@@ -40,6 +40,7 @@ the environment variables it already supports.
    export ANTHROPIC_MODEL=default                # an alias from /admin/upstreams
    export ANTHROPIC_DEFAULT_HAIKU_MODEL=default  # background tasks go here too
    export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+   export CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144  # what your model actually serves
 
    # Recommended on a multi-replica `prefix_affinity` pool — see below.
    export ANTHROPIC_CUSTOM_HEADERS="x-gateway-affinity: $$-$(date +%s)"
@@ -56,13 +57,19 @@ the environment variables it already supports.
    Anthropic model id nothing serves and only works because the unknown-model
    fallback catches it.
 
-   There is **no** environment variable that tells Claude Code your model's
-   context window — it plans against its own assumption. The levers that do
-   exist are `CLAUDE_CODE_MAX_OUTPUT_TOKENS` (caps the output reservation, which
-   comes out of the same budget) and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (compact
-   earlier; it cannot raise the threshold). The window each backend actually
-   serves is shown per model on `/admin/upstreams`, read from `max_model_len` in
-   its `/models` response.
+   `CLAUDE_CODE_MAX_CONTEXT_TOKENS` tells Claude Code the window it is planning
+   against — set it to what your model actually serves (`max_model_len`, shown
+   per backend on `/admin/upstreams`; 262144 for a Qwen3.8 at that setting).
+   It is **not in the published environment-variable reference**, but it is read:
+   changing it visibly changes the context meter. Treat it as undocumented
+   rather than unsupported — the same is true of
+   `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY` below, which is also absent from
+   that page and also works.
+
+   Two documented levers sit next to it: `CLAUDE_CODE_MAX_OUTPUT_TOKENS` caps
+   the output reservation, which comes out of the same budget, and
+   `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` compacts earlier (it cannot raise the
+   threshold).
 
 4. **Check it.**
 
@@ -176,7 +183,8 @@ This adds an entry to `/model` rather than replacing the built-in aliases.
 | `ANTHROPIC_CUSTOM_MODEL_OPTION` (+ `_NAME`, `_DESCRIPTION`) | Add a gateway model id to the `/model` picker under its own name. |
 | `API_FORCE_IDLE_TIMEOUT=0` | Turn off the 5-minute body idle timeout, which is *on by default* against a non-Anthropic base URL. Only needed if `upstream_wait_secs` is raised near it. |
 | `ANTHROPIC_BETAS` | Comma-separated `anthropic-beta` values. Forwarded to the backend, which will almost certainly ignore them — the upstream is not Anthropic. |
-| `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | The two real levers on context budget; there is no variable for the window itself. |
+| `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | The window Claude Code plans against. Undocumented but effective — match `max_model_len` from `/admin/upstreams`. |
+| `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | Output reservation and the auto-compaction threshold; both come out of the same budget. |
 | `ANTHROPIC_CUSTOM_HEADERS="x-gateway-affinity: …"` | Pin this session to one replica on a `prefix_affinity` pool — see [Keeping one session on one GPU](#keeping-one-session-on-one-gpu). |
 | `CLAUDE_CODE_ATTRIBUTION_HEADER=0` | Drops the short attribution block Claude Code prepends to the system prompt. The gateway forwards that block to the model as ordinary prompt text; set this if you'd rather it weren't sent at all. |
 | `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, … | Name gateway model ids directly instead of aliasing the Claude ones. |

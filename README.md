@@ -207,6 +207,7 @@ export ANTHROPIC_AUTH_TOKEN=gwk_…            # a token from /tokens
 export ANTHROPIC_MODEL=default                # an alias you defined on /admin/upstreams
 export ANTHROPIC_DEFAULT_HAIKU_MODEL=default  # background tasks go here too
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+export CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144  # match what your model serves
 
 # Recommended when the pool has several replicas and uses `prefix_affinity`:
 # one value per shell is one value per session, so every turn of this session
@@ -224,6 +225,10 @@ small model if you have one.
 
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` stops Claude Code's telemetry and
 update checks, which keeps your usage numbers to actual work.
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS` should match the window your model actually
+serves (`max_model_len`, shown per backend on `/admin/upstreams`) — it is absent
+from the published variable reference but is read, and changing it moves the
+context meter.
 
 ### Keeping a session on one GPU
 
