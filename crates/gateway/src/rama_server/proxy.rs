@@ -3247,6 +3247,11 @@ const REQUEST_HEADER_DENYLIST: &[&str] = &[
     "transfer-encoding",
     "upgrade",
     "expect",
+    // Gateway-internal routing hint (see `upstreams::affinity`). It names the
+    // caller's *session*, which is nobody's business upstream — least of all a
+    // third-party provider's, where forwarding it would disclose a stable
+    // per-session identifier for no reason. It is consumed here and stops here.
+    gateway_core::server::upstreams::affinity::AFFINITY_HEADER,
 ];
 
 const RESPONSE_HEADER_DENYLIST: &[&str] = &[
@@ -3279,6 +3284,29 @@ mod tests {
 
     fn parse(body: &Bytes) -> serde_json::Value {
         serde_json::from_slice(body).unwrap()
+    }
+
+    /// The gateway's own routing hint must not travel further than the gateway.
+    ///
+    /// `x-gateway-affinity` names the caller's session. Upstream it means
+    /// nothing, and on a cloud pool it would hand a third party a stable
+    /// per-session identifier for no reason at all.
+    #[test]
+    fn the_affinity_header_is_consumed_not_forwarded() {
+        let affinity =
+            HeaderName::from_static(gateway_core::server::upstreams::affinity::AFFINITY_HEADER);
+        assert!(!is_request_header_forwarded(&affinity));
+        // The caller's credential must not travel either, in either spelling.
+        assert!(!is_request_header_forwarded(&HeaderName::from_static(
+            "authorization"
+        )));
+        assert!(!is_request_header_forwarded(&HeaderName::from_static(
+            "x-api-key"
+        )));
+        // An ordinary client header still does.
+        assert!(is_request_header_forwarded(&HeaderName::from_static(
+            "anthropic-beta"
+        )));
     }
 
     #[test]

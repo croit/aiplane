@@ -205,8 +205,8 @@ Claude Code speaks the Anthropic Messages API, and the gateway serves it at `POS
 export ANTHROPIC_BASE_URL=https://gateway.example.com
 export ANTHROPIC_AUTH_TOKEN=gwk_…            # a token from /tokens
 export ANTHROPIC_MODEL=default                # an alias you defined on /admin/upstreams
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=default  # background tasks go here too
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-export CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144  # match what your model actually serves
 
 # Recommended when the pool has several replicas and uses `prefix_affinity`:
 # one value per shell is one value per session, so every turn of this session
@@ -216,11 +216,14 @@ export ANTHROPIC_CUSTOM_HEADERS="x-gateway-affinity: $$-$(date +%s)"
 claude
 ```
 
+`ANTHROPIC_DEFAULT_HAIKU_MODEL` matters more than it looks: Claude Code sends
+background work (summaries, titles) to its `haiku` alias, which otherwise
+arrives as an Anthropic model id your gateway has never heard of and only
+survives because of the unknown-model fallback. Point it somewhere real — a
+small model if you have one.
+
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` stops Claude Code's telemetry and
-auto-update chatter from reaching the gateway, which keeps your usage numbers to
-actual work. `CLAUDE_CODE_MAX_CONTEXT_TOKENS` should match the context window
-the serving model reports (`max_model_len`, visible on `/admin/upstreams`);
-Claude Code otherwise assumes an Anthropic-sized window and can overrun yours.
+update checks, which keeps your usage numbers to actual work.
 
 ### Keeping a session on one GPU
 
