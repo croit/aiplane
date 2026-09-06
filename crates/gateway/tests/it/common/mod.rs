@@ -156,6 +156,35 @@ pub async fn state_with_pool(upstream_url: &str, kind: PoolKind, model_name: &st
     state_from_registry(db_pool, registry)
 }
 
+/// A chat pool with **two** backends serving the same model, for tests about
+/// what happens when one of them fails.
+pub async fn state_with_two_chat_backends(first_url: &str, second_url: &str) -> RamaState {
+    let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+    let mut pools = HashMap::new();
+    pools.insert(
+        "pool".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            compliance: Default::default(),
+            enforce_limits: true,
+            kind: PoolKind::Chat,
+            strategy: PickerStrategy::RoundRobin,
+            models: Vec::new(),
+            backend: vec![
+                mock_backend("first", first_url),
+                mock_backend("second", second_url),
+            ],
+        },
+    );
+    let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
+    seed_pool_models(&registry, "pool", 0, &["model-a"]);
+    seed_pool_models(&registry, "pool", 1, &["model-a"]);
+    state_from_registry(db_pool, registry)
+}
+
 /// [`state_with_pool`] plus a client-facing alias on the backend: `alias`
 /// routes to `real_model`. Backs the Anthropic-format tests, where the model
 /// ids a client sends (`claude-sonnet-4-6`) are names no self-hosted backend

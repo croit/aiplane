@@ -562,20 +562,12 @@ async fn chat_bytedumb(
         .ok()
         .map(|v| gateway_core::server::upstreams::affinity::hint_for_request(&headers, &v))
         .unwrap_or_default();
-    let acquired = match gateway_core::server::upstreams::route_or_wait(
-        &state.upstreams,
-        model,
-        PoolKind::Chat,
-        access,
-        state.upstream_wait(),
-        Some(&affinity),
-    )
-    .await
-    {
-        Ok(a) => a,
+    // Resolve first, without a slot: the dispatch below acquires its own (and
+    // may acquire more than one, if a replica fails before answering).
+    let real_model = match resolve_or_wait(state, model, access).await {
+        Ok(id) => id,
         Err(e) => return route_error_response(e),
     };
-    let real_model = acquired.resolved_model().to_string();
     // Admin sampling/reasoning defaults key on the *real* model id (so an
     // alias inherits the target's defaults). Client keys still win —
     // `apply_defaults` only fills missing top-level fields. Then rewrite the
@@ -592,17 +584,51 @@ async fn chat_bytedumb(
             .upstreams
             .enforce_limits_for_model(&real_model, PoolKind::Chat),
     );
-    let resp = forward_streaming(
-        state,
-        acquired,
-        Method::POST,
-        "chat/completions",
-        headers,
-        body,
-        rec,
+    // Dispatch, retrying on another replica while the client has seen nothing.
+    // A replica that fails to answer must not cost the request: that is the
+    // whole difference between an upstream restart being invisible and it
+    // ending someone's turn.
+    let mut last: Option<String> = None;
+    for attempt in 0..=DISPATCH_RETRIES {
+        let acquired = match gateway_core::server::upstreams::route_or_wait(
+            &state.upstreams,
+            &real_model,
+            PoolKind::Chat,
+            access,
+            state.upstream_wait(),
+            Some(&affinity),
+        )
+        .await
+        {
+            Ok(a) => a,
+            Err(e) => return route_error_response(e),
+        };
+        match forward_streaming(
+            state,
+            acquired,
+            Method::POST,
+            "chat/completions",
+            headers.clone(),
+            body.clone(),
+            rec.clone(),
+        )
+        .await
+        {
+            Ok(resp) => return with_resolved_model_header(resp, model, &real_model),
+            Err(msg) => {
+                tracing::warn!(
+                    model = %real_model, attempt, error = %msg,
+                    "dispatch failed before any response — trying another replica"
+                );
+                last = Some(msg);
+            }
+        }
+    }
+    error_response(
+        StatusCode::BAD_GATEWAY,
+        "upstream_unreachable",
+        &last.unwrap_or_else(|| "no replica accepted the request".into()),
     )
-    .await;
-    with_resolved_model_header(resp, model, &real_model)
 }
 
 pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -1929,12 +1955,18 @@ fn force_usage_in_body(body: Bytes) -> (Bytes, bool) {
     }
 }
 
-/// Streaming variant of `forward` — used by /v1/chat/completions so SSE
-/// (`stream: true`) responses unfold token-by-token to the client
-/// instead of buffering. Relays each upstream frame 1:1 while tapping the
-/// deltas through a [`gateway_runtime::loop_guard::LoopGuard`]; the `Acquired` RAII
-/// guard rides along in the relay task so the in-flight slot stays
-/// reserved for the stream's lifetime. Same header policy as `forward`.
+/// Relay one upstream call to the client, streaming the body through 1:1.
+///
+/// Reports a **pre-response** dispatch failure to the caller instead of turning
+/// it into a `502`.
+///
+/// `Err` means this replica produced nothing: the connection failed, or it
+/// answered with a gateway-class status. Nothing has been billed or written to
+/// the client, so the caller may simply ask another replica — which is the
+/// difference between an upstream restart being invisible and it ending the
+/// request. Once the upstream's own status and headers are relayed, every later
+/// failure is in-band and this returns `Ok`.
+#[allow(clippy::too_many_arguments)]
 async fn forward_streaming(
     state: &RamaState,
     acquired: Acquired,
@@ -1943,7 +1975,7 @@ async fn forward_streaming(
     client_headers: HeaderMap,
     body: Bytes,
     rec: RecordParams,
-) -> Response {
+) -> Result<Response, String> {
     use rama::futures::StreamExt;
 
     let backend = acquired.backend();
@@ -1972,6 +2004,9 @@ async fn forward_streaming(
     let upstream = match req.body(body).send().await {
         Ok(r) => r,
         Err(err) => {
+            // Take it out of rotation so a retry lands elsewhere; the health
+            // probe restores it a second after it answers again.
+            acquired.backend().set_healthy(false);
             drop(acquired);
             rec.emit(
                 &state.usage,
@@ -1980,11 +2015,7 @@ async fn forward_streaming(
                 started,
                 (None, None, None),
             );
-            return error_response(
-                StatusCode::BAD_GATEWAY,
-                "upstream_unreachable",
-                &err.to_string(),
-            );
+            return Err(err.to_string());
         }
     };
     let status = upstream.status();
@@ -2001,6 +2032,10 @@ async fn forward_streaming(
     // status + body verbatim. Auto-learning fires before the client sees it.
     if !status.is_success() {
         let bytes = upstream.bytes().await.unwrap_or_default();
+        let retryable = is_retryable_dispatch_status(status.as_u16());
+        if retryable {
+            acquired.backend().set_healthy(false);
+        }
         drop(acquired);
         rec.emit(
             &state.usage,
@@ -2009,6 +2044,13 @@ async fn forward_streaming(
             started,
             tokens_from_bytes(&bytes),
         );
+        // A gateway-class status means this replica did not answer, so the
+        // caller may ask another. Anything else is the model server's own
+        // answer — including its wording, which clients match on to retry
+        // without a capability — and is relayed untouched.
+        if retryable {
+            return Err(format!("upstream returned HTTP {}", status.as_u16()));
+        }
         maybe_learn_capability(state, &model_key, status.as_u16(), &bytes);
         let mut builder = Response::builder().status(
             StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -2016,13 +2058,13 @@ async fn forward_streaming(
         for (name, value) in forwarded_headers {
             builder = builder.header(name, value);
         }
-        return builder.body(bytes.into()).unwrap_or_else(|err| {
+        return Ok(builder.body(bytes.into()).unwrap_or_else(|err| {
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal_error",
                 &format!("building response: {err}"),
             )
-        });
+        }));
     }
 
     let usage_sink = state.usage.clone();
@@ -2130,7 +2172,7 @@ async fn forward_streaming(
             &format!("building response: {err}"),
         )
     });
-    with_backend_header(resp, &served_by)
+    Ok(with_backend_header(resp, &served_by))
 }
 
 /// Why a streamed turn ended early, carrying the upstream status where there
@@ -2680,41 +2722,73 @@ async fn drive_streaming_tool_loop_inner(
             &client_headers,
             &request_body,
         );
-        let acquired = state
-            .upstreams
-            .acquire_for_access_affine(&model, PoolKind::Chat, &access, Some(&affinity))
-            // No slot to be had is the backend being unavailable, not the
-            // request being wrong — say so, so a client can retry.
-            .map_err(|e| StreamFailure::with_status(503, e.to_string()))?;
-        let backend_name = acquired.backend().name.clone();
-        let started = Instant::now();
-        let url = format!("{}/chat/completions", acquired.backend().base_url);
-        let serialized = serde_json::to_vec(&request_body).map_err(|e| e.to_string())?;
+        // Acquire, then open the upstream stream — retrying on another replica
+        // while nothing of *this round* has been relayed yet.
+        //
+        // This is the path an agent client actually uses, and it was the one
+        // place a backend restart still killed a turn. The response headers left
+        // long ago (an SSE body is streamed), so a failure here cannot be
+        // answered with a status code — but it can be answered by simply asking
+        // a different replica, because a `send()` that fails, or an upstream
+        // that answers 502/503/504, has produced no frames to duplicate. Only a
+        // failure *after* frames have been forwarded is genuinely unrecoverable.
+        //
+        // The acquire waits out an outage exactly as the pre-flight resolve
+        // does, so a replica coming back mid-turn resumes the turn instead of
+        // ending it.
+        let (acquired, upstream, backend_name, started) = {
+            let mut attempt = 0;
+            loop {
+                let acquired = gateway_core::server::upstreams::route_or_wait(
+                    &state.upstreams,
+                    &model,
+                    PoolKind::Chat,
+                    &access,
+                    state.upstream_wait(),
+                    Some(&affinity),
+                )
+                .await
+                // No replica came back within the budget: the backend is
+                // unavailable, not the request wrong — say so, so a client can
+                // retry.
+                .map_err(|e| StreamFailure::with_status(503, e.to_string()))?;
+                let backend_name = acquired.backend().name.clone();
+                let started = Instant::now();
+                let url = format!("{}/chat/completions", acquired.backend().base_url);
+                let serialized = serde_json::to_vec(&request_body).map_err(|e| e.to_string())?;
 
-        let mut http = state
-            .http
-            .post(&url)
-            .header("content-type", "application/json")
-            .header("accept", "text/event-stream")
-            // `accept-encoding: identity` prevents reqwest from
-            // requesting gzip — a compressed SSE response is
-            // buffered until the upstream closes, which kills
-            // streaming.
-            .header("accept-encoding", "identity")
-            .body(serialized);
-        for (name, value) in &client_headers {
-            if is_request_header_forwarded(name) {
-                http = http.header(name.as_str(), value);
-            }
-        }
-        if let Some(key) = acquired.backend().api_key.as_deref() {
-            http = http.bearer_auth(key);
-        }
+                let mut http = state
+                    .http
+                    .post(&url)
+                    .header("content-type", "application/json")
+                    .header("accept", "text/event-stream")
+                    // `accept-encoding: identity` prevents reqwest from
+                    // requesting gzip — a compressed SSE response is
+                    // buffered until the upstream closes, which kills
+                    // streaming.
+                    .header("accept-encoding", "identity")
+                    .body(serialized);
+                for (name, value) in &client_headers {
+                    if is_request_header_forwarded(name) {
+                        http = http.header(name.as_str(), value);
+                    }
+                }
+                if let Some(key) = acquired.backend().api_key.as_deref() {
+                    http = http.bearer_auth(key);
+                }
 
-        let upstream = match http.send().await {
-            Ok(u) => u,
-            Err(e) => {
-                drop(acquired);
+                let failure = match http.send().await {
+                    Ok(u) if !is_retryable_dispatch_status(u.status().as_u16()) => {
+                        break (acquired, u, backend_name, started);
+                    }
+                    Ok(u) => format!("upstream returned HTTP {}", u.status().as_u16()),
+                    Err(e) => {
+                        // Take it out of rotation so the retry lands elsewhere;
+                        // the probe restores it a second after it answers again.
+                        acquired.backend().set_healthy(false);
+                        e.to_string()
+                    }
+                };
                 rec.emit(
                     &state.usage,
                     &backend_name,
@@ -2722,13 +2796,18 @@ async fn drive_streaming_tool_loop_inner(
                     started,
                     (None, None, None),
                 );
-                // A backend we couldn't reach at all: the same 502 the
-                // buffered path records, so a client sees a transport
-                // failure rather than a request error.
-                return Err(StreamFailure::with_status(
-                    StatusCode::BAD_GATEWAY.as_u16(),
-                    e.to_string(),
-                ));
+                drop(acquired);
+                if attempt >= DISPATCH_RETRIES {
+                    return Err(StreamFailure::with_status(
+                        StatusCode::BAD_GATEWAY.as_u16(),
+                        failure,
+                    ));
+                }
+                tracing::warn!(
+                    model, attempt, error = %failure,
+                    "streaming dispatch failed before any frame — trying another replica"
+                );
+                attempt += 1;
             }
         };
         if !upstream.status().is_success() {

@@ -726,6 +726,57 @@ async fn v1_chat_completions_waits_for_a_backend_to_come_back() {
     assert_eq!(parsed["choices"][0]["message"]["content"], "waited-for-you");
 }
 
+/// The streamed path must survive a replica failing mid-turn, because that is
+/// the path an agent client actually uses.
+///
+/// The response headers left long before the upstream was contacted, so this
+/// cannot be answered with a status code — it has to be answered by asking a
+/// different replica. A `send()` that fails has produced no frames, so there is
+/// nothing to duplicate.
+#[tokio::test]
+async fn a_streamed_turn_survives_a_replica_that_fails_before_any_frame() {
+    // Two replicas: one that refuses connections, one that streams a real
+    // answer. Which one the picker tries first is not the point — either
+    // ordering must end with the client getting the answer.
+    let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead_addr = dead.local_addr().unwrap();
+    drop(dead);
+
+    let alive = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            concat!(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"survived\"}}]}\n\n",
+                "data: [DONE]\n\n",
+            ),
+            "text/event-stream",
+        ))
+        .mount(&alive)
+        .await;
+
+    let state =
+        common::state_with_two_chat_backends(&format!("http://{dead_addr}/v1"), &alive.uri()).await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "model-a", "stream": true, "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let text = String::from_utf8_lossy(&common::read_body(resp).await).to_string();
+    assert!(
+        text.contains("survived"),
+        "the turn should have been re-dispatched to the working replica: {text}"
+    );
+}
+
 #[tokio::test]
 async fn v1_models_lists_all_pools_deduped_with_full_objects() {
     // Lists EVERY pool/kind, de-duplicated by id, even when a backend (the

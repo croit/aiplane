@@ -187,7 +187,31 @@ So the gateway parks it. `upstreams::wait::route_or_wait` retries the normal rou
 - **Only capacity failures wait.** An unknown model name is a typo or a misconfiguration, and waiting for it would turn a clear `404` into a long hang.
 - **No slot is held while parked** — a parked request costs a task and a timer, nothing on the backend.
 - **Recovery latency is the probe's, not the poll's.** A backend that is known down is re-probed every second instead of every five, because that interval is what every parked request pays.
+- **A replica that fails to answer costs a retry, not the request.** A dispatch
+  that dies at the socket, or an upstream that answers `502`/`503`/`504`, has
+  produced nothing — so the gateway takes that replica out of rotation and asks
+  another, up to twice. This holds on the **streamed** path too, where the
+  response headers left long ago: a `send()` that fails has emitted no frames,
+  so there is nothing to duplicate. Only a failure *after* frames have been
+  forwarded is unrecoverable.
 - **Past the budget the answer is still retryable**: `/v1/messages` returns `529 overloaded_error` with `Retry-After`, `/v1/chat/completions` a `503` with `Retry-After`, so the client's own backoff continues where the gateway left off. Never a `4xx` — a `404` is the one thing no SDK retries.
+
+### Verified against two live replicas
+
+With one replica of a two-replica pool killed, requests are served by the other
+with no client-visible error (`X-Gateway-Backend` shows the switch, the heartbeat
+logs `DEGRADED … qwen=1/2`).
+
+With **both** killed and no fallback configured, a streamed request was held
+open for the whole outage and completed normally the moment one replica came
+back — `HTTP 200`, real model output, no error at any point. That is the
+behaviour an agent client needs: an upstream restart becomes a pause in the
+turn, not the end of it.
+
+Note the interaction with `fallback_offline`: on a pool that has one, a full
+outage **does not park at all** — it re-resolves to the backup model
+immediately, which is better than waiting. Parking is what happens when there is
+nothing to fall back to.
 
 ### An outage must never look like a missing model
 
