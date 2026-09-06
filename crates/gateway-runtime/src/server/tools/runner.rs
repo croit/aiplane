@@ -128,6 +128,15 @@ pub struct LoopOutput {
     /// Number of gateway-tool rounds executed (0 when the model returned no
     /// gateway tool_calls). Useful for audit logs + tests.
     pub rounds: u32,
+    /// Which upstream backend served the turn, when the caller's dispatch
+    /// closure recorded one.
+    ///
+    /// The runner cannot know this — it only sees an opaque `upstream` callback
+    /// — so it always leaves this `None` and the caller fills it in. It exists
+    /// so the answer can reach the client as a response header: routing
+    /// decisions were otherwise unobservable from outside the process, which
+    /// makes "is my session staying on one replica?" unanswerable.
+    pub backend: Option<String>,
 }
 
 /// Runs the chat-completion request with tool injection + the gateway-tool
@@ -201,6 +210,7 @@ where
                 body: body_bytes,
                 status,
                 rounds,
+                backend: None,
             });
         }
 
@@ -235,6 +245,7 @@ where
                     .map_err(|e| LoopError::MalformedUpstream(e.to_string()))?,
                 status,
                 rounds,
+                backend: None,
             });
         }
 

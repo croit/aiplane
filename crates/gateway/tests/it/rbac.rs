@@ -50,6 +50,7 @@ fn backend(name: &str, base_url: &str, supports_edit: bool) -> BackendConfig {
         alias: None,
         probe_models: true,
         supports_edit,
+        enabled: true,
         name: name.into(),
         base_url: base_url.into(),
         api_key_env: None,

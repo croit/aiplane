@@ -56,6 +56,7 @@ async fn state_with_tools(upstream_uri: &str) -> RamaState {
                 alias: None,
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 name: "mock".into(),
                 base_url: upstream_uri.into(),
                 api_key_env: None,

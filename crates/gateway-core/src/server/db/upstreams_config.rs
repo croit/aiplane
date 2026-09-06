@@ -10,7 +10,7 @@
 //!
 //! Schema lives in `migrations/0042_upstream_config_db.sql`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use jiff::Timestamp;
 use sqlx::Row;
@@ -44,6 +44,8 @@ pub struct BackendRow {
     pub health_path: String,
     pub probe_models: bool,
     pub supports_edit: bool,
+    /// `false` = taken out of rotation for maintenance (migration 0063).
+    pub enabled: bool,
     pub models: Vec<String>,
     pub aliases: Vec<AliasRow>,
     pub created_at: Timestamp,
@@ -145,7 +147,7 @@ pub async fn is_empty(db: &Pool) -> Result<bool, DbError> {
 async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbError> {
     let rows = sqlx::query(
         r#"SELECT name, base_url, api_key_env, api_key_ct, api_key_nonce, weight, max_inflight,
-                  health_path, probe_models, supports_edit, created_at, updated_at
+                  health_path, probe_models, supports_edit, enabled, created_at, updated_at
              FROM backends ORDER BY name"#,
     )
     .fetch_all(db)
@@ -169,6 +171,7 @@ async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbE
                 health_path: row.try_get("health_path")?,
                 probe_models: row.try_get::<i64, _>("probe_models")? != 0,
                 supports_edit: row.try_get::<i64, _>("supports_edit")? != 0,
+                enabled: row.try_get::<i64, _>("enabled")? != 0,
                 models: Vec::new(),
                 aliases: Vec::new(),
                 created_at,
@@ -334,14 +337,104 @@ pub async fn get_backend(db: &Pool, name: &str) -> Result<Option<BackendRow>, Db
     Ok(backends.remove(name))
 }
 
+/// Remember the model set a backend was last seen serving (see migration
+/// `0062_backend_probed_models`). Replaces the whole set for that backend.
+///
+/// Called from the health probe whenever a `/models` response differs from what
+/// the backend previously advertised, so the rows track the live loadout. The
+/// point is the *next* boot: without them, a gateway that starts while a backend
+/// is down knows of no models at all and answers `404 model_not_found` — a
+/// non-retryable "that model does not exist" — instead of the `503` an outage
+/// deserves.
+pub async fn save_probed_models(
+    db: &Pool,
+    backend_name: &str,
+    models: &HashSet<String>,
+) -> Result<(), DbError> {
+    let now = now_rfc3339();
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM backend_probed_models WHERE backend_name = ?")
+        .bind(backend_name)
+        .execute(&mut *tx)
+        .await?;
+    for model_id in models {
+        sqlx::query(
+            r#"INSERT INTO backend_probed_models (backend_name, model_id, seen_at)
+               VALUES (?, ?, ?)"#,
+        )
+        .bind(backend_name)
+        .bind(model_id)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// The remembered model sets, keyed by backend name. Read once at startup to
+/// seed the registry before the first probe round — see [`save_probed_models`].
+pub async fn load_probed_models(db: &Pool) -> Result<HashMap<String, HashSet<String>>, DbError> {
+    let rows = sqlx::query("SELECT backend_name, model_id FROM backend_probed_models")
+        .fetch_all(db)
+        .await?;
+    let mut out: HashMap<String, HashSet<String>> = HashMap::new();
+    for row in &rows {
+        let backend_name: String = row.try_get("backend_name")?;
+        let model_id: String = row.try_get("model_id")?;
+        out.entry(backend_name).or_default().insert(model_id);
+    }
+    Ok(out)
+}
+
+/// Flip a backend's maintenance switch in the database.
+///
+/// The **live** registry is flipped separately and immediately
+/// (`UpstreamRegistry::set_backend_enabled`) — this is only the part that has
+/// to survive a restart. A maintenance switch you have to "apply" is not a
+/// maintenance switch, so the two are deliberately not coupled to the
+/// topology-reload flow.
+pub async fn set_backend_enabled(db: &Pool, name: &str, enabled: bool) -> Result<(), DbError> {
+    sqlx::query("UPDATE backends SET enabled = ?, updated_at = ? WHERE name = ?")
+        .bind(enabled as i64)
+        .bind(now_rfc3339())
+        .bind(name)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Whether a backend with this name already exists.
+///
+/// Both `upsert_backend` and `upsert_pool` are upserts keyed on `name`, so the
+/// admin UI needs to tell "create" from "replace" *before* it writes — an add
+/// form that silently overwrote an existing backend cost an operator a working
+/// upstream (the second backend they added to a pool replaced the first).
+pub async fn backend_exists(db: &Pool, name: &str) -> Result<bool, DbError> {
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM backends WHERE name = ?")
+        .bind(name)
+        .fetch_one(db)
+        .await?;
+    Ok(n > 0)
+}
+
+/// Whether a pool with this name already exists. See [`backend_exists`].
+pub async fn pool_exists(db: &Pool, name: &str) -> Result<bool, DbError> {
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pools WHERE name = ?")
+        .bind(name)
+        .fetch_one(db)
+        .await?;
+    Ok(n > 0)
+}
+
 /// Insert or update a backend, replacing its models and aliases atomically.
 pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> {
     let now = now_rfc3339();
     sqlx::query(
         r#"INSERT INTO backends
                (name, base_url, api_key_env, api_key_ct, api_key_nonce, weight, max_inflight,
-                health_path, probe_models, supports_edit, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                health_path, probe_models, supports_edit, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(name) DO UPDATE SET
                base_url      = excluded.base_url,
                api_key_env   = excluded.api_key_env,
@@ -352,6 +445,7 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
                health_path   = excluded.health_path,
                probe_models  = excluded.probe_models,
                supports_edit = excluded.supports_edit,
+               enabled       = excluded.enabled,
                updated_at    = excluded.updated_at"#,
     )
     .bind(&row.name)
@@ -364,6 +458,7 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
     .bind(&row.health_path)
     .bind(row.probe_models as i64)
     .bind(row.supports_edit as i64)
+    .bind(row.enabled as i64)
     .bind(&now)
     .bind(&now)
     .execute(db)
@@ -712,6 +807,7 @@ fn config_to_backend_row(cfg: &BackendConfig) -> BackendRow {
         health_path: cfg.health_path.clone(),
         probe_models: cfg.probe_models,
         supports_edit: cfg.supports_edit,
+        enabled: cfg.enabled,
         models,
         aliases,
         created_at: Timestamp::now(),
@@ -732,6 +828,7 @@ fn config_to_pool_row(name: &str, cfg: &UpstreamPoolConfig, sort_order: i64) -> 
     let strategy_str = match cfg.strategy {
         crate::server::upstreams::config::PickerStrategy::LeastInflight => "least_inflight",
         crate::server::upstreams::config::PickerStrategy::RoundRobin => "round_robin",
+        crate::server::upstreams::config::PickerStrategy::PrefixAffinity => "prefix_affinity",
     };
     let voices = cfg
         .voices
@@ -827,6 +924,7 @@ mod tests {
             health_path: "/v1/models".into(),
             probe_models: true,
             supports_edit: false,
+            enabled: true,
             models: vec!["qwen-32b".into(), "qwen-7b".into()],
             aliases: vec![
                 AliasRow {
@@ -877,6 +975,7 @@ mod tests {
             health_path: "/models".into(),
             probe_models: true,
             supports_edit: false,
+            enabled: true,
             models: vec!["m1".into()],
             aliases: vec![AliasRow {
                 alias: "a1".into(),
@@ -918,6 +1017,7 @@ mod tests {
                 health_path: "/models".into(),
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 models: vec![],
                 aliases: vec![],
                 created_at: Timestamp::now(),
@@ -975,6 +1075,7 @@ mod tests {
                 health_path: "/models".into(),
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 models: vec![],
                 aliases: vec![],
                 created_at: Timestamp::now(),
@@ -1100,6 +1201,7 @@ mod tests {
                 health_path: "/models".into(),
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 models: vec![],
                 aliases: vec![],
                 created_at: Timestamp::now(),

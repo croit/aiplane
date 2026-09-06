@@ -221,9 +221,19 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         // `/admin/pools` GET routes 302-redirect here; the CRUD POST endpoints
         // keep their paths (the ids ride in the body, not the URL).
         .with_get("/admin/upstreams", pages::admin_upstreams_index)
+        // Long-lived SSE feeding the page's per-backend status blocks. Static
+        // path registered before the page's own routes (rama matches in
+        // registration order).
+        .with_get("/admin/upstreams/live", pages::admin_upstreams_live)
         .with_get("/admin/backends", pages::admin_backends_redirect)
         .with_post("/admin/backends/save", pages::admin_backends_save)
         .with_post("/admin/backends/delete", pages::admin_backends_delete)
+        // Maintenance switch. Separate from `/save` because it takes effect on
+        // the live registry immediately, with no "Apply changes" step.
+        .with_post("/admin/backends/enabled", pages::admin_backends_enabled)
+        // Reachability + credential + model-discovery check against the values
+        // currently in the editor. Writes nothing.
+        .with_post("/admin/backends/test", pages::admin_backends_test)
         .with_get("/admin/pools", pages::admin_pools_redirect)
         .with_post("/admin/pools/save", pages::admin_pools_save)
         .with_post("/admin/pools/delete", pages::admin_pools_delete)

@@ -173,6 +173,7 @@ mod tests {
                     alias: None,
                     probe_models: true,
                     supports_edit: false,
+                    enabled: true,
                 }],
             },
         );

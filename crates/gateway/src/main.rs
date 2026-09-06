@@ -243,7 +243,7 @@ async fn main() -> anyhow::Result<()> {
     // which case we wait the 2 s probe timeout and start serving with
     // empty model sets — the looping probe will populate them once the
     // backends come up. (It builds its own no-idle-pool probe client.)
-    srv::upstreams::health::spawn(upstreams.clone()).await;
+    srv::upstreams::health::spawn(upstreams.clone(), Some(db.clone())).await;
     // Positive liveness heartbeat (one line every 15s) so quiet logs can't be
     // mistaken for a hung process — see `spawn_heartbeat`.
     srv::upstreams::health::spawn_heartbeat(upstreams.clone());

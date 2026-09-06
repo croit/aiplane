@@ -796,6 +796,7 @@ mod tests {
                     alias: None,
                     probe_models: false,
                     supports_edit: false,
+                    enabled: true,
                 }],
                 models: vec![],
                 fallback_offline: None,

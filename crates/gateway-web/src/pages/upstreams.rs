@@ -72,10 +72,26 @@ pub async fn upstreams_index(State(state): State<Arc<RamaState>>, req: Request) 
     let mut backend_names: Vec<String> = snapshot.backends.keys().cloned().collect();
     backend_names.sort();
     let all_models = state.upstreams.all_models();
+    // U6/U7: per pool, what clients can actually ask for and how many replicas
+    // can serve each name. Read from the running registry, which is the only
+    // thing that knows.
+    let coverage: HashMap<String, Vec<(String, usize, usize)>> = pools
+        .iter()
+        .map(|p| (p.name.clone(), state.upstreams.pool_model_coverage(&p.name)))
+        .collect();
 
     // Runtime health, keyed by backend name (what the gateway currently serves).
     let health = live_health(&state).await;
     let dirty = state.topology_dirty_count();
+    // U10: what "Apply changes" would actually do. The counter alone says how
+    // many edits are pending, never which — and applying a topology edit while
+    // clients are mid-session deserves better than a number.
+    let pending = apply_diff(
+        &pools,
+        &snapshot.backends,
+        &state.upstreams.live_topology(),
+        lang,
+    );
 
     let body = render_body(
         lang,
@@ -85,7 +101,9 @@ pub async fn upstreams_index(State(state): State<Arc<RamaState>>, req: Request) 
         &backend_names,
         &all_models,
         &health,
+        &coverage,
         dirty,
+        &pending,
     );
     let chat = fetch_sidebar_chat(&state, &user.id, None).await;
     {
@@ -140,6 +158,14 @@ fn redirect_302(to: &str) -> Response {
 struct BackendHealth {
     healthy: bool,
     saturated: bool,
+    /// The upstream rejected the health probe's credentials (401/403). Not a
+    /// health failure — but it means model discovery is off, which is how a
+    /// backend ends up green and serving nothing.
+    auth_failed: bool,
+    /// The maintenance switch. `false` = drained: reachable, but the router
+    /// skips it. Distinct from `healthy`, and shown differently — "down" is a
+    /// problem, "maintenance" is a decision.
+    enabled: bool,
     inflight: u32,
     max_inflight: u32,
     /// Models the backend actually serves (effective set: probe restricted by
@@ -171,6 +197,8 @@ async fn live_health(state: &RamaState) -> HashMap<String, BackendHealth> {
                 BackendHealth {
                     healthy: b.is_healthy(),
                     saturated: b.is_healthy() && b.inflight() >= b.max_inflight,
+                    auth_failed: b.auth_failed(),
+                    enabled: b.is_enabled(),
                     inflight: b.inflight(),
                     max_inflight: b.max_inflight,
                     served,
@@ -200,7 +228,9 @@ fn render_body(
     backend_names: &[String],
     all_models: &[String],
     health: &HashMap<String, BackendHealth>,
+    coverage: &HashMap<String, Vec<(String, usize, usize)>>,
     dirty: u32,
+    pending: &[String],
 ) -> Html {
     // Backends referenced by at least one pool → the rest go in "Unassigned".
     let assigned: HashSet<&str> = pools
@@ -219,18 +249,50 @@ fn render_body(
     let pool_cards: Vec<Html> = pools
         .iter()
         .enumerate()
-        .map(|(i, p)| render_pool_card(lang, i, p, backends, backend_names, health, &pool_names))
+        .map(|(i, p)| {
+            render_pool_card(
+                lang,
+                i,
+                p,
+                backends,
+                backend_names,
+                health,
+                &pool_names,
+                coverage.get(&p.name).map(Vec::as_slice).unwrap_or(&[]),
+            )
+        })
         .collect();
 
     // Signals: `addForm` drives which add form is open (one at a time);
     // `topologyDirty` drives the apply bar; `addPoolKind` gates the speech-only
     // voices field in the add-pool form. Declared once on the container.
-    let signals = format!("{{addForm: '', addPoolKind: 'chat', topologyDirty: {dirty}}}");
+    // `ovwPool` / `ovwBackend` arm the duplicate-name overwrite confirmation on
+    // the two add forms: the save handler sets them when the typed name already
+    // exists, which reveals the warning and makes the *next* save carry
+    // `overwrite=1`. See `overwrite_guard`.
+    // `existingPools` / `existingBackends` let the add forms warn about a name
+    // clash while it is being typed (U9); `newPoolName` / `newBackendName` hold
+    // what is currently in those fields. The server still refuses the save —
+    // this only shortens the feedback loop.
+    let pool_names_json =
+        json_string_array(&pools.iter().map(|p| p.name.clone()).collect::<Vec<_>>());
+    let backend_names_json = json_string_array(backend_names);
+    let signals = format!(
+        "{{addForm: '', addPoolKind: 'chat', ovwPool: false, ovwBackend: false, \
+         newPoolName: '', newBackendName: '', existingPools: {pool_names_json}, \
+         existingBackends: {backend_names_json}, topologyDirty: {dirty}}}"
+    );
 
     html! {
         section(
             class: "max-w-5xl mx-auto p-4 sm:p-6 flex flex-col gap-4",
-            "data-signals": (signals)
+            "data-signals": (signals),
+            // Open the live health stream on load: from here on the status
+            // blocks patch themselves (see `upstreams_live`), so in-flight,
+            // the activity counters, the sparkline and the up/down/drained
+            // badge track reality without an F5. Datastar reconnects on its
+            // own if the connection drops.
+            "data-init": "@get('/admin/upstreams/live')"
         ) {
             header(class: "flex items-start justify-between gap-3 flex-wrap") {
                 div(class: "flex flex-col gap-1") {
@@ -259,7 +321,7 @@ fn render_body(
                 }
             }
 
-            (render_apply_bar(lang))
+            (render_apply_bar(lang, pending))
 
             // Add forms (hidden until a header button reveals them).
             (render_add_pool_card(lang, backend_names))
@@ -285,25 +347,53 @@ fn render_body(
     .to_html()
 }
 
+/// A JSON array literal of strings, for embedding a name list into a
+/// `data-signals` expression. `serde_json` so a quote or backslash in an
+/// operator-chosen name can't break out of the attribute.
+fn json_string_array(values: &[String]) -> String {
+    serde_json::to_string(values).unwrap_or_else(|_| "[]".to_string())
+}
+
 /// The sticky amber "N unapplied changes" bar. Visibility + counter bind to the
 /// `topologyDirty` signal (initialised on the container, kept live by the
 /// save/delete/reload responses), so it appears the moment an edit is saved and
 /// clears itself when the registry is reloaded. `top`/`z-index` are inline
 /// because the shipped CSS bundle carries no `top-0`/`z-30` utility.
-fn render_apply_bar(lang: Lang) -> Html {
+fn render_apply_bar(lang: Lang, pending: &[String]) -> Html {
     let reload = "@post('/admin/upstreams/reload')";
+    // The diff is server-rendered from the DB-vs-registry comparison at page
+    // load. It deliberately does *not* follow the live `topologyDirty` signal:
+    // an edit saved since this page loaded bumps the counter but isn't in this
+    // list, and a stale list would be worse than none. The heading says so.
+    let details = (!pending.is_empty()).then(|| {
+        let lines: Vec<String> = pending.to_vec();
+        html! {
+            details(class: "text-sm") {
+                summary(class: "cursor-pointer select-none") {
+                    (t(lang, "upstreams-apply-diff-summary"))
+                }
+                ul(class: "list-disc pl-5 mt-1") {
+                    for l in lines.iter() { li(class: "font-mono text-xs") { (l.clone()) } }
+                }
+            }
+        }
+        .to_html()
+    });
     html! {
         div(
-            class: "alert alert-warning sticky flex items-center gap-3",
+            class: "alert alert-warning sticky flex items-start gap-3",
             style: "top: 0.75rem; z-index: 30",
             role: "status",
             "data-show": "$topologyDirty > 0"
         ) {
             (icons::alert(18))
-            span(class: "flex-1 text-sm") {
-                strong { span("data-text": "$topologyDirty") {} " " (t(lang, "upstreams-apply-count")) }
-                " "
-                (t(lang, "upstreams-apply-note"))
+            div(class: "flex-1 flex flex-col gap-1") {
+                span(class: "text-sm") {
+                    strong { span("data-text": "$topologyDirty") {} " " (t(lang, "upstreams-apply-count")) }
+                    " "
+                    (t(lang, "upstreams-apply-note"))
+                }
+                if let Some(d) = details.as_ref() { (d.clone()) }
             }
             button(class: "btn btn-sm", "data-on:click": (reload)) {
                 (icons::check(14))
@@ -312,6 +402,145 @@ fn render_apply_bar(lang: Lang) -> Html {
         }
     }
     .to_html()
+}
+
+/// What applying the edited DB topology would change about what is being served
+/// (U10), as one human-readable line per change.
+///
+/// "3 unapplied changes" is not enough to act on. Applying a topology edit
+/// swaps the live routing table under running sessions, and the operator should
+/// be able to see that it will, say, retire a backend that is currently serving
+/// — rather than finding out from a client. Compares the DB rows the admin has
+/// been editing against [`UpstreamRegistry::live_topology`].
+///
+/// Empty when the two agree, which is also the case right after a reload.
+fn apply_diff(
+    pools: &[PoolRow],
+    backends: &HashMap<String, BackendRow>,
+    live: &gateway_core::server::upstreams::LiveTopology,
+    lang: Lang,
+) -> Vec<String> {
+    use std::collections::BTreeMap;
+
+    let mut out: Vec<String> = Vec::new();
+    let live_pools: BTreeMap<&str, &gateway_core::server::upstreams::LivePool> =
+        live.pools.iter().map(|p| (p.name.as_str(), p)).collect();
+    let db_pools: BTreeMap<&str, &PoolRow> = pools.iter().map(|p| (p.name.as_str(), p)).collect();
+
+    for (name, p) in &db_pools {
+        let Some(lp) = live_pools.get(name) else {
+            out.push(t_args(
+                lang,
+                "upstreams-diff-pool-added",
+                &i18n::args([("pool", (*name).to_string().into())]),
+            ));
+            continue;
+        };
+        if p.kind != format!("{:?}", lp.kind).to_lowercase() {
+            out.push(t_args(
+                lang,
+                "upstreams-diff-pool-kind",
+                &i18n::args([
+                    ("pool", (*name).to_string().into()),
+                    ("from", format!("{:?}", lp.kind).to_lowercase().into()),
+                    ("to", p.kind.clone().into()),
+                ]),
+            ));
+        }
+        let live_strategy = strategy_key(lp.strategy);
+        if p.strategy != live_strategy {
+            out.push(t_args(
+                lang,
+                "upstreams-diff-pool-strategy",
+                &i18n::args([
+                    ("pool", (*name).to_string().into()),
+                    ("from", live_strategy.to_string().into()),
+                    ("to", p.strategy.clone().into()),
+                ]),
+            ));
+        }
+        // Membership, which is what changes where traffic goes.
+        let mut db_members: Vec<&str> = p.backends.iter().map(String::as_str).collect();
+        db_members.sort_unstable();
+        let live_members: Vec<&str> = lp.backends.iter().map(|b| b.name.as_str()).collect();
+        for added in db_members.iter().filter(|m| !live_members.contains(m)) {
+            out.push(t_args(
+                lang,
+                "upstreams-diff-backend-joins",
+                &i18n::args([
+                    ("backend", (*added).to_string().into()),
+                    ("pool", (*name).to_string().into()),
+                ]),
+            ));
+        }
+        for removed in live_members.iter().filter(|m| !db_members.contains(m)) {
+            out.push(t_args(
+                lang,
+                "upstreams-diff-backend-leaves",
+                &i18n::args([
+                    ("backend", (*removed).to_string().into()),
+                    ("pool", (*name).to_string().into()),
+                ]),
+            ));
+        }
+        // Per-backend dispatch settings.
+        for lb in &lp.backends {
+            let Some(row) = backends.get(&lb.name) else {
+                continue;
+            };
+            if row.base_url.trim_end_matches('/') != lb.base_url {
+                out.push(t_args(
+                    lang,
+                    "upstreams-diff-backend-url",
+                    &i18n::args([
+                        ("backend", lb.name.clone().into()),
+                        ("from", lb.base_url.clone().into()),
+                        ("to", row.base_url.clone().into()),
+                    ]),
+                ));
+            }
+            if row.weight.max(1) != lb.weight || row.max_inflight.max(1) != lb.max_inflight {
+                out.push(t_args(
+                    lang,
+                    "upstreams-diff-backend-limits",
+                    &i18n::args([
+                        ("backend", lb.name.clone().into()),
+                        ("weight", row.weight.to_string().into()),
+                        ("inflight", row.max_inflight.to_string().into()),
+                    ]),
+                ));
+            }
+            if row.health_path != lb.health_path {
+                out.push(t_args(
+                    lang,
+                    "upstreams-diff-backend-health-path",
+                    &i18n::args([
+                        ("backend", lb.name.clone().into()),
+                        ("to", row.health_path.clone().into()),
+                    ]),
+                ));
+            }
+        }
+    }
+    for name in live_pools.keys().filter(|n| !db_pools.contains_key(*n)) {
+        out.push(t_args(
+            lang,
+            "upstreams-diff-pool-removed",
+            &i18n::args([("pool", (*name).to_string().into())]),
+        ));
+    }
+    out
+}
+
+/// The DB spelling of a picker strategy — the same vocabulary `db_bridge`
+/// parses, so a diff can compare it against the stored string.
+fn strategy_key(s: gateway_core::server::upstreams::PickerStrategy) -> &'static str {
+    use gateway_core::server::upstreams::PickerStrategy as P;
+    match s {
+        P::RoundRobin => "round_robin",
+        P::LeastInflight => "least_inflight",
+        P::PrefixAffinity => "prefix_affinity",
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +556,7 @@ fn render_pool_card(
     backend_names: &[String],
     health: &HashMap<String, BackendHealth>,
     pool_names: &[String],
+    coverage: &[(String, usize, usize)],
 ) -> Html {
     let offline_badge = pool.fallback_offline.as_deref().map(|m| {
         html! {
@@ -367,6 +597,8 @@ fn render_pool_card(
         .collect();
 
     let del_sig = format!("dp{idx}");
+    let coverage_block = render_pool_coverage(lang, coverage);
+    let problems = render_pool_problems(lang, pool, backends, health, coverage);
     html! {
         article(class: "card border border-base-300 bg-base-100") {
             div(class: "card-body gap-3") {
@@ -382,6 +614,7 @@ fn render_pool_card(
                         &t(lang, "pools-delete-pool"), &t(lang, "upstreams-delete-confirm"), &del_sig
                     ))
                 }
+                if let Some(w) = problems.as_ref() { (w.clone()) }
                 if rows.is_empty() {
                     p(class: "text-base-content/60 text-sm") { (t(lang, "backends-pool-empty")) }
                 } else {
@@ -389,11 +622,220 @@ fn render_pool_card(
                         for r in rows.iter() { (r.clone()) }
                     }
                 }
+                (coverage_block)
                 (render_pool_editor(lang, pool, backend_names))
             }
         }
     }
     .to_html()
+}
+
+/// What this pool advertises to clients, and how many of its replicas can serve
+/// each name (U6 + U7 in one block).
+///
+/// Two questions that had no answer on this page. "What will `/v1/models`
+/// return?" — you found out by calling the API. And "is every replica actually
+/// serving this?" — you found out by watching `nvidia-smi` and noticing one GPU
+/// was idle. The second is the important one: a pool where half the backends
+/// can't resolve the alias clients ask for keeps answering every request, on
+/// half the hardware, silently. `1/2` in amber says so.
+///
+/// Rendered from the running registry, from the same `listed_models` /
+/// `serves_model` calls the router uses, so it cannot disagree with what
+/// requests actually do.
+fn render_pool_coverage(lang: Lang, coverage: &[(String, usize, usize)]) -> Html {
+    if coverage.is_empty() {
+        return html! {}.to_html();
+    }
+    let chips: Vec<Html> = coverage
+        .iter()
+        .map(|(name, serving, total)| coverage_chip(lang, name, *serving, *total))
+        .collect();
+    let heading = t(lang, "upstreams-coverage-heading");
+    let hint = t(lang, "upstreams-coverage-hint");
+    html! {
+        details(class: "rounded-lg border border-base-300 bg-base-200/40") {
+            summary(class: "cursor-pointer select-none px-3 py-2 text-sm font-medium") {
+                (heading)
+            }
+            div(class: "border-t border-base-300 p-3 flex flex-col gap-2") {
+                span(class: "text-xs text-base-content/60") { (hint) }
+                div(class: "flex flex-wrap gap-1") {
+                    for c in chips.iter() { (c.clone()) }
+                }
+            }
+        }
+    }
+    .to_html()
+}
+
+/// One advertised name with its replica count. Green when every backend serves
+/// it, amber when only some do, red when none can right now.
+fn coverage_chip(lang: Lang, name: &str, serving: usize, total: usize) -> Html {
+    let (class, title) = if serving == 0 {
+        (
+            "badge badge-error badge-sm font-mono",
+            t(lang, "upstreams-coverage-none-title"),
+        )
+    } else if serving < total {
+        (
+            "badge badge-warning badge-sm font-mono",
+            t(lang, "upstreams-coverage-partial-title"),
+        )
+    } else {
+        (
+            "badge badge-success badge-outline badge-sm font-mono",
+            t(lang, "upstreams-coverage-full-title"),
+        )
+    };
+    let label = format!("{name} · {serving}/{total}");
+    html! { span(class: (class), title: (title)) { (label) } }.to_html()
+}
+
+/// Everything currently wrong with this pool, in one line at the top of its
+/// card (U8).
+///
+/// The incident that motivated this page was diagnosable from four separate
+/// places — a badge colour, a chip colour, a log line, and `nvidia-smi` — and
+/// so it was not diagnosed for hours. This collects the conditions that mean
+/// "this pool is not doing what you think" and states them, or renders nothing
+/// at all when the pool is healthy (a banner that is always there is furniture,
+/// not a warning).
+fn render_pool_problems(
+    lang: Lang,
+    pool: &PoolRow,
+    backends: &HashMap<String, BackendRow>,
+    health: &HashMap<String, BackendHealth>,
+    coverage: &[(String, usize, usize)],
+) -> Option<Html> {
+    let mut problems: Vec<String> = Vec::new();
+
+    if pool.backends.is_empty() {
+        problems.push(t(lang, "upstreams-problem-no-backends"));
+    }
+
+    // Live backends of this pool, by the two failure states that leave one
+    // looking fine: a rejected credential, and an empty model set.
+    let live: Vec<&BackendHealth> = pool
+        .backends
+        .iter()
+        .filter_map(|n| health.get(n.as_str()))
+        .collect();
+    if !live.is_empty() && live.iter().all(|h| !h.enabled) {
+        problems.push(t(lang, "upstreams-problem-all-drained"));
+    } else if !live.is_empty() && live.iter().all(|h| !h.healthy || !h.enabled) {
+        problems.push(t(lang, "upstreams-problem-all-down"));
+    }
+    let rejected: Vec<&str> = pool
+        .backends
+        .iter()
+        .filter(|n| health.get(n.as_str()).is_some_and(|h| h.auth_failed))
+        .map(String::as_str)
+        .collect();
+    if !rejected.is_empty() {
+        problems.push(t_args(
+            lang,
+            "upstreams-problem-auth",
+            &i18n::args([("backends", rejected.join(", ").into())]),
+        ));
+    }
+    let modelless: Vec<&str> = pool
+        .backends
+        .iter()
+        .filter(|n| health.get(n.as_str()).is_some_and(|h| h.served.is_empty()))
+        .map(String::as_str)
+        .collect();
+    if !modelless.is_empty() {
+        problems.push(t_args(
+            lang,
+            "upstreams-problem-no-models",
+            &i18n::args([("backends", modelless.join(", ").into())]),
+        ));
+    }
+
+    // Aliases that are configured but route nowhere — the silent one.
+    let broken_aliases: Vec<String> = pool
+        .backends
+        .iter()
+        .filter_map(|n| health.get(n.as_str()).map(|h| (n, h)))
+        .flat_map(|(n, h)| {
+            h.aliases
+                .iter()
+                .filter(|a| !a.resolves)
+                .map(move |a| format!("{}/{}", n, a.name))
+        })
+        .collect();
+    if !broken_aliases.is_empty() {
+        problems.push(t_args(
+            lang,
+            "upstreams-problem-broken-aliases",
+            &i18n::args([("aliases", broken_aliases.join(", ").into())]),
+        ));
+    }
+
+    // Half-covered names: served by some replicas but not all — the state that
+    // silently halves throughput.
+    let partial: Vec<String> = coverage
+        .iter()
+        .filter(|(_, serving, total)| *serving > 0 && serving < total)
+        .map(|(name, serving, total)| format!("{name} ({serving}/{total})"))
+        .collect();
+    if !partial.is_empty() {
+        problems.push(t_args(
+            lang,
+            "upstreams-problem-partial-coverage",
+            &i18n::args([("models", partial.join(", ").into())]),
+        ));
+    }
+
+    // Models the operator declared that nobody actually serves.
+    let advertised: HashSet<&str> = coverage.iter().map(|(n, _, _)| n.as_str()).collect();
+    let unserved: Vec<&str> = pool
+        .models
+        .iter()
+        .map(String::as_str)
+        .filter(|m| !advertised.contains(m))
+        .collect();
+    if !unserved.is_empty() && !live.is_empty() {
+        problems.push(t_args(
+            lang,
+            "upstreams-problem-unserved-allowlist",
+            &i18n::args([("models", unserved.join(", ").into())]),
+        ));
+    }
+
+    // A pool referencing a backend row that no longer exists.
+    let missing: Vec<&str> = pool
+        .backends
+        .iter()
+        .filter(|n| !backends.contains_key(n.as_str()))
+        .map(String::as_str)
+        .collect();
+    if !missing.is_empty() {
+        problems.push(t_args(
+            lang,
+            "upstreams-problem-missing-backends",
+            &i18n::args([("backends", missing.join(", ").into())]),
+        ));
+    }
+
+    if problems.is_empty() {
+        return None;
+    }
+    Some(
+        html! {
+            div(class: "alert alert-warning text-sm flex-col items-start gap-1", role: "alert") {
+                div(class: "flex items-center gap-2 font-medium") {
+                    (icons::alert(16))
+                    span { (t(lang, "upstreams-problems-heading")) }
+                }
+                ul(class: "list-disc pl-5") {
+                    for p in problems.iter() { li { (p.clone()) } }
+                }
+            }
+        }
+        .to_html(),
+    )
 }
 
 /// GDPR / NDA / limits indicators for the pool header. ✓ (success) when the
@@ -417,24 +859,35 @@ fn compliance_indicators(lang: Lang, gdpr: bool, nda: bool, enforce: bool) -> Ht
     .to_html()
 }
 
-/// One backend health row: a static status block (badge, base URL, models,
-/// in-flight bar, activity + sparkline) followed by an explicit "Edit backend"
-/// `<details>` toggle that reveals the backend editor form. `health = None`
-/// renders a muted "pending apply" row (the backend is in the DB but not yet in
-/// the runtime registry).
-fn render_backend_details(
+/// The live status block of one backend row: status badge (+ any "key rejected"
+/// / "no models" warnings), name and base URL, the maintenance switch, the
+/// in-flight bar, the activity counters and sparkline, and the model/alias
+/// chips.
+///
+/// Carries a stable id derived from the backend name ([`backend_status_id`]) and
+/// is rendered from exactly one place, because two consumers need byte-identical
+/// output: the page itself, and the live health stream
+/// (`GET /admin/upstreams/live`) which re-patches this element by that id every
+/// couple of seconds. Nothing inside it may hold operator input — it is
+/// replaced wholesale, and the editor form deliberately lives outside it.
+fn render_backend_status(
     lang: Lang,
     row: &BackendRow,
     health: Option<&BackendHealth>,
     del_sig: &str,
-    current_pool: Option<&str>,
-    pool_names: &[String],
 ) -> Html {
+    // Drained outranks up/down in the badge: it is the operator's own decision
+    // and explains the zero traffic, which "up" would not.
     let (status_class, status_label) = match health {
         None => ("badge badge-ghost", t(lang, "upstreams-backend-pending")),
+        Some(h) if !h.enabled => ("badge badge-neutral", t(lang, "backends-status-drained")),
         Some(h) if !h.healthy => ("badge badge-error", t(lang, "backends-status-down")),
         Some(h) if h.saturated => ("badge badge-warning", t(lang, "backends-status-saturated")),
         Some(_) => ("badge badge-success", t(lang, "backends-status-up")),
+    };
+    let status_title = match health {
+        Some(h) if !h.enabled => t(lang, "backends-status-drained-title"),
+        _ => String::new(),
     };
     let inflight = health.map(|h| h.inflight).unwrap_or(0).to_string();
     let max_inflight = health
@@ -446,6 +899,24 @@ fn render_backend_details(
         Some(h) if h.saturated => "progress progress-warning w-24",
         _ => "progress progress-primary w-24",
     };
+    // Two states that used to be invisible and together caused a production
+    // outage: the probe's credentials were rejected, and the backend advertises
+    // no models at all. Either one means nothing new can route here, while the
+    // status badge still says "up".
+    // U5: where this backend's credential comes from, and whether it is
+    // actually there. Invisible until now — an `api_key_env` naming an unset
+    // variable looked identical to a working key, and that is what started the
+    // outage this page exists to prevent.
+    let key_badge = key_origin_badge(lang, row);
+    let auth_badge = health.filter(|h| h.auth_failed).map(|_| {
+        html! {
+            span(
+                class: "badge badge-error badge-sm",
+                title: (t(lang, "backends-auth-failed-title"))
+            ) { (t(lang, "backends-auth-failed")) }
+        }
+        .to_html()
+    });
     let recent: Vec<i64> = health.map(|h| h.recent.clone()).unwrap_or_default();
     let tail = |n: usize| -> i64 { recent.iter().rev().take(n).sum() };
     let c15 = tail(3);
@@ -453,53 +924,150 @@ fn render_backend_details(
     let c60: i64 = recent.iter().sum();
     let spark = sparkline_svg(&recent);
     let served: Vec<String> = health.map(|h| h.served.clone()).unwrap_or_default();
+    // Only for a backend the registry actually knows: a not-yet-applied one has
+    // no model set *yet*, which is not the same problem.
+    let no_models_badge = (health.is_some() && served.is_empty()).then(|| {
+        html! {
+            span(
+                class: "badge badge-warning badge-sm",
+                title: (t(lang, "backends-no-models-title"))
+            ) { (t(lang, "backends-no-models")) }
+        }
+        .to_html()
+    });
     let withheld: Vec<String> = health.map(|h| h.withheld.clone()).unwrap_or_default();
     let withheld_title = t(lang, "upstreams-model-withheld-title");
     let aliases = health
-        .map(|h| alias_chips(lang, &h.aliases))
+        .map(|h| alias_chips(lang, &h.aliases, &h.served))
         .unwrap_or_default();
     let base_url = row.base_url.clone();
     let name = row.name.clone();
+    // Only offered for a backend the registry actually knows: flipping the
+    // switch on one that has never been applied would write the DB and change
+    // nothing visible, which reads as a broken control.
+    let drain_switch = health.map(|h| drain_switch(lang, &row.name, h.enabled));
+
+    let block_id = backend_status_id(&row.name);
 
     html! {
-        div(class: "rounded-lg border border-base-300 bg-base-100") {
-            // Live status row — a static display (was formerly the sole expand
-            // affordance; the huge served-models list buried the disclosure).
-            div(class: "px-3 py-2 flex flex-col gap-2") {
-                div(class: "flex items-center justify-between gap-3 flex-wrap") {
-                    div(class: "flex items-center gap-2 min-w-0") {
-                        span(class: (status_class)) { (status_label) }
-                        div(class: "min-w-0") {
-                            div(class: "text-sm font-medium font-mono break-all") { (name) }
-                            div(class: "text-xs text-base-content/60 font-mono break-all") { (base_url) }
-                        }
-                    }
-                    div(class: "flex flex-col items-end gap-1 shrink-0") {
-                        div(class: "flex items-center gap-2") {
-                            span(class: "text-xs text-base-content/60 tabular-nums") {
-                                (t_args(lang, "backends-inflight-label", &i18n::args([("load", load.clone().into())])))
-                            }
-                            progress(class: (bar_class), value: (inflight), max: (max_inflight)) {}
-                        }
-                        div(class: "flex items-center gap-2 text-base-content/50") {
-                            span(class: "text-xs tabular-nums whitespace-nowrap") {
-                                (t_args(
-                                    lang, "backends-activity-summary",
-                                    &i18n::args([
-                                        ("m15", c15.to_string().into()),
-                                        ("m30", c30.to_string().into()),
-                                        ("m60", c60.to_string().into()),
-                                    ])
-                                ))
-                            }
-                            span(class: "text-primary") { #(spark.clone()) }
-                        }
-                    }
-                }
-                if !served.is_empty() || !withheld.is_empty() || !aliases.is_empty() {
-                    (render_backend_model_chips(lang, del_sig, &served, &withheld, &aliases, &withheld_title))
+        div(id: (block_id), class: "px-3 py-2 flex flex-col gap-2") {
+        div(class: "flex items-center justify-between gap-3 flex-wrap") {
+            div(class: "flex items-center gap-2 min-w-0") {
+                span(class: (status_class), title: (status_title)) { (status_label) }
+                if let Some(b) = auth_badge.as_ref() { (b.clone()) }
+                if let Some(b) = no_models_badge.as_ref() { (b.clone()) }
+                if let Some(b) = key_badge.as_ref() { (b.clone()) }
+                div(class: "min-w-0") {
+                    div(class: "text-sm font-medium font-mono break-all") { (name) }
+                    div(class: "text-xs text-base-content/60 font-mono break-all") { (base_url) }
                 }
             }
+            div(class: "flex flex-col items-end gap-1 shrink-0") {
+                if let Some(sw) = drain_switch.as_ref() { (sw.clone()) }
+                div(class: "flex items-center gap-2") {
+                    span(class: "text-xs text-base-content/60 tabular-nums") {
+                        (t_args(lang, "backends-inflight-label", &i18n::args([("load", load.clone().into())])))
+                    }
+                    progress(class: (bar_class), value: (inflight), max: (max_inflight)) {}
+                }
+                div(class: "flex items-center gap-2 text-base-content/50") {
+                    span(class: "text-xs tabular-nums whitespace-nowrap") {
+                        (t_args(
+                            lang, "backends-activity-summary",
+                            &i18n::args([
+                                ("m15", c15.to_string().into()),
+                                ("m30", c30.to_string().into()),
+                                ("m60", c60.to_string().into()),
+                            ])
+                        ))
+                    }
+                    span(class: "text-primary") { #(spark.clone()) }
+                }
+            }
+        }
+        if !served.is_empty() || !withheld.is_empty() || !aliases.is_empty() {
+            (render_backend_model_chips(lang, del_sig, &served, &withheld, &aliases, &withheld_title))
+        }
+        }
+    }
+    .to_html()
+}
+
+/// Where a backend's API key comes from — and, for the env-var case, whether
+/// that variable is actually set in this process.
+///
+/// A key sealed in the database and a key named after an environment variable
+/// that does not exist rendered identically: nothing at all. The second one
+/// makes every probe answer 401, which disables model discovery, which empties
+/// the model set, which un-binds every bare alias — a four-step chain that
+/// starts with something the page never showed. Now it does, in red.
+///
+/// `None` when a key is stored: that is the normal, boring case and needs no
+/// badge. Reading the environment here is safe — only the variable's presence
+/// is reported, never its value.
+fn key_origin_badge(lang: Lang, row: &BackendRow) -> Option<Html> {
+    if row.api_key_ct.is_some() {
+        return None;
+    }
+    let var = row.api_key_env.as_deref()?;
+    let set = std::env::var(var).is_ok_and(|v| !v.is_empty());
+    let (class, label, title) = if set {
+        (
+            "badge badge-ghost badge-sm font-mono",
+            t_args(
+                lang,
+                "backends-key-env-badge",
+                &i18n::args([("var", var.to_string().into())]),
+            ),
+            t(lang, "backends-key-env-title"),
+        )
+    } else {
+        (
+            "badge badge-error badge-sm font-mono",
+            t_args(
+                lang,
+                "backends-key-env-unset-badge",
+                &i18n::args([("var", var.to_string().into())]),
+            ),
+            t(lang, "backends-key-env-unset-title"),
+        )
+    };
+    Some(html! { span(class: (class), title: (title)) { (label) } }.to_html())
+}
+
+/// DOM id of a backend's status block, derived from its name so the page and the
+/// live stream agree without passing ids around.
+///
+/// Hex-encoded rather than slugified: backend names are operator-chosen and may
+/// contain anything, and two names that slugified to the same id would make the
+/// live stream patch one backend's numbers into another's row. Hex can't
+/// collide.
+fn backend_status_id(backend_name: &str) -> String {
+    let mut out = String::with_capacity(3 + backend_name.len() * 2);
+    out.push_str("bh-");
+    for b in backend_name.as_bytes() {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
+/// One backend health row: the live status block ([`render_backend_status`],
+/// re-patched by the health stream) followed by an explicit "Edit backend"
+/// `<details>` toggle that reveals the backend editor form. `health = None`
+/// renders a muted "pending apply" row (the backend is in the DB but not yet in
+/// the runtime registry).
+fn render_backend_details(
+    lang: Lang,
+    row: &BackendRow,
+    health: Option<&BackendHealth>,
+    del_sig: &str,
+    current_pool: Option<&str>,
+    pool_names: &[String],
+) -> Html {
+    let status = render_backend_status(lang, row, health, del_sig);
+    html! {
+        div(class: "rounded-lg border border-base-300 bg-base-100") {
+            (status)
             // Explicit "Edit backend" toggle (mirrors "Edit pool") so the
             // editor is discoverable regardless of how tall the status row is.
             details(class: "border-t border-base-300") {
@@ -536,6 +1104,9 @@ fn render_backend_model_chips(
     withheld_title: &str,
 ) -> Html {
     let sig = format!("inact_{del_sig}");
+    // `__ifmissing`: the live health stream re-patches this block every couple
+    // of seconds, and a plain `data-signals` would re-assert `false` each time —
+    // silently collapsing a row the operator had just expanded.
     let signals = format!("{{{sig}: false}}");
     let show = format!("${sig}");
     let hide = format!("!${sig}");
@@ -572,7 +1143,7 @@ fn render_backend_model_chips(
     }
 
     html! {
-        div(class: "flex flex-wrap gap-1 items-center", "data-signals": (signals)) {
+        div(class: "flex flex-wrap gap-1 items-center", "data-signals__ifmissing": (signals)) {
             for c in children.iter() { (c.clone()) }
         }
     }
@@ -615,14 +1186,48 @@ fn inactive_toggle_pill(label: &str, show_expr: &str, click_expr: &str, title: &
     .to_html()
 }
 
-/// Alias chips for a backend's live alias set (map form "name → target", a
-/// disabled bare alias flagged, an active bare alias just named).
-fn alias_chips(lang: Lang, aliases: &[AliasStatus]) -> Vec<Html> {
+/// Alias chips for a backend's live alias set.
+///
+/// Blue = this alias routes right now. Amber = it is configured but a request
+/// naming it would **not** route, with the reason in the tooltip. That second
+/// state is the whole point of the function: a map alias pointing at a model id
+/// the backend doesn't serve used to render exactly like a working one, so
+/// `default → qwen-32b` against a server that advertises
+/// `unsloth/Qwen3.8-27B-NVFP4` looked correct on this page while every request
+/// for `default` came back 404. `served` is the backend's live model list, named
+/// in the tooltip so the right id is one glance away.
+fn alias_chips(lang: Lang, aliases: &[AliasStatus], served: &[String]) -> Vec<Html> {
+    let serves_hint = || -> String {
+        if served.is_empty() {
+            t(lang, "backends-alias-serves-nothing")
+        } else {
+            t_args(
+                lang,
+                "backends-alias-serves",
+                &i18n::args([("models", served.join(", ").into())]),
+            )
+        }
+    };
     aliases
         .iter()
         .map(|a| {
-            let (label, class, title) = match (&a.target, a.disabled) {
-                (Some(target), _) => (
+            let (label, class, title) = match (&a.target, a.disabled, a.resolves) {
+                // Map alias whose target isn't served — configured, unroutable,
+                // and previously indistinguishable from a healthy one.
+                (Some(target), _, false) => (
+                    format!("{} ⇸ {target}", a.name),
+                    "badge badge-warning badge-sm font-mono",
+                    format!(
+                        "{} {}",
+                        t_args(
+                            lang,
+                            "backends-alias-unresolved-title",
+                            &i18n::args([("target", target.to_string().into())]),
+                        ),
+                        serves_hint()
+                    ),
+                ),
+                (Some(target), _, true) => (
                     format!("{} → {target}", a.name),
                     "badge badge-info badge-sm font-mono",
                     t_args(
@@ -631,16 +1236,31 @@ fn alias_chips(lang: Lang, aliases: &[AliasStatus]) -> Vec<Html> {
                         &i18n::args([("target", target.to_string().into())]),
                     ),
                 ),
-                (None, true) => (
+                (None, true, _) => (
                     t_args(
                         lang,
                         "backends-alias-disabled-label",
                         &i18n::args([("name", a.name.clone().into())]),
                     ),
                     "badge badge-warning badge-sm font-mono",
-                    t(lang, "backends-alias-disabled-title"),
+                    format!(
+                        "{} {}",
+                        t(lang, "backends-alias-disabled-title"),
+                        serves_hint()
+                    ),
                 ),
-                (None, false) => (
+                // Bare alias with nothing to bind to — the backend advertises no
+                // models at all (never probed, or probing but reporting none).
+                (None, false, false) => (
+                    t_args(
+                        lang,
+                        "backends-alias-disabled-label",
+                        &i18n::args([("name", a.name.clone().into())]),
+                    ),
+                    "badge badge-warning badge-sm font-mono",
+                    t(lang, "backends-alias-nothing-title"),
+                ),
+                (None, false, true) => (
                     a.name.clone(),
                     "badge badge-info badge-sm font-mono",
                     t(lang, "backends-alias-bare-title"),
@@ -748,7 +1368,15 @@ fn render_pool_form(
 
     let kind_opts = options_for(KINDS, &kind);
     let strategy_opts = options_for(STRATEGIES, &strategy);
-    let name_field = super::pk_name_input(&name, "chat-eu", is_edit);
+    let name_field =
+        super::pk_name_input(&name, "chat-eu", is_edit, is_add.then_some("newPoolName"));
+    let clash = name_clash_warning(
+        lang,
+        is_add,
+        "newPoolName",
+        "existingPools",
+        "pools-name-taken",
+    );
     let backend_boxes: Vec<Html> = backend_names
         .iter()
         .map(|bn| super::bool_checkbox("backends", bn, bn, assigned.iter().any(|a| a == bn), true))
@@ -794,6 +1422,8 @@ fn render_pool_form(
             class: "flex flex-col gap-3 m-0"
         ) {
             input(type: "hidden", name: "sort_order", value: (sort_order_str));
+            (overwrite_guard(lang, is_add, "ovwPool", "pools-overwrite-hint"))
+            (clash)
             div(class: "grid grid-cols-1 sm:grid-cols-3 gap-3") {
                 label(class: "flex flex-col gap-1") {
                     span(class: "text-xs opacity-70") { (t(lang, "pools-field-name")) }
@@ -808,6 +1438,7 @@ fn render_pool_form(
                     select(name: "strategy", class: "select select-bordered select-sm w-full") {
                         for o in strategy_opts.iter() { (o.clone()) }
                     }
+                    span(class: "text-xs text-base-content/50") { (t(lang, "pools-field-strategy-hint")) }
                 }
             }
             label(class: "flex flex-col gap-1") {
@@ -967,6 +1598,110 @@ fn render_pool_offer_voices_field(
     }
 }
 
+/// A live "that name is already taken" note for an add form, shown while the
+/// operator types (U9).
+///
+/// Purely client-side and purely advisory: the page already knows every existing
+/// name, so telling the operator *before* they press Save costs one comparison.
+/// The authoritative refusal stays on the server (see [`overwrite_guard`]) —
+/// this only saves a round-trip and stops the mistake earlier, which is where
+/// the incident's "second backend" actually went wrong.
+fn name_clash_warning(
+    lang: Lang,
+    is_add: bool,
+    name_signal: &str,
+    list_signal: &str,
+    message_key: &str,
+) -> Html {
+    if !is_add {
+        return html! {}.to_html();
+    }
+    let show = format!("${list_signal}.includes(${name_signal}.trim())");
+    let message = t(lang, message_key);
+    html! {
+        div(
+            class: "alert alert-warning text-sm py-2",
+            role: "alert",
+            "data-show": (show)
+        ) {
+            (icons::alert(16))
+            span { (message) }
+        }
+    }
+    .to_html()
+}
+
+/// The duplicate-name overwrite guard for an **add** form (empty on edit forms,
+/// where the name is read-only and overwriting is the whole point).
+///
+/// Both `name` columns are primary keys and both save handlers upsert, so an
+/// add form submitted with a name that already exists used to *silently replace*
+/// that pool/backend — the reason "add a second backend to a pool" could end up
+/// with one backend and a rewritten base URL. Two parts:
+///
+///   - `mode=add`, which is what tells the handler this form claims to be
+///     creating something rather than editing it;
+///   - a hidden `overwrite` bound to `sig`, which the handler flips (via a
+///     signal patch) when it refuses the first save. The warning below becomes
+///     visible, and the next click carries `overwrite=1` and goes through.
+///
+/// So the confirmation is server-authoritative — a stale page or a second admin
+/// can't skip it — while staying inside the datastar signal idiom the rest of
+/// this page uses.
+fn overwrite_guard(lang: Lang, is_add: bool, sig: &str, hint_key: &str) -> Html {
+    if !is_add {
+        return html! {}.to_html();
+    }
+    let show = format!("${sig}");
+    let sig = sig.to_string();
+    let hint = t(lang, hint_key);
+    html! {
+        div {
+            input(type: "hidden", name: "mode", value: "add");
+            input(type: "hidden", name: "overwrite", "data-bind": (sig));
+            div(class: "alert alert-warning text-sm", role: "alert", "data-show": (show)) {
+                (icons::alert(16))
+                span { (hint) }
+            }
+        }
+    }
+    .to_html()
+}
+
+/// The per-backend maintenance switch: a checkbox that posts
+/// `/admin/backends/enabled` on change and takes effect on the live registry
+/// immediately.
+///
+/// Its own tiny form, not part of the backend editor, for two reasons: draining
+/// a box has to be one click from the status row (not behind a disclosure and a
+/// Save), and it must not be entangled with the "Apply changes" flow the editor
+/// belongs to.
+///
+/// The checkbox posts its enclosing form, so the value it sends is its state
+/// *after* the click: checked ⇒ `enabled=on` ⇒ serving. An unchecked checkbox
+/// submits nothing at all, which the handler reads as drained — the same
+/// convention as every other flag on this page.
+fn drain_switch(lang: Lang, backend_name: &str, enabled: bool) -> Html {
+    let post = "@post('/admin/backends/enabled', {contentType: 'form'})";
+    let name = backend_name.to_string();
+    let label = t(lang, "backends-enabled-label");
+    let hint = t(lang, "backends-enabled-hint");
+    let toggle = super::bool_checkbox("enabled", "on", &label, enabled, false);
+    html! {
+        form(
+            method: "post",
+            action: "/admin/backends/enabled",
+            class: "m-0",
+            "data-on:change": (post),
+            title: (hint)
+        ) {
+            input(type: "hidden", name: "name", value: (name));
+            (toggle)
+        }
+    }
+    .to_html()
+}
+
 /// A "Cancel" button that hides the add card (`$addForm = ''`).
 fn pool_cancel_button(lang: Lang) -> Html {
     html! {
@@ -1037,6 +1772,7 @@ fn render_backend_form_add(lang: Lang, pool_names: &[String]) -> Html {
             "data-on:submit__prevent": "@post('/admin/backends/save', {contentType: 'form'})",
             class: "flex flex-col gap-3 m-0"
         ) {
+            (overwrite_guard(lang, true, "ovwBackend", "backends-overwrite-hint"))
             (fields)
             div(class: "flex justify-end gap-2") {
                 button(
@@ -1148,7 +1884,16 @@ fn backend_form_fields(
     let aliases = existing
         .map(|b| super::backends::alias_lines(&b.aliases))
         .unwrap_or_default();
-    let name_field = super::pk_name_input(&name, "gpu-01", is_edit);
+    let is_add = existing.is_none();
+    let name_field =
+        super::pk_name_input(&name, "gpu-01", is_edit, is_add.then_some("newBackendName"));
+    let clash = name_clash_warning(
+        lang,
+        is_add,
+        "newBackendName",
+        "existingBackends",
+        "backends-name-taken",
+    );
     let probe_box = super::bool_checkbox(
         "probe_models",
         "on",
@@ -1167,8 +1912,18 @@ fn backend_form_fields(
     // backend's current pool so a plain round-trip save doesn't move it. See
     // `set_backend_pool` for the single-pool tradeoff this implies.
     let pool_select = render_pool_select(lang, pool_select_id, current_pool, pool_names);
+    // One result box per form. Derived from the name when editing (unique, and
+    // stable across a live re-render), fixed for the single add form.
+    let result_id = if name.is_empty() {
+        "bt-add".to_string()
+    } else {
+        format!("bt-{}", backend_status_id(&name))
+    };
+    let test_row = test_connection_row(lang, &result_id);
     html! {
         div(class: "flex flex-col gap-3") {
+            input(type: "hidden", name: "result_id", value: (result_id));
+            (clash)
             div(class: "grid grid-cols-1 sm:grid-cols-2 gap-3") {
                 label(class: "flex flex-col gap-1") {
                     span(class: "text-xs opacity-70") { (t(lang, "backends-field-name")) }
@@ -1241,6 +1996,97 @@ fn backend_form_fields(
                 (probe_box)
                 (edit_box)
             }
+            (test_row)
+        }
+    }
+    .to_html()
+}
+
+/// The outcome box for "Test connection": a coloured alert plus, on success, the
+/// exact model ids the upstream reported — each one **click-to-insert** into the
+/// aliases textarea of the same form.
+///
+/// The insert is the point. The ids a self-hosted server reports are full repo
+/// paths (`unsloth/Qwen3.8-27B-NVFP4`), an alias target has to match one
+/// character for character, and typing it from memory is how a pool ends up
+/// with an alias that resolves to nothing. Clicking a chip completes the line
+/// the cursor is on: `default` becomes `default=unsloth/Qwen3.8-27B-NVFP4`.
+pub(super) fn render_test_result(
+    lang: Lang,
+    kind: session_core::chrome::FlashKind,
+    message: &str,
+    models: &[String],
+) -> Html {
+    use session_core::chrome::FlashKind;
+    let alert = match kind {
+        FlashKind::Success => "alert alert-success text-sm",
+        FlashKind::Error => "alert alert-error text-sm",
+        FlashKind::Info => "alert alert-info text-sm",
+    };
+    let chips: Vec<Html> = models.iter().map(|m| model_insert_chip(m)).collect();
+    let message = message.to_string();
+    let hint = t(lang, "backends-test-insert-hint");
+    html! {
+        div(class: "flex flex-col gap-2") {
+            div(class: (alert), role: "status") { span { (message) } }
+            if !chips.is_empty() {
+                div(class: "flex flex-col gap-1") {
+                    span(class: "text-xs text-base-content/60") { (hint) }
+                    div(class: "flex flex-wrap gap-1") {
+                        for c in chips.iter() { (c.clone()) }
+                    }
+                }
+            }
+        }
+    }
+    .to_html()
+}
+
+/// One reported model id, as a button that completes the aliases line the cursor
+/// is on with `=<id>` (or inserts the bare id when the line already names one).
+///
+/// Plain inline JS on the click rather than a signal: it reaches into the
+/// sibling `<textarea>`'s selection state, which is DOM detail no signal should
+/// carry.
+fn model_insert_chip(model_id: &str) -> Html {
+    // `el.closest('form')` keeps it working in every copy of the editor without
+    // ids; JSON-encoding the id keeps a quote or backslash in a model name from
+    // breaking out of the expression.
+    let id_literal = serde_json::to_string(model_id).unwrap_or_else(|_| "\"\"".into());
+    let click = format!(
+        "(() => {{ const ta = el.closest('form').querySelector('textarea[name=aliases]'); if (!ta) return; const id = {id_literal}; const at = ta.selectionStart ?? ta.value.length; const ls = ta.value.lastIndexOf('\\n', Math.max(0, at - 1)) + 1; let le = ta.value.indexOf('\\n', at); if (le < 0) le = ta.value.length; const nm = ta.value.slice(ls, le).split('=')[0].trim(); const rep = nm ? nm + '=' + id : id; ta.value = ta.value.slice(0, ls) + rep + ta.value.slice(le); const c = ls + rep.length; ta.setSelectionRange(c, c); ta.focus(); }})()"
+    );
+    let label = model_id.to_string();
+    html! {
+        button(
+            type: "button",
+            class: "badge badge-outline badge-sm font-mono cursor-pointer",
+            "data-on:click": (click)
+        ) { (label) }
+    }
+    .to_html()
+}
+
+/// The "Test connection" button plus the result box it patches, for one editor
+/// form. `result_id` is unique per form so several open editors keep their own
+/// results.
+fn test_connection_row(lang: Lang, result_id: &str) -> Html {
+    // `contentType: 'form'` posts the surrounding editor, so the test uses
+    // exactly what is typed right now — not what is stored.
+    let post = "@post('/admin/backends/test', {contentType: 'form'})";
+    let result_id = result_id.to_string();
+    let label = t(lang, "backends-test-button");
+    let hint = t(lang, "backends-test-hint");
+    html! {
+        div(class: "flex flex-col gap-2") {
+            div(class: "flex items-center gap-2 flex-wrap") {
+                button(type: "button", class: "btn btn-sm btn-outline", "data-on:click": (post)) {
+                    (icons::plug(14))
+                    span { (label) }
+                }
+                span(class: "text-xs text-base-content/50") { (hint) }
+            }
+            div(id: (result_id)) {}
         }
     }
     .to_html()
@@ -1413,8 +2259,396 @@ fn sparkline_svg(values: &[i64]) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Live health stream
+// ---------------------------------------------------------------------------
+
+/// How often the live stream re-renders the status blocks.
+const LIVE_TICK: std::time::Duration = std::time::Duration::from_secs(2);
+/// Idle keep-alive cadence. Long-lived SSE responses die silently behind
+/// proxies that time out an idle connection; an SSE comment costs two bytes and
+/// keeps the pipe warm without touching the DOM.
+const LIVE_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// GET /admin/upstreams/live — push per-backend status updates while the page
+/// is open.
+///
+/// The numbers on this page (in-flight, 15/30/60-minute counts, sparkline, and
+/// the up/down/drained badge) are the ones an operator watches *during* an
+/// incident, and they were a static server render: you learned whether a
+/// backend had come back by pressing F5. This streams them instead.
+///
+/// Only the status blocks are patched, by the id
+/// [`backend_status_id`] derives from each backend's name. That matters: the
+/// editor forms and the add-forms live outside those blocks, so a tick can
+/// never clobber half-typed input or collapse an open `<details>`. A tick that
+/// renders byte-identical HTML is dropped rather than sent, so a quiet
+/// deployment costs one keep-alive comment every [`LIVE_KEEPALIVE`].
+pub async fn upstreams_live(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_headers(req.headers());
+    if let Err(resp) = require_admin_or_403(&state, &req).await {
+        return resp;
+    }
+    let (mut tx, rx) =
+        rama::futures::channel::mpsc::unbounded::<Result<rama::bytes::Bytes, std::io::Error>>();
+
+    tokio::spawn(async move {
+        use rama::futures::sink::SinkExt;
+        // Last HTML sent per backend, so an unchanged tick sends nothing.
+        let mut last: HashMap<String, String> = HashMap::new();
+        let mut since_traffic = std::time::Instant::now();
+        loop {
+            tokio::time::sleep(LIVE_TICK).await;
+            let Ok(snapshot) = upstreams_config::load_snapshot(&state.db).await else {
+                // A DB hiccup is not a reason to tear the page's stream down;
+                // the next tick tries again.
+                continue;
+            };
+            let health = live_health(&state).await;
+            let mut sent_any = false;
+            for (idx, (name, row)) in snapshot.backends.iter().enumerate() {
+                // `del_sig` only has to be unique and stable per backend within
+                // one page; the index over a name-sorted map is both.
+                let sig = format!("live{idx}");
+                let html =
+                    render_backend_status(lang, row, health.get(name.as_str()), &sig).to_string();
+                if last.get(name).is_some_and(|prev| prev == &html) {
+                    continue;
+                }
+                let id = backend_status_id(name);
+                let event =
+                    session_core::chrome::sse_patch(Some(&format!("#{id}")), Some("outer"), &html);
+                if tx.send(Ok(event)).await.is_err() {
+                    return; // page closed
+                }
+                last.insert(name.clone(), html);
+                sent_any = true;
+            }
+            if sent_any {
+                since_traffic = std::time::Instant::now();
+            } else if since_traffic.elapsed() >= LIVE_KEEPALIVE {
+                if tx
+                    .send(Ok(rama::bytes::Bytes::from_static(b": keepalive\n\n")))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                since_traffic = std::time::Instant::now();
+            }
+        }
+    });
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header("x-accel-buffering", "no")
+        .body(rama::http::Body::from_stream(rx))
+        .unwrap_or_else(|_| {
+            session_core::chrome::sse_toast_response(
+                session_core::chrome::FlashKind::Error,
+                "could not open the live stream",
+            )
+        })
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// The apply diff has to name the change that actually matters: a backend
+    /// about to start or stop taking traffic. "3 unapplied changes" told the
+    /// operator nothing about that.
+    #[test]
+    fn the_apply_diff_names_membership_changes() {
+        use gateway_core::server::upstreams::{LiveBackend, LivePool, LiveTopology};
+        use gateway_core::server::upstreams::{PickerStrategy, PoolKind};
+
+        let live = LiveTopology {
+            pools: vec![LivePool {
+                name: "chat-eu".into(),
+                kind: PoolKind::Chat,
+                strategy: PickerStrategy::RoundRobin,
+                backends: vec![LiveBackend {
+                    name: "gpu-01".into(),
+                    base_url: "http://gpu-01:8000/v1".into(),
+                    weight: 2,
+                    max_inflight: 32,
+                    health_path: "/models".into(),
+                }],
+            }],
+        };
+        // The DB has a second backend in the pool and a retuned first one.
+        let db_pool = PoolRow {
+            backends: vec!["gpu-01".into(), "gpu-02".into()],
+            ..sample_pool()
+        };
+        let mut retuned = sample_backend();
+        retuned.max_inflight = 64;
+        let backends = HashMap::from([("gpu-01".to_string(), retuned)]);
+
+        let lines = apply_diff(&[db_pool], &backends, &live, Lang::En);
+        let joined = lines.join("\n");
+        assert!(
+            joined.contains("gpu-02") && joined.contains("starts taking traffic"),
+            "{joined}"
+        );
+        assert!(joined.contains("max in-flight 64"), "{joined}");
+
+        // Nothing pending once the two agree — the bar must not cry wolf right
+        // after a reload.
+        let same_pool = PoolRow {
+            backends: vec!["gpu-01".into()],
+            strategy: "round_robin".into(),
+            ..sample_pool()
+        };
+        let unchanged = HashMap::from([("gpu-01".to_string(), sample_backend())]);
+        assert!(
+            apply_diff(&[same_pool], &unchanged, &live, Lang::En).is_empty(),
+            "{:?}",
+            apply_diff(
+                &[PoolRow {
+                    backends: vec!["gpu-01".into()],
+                    strategy: "round_robin".into(),
+                    ..sample_pool()
+                }],
+                &unchanged,
+                &live,
+                Lang::En
+            )
+        );
+    }
+
+    /// A pool that only exists on one side is called out as starting or
+    /// stopping, not silently folded into a field diff.
+    #[test]
+    fn the_apply_diff_reports_added_and_removed_pools() {
+        use gateway_core::server::upstreams::LiveTopology;
+        let empty = LiveTopology { pools: vec![] };
+        let added = apply_diff(&[sample_pool()], &HashMap::new(), &empty, Lang::En);
+        assert!(
+            added.iter().any(|l| l.contains("new pool chat-eu")),
+            "{added:?}"
+        );
+
+        let live = LiveTopology {
+            pools: vec![gateway_core::server::upstreams::LivePool {
+                name: "gone".into(),
+                kind: gateway_core::server::upstreams::PoolKind::Chat,
+                strategy: gateway_core::server::upstreams::PickerStrategy::LeastInflight,
+                backends: vec![],
+            }],
+        };
+        let removed = apply_diff(&[], &HashMap::new(), &live, Lang::En);
+        assert!(
+            removed
+                .iter()
+                .any(|l| l.contains("gone") && l.contains("stops serving")),
+            "{removed:?}"
+        );
+    }
+
+    /// A `BackendHealth` with everything nominal, for tests that vary one thing.
+    fn healthy(served: &[&str], aliases: Vec<AliasStatus>) -> BackendHealth {
+        BackendHealth {
+            healthy: true,
+            saturated: false,
+            auth_failed: false,
+            enabled: true,
+            inflight: 0,
+            max_inflight: 16,
+            served: served.iter().map(|s| (*s).to_string()).collect(),
+            withheld: Vec::new(),
+            aliases,
+            recent: vec![0; 12],
+        }
+    }
+
+    fn alias(name: &str, target: Option<&str>, resolves: bool) -> AliasStatus {
+        AliasStatus {
+            name: name.into(),
+            target: target.map(str::to_string),
+            disabled: false,
+            resolves,
+        }
+    }
+
+    /// A healthy pool gets no banner at all. A warning that is always present is
+    /// furniture, and the operator stops reading it — which is precisely how the
+    /// original incident stayed undiagnosed.
+    #[test]
+    fn a_healthy_pool_renders_no_problem_banner() {
+        let pool = PoolRow {
+            backends: vec!["gpu0".into()],
+            // The allowlist has to name something that is actually served,
+            // otherwise the banner is right to complain about it.
+            models: vec!["m".into()],
+            ..sample_pool()
+        };
+        let backends = HashMap::from([("gpu0".to_string(), sample_backend())]);
+        let health = HashMap::from([("gpu0".to_string(), healthy(&["m"], vec![]))]);
+        assert!(
+            render_pool_problems(Lang::En, &pool, &backends, &health, &[("m".into(), 1, 1)])
+                .is_none()
+        );
+
+        // And the converse: an allowlist entry nobody serves is a real problem,
+        // because clients are being offered a name that cannot route.
+        let stale = PoolRow {
+            models: vec!["m".into(), "never-loaded".into()],
+            ..pool
+        };
+        let html =
+            render_pool_problems(Lang::En, &stale, &backends, &health, &[("m".into(), 1, 1)])
+                .expect("an unserved allowlist entry must warn")
+                .to_string();
+        assert!(html.contains("never-loaded"), "{html}");
+    }
+
+    /// The three states that made the outage invisible must each be named: a
+    /// rejected credential, an empty model set, and an alias that routes
+    /// nowhere.
+    #[test]
+    fn the_problem_banner_names_the_silent_failures() {
+        let pool = PoolRow {
+            backends: vec!["gpu0".into(), "gpu1".into()],
+            ..sample_pool()
+        };
+        let backends = HashMap::from([
+            ("gpu0".to_string(), sample_backend()),
+            ("gpu1".to_string(), sample_backend()),
+        ]);
+        let mut rejected = healthy(&[], vec![alias("default", Some("qwen-32b"), false)]);
+        rejected.auth_failed = true;
+        let health = HashMap::from([
+            ("gpu0".to_string(), rejected),
+            ("gpu1".to_string(), healthy(&["real-id"], vec![])),
+        ]);
+        let html = render_pool_problems(
+            Lang::En,
+            &pool,
+            &backends,
+            &health,
+            &[("real-id".into(), 1, 2)],
+        )
+        .expect("a broken pool must warn")
+        .to_string();
+
+        assert!(html.contains("Credential rejected"), "{html}");
+        assert!(html.contains("No models advertised"), "{html}");
+        assert!(
+            html.contains("gpu0/default"),
+            "the dead alias must be named: {html}"
+        );
+        // And the half-covered model, which is what idles half the fleet.
+        assert!(html.contains("real-id (1/2)"), "{html}");
+    }
+
+    /// Coverage chips say how many replicas serve each advertised name, and a
+    /// partial count is visually distinct — that is the number that would have
+    /// shown one GPU sitting idle.
+    #[test]
+    fn coverage_chips_flag_partially_served_models() {
+        let html = render_pool_coverage(
+            Lang::En,
+            &[
+                ("full".into(), 2, 2),
+                ("half".into(), 1, 2),
+                ("none".into(), 0, 2),
+            ],
+        )
+        .to_string();
+        assert!(html.contains("full · 2/2"), "{html}");
+        assert!(html.contains("half · 1/2"), "{html}");
+        assert!(html.contains("none · 0/2"), "{html}");
+        assert!(
+            html.contains("badge-warning"),
+            "partial must stand out: {html}"
+        );
+        assert!(
+            html.contains("badge-error"),
+            "unserved must stand out: {html}"
+        );
+    }
+
+    /// A backend whose key comes from an unset environment variable is the state
+    /// that started the incident; it has to be visible, and loud.
+    #[test]
+    fn an_unset_key_env_var_is_flagged_red() {
+        let row = BackendRow {
+            api_key_env: Some("DEFINITELY_NOT_SET_12345".into()),
+            api_key_ct: None,
+            ..sample_backend()
+        };
+        let html = key_origin_badge(Lang::En, &row)
+            .expect("an env-var key must be reported")
+            .to_string();
+        assert!(html.contains("badge-error"), "{html}");
+        assert!(html.contains("DEFINITELY_NOT_SET_12345"), "{html}");
+
+        // A stored key is the boring case and gets no badge.
+        let stored = BackendRow {
+            api_key_ct: Some(vec![1, 2, 3]),
+            ..sample_backend()
+        };
+        assert!(key_origin_badge(Lang::En, &stored).is_none());
+    }
+
+    /// The reported model ids must be click-to-insert, and the target of that
+    /// insert must be the aliases textarea of the *same* form — the whole point
+    /// is that an operator never retypes an id like
+    /// `unsloth/Qwen3.8-27B-NVFP4` by hand.
+    #[test]
+    fn test_result_offers_reported_ids_as_alias_inserts() {
+        let html = render_test_result(
+            Lang::En,
+            session_core::chrome::FlashKind::Success,
+            "ok",
+            &["unsloth/Qwen3.8-27B-NVFP4".to_string()],
+        )
+        .to_string();
+        assert!(html.contains("unsloth/Qwen3.8-27B-NVFP4"), "{html}");
+        assert!(
+            html.contains("textarea[name=aliases]"),
+            "the chip must target the aliases field: {html}"
+        );
+        // A model id with a quote in it must not break out of the handler.
+        let tricky = render_test_result(
+            Lang::En,
+            session_core::chrome::FlashKind::Success,
+            "ok",
+            &["we\"ird".to_string()],
+        )
+        .to_string();
+        assert!(!tricky.contains("const id = \"we\"ird\""), "{tricky}");
+    }
+
+    /// Failure results carry no insert chips — there is nothing to insert, and a
+    /// chip row under an error message reads as if something worked.
+    #[test]
+    fn a_failed_test_shows_no_insert_chips() {
+        let html = render_test_result(
+            Lang::En,
+            session_core::chrome::FlashKind::Error,
+            "nope",
+            &[],
+        )
+        .to_string();
+        assert!(html.contains("alert-error"), "{html}");
+        assert!(!html.contains("textarea[name=aliases]"), "{html}");
+    }
+
+    /// Each editor patches its own result box: two backends open at once must
+    /// not overwrite each other's answer.
+    #[test]
+    fn each_backend_editor_has_its_own_test_result_box() {
+        let a = backend_form_fields(Lang::En, Some(&sample_backend()), None, &[], None).to_string();
+        let add = render_backend_form_add(Lang::En, &[]).to_string();
+        let id = format!("bt-{}", backend_status_id("gpu-01"));
+        assert!(a.contains(&id), "edit form should carry {id}: {a}");
+        assert!(add.contains("bt-add"), "{add}");
+        assert!(a.contains("/admin/backends/test"));
+    }
     use super::*;
     use jiff::Timestamp;
 
@@ -1450,6 +2684,7 @@ mod tests {
             health_path: "/models".into(),
             probe_models: true,
             supports_edit: false,
+            enabled: true,
             models: vec!["qwen-32b".into(), "qwen-7b".into()],
             aliases: vec![],
             created_at: Timestamp::now(),
@@ -1498,6 +2733,7 @@ mod tests {
             &["gpu-01".into(), "gpu-02".into()],
             &HashMap::new(),
             &["chat-eu".into()],
+            &[],
         )
         .to_string();
         assert!(
@@ -1596,7 +2832,7 @@ mod tests {
     /// and its button posts the reload — the dirty-state ↔ endpoint contract.
     #[test]
     fn apply_bar_binds_signal_and_posts_reload() {
-        let html = render_apply_bar(Lang::En).to_string();
+        let html = render_apply_bar(Lang::En, &[]).to_string();
         // `>` is HTML-escaped to `&gt;` inside the attribute value.
         assert!(
             html.contains("$topologyDirty &gt; 0"),
@@ -1624,7 +2860,9 @@ mod tests {
             &[],
             &[],
             &HashMap::new(),
+            &HashMap::new(),
             2,
+            &[],
         )
         .to_string();
         assert!(
@@ -1708,6 +2946,8 @@ mod tests {
     fn withheld_models_collapse_behind_inactive_pill() {
         let b = sample_backend();
         let health = BackendHealth {
+            auth_failed: false,
+            enabled: true,
             healthy: true,
             saturated: false,
             inflight: 0,

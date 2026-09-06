@@ -109,11 +109,19 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
     // what makes `claude-sonnet-4-6` (a name no self-hosted backend serves)
     // route to whatever the operator aliased it to.
     let access = state.pool_access_for_token(&user);
-    let real_model = match state
-        .upstreams
-        .route_access(&requested_model, PoolKind::Chat, &access)
-    {
-        Ok(a) => a.resolved_model().to_string(),
+    // `route_or_wait`, not `route_access`: when the pool is momentarily down
+    // (a restarting GPU box, a model being swapped) this parks the request until
+    // a backend answers its probe again instead of failing it. Nothing has been
+    // written to the client yet, so a request that waits and then succeeds looks
+    // to Claude Code exactly like a slow one — the turn continues instead of
+    // dying. See `upstreams::wait`.
+    // Resolve **without** taking a slot: the tool loop below makes its own
+    // routing decision per round, so a guard acquired here would be dropped
+    // unused — holding capacity the request never spends and counting as a
+    // dispatch it never made. Waiting still happens, because a pool with no
+    // available replica should park the request rather than fail it.
+    let real_model = match proxy::resolve_or_wait(&state, &requested_model, &access).await {
+        Ok(id) => id,
         Err(e) => return route_error_response(e),
     };
 
@@ -400,7 +408,12 @@ async fn buffered(
     if let Ok(rounds) = rama::http::HeaderValue::from_str(&outcome.rounds.to_string()) {
         resp.headers_mut().insert("x-gateway-tool-rounds", rounds);
     }
-    resp
+    // Which replica served the turn. The one way a client can check from
+    // outside whether prefix affinity is doing what it claims.
+    match outcome.backend.as_deref() {
+        Some(b) => proxy::with_backend_header(resp, b),
+        None => resp,
+    }
 }
 
 /// Translate the request's thinking configuration into the serving model's
@@ -542,11 +555,34 @@ fn rate_limited(e: &gateway_core::server::limits::LimitExceeded) -> Response {
 /// about the envelope they put it in.
 fn route_error_response(err: RouteError) -> Response {
     let (status, message) = err.status_and_message();
+    // An outage that outlived the wait budget is reported as Anthropic's own
+    // `529 overloaded_error` rather than a bare `503`. Both are retryable, but
+    // 529 is the one Anthropic clients have a dedicated recovery path for
+    // (the SDKs back off and retry it; Claude Code shows "retrying" instead of
+    // ending the turn), and `Retry-After` tells them how long to wait — which is
+    // the whole point of having parked the request first.
+    if matches!(err, RouteError::Acquire(_)) {
+        let body = anthropic::error::envelope("overloaded_error", &message);
+        let mut resp = json_response(
+            StatusCode::from_u16(529).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+            &body,
+        );
+        if let Ok(v) = rama::http::HeaderValue::from_str(&RETRY_AFTER_SECS.to_string()) {
+            resp.headers_mut()
+                .insert(rama::http::header::RETRY_AFTER, v);
+        }
+        return resp;
+    }
     error_response(
         StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         &message,
     )
 }
+
+/// `Retry-After` for an upstream outage, in seconds. Short: the gateway already
+/// waited out the budget, and the health probe re-checks a down backend every
+/// second, so there is nothing to gain from parking the *client* for long.
+const RETRY_AFTER_SECS: u32 = 5;
 
 /// Tool-loop failures, in the Anthropic shape. Same split as above.
 fn loop_error_response(err: LoopError) -> Response {

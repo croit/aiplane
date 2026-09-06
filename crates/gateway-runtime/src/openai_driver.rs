@@ -1064,13 +1064,22 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
         );
         let serialized = serde_json::to_vec(&request_body).map_err(upstream_err)?;
 
+        // Prefix affinity, so a chat-UI conversation keeps landing on the
+        // replica that holds its KV prefix instead of alternating between GPUs
+        // each turn. Keyed on the **session id**, which this path happens to
+        // know — an exact identity rather than the prefix hash the `/v1` paths
+        // have to derive, so it survives compaction rewriting the history too.
+        let affinity = gateway_core::server::upstreams::affinity::AffinityHint::for_conversation(
+            &ctx.session_id,
+        );
         let acquired = d
             .state
             .upstreams
-            .route_access(
+            .route_access_affine(
                 &real_model,
                 gateway_core::server::upstreams::PoolKind::Chat,
                 &access,
+                Some(&affinity),
             )
             .map_err(upstream_err)?;
         let backend = acquired.backend();

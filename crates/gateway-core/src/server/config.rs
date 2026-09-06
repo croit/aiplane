@@ -817,6 +817,23 @@ pub struct GatewayConfig {
     /// operator can always get in. Empty by default.
     #[serde(default)]
     pub bootstrap_admin_groups: Vec<String>,
+    /// How long a request may wait for its pool to come back before the gateway
+    /// gives up on it, in seconds. Default 120; `0` restores the old
+    /// fail-immediately behaviour.
+    ///
+    /// When every backend serving a model is down (or every slot is taken), the
+    /// gateway holds the request and retries routing until a backend answers its
+    /// health probe again — see `upstreams::wait`. Nothing has reached the client
+    /// yet, so a short outage becomes a pause rather than a failed turn, which is
+    /// what lets an agent client keep its tool loop across an upstream restart.
+    ///
+    /// Set it well below the client's own request timeout (Claude Code's default
+    /// is 10 minutes) — the point is to absorb outages the client would otherwise
+    /// see, not to out-wait the client. Past the budget the request still gets a
+    /// *retryable* answer (`503`/`529` with `Retry-After`), so the client's
+    /// backoff continues where this left off.
+    #[serde(default = "default_upstream_wait_secs")]
+    pub upstream_wait_secs: u64,
 }
 
 impl Default for GatewayConfig {
@@ -829,8 +846,15 @@ impl Default for GatewayConfig {
             session_absolute_max_days: default_session_absolute_max_days(),
             allow_impersonation: false,
             bootstrap_admin_groups: Vec::new(),
+            upstream_wait_secs: default_upstream_wait_secs(),
         }
     }
+}
+
+/// Two minutes: long enough to ride out a vLLM restart or a model swap, short
+/// enough to stay far inside any sane client timeout.
+fn default_upstream_wait_secs() -> u64 {
+    120
 }
 
 fn default_public_url() -> String {

@@ -659,6 +659,73 @@ async fn v1_chat_completions_known_model_all_replicas_down_is_503() {
     assert_eq!(parsed["error"]["code"], "upstream_unreachable");
 }
 
+/// The graceful-pause contract, end to end: a request that arrives while every
+/// replica is down is **held**, and served normally the moment one returns.
+///
+/// This is what keeps an agent session alive across an upstream restart. The
+/// client has received nothing at that point — no status line, no byte — so a
+/// request that waits 300 ms and then succeeds is indistinguishable from a slow
+/// one, and the turn continues instead of dying on a 503 the client may not
+/// retry.
+#[tokio::test]
+async fn v1_chat_completions_waits_for_a_backend_to_come_back() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "c1",
+            "object": "chat.completion",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "waited-for-you"}}],
+        })))
+        .mount(&upstream)
+        .await;
+    let mut state = common::state_with_chat_pool(&upstream.uri()).await;
+    // A real (short) wait budget: the harness disables parking by default so
+    // failure assertions don't sit through two minutes.
+    state = state.with_upstream_wait(std::time::Duration::from_secs(10));
+    for pool in state.upstreams.pools() {
+        for backend in &pool.backends {
+            backend.set_healthy(false);
+        }
+    }
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+
+    // Bring the pool back shortly after the request is parked.
+    let recover = state.upstreams.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        for pool in recover.pools() {
+            for backend in &pool.backends {
+                backend.set_healthy(true);
+            }
+        }
+    });
+
+    let app = common::app(state);
+    let body = json!({"model": "model-a", "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let started = std::time::Instant::now();
+    let resp = app.serve(req).await.unwrap();
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "a request parked through a short outage must still be served"
+    );
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(250),
+        "it answered before the backend recovered, so it cannot have waited"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(parsed["choices"][0]["message"]["content"], "waited-for-you");
+}
+
 #[tokio::test]
 async fn v1_models_lists_all_pools_deduped_with_full_objects() {
     // Lists EVERY pool/kind, de-duplicated by id, even when a backend (the
@@ -844,6 +911,7 @@ async fn state_with_backend_api_key(
                 alias: None,
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 name: "mock".into(),
                 base_url: upstream_url.into(),
                 api_key_env: Some(ENV_KEY.into()),
@@ -902,6 +970,7 @@ async fn state_with_alias_pool(upstream_url: &str) -> gateway::rama_server::Rama
                 alias: Some(AliasSpec::Names(vec!["qwen".into()])),
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 name: "mock".into(),
                 base_url: upstream_url.into(),
                 api_key_env: None,

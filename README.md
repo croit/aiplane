@@ -36,7 +36,9 @@
 
 - **OpenAI-compatible API** — `POST /v1/chat/completions` (streaming + non-streaming), `POST /v1/embeddings`, `POST /v1/images/generations` + `POST /v1/images/edits`, `POST /v1/audio/transcriptions`, `POST /v1/audio/speech` (text-to-speech, when a speech pool is configured), and `GET /v1/models`. Point any OpenAI SDK at it.
 - **Anthropic-compatible API** — `POST /v1/messages` (streaming + non-streaming) and `POST /v1/messages/count_tokens`, so **[Claude Code](#claude-code-against-your-own-models) can be pointed straight at the gateway** and run against whatever models you serve. Same routing, tokens, limits, tools and usage accounting as the OpenAI surface; the gateway translates between the two dialects.
-- **Multi-backend routing** — named upstream pools (`chat` / `transcription` / `embedding` / `image` / `speech` kinds). Each pool load-balances across its backends (round-robin or least-in-flight) with per-backend health probes. Models are discovered live from each backend's `/models` endpoint, so loading a model on a backend makes it routable with no config change.
+- **Multi-backend routing** — named upstream pools (`chat` / `transcription` / `embedding` / `image` / `speech` kinds). Each pool load-balances across its backends with per-backend health probes and a per-backend maintenance switch that takes effect on the next request. Models are discovered live from each backend's `/models` endpoint, so loading a model on a backend makes it routable with no config change.
+- **KV-cache-aware routing** — pick `prefix_affinity` and a conversation keeps landing on the replica that already holds its KV prefix, instead of alternating between GPUs and paying a full prefill on every turn. Clients that can name their session (`x-gateway-affinity`, which Claude Code sets per launch via `ANTHROPIC_CUSTOM_HEADERS`) get exact affinity by weighted rendezvous hash; everything else is matched block-wise against an approximate per-pool index of which replica was recently sent which prompt prefix — so a new session can also start warm on the replica already holding the shared system prompt. A two-threshold load valve hands throughput back when a replica is genuinely busier. `least_inflight` and weighted `round_robin` remain available. See [`docs/upstreams.md`](docs/upstreams.md#how-prefix-affinity-decides).
+- **Outages pause instead of failing** — when every replica of a model is down or saturated, the gateway holds the request and retries routing until one returns (`[gateway] upstream_wait_secs`, default 120s) rather than failing it. Nothing has reached the client, so an agent turn survives an upstream restart. A model stays *known* across a gateway restart too, so an outage is always a retryable `529`/`503` with `Retry-After` — never the `404` that tells a client the model doesn't exist. See [`docs/upstreams.md`](docs/upstreams.md#waiting-out-an-outage).
 - **Model aliases + fallback** — give clients a stable name (a per-backend alias like `qwen`) that routes to whatever real model is loaded, so swapping the model needs no client change; the same alias on several backends is a load-balanced group. Optional fallbacks cover an unknown model name or a known model whose backends are all down. All configured per backend/pool at `/admin/upstreams`. See [`docs/upstreams.md`](docs/upstreams.md#model-aliases).
 - **OIDC login** — browser sign-in against your identity provider; the gateway then issues its own `gwk_…` API tokens. Provider secrets come only from the environment.
 - **Per-user tokens + RBAC** — tokens are SHA-256-hashed at rest and revocable. Roles (mapped from OIDC claims) gate which models and server-side tools each user may use.
@@ -201,8 +203,59 @@ Claude Code speaks the Anthropic Messages API, and the gateway serves it at `POS
 
 ```bash
 export ANTHROPIC_BASE_URL=https://gateway.example.com
-export ANTHROPIC_AUTH_TOKEN=gwk_…   # a token from /tokens
+export ANTHROPIC_AUTH_TOKEN=gwk_…            # a token from /tokens
+export ANTHROPIC_MODEL=default                # an alias you defined on /admin/upstreams
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+export CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144  # match what your model actually serves
+
+# Recommended when the pool has several replicas and uses `prefix_affinity`:
+# one value per shell is one value per session, so every turn of this session
+# goes back to the GPU that already holds its KV cache.
+export ANTHROPIC_CUSTOM_HEADERS="x-gateway-affinity: $$-$(date +%s)"
+
 claude
+```
+
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` stops Claude Code's telemetry and
+auto-update chatter from reaching the gateway, which keeps your usage numbers to
+actual work. `CLAUDE_CODE_MAX_CONTEXT_TOKENS` should match the context window
+the serving model reports (`max_model_len`, visible on `/admin/upstreams`);
+Claude Code otherwise assumes an Anthropic-sized window and can overrun yours.
+
+### Keeping a session on one GPU
+
+`x-gateway-affinity` is the exact-affinity hook for a `prefix_affinity` pool
+(see [`docs/upstreams.md`](docs/upstreams.md#how-prefix-affinity-decides)).
+Claude Code reads `ANTHROPIC_CUSTOM_HEADERS` **once at launch**, so one value
+per terminal is precisely one value per session. Any value works — it is hashed,
+not interpreted — as long as it differs between concurrent sessions; `$$` (the
+shell's pid) plus a timestamp is enough.
+
+It is optional: without it the gateway matches the request's prompt prefix
+against an index of what each replica was recently sent, which pins a
+conversation just as well and additionally lets a *new* session start warm on a
+replica that already holds the shared system prompt. Measured on two replicas,
+seven interleaved conversations, four turns each:
+
+| Strategy | Conversations that stayed on one replica | First-turn spread |
+|---|---|---|
+| `least_inflight` | **0 / 7** — every turn bounced to the cold replica | 4 / 3 |
+| `prefix_affinity`, no header | **7 / 7** | 3 / 4 |
+| `prefix_affinity` + `x-gateway-affinity` | **7 / 7** | 4 / 3 |
+
+Set the header when you want the guarantee rather than the inference — for
+example when sessions are launched from a script that always opens with the same
+prompt, where the prefix alone cannot tell them apart.
+
+`X-Gateway-Backend` on every response names the replica that served it, so you
+can check any of this from the client:
+
+```bash
+curl -sD- -o /dev/null https://gateway.example.com/v1/messages \
+  -H "authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
+  -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' \
+  -d '{"model":"default","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}' \
+  | grep -i x-gateway
 ```
 
 Then alias the model ids Claude Code asks for (`claude-sonnet-4-6`, `claude-haiku-4-5`, …) onto the models you actually serve, on `/admin/upstreams` — the same alias also makes them discoverable in Claude Code's `/model` picker. Any id you don't alias falls through to the pool's configured unknown-model fallback, so a working setup can be one alias or none.

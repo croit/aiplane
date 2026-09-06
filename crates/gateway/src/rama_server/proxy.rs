@@ -365,6 +365,31 @@ fn proxy_tool_ctx(
 /// error accounting stays consistent across paths. Factored out of the
 /// `run_with_tools` closure in [`chat_completions`] so that ~70-line
 /// acquire/send/emit dance is named instead of nested three closures deep.
+/// How many *extra* replicas to try when a dispatch fails before the client has
+/// been given anything.
+///
+/// A transport failure or a gateway-class upstream status means this replica
+/// produced no answer, so nothing has been billed, streamed or observed — and
+/// the pool very likely has another replica that works. Returning the error
+/// instead makes the client's whole turn depend on the one replica the router
+/// happened to pick, which is what "the backend went down and Claude Code
+/// broke" actually was. Bounded at two so a genuinely dead pool still fails
+/// promptly rather than walking every backend on every round.
+const DISPATCH_RETRIES: u32 = 2;
+
+/// One upstream round for the buffered tool loop, retrying on another replica
+/// when a dispatch fails outright.
+///
+/// The retry is safe precisely because it is pre-response: a transport error or
+/// a `502`/`503`/`504` means the upstream never produced a completion, so there
+/// is nothing to duplicate. A `4xx`, or any `5xx` the model server generated
+/// itself, is relayed untouched — those are answers, and retrying them would
+/// hide a real rejection behind a slower one.
+///
+/// The failing replica is marked unhealthy before the retry, so the re-route
+/// skips it (and the health probe restores it within a second once it answers
+/// again).
+#[allow(clippy::too_many_arguments)]
 async fn forward_one_round(
     state: &Arc<RamaState>,
     model: &str,
@@ -372,12 +397,85 @@ async fn forward_one_round(
     headers: &HeaderMap,
     rec: &RecordParams,
     body_value: Value,
+    served_by: Option<&std::sync::Mutex<Option<String>>>,
 ) -> Result<(u16, Bytes), LoopError> {
+    let mut last: Option<LoopError> = None;
+    for attempt in 0..=DISPATCH_RETRIES {
+        match forward_one_round_once(
+            state,
+            model,
+            access,
+            headers,
+            rec,
+            body_value.clone(),
+            served_by,
+        )
+        .await
+        {
+            Ok((status, _)) if is_retryable_dispatch_status(status) => {
+                tracing::warn!(
+                    model,
+                    status,
+                    attempt,
+                    "upstream answered with a gateway-class error — trying another replica"
+                );
+                last = Some(LoopError::Upstream(format!(
+                    "upstream returned HTTP {status}"
+                )));
+            }
+            Ok(ok) => return Ok(ok),
+            Err(LoopError::Upstream(msg)) => {
+                tracing::warn!(
+                    model, attempt, error = %msg,
+                    "dispatch failed before any response — trying another replica"
+                );
+                last = Some(LoopError::Upstream(msg));
+            }
+            // Anything else is our own error (a malformed body, an exhausted
+            // loop) and will fail identically on every replica.
+            Err(other) => return Err(other),
+        }
+    }
+    Err(last.unwrap_or_else(|| LoopError::Upstream("no replica accepted the request".into())))
+}
+
+/// Statuses that mean "this replica did not answer", as opposed to "this is the
+/// answer". Only these are retried elsewhere.
+fn is_retryable_dispatch_status(status: u16) -> bool {
+    matches!(status, 502..=504)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn forward_one_round_once(
+    state: &Arc<RamaState>,
+    model: &str,
+    access: &gateway_core::server::upstreams::PoolAccess,
+    headers: &HeaderMap,
+    rec: &RecordParams,
+    body_value: Value,
+    // Where to record the backend this round picked, for the response header.
+    // Only the *first* round writes: that is the round the affinity decision
+    // was made for, and on a multi-round turn later rounds may differ.
+    served_by: Option<&std::sync::Mutex<Option<String>>>,
+) -> Result<(u16, Bytes), LoopError> {
+    // Re-derived per round rather than passed in: the key comes from the system
+    // prompt plus the first user turn, which the loop never rewrites, so every
+    // round of one tool loop keys identically and stays on the replica holding
+    // the conversation's KV prefix. That is the case where affinity pays most —
+    // each round resends the whole (growing) conversation.
+    let affinity =
+        gateway_core::server::upstreams::affinity::hint_for_request(headers, &body_value);
     let acquired = state
         .upstreams
-        .acquire_for_access(model, PoolKind::Chat, access)
+        .acquire_for_access_affine(model, PoolKind::Chat, access, Some(&affinity))
         .map_err(|e| LoopError::Upstream(e.to_string()))?;
     let backend_name = acquired.backend().name.clone();
+    if let Some(cell) = served_by
+        && let Ok(mut slot) = cell.lock()
+        && slot.is_none()
+    {
+        *slot = Some(backend_name.clone());
+    }
     let started = Instant::now();
     let serialized = serde_json::to_vec(&body_value)
         .map_err(|e| LoopError::Upstream(format!("serialise: {e}")))?;
@@ -397,6 +495,9 @@ async fn forward_one_round(
     let resp = match http.body(serialized).send().await {
         Ok(r) => r,
         Err(e) => {
+            // Take it out of rotation so the caller's retry lands elsewhere.
+            // The health probe puts it back within a second of it answering.
+            acquired.backend().set_healthy(false);
             drop(acquired);
             rec.emit(
                 &state.usage,
@@ -412,6 +513,7 @@ async fn forward_one_round(
     let bytes = match resp.bytes().await {
         Ok(b) => b,
         Err(e) => {
+            acquired.backend().set_healthy(false);
             drop(acquired);
             rec.emit(
                 &state.usage,
@@ -452,7 +554,24 @@ async fn chat_bytedumb(
     // `RouteError`, so `route_error_response` maps an unknown model straight
     // to 404 `model_not_found` (and known-but-down to 503). Acquires the slot
     // up front so the resolved real id is known before we touch the body.
-    let acquired = match state.upstreams.route_access(model, PoolKind::Chat, access) {
+    // Prefix-affinity key, parsed from the client's body as-is. Best-effort:
+    // an unparseable body simply routes by load (and would fail upstream
+    // anyway). See `upstreams::affinity` for why this matters more than
+    // balancing on self-hosted replicas.
+    let affinity = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .map(|v| gateway_core::server::upstreams::affinity::hint_for_request(&headers, &v))
+        .unwrap_or_default();
+    let acquired = match gateway_core::server::upstreams::route_or_wait(
+        &state.upstreams,
+        model,
+        PoolKind::Chat,
+        access,
+        state.upstream_wait(),
+        Some(&affinity),
+    )
+    .await
+    {
         Ok(a) => a,
         Err(e) => return route_error_response(e),
     };
@@ -538,11 +657,14 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
     // 503, so they can't distinguish an unknown model), and every round must
     // dispatch the *same* resolved real id. `route` here both maps the OpenAI
     // 404/503 before streaming starts and yields the real id to forward.
-    let real_model = match state
-        .upstreams
-        .route_access(&model, PoolKind::Chat, &access)
-    {
-        Ok(a) => a.resolved_model().to_string(),
+    // Resolved **without** taking a slot: the loops below route per round, so a
+    // guard acquired here would be dropped unused — holding capacity the
+    // request never spends and counting as a dispatch it never made (which, on
+    // a dispatch-balanced picker, locks the two acquisitions into strict
+    // alternation and pins every real dispatch to one replica). The outage wait
+    // still applies.
+    let real_model = match resolve_or_wait(&state, &model, &access).await {
+        Ok(id) => id,
         Err(e) => return route_error_response(e),
     };
 
@@ -604,6 +726,7 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
         Err(err) => return loop_error_response(err),
     };
 
+    let served_by = outcome.backend.clone();
     let resp = Response::builder()
         .status(StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::OK))
         .header(rama::http::header::CONTENT_TYPE, "application/json")
@@ -616,6 +739,10 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
                 &format!("building response: {err}"),
             )
         });
+    let resp = match served_by.as_deref() {
+        Some(b) => with_backend_header(resp, b),
+        None => resp,
+    };
     with_resolved_model_header(resp, &model, &real_model)
 }
 
@@ -1821,6 +1948,9 @@ async fn forward_streaming(
 
     let backend = acquired.backend();
     let backend_name = backend.name.clone();
+    // The spawned relay task takes ownership of `backend_name`; this copy stays
+    // behind for the response header (see `with_backend_header`).
+    let served_by = backend_name.clone();
     let model_key = acquired.resolved_model().to_string();
     let url = format!("{}/{}", backend.base_url, upstream_path);
     let started = Instant::now();
@@ -1990,13 +2120,17 @@ async fn forward_streaming(
     for (name, value) in forwarded_headers {
         builder = builder.header(name, value);
     }
-    builder.body(body).unwrap_or_else(|err| {
+    // Which replica served this. Stamped here rather than at the eight dispatch
+    // call sites because this is where the answer is known, and every one of
+    // them funnels through it.
+    let resp = builder.body(body).unwrap_or_else(|err| {
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
             &format!("building response: {err}"),
         )
-    })
+    });
+    with_backend_header(resp, &served_by)
 }
 
 /// Why a streamed turn ended early, carrying the upstream status where there
@@ -2175,24 +2309,40 @@ pub(crate) async fn buffered_with_tools(
 
     let round_state = state.clone();
     let round_model = real_model.to_string();
-    let outcome =
-        runner::run_with_tools(
-            &tool_source,
-            allowed_tools,
-            &tool_ctx,
-            request_body,
-            move |body_value| {
-                let state = round_state.clone();
-                let model = round_model.clone();
-                let access = access.clone();
-                let headers = headers.clone();
-                let rec = rec.clone();
-                async move {
-                    forward_one_round(&state, &model, &access, &headers, &rec, body_value).await
-                }
-            },
-        )
-        .await;
+    // Which replica the *first* round landed on. Recorded by the dispatch
+    // closure — the only thing that knows — and reported to the client as
+    // `X-Gateway-Backend`. First round rather than last: it is the one the
+    // affinity decision was made for, and on a multi-round turn later rounds
+    // can legitimately differ.
+    let served_by: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
+    let round_served_by = Arc::clone(&served_by);
+    let outcome = runner::run_with_tools(
+        &tool_source,
+        allowed_tools,
+        &tool_ctx,
+        request_body,
+        move |body_value| {
+            let state = round_state.clone();
+            let model = round_model.clone();
+            let access = access.clone();
+            let headers = headers.clone();
+            let rec = rec.clone();
+            let served_by = Arc::clone(&round_served_by);
+            async move {
+                forward_one_round(
+                    &state,
+                    &model,
+                    &access,
+                    &headers,
+                    &rec,
+                    body_value,
+                    Some(&served_by),
+                )
+                .await
+            }
+        },
+    )
+    .await;
 
     // An upstream that rejected a capability teaches the model registry, once,
     // wherever the turn was driven from.
@@ -2200,6 +2350,10 @@ pub(crate) async fn buffered_with_tools(
         && out.status >= 400
     {
         maybe_learn_capability(state, real_model, out.status, &out.body);
+    }
+    let mut outcome = outcome;
+    if let Ok(out) = &mut outcome {
+        out.backend = served_by.lock().ok().and_then(|g| g.clone());
     }
     outcome
 }
@@ -2520,9 +2674,15 @@ async fn drive_streaming_tool_loop_inner(
     let suppress_usage_frame = !client_wants_usage;
 
     for _round in 0..STREAM_TOOL_LOOP_MAX_ROUNDS {
+        // See the note in `buffered_round`: keyed off the unchanging head of the
+        // conversation, so every round of this loop lands on the same replica.
+        let affinity = gateway_core::server::upstreams::affinity::hint_for_request(
+            &client_headers,
+            &request_body,
+        );
         let acquired = state
             .upstreams
-            .acquire_for_access(&model, PoolKind::Chat, &access)
+            .acquire_for_access_affine(&model, PoolKind::Chat, &access, Some(&affinity))
             // No slot to be had is the backend being unavailable, not the
             // request being wrong — say so, so a client can retry.
             .map_err(|e| StreamFailure::with_status(503, e.to_string()))?;
@@ -2859,6 +3019,28 @@ pub(crate) fn set_model_in_value(body: &mut Value, real_model: &str) {
 /// `Response` before it's returned, so it lands in the header block ahead of
 /// any streamed body. A non-ASCII model id (never the case for real ids) is
 /// silently skipped rather than failing the response.
+/// `X-Gateway-Backend` response header: which replica actually served this
+/// request.
+///
+/// Routing decisions were previously unobservable from outside the process. That
+/// is fine until the decision is the thing you are debugging — "is my session
+/// staying on one GPU?" had no answer short of reading the gateway's usage
+/// table, and "why is one GPU idle?" none at all. One header answers both from
+/// any client:
+///
+/// ```text
+/// curl -sD- -o/dev/null … | grep -i x-gateway-backend
+/// ```
+///
+/// Backend *names* are operator-chosen labels, not secrets, and the caller has
+/// already been authorised to use the pool.
+pub(crate) fn with_backend_header(mut resp: Response, backend: &str) -> Response {
+    if let Ok(val) = rama::http::HeaderValue::from_str(backend) {
+        resp.headers_mut().insert("x-gateway-backend", val);
+    }
+    resp
+}
+
 pub(crate) fn with_resolved_model_header(
     mut resp: Response,
     requested: &str,
@@ -2871,6 +3053,34 @@ pub(crate) fn with_resolved_model_header(
     }
     resp
 }
+
+/// [`UpstreamRegistry::resolve_route_access`] with the outage-parking behaviour
+/// [`route_or_wait`](gateway_core::server::upstreams::route_or_wait) gives the
+/// dispatch path — for the paths that only need the resolved model id.
+pub(crate) async fn resolve_or_wait(
+    state: &RamaState,
+    model: &str,
+    access: &gateway_core::server::upstreams::PoolAccess,
+) -> Result<String, RouteError> {
+    let deadline = Instant::now() + state.upstream_wait();
+    loop {
+        let err = match state
+            .upstreams
+            .resolve_route_access(model, PoolKind::Chat, access)
+        {
+            Ok(id) => return Ok(id),
+            Err(e) => e,
+        };
+        if !matches!(err, RouteError::Acquire(_)) || Instant::now() >= deadline {
+            return Err(err);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
+
+/// `Retry-After` for an upstream outage, in seconds — see the Anthropic path's
+/// twin. Short on purpose: the wait already happened server-side.
+const OUTAGE_RETRY_AFTER_SECS: u32 = 5;
 
 fn route_error_response(err: RouteError) -> Response {
     // The status and wording are the error's own (see
@@ -2885,7 +3095,16 @@ fn route_error_response(err: RouteError) -> Response {
     };
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     if matches!(err, RouteError::Acquire(_)) {
-        return error_response(status, code, &message);
+        // The gateway already parked this request for the whole wait budget
+        // (`upstreams::wait`), so the outage is real. Keep the `503` OpenAI
+        // clients understand, but attach `Retry-After` so their backoff has a
+        // number to work from rather than guessing.
+        let mut resp = error_response(status, code, &message);
+        if let Ok(v) = rama::http::HeaderValue::from_str(&OUTAGE_RETRY_AFTER_SECS.to_string()) {
+            resp.headers_mut()
+                .insert(rama::http::header::RETRY_AFTER, v);
+        }
+        return resp;
     }
     // OpenAI's request-error shape, with `param: "model"` so clients treat it
     // as a bad request rather than something to retry.

@@ -66,6 +66,9 @@ pub struct RamaState {
     /// sticky "N unapplied changes" bar. Not persisted: after a restart the
     /// registry is rebuilt from the DB, so a fresh 0 is correct.
     topology_dirty: Arc<AtomicU32>,
+    /// Test-only override of `[gateway] upstream_wait_secs`. See
+    /// [`Self::with_upstream_wait`].
+    upstream_wait_override: Option<std::time::Duration>,
 }
 
 impl RamaState {
@@ -85,7 +88,25 @@ impl RamaState {
             ocr,
             enforcer,
             topology_dirty: Arc::new(AtomicU32::new(0)),
+            upstream_wait_override: None,
         }
+    }
+
+    /// How long a request may be parked waiting for its pool to come back
+    /// (`[gateway] upstream_wait_secs`, default 120 s; `0` disables parking).
+    /// Read per request so the value is never stale after a config reload.
+    pub fn upstream_wait(&self) -> std::time::Duration {
+        self.upstream_wait_override.unwrap_or_else(|| {
+            std::time::Duration::from_secs(self.inner.config().gateway.upstream_wait_secs)
+        })
+    }
+
+    /// Override the wait budget for this state. For tests that exercise the
+    /// parking behaviour itself and need a budget measured in seconds rather
+    /// than whatever the config says.
+    pub fn with_upstream_wait(mut self, budget: std::time::Duration) -> Self {
+        self.upstream_wait_override = Some(budget);
+        self
     }
 
     /// Record one unapplied topology edit and return the new count. Called by

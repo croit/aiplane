@@ -98,6 +98,7 @@ fn registry_pointed_at(upstream_url: &str) -> Arc<UpstreamRegistry> {
                 alias: None,
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 name: "mock".into(),
                 base_url: upstream_url.into(),
                 api_key_env: None,

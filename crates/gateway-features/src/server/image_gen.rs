@@ -571,6 +571,7 @@ mod tests {
             alias: None,
             probe_models: false,
             supports_edit: false,
+            enabled: true,
         }
     }
 

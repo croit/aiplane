@@ -43,6 +43,17 @@ pub struct AliasStatus {
     /// True when a bare alias is currently disabled because the backend serves
     /// more than one model (ambiguous) — see [`Backend::reevaluate_aliases`].
     pub disabled: bool,
+    /// Whether the alias actually resolves right now, i.e. whether a request
+    /// naming it would route.
+    ///
+    /// Separate from [`Self::disabled`], which only ever describes the *bare*
+    /// form. A map alias is never "disabled" — it simply resolves or doesn't,
+    /// depending on whether its target is currently served — and an operator who
+    /// mistypes that target (easy: a vLLM reports its full repo path, not the
+    /// short name anyone would guess) gets an alias that is configured, listed
+    /// in the editor, and silently unroutable. This is the flag that lets the
+    /// admin page say so.
+    pub resolves: bool,
 }
 
 /// A single upstream backend with the runtime state we need to schedule it.
@@ -62,7 +73,36 @@ pub struct Backend {
     /// [`BackendConfig::supports_edit`].
     supports_edit: bool,
     inflight: AtomicU32,
+    /// Total requests ever dispatched to this backend by this process.
+    ///
+    /// The load signal `inflight` cannot provide. An agent client waits for each
+    /// answer before sending the next, so at the moment a request is routed
+    /// *every* replica reads zero in flight — instantaneous load is blind to
+    /// sequential traffic, which is most agent traffic. Compared as a **ratio**
+    /// (never an absolute), so a monotonic counter converges on proportional
+    /// sharing instead of eventually declaring everything overloaded.
+    dispatched: AtomicU64,
     healthy: AtomicBool,
+    /// Set when the health probe's last attempt was rejected by the upstream's
+    /// authentication (`401`/`403`), cleared by the first probe that comes back
+    /// with model data.
+    ///
+    /// A rejected probe is deliberately **not** "unhealthy": some upstreams
+    /// protect `/models` differently from `/chat/completions`, so real traffic
+    /// may work fine. But it does mean model discovery is off, and a backend
+    /// whose model set never fills is a backend nothing routes to — the exact
+    /// state that once presented as a green "up" badge serving no models, with
+    /// an alias that silently bound to nothing. This flag exists so the admin
+    /// page can say "the key was rejected" instead of showing health and
+    /// leaving the operator to guess.
+    auth_failed: AtomicBool,
+    /// Maintenance switch (see [`BackendConfig::enabled`]). `false` = the picker
+    /// skips this backend; everything else about it keeps working, health probe
+    /// included, so the admin page still shows whether the box is back.
+    ///
+    /// Atomic rather than a plain `bool` because it is flipped **live**, without
+    /// a topology reload — a maintenance switch you have to "apply" isn't one.
+    enabled: AtomicBool,
     /// The set of model IDs this backend currently advertises, as reported
     /// by its most recent successful `/models` probe. Empty until the first
     /// probe completes (`health::spawn` does an initial blocking round so
@@ -122,7 +162,10 @@ impl Backend {
             probe_models: cfg.probe_models,
             supports_edit: cfg.supports_edit,
             inflight: AtomicU32::new(0),
+            dispatched: AtomicU64::new(0),
             healthy: AtomicBool::new(true),
+            auth_failed: AtomicBool::new(false),
+            enabled: AtomicBool::new(cfg.enabled),
             models: RwLock::new(HashSet::new()),
             config_models,
             aliases,
@@ -130,9 +173,15 @@ impl Backend {
             context_windows: RwLock::new(HashMap::new()),
         };
         // Evaluate against the config-model set now, so a bare alias declared
-        // alongside multiple static models is disabled (and logged) from the
-        // start; the first probe re-evaluates against the live set.
-        backend.reevaluate_aliases();
+        // alongside multiple static models is disabled from the start; the
+        // first probe re-evaluates against the live set.
+        //
+        // Silent about the *zero*-model case: at construction the probe has
+        // definitionally not run, so every bare alias on every probe-discovered
+        // backend would warn on every boot and then immediately re-enable
+        // itself a moment later. A warning that fires every time it is not a
+        // problem is how an operator learns to ignore warnings.
+        backend.reevaluate_aliases_quiet_when_empty(true);
         backend
     }
 
@@ -144,8 +193,48 @@ impl Backend {
         self.healthy.store(h, Ordering::Relaxed);
     }
 
+    /// Whether this backend may take traffic (the maintenance switch). Health
+    /// is a separate question — see [`Self::is_available`].
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    /// Flip the maintenance switch on the live backend. Persisting it is the
+    /// caller's job (`db::upstreams_config::set_backend_enabled`).
+    pub fn set_enabled(&self, on: bool) {
+        self.enabled.store(on, Ordering::Relaxed);
+    }
+
+    /// The one question the picker asks: may this backend take a request right
+    /// now? Enabled **and** healthy.
+    ///
+    /// Every routing path goes through this rather than `is_healthy`, so a
+    /// drained backend cannot be reached by any of them — while `knows_model`
+    /// stays deliberately unaware of it, which is what keeps a drained pool
+    /// answering "temporarily unavailable" instead of "no such model".
+    pub fn is_available(&self) -> bool {
+        self.is_enabled() && self.is_healthy()
+    }
+
+    /// Whether the last probe was rejected by upstream auth — see
+    /// [`Self::auth_failed`](#structfield.auth_failed).
+    pub fn auth_failed(&self) -> bool {
+        self.auth_failed.load(Ordering::Relaxed)
+    }
+
+    /// Record (or clear) an upstream auth rejection on the health path.
+    pub fn set_auth_failed(&self, failed: bool) {
+        self.auth_failed.store(failed, Ordering::Relaxed);
+    }
+
     pub fn inflight(&self) -> u32 {
         self.inflight.load(Ordering::Relaxed)
+    }
+
+    /// Total requests dispatched here since this process started — see
+    /// [`Self::dispatched`](#structfield.dispatched).
+    pub fn dispatched(&self) -> u64 {
+        self.dispatched.load(Ordering::Relaxed)
     }
 
     /// Runs `f` against this backend's *effective* model set — the set the
@@ -326,18 +415,30 @@ impl Backend {
         set
     }
 
-    /// Recompute which bare (list-form) aliases are ambiguous — the backend
-    /// serves more than one model, so "the sole model" is undefined — and
-    /// disable them. Called at construction and after every probe update. Logs
-    /// only on the transition (disable / re-enable), so a steady state stays
-    /// silent. Map-form aliases are never disabled: they name their target.
+    /// Recompute which bare (list-form) aliases can currently bind, and disable
+    /// the ones that can't. Called at construction and after every probe update.
+    /// Logs only on the transition (disable / re-enable), so a steady state
+    /// stays silent. Map-form aliases are never disabled: they name their target.
+    ///
+    /// A bare alias needs **exactly one** effective model. Both other counts
+    /// disable it, for different reasons and with different log lines:
+    ///
+    ///   - `>1` — genuinely ambiguous, the operator has to pick a target. ERROR.
+    ///   - `0` — the backend advertises nothing, usually a probe that never
+    ///     returned data (an unset `api_key_env` makes `/models` answer 401,
+    ///     which counts as reachable). This case used to leave `disabled` at
+    ///     `false`: the alias resolved to nothing while the admin page drew it
+    ///     as healthy, on a backend badged "up". WARN, and honestly flagged.
     fn reevaluate_aliases(&self) {
-        // A bare alias needs exactly one model to bind to. Only >1 is the
-        // genuinely-ambiguous case worth an ERROR; with 0 models the backend
-        // serves nothing, so the alias just doesn't resolve (not "ambiguous").
+        self.reevaluate_aliases_quiet_when_empty(false);
+    }
+
+    /// [`Self::reevaluate_aliases`], optionally suppressing the log line for
+    /// the "backend advertises nothing" case — see the call in `new`.
+    fn reevaluate_aliases_quiet_when_empty(&self, quiet_when_empty: bool) {
         let effective_len = self.with_effective_models(|set| set.len());
         let mut now_disabled: HashSet<String> = HashSet::new();
-        if effective_len > 1 {
+        if effective_len != 1 {
             for (name, target) in &self.aliases {
                 if target.is_none() {
                     now_disabled.insert(name.clone());
@@ -348,14 +449,28 @@ impl Backend {
             return;
         };
         for name in now_disabled.difference(&guard) {
-            tracing::error!(
-                backend = %self.name,
-                alias = %name,
-                models = effective_len,
-                "bare alias `{name}` is ambiguous — this backend now serves multiple models, \
-                 so it can't pick one; disabling it. Give it an explicit target with the map \
-                 form, e.g. `alias = {{ \"{name}\" = \"<real-model-id>\" }}`."
-            );
+            if effective_len == 0 {
+                if quiet_when_empty {
+                    continue;
+                }
+                tracing::warn!(
+                    backend = %self.name,
+                    alias = %name,
+                    "bare alias `{name}` cannot bind — this backend advertises no models at \
+                     all, so requests for `{name}` will not route. Usually a health probe that \
+                     never returned data: check the backend's API key (a 401 on /models counts \
+                     as reachable but disables model discovery) and that its base URL is right."
+                );
+            } else {
+                tracing::error!(
+                    backend = %self.name,
+                    alias = %name,
+                    models = effective_len,
+                    "bare alias `{name}` is ambiguous — this backend now serves multiple models, \
+                     so it can't pick one; disabling it. Give it an explicit target with the map \
+                     form, e.g. `alias = {{ \"{name}\" = \"<real-model-id>\" }}`."
+                );
+            }
         }
         for name in guard.difference(&now_disabled) {
             tracing::info!(
@@ -389,6 +504,9 @@ impl Backend {
                 name: name.clone(),
                 target: target.clone(),
                 disabled: disabled.contains(name),
+                // The same call the router makes, so the badge can never claim
+                // an alias works while requests for it 404.
+                resolves: self.resolve(name).is_some(),
             })
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -431,6 +549,10 @@ pub struct Pool {
     pub allowed_groups: Vec<String>,
     /// Cursor for round-robin.
     rr_cursor: AtomicUsize,
+    /// Which of this pool's replicas was recently sent which prompt prefix.
+    /// Only read by [`PickerStrategy::PrefixAffinity`]; see
+    /// [`crate::server::upstreams::prefix_index`].
+    prefix_index: super::prefix_index::PrefixIndex,
 }
 
 /// A resolved caller's pool-access decision, built once per request from the
@@ -501,6 +623,56 @@ impl PoolAccess {
     }
 }
 
+/// What the running registry is serving right now — the "before" side of the
+/// apply diff. See [`UpstreamRegistry::live_topology`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveTopology {
+    /// Sorted by pool name.
+    pub pools: Vec<LivePool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LivePool {
+    pub name: String,
+    pub kind: PoolKind,
+    pub strategy: PickerStrategy,
+    /// Sorted by backend name.
+    pub backends: Vec<LiveBackend>,
+}
+
+/// The backend fields worth diffing: the ones a reload actually changes about
+/// how requests are dispatched. Secrets are deliberately absent — a diff must
+/// never be a place a key can leak, and "the key changed" is not something an
+/// operator needs spelled out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveBackend {
+    pub name: String,
+    pub base_url: String,
+    pub weight: u32,
+    pub max_inflight: u32,
+    pub health_path: String,
+}
+
+/// Minimum share of a prompt's blocks that must match before cache locality
+/// outranks load — SGLang's `cache_threshold`, same default.
+///
+/// Below it there is little cache to preserve, so spreading the request is
+/// worth more than pinning it.
+const PREFIX_MATCH_THRESHOLD: f64 = 0.3;
+
+/// Absolute in-flight difference (per unit of `weight`) above which load
+/// outranks affinity. Modelled on SGLang's `balance_abs_threshold`, in requests
+/// rather than queued tokens because that is what this gateway meters.
+const BALANCE_ABS_THRESHOLD: u32 = 4;
+
+/// Relative load ratio above which load outranks affinity — SGLang's
+/// `balance_rel_threshold`, same default.
+///
+/// The absolute test alone is wrong under uniformly heavy load: with every
+/// replica at 40 in-flight, a difference of 5 is noise, and spilling on it
+/// would abandon warm caches for nothing. Both tests must fire.
+const BALANCE_REL_THRESHOLD: f64 = 1.5;
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AcquireError {
     #[error("no healthy backend in pool `{pool}`")]
@@ -529,6 +701,7 @@ impl Pool {
             fallback_offline: cfg.fallback_offline.clone(),
             allowed_groups: cfg.allowed_groups.clone(),
             rr_cursor: AtomicUsize::new(0),
+            prefix_index: super::prefix_index::PrefixIndex::default(),
         }
     }
 
@@ -537,7 +710,7 @@ impl Pool {
     pub fn serves_model(&self, model: &str) -> bool {
         self.backends
             .iter()
-            .any(|b| b.is_healthy() && b.serves_model(model))
+            .any(|b| b.is_available() && b.serves_model(model))
     }
 
     /// True if *any* backend in the pool serves `model`, regardless of
@@ -557,7 +730,7 @@ impl Pool {
     fn resolve_healthy(&self, model: &str) -> Option<String> {
         self.backends
             .iter()
-            .filter(|b| b.is_healthy())
+            .filter(|b| b.is_available())
             .find_map(|b| b.resolve(model))
     }
 
@@ -566,10 +739,27 @@ impl Pool {
     /// slot. The pool's `strategy` orders the candidate list; saturation
     /// falls through to the next candidate.
     pub fn acquire_for_model(&self, model: &str) -> Result<Acquired, AcquireError> {
+        self.acquire_for_model_affine(model, None)
+    }
+
+    /// The pool's prefix index, for diagnostics.
+    pub fn prefix_index(&self) -> &super::prefix_index::PrefixIndex {
+        &self.prefix_index
+    }
+
+    /// [`Self::acquire_for_model`] with an optional prefix-affinity key (see
+    /// [`crate::server::upstreams::affinity`]). Only
+    /// [`PickerStrategy::PrefixAffinity`] reads it; `None` there behaves as
+    /// `least_inflight`.
+    pub fn acquire_for_model_affine(
+        &self,
+        model: &str,
+        affinity: Option<&super::affinity::AffinityHint>,
+    ) -> Result<Acquired, AcquireError> {
         let candidates: Vec<&Arc<Backend>> = self
             .backends
             .iter()
-            .filter(|b| b.is_healthy() && b.serves_model(model))
+            .filter(|b| b.is_available() && b.serves_model(model))
             .collect();
         if candidates.is_empty() {
             return Err(AcquireError::NoHealthyBackend {
@@ -577,9 +767,18 @@ impl Pool {
             });
         }
 
-        let ordered = match self.strategy {
-            PickerStrategy::RoundRobin => self.pick_round_robin(&candidates),
-            PickerStrategy::LeastInflight => self.pick_least_inflight(&candidates),
+        let hint = affinity.filter(|h| !h.is_empty());
+        let ordered = match (self.strategy, hint) {
+            (PickerStrategy::RoundRobin, _) => self.pick_round_robin(&candidates),
+            (PickerStrategy::PrefixAffinity, Some(hint)) => {
+                self.pick_prefix_affinity(&candidates, hint)
+            }
+            // Nothing to be affine to (embeddings, OCR, a body with no prompt):
+            // fall back to load, which is the honest answer — pinning such
+            // traffic to one backend would be affinity in name only.
+            (PickerStrategy::PrefixAffinity, None) | (PickerStrategy::LeastInflight, _) => {
+                self.pick_least_inflight(&candidates)
+            }
         };
 
         for backend in ordered {
@@ -589,6 +788,14 @@ impl Pool {
                 // filtered by `serves_model`, so `resolve` is normally `Some`;
                 // fall back to the requested string on a probe-update race.
                 let resolved_model = backend.resolve(model).unwrap_or_else(|| model.to_string());
+                // Remember where this prefix went, so the conversation's next
+                // turn can find it. Recorded on dispatch rather than on success
+                // because that is what the index claims to know: what was sent.
+                if let Some(hint) = hint
+                    && !hint.blocks.is_empty()
+                {
+                    self.prefix_index.record(&hint.blocks, &backend.name);
+                }
                 return Ok(Acquired {
                     backend: Arc::clone(backend),
                     resolved_model,
@@ -600,20 +807,242 @@ impl Pool {
         })
     }
 
+    /// Round-robin, **weighted**: a backend with `weight = 3` appears three
+    /// times in the rotation, so it takes three turns for every one its
+    /// `weight = 1` neighbour takes.
+    ///
+    /// `weight` was a dead field until this — stored, rendered in the admin
+    /// editor, read by nothing. An operator running unequal hardware (one GPU
+    /// twice the size of the other) turned the dial and got exactly nothing.
+    /// A control that does nothing is worse than no control, so it now does what
+    /// it says.
     fn pick_round_robin<'a>(&self, healthy: &[&'a Arc<Backend>]) -> Vec<&'a Arc<Backend>> {
-        let start = self.rr_cursor.fetch_add(1, Ordering::Relaxed) % healthy.len();
-        let mut out = Vec::with_capacity(healthy.len());
-        for i in 0..healthy.len() {
-            out.push(healthy[(start + i) % healthy.len()]);
+        // The rotation slot list: each backend repeated `weight` times. Ordered
+        // by backend so the expansion is deterministic, and cheap — pools are a
+        // handful of entries and weights are small integers.
+        let slots: Vec<&'a Arc<Backend>> = healthy
+            .iter()
+            .flat_map(|b| std::iter::repeat_n(*b, b.weight.max(1) as usize))
+            .collect();
+        let start = self.rr_cursor.fetch_add(1, Ordering::Relaxed) % slots.len();
+        // Walk the rotation from `start`, keeping each backend's *first*
+        // appearance: the caller falls through this list on saturation, so it
+        // must name every candidate exactly once, in weighted-rotation order.
+        let mut out: Vec<&'a Arc<Backend>> = Vec::with_capacity(healthy.len());
+        for i in 0..slots.len() {
+            let b = slots[(start + i) % slots.len()];
+            if !out.iter().any(|seen| Arc::ptr_eq(seen, b)) {
+                out.push(b);
+            }
         }
         out
     }
 
+    /// Least-loaded first, **ties broken round-robin**.
+    ///
+    /// The tie-break is not a refinement, it is the difference between using the
+    /// fleet and using one machine of it. `inflight` counts requests in flight
+    /// *right now*, so a client that waits for each answer before sending the
+    /// next one finds every backend at zero every single time. A plain sort is
+    /// stable, so every one of those ties resolved to the same backend and one
+    /// GPU ran at 100 % while its twin idled at 15 W — visible in production,
+    /// with no error anywhere, because the requests all succeeded.
+    ///
+    /// Rotating first and then stable-sorting gets both properties from one
+    /// pass: the sort keeps the rotated order inside each group of equal load,
+    /// so genuinely-idle backends alternate while a genuinely-busier one still
+    /// sorts behind an idle one. (`pick_round_robin` advances the shared cursor,
+    /// which is what makes consecutive ties land differently.)
+    /// Order the candidates by cache locality, then let load override it when
+    /// the imbalance is real.
+    ///
+    /// Locality comes from whichever mechanism the request supplied:
+    ///
+    ///   - an **exact key** (the client's `x-gateway-affinity`, or the chat UI's
+    ///     session id) ranks by weighted rendezvous hash. Rendezvous rather than
+    ///     a modulo or a ring position because draining one replica must move
+    ///     only *its* share — anything else reshuffles the pool and cold-starts
+    ///     every conversation at once.
+    ///   - otherwise the **prefix chain** ranks by how many leading blocks each
+    ///     replica was recently sent, longest match first. This is what lets a
+    ///     new session start on the replica that already holds the shared system
+    ///     prompt, and what lets a compacted conversation keep the part of its
+    ///     history that still matches.
+    ///
+    /// Then the **load valve**, which is what keeps this from being a worse
+    /// round-robin under pressure. Both of SGLang's tests must fire before load
+    /// wins: an absolute in-flight difference *and* a relative ratio. The
+    /// absolute test alone spills on noise once every replica is busy; the
+    /// relative test alone spills far too eagerly when the pool is nearly idle
+    /// (0 vs 1 in flight is a ratio of infinity and means nothing).
+    fn pick_prefix_affinity<'a>(
+        &self,
+        candidates: &[&'a Arc<Backend>],
+        hint: &super::affinity::AffinityHint,
+    ) -> Vec<&'a Arc<Backend>> {
+        let mut ordered: Vec<&'a Arc<Backend>> = candidates.to_vec();
+
+        if let Some(key) = hint.key {
+            // Highest rendezvous score first. `total_cmp` gives a total order
+            // over floats; ties (astronomically unlikely) break on name so the
+            // result stays deterministic.
+            ordered.sort_by(|a, b| {
+                let sa = super::affinity::score(key, &a.name, a.weight);
+                let sb = super::affinity::score(key, &b.name, b.weight);
+                sb.total_cmp(&sa).then_with(|| a.name.cmp(&b.name))
+            });
+        } else {
+            let total = hint.blocks.len();
+            let matched: HashMap<&str, usize> = ordered
+                .iter()
+                .map(|b| {
+                    (
+                        b.name.as_str(),
+                        self.prefix_index.match_len(&hint.blocks, &b.name),
+                    )
+                })
+                .collect();
+            let best = matched.values().copied().max().unwrap_or(0);
+            // Too little of the prompt is cached anywhere for locality to be
+            // worth biasing on — spread instead, which also seeds the index
+            // more evenly for the conversations that follow.
+            if total == 0 || (best as f64 / total as f64) < PREFIX_MATCH_THRESHOLD {
+                // Deliberately DEBUG, and deliberately present: "which replica
+                // did my session land on, and why" is otherwise unanswerable
+                // from outside the process, and it is the first question anyone
+                // asks when a GPU looks idle.
+                tracing::debug!(
+                    blocks = total,
+                    best,
+                    "prefix-affinity: too little of this prompt is cached anywhere — balancing"
+                );
+                return self.pick_least_inflight(candidates);
+            }
+            // Rank on the **conversation-specific** part of the match, not the
+            // total.
+            //
+            // This is the difference between a working router and one that
+            // funnels a whole fleet onto a single GPU. Every session of one
+            // client sends the same enormous system prompt, so once any replica
+            // holds those blocks it wins the longest-match test for *every* new
+            // conversation. Measured against two live replicas: eight
+            // independent sessions, eight times the same replica, its twin
+            // completely idle. The shared part of a prompt says nothing about
+            // where a conversation belongs precisely *because* it is shared.
+            //
+            // `discriminating_match_len` strips it, by asking which matched
+            // blocks several different conversations have extended differently.
+            // A brand-new conversation therefore scores 0 on every replica —
+            // however much boilerplate they hold — and falls through to load,
+            // which spreads it; its second turn scores above 0 on exactly the
+            // replica that served the first.
+            //
+            // Total match stays as the tie-break, so a replica that already
+            // holds the shared preamble still beats a cold one for a brand-new
+            // conversation — the cross-session warm start, kept without letting
+            // it dominate.
+            let exclusive = |name: &str| {
+                self.prefix_index
+                    .discriminating_match_len(&hint.blocks, name)
+            };
+            if ordered.iter().all(|b| exclusive(&b.name) == 0) {
+                tracing::debug!(
+                    blocks = total,
+                    best,
+                    "prefix-affinity: the match is shared boilerplate, not this \
+                     conversation — balancing"
+                );
+                // Nothing distinguishes the candidates by cache: every one of
+                // them holds exactly the same prefix. Balance, and let the
+                // index learn where this conversation went.
+                return self.pick_least_inflight(candidates);
+            }
+            tracing::debug!(
+                blocks = total,
+                best,
+                scores = ?ordered
+                    .iter()
+                    .map(|b| (b.name.clone(), matched.get(b.name.as_str()).copied().unwrap_or(0), exclusive(&b.name)))
+                    .collect::<Vec<_>>(),
+                "prefix-affinity scoring"
+            );
+            ordered.sort_by(|a, b| {
+                exclusive(&b.name)
+                    .cmp(&exclusive(&a.name))
+                    .then_with(|| {
+                        matched
+                            .get(b.name.as_str())
+                            .cmp(&matched.get(a.name.as_str()))
+                    })
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+        }
+
+        // The load valve. A stable sort by "is this backend overloaded relative
+        // to the least-loaded one" keeps the locality order intact among
+        // backends that are equally busy.
+        let min_load = ordered
+            .iter()
+            .map(|b| Self::normalised_load(b))
+            .min()
+            .unwrap_or(0);
+        ordered.sort_by_key(|b| u8::from(Self::is_overloaded(b, min_load)));
+        ordered
+    }
+
+    /// In-flight requests per unit of `weight` — load measured against
+    /// capacity, so `weight` means the same thing here as in the rotation.
+    fn normalised_load(b: &Backend) -> u32 {
+        b.inflight() / b.weight.max(1)
+    }
+
+    /// Whether this backend is busy enough that throughput should outrank its
+    /// warm cache. See [`Self::pick_prefix_affinity`].
+    ///
+    /// Two independent signals, either of which can fire:
+    ///
+    ///   - **Concurrent load**, gated on the absolute *and* relative tests
+    ///     together. The absolute one alone spills on noise once every replica
+    ///     is busy; the relative one alone spills far too eagerly when the pool
+    ///     is nearly idle, where 0 vs 1 in flight is a ratio of infinity.
+    ///
+    /// Cumulative share is deliberately *not* consulted here. It is a fairness
+    /// signal for **new** work, and new work does not reach this point — a
+    /// conversation with no discriminating match falls through to
+    /// [`Self::pick_least_inflight`], which weighs it. Applying it to an
+    /// established conversation would move a lone session off its warm replica
+    /// to a replica that then still idles: a cold prefill bought for nothing.
+    fn is_overloaded(b: &Backend, min_load: u32) -> bool {
+        let load = Self::normalised_load(b);
+        let over_abs = load.saturating_sub(min_load) >= BALANCE_ABS_THRESHOLD;
+        let over_rel = f64::from(load) > f64::from(min_load.max(1)) * BALANCE_REL_THRESHOLD;
+        over_abs && over_rel
+    }
+
     fn pick_least_inflight<'a>(&self, healthy: &[&'a Arc<Backend>]) -> Vec<&'a Arc<Backend>> {
-        // Sort ascending by inflight so we try the least-loaded first, falling
-        // through to busier ones if it's saturated.
-        let mut sorted: Vec<&'a Arc<Backend>> = healthy.to_vec();
-        sorted.sort_by_key(|b| b.inflight());
+        // Rotate first so that backends tied on *both* measures below still
+        // alternate rather than always resolving to the same one.
+        let mut sorted: Vec<&'a Arc<Backend>> = self.pick_round_robin(healthy);
+        // Two keys, both normalised by `weight` so it means the same thing here
+        // as in the rotation:
+        //
+        //   1. in-flight — who is busy *now*;
+        //   2. total dispatched — who has been given more work overall.
+        //
+        // The second is what makes this work for sequential traffic. A client
+        // that waits for each answer leaves every replica at zero in flight, so
+        // key 1 ties on every single decision and key 1 alone would spread work
+        // only as well as the rotation happens to. Measured: eight independent
+        // conversations, all eight to one replica, its twin idle.
+        //
+        // Scaled integers rather than floats so the keys stay exactly `Ord`.
+        sorted.sort_by_key(|b| {
+            let w = u64::from(b.weight.max(1));
+            (
+                (u64::from(b.inflight()) * 1000) / w,
+                (b.dispatched() * 1000) / w,
+            )
+        });
         sorted
     }
 }
@@ -631,7 +1060,10 @@ fn try_acquire_slot(backend: &Backend) -> bool {
             Ordering::AcqRel,
             Ordering::Relaxed,
         ) {
-            Ok(_) => return true,
+            Ok(_) => {
+                backend.dispatched.fetch_add(1, Ordering::Relaxed);
+                return true;
+            }
             Err(observed) => current = observed,
         }
     }
@@ -838,10 +1270,117 @@ impl UpstreamRegistry {
                 }
             }
         }
+        // The maintenance switch is live state, but it is also persisted, and
+        // the freshly-built backends already carry the DB's value — so there is
+        // nothing to carry over here. Left explicit because the temptation is to
+        // copy it from the outgoing registry, which would resurrect a backend an
+        // admin drained *and* saved between the two.
 
         self.inner.store(Arc::new(data));
         self.generation.fetch_add(1, Ordering::Relaxed);
         Ok(())
+    }
+
+    /// A comparable summary of what the registry is *currently serving*, for
+    /// diffing against the edited DB topology.
+    ///
+    /// Deliberately a plain data snapshot rather than a diff method: the DB side
+    /// lives in `db::upstreams_config` and the web layer owns the wording, so
+    /// the registry's job is only to say what it has.
+    pub fn live_topology(&self) -> LiveTopology {
+        let d = self.data();
+        let mut pools: Vec<LivePool> = d
+            .pools
+            .values()
+            .map(|p| {
+                let mut backends: Vec<LiveBackend> = p
+                    .backends
+                    .iter()
+                    .map(|b| LiveBackend {
+                        name: b.name.clone(),
+                        base_url: b.base_url.clone(),
+                        weight: b.weight,
+                        max_inflight: b.max_inflight,
+                        health_path: b.health_path.clone(),
+                    })
+                    .collect();
+                backends.sort_by(|a, b| a.name.cmp(&b.name));
+                LivePool {
+                    name: p.name.clone(),
+                    kind: p.kind,
+                    strategy: p.strategy,
+                    backends,
+                }
+            })
+            .collect();
+        pools.sort_by(|a, b| a.name.cmp(&b.name));
+        LiveTopology { pools }
+    }
+
+    /// For one pool: every name it currently advertises to clients, each with
+    /// how many of the pool's backends can actually serve it and how many exist.
+    ///
+    /// This is the number that makes a silent half-outage visible. A pool of two
+    /// replicas where one backend's alias points at a model it does not serve
+    /// keeps working — every request succeeds, on one GPU, while the other
+    /// idles — and nothing anywhere says so. `1/2` does.
+    ///
+    /// Counts *availability*, so a drained backend reads as unavailable too:
+    /// that is what the operator wants to see while draining. Sorted by name;
+    /// empty for a pool the registry doesn't know.
+    pub fn pool_model_coverage(&self, pool_name: &str) -> Vec<(String, usize, usize)> {
+        let d = self.data();
+        let Some(pool) = d.pools.get(pool_name) else {
+            return Vec::new();
+        };
+        let total = pool.backends.len();
+        let mut names: Vec<String> = pool
+            .backends
+            .iter()
+            .flat_map(|b| b.listed_models())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+            .into_iter()
+            .map(|name| {
+                let serving = pool
+                    .backends
+                    .iter()
+                    .filter(|b| b.is_available() && b.serves_model(&name))
+                    .count();
+                (name, serving, total)
+            })
+            .collect()
+    }
+
+    /// Flip one backend's maintenance switch on the **running** registry, by
+    /// name. Returns `false` if no backend by that name is registered.
+    ///
+    /// Deliberately outside the topology-reload flow: draining a box for
+    /// maintenance has to take effect on the next request, not after an admin
+    /// remembers to press "Apply changes". The DB write that makes it survive a
+    /// restart is a separate, independent call.
+    ///
+    /// A backend can appear in several pools; every instance is flipped.
+    pub fn set_backend_enabled(&self, backend_name: &str, on: bool) -> bool {
+        let d = self.data();
+        let mut found = false;
+        for pool in d.pools.values() {
+            for b in &pool.backends {
+                if b.name == backend_name {
+                    b.set_enabled(on);
+                    found = true;
+                }
+            }
+        }
+        if found {
+            tracing::info!(
+                backend = %backend_name, enabled = on,
+                "backend maintenance switch flipped"
+            );
+        }
+        found
     }
 
     /// Load the current data snapshot. Lock-free read + one atomic Arc clone.
@@ -1155,6 +1694,20 @@ impl UpstreamRegistry {
         kind: PoolKind,
         access: &PoolAccess,
     ) -> Result<Acquired, RouteError> {
+        self.acquire_for_access_affine(model, kind, access, None)
+    }
+
+    /// [`Self::acquire_for_access`] carrying an optional prefix-affinity key
+    /// (see [`crate::server::upstreams::affinity`]). The key only influences
+    /// *which backend inside a pool* is chosen, never which pool or which model
+    /// — so it cannot change what a request resolves to, only where it lands.
+    pub fn acquire_for_access_affine(
+        &self,
+        model: &str,
+        kind: PoolKind,
+        access: &PoolAccess,
+        affinity: Option<&super::affinity::AffinityHint>,
+    ) -> Result<Acquired, RouteError> {
         let d = self.data();
         // The token's allowlist is checked before anything is resolved, so a
         // denied model can never reach a backend — and never silently lands
@@ -1184,7 +1737,9 @@ impl UpstreamRegistry {
             .values()
             .find(|p| p.kind == kind && access.allows(p) && p.serves_model(model))
         {
-            return pool.acquire_for_model(model).map_err(RouteError::Acquire);
+            return pool
+                .acquire_for_model_affine(model, affinity)
+                .map_err(RouteError::Acquire);
         }
         // No healthy serving backend. If the model is nonetheless known to a
         // pool of this kind the caller may access, it's a transient outage (all
@@ -1227,13 +1782,26 @@ impl UpstreamRegistry {
         kind: PoolKind,
         access: &PoolAccess,
     ) -> Result<Acquired, RouteError> {
-        match self.acquire_for_access(model, kind, access) {
+        self.route_access_affine(model, kind, access, None)
+    }
+
+    /// [`Self::route_access`] carrying an optional prefix-affinity key. The
+    /// fallback retries carry it too: a request that lands on a pool's offline
+    /// backup should still stick to one replica of it.
+    pub fn route_access_affine(
+        &self,
+        model: &str,
+        kind: PoolKind,
+        access: &PoolAccess,
+        affinity: Option<&super::affinity::AffinityHint>,
+    ) -> Result<Acquired, RouteError> {
+        match self.acquire_for_access_affine(model, kind, access, affinity) {
             Ok(acquired) => Ok(acquired),
             Err(RouteError::UnknownModel(orig)) => {
                 let fb = self.data().fallback.for_kind(kind).map(str::to_owned);
                 match fb {
                     Some(fallback) => self
-                        .acquire_for_access(&fallback, kind, access)
+                        .acquire_for_access_affine(&fallback, kind, access, affinity)
                         .map_err(|_| RouteError::UnknownModel(orig)),
                     None => Err(RouteError::UnknownModel(orig)),
                 }
@@ -1241,7 +1809,7 @@ impl UpstreamRegistry {
             Err(RouteError::Acquire(AcquireError::NoHealthyBackend { pool })) => {
                 match self.pool_fallback_offline(&pool) {
                     Some(fallback) => self
-                        .acquire_for_access(&fallback, kind, access)
+                        .acquire_for_access_affine(&fallback, kind, access, affinity)
                         .map_err(|_| RouteError::Acquire(AcquireError::NoHealthyBackend { pool })),
                     None => Err(RouteError::Acquire(AcquireError::NoHealthyBackend { pool })),
                 }
@@ -1263,6 +1831,92 @@ impl UpstreamRegistry {
     /// Read-only admin view.
     pub fn fallback_model(&self, kind: PoolKind) -> Option<String> {
         self.data().fallback.for_kind(kind).map(str::to_owned)
+    }
+
+    /// The model id [`Self::route_access`] would forward, **without taking an
+    /// in-flight slot**.
+    ///
+    /// For callers that need the resolved name before they dispatch — the
+    /// Anthropic path rewrites the body's `model` and keys admin defaults on it
+    /// long before the tool loop makes its own routing decision per round.
+    /// Those callers used to call `route_access` and drop the guard, which took
+    /// a slot the request never used and, worse, counted as a dispatch: every
+    /// request then registered *two*, and with a dispatch-balanced picker the
+    /// two acquisitions locked into strict alternation — the resolve call always
+    /// picking one replica and the real dispatch always the other. Measured
+    /// live as 24 consecutive requests to one GPU.
+    ///
+    /// Same decisions as `route_access`, including both fallbacks, so the error
+    /// a caller sees here is the error it would have got: unknown model, model
+    /// not allowed, or pool unavailable.
+    pub fn resolve_route_access(
+        &self,
+        model: &str,
+        kind: PoolKind,
+        access: &PoolAccess,
+    ) -> Result<String, RouteError> {
+        match self.resolve_access_no_slot(model, kind, access) {
+            Ok(id) => Ok(id),
+            Err(RouteError::UnknownModel(orig)) => {
+                let fb = self.data().fallback.for_kind(kind).map(str::to_owned);
+                match fb {
+                    Some(fallback) => self
+                        .resolve_access_no_slot(&fallback, kind, access)
+                        .map_err(|_| RouteError::UnknownModel(orig)),
+                    None => Err(RouteError::UnknownModel(orig)),
+                }
+            }
+            Err(RouteError::Acquire(AcquireError::NoHealthyBackend { pool })) => {
+                match self.pool_fallback_offline(&pool) {
+                    Some(fallback) => self
+                        .resolve_access_no_slot(&fallback, kind, access)
+                        .map_err(|_| RouteError::Acquire(AcquireError::NoHealthyBackend { pool })),
+                    None => Err(RouteError::Acquire(AcquireError::NoHealthyBackend { pool })),
+                }
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// The pool-selection half of [`Self::acquire_for_access_affine`], resolving
+    /// the model id without claiming capacity. Mirrors its access checks and its
+    /// 404-vs-503 distinction exactly.
+    fn resolve_access_no_slot(
+        &self,
+        model: &str,
+        kind: PoolKind,
+        access: &PoolAccess,
+    ) -> Result<String, RouteError> {
+        let d = self.data();
+        if !access.allows_model(model) {
+            let known = d
+                .pools
+                .values()
+                .any(|p| p.kind == kind && access.allows(p) && p.knows_model(model));
+            return Err(if known {
+                RouteError::ModelNotAllowed(model.to_string())
+            } else {
+                RouteError::UnknownModel(model.to_string())
+            });
+        }
+        if let Some(id) = d
+            .pools
+            .values()
+            .filter(|p| p.kind == kind && access.allows(p))
+            .find_map(|p| p.resolve_healthy(model))
+        {
+            return Ok(id);
+        }
+        if let Some(pool) = d
+            .pools
+            .values()
+            .find(|p| p.kind == kind && access.allows(p) && p.knows_model(model))
+        {
+            return Err(RouteError::Acquire(AcquireError::NoHealthyBackend {
+                pool: pool.name.clone(),
+            }));
+        }
+        Err(RouteError::UnknownModel(model.to_string()))
     }
 
     /// Resolve a requested name to the real model id a healthy backend of
@@ -1398,6 +2052,651 @@ impl RouteError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An exact-key hint, as the `x-gateway-affinity` header or the chat UI's
+    /// session id produces.
+    fn keyed(key: u64) -> super::super::affinity::AffinityHint {
+        super::super::affinity::AffinityHint {
+            key: Some(key),
+            blocks: Vec::new(),
+        }
+    }
+
+    /// The whole point of `prefix_affinity`: one conversation keeps landing on
+    /// one replica, so its KV prefix stays warm, while *different*
+    /// conversations still spread across the pool.
+    #[test]
+    fn prefix_affinity_pins_a_conversation_and_still_spreads_sessions() {
+        let pools = HashMap::from([(
+            "p".to_string(),
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::PrefixAffinity,
+                vec![
+                    backend_with_models("gpu0", &["m"]),
+                    backend_with_models("gpu1", &["m"]),
+                ],
+            ),
+        )]);
+        let reg = UpstreamRegistry::new(&pools).unwrap();
+        let pool = reg.pools().into_iter().next().unwrap();
+
+        // Same key, many turns (each released before the next, as a session
+        // does): always the same backend.
+        let key = 0xdead_beefu64;
+        let first = pool
+            .acquire_for_model_affine("m", Some(&keyed(key)))
+            .unwrap();
+        let pinned = first.backend().name.clone();
+        drop(first);
+        for _ in 0..20 {
+            let a = pool
+                .acquire_for_model_affine("m", Some(&keyed(key)))
+                .unwrap();
+            assert_eq!(a.backend().name, pinned, "session left its warm replica");
+        }
+
+        // Many different keys: both backends get used, so two sessions are not
+        // stuck on one GPU.
+        let mut seen: HashSet<String> = HashSet::new();
+        for k in 0..64u64 {
+            let a = pool.acquire_for_model_affine("m", Some(&keyed(k))).unwrap();
+            seen.insert(a.backend().name.clone());
+        }
+        assert_eq!(
+            seen.len(),
+            2,
+            "affinity collapsed every session onto {seen:?}"
+        );
+    }
+
+    /// Affinity must not become a worse round-robin under load: once a replica
+    /// is a full load bucket busier than its peer, the request spills.
+    #[test]
+    fn prefix_affinity_spills_when_its_backend_is_genuinely_busier() {
+        let pools = HashMap::from([(
+            "p".to_string(),
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::PrefixAffinity,
+                vec![
+                    backend_with_models("gpu0", &["m"]),
+                    backend_with_models("gpu1", &["m"]),
+                ],
+            ),
+        )]);
+        let reg = UpstreamRegistry::new(&pools).unwrap();
+        let pool = reg.pools().into_iter().next().unwrap();
+
+        let key = 7u64;
+        let probe = pool
+            .acquire_for_model_affine("m", Some(&keyed(key)))
+            .unwrap();
+        let pinned = probe.backend().name.clone();
+        // Pile requests on the pinned backend, holding the guards so the
+        // in-flight count actually rises, until it spills. Both thresholds have
+        // to fire, so this needs an absolute gap *and* a 1.5x ratio.
+        let mut held = vec![probe];
+        let mut spilled_at = None;
+        for _ in 0..32 {
+            let a = pool
+                .acquire_for_model_affine("m", Some(&keyed(key)))
+                .unwrap();
+            if a.backend().name != pinned {
+                spilled_at = Some(held.len());
+                break;
+            }
+            held.push(a);
+        }
+        assert!(
+            spilled_at.is_some(),
+            "affinity never gave way to load: {} requests all went to {pinned}",
+            held.len()
+        );
+        // ...but not immediately: the first few concurrent requests of one
+        // conversation must stay on its warm replica.
+        assert!(
+            spilled_at.unwrap() >= BALANCE_ABS_THRESHOLD as usize,
+            "spilled after only {} requests — a couple of parallel tool calls \
+             must not push a session off its cache",
+            spilled_at.unwrap()
+        );
+        drop(held);
+    }
+
+    /// Prefix matching with **no explicit key at all** — the case that matters
+    /// for a client the gateway cannot instrument.
+    ///
+    /// Turn 2 of a conversation must land where turn 1 did, purely because that
+    /// replica was the one sent this prefix. And a *different* conversation
+    /// sharing only the system prompt must still be free to go elsewhere, which
+    /// is the thing a sticky per-conversation key cannot do.
+    #[test]
+    fn prefix_matching_pins_a_conversation_without_any_explicit_key() {
+        use super::super::affinity::AffinityHint;
+        use super::super::prefix_index::prefix_chain;
+
+        let pools = HashMap::from([(
+            "p".to_string(),
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::PrefixAffinity,
+                vec![
+                    backend_with_models("gpu0", &["m"]),
+                    backend_with_models("gpu1", &["m"]),
+                ],
+            ),
+        )]);
+        let reg = UpstreamRegistry::new(&pools).unwrap();
+        let pool = reg.pools().into_iter().next().unwrap();
+
+        let system = "SYSTEM PREAMBLE ".repeat(64);
+        let hint_of = |text: &str| AffinityHint {
+            key: None,
+            blocks: prefix_chain(text),
+        };
+
+        // Turn 1 of conversation A: nothing is known yet, so this is a
+        // load-balanced choice — and it teaches the index.
+        let t1 = hint_of(&format!("{system}user: fix the flaky test"));
+        let first = pool.acquire_for_model_affine("m", Some(&t1)).unwrap();
+        let pinned = first.backend().name.clone();
+        drop(first);
+
+        // Turn 2 and onwards extend that prefix, so they must go back.
+        for turn in 2..8 {
+            let text = format!(
+                "{system}user: fix the flaky test{}",
+                "assistant: working on it ".repeat(turn * 8)
+            );
+            let a = pool
+                .acquire_for_model_affine("m", Some(&hint_of(&text)))
+                .unwrap();
+            assert_eq!(
+                a.backend().name,
+                pinned,
+                "turn {turn} left the replica holding its prefix"
+            );
+        }
+
+        // The index actually learned something, rather than the test passing by
+        // accident on a coin flip.
+        assert!(!pool.prefix_index().is_empty());
+    }
+
+    /// Under *uniformly* heavy load, affinity must hold. This is what the
+    /// relative threshold buys: with both replicas deep in requests, a small
+    /// absolute difference is noise, and spilling on it would abandon a warm
+    /// cache for nothing.
+    #[test]
+    fn prefix_affinity_holds_when_both_replicas_are_equally_busy() {
+        let pools = HashMap::from([(
+            "p".to_string(),
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::PrefixAffinity,
+                vec![
+                    backend_with_models("gpu0", &["m"]),
+                    backend_with_models("gpu1", &["m"]),
+                ],
+            ),
+        )]);
+        let reg = UpstreamRegistry::new(&pools).unwrap();
+        let pool = reg.pools().into_iter().next().unwrap();
+
+        // Load both replicas deeply but short of `max_inflight` (16 each here) —
+        // a saturated pool is a different behaviour, tested elsewhere.
+        let mut held = Vec::new();
+        for k in 0..22u64 {
+            held.push(pool.acquire_for_model_affine("m", Some(&keyed(k))).unwrap());
+        }
+        let (a, b) = (pool.backends[0].inflight(), pool.backends[1].inflight());
+        assert!(a >= 8 && b >= 8, "precondition: both busy, got {a} and {b}");
+
+        // A conversation asking again lands on its own replica, whichever that
+        // is, rather than being bounced by a few requests of difference.
+        let key = 99u64;
+        let first = pool
+            .acquire_for_model_affine("m", Some(&keyed(key)))
+            .unwrap();
+        let pinned = first.backend().name.clone();
+        drop(first);
+        let again = pool
+            .acquire_for_model_affine("m", Some(&keyed(key)))
+            .unwrap();
+        assert_eq!(again.backend().name, pinned);
+        drop(again);
+        drop(held);
+    }
+
+    /// Draining one backend must move only the keys that belonged to it. A
+    /// modulo-style mapping would reshuffle everything and wipe every warm cache
+    /// in the pool at once — which is why the picker uses rendezvous hashing.
+    #[test]
+    fn draining_one_backend_does_not_reshuffle_the_others_keys() {
+        let pools = HashMap::from([(
+            "p".to_string(),
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::PrefixAffinity,
+                vec![
+                    backend_with_models("gpu0", &["m"]),
+                    backend_with_models("gpu1", &["m"]),
+                    backend_with_models("gpu2", &["m"]),
+                ],
+            ),
+        )]);
+        let reg = UpstreamRegistry::new(&pools).unwrap();
+        let pool = reg.pools().into_iter().next().unwrap();
+
+        let before: Vec<(u64, String)> = (0..300u64)
+            .map(|k| {
+                let a = pool.acquire_for_model_affine("m", Some(&keyed(k))).unwrap();
+                (k, a.backend().name.clone())
+            })
+            .collect();
+
+        reg.set_backend_enabled("gpu2", false);
+
+        for (k, was) in &before {
+            let a = pool
+                .acquire_for_model_affine("m", Some(&keyed(*k)))
+                .unwrap();
+            if was != "gpu2" {
+                assert_eq!(
+                    &a.backend().name,
+                    was,
+                    "key {k} moved off {was} even though it was not drained"
+                );
+            } else {
+                assert_ne!(a.backend().name, "gpu2");
+            }
+        }
+    }
+
+    /// A request with no key (embeddings, OCR, a body with no prompt) must not
+    /// all pile onto one backend — the strategy falls back to load.
+    #[test]
+    fn prefix_affinity_without_a_key_balances_by_load() {
+        let pools = HashMap::from([(
+            "p".to_string(),
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::PrefixAffinity,
+                vec![
+                    backend_with_models("gpu0", &["m"]),
+                    backend_with_models("gpu1", &["m"]),
+                ],
+            ),
+        )]);
+        let reg = UpstreamRegistry::new(&pools).unwrap();
+        let pool = reg.pools().into_iter().next().unwrap();
+
+        let mut seen: HashSet<String> = HashSet::new();
+        for _ in 0..6 {
+            let a = pool.acquire_for_model_affine("m", None).unwrap();
+            seen.insert(a.backend().name.clone());
+        }
+        assert_eq!(seen.len(), 2, "keyless traffic pinned to {seen:?}");
+    }
+
+    /// The maintenance switch: drained backends take no traffic, siblings pick
+    /// up the load, and — the part that matters for clients — the models stay
+    /// *known*, so draining the last backend in a pool is a temporary outage
+    /// (503) and never "no such model" (404).
+    #[test]
+    fn draining_a_backend_reroutes_without_making_its_models_unknown() {
+        let pools = HashMap::from([(
+            "p".to_string(),
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::LeastInflight,
+                vec![
+                    backend_with_models("gpu0", &["m"]),
+                    backend_with_models("gpu1", &["m"]),
+                ],
+            ),
+        )]);
+        let reg = UpstreamRegistry::new(&pools).unwrap();
+
+        assert!(reg.set_backend_enabled("gpu0", false), "backend not found");
+        assert!(
+            !reg.set_backend_enabled("nope", false),
+            "unknown name reported found"
+        );
+
+        // Everything goes to the sibling now, however many requests we make.
+        for _ in 0..6 {
+            let a = reg.route("m", PoolKind::Chat).unwrap();
+            assert_eq!(a.backend().name, "gpu1");
+        }
+
+        // Drain the sibling too: the model is still known, so this is an outage,
+        // not a typo. A 404 here is what makes a client give up entirely.
+        reg.set_backend_enabled("gpu1", false);
+        let err = reg.route("m", PoolKind::Chat).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                RouteError::Acquire(AcquireError::NoHealthyBackend { .. })
+            ),
+            "drained pool must report an outage, got {err:?}"
+        );
+        assert_eq!(err.status_and_message().0, 503);
+        // And it stays listed, so clients don't see the model disappear.
+        assert!(reg.all_models().contains(&"m".to_string()));
+
+        // Switch one back on and it serves again immediately — no reload.
+        reg.set_backend_enabled("gpu0", true);
+        assert_eq!(
+            reg.route("m", PoolKind::Chat).unwrap().backend().name,
+            "gpu0"
+        );
+    }
+
+    /// `weight` has to actually weigh something. It was stored and rendered in
+    /// the editor while no picker read it, so an operator running one GPU twice
+    /// the size of the other could turn the dial and change nothing.
+    #[test]
+    fn weight_shifts_the_share_of_traffic() {
+        let mut heavy = backend_with_models("big", &["m"]);
+        heavy.weight = 3;
+        let light = backend_with_models("small", &["m"]);
+
+        for strategy in [PickerStrategy::RoundRobin, PickerStrategy::LeastInflight] {
+            let pools = HashMap::from([(
+                "p".to_string(),
+                pool_config(PoolKind::Chat, strategy, vec![heavy.clone(), light.clone()]),
+            )]);
+            let reg = UpstreamRegistry::new(&pools).unwrap();
+
+            let mut big = 0;
+            let mut small = 0;
+            for _ in 0..40 {
+                let a = reg.route("m", PoolKind::Chat).unwrap();
+                match a.backend().name.as_str() {
+                    "big" => big += 1,
+                    _ => small += 1,
+                }
+            }
+            // 3:1 by weight. Assert the direction and that both are used, not an
+            // exact split — `least_inflight` also reacts to real load, and
+            // pinning the ratio would make this a test of the arithmetic.
+            assert!(small > 0, "{strategy:?} starved the light backend");
+            assert!(
+                big > small,
+                "{strategy:?} ignored weight: big={big} small={small}"
+            );
+        }
+    }
+
+    /// Every candidate must still appear exactly once in the order the picker
+    /// falls through on saturation — the weighted rotation repeats backends
+    /// internally, and a duplicate would waste a slot check (or, with an
+    /// exhausted pool, report saturation against the same backend twice).
+    #[test]
+    fn the_weighted_rotation_names_each_backend_once() {
+        let mut heavy = backend_with_models("big", &["m"]);
+        heavy.weight = 4;
+        let pools = HashMap::from([(
+            "p".to_string(),
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::RoundRobin,
+                vec![heavy, backend_with_models("small", &["m"])],
+            ),
+        )]);
+        let reg = UpstreamRegistry::new(&pools).unwrap();
+        let pool = reg.pools().into_iter().next().unwrap();
+        let candidates: Vec<&Arc<Backend>> = pool.backends.iter().collect();
+        for _ in 0..8 {
+            let order = pool.pick_round_robin(&candidates);
+            assert_eq!(
+                order.len(),
+                2,
+                "each backend exactly once, got {}",
+                order.len()
+            );
+            assert_ne!(order[0].name, order[1].name);
+        }
+    }
+
+    /// The state the production incident was actually in: a backend that
+    /// advertises **zero** models. A bare alias then binds to nothing, so it
+    /// resolves to `None` and drops out of the listing — but `disabled` stayed
+    /// `false` (that flag only ever described the >1 "ambiguous" case), so the
+    /// admin page drew it as a healthy blue chip on a backend badged "up".
+    ///
+    /// Zero models is the normal consequence of a probe that never returned
+    /// data: an unset `api_key_env` makes `/models` answer 401, which counts as
+    /// "reachable" and leaves the model set empty. One missing environment
+    /// variable therefore produced a green backend, a blue alias, and a name no
+    /// request could route to.
+    #[test]
+    fn a_bare_alias_on_a_backend_with_no_models_reports_itself_broken() {
+        let mut b = backend("qwen-gpu0", 16);
+        b.alias = Some(AliasSpec::Names(vec!["default".into()]));
+        let be = Backend::new(&b, &[]);
+
+        assert!(
+            be.models_snapshot().is_empty(),
+            "precondition: nothing advertised"
+        );
+        assert!(be.resolve("default").is_none(), "nothing to bind to");
+        assert!(!be.listed_models().contains("default"));
+
+        let status = be.alias_status();
+        assert_eq!(status.len(), 1);
+        assert!(
+            !status[0].resolves,
+            "the admin view must be able to see that this alias routes nowhere"
+        );
+
+        // One model shows up → the same alias works again, untouched.
+        be.set_models(HashSet::from(["unsloth/Qwen3.8-27B-NVFP4".to_string()]));
+        assert_eq!(
+            be.resolve("default").as_deref(),
+            Some("unsloth/Qwen3.8-27B-NVFP4")
+        );
+        assert!(be.alias_status()[0].resolves);
+    }
+
+    /// Sequential traffic — one request at a time, which is what a single agent
+    /// session looks like — must still spread across the pool.
+    ///
+    /// Every backend reads as "0 in flight" at the moment a lone request routes,
+    /// so `least_inflight` is deciding between equals on every call. Without a
+    /// tie-break it handed all of them to the same backend; this is the test that
+    /// says it doesn't. Round-robin was never affected, which is exactly how the
+    /// asymmetry showed up in production.
+    #[test]
+    fn least_inflight_spreads_sequential_traffic_across_the_pool() {
+        for strategy in [PickerStrategy::LeastInflight, PickerStrategy::RoundRobin] {
+            let pools = HashMap::from([(
+                "p".to_string(),
+                pool_config(
+                    PoolKind::Chat,
+                    strategy,
+                    vec![
+                        backend_with_models("gpu0", &["m"]),
+                        backend_with_models("gpu1", &["m"]),
+                    ],
+                ),
+            )]);
+            let reg = UpstreamRegistry::new(&pools).unwrap();
+
+            // Acquire *and release* each time: the next request sees an idle pool,
+            // exactly like a client that waits for its answer before asking again.
+            let mut seen: HashSet<String> = HashSet::new();
+            for _ in 0..6 {
+                let a = reg.route("m", PoolKind::Chat).expect("should route");
+                seen.insert(a.backend().name.clone());
+            }
+            assert_eq!(
+                seen.len(),
+                2,
+                "{strategy:?} sent every sequential request to {seen:?}"
+            );
+        }
+    }
+
+    /// The tie-break must not cost the actual load-awareness: a backend with
+    /// requests in flight loses to an idle one however the cursor happens to sit.
+    #[test]
+    fn least_inflight_still_prefers_the_idle_backend() {
+        let pools = HashMap::from([(
+            "p".to_string(),
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::LeastInflight,
+                vec![
+                    backend_with_models("gpu0", &["m"]),
+                    backend_with_models("gpu1", &["m"]),
+                ],
+            ),
+        )]);
+        let reg = UpstreamRegistry::new(&pools).unwrap();
+
+        // Pin four requests on whichever backend the first call picks, then check
+        // that the next two both go to the other one.
+        let first = reg.route("m", PoolKind::Chat).unwrap();
+        let busy = first.backend().name.clone();
+        let mut held = vec![first];
+        for _ in 0..3 {
+            let a = reg.route("m", PoolKind::Chat).unwrap();
+            if a.backend().name == busy {
+                held.push(a);
+            }
+        }
+        for _ in 0..2 {
+            let a = reg.route("m", PoolKind::Chat).unwrap();
+            assert_ne!(
+                a.backend().name,
+                busy,
+                "the loaded backend should not win over an idle one"
+            );
+        }
+        drop(held);
+    }
+
+    /// A broken alias doesn't just fail its own requests — it quietly takes a
+    /// whole replica out of the load balancer.
+    ///
+    /// Observed in production as "one GPU is pinned at 100%, the other sits at
+    /// 0% with plenty of requests in flight". The pool had two backends serving
+    /// the same model; on one of them the alias clients actually ask for
+    /// (`default`) pointed at a model id that backend doesn't serve, so
+    /// `serves_model("default")` was false and the picker never considered it.
+    /// Nothing reported an error: requests kept succeeding, on half the hardware.
+    #[test]
+    fn a_backend_whose_alias_is_broken_drops_out_of_the_balancer() {
+        let served = "unsloth/Qwen3.8-27B-NVFP4";
+        let mut good = backend("qwen-gpu1", 16);
+        good.alias = Some(AliasSpec::Targets(HashMap::from([(
+            "default".to_string(),
+            served.to_string(),
+        )])));
+        let mut broken = backend("qwen-gpu0", 16);
+        broken.alias = Some(AliasSpec::Targets(HashMap::from([(
+            "default".to_string(),
+            "qwen-32b".to_string(), // never loaded on this server
+        )])));
+
+        let pools = HashMap::from([(
+            "qwen".to_string(),
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::LeastInflight,
+                vec![good, broken],
+            ),
+        )]);
+        let reg = UpstreamRegistry::new(&pools).unwrap();
+        for pool in reg.pools() {
+            for b in &pool.backends {
+                b.set_models(HashSet::from([served.to_string()]));
+            }
+        }
+
+        // Every request lands on the one backend whose alias resolves, however
+        // loaded it already is — the other is invisible to the picker.
+        let mut held = Vec::new();
+        for _ in 0..8 {
+            let a = reg.route("default", PoolKind::Chat).expect("should route");
+            assert_eq!(a.backend().name, "qwen-gpu1");
+            held.push(a);
+        }
+        drop(held);
+
+        // Asking for the real id spreads across both, which is what proves the
+        // imbalance is the alias and not the picker.
+        let a = reg.route(served, PoolKind::Chat).unwrap();
+        let b = reg.route(served, PoolKind::Chat).unwrap();
+        assert_ne!(
+            a.backend().name,
+            b.backend().name,
+            "least_inflight should have used the idle replica"
+        );
+    }
+
+    /// Both ways an alias can silently stop resolving — the two shapes of the
+    /// production incident where `default` and `qwen` disappeared from
+    /// `/v1/models` and started answering 404.
+    ///
+    /// A **bare** alias binds to "the backend's sole model", so it dies the
+    /// moment the effective set is not exactly one — including when a probe
+    /// stops answering (a 401 from an unset `api_key_env` leaves the live set
+    /// empty and falls back to the configured list).
+    ///
+    /// A **map** alias names its target, and resolves only while that target is
+    /// actually served. Point one at a model id the server does not load — easy
+    /// to do, since the id a vLLM reports is its full repo path, not the short
+    /// name — and the alias is just as gone, with no error anywhere.
+    #[test]
+    fn an_alias_resolves_only_while_its_binding_holds() {
+        let served = "unsloth/Qwen3.8-27B-NVFP4";
+
+        // Bare alias + exactly one served model: resolves and is advertised.
+        let mut b = backend("qwen-gpu0", 4);
+        b.alias = Some(AliasSpec::Names(vec!["default".into(), "qwen".into()]));
+        let bare = Backend::new(&b, &[]);
+        bare.set_models(HashSet::from([served.to_string()]));
+        assert_eq!(bare.resolve("default").as_deref(), Some(served));
+        assert!(bare.listed_models().contains("default"));
+
+        // Same backend once the probe reports a second model: "the sole model"
+        // is undefined, so the bare aliases are disabled and drop out of the
+        // listing rather than routing somewhere arbitrary.
+        bare.set_models(HashSet::from([served.to_string(), "qwen-7b".to_string()]));
+        assert!(bare.resolve("default").is_none());
+        assert!(!bare.listed_models().contains("default"));
+
+        // Map alias pointed at a model id this backend does not serve: also
+        // unresolvable, also unlisted — the failure mode that looks like a
+        // correctly configured alias.
+        let mut m = backend("qwen-gpu1", 4);
+        m.alias = Some(AliasSpec::Targets(HashMap::from([(
+            "default".to_string(),
+            "qwen-32b".to_string(),
+        )])));
+        let mapped = Backend::new(&m, &[]);
+        mapped.set_models(HashSet::from([served.to_string()]));
+        assert!(
+            mapped.resolve("default").is_none(),
+            "an alias whose target is not served must not resolve"
+        );
+        assert!(!mapped.listed_models().contains("default"));
+
+        // Pointed at what the server actually reports, it resolves.
+        let mut m2 = backend("qwen-gpu2", 4);
+        m2.alias = Some(AliasSpec::Targets(HashMap::from([(
+            "default".to_string(),
+            served.to_string(),
+        )])));
+        let ok = Backend::new(&m2, &[]);
+        ok.set_models(HashSet::from([served.to_string()]));
+        assert_eq!(ok.resolve("default").as_deref(), Some(served));
+    }
+
     use crate::server::upstreams::config::{
         AliasSpec, BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig,
     };
@@ -1415,6 +2714,7 @@ mod tests {
             alias: None,
             probe_models: true,
             supports_edit: false,
+            enabled: true,
         }
     }
 
@@ -2813,6 +4113,7 @@ mod tests {
                     health_path: "/models".into(),
                     probe_models: true,
                     supports_edit: false,
+                    enabled: true,
                     models: vec![],
                     aliases: vec![],
                     created_at: Timestamp::now(),

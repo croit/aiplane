@@ -29,8 +29,16 @@ use serde::Deserialize;
 use tokio::time::sleep;
 
 use super::registry::{Backend, UpstreamRegistry};
+use crate::server::db::{Pool, upstreams_config};
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(5);
+/// Probe cadence while a backend is *known down*. Tighter than
+/// [`PROBE_INTERVAL`] because this is the interval that decides how long a
+/// client parked in `wait_for_route` keeps waiting after the upstream is
+/// actually back: at 5 s a recovered backend stayed invisible for up to five
+/// seconds of dead air on every request. Cheap — one GET against an upstream
+/// that is, by definition, not serving traffic.
+const DOWN_PROBE_INTERVAL: Duration = Duration::from_secs(1);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const FAILURE_THRESHOLD: u32 = 3;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
@@ -70,16 +78,29 @@ fn probe_client() -> reqwest::Client {
 /// Spawns one background task per backend. Awaits an initial parallel
 /// probe round before returning, so the registry has at least one
 /// model-set update per reachable backend before traffic starts.
-pub async fn spawn(registry: Arc<UpstreamRegistry>) {
+pub async fn spawn(registry: Arc<UpstreamRegistry>, db: Option<Pool>) {
     let http = probe_client();
+    if let Some(db) = db.as_ref() {
+        seed_remembered_models(&registry, db).await;
+    }
     let mut initial = Vec::new();
     for pool in registry.pools() {
         for backend in &pool.backends {
             let http = http.clone();
             let pool_name = pool.name.clone();
             let backend = Arc::clone(backend);
+            let db = db.clone();
             initial.push(tokio::spawn(async move {
-                probe_once(&http, &pool_name, &backend).await;
+                let outcome = probe_once(&http, &pool_name, &backend, db.as_ref()).await;
+                // A backend that is already unreachable at startup must not
+                // start out `healthy` (the field's initial value): the router
+                // would send it real traffic for the first three probe rounds
+                // and every one of those requests would fail at the socket.
+                // We just proved it is down, so say so — the loop below flips
+                // it back on the first success, ~1 s later.
+                if matches!(outcome, ProbeOutcome::Failed(_)) {
+                    backend.set_healthy(false);
+                }
             }));
         }
     }
@@ -105,8 +126,9 @@ pub async fn spawn(registry: Arc<UpstreamRegistry>) {
             let pool_name = pool.name.clone();
             let http = http.clone();
             let registry = Arc::clone(&registry);
+            let db = db.clone();
             tokio::spawn(async move {
-                run_probe(http, pool_name, backend, registry, generation).await;
+                run_probe(http, pool_name, backend, registry, generation, db).await;
             });
         }
     }
@@ -154,11 +176,54 @@ pub fn spawn_heartbeat(registry: Arc<UpstreamRegistry>) {
     });
 }
 
+/// Seed every backend that has no live model set yet from what it was last seen
+/// serving (`backend_probed_models`).
+///
+/// Runs before the first probe round, so a gateway booting while an upstream is
+/// down still *knows* which models that upstream serves. That is the difference
+/// between `503 no healthy backend` (an outage; clients retry) and `404
+/// model_not_found` (a typo; clients give up and tell the user the model does
+/// not exist). It grants no health: routing still requires a successful probe,
+/// which is the only thing that can set `healthy`.
+///
+/// Only fills *empty* sets, so it never overrides a set carried across a
+/// topology reload, and the first successful probe replaces it wholesale.
+async fn seed_remembered_models(registry: &UpstreamRegistry, db: &Pool) {
+    let remembered = match upstreams_config::load_probed_models(db).await {
+        Ok(m) if !m.is_empty() => m,
+        Ok(_) => return,
+        Err(err) => {
+            tracing::debug!(error = %err, "could not load remembered model sets");
+            return;
+        }
+    };
+    for pool in registry.pools() {
+        for backend in &pool.backends {
+            if !backend.live_models().is_empty() {
+                continue;
+            }
+            let Some(models) = remembered.get(&backend.name) else {
+                continue;
+            };
+            tracing::info!(
+                pool = %pool.name, backend = %backend.name, models = models.len(),
+                "seeded last-known model set (not yet probed; backend stays unhealthy until it answers)"
+            );
+            backend.set_models(models.clone());
+        }
+    }
+}
+
 /// Single round of probing — used by both the bootstrap path and the
 /// looping path. Updates liveness + advertised-model set on success; on
 /// failure, only returns the outcome (the caller decides whether one
 /// failure flips health or only the third).
-async fn probe_once(http: &reqwest::Client, pool_name: &str, backend: &Backend) -> ProbeOutcome {
+async fn probe_once(
+    http: &reqwest::Client,
+    pool_name: &str,
+    backend: &Backend,
+    db: Option<&Pool>,
+) -> ProbeOutcome {
     let url = format!("{}{}", backend.base_url, backend.health_path);
     // Send the backend's API key on the probe — same `Authorization:
     // Bearer …` header `proxy.rs` adds to real requests. Without it the
@@ -196,7 +261,20 @@ async fn probe_once(http: &reqwest::Client, pool_name: &str, backend: &Backend) 
     // If real requests get 401 too, they'll surface the failure end to
     // end; if the previous probe round populated the model set, that
     // state survives until a successful probe replaces it.
-    if status.as_u16() == 401 {
+    if matches!(status.as_u16(), 401 | 403) {
+        // Flag it so the admin page can say "the key was rejected" rather than
+        // showing a green backend that quietly advertises nothing. Not a health
+        // failure: some upstreams scope `/models` differently from
+        // `/chat/completions`, so real traffic may still work.
+        if !backend.auth_failed() {
+            tracing::warn!(
+                pool = %pool_name, backend = %backend.name, status = status.as_u16(),
+                "health probe was rejected by upstream auth — model discovery is off for this \
+                 backend, so nothing new will become routable through it. Check its API key \
+                 (and, if it uses `api_key_env`, that the variable is actually set)."
+            );
+        }
+        backend.set_auth_failed(true);
         return ProbeOutcome::AliveNoData;
     }
     if !status.is_success() {
@@ -268,9 +346,29 @@ async fn probe_once(http: &reqwest::Client, pool_name: &str, backend: &Backend) 
             total = new_set.len(),
             "advertised models updated"
         );
+        // Remember it, so the *next* boot knows this backend's models even if
+        // it is unreachable then (see `seed_remembered_models`). Only on a
+        // change — the steady state writes nothing. Best-effort: a write failure
+        // costs the seed, not the probe.
+        if let Some(db) = db
+            && let Err(err) =
+                upstreams_config::save_probed_models(db, &backend.name, &new_set).await
+        {
+            tracing::debug!(
+                pool = %pool_name, backend = %backend.name, error = %err,
+                "could not remember the advertised model set"
+            );
+        }
     }
     backend.set_models(new_set);
     backend.set_context_windows(windows);
+    if backend.auth_failed() {
+        tracing::info!(
+            pool = %pool_name, backend = %backend.name,
+            "upstream auth accepted again — model discovery restored"
+        );
+        backend.set_auth_failed(false);
+    }
 
     ProbeOutcome::AliveWithModels
 }
@@ -338,6 +436,7 @@ async fn run_probe(
     backend: Arc<Backend>,
     registry: Arc<UpstreamRegistry>,
     generation: u64,
+    db: Option<Pool>,
 ) {
     tracing::debug!(
         pool = %pool_name,
@@ -357,7 +456,7 @@ async fn run_probe(
             );
             return;
         }
-        match probe_once(&http, &pool_name, &backend).await {
+        match probe_once(&http, &pool_name, &backend, db.as_ref()).await {
             ProbeOutcome::AliveWithModels | ProbeOutcome::AliveNoData => {
                 if !backend.is_healthy() {
                     tracing::info!(pool = %pool_name, backend = %backend.name, "backend recovered — healthy again");
@@ -398,7 +497,14 @@ async fn run_probe(
                 }
             }
         }
-        sleep(PROBE_INTERVAL).await;
+        // Poll a down backend more often than a healthy one: this interval is
+        // the recovery latency every parked request pays.
+        sleep(if backend.is_healthy() {
+            PROBE_INTERVAL
+        } else {
+            DOWN_PROBE_INTERVAL
+        })
+        .await;
     }
 }
 
@@ -452,6 +558,7 @@ mod tests {
             alias: None,
             probe_models,
             supports_edit: false,
+            enabled: true,
         }
     }
 
@@ -521,7 +628,7 @@ mod tests {
             .await;
         let backend = backend_arc(&server.uri(), true);
 
-        let outcome = probe_once(&reqwest::Client::new(), "images", &backend).await;
+        let outcome = probe_once(&reqwest::Client::new(), "images", &backend, None).await;
         assert!(
             matches!(outcome, ProbeOutcome::AliveWithModels),
             "expected AliveWithModels, got {outcome:?}"
@@ -537,7 +644,7 @@ mod tests {
         let server = chat_catalog_server().await;
         let backend = backend_arc(&server.uri(), false);
 
-        let outcome = probe_once(&reqwest::Client::new(), "images", &backend).await;
+        let outcome = probe_once(&reqwest::Client::new(), "images", &backend, None).await;
         // Reachable, but no discovery: config model set is untouched.
         assert!(
             matches!(outcome, ProbeOutcome::AliveNoData),
@@ -566,7 +673,7 @@ mod tests {
         let server = chat_catalog_server().await;
         let backend = backend_arc(&server.uri(), true);
 
-        let outcome = probe_once(&reqwest::Client::new(), "images", &backend).await;
+        let outcome = probe_once(&reqwest::Client::new(), "images", &backend, None).await;
         assert!(
             matches!(outcome, ProbeOutcome::AliveWithModels),
             "expected AliveWithModels, got {outcome:?}"

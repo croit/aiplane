@@ -158,6 +158,7 @@ fn registry(embed: &str) -> Arc<UpstreamRegistry> {
                 alias: None,
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 name: "e".into(),
                 base_url: embed.into(),
                 api_key_env: None,

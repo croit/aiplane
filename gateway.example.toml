@@ -56,6 +56,19 @@ token_ttl_days = 90
 # are re-read. Defaults: 30 and 90.
 session_ttl_days = 30
 session_absolute_max_days = 90
+# How long a request may wait for its pool to come back before the gateway gives
+# up on it, in seconds. Default 120; 0 restores fail-immediately behaviour.
+#
+# When every backend serving a model is down (a restarting GPU box, a model being
+# swapped) or every slot is taken, the gateway holds the request and retries
+# routing until a backend answers its health probe again. Nothing has reached the
+# client yet, so a short outage becomes a pause rather than a failed turn — which
+# is what lets an agent client keep its tool loop across an upstream restart.
+#
+# Keep it well below the client's own request timeout (Claude Code's default is
+# 10 minutes). Past the budget the request still gets a *retryable* answer
+# (529/503 with Retry-After), so the client's backoff takes over from there.
+upstream_wait_secs = 120
 # Let admins impersonate other users from /admin/users (debugging aid; every
 # impersonation is audited and shows a persistent banner). Default false
 # (opt-in) — it's a privileged capability, so it's off unless you enable it

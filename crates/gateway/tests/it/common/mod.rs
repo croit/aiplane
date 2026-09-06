@@ -45,6 +45,7 @@ pub fn mock_backend(name: &str, base_url: &str) -> BackendConfig {
         alias: None,
         probe_models: true,
         supports_edit: false,
+        enabled: true,
         name: name.into(),
         base_url: base_url.into(),
         api_key_env: None,
@@ -58,13 +59,32 @@ pub fn mock_backend(name: &str, base_url: &str) -> BackendConfig {
 
 /// Assemble a `RamaState` from an already-seeded registry plus the shared
 /// in-memory db — the identical tail every pool builder repeats.
+/// The config every test state is built from: production defaults with the
+/// upstream **wait budget disabled**.
+///
+/// A real deployment parks a request for up to two minutes when its pool has no
+/// available backend, which is the whole point (see `upstreams::wait`). A test
+/// asserting the eventual failure must not sit through it — with the production
+/// default, `v1_chat_completions_known_model_all_replicas_down_is_503` simply
+/// hung until the harness killed it. Tests that want to exercise the parking
+/// itself set their own budget; everything else wants the immediate answer.
+pub fn test_config() -> Config {
+    Config {
+        gateway: gateway_core::server::config::GatewayConfig {
+            upstream_wait_secs: 0,
+            ..Default::default()
+        },
+        ..Config::default()
+    }
+}
+
 pub fn state_from_registry(
     db_pool: db::Pool,
     registry: Arc<upstreams::UpstreamRegistry>,
 ) -> RamaState {
     let tools = Arc::new(ToolRegistry::new());
     let rbac = Arc::new(Resolver::empty());
-    let app = AppState::new(Config::default(), db_pool.clone(), registry, tools, rbac)
+    let app = AppState::new(test_config(), db_pool.clone(), registry, tools, rbac)
         .with_tool_family_builder(gateway::tool_families::typst());
     let sessions = SessionStore::new(db_pool, TEST_SECRET);
     RamaState::new(
@@ -83,7 +103,7 @@ pub async fn state_with_user_skills(root: std::path::PathBuf) -> RamaState {
     let registry = upstreams::UpstreamRegistry::new(&HashMap::new()).unwrap();
     let tools = Arc::new(ToolRegistry::new());
     let rbac = Arc::new(Resolver::empty());
-    let app = AppState::new(Config::default(), db_pool.clone(), registry, tools, rbac)
+    let app = AppState::new(test_config(), db_pool.clone(), registry, tools, rbac)
         .with_skills(Arc::new(SkillStore::load(root.clone())))
         .with_user_skills(Arc::new(UserSkillStore::new(root.join(".users"))));
     let sessions = SessionStore::new(db_pool, TEST_SECRET);
@@ -225,7 +245,7 @@ pub async fn state_with_s3(endpoint: &str) -> RamaState {
     }
     let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let registry = upstreams::UpstreamRegistry::new(&HashMap::new()).unwrap();
-    let mut config = Config::default();
+    let mut config = test_config();
     config.chat.s3 = Some(S3Config {
         endpoint: endpoint.to_string(),
         region: "us-east-1".into(),
@@ -380,6 +400,7 @@ pub async fn state_with_admin_rbac_and_comfyui(upstream_url: &str) -> RamaState 
                 alias: None,
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 name: "mock".into(),
                 base_url: upstream_url.into(),
                 api_key_env: None,
@@ -413,7 +434,7 @@ pub async fn state_with_admin_rbac_and_comfyui(upstream_url: &str) -> RamaState 
     };
     let rbac = Arc::new(Resolver::build(rbac_config, vec![admin_role]).unwrap());
 
-    let mut config = Config::default();
+    let mut config = test_config();
     config.gateway.allow_impersonation = true;
     let tmp = tempfile::tempdir().unwrap();
     let store = Arc::new(ComfyuiStore::load(tmp.keep()));
@@ -466,6 +487,7 @@ async fn state_with_admin_rbac_cfg(upstream_url: &str, allow_impersonation: bool
                 alias: None,
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 name: "mock".into(),
                 base_url: upstream_url.into(),
                 api_key_env: None,
@@ -498,7 +520,7 @@ async fn state_with_admin_rbac_cfg(upstream_url: &str, allow_impersonation: bool
     };
     let rbac = Arc::new(Resolver::build(rbac_config, vec![admin_role]).unwrap());
 
-    let mut config = Config::default();
+    let mut config = test_config();
     config.gateway.allow_impersonation = allow_impersonation;
     let app = AppState::new(config, pool.clone(), registry, tools, rbac)
         .with_tool_family_builder(gateway::tool_families::typst());

@@ -183,6 +183,7 @@ async fn main() -> anyhow::Result<()> {
                 alias: None,
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 name: "wiremock-chat".into(),
                 base_url: chat_mock.uri(),
                 api_key_env: None,
@@ -210,6 +211,7 @@ async fn main() -> anyhow::Result<()> {
                 alias: None,
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 name: "wiremock-voice".into(),
                 base_url: voice_mock.uri(),
                 api_key_env: None,
@@ -242,6 +244,7 @@ async fn main() -> anyhow::Result<()> {
                 alias: None,
                 probe_models: false,
                 supports_edit: false,
+                enabled: true,
                 name: "wiremock-speech".into(),
                 base_url: chat_mock.uri(),
                 api_key_env: None,
@@ -271,6 +274,7 @@ async fn main() -> anyhow::Result<()> {
                 alias: None,
                 probe_models: false,
                 supports_edit: true,
+                enabled: true,
                 name: "wiremock-image".into(),
                 base_url: chat_mock.uri(),
                 api_key_env: None,
@@ -295,7 +299,7 @@ async fn main() -> anyhow::Result<()> {
     // populated before we start serving requests. Without this, the
     // first chat-page render lands on empty dropdowns until the
     // looping probe catches up 5 s later.
-    upstreams::health::spawn(registry.clone()).await;
+    upstreams::health::spawn(registry.clone(), None).await;
     // Skills (for the /admin/skills screenshot + local debugging): load the
     // repo's `data/skills` bundles into a hot-reloadable store, grant the dev
     // role every skill, and register `read_skill`. Mirrors `main.rs`.

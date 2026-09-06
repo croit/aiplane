@@ -30,7 +30,8 @@ use rama::http::service::web::extract::State;
 use rama::http::{Request, Response};
 
 use super::{
-    checkbox_on, dirty_signal, field, fields_all, parse_csv, read_form, require_admin_or_403, toast,
+    checkbox_on, dirty_signal, field, fields_all, overwrite_clear, overwrite_prompt, parse_csv,
+    read_form, require_admin_or_403, toast,
 };
 use session_core::chrome::{FlashKind, sse_response, sse_toast};
 use session_core::i18n::{self, Lang, t, t_args};
@@ -48,8 +49,10 @@ pub(super) const KINDS: &[&str] = &[
     "speech",
     "ocr",
 ];
-/// Picker strategies, matching the `db_bridge` parser.
-pub(super) const STRATEGIES: &[&str] = &["least_inflight", "round_robin"];
+/// Picker strategies, matching the `db_bridge` parser. `prefix_affinity` is
+/// listed first because it is the right choice for chat pools backed by several
+/// self-hosted replicas — see `upstreams::affinity`.
+pub(super) const STRATEGIES: &[&str] = &["prefix_affinity", "least_inflight", "round_robin"];
 /// Kinds that support an unknown-model fallback (speech deliberately has none —
 /// a mistyped voice/model just surfaces the backend's own error).
 pub(super) const FALLBACK_KINDS: &[&str] = &["chat", "transcription", "embedding", "image"];
@@ -150,6 +153,34 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
     if name.is_empty() {
         return toast(FlashKind::Error, t(lang, "pools-error-name-required"));
     }
+    // Add form + a name that already exists = an accidental overwrite (`name` is
+    // the primary key and this is an upsert). Refuse the first save and arm the
+    // form's confirmation; a second click arrives with `overwrite=1`.
+    if field(&pairs, "mode").trim() == "add" && !checkbox_on(field(&pairs, "overwrite")) {
+        match upstreams_config::pool_exists(&state.db, name).await {
+            Ok(true) => {
+                return overwrite_prompt(
+                    t_args(
+                        lang,
+                        "pools-error-name-exists",
+                        &i18n::args([("name", name.to_string().into())]),
+                    ),
+                    "ovwPool",
+                );
+            }
+            Ok(false) => {}
+            Err(e) => {
+                return toast(
+                    FlashKind::Error,
+                    t_args(
+                        lang,
+                        "admin-db-error",
+                        &i18n::args([("err", e.to_string().into())]),
+                    ),
+                );
+            }
+        }
+    }
     let kind = field(&pairs, "kind").trim();
     if !KINDS.contains(&kind) {
         return toast(
@@ -210,6 +241,7 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
                     ),
                 }),
                 dirty_signal(dirty),
+                overwrite_clear("ovwPool"),
             ];
             // Refresh the Add-backend Pool select so this pool is immediately
             // selectable there (no reload / no "Apply changes" needed).

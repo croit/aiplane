@@ -36,13 +36,24 @@ the environment variables it already supports.
 
    ```bash
    export ANTHROPIC_BASE_URL=https://gateway.example.com
-   export ANTHROPIC_AUTH_TOKEN=gwk_…
+   export ANTHROPIC_AUTH_TOKEN=gwk_…            # a token from /tokens
+   export ANTHROPIC_MODEL=default                # an alias from /admin/upstreams
+   export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+   export CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144  # what your model actually serves
+
+   # Recommended on a multi-replica `prefix_affinity` pool — see below.
+   export ANTHROPIC_CUSTOM_HEADERS="x-gateway-affinity: $$-$(date +%s)"
    ```
 
    `ANTHROPIC_AUTH_TOKEN` sends the token as `Authorization: Bearer`;
    `ANTHROPIC_API_KEY` sends it as `x-api-key`. The gateway accepts both, so
-   either variable works. To make it permanent, put the same two keys in the
+   either variable works. To make it permanent, put the same keys in the
    `env` block of `~/.claude/settings.json`.
+
+   `CLAUDE_CODE_MAX_CONTEXT_TOKENS` should match the context window the serving
+   model reports (`max_model_len`, shown per backend on `/admin/upstreams`).
+   Claude Code otherwise plans against an Anthropic-sized window and can
+   overrun yours mid-session.
 
 4. **Check it.**
 
@@ -57,12 +68,56 @@ the environment variables it already supports.
 
    Then just run `claude`.
 
+### Keeping one session on one GPU
+
+On a pool with several self-hosted replicas, set the pool's strategy to
+`prefix_affinity` (`/admin/upstreams`). Without it, consecutive turns of one
+session alternate between replicas and every turn pays a full prefill instead of
+a prefix-cache hit — measured on two replicas with seven interleaved
+conversations of four turns each:
+
+| Strategy | Conversations that stayed on one replica | First-turn spread |
+|---|---|---|
+| `least_inflight` | **0 / 7** — every turn bounced to the cold replica | 4 / 3 |
+| `prefix_affinity`, no header | **7 / 7** | 3 / 4 |
+| `prefix_affinity` + `x-gateway-affinity` | **7 / 7** | 4 / 3 |
+
+`x-gateway-affinity` names the session outright. Claude Code reads
+`ANTHROPIC_CUSTOM_HEADERS` **once at launch**, so one value per terminal is
+exactly one value per session; the value is hashed, not interpreted, so anything
+that differs between concurrent sessions works (`$$` plus a timestamp is
+plenty).
+
+It is optional. Without it the gateway matches the request's prompt prefix
+against a per-pool index of what each replica was recently sent, which pins a
+conversation just as well *and* lets a new session start warm on a replica that
+already holds the shared system prompt. Set the header when you want the
+guarantee instead of the inference — most usefully when sessions are launched
+from a script that always opens with the same prompt, where the prefix cannot
+tell them apart.
+
+Every response carries `X-Gateway-Backend` naming the replica that served it, so
+this is checkable from the client:
+
+```bash
+curl -sD- -o /dev/null "$ANTHROPIC_BASE_URL/v1/messages" \
+  -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
+  -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' \
+  -d '{"model":"default","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}' \
+  | grep -i x-gateway
+```
+
+The full decision procedure, and why the shared system prompt is deliberately
+excluded from it, is in [`upstreams.md`](upstreams.md#how-prefix-affinity-decides).
+
 ### Optional environment
 
 | Variable | Why |
 |---|---|
 | `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` | Adds the gateway's models to the `/model` picker. Claude Code calls `GET /v1/models?limit=1000` at startup and keeps entries whose id contains `claude` or `anthropic` — which is what your aliases are for. |
-| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` | Stops Claude Code reporting telemetry to Anthropic. Model inference already goes only to the gateway. |
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` | Stops Claude Code reporting telemetry and update checks. Model inference already goes only to the gateway; this also keeps your `/usage` numbers to actual work. |
+| `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | Plan against *your* model's context window rather than an Anthropic-sized one. Match `max_model_len` from `/admin/upstreams`. |
+| `ANTHROPIC_CUSTOM_HEADERS="x-gateway-affinity: …"` | Pin this session to one replica on a `prefix_affinity` pool — see [Keeping one session on one GPU](#keeping-one-session-on-one-gpu). |
 | `CLAUDE_CODE_ATTRIBUTION_HEADER=0` | Drops the short attribution block Claude Code prepends to the system prompt. The gateway forwards that block to the model as ordinary prompt text; set this if you'd rather it weren't sent at all. |
 | `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, … | Name gateway model ids directly instead of aliasing the Claude ones. |
 

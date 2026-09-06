@@ -125,6 +125,7 @@ fn backend_row_to_config(row: &BackendRow, crypto: &Crypto) -> BackendConfig {
         alias,
         probe_models: row.probe_models,
         supports_edit: row.supports_edit,
+        enabled: row.enabled,
     }
 }
 
@@ -150,6 +151,7 @@ fn parse_strategy(pool: &str, s: &str) -> PickerStrategy {
     match s {
         "round_robin" => PickerStrategy::RoundRobin,
         "least_inflight" => PickerStrategy::LeastInflight,
+        "prefix_affinity" => PickerStrategy::PrefixAffinity,
         other => {
             tracing::warn!(
                 pool = %pool, strategy = %other,
@@ -198,6 +200,7 @@ mod tests {
                 health_path: "/models".into(),
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 models: vec!["qwen-32b".into()],
                 aliases: vec![AliasRow {
                     alias: "fast".into(),
@@ -259,6 +262,7 @@ mod tests {
                 health_path: "/models".into(),
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 models: vec![],
                 aliases: vec![
                     AliasRow {
@@ -314,6 +318,7 @@ mod tests {
                 health_path: "/models".into(),
                 probe_models: true,
                 supports_edit: false,
+                enabled: true,
                 models: vec!["m1".into()],
                 aliases,
                 created_at: ts(),

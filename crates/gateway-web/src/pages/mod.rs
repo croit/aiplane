@@ -323,10 +323,34 @@ pub(super) fn bool_checkbox(
 /// Render a `name` text input (the primary key of a CRUD row): read-only when
 /// `readonly` (rename = delete + re-add), otherwise editable with a
 /// `placeholder`. Standalone for the same reason as [`bool_checkbox`].
-pub(super) fn pk_name_input(value: &str, placeholder: &str, readonly: bool) -> plait::Html {
+///
+/// `bind` attaches a datastar signal to the field, which the *add* forms use to
+/// tell the operator a name is already taken **while they type** instead of
+/// refusing the save afterwards. The live check is a courtesy; the
+/// server-side refusal is the actual guarantee (a stale page or a second admin
+/// can't skip it).
+pub(super) fn pk_name_input(
+    value: &str,
+    placeholder: &str,
+    readonly: bool,
+    bind: Option<&str>,
+) -> plait::Html {
     use plait::{ToHtml, html};
     let value = value.to_string();
     let placeholder = placeholder.to_string();
+    // A standalone branch per attribute shape — the macro can't express a
+    // conditional attribute (see the note on `select_option`).
+    if let Some(sig) = bind {
+        let sig = sig.to_string();
+        return html! {
+            input(
+                type: "text", name: "name", value: (value), required: "required",
+                placeholder: (placeholder), "data-bind": (sig),
+                class: "input input-bordered input-sm font-mono w-full"
+            );
+        }
+        .to_html();
+    }
     if readonly {
         html! {
             input(type: "text", name: "name", value: (value), required: "required", readonly: "readonly", class: "input input-bordered input-sm font-mono w-full");
@@ -427,6 +451,30 @@ pub(super) fn toast(kind: FlashKind, message: impl Into<String>) -> Response {
 /// the pools/backends save+delete handlers and the reload handler.
 pub(super) fn dirty_signal(count: u32) -> rama::bytes::Bytes {
     session_core::chrome::sse_signals(&format!("{{topologyDirty: {count}}}"))
+}
+
+/// The "this name already exists" answer for an add form: an error toast plus
+/// the signal patch that arms `sig`, which reveals the form's overwrite warning
+/// and makes the next submit carry `overwrite=1`.
+///
+/// Refusing the first save is the whole point — the two upstream save handlers
+/// upsert on `name`, so without this the operator's second "Add backend" would
+/// quietly replace the first one instead of adding to the pool. See
+/// `upstreams::overwrite_guard` for the form side.
+pub(super) fn overwrite_prompt(message: impl Into<String>, sig: &str) -> Response {
+    sse_response(&[
+        sse_toast(&Flash {
+            kind: FlashKind::Error,
+            message: message.into(),
+        }),
+        session_core::chrome::sse_signals(&format!("{{{sig}: true}}")),
+    ])
+}
+
+/// Clears an add form's overwrite arming after a save went through, so the next
+/// use of the form starts from the warning-free state.
+pub(super) fn overwrite_clear(sig: &str) -> rama::bytes::Bytes {
+    session_core::chrome::sse_signals(&format!("{{{sig}: false}}"))
 }
 
 /// Read a request body and parse it as a urlencoded form. A
@@ -1492,14 +1540,15 @@ pub use admin::{
 mod upstreams;
 pub use upstreams::{
     backends_redirect as admin_backends_redirect, pools_redirect as admin_pools_redirect,
-    upstreams_index as admin_upstreams_index,
+    upstreams_index as admin_upstreams_index, upstreams_live as admin_upstreams_live,
 };
 
 // Backend CRUD write handlers (paths `/admin/backends/*`, unchanged); the page
 // they back is now `/admin/upstreams`. Same `admin`-role gate.
 mod backends;
 pub use backends::{
-    backends_delete as admin_backends_delete, backends_save as admin_backends_save,
+    backends_delete as admin_backends_delete, backends_enabled as admin_backends_enabled,
+    backends_save as admin_backends_save, backends_test as admin_backends_test,
 };
 
 // Pool CRUD write handlers (paths `/admin/pools/*`, unchanged); the page they

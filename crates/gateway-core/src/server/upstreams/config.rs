@@ -154,6 +154,21 @@ pub enum PickerStrategy {
     RoundRobin,
     #[default]
     LeastInflight,
+    /// Send a conversation back to the replica that already holds its KV prefix,
+    /// and only spread when load actually demands it.
+    ///
+    /// The right default for agent traffic against self-hosted replicas. Each
+    /// vLLM instance caches prefixes separately, so a session whose turns
+    /// alternate between two GPUs pays a full prefill on every turn — the
+    /// balancing costs far more than it saves. This strategy maps a request's
+    /// prefix (see [`crate::server::upstreams::affinity`]) onto a backend by
+    /// weighted rendezvous hash, so the same conversation keeps landing on the
+    /// same machine, while a backend that is genuinely busier than its peers
+    /// still gets skipped.
+    ///
+    /// Requests with nothing to key on (embeddings, OCR, a body with no system
+    /// prompt or user turn) fall back to `least_inflight`.
+    PrefixAffinity,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -217,6 +232,14 @@ pub struct BackendConfig {
     /// [`pool models`](UpstreamPoolConfig::models) stay authoritative.
     #[serde(default = "default_true")]
     pub probe_models: bool,
+    /// Whether this backend may receive traffic. `false` is the maintenance
+    /// switch: the backend keeps every setting and keeps being health-probed,
+    /// but the picker skips it. Its models stay *known* to the gateway, so a
+    /// request for one gets a sibling backend, or a temporary-outage answer —
+    /// never "that model does not exist". Managed from `/admin/upstreams`
+    /// (DB-backed); defaults to `true` for config-file backends.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// Whether this backend supports image *editing* (image-to-image), not just
     /// text-to-image generation. Only meaningful on `kind = "image"` pools.
     /// Default `false` (text→image only, e.g. z.AI GLM-Image). A self-hosted

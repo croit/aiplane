@@ -664,7 +664,11 @@ pub async fn upstreams_reload(State(state): State<Arc<RamaState>>, req: Request)
 
     match state.upstreams.reload(&snapshot, &state.crypto) {
         Ok(()) => {
-            gateway_core::server::upstreams::health::spawn(state.upstreams.clone()).await;
+            gateway_core::server::upstreams::health::spawn(
+                state.upstreams.clone(),
+                Some(state.db.clone()),
+            )
+            .await;
             let pool_count = snapshot.pools.len();
             let backend_count = snapshot.backends.len();
             tracing::info!(
