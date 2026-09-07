@@ -22,6 +22,7 @@ pub mod proxy;
 pub mod rag_api;
 pub mod router;
 pub mod sandbox_api;
+pub mod spa;
 pub mod vad;
 
 pub use gateway_core::rama_server::{SessionStore, cors, session};

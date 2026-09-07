@@ -94,6 +94,16 @@ COPY --chown=gateway:gateway examples/typst-templates /opt/typst-templates
 # `0644` is enough — it's dlopen'd, not exec'd.
 COPY --chown=root:root --chmod=0644 target/release/libpdfium.so /usr/local/lib/libpdfium.so
 
+# The SvelteKit SPA (issue #22): `vite build` output (adapter-static —
+# content-hashed assets + an index.html fallback), built by the
+# `build-web` mise task and staged into target/frontend/build/ so it
+# rides the same artifact pipeline as the binaries (CI's `container` job
+# downloads it alongside gateway/typst/sandbox-runner). No Node in the
+# runtime image — the Rust binary serves these files at `/app` from
+# `GATEWAY_STATIC_DIR` (rama_server::spa). Read-only layer: the handler
+# only reads.
+COPY --chown=gateway:gateway target/frontend/build /usr/share/gateway/ui
+
 # The data directory GATEWAY_DATA_DIR points at, owned by the runtime user.
 # Without this the "one env var and a volume" quickstart fails on Docker: a
 # missing mountpoint is created root:root 0755, and SQLite then gets EACCES
@@ -125,11 +135,15 @@ USER gateway
 # volume and nothing else already does the right thing.
 #
 # PDFIUM_LIB_PATH points the PDF reader at the bundled pdfium above.
+# GATEWAY_STATIC_DIR serves the SPA copied to /usr/share/gateway/ui
+# above at /app (unset in dev — a missing dir 503s only /app, the rest
+# of the gateway is unaffected; see rama_server::spa).
 ENV IP=0.0.0.0 \
     PORT=8080 \
     GATEWAY_DATA_DIR=/var/lib/gateway \
     RUST_LOG=info,gateway=info,gateway_core=info,gateway_features=info,gateway_runtime=info,gateway_tools=info,gateway_web=info \
-    PDFIUM_LIB_PATH=/usr/local/lib/libpdfium.so
+    PDFIUM_LIB_PATH=/usr/local/lib/libpdfium.so \
+    GATEWAY_STATIC_DIR=/usr/share/gateway/ui
 
 EXPOSE 8080
 

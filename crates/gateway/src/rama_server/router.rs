@@ -39,7 +39,7 @@ use serde_json::json;
 use crate::rama_server::RamaState;
 use crate::rama_server::first_run::FirstRunLayer;
 use crate::rama_server::{
-    api, comfyui_api, messages, oidc_handlers, pages, proxy, rag_api, sandbox_api,
+    api, comfyui_api, messages, oidc_handlers, pages, proxy, rag_api, sandbox_api, spa,
 };
 use gateway_core::rama_server::cors::V1CorsLayer;
 use session_core::assets;
@@ -379,6 +379,20 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         )
         .with_post("/api/v0/comfyui/reload", comfyui_api::reload)
         .with_get("/api/v0/comfyui/catalog", comfyui_api::catalog)
+        // Static SPA (SvelteKit `adapter-static` build) served from disk.
+        // MUST be the LAST routes: they sit under the `/app` prefix (which
+        // collides with nothing) and the `{*name}` form is a catch-all, so
+        // rama's registration-order matching requires they come after every
+        // other route. They coexist with the server-rendered pages (which own
+        // `/`, `/chat`, `/tokens`, …) during migration — see
+        // `rama_server::spa`.
+        // Two registrations: `/app` (the entry point) and the catch-all
+        // `/app/{*name}` (non-empty remainder) are distinct shapes for the
+        // matcher. The trailing-slash form `/app/` cannot be registered (the
+        // matcher trims trailing slashes on insert but not on lookup) —
+        // `spa::SpaNormalizeLayer` normalises it to `/app` before routing.
+        .with_get("/app", spa::spa_get)
+        .with_get("/app/{*name}", spa::spa_get)
 }
 
 /// The complete HTTP service: the router plus the layers that make it
@@ -412,6 +426,13 @@ pub fn service(
     (
         V1CorsLayer,
         first_run,
+        // Rewrites `/app/` → `/app` before the router looks the path up (the
+        // matcher trims a trailing slash on insert but not on lookup, so a
+        // literal `/app/` never matches). Sits *outside* the error handler:
+        // the handler requires `Error: Into<ErrorResponse>`, which an
+        // infallible service does not satisfy, and the rewrite only needs to
+        // run before route lookup — which happens at the router itself.
+        spa::SpaNormalizeLayer,
         ArcLayer::new(),
         ErrorHandlerLayer::default(),
     )

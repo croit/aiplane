@@ -1,0 +1,654 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "croit LLM Gateway — session API (/api/v0)",
+    "version": "0.1.0",
+    "description": "Session-authenticated JSON API used by the web UI (the SvelteKit SPA at /app and, during the migration, the legacy server-rendered pages).\n\nSCOPE (issue #22 phase 1): the /api/v0/* surface only. The OpenAI-compatible /v1/* proxy is documented in docs/gateway-api.md and is intentionally NOT part of this spec — it is a byte-relay to upstream providers whose schema is OpenAI's, not ours. /auth/* is a browser redirect flow (not JSON). The ~150 form-POST page routes are the legacy surface phases 3-5 delete.\n\nHand-maintained rather than derived from code annotations: the wire types in shared::api use jiff::Timestamp (no schemars derive) and the surface churns every phase of #22, so code-first annotations (utoipa) would be re-annotated constantly. THE CONTRACT IS ENFORCED, NOT ASPIRATIONAL: tests/it/openapi_drift.rs fails CI when this spec and the routes registered in src/rama_server/router.rs drift apart in either direction — exactly the shape the generated TS client (openapi-typescript, wired in phase 2) will trust.\n\nAuth: every endpoint is session-gated by the signed session cookie set at /auth/callback (401 OpenAI-envelope when absent/expired). RAG endpoints additionally require the admin role (403).",
+    "license": { "name": "AGPL-3.0-only" }
+  },
+  "servers": [{ "url": "/" }],
+  "security": [{ "sessionCookie": [] }],
+  "tags": [
+    { "name": "identity", "description": "Caller identity and profile preferences." },
+    { "name": "tokens", "description": "Gateway API token CRUD (bearer secrets for the /v1 surface)." },
+    { "name": "audio", "description": "Session-gated audio endpoints (transcription, TTS)." },
+    { "name": "push", "description": "Web Push subscription management." },
+    { "name": "feedback", "description": "Per-turn feedback (location fix, ask reply)." },
+    { "name": "rag", "description": "RAG collection management. All endpoints require the admin role." },
+    { "name": "comfyui", "description": "ComfyUI workflow catalog." }
+  ],
+  "paths": {
+    "/api/v0/me": {
+      "get": {
+        "tags": ["identity"],
+        "summary": "Caller identity, RBAC role ids, and granted tools",
+        "operationId": "getMe",
+        "responses": {
+          "200": {
+            "description": "The caller's identity.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Me" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/me/timezone": {
+      "post": {
+        "tags": ["identity"],
+        "summary": "Store the caller's IANA timezone",
+        "operationId": "setTimezone",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "required": ["timezone"], "properties": { "timezone": { "type": "string", "description": "IANA tz name, e.g. Europe/Berlin." } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" }, "timezone": { "type": "string" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/me/speech_voice": {
+      "post": {
+        "tags": ["identity"],
+        "summary": "Pick the caller's TTS voice",
+        "operationId": "setSpeechVoice",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "required": ["voice"], "properties": { "voice": { "type": "string" } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" }, "voice": { "type": "string" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/me/location": {
+      "post": {
+        "tags": ["identity"],
+        "summary": "Store a browser-located position for the user",
+        "operationId": "setLocation",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "required": ["lat", "lon"], "properties": { "lat": { "type": "number" }, "lon": { "type": "number" } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
+      "delete": {
+        "tags": ["identity"],
+        "summary": "Forget the stored position",
+        "operationId": "clearLocation",
+        "responses": {
+          "200": {
+            "description": "Cleared.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/tokens": {
+      "get": {
+        "tags": ["tokens"],
+        "summary": "List the caller's gateway tokens",
+        "operationId": "listTokens",
+        "responses": {
+          "200": {
+            "description": "All tokens owned by the caller (revoked included).",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/TokenSummary" } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
+      "post": {
+        "tags": ["tokens"],
+        "summary": "Mint a new gateway token",
+        "operationId": "createToken",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateTokenRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The token summary plus its plaintext secret (shown exactly once).",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateTokenResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/tokens/{id}": {
+      "delete": {
+        "tags": ["tokens"],
+        "summary": "Hard-delete a revoked token",
+        "operationId": "deleteToken",
+        "parameters": [{ "$ref": "#/components/parameters/TokenId" }],
+        "responses": {
+          "200": {
+            "description": "deleted=false if the row was missing, foreign, or still active.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/tokens/{id}/revoke": {
+      "post": {
+        "tags": ["tokens"],
+        "summary": "Revoke an active token",
+        "operationId": "revokeToken",
+        "parameters": [{ "$ref": "#/components/parameters/TokenId" }],
+        "responses": {
+          "200": {
+            "description": "revoked=false if it was already revoked or not the caller's.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RevokeResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/tokens/{id}/rotate": {
+      "post": {
+        "tags": ["tokens"],
+        "summary": "Re-mint an active token's secret",
+        "operationId": "rotateToken",
+        "parameters": [{ "$ref": "#/components/parameters/TokenId" }],
+        "responses": {
+          "200": {
+            "description": "The token summary plus the new plaintext secret (shown exactly once).",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateTokenResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/tokens/{id}/tools": {
+      "put": {
+        "tags": ["tokens"],
+        "summary": "Replace a token's tool configuration",
+        "operationId": "updateTokenTools",
+        "parameters": [{ "$ref": "#/components/parameters/TokenId" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateTokenToolsRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The applied configuration.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" }, "tools_enabled": { "type": "boolean" }, "disabled_tools": { "type": "array", "items": { "type": "string" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/transcriptions": {
+      "post": {
+        "tags": ["audio"],
+        "summary": "Whisper-compatible audio transcription (session-gated mirror of /v1/audio/transcriptions)",
+        "operationId": "transcribeAudio",
+        "requestBody": {
+          "required": true,
+          "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary" }, "model": { "type": "string" } } } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Transcription result (OpenAI shape).",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/transcription_models": {
+      "get": {
+        "tags": ["audio"],
+        "summary": "Models served by healthy transcription-pool backends",
+        "operationId": "listTranscriptionModels",
+        "responses": {
+          "200": {
+            "description": "Model id list.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "type": "string" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/speech": {
+      "post": {
+        "tags": ["audio"],
+        "summary": "Text-to-speech (session-gated mirror of /v1/audio/speech)",
+        "operationId": "synthesizeSpeech",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "required": ["model", "input", "voice"], "properties": { "model": { "type": "string" }, "input": { "type": "string" }, "voice": { "type": "string" }, "response_format": { "type": "string" } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Audio bytes.",
+            "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/push/config": {
+      "get": {
+        "tags": ["push"],
+        "summary": "Web Push availability and the VAPID public key",
+        "operationId": "getPushConfig",
+        "responses": {
+          "200": {
+            "description": "enabled=false when Web Push is unconfigured.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "publicKey": { "type": ["string", "null"] } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/push/subscribe": {
+      "post": {
+        "tags": ["push"],
+        "summary": "Register a browser PushSubscription",
+        "operationId": "pushSubscribe",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "description": "A W3C PushSubscription JSON (endpoint + keys{p256dh, auth}).", "required": ["endpoint"], "properties": { "endpoint": { "type": "string" }, "keys": { "type": "object", "properties": { "p256dh": { "type": "string" }, "auth": { "type": "string" } } } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/push/unsubscribe": {
+      "post": {
+        "tags": ["push"],
+        "summary": "Remove a browser PushSubscription",
+        "operationId": "pushUnsubscribe",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "required": ["endpoint"], "properties": { "endpoint": { "type": "string" } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Removed.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/me/location/feedback/{turn_id}": {
+      "post": {
+        "tags": ["feedback"],
+        "summary": "Answer a get_user_location browser-fix prompt for a turn",
+        "operationId": "locationFeedback",
+        "parameters": [{ "$ref": "#/components/parameters/TurnId" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "description": "BrowserFix: the user's fix (allow/deny + position)." } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Delivered to the waiting tool.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/me/ask/feedback/{turn_id}": {
+      "post": {
+        "tags": ["feedback"],
+        "summary": "Answer an ask_user prompt for a turn",
+        "operationId": "askFeedback",
+        "parameters": [{ "$ref": "#/components/parameters/TurnId" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "description": "AskReply: the user's answer." } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Delivered to the waiting tool.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/rag/providers": {
+      "get": {
+        "tags": ["rag"],
+        "summary": "Configured RAG source providers",
+        "operationId": "listRagProviders",
+        "responses": {
+          "200": {
+            "description": "Provider catalog.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v0/rag/profiles": {
+      "get": {
+        "tags": ["rag"],
+        "summary": "Saved RAG source profiles",
+        "operationId": "listRagProfiles",
+        "responses": {
+          "200": {
+            "description": "Profile list.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "type": "object" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v0/rag/collections": {
+      "get": {
+        "tags": ["rag"],
+        "summary": "List RAG collections",
+        "operationId": "listRagCollections",
+        "responses": {
+          "200": {
+            "description": "Collection list.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/RagCollection" } } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "tags": ["rag"],
+        "summary": "Create a RAG collection",
+        "operationId": "createRagCollection",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "description": "CreateRequest: name, source config, profile reference." } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The created collection.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RagCollection" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v0/rag/collections/{id}": {
+      "get": {
+        "tags": ["rag"],
+        "summary": "Fetch one RAG collection",
+        "operationId": "getRagCollection",
+        "parameters": [{ "$ref": "#/components/parameters/RagCollectionId" }],
+        "responses": {
+          "200": {
+            "description": "The collection.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RagCollection" } } }
+          },
+          "404": { "description": "No such collection." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "patch": {
+        "tags": ["rag"],
+        "summary": "Update a RAG collection (source config / enablement)",
+        "operationId": "updateRagCollection",
+        "parameters": [{ "$ref": "#/components/parameters/RagCollectionId" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "description": "UpdateRequest: the fields to change." } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The collection after the update.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RagCollection" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "delete": {
+        "tags": ["rag"],
+        "summary": "Delete a RAG collection",
+        "operationId": "deleteRagCollection",
+        "parameters": [{ "$ref": "#/components/parameters/RagCollectionId" }],
+        "responses": {
+          "200": {
+            "description": "deleted=true when the row existed.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "deleted": { "type": "boolean" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v0/rag/collections/{id}/reindex": {
+      "post": {
+        "tags": ["rag"],
+        "summary": "Trigger an incremental re-index of a collection",
+        "operationId": "reindexRagCollection",
+        "parameters": [{ "$ref": "#/components/parameters/RagCollectionId" }],
+        "responses": {
+          "200": {
+            "description": "The collection with its updated index state.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RagCollection" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v0/comfyui/catalog": {
+      "get": {
+        "tags": ["comfyui"],
+        "summary": "Bundled ComfyUI workflow catalog",
+        "operationId": "getComfyuiCatalog",
+        "responses": {
+          "200": {
+            "description": "Workflow catalog.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v0/comfyui/reload": {
+      "post": {
+        "tags": ["comfyui"],
+        "summary": "Re-scan the workflow directory",
+        "operationId": "reloadComfyuiCatalog",
+        "responses": {
+          "200": {
+            "description": "Reloaded.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "id",
+        "description": "Signed session cookie minted by GET /auth/callback (rama_server::session::COOKIE_NAME). The scheme type is apiKey because OpenAPI has no first-class signed-cookie type."
+      }
+    },
+    "parameters": {
+      "TokenId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "Token id (uuid).",
+        "schema": { "type": "string" }
+      },
+      "TurnId": {
+        "name": "turn_id",
+        "in": "path",
+        "required": true,
+        "description": "Chat turn id.",
+        "schema": { "type": "string" }
+      },
+      "RagCollectionId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "RAG collection id (row id).",
+        "schema": { "type": "integer" }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "No valid session — OpenAI-shaped error envelope.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "Forbidden": {
+        "description": "Authenticated but lacking the required role — OpenAI-shaped error envelope.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      }
+    },
+    "schemas": {
+      "Me": {
+        "type": "object",
+        "description": "shared::api::Me — identity + role grants.",
+        "required": ["id", "email", "roles", "role_ids", "allowed_tools"],
+        "properties": {
+          "id": { "type": "string" },
+          "email": { "type": "string" },
+          "name": { "type": ["string", "null"] },
+          "roles": { "type": "array", "items": { "type": "string" }, "description": "Raw OIDC claim values (e.g. groups)." },
+          "role_ids": { "type": "array", "items": { "type": "string" }, "description": "RBAC role ids after [rbac.mapping]." },
+          "allowed_tools": { "type": "array", "items": { "$ref": "#/components/schemas/ToolSummary" } }
+        }
+      },
+      "ToolSummary": {
+        "type": "object",
+        "required": ["id", "name", "description"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      },
+      "TokenSummary": {
+        "type": "object",
+        "required": ["id", "name", "created_at", "expires_at", "revoked", "tools_enabled", "disabled_tools"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time", "description": "jiff Timestamp (RFC 3339)." },
+          "last_used_at": { "type": ["string", "null"], "format": "date-time" },
+          "expires_at": { "type": "string", "format": "date-time" },
+          "revoked": { "type": "boolean" },
+          "tools_enabled": { "type": "boolean", "description": "Master tool switch; false (default) means pure passthrough." },
+          "disabled_tools": { "type": "array", "items": { "type": "string" }, "description": "Toggle keys disabled for this token; unlisted capabilities are on." }
+        }
+      },
+      "CreateTokenRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "ttl_days": { "type": ["integer", "null"], "description": "Lifetime in days; server default when null." },
+          "tools_enabled": { "type": ["boolean", "null"], "description": "Defaults to false — a token is born without tool access." },
+          "disabled_tools": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "CreateTokenResponse": {
+        "type": "object",
+        "required": ["token", "plaintext"],
+        "properties": {
+          "token": { "$ref": "#/components/schemas/TokenSummary" },
+          "plaintext": { "type": "string", "description": "gwk_<64 hex>. Shown exactly once." }
+        }
+      },
+      "RevokeResponse": {
+        "type": "object",
+        "required": ["revoked"],
+        "properties": { "revoked": { "type": "boolean", "description": "false if already revoked / missing / foreign." } }
+      },
+      "DeleteResponse": {
+        "type": "object",
+        "required": ["deleted"],
+        "properties": { "deleted": { "type": "boolean", "description": "false if missing / foreign / still active." } }
+      },
+      "UpdateTokenToolsRequest": {
+        "type": "object",
+        "required": ["tools_enabled"],
+        "properties": {
+          "tools_enabled": { "type": "boolean" },
+          "disabled_tools": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "RagCollection": {
+        "type": "object",
+        "description": "rag_api::CollectionView — one RAG collection with its source config and index state. Detailed field-by-field shape lands with the phase-4 RAG port.",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "description": "shared::api::ErrorEnvelope — the gateway's uniform error shape.",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["message", "type", "code"],
+            "properties": {
+              "message": { "type": "string" },
+              "type": { "type": "string" },
+              "code": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

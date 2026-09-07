@@ -38,6 +38,7 @@ const UNDOCUMENTED: &[&str] = &[
     "/sw.js",                // PWA service worker — static baked-in asset
     "/favicon.ico",          // PWA favicon — static baked-in asset
     "/icons/*",              // PWA icon PNGs — static baked-in assets
+    "/app/*",                // SvelteKit SPA static shell (served from disk)
     "/auth/*",               // OIDC browser flow (covered in prose)
     "/theme/toggle",         // UI affordance, not an API surface
     "/nav/toggle",           // UI affordance — collapse/expand a sidebar nav-group

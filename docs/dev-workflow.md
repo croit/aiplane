@@ -21,13 +21,16 @@ The gateway binary `include_bytes!`s its static assets (`app.css`, `datastar.js`
 | Run gateway against local config | `mise run dev` |
 | Run a stub gateway for UI debugging (seeded session, mock LLM) | `mise run dev-ui` |
 | Build the gateway debug binary (no run) | `mise run dev-build` |
+| **SvelteKit SPA** dev server (Vite HMR on :5173, proxies API to :8080) | `mise run dev-web` |
+| Build the SvelteKit SPA into `target/frontend/build/` | `mise run build-web` |
+| svelte-check (TS + a11y diagnostics) on the SPA | `mise run check-web` |
 | Fast type-check across the workspace | `mise run check` |
 | **Release** build (slow, for deploys) | `mise run build` |
 | Tests — one crate (the iteration loop) | `mise run test-crate <crate> [filter]` |
 | Tests — whole workspace | `mise run test` |
 | Tests with stdout visible | `mise run test-nocapture` |
 | Lint — one crate | `mise run lint-crate <crate>` |
-| Lint (clippy `-D warnings` + `fmt --check` + `tsc --noEmit`) | `mise run lint` |
+| Lint (clippy `-D warnings` + `fmt --check` + `tsc --noEmit` + svelte-check) | `mise run lint` |
 | Apply Rust formatting | `mise run fmt` |
 | Tailwind / daisyUI CSS — one-shot | `mise run build-css` |
 | Tailwind / daisyUI CSS — live rebuild | `mise run watch-css` |
@@ -297,12 +300,29 @@ The repo's README/docs screenshots are produced this way — see the `take-scree
 
 Every code path under test (cookie parsing, session lookup, RBAC, flash cookies, datastar's preventDefault, …) is the same one production runs. The only things faked are the upstream LLM and the OIDC handoff.
 
+## The SvelteKit SPA (`web/`, issue #22)
+
+The new UI (a SvelteKit SPA mounted at `/app` while the server-rendered pages are migrated away) has **two** development modes:
+
+**Hot-reload mode — the everyday loop.** Two terminals:
+
+```bash
+mise run dev       # gateway (Rust) on :8080
+mise run dev-web   # Vite dev server on :5173, HMR on every Svelte save
+```
+
+Open `http://localhost:5173/app`. Vite proxies `/api`, `/v1`, and `/auth` to the gateway on :8080 (`web/vite.config.ts`), so the session cookie and every backend call behave exactly as in production — while a Svelte-file save re-renders in <100 ms with **no Rust rebuild**. This is the point of the migration: UI iteration no longer pays the Rust compile.
+
+**Served mode — what production looks like.** `mise run dev` additionally sets `GATEWAY_STATIC_DIR=target/frontend/build` (built by its `build-web` dep), so the gateway serves the compiled SPA at `http://localhost:8080/app`. Use this to verify the built artifact, cache headers, and the history fallback. No Node runs in production: the container image just `COPY`s the built `target/frontend/build/` directory in (see the Dockerfile) and the Rust binary serves it (`crates/gateway/src/rama_server/spa.rs`).
+
+The SPA's API contract is `docs/openapi.json`, enforced against `router.rs` by the `openapi_drift` test — adding a `/api/v0/*` route without a spec entry fails CI, and vice versa.
+
 ## CI
 
 GitHub Actions is wired up in `.github/workflows/ci.yml`. It triggers on pushes to `main`, on tags, and on pull requests. The toolchain comes from `mise.toml` via `jdx/mise-action`; `Swatinem/rust-cache` caches the cargo registry + `target/` across runs (CI does **not** use sccache). There are four jobs:
 
-1. **ci** — runs `mise run ci`, which fans out via mise's DAG to lint + test + release-build (each transitively depending on `build-assets`). It then builds the `sandbox-runner` binary and uploads the `gateway-binaries` artifact: `target/release/{gateway, sandbox-runner, typst, libpdfium.so}` (7-day retention). Debuginfo is dropped from the dev/test profiles (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`) so the multi-profile compile doesn't run the runner out of disk.
-2. **container** (needs `ci`) — downloads the artifact and builds the production image from `/Dockerfile` with `docker/build-push-action`. On pull requests it builds with `push: false` (validation only). On the default branch and on tags it pushes to GHCR (`ghcr.io/croit/llm-gateway`) with tags from `docker/metadata-action` (branch, tag, `sha-<short>`, and `latest` on the default branch).
+1. **ci** — runs `mise run ci`, which fans out via mise's DAG to lint + test + release-build + SPA-build (each transitively depending on `build-assets`). It then builds the `sandbox-runner` binary and uploads two artifacts: `gateway-binaries` (`target/release/{gateway, sandbox-runner, typst, libpdfium.so}`) and `gateway-spa` (`target/frontend/build/`) (7-day retention). Debuginfo is dropped from the dev/test profiles (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`) so the multi-profile compile doesn't run the runner out of disk.
+2. **container** (needs `ci`) — downloads the artifacts and builds the production image from `/Dockerfile` with `docker/build-push-action`. On pull requests it builds with `push: false` (validation only). On the default branch and on tags it pushes to GHCR (`ghcr.io/croit/llm-gateway`) with tags from `docker/metadata-action` (branch, tag, `sha-<short>`, and `latest` on the default branch).
 3. **sandbox-image** (needs `ci`, `push` events only) — builds and pushes the code-execution sandbox gold image (`ghcr.io/croit/llm-gateway-sandbox`) from `sandbox-image/Containerfile`.
 4. **sandbox-runner-image** (needs `ci`, `push` events only) — builds and pushes the sandbox runner image (`ghcr.io/croit/llm-gateway-sandbox-runner`) from `deploy/sandbox-runner/Containerfile`.
 

@@ -64,6 +64,13 @@ fn serves_before_setup(path: &str) -> bool {
     if path.starts_with("/assets/") || path.starts_with("/icons/") {
         return true;
     }
+    // The SvelteKit SPA static shell (served from disk under `/app`). These
+    // are unauthenticated static files; the SPA's own API calls self-protect
+    // with 401/403, and the OIDC login correctly 303s to the wizard. Loading
+    // the shell before setup is harmless and lets the client render.
+    if path == "/app" || path.starts_with("/app/") {
+        return true;
+    }
     if matches!(
         path,
         "/favicon.ico" | "/manifest.webmanifest" | "/sw.js" | "/lang" | "/theme/toggle"
@@ -169,6 +176,8 @@ mod tests {
             "/manifest.webmanifest",
             "/icons/icon-192.png",
             "/lang",
+            "/app",
+            "/app/tokens",
         ] {
             assert!(serves_before_setup(path), "{path} must serve before setup");
         }

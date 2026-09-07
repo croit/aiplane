@@ -555,7 +555,8 @@ openai api chat_completions.create -m <model-id> -g user "Hello"
 | `POST /impersonate/stop` | session cookie | End an active impersonation and return to your own account. |
 | `/feedback`, `/feedback/extract`, `/feedback/config` | session cookie | Feedback widget: file a GitHub issue, turn a voice transcript into structured fields, and report whether the feature is configured. Enabled at `/admin/settings` → Notifications. |
 | `/api/v0/push/config`, `/api/v0/push/subscribe`, `/api/v0/push/unsubscribe` | session cookie | Web Push (turn-complete notifications): fetch the VAPID public key + enabled flag, register a browser subscription, and forget one. Governed by the Web Push settings at `/admin/settings` → Notifications. |
-| `/api/v0/*` | session cookie | JSON APIs backing the UI. |
+| `/api/v0/*` | session cookie | JSON APIs backing the UI. The `/api/v0` contract is specified in [`docs/openapi.json`](docs/openapi.json) and kept in sync with the router by a CI drift test. |
+| `/app/*` | public (shell) / session cookie (API calls) | The **SvelteKit SPA** (under construction — see issue #22): a client-rendered app served as static files by the gateway. Built with `mise run build-web`, deployed via the container image; during migration it coexists with the server-rendered pages above. |
 
 The `/v1/*` endpoints require `Authorization: Bearer gwk_…` (`/v1/messages` also accepts the same token in `x-api-key`, which is where an Anthropic-format client puts it). Client `Authorization` headers are dropped at the proxy and the configured upstream key (if any) is injected; hop-by-hop headers are filtered both ways; upstream 4xx/5xx are relayed verbatim. The UI pages use the signed session cookie minted at OIDC login.
 
@@ -569,7 +570,8 @@ CI builds `target/release/gateway` and publishes a runtime container image (`deb
 
 ```bash
 mise run build                    # produces target/release/gateway (and fetches the typst CLI)
-docker build -t gateway:dev .     # Dockerfile COPYs the release binary into the image
+mise run build-web                # produces target/frontend/build (the SvelteKit SPA)
+docker build -t gateway:dev .     # Dockerfile COPYs the release binary + SPA into the image
 ```
 
 [`deploy/quadlet/`](deploy/quadlet/) ships a hardened systemd-podman Quadlet (read-only rootfs, all capabilities dropped, runs as an unprivileged uid). Its [README](deploy/quadlet/README.md) is the full walkthrough; in short:

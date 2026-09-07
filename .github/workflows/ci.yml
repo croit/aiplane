@@ -139,6 +139,17 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+      # The SvelteKit SPA build (adapter-static output, staged into
+      # target/frontend/build/ by the `build-web` mise task). A separate
+      # artifact because it is a whole directory the container job COPYs;
+      # `gateway-binaries` is executables-only.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gateway-spa
+          path: target/frontend/build/
+          retention-days: 7
+          if-no-files-found: error
+
   container:
     name: container image
     # Gated on `secrets` as well as `ci`: a red secret scan must not be able to
@@ -158,6 +169,13 @@ jobs:
         with:
           name: gateway-binaries
           path: target/release
+
+      # Same for the SPA build — the Dockerfile COPYs target/frontend/build
+      # (staged there by the `build-web` mise task in the `ci` job).
+      - uses: actions/download-artifact@v8
+        with:
+          name: gateway-spa
+          path: target/frontend/build
 
       # upload-artifact does not preserve the executable bit; restore it so the
       # COPYed /app/gateway is runnable.

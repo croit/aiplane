@@ -129,8 +129,8 @@ NEXTCLOUD_PASS="$PASSWORD" \
 dir = "{{ config_root }}"
 
 [tasks.dev]
-description = "Run the gateway (debug build) against the local config. Pair with `mise run watch-css` / `mise run watch-js` in another terminal for live asset reload."
-depends = ["build-assets"]
+description = "Run the gateway (debug build) against the local config. Pair with `mise run watch-css` / `mise run watch-js` in another terminal for live asset reload (legacy pages) or `mise run dev-web` for the SvelteKit SPA at :5173 (issue #22) with HMR against this server."
+depends = ["build-assets", "build-web"]
 run = """
 # GATEWAY_SESSION_KEY is mandatory (the gateway refuses to boot without it —
 # see load_session_secret in crates/gateway/src/main.rs). Generate one on first
@@ -144,7 +144,11 @@ if [ ! -f "$KEY_FILE" ]; then
   chmod 600 "$KEY_FILE"
   echo "generated a persistent dev session key at $KEY_FILE (gitignored)"
 fi
-GATEWAY_SESSION_KEY="$(cat "$KEY_FILE")" exec cargo run --package gateway
+# GATEWAY_STATIC_DIR serves the SvelteKit SPA at /app (issue #22) from the
+# `mise run build-web` output. A missing directory is harmless — only /app
+# then 503s, the rest of the gateway is unaffected. Override with your own
+# path (e.g. a prebuilt copy) to point at a different build.
+exec env GATEWAY_STATIC_DIR="${GATEWAY_STATIC_DIR:-target/frontend/build}" GATEWAY_SESSION_KEY="$(cat "$KEY_FILE")" cargo run --package gateway
 """
 dir = "{{ config_root }}"
 
@@ -248,6 +252,43 @@ run = "npm --prefix ui run typecheck"
 description = "Composite: produce both the CSS and JS bundles. Used as the dep for everything that builds the gateway binary so a fresh checkout produces working static assets without manual steps."
 depends = ["build-css", "build-js"]
 
+# --- web/ — the SvelteKit SPA (issue #22) --------------------------------
+# Dev loop: `mise run dev` (gateway :8080) + `mise run dev-web` (Vite :5173
+# with /api, /v1, /auth proxied to :8080, HMR on every Svelte save — zero
+# Rust rebuilds for UI work). Prod: `build-web` emits adapter-static output
+# into target/frontend/build/, which the Dockerfile copies into the image
+# and the gateway serves at /app from GATEWAY_STATIC_DIR.
+
+[tasks.web-install]
+description = "Install web/ node_modules (SvelteKit SPA). Re-runs only when package.json/lock change."
+sources = ["web/package.json", "web/package-lock.json"]
+outputs = ["web/node_modules/.package-lock.json"]
+run = "npm --prefix web ci --no-audit --no-fund"
+
+[tasks.dev-web]
+description = "SvelteKit dev server (Vite, :5173) with /api, /v1, /auth proxied to the gateway on :8080 — run alongside `mise run dev`. HMR on save; no Rust rebuild on UI changes."
+depends = ["web-install"]
+run = "npm --prefix web run dev"
+
+[tasks.build-web]
+description = "Build the SvelteKit SPA (adapter-static) into target/frontend/build/. The Dockerfile COPYs that directory into the image; `cargo run` serves it at /app when GATEWAY_STATIC_DIR points there."
+depends = ["web-install"]
+sources = ["web/src/**/*", "web/static/**/*", "web/vite.config.ts", "web/package.json"]
+outputs = ["target/frontend/build/index.html"]
+run = """
+set -eu
+npm --prefix web run build
+rm -rf target/frontend
+mkdir -p target/frontend
+cp -r web/build target/frontend/build
+"""
+
+[tasks.check-web]
+description = "svelte-check (typescript + a11y + Svelte diagnostics) across web/src. The SPA counterpart of `typecheck`."
+depends = ["web-install"]
+sources = ["web/src/**/*", "web/vite.config.ts"]
+run = "npm --prefix web run check"
+
 [tasks.dev-ui]
 description = "Stub gateway for local UI debugging: real rama server on :8080 against a wiremock chat + transcription backend with a pre-seeded session. Prints the session cookie to stdout so playwright (or curl) can drive any authed page (/, /tokens, /chat, /theme/toggle, /api/v0/*) without OIDC. See docs/dev-workflow.md → 'Debugging the UI'."
 depends = ["build-assets"]
@@ -275,8 +316,8 @@ dir = "{{ config_root }}"
 run = "node --test 'ui/ts/**/*.test.mjs' 'crates/session-core/ui/ts/**/*.test.mjs'"
 
 [tasks.lint]
-description = "Clippy + rustfmt + tsc --noEmit."
-depends = ["build-assets", "typecheck"]
+description = "Clippy + rustfmt + tsc --noEmit + svelte-check."
+depends = ["build-assets", "typecheck", "check-web"]
 run = [
     "cargo fmt --all -- --check",
     "cargo clippy --workspace --all-targets -- -D warnings",
@@ -299,12 +340,12 @@ description = "Scan only the staged diff for secrets (gitleaks). Run by the pre-
 run = "gitleaks git . --staged --redact --no-banner"
 
 [tasks.ci]
-description = "Everything CI runs: lint + tests (Rust + browser TS) + release build of the gateway binary. mise fans out via the DAG. Locally prefer `verify` — same gate, minus the release build you don't need."
-depends = ["lint", "test", "test-js", "build"]
+description = "Everything CI runs: lint + tests (Rust + browser TS) + release build of the gateway binary + SPA build. mise fans out via the DAG. Locally prefer `verify` — same gate, minus the release build you don't need."
+depends = ["lint", "test", "test-js", "build", "build-web"]
 
 [tasks.verify]
-description = "The local pre-push gate: lint + Rust tests + browser-TS tests. Same checks as `ci` minus the release build — nothing in `ci` catches a compile error that `test` doesn't, and the release build is a THIRD full compile of the workspace (dev for clippy, test for nextest, release for the binary). Run this once before pushing; use `test-crate` / `lint-crate` while iterating."
-depends = ["lint", "test", "test-js"]
+description = "The local pre-push gate: lint + Rust tests + browser-TS tests + SPA build. Same checks as `ci` minus the release build — nothing in `ci` catches a compile error that `test` doesn't, and the release build is a THIRD full compile of the workspace (dev for clippy, test for nextest, release for the binary). Run this once before pushing; use `test-crate` / `lint-crate` while iterating."
+depends = ["lint", "test", "test-js", "build-web"]
 
 [tasks.test-crate]
 description = "Tests for ONE crate — the iteration loop. `mise run test-crate gateway-web [filter]`. Seconds instead of the ~20 min a full `test` costs after touching a root crate, because it links that crate's test binaries only."
