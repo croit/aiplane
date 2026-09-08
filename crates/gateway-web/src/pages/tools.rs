@@ -22,8 +22,8 @@ use serde::Deserialize;
 
 use super::tool_toggles::{self, ToggleCtx};
 use super::{
-    NavItem, fetch_sidebar_chat, is_admin, nav_or_html_page, read_form,
-    require_session_or_redirect, toast,
+    NavItem, fetch_sidebar_chat, is_admin, json_error, json_ok, nav_or_html_page, read_form,
+    require_session_json, require_session_or_redirect, toast,
 };
 use session_core::chrome::{
     Flash, FlashKind, NavSections, Theme, is_datastar_request, sse_patch, sse_response, sse_toast,
@@ -119,6 +119,89 @@ struct ToggleForm {
     /// Present (any value) when the toggle is checked; absent when the
     /// browser leaves an unchecked checkbox out of the form body.
     enabled: Option<String>,
+}
+
+/// GET /api/v0/tools — the caller's tool toggles as data (issue #22 P3):
+/// every tool their roles grant, with its per-user enabled state and the
+/// same grouping the page renders.
+pub async fn tools_list_json(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let entries = tool_toggles::entries_for_roles(&state, &user.roles);
+    let disabled = user_tool_prefs::disabled_for_user(&state.db, &user.id)
+        .await
+        .unwrap_or_default();
+    let tools: Vec<_> = entries
+        .into_iter()
+        .map(|e| {
+            serde_json::json!({
+                "key": e.key,
+                "title": e.title,
+                "description": e.description,
+                "category": e.category.label(),
+                "enabled": !disabled.contains(&e.key),
+            })
+        })
+        .collect();
+    json_ok(
+        rama::http::StatusCode::OK,
+        serde_json::json!({ "tools": tools }),
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct ToolsToggleBody {
+    pub tool_key: String,
+    pub enabled: bool,
+}
+
+/// POST /api/v0/tools/toggle — set one tool's on/off state for the caller
+/// (explicit value; idempotent, unlike the checkbox-presence form).
+pub async fn tools_toggle_json(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    use rama::http::StatusCode;
+
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+    };
+    let parsed: ToolsToggleBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("parsing the toggle body: {err}"),
+            );
+        }
+    };
+    // Refuse keys the caller's roles don't grant — toggling a tool you
+    // cannot use would render a switch that lies.
+    let entries = tool_toggles::entries_for_roles(&state, &user.roles);
+    if !entries.iter().any(|e| e.key == parsed.tool_key) {
+        return json_error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such tool for your roles",
+        );
+    }
+    match user_tool_prefs::set(&state.db, &user.id, &parsed.tool_key, parsed.enabled).await {
+        Ok(()) => json_ok(
+            StatusCode::OK,
+            serde_json::json!({ "tool_key": parsed.tool_key, "enabled": parsed.enabled }),
+        ),
+        Err(err) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        ),
+    }
 }
 
 /// POST /tools/toggle — persist one tool's on/off state for the caller

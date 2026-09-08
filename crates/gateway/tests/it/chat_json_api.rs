@@ -556,3 +556,72 @@ async fn the_models_endpoint_lists_offered_chat_models() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// The usage endpoint answers with the aggregate envelope, self-scoped for
+/// a plain user.
+#[tokio::test]
+async fn the_usage_endpoint_aggregates_the_callers_window() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let app = router(state);
+
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/usage?period=24h".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(body["period"], "24h");
+    assert_eq!(body["scope"], "self");
+    assert!(body["summary"]["requests"].is_i64());
+    assert!(body["currency"].is_string());
+
+    // Anonymous → 401.
+    let resp = app
+        .serve(Request::get("/api/v0/usage").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// The tools endpoints list the caller's granted tools and round-trip a
+/// toggle — refusing keys the roles don't grant.
+#[tokio::test]
+async fn tool_toggles_round_trip_and_refuse_ungranted_keys() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let app = router(state.clone());
+
+    let resp = app
+        .serve(json_req(Method::GET, "/api/v0/tools".into(), &cookie, None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    let tools = body["tools"].as_array().unwrap();
+    assert!(tools.iter().all(|t| t["enabled"].is_boolean()));
+    // The empty RBAC resolver grants nothing in this harness…
+    assert!(tools.is_empty());
+
+    // …so any toggle is refused rather than stored as a lying switch.
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            "/api/v0/tools/toggle".into(),
+            &cookie,
+            Some(r#"{"tool_key":"search_web","enabled":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Anonymous → 401.
+    let resp = app
+        .serve(Request::get("/api/v0/tools").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

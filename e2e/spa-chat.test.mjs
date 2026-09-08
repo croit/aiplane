@@ -91,8 +91,14 @@ test("a turn streams into the SPA over the JSON event protocol", async (t) => {
     // click can't race hydration under a loaded test run.
     await page.locator("textarea").waitFor({ state: "visible", timeout: 5000 });
 
-    // Compose: model + message, send.
-    await page.locator('input[aria-label="Model"]').fill("demo-model");
+    // Compose: model + message, send. The picker is a <select> when the
+    // gateway offers models, free-text otherwise.
+    const picker = page.locator('[aria-label="Model"]');
+    if ((await picker.evaluate((el) => el.tagName)) === "SELECT") {
+        await picker.selectOption("demo-model");
+    } else {
+        await picker.fill("demo-model");
+    }
     await page.locator('textarea').fill("hello from the e2e suite");
     await page.locator('button:has-text("Send")').click();
 

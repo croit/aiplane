@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use jiff::{SignedDuration, Timestamp};
-use rama::http::service::web::extract::{Path, State};
+use rama::http::service::web::extract::{Path, Query, State};
 use rama::http::service::web::response::IntoResponse;
 use rama::http::{Request, Response, StatusCode, header};
 use serde_json::json;
@@ -374,11 +374,121 @@ pub async fn rotate_token(
     })
 }
 
-/// GET /api/v0/transcription_models — names of every `[[models]]`
-/// rule whose pool is a `PoolKind::Transcription`. The chat composer
-/// fetches this on render to populate the voice-model dropdown; the
-/// list is empty when no transcription pool is configured (and the UI
-/// hides the mic button in that case).
+/// Query params of `GET /api/v0/usage` (public: rama's `Query` extractor
+/// requires the type to match the handler's visibility).
+#[derive(serde::Deserialize, Default)]
+pub struct UsageQuery {
+    period: Option<String>,
+    scope: Option<String>,
+    source: Option<String>,
+    backend: Option<String>,
+    token: Option<String>,
+}
+
+/// GET /api/v0/usage — the usage dashboard as data (issue #22 P3): the same
+/// aggregates, pickers, in-force limits, and unpriced-model hints the
+/// server-rendered page computes, for the SPA's usage view.
+pub async fn usage(
+    State(state): State<Arc<RamaState>>,
+    Query(q): Query<UsageQuery>,
+    req: Request,
+) -> Response {
+    use gateway_core::server::db::usage as usage_db;
+    use gateway_core::server::db::usage::{Filter, Period};
+
+    let session = match require_session(&state, &req).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    let user = match gateway_core::server::db::users::find_by_id(&state.db, &session.user_id).await
+    {
+        Ok(Some(u)) => u,
+        _ => return unauthorized("no active session — sign in at /auth/login"),
+    };
+    // "All users" is admin-only; a non-admin passing ?scope=all is ignored —
+    // the same clamp the page applies.
+    let role_ids = state.role_ids_for(&user.roles);
+    let show_all = state.rbac.is_admin(&role_ids) && q.scope.as_deref() == Some("all");
+    let period = Period::parse(q.period.as_deref());
+    let tz = session
+        .timezone
+        .clone()
+        .or_else(|| user.timezone.clone())
+        .unwrap_or_else(|| "UTC".to_string());
+    let now = jiff::Timestamp::now();
+    let bounds = usage_db::period_bounds(period, &tz, now);
+    let filter = Filter {
+        source: q.source.clone().filter(|s| !s.is_empty()),
+        backend: q.backend.clone().filter(|s| !s.is_empty()),
+        user_id: (!show_all).then(|| user.id.clone()),
+        token_id: match q.token.as_deref() {
+            None | Some("") => None,
+            // `none` selects the rows that carry no token at all; empty means
+            // "every token", so the two cannot share a spelling.
+            Some("none") => Some(String::new()),
+            Some(id) => Some(id.to_string()),
+        },
+    };
+    let retention = state.config().usage.retention_days;
+    let agg = usage_db::aggregate(&state.db, bounds, &filter, retention, now, show_all)
+        .await
+        .unwrap_or_default();
+    let backends = usage_db::distinct_backends(&state.db, bounds)
+        .await
+        .unwrap_or_default();
+    let tokens: Vec<_> =
+        usage_db::distinct_tokens(&state.db, bounds, (!show_all).then_some(user.id.as_str()))
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id, label)| json!({ "id": id, "label": label }))
+            .collect();
+    let limit_status = state.enforcer.statuses(&user.id, &role_ids).await;
+    // Models with traffic but no configured price → spend under-counted.
+    let priced = gateway_core::server::db::model_defaults::all_prices(&state.db)
+        .await
+        .unwrap_or_default();
+    let unpriced: Vec<String> = agg
+        .by_model
+        .iter()
+        .filter(|g| {
+            !priced.contains_key(&g.key)
+                && (g.total_tokens > 0 || g.input_units > 0.0 || g.output_units > 0.0)
+        })
+        .map(|g| g.key.clone())
+        .collect();
+
+    let limits: Vec<_> = limit_status
+        .iter()
+        .map(|l| {
+            json!({
+                "model": l.model,
+                "dimension": l.dimension.as_str(),
+                "window": l.window.as_str(),
+                "limit": l.limit,
+                "used": l.used,
+                "refreshes_at": l.refreshes_at.to_string(),
+            })
+        })
+        .collect();
+
+    json_ok(&json!({
+        "period": period.as_str(),
+        "scope": if show_all { "all" } else { "self" },
+        "currency": state.config().usage.currency,
+        "summary": agg.summary,
+        "by_user": agg.by_user,
+        "by_token": agg.by_token,
+        "by_backend": agg.by_backend,
+        "by_source": agg.by_source,
+        "by_model": agg.by_model,
+        "backends": backends,
+        "tokens": tokens,
+        "limits": limits,
+        "unpriced_models": unpriced,
+    }))
+}
+
 /// GET /api/v0/models — the caller's selectable chat models, with the
 /// data-handling flags the compliance banner shows and the configured
 /// default promoted. The SPA's model picker; the legacy page builds the

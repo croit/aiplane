@@ -1378,6 +1378,15 @@ pub(crate) async fn require_session_json(
 /// (`{"error":{"message","type","code"}}`). Mirrors
 /// `gateway::rama_server::api::error_envelope` — the SPA sees one
 /// contract, so the two must stay in sync.
+pub(crate) fn json_ok(status: rama::http::StatusCode, body: serde_json::Value) -> Response {
+    use rama::http::header;
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(body.to_string().into())
+        .expect("static JSON response")
+}
+
 pub(crate) fn json_error(status: rama::http::StatusCode, code: &str, message: &str) -> Response {
     use rama::http::header;
     let body = serde_json::json!({
@@ -1527,7 +1536,7 @@ pub use tokens::{
 // Per-user tool on/off page (`/tools` + `/tools/toggle`). Available to
 // every signed-in user; the list is scoped to the tools their roles
 // grant. Re-export the two handler entry points for the router.
-mod tools;
+pub mod tools;
 pub use tools::{tools_index, tools_toggle};
 
 // ---------------------------------------------------------------------------

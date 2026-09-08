@@ -1548,6 +1548,207 @@
      }
     }
    }
+  },
+  "/api/v0/usage": {
+   "get": {
+    "tags": [
+     "usage"
+    ],
+    "summary": "The usage dashboard as data",
+    "description": "Aggregates for one window, the pickers' distinct values, the caller's in-force limits, and models with traffic but no configured price (spend under-counted). ?scope=all is admin-only and clamped to self for everyone else, exactly like the server-rendered page.",
+    "operationId": "getUsage",
+    "parameters": [
+     {
+      "name": "period",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "today",
+        "24h",
+        "this_week",
+        "last_week",
+        "this_month",
+        "last_month"
+       ],
+       "default": "today"
+      }
+     },
+     {
+      "name": "scope",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "self",
+        "all"
+       ]
+      }
+     },
+     {
+      "name": "source",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "backend",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "token",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "description": "Token id, or `none` for the no-token rows (chat, scheduled runs)."
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The aggregates.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UsageResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   }
+  },
+  "/api/v0/tools": {
+   "get": {
+    "tags": [
+     "tools"
+    ],
+    "summary": "The caller's tool toggles",
+    "description": "Every tool the caller's roles grant, grouped-ready, with the per-user enabled state. Switching a tool off hides it from every conversation for the account.",
+    "operationId": "listTools",
+    "responses": {
+     "200": {
+      "description": "The tool list.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "tools": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "key": {
+              "type": "string"
+             },
+             "title": {
+              "type": "string"
+             },
+             "description": {
+              "type": "string"
+             },
+             "category": {
+              "type": "string"
+             },
+             "enabled": {
+              "type": "boolean"
+             }
+            },
+            "required": [
+             "key",
+             "title",
+             "description",
+             "category",
+             "enabled"
+            ]
+           }
+          }
+         },
+         "required": [
+          "tools"
+         ]
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   }
+  },
+  "/api/v0/tools/toggle": {
+   "post": {
+    "tags": [
+     "tools"
+    ],
+    "summary": "Set one tool's enabled state",
+    "description": "Explicit value, idempotent. 404 when the caller's roles don't grant the tool — a switch that lied would be worse than a refusal.",
+    "operationId": "toggleTool",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "tool_key",
+         "enabled"
+        ],
+        "properties": {
+         "tool_key": {
+          "type": "string"
+         },
+         "enabled": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The stored state.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "tool_key": {
+           "type": "string"
+          },
+          "enabled": {
+           "type": "boolean"
+          }
+         },
+         "required": [
+          "tool_key",
+          "enabled"
+         ]
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
   }
  },
  "components": {
@@ -2105,6 +2306,166 @@
     "properties": {
      "pinned": {
       "type": "boolean"
+     }
+    }
+   },
+   "UsageResponse": {
+    "type": "object",
+    "properties": {
+     "period": {
+      "type": "string"
+     },
+     "scope": {
+      "type": "string",
+      "enum": [
+       "self",
+       "all"
+      ]
+     },
+     "currency": {
+      "type": "string"
+     },
+     "summary": {
+      "$ref": "#/components/schemas/UsageSummary"
+     },
+     "by_user": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/UsageGroup"
+      }
+     },
+     "by_token": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/UsageGroup"
+      }
+     },
+     "by_backend": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/UsageGroup"
+      }
+     },
+     "by_source": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/UsageGroup"
+      }
+     },
+     "by_model": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/UsageGroup"
+      }
+     },
+     "backends": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "tokens": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "label": {
+         "type": "string"
+        }
+       }
+      }
+     },
+     "limits": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "model": {
+         "type": "string",
+         "nullable": true
+        },
+        "dimension": {
+         "type": "string"
+        },
+        "window": {
+         "type": "string"
+        },
+        "limit": {
+         "type": "number"
+        },
+        "used": {
+         "type": "number"
+        },
+        "refreshes_at": {
+         "type": "string"
+        }
+       }
+      }
+     },
+     "unpriced_models": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Models with traffic this window but no configured price."
+     }
+    },
+    "required": [
+     "period",
+     "scope",
+     "currency",
+     "summary"
+    ]
+   },
+   "UsageSummary": {
+    "type": "object",
+    "properties": {
+     "requests": {
+      "type": "integer"
+     },
+     "total_tokens": {
+      "type": "integer"
+     },
+     "total_cost": {
+      "type": "number"
+     },
+     "unique_users": {
+      "type": "integer"
+     },
+     "errors": {
+      "type": "integer"
+     }
+    }
+   },
+   "UsageGroup": {
+    "type": "object",
+    "properties": {
+     "key": {
+      "type": "string"
+     },
+     "label": {
+      "type": "string"
+     },
+     "requests": {
+      "type": "integer"
+     },
+     "total_tokens": {
+      "type": "integer"
+     },
+     "input_units": {
+      "type": "number"
+     },
+     "output_units": {
+      "type": "number"
+     },
+     "cost": {
+      "type": "number"
+     },
+     "errors": {
+      "type": "integer"
      }
     }
    }

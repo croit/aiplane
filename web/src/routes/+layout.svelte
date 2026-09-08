@@ -49,6 +49,9 @@
 		<div class="flex-1 gap-2">
 			<a href="{base}" class="text-lg font-semibold">LLM Gateway</a>
 			<a href="{base}/chat" class="btn btn-ghost btn-sm">Chat</a>
+			<a href="{base}/tokens" class="btn btn-ghost btn-sm">Tokens</a>
+			<a href="{base}/usage" class="btn btn-ghost btn-sm">Usage</a>
+			<a href="{base}/tools" class="btn btn-ghost btn-sm">Tools</a>
 			{#if me.value}
 				<span class="badge badge-outline badge-sm">{me.value.email}</span>
 			{/if}

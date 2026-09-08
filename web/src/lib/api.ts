@@ -155,6 +155,29 @@ export const api = {
 	listChatModels: () =>
 		request<{ models: { id: string; gdpr: boolean; nda: boolean }[] }>('/api/v0/models'),
 
+	/** GET /api/v0/tools — the caller's tool toggles. */
+	listTools: () =>
+		request<{
+			tools: { key: string; title: string; description: string; category: string; enabled: boolean }[];
+		}>('/api/v0/tools'),
+
+	/** POST /api/v0/tools/toggle — set one tool's state (explicit, idempotent). */
+	toggleTool: (toolKey: string, enabled: boolean) =>
+		request<{ tool_key: string; enabled: boolean }>('/api/v0/tools/toggle', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ tool_key: toolKey, enabled })
+		}),
+
+	/** GET /api/v0/usage — the usage dashboard aggregates (issue #22 P3). */
+	usage: (params: { period?: string; scope?: 'all' | 'self'; source?: string; backend?: string; token?: string } = {}) => {
+		const qs = new URLSearchParams(
+			Object.entries(params).filter(([, v]) => v !== undefined && v !== '') as [string, string][]
+		);
+		const suffix = qs.size > 0 ? `?${qs}` : '';
+		return request<import('./usage-types.js').UsageResponse>(`/api/v0/usage${suffix}`);
+	},
+
 	/** GET /api/v0/me — identity + role grants; 401 when signed out. */
 	me: () => request<Me>('/api/v0/me'),
 

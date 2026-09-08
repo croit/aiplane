@@ -491,7 +491,7 @@ impl Filter {
 
 /// Top-line totals for a window. `total_cost` is in the deployment currency
 /// (`[usage] currency`), summed from the immutable per-row `cost`.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct Summary {
     pub requests: i64,
     pub total_tokens: i64,
@@ -501,7 +501,7 @@ pub struct Summary {
 }
 
 /// One grouped breakdown row (by user / token / backend / source / model).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct GroupCount {
     /// The grouping key (user_id, token id, backend name, source, or model).
     pub key: String,
@@ -517,7 +517,7 @@ pub struct GroupCount {
 }
 
 /// Everything the usage page renders for one window+filter.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct Aggregates {
     pub summary: Summary,
     /// Empty for the self-view (a user is the only user in their own data).
