@@ -315,6 +315,10 @@ sources = [
 dir = "{{ config_root }}"
 run = "node --test 'ui/ts/**/*.test.mjs' 'crates/session-core/ui/ts/**/*.test.mjs'"
 
+[tasks.gen-api-client]
+description = "Regenerate web/src/lib/schema.d.ts from docs/openapi.json — run after changing any /api/v0 route; the SPA's typed client types come from here."
+run = "cd web && npx openapi-typescript ../docs/openapi.json -o src/lib/schema.d.ts"
+
 [tasks.test-web]
 description = "Unit-test the SvelteKit SPA's TypeScript (node --test, Node's own type stripping). Tests live next to their module as `*.test.ts` in web/src/lib — the pure, framework-free halves of the SPA (chat event protocol, markdown), so they pin wire behaviour without jsdom."
 sources = ["web/src/lib/**/*.ts"]
