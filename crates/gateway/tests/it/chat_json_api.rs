@@ -625,3 +625,136 @@ async fn tool_toggles_round_trip_and_refuse_ungranted_keys() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// The turn actions: edit rewrites + regenerates, retry drops + regenerates,
+/// share toggles, export answers markdown.
+#[tokio::test]
+async fn turn_actions_edit_retry_share_export() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["v1"], 0).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    // First turn.
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"hello"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_settled(&state, &session.id).await;
+
+    // Export carries the turn text.
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/export.md", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let exported = body_string(resp).await;
+    assert!(exported.contains("hello"), "{exported}");
+
+    // Share on → the flag is stored.
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/share", session.id),
+            &cookie,
+            Some(r#"{"shared": true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Edit the user turn: rewrites + regenerates (202).
+    let turns = chat::list_turns(&state.db, &session.id).await.unwrap();
+    let user_turn = turns
+        .iter()
+        .find(|t| t.turn.role == chat::TurnRole::User)
+        .unwrap();
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!(
+                "/api/v0/chat/sessions/{}/turns/{}/edit",
+                session.id, user_turn.turn.id
+            ),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"edited message"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::ACCEPTED,
+        "{}",
+        body_string(resp).await
+    );
+    wait_settled(&state, &session.id).await;
+
+    // The rewrite + the regenerated reply are both there.
+    let turns = chat::list_turns(&state.db, &session.id).await.unwrap();
+    assert!(
+        turns
+            .iter()
+            .any(|t| t.turn.user_content.as_deref() == Some("edited message"))
+    );
+
+    // Retry the assistant reply: downstream dropped, one new assistant row.
+    let before = chat::list_turns(&state.db, &session.id)
+        .await
+        .unwrap()
+        .len();
+    let turns = chat::list_turns(&state.db, &session.id).await.unwrap();
+    let assistant = turns
+        .iter()
+        .find(|t| t.turn.role == chat::TurnRole::Assistant)
+        .unwrap();
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!(
+                "/api/v0/chat/sessions/{}/turns/{}/retry",
+                session.id, assistant.turn.id
+            ),
+            &cookie,
+            Some(r#"{"model":"model-a"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_settled(&state, &session.id).await;
+    let after = chat::list_turns(&state.db, &session.id)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(
+        after, before,
+        "retry swaps the assistant row, keeping the count"
+    );
+}
+
+/// Wait (bounded) until no turn of the session is in progress.
+async fn wait_settled(state: &gateway::rama_server::RamaState, session_id: &str) {
+    for _ in 0..100 {
+        let busy = chat::list_turns(&state.db, session_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|t| t.turn.status == chat::TurnStatus::InProgress);
+        if !busy {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("turn never settled");
+}

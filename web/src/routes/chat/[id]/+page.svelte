@@ -121,6 +121,48 @@
 		}
 	}
 
+	async function retry(turnId: string) {
+		if (!model.trim() || streaming) return;
+		try {
+			await fetch(`/api/v0/chat/sessions/${id}/turns/${turnId}/retry`, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ model: model.trim() })
+			});
+			controller?.attach();
+		} catch (err) {
+			notice = String(err);
+		}
+	}
+
+	async function editTurn(turnId: string, current: string) {
+		const text = window.prompt('Edit your message:', current)?.trim();
+		if (!text || !model.trim() || streaming || text === current) return;
+		try {
+			await fetch(`/api/v0/chat/sessions/${id}/turns/${turnId}/edit`, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ model: model.trim(), message: text })
+			});
+			controller?.attach();
+		} catch (err) {
+			notice = String(err);
+		}
+	}
+
+	async function toggleShare() {
+		const shared = !(session?.shared ?? false);
+		await fetch(`/api/v0/chat/sessions/${id}/share`, {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ shared })
+		});
+		await loadMeta();
+	}
+
 	async function stop() {
 		try {
 			await api.cancelChatTurn(id);
@@ -163,6 +205,10 @@
 		{session?.title?.trim() || 'Untitled chat'}
 	</h1>
 	<a href="{base}/chat" class="btn btn-ghost btn-sm">All chats</a>
+	<button class="btn btn-ghost btn-sm" onclick={toggleShare}>
+		{session?.shared ? 'Unshare' : 'Share'}
+	</button>
+	<a class="btn btn-ghost btn-sm" href="/api/v0/chat/sessions/{id}/export.md">Export</a>
 </div>
 
 {#if notice}
@@ -205,6 +251,11 @@
 		{#if entry.turn.role === 'user'}
 			<div class="chat chat-end">
 				<div class="chat-bubble chat-bubble-primary whitespace-pre-wrap">{entry.turn.user_content}</div>
+				{#if !streaming}
+					<div class="chat-footer opacity-60">
+						<button class="btn btn-ghost btn-xs" onclick={() => editTurn(entry.turn.id, entry.turn.user_content ?? '')}>Edit</button>
+					</div>
+				{/if}
 			</div>
 		{:else}
 			<div class="chat chat-start">
@@ -245,6 +296,11 @@
 							<div class="alert alert-error py-2"><span>{entry.turn.error_message}</span></div>
 						{:else if entry.turn.status === 'cancelled'}
 							<div class="text-xs text-base-content/50">stopped</div>
+						{/if}
+						{#if entry.turn.status !== 'in_progress' && !streaming}
+							<div class="flex gap-1 mt-1">
+								<button class="btn btn-ghost btn-xs" onclick={() => retry(entry.turn.id)}>Retry</button>
+							</div>
 						{/if}
 					</div>
 				</div>

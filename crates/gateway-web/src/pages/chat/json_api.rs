@@ -30,6 +30,8 @@ use serde_json::json;
 
 use gateway_runtime::rama_server::state::RamaState;
 
+use gateway_core::server::db::users::User;
+
 use super::{ChatSubmit, RequestCtx, SubmitTurnError, submit_turn};
 use crate::pages::{json_error, require_session_json};
 use session_core::db as chat;
@@ -423,4 +425,398 @@ async fn readable_session(
             &err.to_string(),
         )),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Turn actions (retry/edit/share/fork/effort/export) — issue #22 P5/P6.
+
+#[derive(serde::Deserialize)]
+pub struct RetryBody {
+    pub model: String,
+}
+
+/// POST /api/v0/chat/sessions/{id}/turns/{turn_id}/retry — drop this
+/// assistant reply + everything below, regenerate from the preceding user
+/// turn. 202 + turn ids like a fresh submit; the reply streams on /events.
+pub async fn turn_retry(
+    Path((session_id, turn_id)): Path<(String, String)>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+    };
+    let parsed: RetryBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("parsing the retry body: {err}"),
+            );
+        }
+    };
+    let turn = match load_owned_turn(&state, &user, &session_id, &turn_id).await {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+    if turn.role != chat::TurnRole::Assistant {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "only assistant turns can be retried",
+        );
+    }
+    let orphaned = super::doomed_attachments(&state, &session_id, turn.seq).await;
+    if let Err(err) = chat::delete_turns_from_seq(&state.db, &session_id, turn.seq).await {
+        return json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        );
+    }
+    super::reclaim_attachments(&state, orphaned);
+    match start_regeneration_json(&state, &user, &session_id, parsed.model).await {
+        Ok(ids) => ok_json(StatusCode::ACCEPTED, ids),
+        Err(resp) => resp,
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct EditBody {
+    pub model: String,
+    pub message: String,
+}
+
+/// POST /api/v0/chat/sessions/{id}/turns/{turn_id}/edit — rewrite a user
+/// message, drop everything below, regenerate.
+pub async fn turn_edit(
+    Path((session_id, turn_id)): Path<(String, String)>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+    };
+    let parsed: EditBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("parsing the edit body: {err}"),
+            );
+        }
+    };
+    let text = parsed.message.trim().to_string();
+    if text.is_empty() {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "the message must not be empty",
+        );
+    }
+    let turn = match load_owned_turn(&state, &user, &session_id, &turn_id).await {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+    if turn.role != chat::TurnRole::User {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "only your own messages can be edited",
+        );
+    }
+    if let Err(err) = chat::update_user_turn_content(&state.db, &session_id, &turn_id, &text).await
+    {
+        return json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        );
+    }
+    let orphaned = super::doomed_attachments(&state, &session_id, turn.seq + 1).await;
+    if let Err(err) = chat::delete_turns_from_seq(&state.db, &session_id, turn.seq + 1).await {
+        return json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        );
+    }
+    super::reclaim_attachments(&state, orphaned);
+    match start_regeneration_json(&state, &user, &session_id, parsed.model).await {
+        Ok(ids) => ok_json(StatusCode::ACCEPTED, ids),
+        Err(resp) => resp,
+    }
+}
+
+/// The regeneration half shared by retry + edit: reserve the worker, insert
+/// the in-progress assistant row, spawn. Returns the ids a fresh submit
+/// would return.
+async fn start_regeneration_json(
+    state: &Arc<RamaState>,
+    user: &User,
+    session_id: &str,
+    model: String,
+) -> Result<serde_json::Value, Response> {
+    let assistant_turn_id = uuid::Uuid::new_v4().to_string();
+    let worker = match state
+        .chats
+        .register(&user.id, &assistant_turn_id, session_id)
+    {
+        session_core::RegisterOutcome::Registered { worker } => worker,
+        session_core::RegisterOutcome::Busy { .. } => {
+            return Err(json_error(
+                StatusCode::CONFLICT,
+                "turn_in_progress",
+                "this user's previous turn is still streaming — cancel it first",
+            ));
+        }
+    };
+    let assistant_turn = match chat::create_assistant_turn_in_progress(
+        &state.db,
+        session_id,
+        &assistant_turn_id,
+        &model,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(err) => {
+            state.chats.clear(&user.id, &worker);
+            return Err(json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            ));
+        }
+    };
+    let _ = chat::touch_session(&state.db, session_id).await;
+    super::spawn_assistant_worker(
+        state,
+        user,
+        session_id,
+        &assistant_turn_id,
+        &model,
+        &worker,
+        super::RequestCtx {
+            client_ip: None,
+            secure: state.public_url().starts_with("https://"),
+            voice_mode: false,
+        },
+    )
+    .await;
+    Ok(serde_json::json!({
+        "user_turn_id": serde_json::Value::Null,
+        "assistant_turn_id": assistant_turn.id,
+    }))
+}
+
+async fn load_owned_turn(
+    state: &RamaState,
+    user: &User,
+    session_id: &str,
+    turn_id: &str,
+) -> Result<chat::Turn, Response> {
+    match chat::get_session(&state.db, &user.id, session_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return Err(json_error(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "no such conversation",
+            ));
+        }
+        Err(err) => {
+            return Err(json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            ));
+        }
+    }
+    match chat::get_turn(&state.db, session_id, turn_id).await {
+        Ok(Some(t)) => Ok(t),
+        Ok(None) => Err(json_error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such turn",
+        )),
+        Err(err) => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct ShareBody {
+    pub shared: bool,
+}
+
+/// POST /api/v0/chat/sessions/{id}/share — toggle the read-only share flag
+/// (any signed-in user with the id may then read).
+pub async fn session_share(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if !user_owns(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+    };
+    let parsed: ShareBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("parsing the share body: {err}"),
+            );
+        }
+    };
+    match chat::set_shared(&state.db, &user.id, &session_id, parsed.shared).await {
+        Ok(_) => ok_json(
+            StatusCode::OK,
+            serde_json::json!({ "shared": parsed.shared }),
+        ),
+        Err(err) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        ),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct EffortBody {
+    /// fast | standard | deep | max
+    pub effort: String,
+}
+
+/// POST /api/v0/chat/sessions/{id}/effort — the per-conversation reasoning
+/// effort knob.
+pub async fn session_effort(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if !user_owns(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+    };
+    let parsed: EffortBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("parsing the effort body: {err}"),
+            );
+        }
+    };
+    if !matches!(parsed.effort.as_str(), "fast" | "standard" | "deep" | "max") {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "effort must be fast | standard | deep | max",
+        );
+    }
+    match gateway_core::server::db::chat_session_settings::set_effort(
+        &state.db,
+        &session_id,
+        &parsed.effort,
+    )
+    .await
+    {
+        Ok(()) => ok_json(
+            StatusCode::OK,
+            serde_json::json!({ "effort": parsed.effort }),
+        ),
+        Err(err) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        ),
+    }
+}
+
+/// GET /api/v0/chat/sessions/{id}/export.md — the conversation as a
+/// self-contained Markdown document.
+pub async fn session_export_markdown(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    use rama::http::header;
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let session = match readable_session(&state, &user.id, &session_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found_conversation(),
+        Err(resp) => return resp,
+    };
+    let turns = match chat::list_turns(&state.db, &session_id).await {
+        Ok(t) => t,
+        Err(err) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            );
+        }
+    };
+    let opts = session_core::export::ExportOpts {
+        base_url: &state.public_url(),
+    };
+    let body = session_core::export::to_markdown(&session, &turns, &opts);
+    let filename = format!(
+        "{}.md",
+        session
+            .title
+            .as_deref()
+            .map(super::first_message_title)
+            .unwrap_or_else(|| session.id.clone())
+            .replace(['/', ' '], "-")
+    );
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", filename.trim_matches('-')),
+        )
+        .body(body.into())
+        .expect("static file response")
 }

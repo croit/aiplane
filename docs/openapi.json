@@ -4008,6 +4008,206 @@
      }
     }
    }
+  },
+  "/api/v0/chat/sessions/{id}/share": {
+   "post": {
+    "tags": [
+     "chat"
+    ],
+    "summary": "Toggle the read-only share flag",
+    "operationId": "shareChatSession",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "shared"
+        ],
+        "properties": {
+         "shared": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Toggled."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/chat/sessions/{id}/effort": {
+   "post": {
+    "tags": [
+     "chat"
+    ],
+    "summary": "Set the reasoning-effort knob",
+    "operationId": "setChatEffort",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "effort"
+        ],
+        "properties": {
+         "effort": {
+          "type": "string",
+          "enum": [
+           "fast",
+           "standard",
+           "deep",
+           "max"
+          ]
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Set."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/chat/sessions/{id}/export.md": {
+   "get": {
+    "tags": [
+     "chat"
+    ],
+    "summary": "Export the conversation as Markdown",
+    "operationId": "exportChatMarkdown",
+    "responses": {
+     "200": {
+      "description": "A text/markdown attachment."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/chat/sessions/{id}/turns/{turn_id}/retry": {
+   "post": {
+    "tags": [
+     "chat"
+    ],
+    "summary": "Regenerate an assistant reply",
+    "operationId": "retryChatTurn",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "model"
+        ],
+        "properties": {
+         "model": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "202": {
+      "description": "Downstream turns dropped; the new turn ids — the reply streams on the events endpoint."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "409": {
+      "description": "A turn is still streaming."
+     }
+    }
+   }
+  },
+  "/api/v0/chat/sessions/{id}/turns/{turn_id}/edit": {
+   "post": {
+    "tags": [
+     "chat"
+    ],
+    "summary": "Edit a user message and regenerate",
+    "operationId": "editChatTurn",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "model",
+         "message"
+        ],
+        "properties": {
+         "model": {
+          "type": "string"
+         },
+         "message": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "202": {
+      "description": "Rewritten, downstream dropped, regenerating."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "409": {
+      "description": "A turn is still streaming."
+     }
+    }
+   }
   }
  },
  "components": {

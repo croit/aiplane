@@ -614,6 +614,26 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         .with_get(
             "/api/v0/chat/sessions/{id}/events",
             pages::chat::json_api::session_events,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{id}/share",
+            pages::chat::json_api::session_share,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{id}/effort",
+            pages::chat::json_api::session_effort,
+        )
+        .with_get(
+            "/api/v0/chat/sessions/{id}/export.md",
+            pages::chat::json_api::session_export_markdown,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{id}/turns/{turn_id}/retry",
+            pages::chat::json_api::turn_retry,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{id}/turns/{turn_id}/edit",
+            pages::chat::json_api::turn_edit,
         );
     // Debug-only dev/e2e seeding. Registered before the SPA catch-all (which
     // must remain the last routes) and absent from release binaries entirely —
