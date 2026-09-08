@@ -1378,6 +1378,23 @@ pub(crate) async fn require_session_json(
 /// (`{"error":{"message","type","code"}}`). Mirrors
 /// `gateway::rama_server::api::error_envelope` — the SPA sees one
 /// contract, so the two must stay in sync.
+/// The admin twin of [`require_session_json`]: session + admin role, with
+/// JSON envelopes (401 / 403) instead of HTML.
+pub(crate) async fn require_admin_json(
+    state: &RamaState,
+    req: &Request,
+) -> Result<(Session, users::User), Response> {
+    let (session, user) = require_session_json(state, req).await?;
+    if !is_admin(state, &user) {
+        return Err(json_error(
+            rama::http::StatusCode::FORBIDDEN,
+            "forbidden",
+            "admin role required",
+        ));
+    }
+    Ok((session, user))
+}
+
 pub(crate) fn json_ok(status: rama::http::StatusCode, body: serde_json::Value) -> Response {
     use rama::http::header;
     Response::builder()
@@ -1536,6 +1553,7 @@ pub use tokens::{
 // Per-user tool on/off page (`/tools` + `/tools/toggle`). Available to
 // every signed-in user; the list is scoped to the tools their roles
 // grant. Re-export the two handler entry points for the router.
+pub mod json_admin;
 pub mod tools;
 pub use tools::{tools_index, tools_toggle};
 
@@ -1597,7 +1615,7 @@ pub use connectors::{
 // Admin (model defaults, future operator tooling). Gated on the
 // `admin` role at the handler entry; non-admins never see the
 // sidebar entry either.
-mod admin;
+pub(crate) mod admin;
 pub use admin::{
     models_clear as admin_models_clear, models_defaults_save as admin_models_defaults_save,
     models_index as admin_models_index, models_save as admin_models_save,

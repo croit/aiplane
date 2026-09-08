@@ -572,6 +572,16 @@ pub async fn all_prices(
 
 /// Drop the row entirely. No-op if it didn't exist — callers don't
 /// need to pre-check.
+/// Every model with a stored overrides row — the admin editor shows these
+/// even when the registry no longer offers the model.
+pub async fn all_names(pool: &Pool) -> Result<Vec<String>, DbError> {
+    let rows: Vec<String> =
+        sqlx::query_scalar("SELECT model_name FROM model_defaults ORDER BY model_name")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows)
+}
+
 pub async fn delete(pool: &Pool, model_name: &str) -> Result<(), DbError> {
     sqlx::query("DELETE FROM model_defaults WHERE model_name = ?")
         .bind(model_name)

@@ -383,6 +383,80 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         .with_get("/api/v0/comfyui/catalog", comfyui_api::catalog)
         .with_get("/api/v0/models", api::chat_models)
         .with_get("/api/v0/usage", api::usage)
+        // Admin JSON API for the SPA (issue #22 P4).
+        .with_get("/api/v0/admin/groups", pages::json_admin::groups_list)
+        .with_put("/api/v0/admin/groups", pages::json_admin::groups_save)
+        .with_delete(
+            "/api/v0/admin/groups/{name}",
+            pages::json_admin::groups_delete,
+        )
+        .with_get("/api/v0/admin/users", pages::json_admin::users_list)
+        .with_post(
+            "/api/v0/admin/users/{id}/impersonate",
+            pages::json_admin::users_impersonate,
+        )
+        .with_post(
+            "/api/v0/admin/impersonate/stop",
+            pages::json_admin::impersonate_stop,
+        )
+        .with_get("/api/v0/admin/models", pages::json_admin::models_list)
+        .with_put("/api/v0/admin/models", pages::json_admin::models_save)
+        .with_delete(
+            "/api/v0/admin/models/{name}",
+            pages::json_admin::models_delete,
+        )
+        .with_put(
+            "/api/v0/admin/models/defaults",
+            pages::json_admin::models_feature_default,
+        )
+        .with_put(
+            "/api/v0/admin/models/search",
+            pages::json_admin::models_search_save,
+        )
+        .with_get("/api/v0/admin/limits", pages::json_admin::limits_list)
+        .with_post("/api/v0/admin/limits", pages::json_admin::limits_save)
+        .with_delete(
+            "/api/v0/admin/limits/{id}",
+            pages::json_admin::limits_delete,
+        )
+        .with_get("/api/v0/admin/settings", pages::json_admin::settings_list)
+        .with_post("/api/v0/admin/settings", pages::json_admin::settings_save)
+        .with_post(
+            "/api/v0/admin/settings/clear",
+            pages::json_admin::settings_clear,
+        )
+        .with_get("/api/v0/admin/tokens", pages::json_admin::tokens_list)
+        .with_put(
+            "/api/v0/admin/tokens/{id}/models",
+            pages::json_admin::tokens_models,
+        )
+        .with_get("/api/v0/admin/upstreams", pages::json_admin::topology_list)
+        .with_get(
+            "/api/v0/admin/upstreams/events",
+            pages::json_admin::topology_events,
+        )
+        .with_put("/api/v0/admin/backends", pages::json_admin::backends_save)
+        .with_delete(
+            "/api/v0/admin/backends/{name}",
+            pages::json_admin::backends_delete,
+        )
+        .with_post(
+            "/api/v0/admin/backends/{name}/enabled",
+            pages::json_admin::backends_enabled,
+        )
+        .with_put("/api/v0/admin/pools", pages::json_admin::pools_save)
+        .with_delete(
+            "/api/v0/admin/pools/{name}",
+            pages::json_admin::pools_delete,
+        )
+        .with_put(
+            "/api/v0/admin/upstreams/fallback",
+            pages::json_admin::topology_fallback,
+        )
+        .with_post(
+            "/api/v0/admin/upstreams/reload",
+            pages::json_admin::topology_reload,
+        )
         .with_get("/api/v0/tools", pages::tools::tools_list_json)
         .with_post("/api/v0/tools/toggle", pages::tools::tools_toggle_json)
         // Chat JSON API for the SvelteKit SPA (issue #22 phase 2). The

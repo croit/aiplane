@@ -247,8 +247,25 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
             );
         }
     };
+    match apply_model_form(&state, &form).await {
+        Ok(()) => toast(
+            FlashKind::Success,
+            t_args(
+                lang,
+                "admin-saved-model",
+                &i18n::args([("model", form.model_name.clone().into())]),
+            ),
+        ),
+        Err(e) => toast(FlashKind::Error, e),
+    }
+}
+
+/// The shared core of the model-overrides save (form route + JSON API):
+/// validate every field, then write either the price-only slice or the
+/// whole row. `Err` carries the human-readable failure.
+pub(crate) async fn apply_model_form(state: &RamaState, form: &SaveForm) -> Result<(), String> {
     if form.model_name.is_empty() {
-        return toast(FlashKind::Error, t(lang, "admin-missing-model-name"));
+        return Err("a model name is required".into());
     }
 
     // ---- validate every field before touching the DB ----
@@ -264,33 +281,19 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
     let input_price = match parse_price(&form.input_price) {
         Ok(p) => p,
         Err(v) => {
-            return toast(
-                FlashKind::Error,
-                t_args(
-                    lang,
-                    "admin-price-invalid",
-                    &i18n::args([("value", v.into())]),
-                ),
-            );
+            return Err(format!("not a valid price: {v}"));
         }
     };
     let output_price = match parse_price(&form.output_price) {
         Ok(p) => p,
         Err(v) => {
-            return toast(
-                FlashKind::Error,
-                t_args(
-                    lang,
-                    "admin-price-invalid",
-                    &i18n::args([("value", v.into())]),
-                ),
-            );
+            return Err(format!("not a valid price: {v}"));
         }
     };
     let pricing_unit = db::PricingUnit::parse(&form.pricing_unit);
 
     if form.price_only == "1" {
-        return match db::set_pricing_with_unit(
+        return db::set_pricing_with_unit(
             &state.db,
             &form.model_name,
             input_price,
@@ -298,38 +301,14 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
             pricing_unit,
         )
         .await
-        {
-            Ok(()) => toast(
-                FlashKind::Success,
-                t_args(
-                    lang,
-                    "admin-saved-model",
-                    &i18n::args([("model", form.model_name.clone().into())]),
-                ),
-            ),
-            Err(err) => toast(
-                FlashKind::Error,
-                t_args(
-                    lang,
-                    "admin-db-upsert-error",
-                    &i18n::args([("err", err.to_string().into())]),
-                ),
-            ),
-        };
+        .map_err(|e| e.to_string());
     }
     let context_window = match form.context_window.trim() {
         "" => None,
         s => match s.parse::<i64>() {
             Ok(n) if n >= 1 => Some(n),
             _ => {
-                return toast(
-                    FlashKind::Error,
-                    t_args(
-                        lang,
-                        "admin-context-window-invalid",
-                        &i18n::args([("value", s.to_string().into())]),
-                    ),
-                );
+                return Err(format!("context window must be a whole number ≥ 1: {s}"));
             }
         },
     };
@@ -337,14 +316,7 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
         "" | "auto" => None,
         s @ ("none" | "qwen" | "openai" | "glm" | "anthropic") => Some(s.to_string()),
         other => {
-            return toast(
-                FlashKind::Error,
-                t_args(
-                    lang,
-                    "admin-unknown-reasoning-style",
-                    &i18n::args([("style", other.to_string().into())]),
-                ),
-            );
+            return Err(format!("unknown reasoning style: {other}"));
         }
     };
     let budget = |s: &str| -> Result<Option<i64>, String> {
@@ -354,11 +326,7 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
         }
         match s.parse::<i64>() {
             Ok(n) if n >= 1 => Ok(Some(n)),
-            _ => Err(t_args(
-                lang,
-                "admin-budget-not-positive",
-                &i18n::args([("value", s.to_string().into())]),
-            )),
+            _ => Err(format!("budget must be a whole number ≥ 1: {s}")),
         }
     };
     let effort = |s: &str| -> Result<Option<String>, String> {
@@ -369,11 +337,7 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
         if ReasoningStyle::Glm.effort_levels().contains(&s) {
             Ok(Some(s.to_string()))
         } else {
-            Err(t_args(
-                lang,
-                "admin-unknown-reasoning-effort",
-                &i18n::args([("value", s.to_string().into())]),
-            ))
+            Err(format!("unknown reasoning effort: {s}"))
         }
     };
     let overrides = match (|| -> Result<db::ReasoningOverrideCols, String> {
@@ -387,20 +351,13 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
         })
     })() {
         Ok(c) => c,
-        Err(e) => return toast(FlashKind::Error, e),
+        Err(e) => return Err(e),
     };
     let toml = form.defaults_toml.trim();
     if !toml.is_empty()
         && let Err(err) = merge::parse_defaults(&form.defaults_toml)
     {
-        return toast(
-            FlashKind::Error,
-            t_args(
-                lang,
-                "admin-invalid-toml",
-                &i18n::args([("err", err.to_string().into())]),
-            ),
-        );
+        return Err(format!("invalid defaults TOML: {err}"));
     }
 
     let tri = |s: &str| -> Option<bool> {
@@ -433,24 +390,9 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
             fallback_tools: fb(&form.fallback_tools),
         },
     };
-    match db::set_all(&state.db, &form.model_name, &fields).await {
-        Ok(()) => toast(
-            FlashKind::Success,
-            t_args(
-                lang,
-                "admin-saved-model",
-                &i18n::args([("model", form.model_name.clone().into())]),
-            ),
-        ),
-        Err(err) => toast(
-            FlashKind::Error,
-            t_args(
-                lang,
-                "admin-db-upsert-error",
-                &i18n::args([("err", err.to_string().into())]),
-            ),
-        ),
-    }
+    db::set_all(&state.db, &form.model_name, &fields)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// POST /admin/models/clear — delete a model's stored overrides entirely,
@@ -735,50 +677,50 @@ struct SearchForm {
 /// The consolidated per-model save form. Every field is optional / blank =
 /// "clear this facet"; the row itself is kept (delete it via `models_clear`).
 #[derive(Default, serde::Deserialize)]
-struct SaveForm {
-    model_name: String,
+pub(crate) struct SaveForm {
+    pub(crate) model_name: String,
     #[serde(default)]
-    input_price: String,
+    pub(crate) input_price: String,
     #[serde(default)]
-    output_price: String,
+    pub(crate) output_price: String,
     #[serde(default)]
-    pricing_unit: String,
+    pub(crate) pricing_unit: String,
     #[serde(default)]
-    price_only: String,
+    pub(crate) price_only: String,
     #[serde(default)]
-    context_window: String,
+    pub(crate) context_window: String,
     #[serde(default)]
-    reasoning_style: String,
+    pub(crate) reasoning_style: String,
     #[serde(default)]
-    budget_standard: String,
+    pub(crate) budget_standard: String,
     #[serde(default)]
-    budget_deep: String,
+    pub(crate) budget_deep: String,
     #[serde(default)]
-    budget_max: String,
+    pub(crate) budget_max: String,
     #[serde(default)]
-    effort_standard: String,
+    pub(crate) effort_standard: String,
     #[serde(default)]
-    effort_deep: String,
+    pub(crate) effort_deep: String,
     #[serde(default)]
-    effort_max: String,
+    pub(crate) effort_max: String,
     #[serde(default)]
-    cap_vision: String,
+    pub(crate) cap_vision: String,
     #[serde(default)]
-    cap_audio_input: String,
+    pub(crate) cap_audio_input: String,
     #[serde(default)]
-    cap_pdf_input: String,
+    pub(crate) cap_pdf_input: String,
     #[serde(default)]
-    cap_tools: String,
+    pub(crate) cap_tools: String,
     #[serde(default)]
-    cap_parallel_tools: String,
+    pub(crate) cap_parallel_tools: String,
     #[serde(default)]
-    cap_structured_output: String,
+    pub(crate) cap_structured_output: String,
     #[serde(default)]
-    fallback_vision: String,
+    pub(crate) fallback_vision: String,
     #[serde(default)]
-    fallback_tools: String,
+    pub(crate) fallback_tools: String,
     #[serde(default)]
-    defaults_toml: String,
+    pub(crate) defaults_toml: String,
 }
 
 // ---------------------------------------------------------------------------

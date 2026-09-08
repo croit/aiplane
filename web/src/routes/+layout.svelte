@@ -52,6 +52,9 @@
 			<a href="{base}/tokens" class="btn btn-ghost btn-sm">Tokens</a>
 			<a href="{base}/usage" class="btn btn-ghost btn-sm">Usage</a>
 			<a href="{base}/tools" class="btn btn-ghost btn-sm">Tools</a>
+			{#if me.value?.role_ids?.includes('admin')}
+				<a href="{base}/admin/groups" class="btn btn-ghost btn-sm">Admin</a>
+			{/if}
 			{#if me.value}
 				<span class="badge badge-outline badge-sm">{me.value.email}</span>
 			{/if}

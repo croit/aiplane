@@ -1749,6 +1749,1068 @@
      }
     }
    }
+  },
+  "/api/v0/admin/groups": {
+   "get": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "List RBAC groups",
+    "operationId": "listAdminGroups",
+    "responses": {
+     "200": {
+      "description": "Groups with mappings + grants, plus the pickers' option sets.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   },
+   "put": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Upsert a group",
+    "operationId": "saveAdminGroup",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "name"
+        ],
+        "properties": {
+         "name": {
+          "type": "string"
+         },
+         "description": {
+          "type": "string"
+         },
+         "is_admin": {
+          "type": "boolean"
+         },
+         "is_default": {
+          "type": "boolean"
+         },
+         "oidc_values": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "tools": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "skills": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Saved; the RBAC resolver reloaded."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/groups/{name}": {
+   "delete": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Delete a group",
+    "operationId": "deleteAdminGroup",
+    "responses": {
+     "204": {
+      "description": "Deleted; resolver reloaded."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/users": {
+   "get": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "List all users",
+    "operationId": "listAdminUsers",
+    "responses": {
+     "200": {
+      "description": "Every known user with roles."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/users/{id}/impersonate": {
+   "post": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Start impersonating a user",
+    "description": "Mints an impersonation session (admin only, not nestable) and returns it as Set-Cookie.",
+    "operationId": "impersonateUser",
+    "responses": {
+     "200": {
+      "description": "Sets the impersonation session cookie."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/impersonate/stop": {
+   "post": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Stop impersonating",
+    "operationId": "stopImpersonation",
+    "responses": {
+     "200": {
+      "description": "Restores the admin session cookie."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/models": {
+   "get": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Model defaults + prices + feature defaults + search settings",
+    "operationId": "listAdminModels",
+    "responses": {
+     "200": {
+      "description": "Per-model overrides, offered set, feature defaults, search settings, currency."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   },
+   "put": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Save one model's overrides",
+    "description": "Same validation as the form path (prices, context window, reasoning style, budgets, efforts, TOML).",
+    "operationId": "saveAdminModel",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "model_name"
+        ],
+        "description": "Mirrors the legacy form's string fields; blank clears a facet."
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Saved."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/models/{name}": {
+   "delete": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Delete a model's overrides",
+    "operationId": "clearAdminModel",
+    "responses": {
+     "204": {
+      "description": "Deleted."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/models/defaults": {
+   "put": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Set a feature's default model",
+    "operationId": "setAdminFeatureDefault",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "feature",
+         "model"
+        ],
+        "properties": {
+         "feature": {
+          "type": "string",
+          "enum": [
+           "chat",
+           "transcription",
+           "image",
+           "embedding"
+          ]
+         },
+         "model": {
+          "type": "string",
+          "description": "Empty clears."
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Saved."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/models/search": {
+   "put": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Save web-search settings",
+    "operationId": "saveAdminSearchSettings",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "provider"
+        ],
+        "properties": {
+         "provider": {
+          "type": "string"
+         },
+         "searxng_url": {
+          "type": "string"
+         },
+         "brave_api_key": {
+          "type": "string",
+          "description": "Blank keeps the stored key."
+         },
+         "clear_brave_key": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Saved; the Brave key is sealed."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/limits": {
+   "get": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "List limit rules + pickers",
+    "operationId": "listAdminLimits",
+    "responses": {
+     "200": {
+      "description": "Rules, users, tokens, roles, models, currency."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Upsert a limit rule",
+    "operationId": "saveAdminLimit",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "subject_type",
+         "subject_id",
+         "dimension",
+         "window",
+         "value"
+        ],
+        "properties": {
+         "subject_type": {
+          "type": "string",
+          "enum": [
+           "global",
+           "role",
+           "user",
+           "token"
+          ]
+         },
+         "subject_id": {
+          "type": "string"
+         },
+         "model": {
+          "type": "string"
+         },
+         "dimension": {
+          "type": "string",
+          "enum": [
+           "requests",
+           "tokens",
+           "cost"
+          ]
+         },
+         "window": {
+          "type": "string",
+          "enum": [
+           "hour",
+           "day",
+           "week",
+           "month"
+          ]
+         },
+         "value": {
+          "type": "number"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Saved."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/limits/{id}": {
+   "delete": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Delete a limit rule",
+    "operationId": "deleteAdminLimit",
+    "responses": {
+     "204": {
+      "description": "Deleted."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/settings": {
+   "get": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Settings sections + in-force values",
+    "operationId": "listAdminSettings",
+    "responses": {
+     "200": {
+      "description": "Declarative spec with effective values (secrets only as secret_set) + restart-pending list."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Save one settings section",
+    "operationId": "saveAdminSettings",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "section",
+         "values"
+        ],
+        "properties": {
+         "section": {
+          "type": "string"
+         },
+         "values": {
+          "type": "object",
+          "additionalProperties": {
+           "type": "string"
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Stored, marked operator-owned, hot-reloaded (config + session policy); restart-pending tracked."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/settings/clear": {
+   "post": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Clear one stored setting",
+    "operationId": "clearAdminSetting",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "key"
+        ],
+        "properties": {
+         "key": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Cleared; built-in default applies."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/tokens": {
+   "get": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "The token register",
+    "operationId": "listAdminTokens",
+    "responses": {
+     "200": {
+      "description": "All tokens with owners, allowlist lists, per-token limits, month-to-date usage."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/tokens/{id}/models": {
+   "put": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Replace a token's admin model allowlist",
+    "operationId": "saveAdminTokenModels",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "restrict"
+        ],
+        "properties": {
+         "restrict": {
+          "type": "boolean"
+         },
+         "models": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Saved; owner rows untouched."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/upstreams": {
+   "get": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Topology snapshot + live health",
+    "operationId": "listAdminTopology",
+    "responses": {
+     "200": {
+      "description": "DB pools/backends/fallbacks, live registry state, last-hour usage, dirty counter."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/upstreams/events": {
+   "get": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Live health stream (SSE, JSON events)",
+    "operationId": "streamAdminTopology",
+    "responses": {
+     "200": {
+      "description": "event: status — one per changed backend every 2 s; keepalive comments every 20 s."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/upstreams/reload": {
+   "post": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Apply the topology",
+    "operationId": "reloadAdminTopology",
+    "responses": {
+     "200": {
+      "description": "Registry rebuilt, probes respawned, dirty reset."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/upstreams/fallback": {
+   "put": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Set a kind's unknown-model fallback",
+    "operationId": "setAdminFallback",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "kind"
+        ],
+        "properties": {
+         "kind": {
+          "type": "string"
+         },
+         "model": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Live immediately."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/backends": {
+   "put": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Upsert a backend",
+    "operationId": "saveAdminBackend",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "name",
+         "base_url"
+        ],
+        "properties": {
+         "name": {
+          "type": "string"
+         },
+         "base_url": {
+          "type": "string"
+         },
+         "api_key_env": {
+          "type": "string"
+         },
+         "api_key": {
+          "type": "string"
+         },
+         "weight": {
+          "type": "integer"
+         },
+         "max_inflight": {
+          "type": "integer"
+         },
+         "health_path": {
+          "type": "string"
+         },
+         "probe_models": {
+          "type": "boolean"
+         },
+         "supports_edit": {
+          "type": "boolean"
+         },
+         "models": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "aliases": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "properties": {
+            "alias": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            }
+           }
+          }
+         },
+         "pool": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pool to assign; null unassigns; absent leaves as-is."
+         },
+         "overwrite": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Saved; topology dirty. Blank api_key keeps the stored (sealed) one; the drain state is preserved."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "409": {
+      "description": "Name exists — resend with overwrite.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorEnvelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v0/admin/backends/{name}": {
+   "delete": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Delete a backend",
+    "operationId": "deleteAdminBackend",
+    "responses": {
+     "204": {
+      "description": "Deleted; topology dirty."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/backends/{name}/enabled": {
+   "post": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Drain / undrain a backend",
+    "operationId": "setAdminBackendEnabled",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "enabled"
+        ],
+        "properties": {
+         "enabled": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Live in the registry immediately (no reload, no dirty)."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/pools": {
+   "put": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Upsert a pool",
+    "operationId": "saveAdminPool",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "name",
+         "kind"
+        ],
+        "properties": {
+         "name": {
+          "type": "string"
+         },
+         "kind": {
+          "type": "string",
+          "enum": [
+           "chat",
+           "transcription",
+           "embedding",
+           "image",
+           "speech",
+           "ocr"
+          ]
+         },
+         "strategy": {
+          "type": "string"
+         },
+         "fallback_offline": {
+          "type": "string",
+          "nullable": true
+         },
+         "compliance_gdpr": {
+          "type": "boolean"
+         },
+         "compliance_nda": {
+          "type": "boolean"
+         },
+         "enforce_limits": {
+          "type": "boolean"
+         },
+         "sort_order": {
+          "type": "integer"
+         },
+         "allowed_groups": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "backends": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "models": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "voices": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "properties": {
+            "lang": {
+             "type": "string"
+            },
+            "voice": {
+             "type": "string"
+            }
+           }
+          }
+         },
+         "offer_voices": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "overwrite": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Saved; topology dirty."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "409": {
+      "description": "Name exists — resend with overwrite.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorEnvelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v0/admin/pools/{name}": {
+   "delete": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Delete a pool",
+    "operationId": "deleteAdminPool",
+    "responses": {
+     "204": {
+      "description": "Deleted; topology dirty."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
   }
  },
  "components": {
