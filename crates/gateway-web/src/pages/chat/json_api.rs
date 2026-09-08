@@ -46,12 +46,37 @@ fn ok_json(status: StatusCode, body: serde_json::Value) -> Response {
 }
 
 /// GET /api/v0/chat/sessions — every conversation of the signed-in user,
-/// pinned first then most-recent (the sidebar's order).
-pub async fn sessions_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+/// pinned first then most-recent (the sidebar's order). With `?q=` the FTS
+/// content search answers instead: title matches first, then content hits
+/// with a highlighted snippet.
+pub async fn sessions_list(
+    State(state): State<Arc<RamaState>>,
+    rama::http::service::web::extract::Query(params): rama::http::service::web::extract::Query<
+        SessionsQuery,
+    >,
+    req: Request,
+) -> Response {
     let (_session, user) = match require_session_json(&state, &req).await {
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    if let Some(q) = params.q.filter(|q| !q.trim().is_empty()) {
+        let hits = chat::search_sessions(&state.db, &user.id, q.trim(), 50)
+            .await
+            .unwrap_or_default();
+        return ok_json(
+            StatusCode::OK,
+            json!({
+                "sessions": hits.iter().map(|h| serde_json::json!({
+                    "id": h.session_id,
+                    "title": h.title,
+                    "updated_at": h.updated_at.to_string(),
+                    "pinned": h.pinned,
+                    "snippet": h.snippet,
+                })).collect::<Vec<_>>(),
+            }),
+        );
+    }
     match chat::list_sessions(&state.db, &user.id).await {
         Ok(sessions) => ok_json(StatusCode::OK, json!({ "sessions": sessions })),
         Err(err) => json_error(
@@ -60,6 +85,11 @@ pub async fn sessions_list(State(state): State<Arc<RamaState>>, req: Request) ->
             &err.to_string(),
         ),
     }
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct SessionsQuery {
+    q: Option<String>,
 }
 
 /// POST /api/v0/chat/sessions — mint an empty conversation.

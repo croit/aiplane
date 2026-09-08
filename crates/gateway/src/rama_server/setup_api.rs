@@ -484,4 +484,3 @@ pub async fn setup_probe_callback(
         .body(rama::http::Body::empty())
         .expect("static redirect")
 }
-

@@ -11,11 +11,13 @@
 		<script>
 			// Theme before first paint: the gateway's chrome reads a
 			// `theme` cookie ("light"/"dark", see session_core::chrome).
-			// Applying it here — before CSS resolves — avoids a
-			// flash-of-wrong-theme on every hard load of the SPA.
+			// No cookie → follow the OS preference (what the legacy page's
+			// `media="(prefers-color-scheme: …)"` meta did). Applying it
+			// here — before CSS resolves — avoids a flash-of-wrong-theme.
 			(() => {
 				const m = document.cookie.match(/(?:^|;\s*)theme=(dark|light)(?:;|$)/);
-				document.documentElement.dataset.theme = m ? m[1] : 'light';
+				document.documentElement.dataset.theme =
+					m ? m[1] : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 			})();
 		</script>
 		%sveltekit.head%

@@ -4,6 +4,7 @@
 	import { api, ApiError } from '$lib/api';
 	import { createConversationController } from '$lib/chat.svelte';
 	import { createVoiceController } from '$lib/voice.svelte';
+	import { refreshSidebar } from '$lib/sidebar.svelte';
 	import { renderMarkdown } from '$lib/markdown';
 	import type { ChatSession } from '$lib/chat-protocol';
 
@@ -53,7 +54,7 @@
 	onMount(() => {
 		void loadModels();
 		const c = createConversationController(id);
-		c.onSidebarChanged = () => loadMeta();
+		c.onSidebarChanged = () => { void loadMeta(); void refreshSidebar(); };
 		c.attach();
 		controller = c;
 		void loadMeta();
@@ -70,6 +71,7 @@
 		try {
 			await api.sendChatMessage(id, { model: model.trim(), message: text, voice: true });
 			controller?.attach();
+			void refreshSidebar();
 		} catch (err) {
 			notice = String(err);
 		} finally {

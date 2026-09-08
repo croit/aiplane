@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { base } from '$app/paths';
 	import { api } from '$lib/api';
+	import { refreshSidebar, sidebar } from '$lib/sidebar.svelte';
 	import { push, enablePush, disablePush, refreshPushState } from '$lib/push.svelte';
 	import type { ChatSession } from '$lib/chat-protocol';
 
