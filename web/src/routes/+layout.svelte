@@ -6,6 +6,7 @@
 	import { goto } from '$app/navigation';
 	import { api, loginUrl } from '$lib/api';
 	import { loadMe, me } from '$lib/session.svelte';
+	import { feedback, loadConfig, openDialog, submit } from '$lib/feedback.svelte';
 
 	let { children } = $props();
 
@@ -41,6 +42,7 @@
 		if ('serviceWorker' in navigator) {
 			void navigator.serviceWorker.register(`${base}/sw.js`);
 		}
+		void loadConfig();
 	});
 </script>
 
@@ -91,4 +93,41 @@
 	<main class="mx-auto max-w-3xl p-4">
 		{@render children()}
 	</main>
+
+	{#if feedback.enabled && me.value}
+		<button class="btn btn-circle btn-neutral fixed bottom-4 right-4 z-40" onclick={openDialog} aria-label="Send feedback">
+			?
+		</button>
+	{/if}
+
+	{#if feedback.open}
+		<dialog class="modal modal-open" aria-label="Send feedback">
+			<div class="modal-box max-w-lg">
+				{#if feedback.submitted}
+					<h2 class="text-lg font-semibold mb-2">Thank you</h2>
+					<p class="text-sm text-base-content/70">Your feedback was filed as an issue.</p>
+					<div class="modal-action"><button class="btn btn-primary btn-sm" onclick={() => (feedback.open = false)}>Done</button></div>
+				{:else}
+					<h2 class="text-lg font-semibold mb-3">Send feedback</h2>
+					<div class="flex flex-col gap-3">
+						<input class="input input-bordered input-sm" placeholder="Short summary" bind:value={feedback.title} />
+						<textarea class="textarea textarea-bordered text-sm" rows="3" placeholder="What happened, or what would you like?" bind:value={feedback.description}></textarea>
+						<textarea class="textarea textarea-bordered text-sm" rows="2" placeholder="Why does this matter?" bind:value={feedback.business}></textarea>
+						<textarea class="textarea textarea-bordered text-sm" rows="2" placeholder="When is this done?" bind:value={feedback.acceptance}></textarea>
+						<select class="select select-bordered select-sm" bind:value={feedback.priority}>
+							<option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+						</select>
+						{#if feedback.error}<div class="alert alert-error py-2 text-sm"><span>{feedback.error}</span></div>{/if}
+					</div>
+					<div class="modal-action">
+						<button class="btn btn-ghost btn-sm" onclick={() => (feedback.open = false)}>Cancel</button>
+						<button class="btn btn-primary btn-sm" onclick={submit} disabled={feedback.busy || !feedback.title.trim() || !feedback.description.trim()}>
+							{feedback.busy ? 'Sending…' : 'Send'}
+						</button>
+					</div>
+				{/if}
+			</div>
+			<form method="dialog" class="modal-backdrop"><button onclick={() => (feedback.open = false)}>close</button></form>
+		</dialog>
+	{/if}
 </div>

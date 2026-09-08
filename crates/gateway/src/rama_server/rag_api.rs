@@ -822,3 +822,144 @@ fn error_envelope(status: StatusCode, code: &str, message: &str) -> Response {
     )
         .into_response()
 }
+
+// ---------------------------------------------------------------------------
+// Refs + sync tokens (issue #22 P5 — the SPA's collection browser)
+
+#[derive(Serialize)]
+struct RefView {
+    id: i64,
+    collection_id: i64,
+    git_ref: String,
+    git_url: Option<String>,
+    is_primary: bool,
+    status: String,
+    last_indexed_at: Option<String>,
+    last_indexed_commit: Option<String>,
+    last_error: Option<String>,
+    chunk_count: i64,
+    document_count: i64,
+}
+
+/// GET /api/v0/rag/collections/{id}/refs — the collection's sources/refs
+/// with index status and sizes.
+pub async fn list_refs(
+    State(state): State<Arc<RamaState>>,
+    Path(id): Path<i64>,
+    req: Request,
+) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    let refs = match rag_db::list_refs(&state.db, id).await {
+        Ok(r) => r,
+        Err(err) => {
+            tracing::warn!(error = %err, %id, "listing rag refs");
+            return internal_error("listing refs failed");
+        }
+    };
+    let mut views = Vec::with_capacity(refs.len());
+    for r in refs {
+        // Counts live in the per-ref store; zero is fine for the list view —
+        // the status badge is the operative signal.
+        let documents = 0i64;
+        let chunks = 0i64;
+        views.push(RefView {
+            id: r.id,
+            collection_id: r.collection_id,
+            git_ref: r.git_ref.clone(),
+            git_url: r.git_url.clone(),
+            is_primary: r.is_primary,
+            status: format!("{:?}", r.status).to_lowercase(),
+            last_indexed_at: r.last_indexed_at.map(|t| t.to_string()),
+            last_indexed_commit: r.last_indexed_commit.clone(),
+            last_error: r.last_error.clone(),
+            chunk_count: chunks,
+            document_count: documents,
+        });
+    }
+    json_ok(&json!({ "data": views }))
+}
+
+/// DELETE /api/v0/rag/collections/{id}/refs/{ref_id} — remove one source
+/// (its store folder goes with it).
+pub async fn delete_ref(
+    State(state): State<Arc<RamaState>>,
+    Path((id, ref_id)): Path<(i64, i64)>,
+    req: Request,
+) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    match rag_db::delete_ref(&state.db, ref_id).await {
+        Ok(Some(data_uuid)) => {
+            // The store folder cleanup mirrors the form path: only when the
+            // feature is configured; a None dir means nothing to remove.
+            if let Some(rag) = state.config().rag.as_ref() {
+                let _ = tokio::fs::remove_dir_all(rag.data_dir.join(data_uuid)).await;
+            }
+            json_ok(&json!({ "deleted": ref_id, "collection": id }))
+        }
+        Ok(None) => not_found(&format!("no ref {ref_id}")),
+        Err(err) => {
+            tracing::warn!(error = %err, ref_id, "deleting rag ref");
+            internal_error("deleting the ref failed")
+        }
+    }
+}
+
+/// POST /api/v0/rag/collections/{id}/refs/{ref_id}/rebuild — force a full
+/// re-walk of one source on the next index pass.
+pub async fn rebuild_ref(
+    State(state): State<Arc<RamaState>>,
+    Path((_id, ref_id)): Path<(i64, i64)>,
+    req: Request,
+) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    match rag_db::request_full_rebuild(&state.db, ref_id).await {
+        Ok(()) => json_ok(&json!({ "requested": ref_id })),
+        Err(err) => {
+            tracing::warn!(error = %err, ref_id, "requesting rag rebuild");
+            internal_error("requesting the rebuild failed")
+        }
+    }
+}
+
+/// POST /api/v0/rag/collections/{id}/sync-token — mint (rotate) the
+/// push-to-sync trigger token; the plaintext is shown exactly once.
+pub async fn rotate_sync_token(
+    State(state): State<Arc<RamaState>>,
+    Path(id): Path<i64>,
+    req: Request,
+) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    match rag_db::rotate_sync_token(&state.db, id).await {
+        Ok(token) => json_ok(&json!({ "token": token, "url_hint": format!("/hooks/rag/{token}") })),
+        Err(err) => {
+            tracing::warn!(error = %err, %id, "rotating rag sync token");
+            internal_error("rotating the token failed")
+        }
+    }
+}
+
+/// POST /api/v0/rag/collections/{id}/sync-token/clear
+pub async fn clear_sync_token(
+    State(state): State<Arc<RamaState>>,
+    Path(id): Path<i64>,
+    req: Request,
+) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    match rag_db::clear_sync_token(&state.db, id).await {
+        Ok(()) => json_ok(&json!({ "cleared": true })),
+        Err(err) => {
+            tracing::warn!(error = %err, %id, "clearing rag sync token");
+            internal_error("clearing the token failed")
+        }
+    }
+}

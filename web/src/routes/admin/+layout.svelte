@@ -13,7 +13,8 @@
 		['Upstreams', '/admin/upstreams'],
 		['Skills', '/admin/skills'],
 		['Connectors', '/admin/connectors'],
-		['ComfyUI', '/admin/comfyui']
+		['ComfyUI', '/admin/comfyui'],
+		['RAG', '/admin/rag']
 	];
 </script>
 

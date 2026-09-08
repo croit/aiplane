@@ -3893,6 +3893,121 @@
      }
     }
    }
+  },
+  "/api/v0/rag/collections/{id}/refs": {
+   "get": {
+    "tags": [
+     "rag"
+    ],
+    "summary": "List a collection's sources/refs",
+    "operationId": "listRagRefs",
+    "responses": {
+     "200": {
+      "description": "Refs with index status, last commit, last error."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/rag/collections/{id}/refs/{ref_id}": {
+   "delete": {
+    "tags": [
+     "rag"
+    ],
+    "summary": "Delete one source (store folder removed)",
+    "operationId": "deleteRagRef",
+    "responses": {
+     "200": {
+      "description": "Deleted."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/rag/collections/{id}/refs/{ref_id}/rebuild": {
+   "post": {
+    "tags": [
+     "rag"
+    ],
+    "summary": "Force a full re-walk of one source",
+    "operationId": "rebuildRagRef",
+    "responses": {
+     "200": {
+      "description": "Requested; the indexer picks it up."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/rag/collections/{id}/sync-token": {
+   "post": {
+    "tags": [
+     "rag"
+    ],
+    "summary": "Mint (rotate) the push-to-sync token",
+    "operationId": "rotateRagSyncToken",
+    "responses": {
+     "200": {
+      "description": "The token plaintext — shown exactly once; the URL hint carries the hook path."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/rag/collections/{id}/sync-token/clear": {
+   "post": {
+    "tags": [
+     "rag"
+    ],
+    "summary": "Clear the sync token",
+    "operationId": "clearRagSyncToken",
+    "responses": {
+     "200": {
+      "description": "Cleared; the hook 404s from now on."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
   }
  },
  "components": {

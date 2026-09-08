@@ -379,6 +379,23 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/rag/collections/{id}/reindex",
             rag_api::reindex_collection,
         )
+        .with_get("/api/v0/rag/collections/{id}/refs", rag_api::list_refs)
+        .with_delete(
+            "/api/v0/rag/collections/{id}/refs/{ref_id}",
+            rag_api::delete_ref,
+        )
+        .with_post(
+            "/api/v0/rag/collections/{id}/refs/{ref_id}/rebuild",
+            rag_api::rebuild_ref,
+        )
+        .with_post(
+            "/api/v0/rag/collections/{id}/sync-token",
+            rag_api::rotate_sync_token,
+        )
+        .with_post(
+            "/api/v0/rag/collections/{id}/sync-token/clear",
+            rag_api::clear_sync_token,
+        )
         .with_post("/api/v0/comfyui/reload", comfyui_api::reload)
         .with_get("/api/v0/comfyui/catalog", comfyui_api::catalog)
         .with_get("/api/v0/models", api::chat_models)
