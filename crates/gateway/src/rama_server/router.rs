@@ -458,6 +458,59 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             pages::json_admin::topology_reload,
         )
         // Workspace JSON API for the SPA (issue #22 P5).
+        // Skills + connectors + integrations JSON (issue #22 P5).
+        .with_get("/api/v0/skills", pages::json_skills::skills_list)
+        .with_post("/api/v0/skills", pages::json_skills::skills_upload)
+        .with_get("/api/v0/skills/{name}/body", pages::json_skills::skill_body)
+        .with_delete("/api/v0/skills/{name}", pages::json_skills::skills_delete)
+        .with_get(
+            "/api/v0/admin/skills",
+            pages::json_skills::admin_skills_list,
+        )
+        .with_post(
+            "/api/v0/admin/skills",
+            pages::json_skills::admin_skills_upload,
+        )
+        .with_delete(
+            "/api/v0/admin/skills/{name}",
+            pages::json_skills::admin_skills_delete,
+        )
+        .with_put(
+            "/api/v0/admin/skills/grants",
+            pages::json_skills::admin_skills_grants,
+        )
+        .with_get(
+            "/api/v0/admin/connectors",
+            pages::json_skills::admin_connectors_list,
+        )
+        .with_put(
+            "/api/v0/admin/connectors",
+            pages::json_skills::admin_connectors_save,
+        )
+        .with_post(
+            "/api/v0/admin/connectors/restore-defaults",
+            pages::json_skills::admin_connectors_restore_defaults,
+        )
+        .with_post(
+            "/api/v0/admin/connectors/{key}/toggle",
+            pages::json_skills::admin_connectors_toggle,
+        )
+        .with_delete(
+            "/api/v0/admin/connectors/{key}",
+            pages::json_skills::admin_connectors_delete,
+        )
+        .with_get(
+            "/api/v0/integrations",
+            pages::json_skills::integrations_list,
+        )
+        .with_post(
+            "/api/v0/integrations/{key}/token",
+            pages::json_skills::integrations_connect_token,
+        )
+        .with_post(
+            "/api/v0/integrations/{key}/disconnect",
+            pages::json_skills::integrations_disconnect,
+        )
         .with_get("/api/v0/memories", pages::json_workspace::memories_list)
         .with_post("/api/v0/memories", pages::json_workspace::memories_create)
         .with_put(

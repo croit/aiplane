@@ -396,7 +396,10 @@ async fn workspace_surfaces_round_trip() {
     let created_raw = body(resp).await;
     let created: serde_json::Value =
         serde_json::from_str(&created_raw).expect("memory create answers 201 JSON");
-    assert!(created["id"].is_string(), "the memory row carries its id: {created_raw}");
+    assert!(
+        created["id"].is_string(),
+        "the memory row carries its id: {created_raw}"
+    );
     let resp = app
         .serve(req(
             rama::http::Method::GET,
@@ -445,4 +448,98 @@ async fn workspace_surfaces_round_trip() {
     assert_eq!(resp.status(), StatusCode::CREATED);
     let hook: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
     assert!(hook["secret"].as_str().unwrap().starts_with("gwh_"));
+}
+
+/// Skills + integrations: list (feature off → global set), connectors
+/// admin CRUD gating, and the static-token connect flow.
+#[tokio::test]
+async fn skills_and_connectors_surfaces() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+
+    // Skills list answers (the harness wires no skills dir — empty set).
+    let resp = app
+        .serve(req(
+            rama::http::Method::GET,
+            "/api/v0/skills",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let raw = body(resp).await;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(parsed["skills"].as_array().is_some());
+
+    // Integrations list: empty catalog → empty list.
+    let resp = app
+        .serve(req(
+            rama::http::Method::GET,
+            "/api/v0/integrations",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Admin connectors: create → toggle → delete cascade.
+    let resp = app
+        .serve(req(
+            rama::http::Method::PUT,
+            "/api/v0/admin/connectors",
+            &cookie,
+            Some(r#"{"key":"probe","title":"Probe","base_url":"https://mcp.invalid/mcp","auth_type":"static_bearer","client_secret":"tok"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "{}", body(resp).await);
+
+    // Non-admin is barred.
+    let pleb = common::seed_session(&state, "pleb2", "pleb2@example.com").await;
+    let resp = app
+        .serve(req(
+            rama::http::Method::GET,
+            "/api/v0/admin/connectors",
+            &pleb,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Static-token connect as the plain user.
+    let resp = app
+        .serve(req(
+            rama::http::Method::POST,
+            "/api/v0/integrations/probe/token",
+            &pleb,
+            Some(r#"{"token":"secret-token"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "{}", body(resp).await);
+
+    let resp = app
+        .serve(req(
+            rama::http::Method::POST,
+            "/api/v0/integrations/probe/disconnect",
+            &pleb,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let resp = app
+        .serve(req(
+            rama::http::Method::DELETE,
+            "/api/v0/admin/connectors/probe",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 }

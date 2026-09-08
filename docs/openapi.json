@@ -3418,6 +3418,481 @@
      }
     }
    }
+  },
+  "/api/v0/skills": {
+   "get": {
+    "tags": [
+     "skills"
+    ],
+    "summary": "List the caller's effective skills",
+    "operationId": "listSkills",
+    "responses": {
+     "200": {
+      "description": "Global granted + private (shadowing) skills; user_skills_enabled says whether private ones can be managed."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "skills"
+    ],
+    "summary": "Upload or author a private skill",
+    "description": "Either a multipart .skill archive (file part) or {name, manifest} JSON. The manifest is a full SKILL.md.",
+    "operationId": "uploadSkill",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "name": {
+          "type": "string"
+         },
+         "manifest": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Installed."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/skills/{name}/body": {
+   "get": {
+    "tags": [
+     "skills"
+    ],
+    "summary": "One skill's SKILL.md body",
+    "operationId": "skillBody",
+    "responses": {
+     "200": {
+      "description": "The instructions, frontmatter stripped."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/skills/{name}": {
+   "delete": {
+    "tags": [
+     "skills"
+    ],
+    "summary": "Delete a private skill",
+    "operationId": "deleteSkill",
+    "responses": {
+     "204": {
+      "description": "Deleted."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/skills": {
+   "get": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "The global skill catalog + grants",
+    "operationId": "listAdminSkills",
+    "responses": {
+     "200": {
+      "description": "Skills + the role-grant overlay + the group names."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Install a .skill archive (multipart file part)",
+    "operationId": "uploadAdminSkill",
+    "responses": {
+     "201": {
+      "description": "Installed; live without a restart."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/skills/{name}": {
+   "delete": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Remove a global skill",
+    "operationId": "deleteAdminSkill",
+    "responses": {
+     "204": {
+      "description": "Removed + grants cleared."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/skills/grants": {
+   "put": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Replace a skill's role grants",
+    "operationId": "setAdminSkillGrants",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "skill",
+         "roles"
+        ],
+        "properties": {
+         "skill": {
+          "type": "string"
+         },
+         "roles": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Overlay re-seeded into the live resolver."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/connectors": {
+   "get": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "The MCP connector catalog",
+    "operationId": "listAdminConnectors",
+    "responses": {
+     "200": {
+      "description": "All entries with auth shape, scopes, groups, audit flag."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   },
+   "put": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Create/update a catalog entry",
+    "operationId": "saveAdminConnector",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "key",
+         "base_url"
+        ],
+        "properties": {
+         "key": {
+          "type": "string"
+         },
+         "title": {
+          "type": "string"
+         },
+         "description": {
+          "type": "string"
+         },
+         "base_url": {
+          "type": "string"
+         },
+         "auth_type": {
+          "type": "string",
+          "enum": [
+           "oauth2",
+           "none",
+           "static_bearer"
+          ]
+         },
+         "scopes": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "client_id": {
+          "type": "string"
+         },
+         "client_secret": {
+          "type": "string"
+         },
+         "groups": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "audit": {
+          "type": "boolean"
+         },
+         "overwrite": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Saved; a typed client secret is sealed, blank keeps the stored one."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "409": {
+      "description": "Key exists — resend with overwrite."
+     }
+    }
+   }
+  },
+  "/api/v0/admin/connectors/restore-defaults": {
+   "post": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Re-seed the built-in catalog entries",
+    "operationId": "restoreConnectorDefaults",
+    "responses": {
+     "200": {
+      "description": "Seeded."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/connectors/{key}/toggle": {
+   "post": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Enable/disable a connector",
+    "operationId": "toggleAdminConnector",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "enabled"
+        ],
+        "properties": {
+         "enabled": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Toggled."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/admin/connectors/{key}": {
+   "delete": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Delete a connector (cascades connections)",
+    "operationId": "deleteAdminConnector",
+    "responses": {
+     "204": {
+      "description": "Deleted."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/api/v0/integrations": {
+   "get": {
+    "tags": [
+     "integrations"
+    ],
+    "summary": "The caller's connector list + connection state",
+    "operationId": "listIntegrations",
+    "responses": {
+     "200": {
+      "description": "Enabled connectors with connected flag."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   }
+  },
+  "/api/v0/integrations/{key}/token": {
+   "post": {
+    "tags": [
+     "integrations"
+    ],
+    "summary": "Connect a static-token connector",
+    "operationId": "connectIntegrationToken",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "token"
+        ],
+        "properties": {
+         "token": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Connected; token sealed at rest."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/integrations/{key}/disconnect": {
+   "post": {
+    "tags": [
+     "integrations"
+    ],
+    "summary": "Disconnect a connector",
+    "operationId": "disconnectIntegration",
+    "responses": {
+     "204": {
+      "description": "Disconnected + cache invalidated."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
   }
  },
  "components": {

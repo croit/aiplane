@@ -10,7 +10,10 @@
 		['Limits', '/admin/limits'],
 		['Settings', '/admin/settings'],
 		['Tokens', '/admin/tokens'],
-		['Upstreams', '/admin/upstreams']
+		['Upstreams', '/admin/upstreams'],
+		['Skills', '/admin/skills'],
+		['Connectors', '/admin/connectors'],
+		['ComfyUI', '/admin/comfyui']
 	];
 </script>
 

@@ -52,6 +52,8 @@
 			<a href="{base}/memory" class="btn btn-ghost btn-sm">Memory</a>
 			<a href="{base}/scheduled" class="btn btn-ghost btn-sm">Scheduled</a>
 			<a href="{base}/webhooks" class="btn btn-ghost btn-sm">Webhooks</a>
+			<a href="{base}/skills" class="btn btn-ghost btn-sm">Skills</a>
+			<a href="{base}/integrations" class="btn btn-ghost btn-sm">Integrations</a>
 			<a href="{base}/tokens" class="btn btn-ghost btn-sm">Tokens</a>
 			<a href="{base}/usage" class="btn btn-ghost btn-sm">Usage</a>
 			<a href="{base}/tools" class="btn btn-ghost btn-sm">Tools</a>
