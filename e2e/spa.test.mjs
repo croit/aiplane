@@ -69,6 +69,38 @@ test("a signed-out visitor is redirected into the OIDC login flow", async () => 
     await ctx.close();
 });
 
+test("the SPA is a PWA: manifest, service worker, and push wiring", async () => {
+    const ctx = await browser.newContext();
+    await ctx.addCookies([
+        { name: "id", value: await devSessionCookie(), url: BASE },
+    ]);
+    // Serve the PWA files at all (the build ships them into static/).
+    for (const path of ["/app/sw.js", "/app/manifest.webmanifest"]) {
+        const r = await fetch(`${BASE}${path}`);
+        assert.equal(r.status, 200, `${path} must be served`);
+    }
+
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/app`, { waitUntil: "networkidle" });
+    // The manifest is linked…
+    const manifest = page.locator('link[rel="manifest"]');
+    assert.equal(await manifest.count(), 1);
+    // …and the service worker registers and activates. (Asserted via
+    // getRegistrations rather than `serviceWorker.ready`, which never
+    // resolves in the headless shell even with an activated worker.)
+    const sw = await page.evaluate(async () => {
+        const [reg] = await navigator.serviceWorker.getRegistrations();
+        return reg?.active
+            ? { scope: reg.scope, state: reg.active.state, script: reg.active.scriptURL }
+            : null;
+    });
+    assert.ok(sw, "the SPA service worker must register");
+    assert.match(sw.scope, /\/app\/$/, "the SW must control the /app/ scope");
+    assert.equal(sw.state, "activated");
+    assert.match(sw.script, /\/app\/sw\.js$/);
+    await ctx.close();
+});
+
 test("a signed-in user sees their identity from GET /api/v0/me", async () => {
     const ctx = await browser.newContext();
     await ctx.addCookies([

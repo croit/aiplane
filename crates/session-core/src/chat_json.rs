@@ -354,7 +354,8 @@ pub async fn run_json_turn_stream(
         // Flush at most every EVENT_COALESCE while dirty; the deadline
         // branch wakes exactly when the window elapses. A Finalized flush
         // is authoritative regardless of the window (it must land).
-        let deadline = last_emit.map_or_else(tokio::time::Instant::now, |last| last + EVENT_COALESCE);
+        let deadline =
+            last_emit.map_or_else(tokio::time::Instant::now, |last| last + EVENT_COALESCE);
         tokio::select! {
             biased;
             update = broadcast_rx.recv() => match update {

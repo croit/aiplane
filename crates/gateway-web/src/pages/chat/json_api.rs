@@ -272,7 +272,6 @@ pub async fn message_send(
                 "assistant_turn_id": submitted.assistant_turn.id,
             }),
         ),
-        Err(SubmitTurnError::NotFound) => not_found_conversation(),
         Err(SubmitTurnError::RateLimited) => json_error(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",

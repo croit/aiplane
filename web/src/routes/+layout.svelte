@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { page } from '$app/state';
 	import { base } from '$app/paths';
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api, loginUrl } from '$lib/api';
 	import { loadMe, me } from '$lib/session.svelte';
@@ -33,6 +34,14 @@
 	}
 
 	let openMenu = $state(false);
+
+	// The SPA's service worker (scope /app/): Web Push notifications +
+	// PWA installability. See static/sw.js.
+	onMount(() => {
+		if ('serviceWorker' in navigator) {
+			void navigator.serviceWorker.register(`${base}/sw.js`);
+		}
+	});
 </script>
 
 <div class="min-h-dvh bg-base-100 text-base-content">

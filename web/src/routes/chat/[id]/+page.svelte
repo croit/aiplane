@@ -12,6 +12,7 @@
 	let controller = $state<ReturnType<typeof createConversationController> | null>(null);
 	let session = $state<ChatSession | null>(null);
 	let model = $state('');
+	let models = $state<{ id: string; gdpr: boolean; nda: boolean }[]>([]);
 	let draft = $state('');
 	let sending = $state(false);
 	let notice = $state<string | null>(null);
@@ -35,7 +36,21 @@
 		}
 	}
 
+	/** The picker prefers the offered models; free text stays as the
+	 * fallback for gateways without pools (or models the grant filters out).
+	 * The compliance flags ride along as the option's title tooltip. */
+	async function loadModels() {
+		try {
+			const list = await api.listChatModels();
+			models = list.models;
+			if (!model && models.length > 0) model = models[0].id;
+		} catch {
+			// Picker stays free-text; submitting still works.
+		}
+	}
+
 	onMount(() => {
+		void loadModels();
 		const c = createConversationController(id);
 		c.onSidebarChanged = () => loadMeta();
 		c.attach();
@@ -199,13 +214,28 @@
 <div class="card border border-base-300 sticky bottom-0">
 	<div class="card-body p-3 gap-2">
 		<div class="flex gap-2">
-			<input
-				class="input input-bordered input-sm w-56"
-				placeholder="model (e.g. gpt-4o-mini)"
-				aria-label="Model"
-				bind:value={model}
-				disabled={streaming || sending}
-			/>
+			{#if models.length > 0}
+				<select
+					class="select select-bordered select-sm w-56"
+					aria-label="Model"
+					bind:value={model}
+					disabled={streaming || sending}
+				>
+					{#each models as m (m.id)}
+						<option value={m.id} title="{m.gdpr ? 'GDPR region' : ''} {m.nda ? 'NDA-covered' : ''}">
+							{m.id}{m.gdpr ? ' · gdpr' : ''}{m.nda ? ' · nda' : ''}
+						</option>
+					{/each}
+				</select>
+			{:else}
+				<input
+					class="input input-bordered input-sm w-56"
+					placeholder="model (e.g. gpt-4o-mini)"
+					aria-label="Model"
+					bind:value={model}
+					disabled={streaming || sending}
+				/>
+			{/if}
 			<textarea
 				class="textarea textarea-bordered flex-1 min-h-11 max-h-48"
 				rows="1"

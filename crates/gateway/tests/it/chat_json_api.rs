@@ -516,3 +516,43 @@ async fn reconnecting_after_completion_replays_from_the_db() {
     assert_eq!(assistant["turn"]["content"], serde_json::json!("done"));
     assert_eq!(assistant["turn"]["status"], serde_json::json!("completed"));
 }
+
+/// The models endpoint lists what the user's grant permits, compliance
+/// flags included — the SPA picker's data source.
+#[tokio::test]
+async fn the_models_endpoint_lists_offered_chat_models() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&upstream)
+        .await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let app = router(state);
+
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/models".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    let models = body["models"].as_array().unwrap();
+    assert!(
+        models.iter().any(|m| m["id"] == "model-a"),
+        "the seeded pool's model must be offered: {models:?}"
+    );
+    assert!(models[0]["gdpr"].is_boolean());
+    assert!(models[0]["nda"].is_boolean());
+
+    // Anonymous → the 401 envelope.
+    let resp = app
+        .serve(Request::get("/api/v0/models").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

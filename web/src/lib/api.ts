@@ -151,6 +151,10 @@ export const api = {
 	/** The events stream URL — for `new EventSource` (cookies ride along same-origin). */
 	chatEventsUrl: (id: string) => `/api/v0/chat/sessions/${encodeURIComponent(id)}/events`,
 
+	/** GET /api/v0/models — the caller's chat models (compliance flags included). */
+	listChatModels: () =>
+		request<{ models: { id: string; gdpr: boolean; nda: boolean }[] }>('/api/v0/models'),
+
 	/** GET /api/v0/me — identity + role grants; 401 when signed out. */
 	me: () => request<Me>('/api/v0/me'),
 

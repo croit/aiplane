@@ -1494,6 +1494,60 @@
      }
     }
    }
+  },
+  "/api/v0/models": {
+   "get": {
+    "tags": [
+     "chat"
+    ],
+    "summary": "The caller's selectable chat models",
+    "description": "Models the signed-in user's group grant permits, with the data-handling flags (gdpr/nda) the compliance banner shows and the configured default promoted to first. The SPA's model picker.",
+    "operationId": "listChatModels",
+    "responses": {
+     "200": {
+      "description": "The model list.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "models": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "id": {
+              "type": "string"
+             },
+             "gdpr": {
+              "type": "boolean",
+              "description": "Hosted in the GDPR region — safe for personal data."
+             },
+             "nda": {
+              "type": "boolean",
+              "description": "NDA-covered provider — safe under customer NDAs."
+             }
+            },
+            "required": [
+             "id",
+             "gdpr",
+             "nda"
+            ]
+           }
+          }
+         },
+         "required": [
+          "models"
+         ]
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   }
   }
  },
  "components": {

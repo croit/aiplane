@@ -381,6 +381,7 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         )
         .with_post("/api/v0/comfyui/reload", comfyui_api::reload)
         .with_get("/api/v0/comfyui/catalog", comfyui_api::catalog)
+        .with_get("/api/v0/models", api::chat_models)
         // Chat JSON API for the SvelteKit SPA (issue #22 phase 2). The
         // legacy form/SSE-HTML chat routes under `/chat/*` stay alive
         // beside these until phase 6.

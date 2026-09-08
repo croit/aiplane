@@ -1016,9 +1016,6 @@ pub async fn chat_message_send(
     };
     let submitted = match submit_turn(&state, &user, &active, submit, ctx).await {
         Ok(s) => s,
-        Err(SubmitTurnError::NotFound) => {
-            return sse_submit_error_response(&t(lang, "chat-error-conversation-not-found"));
-        }
         Err(SubmitTurnError::RateLimited) => {
             return sse_submit_error_response(&t(lang, "chat-error-rate-limited"));
         }
@@ -1065,7 +1062,6 @@ pub async fn chat_message_send(
 /// map these onto their own response shapes.
 #[derive(Debug)]
 pub(crate) enum SubmitTurnError {
-    NotFound,
     RateLimited,
     /// This user's previous turn is still streaming — the registry refused.
     Busy,
@@ -1833,7 +1829,7 @@ fn reclaim_attachments(state: &Arc<RamaState>, orphaned: Vec<chat_attachments::A
 /// session itself: the caller's source IP (for GeoIP) and whether the
 /// browser is on a secure context (so a precise-location prompt can even
 /// succeed). Bundled so the worker/regeneration signatures stay legible.
-struct RequestCtx {
+pub(crate) struct RequestCtx {
     client_ip: Option<String>,
     secure: bool,
     /// This turn came from voice-conversation mode → the driver injects the
@@ -2283,7 +2279,7 @@ pub(crate) struct ChatSubmit {
     pub(crate) user_turn_id: String,
 }
 
-struct UploadedAttachment {
+pub(crate) struct UploadedAttachment {
     outcome: chat_attachments::UploadOutcome,
 }
 

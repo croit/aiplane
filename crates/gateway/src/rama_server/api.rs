@@ -379,6 +379,43 @@ pub async fn rotate_token(
 /// fetches this on render to populate the voice-model dropdown; the
 /// list is empty when no transcription pool is configured (and the UI
 /// hides the mic button in that case).
+/// GET /api/v0/models — the caller's selectable chat models, with the
+/// data-handling flags the compliance banner shows and the configured
+/// default promoted. The SPA's model picker; the legacy page builds the
+/// same list server-side (`pages::chat::list_chat_models`).
+pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let session = match require_session(&state, &req).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    let user = match gateway_core::server::db::users::find_by_id(&state.db, &session.user_id).await
+    {
+        Ok(Some(u)) => u,
+        _ => return unauthorized("no active session — sign in at /auth/login"),
+    };
+    // Session path: access is exactly the user's group grant.
+    let access = state.pool_access_for(&user.roles);
+    let mut models: Vec<(String, gateway_core::server::upstreams::Compliance)> =
+        state.upstreams.models_with_compliance_for_kind_for(
+            gateway_core::server::upstreams::PoolKind::Chat,
+            &access,
+        );
+    use gateway_core::server::feature_defaults::{self, Feature};
+    let configured = feature_defaults::get(&state.db, Feature::Chat).await;
+    feature_defaults::promote(configured.as_deref(), &mut models, |m| m.0.as_str());
+    let listed: Vec<_> = models
+        .into_iter()
+        .map(|(id, compliance)| {
+            json!({
+                "id": id,
+                "gdpr": compliance.gdpr,
+                "nda": compliance.nda,
+            })
+        })
+        .collect();
+    json_ok(&json!({ "models": listed }))
+}
+
 pub async fn transcription_models(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     if let Err(resp) = require_session(&state, &req).await {
         return resp;
