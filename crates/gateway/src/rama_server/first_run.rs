@@ -77,6 +77,15 @@ fn serves_before_setup(path: &str) -> bool {
     ) {
         return true;
     }
+    // The setup wizard's own API — the one surface that must work while the
+    // gateway is unconfigured (that is its entire job).
+    if path == "/api/v0/setup/state"
+        || path == "/api/v0/setup/test"
+        || path == "/api/v0/setup/restart"
+        || path == "/api/v0/setup/finish"
+    {
+        return true;
+    }
     // Debug-only dev/e2e seeding (see `rama_server::dev_seed`). These are
     // how a fresh dev database *becomes* set up, so gating them would be
     // self-blocking. The routes only exist in debug builds; on a release

@@ -543,3 +543,63 @@ async fn skills_and_connectors_surfaces() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 }
+
+/// The setup wizard API (issue #22 P5/P6): state/draft lifecycle on a fresh
+/// gateway. The full OIDC round trip needs a real provider — wiremock OIDC
+/// lives in oidc_integration — so this pins the gate + draft mechanics.
+#[tokio::test]
+async fn setup_api_state_and_gates() {
+    // A state whose setup is NOT completed: seed a bare RamaState.
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let app = router(std::sync::Arc::new(state));
+
+    // Fresh: first_run, no draft, no proof.
+    let resp = app
+        .serve(
+            Request::get("/api/v0/setup/state")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let raw = body(resp).await;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(parsed["access"], "first_run");
+    assert!(parsed["draft"].is_null());
+    assert!(parsed["proof"].is_null());
+
+    // Test with garbage provider → 502 with the operator-facing message,
+    // but the draft is kept.
+    let resp = app
+        .serve(req(
+            rama::http::Method::POST,
+            "/api/v0/setup/test",
+            "placeholder",
+            Some(
+                r#"{"public_url":"http://localhost:8080","issuer":"http://127.0.0.1:9","client_id":"c","client_secret":"s"}"#
+                    .into(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY, "{raw}");
+    let raw2 = body(resp).await;
+    assert!(raw2.contains("provider"), "{raw2}");
+
+    // The draft survived for the operator's typing.
+    let resp = app
+        .serve(
+            Request::get("/api/v0/setup/state")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
+    assert_eq!(parsed["draft"]["issuer"], "http://127.0.0.1:9");
+    assert_eq!(
+        parsed["draft"]["client_secret_set"],
+        serde_json::json!(true)
+    );
+}

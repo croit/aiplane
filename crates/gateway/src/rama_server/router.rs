@@ -40,6 +40,7 @@ use crate::rama_server::RamaState;
 #[cfg(debug_assertions)]
 use crate::rama_server::dev_seed;
 use crate::rama_server::first_run::FirstRunLayer;
+use crate::rama_server::setup_api;
 use crate::rama_server::{
     api, comfyui_api, messages, oidc_handlers, pages, proxy, rag_api, sandbox_api, spa,
 };
@@ -528,6 +529,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/integrations/{key}/disconnect",
             pages::json_skills::integrations_disconnect,
         )
+        .with_get("/api/v0/setup/state", setup_api::setup_state)
+        .with_post("/api/v0/setup/test", setup_api::setup_test)
+        .with_post("/api/v0/setup/restart", setup_api::setup_restart)
+        .with_post("/api/v0/setup/finish", setup_api::setup_finish)
         .with_get("/api/v0/memories", pages::json_workspace::memories_list)
         .with_post("/api/v0/memories", pages::json_workspace::memories_create)
         .with_put(

@@ -15,7 +15,9 @@
 	// Signed out (401 from /api/v0/me) anywhere in the SPA → start the OIDC
 	// login, coming back to the route the user actually wanted.
 	$effect(() => {
-		if (me.loaded && me.value === null && !page.url.pathname.endsWith('/login')) {
+		// The setup wizard runs before any account exists — never bounce it.
+		const isSetup = page.url.pathname.startsWith('/setup');
+		if (me.loaded && me.value === null && !page.url.pathname.endsWith('/login') && !isSetup) {
 			window.location.href = loginUrl(page.url.pathname + page.url.search);
 		}
 	});

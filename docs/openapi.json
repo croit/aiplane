@@ -4208,6 +4208,138 @@
      }
     }
    }
+  },
+  "/api/v0/setup/state": {
+   "get": {
+    "tags": [
+     "setup"
+    ],
+    "summary": "Where the wizard stands",
+    "description": "Deliberately unauthenticated while setup is open: an empty gateway has no accounts. 404 once setup is closed.",
+    "operationId": "setupState",
+    "responses": {
+     "200": {
+      "description": "Access mode (first_run | recovery | closed), the saved draft (secret only as client_secret_set), and the verified proof when a test login landed."
+     }
+    }
+   }
+  },
+  "/api/v0/setup/test": {
+   "post": {
+    "tags": [
+     "setup"
+    ],
+    "summary": "Save the provider settings and start a test login",
+    "operationId": "setupTest",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "public_url",
+         "issuer",
+         "client_id"
+        ],
+        "properties": {
+         "public_url": {
+          "type": "string"
+         },
+         "issuer": {
+          "type": "string"
+         },
+         "client_id": {
+          "type": "string"
+         },
+         "client_secret": {
+          "type": "string",
+          "description": "Blank keeps the stored secret on an unchanged draft."
+         },
+         "scopes": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "roles_claim": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "authorize_url + the browser-binding cookie — navigate the browser there."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "502": {
+      "description": "The provider was unreachable or discovery failed."
+     }
+    }
+   }
+  },
+  "/api/v0/setup/restart": {
+   "post": {
+    "tags": [
+     "setup"
+    ],
+    "summary": "Throw the proof away",
+    "operationId": "setupRestart",
+    "responses": {
+     "200": {
+      "description": "Back to screen 1."
+     }
+    }
+   }
+  },
+  "/api/v0/setup/finish": {
+   "post": {
+    "tags": [
+     "setup"
+    ],
+    "summary": "Promote the draft and open for business",
+    "operationId": "setupFinish",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "claim": {
+          "type": "string"
+         },
+         "value": {
+          "type": "string"
+         },
+         "manual_claim": {
+          "type": "string"
+         },
+         "manual_value": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Settings persisted, admin + default groups created, OIDC live, setup marked complete."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "502": {
+      "description": "The provider was unreachable."
+     }
+    }
+   }
   }
  },
  "components": {

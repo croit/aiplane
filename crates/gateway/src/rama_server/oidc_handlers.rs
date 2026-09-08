@@ -167,7 +167,7 @@ pub async fn callback(State(state): State<Arc<RamaState>>, req: Request) -> Resp
         // on a fresh install), then hands the claims back. Deliberately no user
         // upsert and no session — nothing has authorised anyone yet.
         Purpose::Setup => {
-            return crate::rama_server::pages::setup_probe_callback(
+            return crate::rama_server::setup_api::setup_probe_callback(
                 &state,
                 req.headers(),
                 &code,

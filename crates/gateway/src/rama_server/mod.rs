@@ -24,6 +24,7 @@ pub mod proxy;
 pub mod rag_api;
 pub mod router;
 pub mod sandbox_api;
+pub mod setup_api;
 pub mod spa;
 pub mod vad;
 
