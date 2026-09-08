@@ -10,6 +10,7 @@ import {
 	applyEvent,
 	newConversationState,
 	parseSseBlock,
+	parseUserContent,
 	sessionTitle,
 	type ChatEvent,
 	type ConversationState,
@@ -154,4 +155,26 @@ test('session titles fall back to the first user line, truncated', () => {
 		] as never),
 		'first line'
 	);
+});
+
+test('attachment markers parse into chips and vanish from the text', () => {
+	const content =
+		'look at this\n\n[gw-attachment file="shot.png" mime="image/png" url="/chat/attachment/t1/shot.png" size=123]\n\nand this\n[gw-attachment file="data.csv" mime="text/csv" url="/chat/attachment/t1/data.csv" size=45]';
+	const { text, attachments } = parseUserContent(content);
+	assert.equal(text, 'look at this\n\nand this');
+	assert.deepEqual(
+		attachments.map((a) => [a.filename, a.mime, a.size]),
+		[
+			['shot.png', 'image/png', 123],
+			['data.csv', 'text/csv', 45]
+		]
+	);
+	assert.equal(attachments[0].url, '/chat/attachment/t1/shot.png');
+});
+
+test('content without markers parses to itself', () => {
+	const { text, attachments } = parseUserContent('plain message');
+	assert.equal(text, 'plain message');
+	assert.equal(attachments.length, 0);
+	assert.deepEqual(parseUserContent(null), { text: '', attachments: [] });
 });

@@ -32,7 +32,7 @@ use gateway_runtime::rama_server::state::RamaState;
 
 use gateway_core::server::db::users::User;
 
-use super::{ChatSubmit, RequestCtx, SubmitTurnError, submit_turn};
+use super::{ChatSubmit, RequestCtx, SubmitTurnError, TurnPath, submit_turn};
 use crate::pages::{json_error, require_session_json};
 use session_core::db as chat;
 
@@ -248,29 +248,55 @@ pub async fn message_send(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    // Two request shapes, one code path: JSON `{model, message}` for plain
+    // text, multipart/form-data (like the legacy composer) when attachments
+    // ride along — they must upload under the user-turn's S3 prefix, which
+    // only exists at parse time.
+    let content_type = req
+        .headers()
+        .get(rama::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let user_turn_id = uuid::Uuid::new_v4().to_string();
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: MessageBody = match serde_json::from_slice(&bytes) {
-        Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the message body: {err}"),
-            );
+    let submit = if content_type.starts_with("multipart/form-data") {
+        let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+            Ok(b) => b,
+            Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+        };
+        match super::parse_chat_submit(&content_type, bytes, &user_turn_id, &state).await {
+            Ok(mut s) => {
+                s.user_text = s.user_text.trim().to_string();
+                s
+            }
+            Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+        }
+    } else {
+        let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+            Ok(b) => b,
+            Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+        };
+        let parsed: MessageBody = match serde_json::from_slice(&bytes) {
+            Ok(p) => p,
+            Err(err) => {
+                return json_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    &format!("parsing the message body: {err}"),
+                );
+            }
+        };
+        ChatSubmit {
+            model: parsed.model,
+            user_text: parsed.message.trim().to_string(),
+            attachments: Vec::new(),
+            voice: parsed.voice,
+            user_turn_id,
         }
     };
-    let submit = ChatSubmit {
-        model: parsed.model,
-        user_text: parsed.message.trim().to_string(),
-        attachments: Vec::new(),
-        voice: parsed.voice,
-        user_turn_id: uuid::Uuid::new_v4().to_string(),
-    };
-    if submit.user_text.is_empty() {
+    let has_attachments = !submit.attachments.is_empty();
+    if submit.user_text.is_empty() && !has_attachments {
         return json_error(
             StatusCode::BAD_REQUEST,
             "invalid_request",
@@ -460,6 +486,10 @@ async fn readable_session(
 // ---------------------------------------------------------------------------
 // Turn actions (retry/edit/share/fork/effort/export) — issue #22 P5/P6.
 
+/// Named (not positional) path extraction: rama's tuple `Path` reads
+/// captures in a non-deterministic order, so any route with two or more
+/// params must map by name — the same reason the legacy handlers use
+/// `TurnPath`.
 #[derive(serde::Deserialize)]
 pub struct RetryBody {
     pub model: String,
@@ -469,7 +499,10 @@ pub struct RetryBody {
 /// assistant reply + everything below, regenerate from the preceding user
 /// turn. 202 + turn ids like a fresh submit; the reply streams on /events.
 pub async fn turn_retry(
-    Path((session_id, turn_id)): Path<(String, String)>,
+    Path(TurnPath {
+        id: session_id,
+        turn_id,
+    }): Path<TurnPath>,
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
@@ -527,7 +560,10 @@ pub struct EditBody {
 /// POST /api/v0/chat/sessions/{id}/turns/{turn_id}/edit — rewrite a user
 /// message, drop everything below, regenerate.
 pub async fn turn_edit(
-    Path((session_id, turn_id)): Path<(String, String)>,
+    Path(TurnPath {
+        id: session_id,
+        turn_id,
+    }): Path<TurnPath>,
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {

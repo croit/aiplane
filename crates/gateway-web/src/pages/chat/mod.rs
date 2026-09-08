@@ -1515,8 +1515,8 @@ pub async fn chat_cancel(
 
 #[derive(serde::Deserialize)]
 pub struct TurnPath {
-    id: String,
-    turn_id: String,
+    pub id: String,
+    pub turn_id: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -1551,10 +1551,13 @@ async fn load_owned_turn(
     }
     match chat::get_turn(&state.db, session_id, turn_id).await {
         Ok(Some(t)) => Ok(t),
-        Ok(None) => Err(sse_submit_error_response(&t(
-            lang,
-            "chat-error-message-not-found",
-        ))),
+        Ok(None) => {
+            eprintln!("DEBUG legacy load_owned_turn miss");
+            Err(sse_submit_error_response(&t(
+                lang,
+                "chat-error-message-not-found",
+            )))
+        }
         Err(err) => Err(sse_submit_error_response(&err.to_string())),
     }
 }

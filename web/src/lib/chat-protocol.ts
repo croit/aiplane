@@ -263,3 +263,39 @@ export function sessionTitle(session: ChatSession, turns: Iterable<LiveTurn>): s
 	}
 	return 'Untitled chat';
 }
+
+// ---------------------------------------------------------------------------
+// Chat attachments (user turns carry `[gw-attachment …]` markers inline)
+
+export interface ChatAttachment {
+	filename: string;
+	mime: string;
+	url: string;
+	size: number;
+	link?: string;
+}
+
+const MARKER_RE =
+	/\[gw-attachment file="([^"]*)" mime="([^"]*)" url="([^"]*)" size=(\d+)(?: link="([^"]*)")?\]/g;
+
+/** Split a user message into plain text + parsed attachment markers. */
+export function parseUserContent(
+	content: string | null
+): { text: string; attachments: ChatAttachment[] } {
+	if (!content) return { text: '', attachments: [] };
+	const attachments: ChatAttachment[] = [];
+	const text = content
+		.replace(MARKER_RE, (_m, file: string, mime: string, url: string, size: string, link?: string) => {
+			attachments.push({
+				filename: file,
+				mime,
+				url,
+				size: Number(size),
+				link: link || undefined
+			});
+			return '';
+		})
+		.replace(/\n{3,}/g, '\n\n')
+		.trim();
+	return { text, attachments };
+}

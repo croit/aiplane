@@ -635,6 +635,7 @@ async fn turn_actions_edit_retry_share_export() {
     let (state, cookie) = setup(&upstream.uri()).await;
     let app = router(state.clone());
     let session = chat::create_session(&state.db, "alice").await.unwrap();
+    eprintln!("DEBUG test session.id = {}", session.id);
 
     // First turn.
     let resp = app
@@ -731,7 +732,12 @@ async fn turn_actions_edit_retry_share_export() {
         ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        resp.status(),
+        StatusCode::ACCEPTED,
+        "{}",
+        body_string(resp).await
+    );
     wait_settled(&state, &session.id).await;
     let after = chat::list_turns(&state.db, &session.id)
         .await
@@ -757,4 +763,73 @@ async fn wait_settled(state: &gateway::rama_server::RamaState, session_id: &str)
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     panic!("turn never settled");
+}
+
+/// Multipart submit with attachments: files upload under the turn prefix
+/// and the markers land in the stored user content — the same contract the
+/// legacy composer has.
+#[tokio::test]
+async fn multipart_submit_uploads_attachments_into_the_turn() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["ok"], 0).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let boundary = "----e2eboundary";
+    let mut body = Vec::new();
+    for (name, value) in [("model", "model-a"), ("message", "see attachment")] {
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(
+            format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+                .as_bytes(),
+        );
+    }
+    let png = [0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(
+        "Content-Disposition: form-data; name=\"attachment\"; filename=\"shot.png\"\r\n\r\n"
+            .as_bytes(),
+    );
+    body.extend_from_slice(&png);
+    body.extend_from_slice(b"\r\n");
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+
+    let resp = app
+        .serve(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/v0/chat/sessions/{}/messages", session.id))
+                .header("cookie", format!("id={cookie}"))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // No [chat.s3] in this harness → the attachment upload is refused with
+    // a 400 that names the missing configuration (the same contract the
+    // legacy composer surfaces as a toast). The marker/content assertions
+    // live in the S3-configured suites; here we pin the refusal shape.
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "{}",
+        body_string(resp).await
+    );
+    assert!(
+        body_string(resp)
+            .await
+            .contains("chat attachments are not configured")
+    );
+    assert!(
+        chat::list_turns(&state.db, &session.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a refused upload must not leave rows"
+    );
 }

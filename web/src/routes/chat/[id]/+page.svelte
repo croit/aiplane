@@ -6,6 +6,7 @@
 	import { createVoiceController } from '$lib/voice.svelte';
 	import { refreshSidebar } from '$lib/sidebar.svelte';
 	import { renderMarkdown } from '$lib/markdown';
+	import { parseUserContent } from '$lib/chat-protocol';
 	import type { ChatSession } from '$lib/chat-protocol';
 
 	let { data } = $props<{ data: { id: string } }>();
@@ -16,6 +17,7 @@
 	let model = $state('');
 	let models = $state<{ id: string; gdpr: boolean; nda: boolean }[]>([]);
 	let draft = $state('');
+	let files = $state<File[]>([]);
 	let sending = $state(false);
 	let notice = $state<string | null>(null);
 
@@ -105,12 +107,28 @@
 
 	async function send() {
 		const text = draft.trim();
-		if (!text || !model.trim() || sending) return;
+		if ((!text && files.length === 0) || !model.trim() || sending) return;
 		sending = true;
 		notice = null;
 		try {
-			await api.sendChatMessage(id, { model: model.trim(), message: text });
+			if (files.length > 0) {
+				// Attachments ride as multipart (same shape as the legacy
+				// composer) so they land under this turn's storage prefix.
+				const fd = new FormData();
+				fd.append('model', model.trim());
+				fd.append('message', text);
+				for (const f of files) fd.append('attachment', f);
+				const res = await fetch(`/api/v0/chat/sessions/${id}/messages`, {
+					method: 'POST',
+					credentials: 'same-origin',
+					body: fd
+				});
+				if (!res.ok) throw new Error((await res.text()).slice(0, 200));
+			} else {
+				await api.sendChatMessage(id, { model: model.trim(), message: text });
+			}
 			draft = '';
+			files = [];
 			// The reply arrives on a fresh stream (the idle one closed).
 			controller?.attach();
 		} catch (err) {
@@ -121,6 +139,30 @@
 		} finally {
 			sending = false;
 		}
+	}
+
+	function addFiles(list: FileList | File[] | null) {
+		if (!list) return;
+		files = [...files, ...Array.from(list)];
+	}
+
+	function onPaste(e: ClipboardEvent) {
+		const images = Array.from(e.clipboardData?.files ?? []).filter((f) =>
+			f.type.startsWith('image/')
+		);
+		if (images.length > 0) {
+			e.preventDefault();
+			addFiles(images);
+		}
+	}
+
+	function onDrop(e: DragEvent) {
+		e.preventDefault();
+		addFiles(e.dataTransfer?.files ?? null);
+	}
+
+	function onDragOver(e: DragEvent) {
+		e.preventDefault();
 	}
 
 	async function retry(turnId: string) {
@@ -251,8 +293,28 @@
 <div class="flex flex-col gap-4 mb-4">
 	{#each turns as entry (entry.turn.id)}
 		{#if entry.turn.role === 'user'}
+			{@const parsed = parseUserContent(entry.turn.user_content)}
 			<div class="chat chat-end">
-				<div class="chat-bubble chat-bubble-primary whitespace-pre-wrap">{entry.turn.user_content}</div>
+				<div class="chat-bubble chat-bubble-primary">
+					{#if parsed.attachments.length > 0}
+						<div class="flex flex-wrap gap-2 mb-2 justify-end">
+							{#each parsed.attachments as att (att.url)}
+								{#if att.mime.startsWith('image/')}
+									<a href={att.url} target="_blank" rel="noopener">
+										<img src={att.url} alt={att.filename} class="rounded-lg max-h-48" />
+									</a>
+								{:else}
+									<a href={att.url} class="btn btn-sm" download={att.filename}>
+										{att.filename} ({Math.round(att.size / 1024)} KB)
+									</a>
+								{/if}
+							{/each}
+						</div>
+					{/if}
+					{#if parsed.text}
+						<div class="whitespace-pre-wrap">{parsed.text}</div>
+					{/if}
+				</div>
 				{#if !streaming}
 					<div class="chat-footer opacity-60">
 						<button class="btn btn-ghost btn-xs" onclick={() => editTurn(entry.turn.id, entry.turn.user_content ?? '')}>Edit</button>
@@ -342,12 +404,19 @@
 				placeholder="Message the model…"
 				bind:value={draft}
 				onkeydown={onKeydown}
+				onpaste={onPaste}
+				ondragover={onDragOver}
+				ondrop={onDrop}
 				disabled={streaming}
 			></textarea>
+			<label class="btn btn-ghost btn-square" aria-label="Attach files" title="Attach files">
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+				<input type="file" multiple class="hidden" onchange={(e) => { addFiles((e.currentTarget as HTMLInputElement).files); (e.currentTarget as HTMLInputElement).value = ''; }} />
+			</label>
 			{#if streaming}
 				<button class="btn btn-error" onclick={stop}>Stop</button>
 			{:else}
-				<button class="btn btn-primary" onclick={send} disabled={!draft.trim() || !model.trim() || sending}>
+				<button class="btn btn-primary" onclick={send} disabled={(!draft.trim() && files.length === 0) || !model.trim() || sending}>
 					Send
 				</button>
 			{/if}

@@ -1516,7 +1516,7 @@ struct LoginPageQuery {
 // doesn't have to know about the split.
 pub mod chat;
 pub use chat::{
-    chat_attachment, chat_attachment_remove, chat_cancel, chat_capabilities_toggle,
+    TurnPath, chat_attachment, chat_attachment_remove, chat_cancel, chat_capabilities_toggle,
     chat_document_edit, chat_document_view, chat_edit, chat_effort_set, chat_export_markdown,
     chat_export_pdf, chat_fork, chat_index, chat_message_send, chat_retry, chat_search,
     chat_session_create, chat_session_delete, chat_session_pin, chat_session_view,

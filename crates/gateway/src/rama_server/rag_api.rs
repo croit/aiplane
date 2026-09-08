@@ -883,9 +883,15 @@ pub async fn list_refs(
 
 /// DELETE /api/v0/rag/collections/{id}/refs/{ref_id} — remove one source
 /// (its store folder goes with it).
+#[derive(serde::Deserialize)]
+pub struct RagRefPath {
+    pub id: i64,
+    pub ref_id: i64,
+}
+
 pub async fn delete_ref(
     State(state): State<Arc<RamaState>>,
-    Path((id, ref_id)): Path<(i64, i64)>,
+    Path(RagRefPath { id, ref_id }): Path<RagRefPath>,
     req: Request,
 ) -> Response {
     if let Err(resp) = require_admin(&state, &req).await {
@@ -912,7 +918,7 @@ pub async fn delete_ref(
 /// re-walk of one source on the next index pass.
 pub async fn rebuild_ref(
     State(state): State<Arc<RamaState>>,
-    Path((_id, ref_id)): Path<(i64, i64)>,
+    Path(RagRefPath { ref_id, .. }): Path<RagRefPath>,
     req: Request,
 ) -> Response {
     if let Err(resp) = require_admin(&state, &req).await {
