@@ -2,27 +2,20 @@
  * Small helpers shared by the SPA's admin views: same-origin JSON fetches
  * with the error envelope surfaced as an Error.
  */
-export async function adminJson<T>(
-	path: string,
-	init?: RequestInit
-): Promise<T> {
-	const res = await fetch(path, {
-		credentials: 'same-origin',
-		...init,
-		headers: { accept: 'application/json', ...init?.headers }
-	});
-	if (!res.ok) {
-		let message = `${res.status} ${res.statusText}`;
-		try {
-			const body = (await res.json()) as { error?: { message?: string } };
-			if (body.error?.message) message = body.error.message;
-		} catch {
-			/* keep the status line */
+import { request, ApiError } from './api';
+
+/** Admin-surface fetch: same transport as `api.*`, but admin error
+ * envelopes surface as plain Errors with the server's message. */
+export async function adminJson<T>(path: string, init?: RequestInit): Promise<T> {
+	try {
+		return await request<T>(path, init);
+	} catch (err) {
+		if (err instanceof ApiError) {
+			const detail = err.message.split(' — ')[1];
+			throw new Error(detail || err.message);
 		}
-		throw new Error(message);
+		throw err;
 	}
-	if (res.status === 204) return undefined as T;
-	return (await res.json()) as T;
 }
 
 export function adminPut<T = unknown>(path: string, body: unknown): Promise<T> {

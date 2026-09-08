@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, ApiError } from '$lib/api';
+	import { adminJson, adminPost } from '$lib/admin-client';
 
 	interface ToolEntry {
 		key: string;
@@ -28,10 +28,8 @@
 
 	async function refresh() {
 		try {
-			const res = await fetch('/api/v0/tools', { headers: { accept: 'application/json' } });
-			if (!res.ok) throw new ApiError(res.status, `tools ${res.status}`);
-			const body = (await res.json()) as { tools: ToolEntry[] };
-			tools = body.tools;
+			tools = (await adminJson<{ tools: ToolEntry[] }>('/api/v0/tools')).tools;
+			error = null;
 		} catch (err) {
 			error = String(err);
 		}
@@ -42,15 +40,10 @@
 		saving = tool.key;
 		notice = null;
 		try {
-			const res = await fetch('/api/v0/tools/toggle', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ tool_key: tool.key, enabled: !tool.enabled })
+			await adminPost('/api/v0/tools/toggle', {
+				tool_key: tool.key,
+				enabled: !tool.enabled
 			});
-			if (!res.ok) {
-				const raw = await res.text();
-				throw new Error(raw.slice(0, 200));
-			}
 			tool.enabled = !tool.enabled;
 		} catch (err) {
 			notice = String(err);

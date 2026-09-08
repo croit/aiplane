@@ -79,7 +79,10 @@ export class ApiError extends Error {
 	}
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/** The single same-origin JSON fetch path. Every client — tokens, chat,
+ * admin surfaces — funnels through here so error envelopes, credentials and
+ * headers live in exactly one place. */
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 	const res = await fetch(path, {
 		credentials: 'same-origin',
 		...init,

@@ -17,8 +17,7 @@
 
 	async function refresh() {
 		try {
-			const data = await adminJson<{ connectors: Connector[] }>('/api/v0/integrations');
-			connectors = data.connectors;
+			connectors = (await adminJson<{ connectors: Connector[] }>('/api/v0/integrations')).connectors;
 			error = null;
 		} catch (err) {
 			error = String(err);

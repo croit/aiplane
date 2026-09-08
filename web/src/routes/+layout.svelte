@@ -283,8 +283,10 @@
 			<span class="font-semibold">LLM Gateway</span>
 		</div>
 
-		<main class="flex-1 min-h-0 overflow-y-auto">
-			{@render children()}
+		<main class="flex-1 min-h-0 min-w-0 overflow-y-auto">
+			<div class="w-full max-w-5xl mx-auto px-4 sm:px-6 pt-6 pb-8">
+				{@render children()}
+			</div>
 		</main>
 	</div>
 
