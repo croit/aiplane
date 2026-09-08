@@ -375,3 +375,74 @@ async fn topology_save_apply_and_stream() {
     );
     drop(resp);
 }
+
+/// The workspace API (issue #22 P5): memories + scheduled + webhooks CRUD
+/// under /api/v0, session-gated.
+#[tokio::test]
+async fn workspace_surfaces_round_trip() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+
+    // Memories.
+    let resp = app
+        .serve(req(
+            rama::http::Method::POST,
+            "/api/v0/memories",
+            &cookie,
+            Some(r#"{"kind":"fact","content":"prefers dark mode"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    let created_raw = body(resp).await;
+    let created: serde_json::Value =
+        serde_json::from_str(&created_raw).expect("memory create answers 201 JSON");
+    assert!(created["id"].is_string(), "the memory row carries its id: {created_raw}");
+    let resp = app
+        .serve(req(
+            rama::http::Method::GET,
+            "/api/v0/memories",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert!(body(resp).await.contains("prefers dark mode"));
+
+    // Scheduled: cron validation + preview.
+    let resp = app
+        .serve(req(
+            rama::http::Method::POST,
+            "/api/v0/scheduled/preview",
+            &cookie,
+            Some(r#"{"cron":"0 9 * * 1-5"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(body(resp).await.contains("upcoming"));
+
+    let resp = app
+        .serve(req(
+            rama::http::Method::POST,
+            "/api/v0/scheduled",
+            &cookie,
+            Some(r#"{"name":"daily","prompt":"hi","model":"model-a","cron":"not cron"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "bad cron rejected");
+
+    // Webhooks: create returns the one-time secret.
+    let resp = app
+        .serve(req(
+            rama::http::Method::POST,
+            "/api/v0/webhooks",
+            &cookie,
+            Some(r#"{"name":"ci","prompt":"summarise","model":"model-a"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let hook: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
+    assert!(hook["secret"].as_str().unwrap().starts_with("gwh_"));
+}

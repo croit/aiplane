@@ -1554,6 +1554,7 @@ pub use tokens::{
 // every signed-in user; the list is scoped to the tools their roles
 // grant. Re-export the two handler entry points for the router.
 pub mod json_admin;
+pub mod json_workspace;
 pub mod tools;
 pub use tools::{tools_index, tools_toggle};
 

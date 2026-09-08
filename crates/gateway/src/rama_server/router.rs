@@ -457,6 +457,57 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/admin/upstreams/reload",
             pages::json_admin::topology_reload,
         )
+        // Workspace JSON API for the SPA (issue #22 P5).
+        .with_get("/api/v0/memories", pages::json_workspace::memories_list)
+        .with_post("/api/v0/memories", pages::json_workspace::memories_create)
+        .with_put(
+            "/api/v0/memories/{id}",
+            pages::json_workspace::memories_update,
+        )
+        .with_delete(
+            "/api/v0/memories/{id}",
+            pages::json_workspace::memories_delete,
+        )
+        .with_get("/api/v0/scheduled", pages::json_workspace::scheduled_list)
+        .with_post("/api/v0/scheduled", pages::json_workspace::scheduled_create)
+        .with_post(
+            "/api/v0/scheduled/preview",
+            pages::json_workspace::scheduled_preview,
+        )
+        .with_put(
+            "/api/v0/scheduled/{id}",
+            pages::json_workspace::scheduled_update,
+        )
+        .with_post(
+            "/api/v0/scheduled/{id}/toggle",
+            pages::json_workspace::scheduled_toggle,
+        )
+        .with_delete(
+            "/api/v0/scheduled/{id}",
+            pages::json_workspace::scheduled_delete,
+        )
+        .with_get("/api/v0/webhooks", pages::json_workspace::webhooks_list)
+        .with_post("/api/v0/webhooks", pages::json_workspace::webhooks_create)
+        .with_put(
+            "/api/v0/webhooks/{id}",
+            pages::json_workspace::webhooks_update,
+        )
+        .with_post(
+            "/api/v0/webhooks/{id}/toggle",
+            pages::json_workspace::webhooks_toggle,
+        )
+        .with_post(
+            "/api/v0/webhooks/{id}/rotate",
+            pages::json_workspace::webhooks_rotate,
+        )
+        .with_delete(
+            "/api/v0/webhooks/{id}",
+            pages::json_workspace::webhooks_delete,
+        )
+        .with_get(
+            "/api/v0/webhooks/{id}/runs",
+            pages::json_workspace::webhooks_runs,
+        )
         .with_get("/api/v0/tools", pages::tools::tools_list_json)
         .with_post("/api/v0/tools/toggle", pages::tools::tools_toggle_json)
         // Chat JSON API for the SvelteKit SPA (issue #22 phase 2). The

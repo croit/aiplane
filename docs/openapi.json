@@ -2811,6 +2811,613 @@
      }
     }
    }
+  },
+  "/api/v0/memories": {
+   "get": {
+    "tags": [
+     "memory"
+    ],
+    "summary": "List the caller's memories",
+    "operationId": "listMemories",
+    "responses": {
+     "200": {
+      "description": "Memories, newest first."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "memory"
+    ],
+    "summary": "Add a memory",
+    "operationId": "createMemory",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "kind",
+         "content"
+        ],
+        "properties": {
+         "kind": {
+          "type": "string",
+          "enum": [
+           "preference",
+           "project",
+           "fact"
+          ]
+         },
+         "content": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Created."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   }
+  },
+  "/api/v0/memories/{id}": {
+   "put": {
+    "tags": [
+     "memory"
+    ],
+    "summary": "Update a memory",
+    "operationId": "updateMemory",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "kind",
+         "content"
+        ],
+        "properties": {
+         "kind": {
+          "type": "string",
+          "enum": [
+           "preference",
+           "project",
+           "fact"
+          ]
+         },
+         "content": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Updated."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "memory"
+    ],
+    "summary": "Delete a memory",
+    "operationId": "deleteMemory",
+    "responses": {
+     "204": {
+      "description": "Deleted."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/scheduled": {
+   "get": {
+    "tags": [
+     "scheduled"
+    ],
+    "summary": "List the caller's scheduled actions",
+    "operationId": "listScheduled",
+    "responses": {
+     "200": {
+      "description": "Actions + the chat model picker list."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "scheduled"
+    ],
+    "summary": "Create a scheduled action",
+    "operationId": "createScheduled",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "name",
+         "prompt",
+         "model",
+         "cron"
+        ],
+        "properties": {
+         "name": {
+          "type": "string"
+         },
+         "prompt": {
+          "type": "string"
+         },
+         "model": {
+          "type": "string"
+         },
+         "cron": {
+          "type": "string",
+          "description": "5-field cron expression"
+         },
+         "timezone": {
+          "type": "string",
+          "description": "IANA name; defaults to the caller's stored timezone."
+         },
+         "tools_enabled": {
+          "type": "boolean"
+         },
+         "reuse_conversation": {
+          "type": "boolean"
+         },
+         "reuse_rounds": {
+          "type": "integer"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Created; next run computed from the cron expression."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   }
+  },
+  "/api/v0/scheduled/preview": {
+   "post": {
+    "tags": [
+     "scheduled"
+    ],
+    "summary": "Preview a cron expression",
+    "description": "Pure computation, no writes — the schedule builder's live preview.",
+    "operationId": "previewCron",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "cron"
+        ],
+        "properties": {
+         "cron": {
+          "type": "string"
+         },
+         "timezone": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Human summary + next three fire times."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   }
+  },
+  "/api/v0/scheduled/{id}": {
+   "put": {
+    "tags": [
+     "scheduled"
+    ],
+    "summary": "Update a scheduled action",
+    "operationId": "updateScheduled",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "name",
+         "prompt",
+         "model",
+         "cron"
+        ],
+        "properties": {
+         "name": {
+          "type": "string"
+         },
+         "prompt": {
+          "type": "string"
+         },
+         "model": {
+          "type": "string"
+         },
+         "cron": {
+          "type": "string",
+          "description": "5-field cron expression"
+         },
+         "timezone": {
+          "type": "string",
+          "description": "IANA name; defaults to the caller's stored timezone."
+         },
+         "tools_enabled": {
+          "type": "boolean"
+         },
+         "reuse_conversation": {
+          "type": "boolean"
+         },
+         "reuse_rounds": {
+          "type": "integer"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Updated."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "scheduled"
+    ],
+    "summary": "Delete a scheduled action",
+    "operationId": "deleteScheduled",
+    "responses": {
+     "204": {
+      "description": "Deleted."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/scheduled/{id}/toggle": {
+   "post": {
+    "tags": [
+     "scheduled"
+    ],
+    "summary": "Pause / resume an action",
+    "operationId": "toggleScheduled",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "enabled"
+        ],
+        "properties": {
+         "enabled": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Resuming recomputes the next fire time."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/webhooks": {
+   "get": {
+    "tags": [
+     "webhooks"
+    ],
+    "summary": "List the caller's webhooks",
+    "operationId": "listWebhooks",
+    "responses": {
+     "200": {
+      "description": "Webhooks + the chat model picker list."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "webhooks"
+    ],
+    "summary": "Create a webhook",
+    "operationId": "createWebhook",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "name",
+         "prompt",
+         "model"
+        ],
+        "properties": {
+         "name": {
+          "type": "string"
+         },
+         "prompt": {
+          "type": "string"
+         },
+         "model": {
+          "type": "string"
+         },
+         "tools_enabled": {
+          "type": "boolean"
+         },
+         "synchronous": {
+          "type": "boolean"
+         },
+         "reuse_conversation": {
+          "type": "boolean"
+         },
+         "reuse_rounds": {
+          "type": "integer"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Created; the gwh_ trigger secret is returned exactly once."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   }
+  },
+  "/api/v0/webhooks/{id}": {
+   "put": {
+    "tags": [
+     "webhooks"
+    ],
+    "summary": "Update a webhook",
+    "operationId": "updateWebhook",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "name",
+         "prompt",
+         "model"
+        ],
+        "properties": {
+         "name": {
+          "type": "string"
+         },
+         "prompt": {
+          "type": "string"
+         },
+         "model": {
+          "type": "string"
+         },
+         "tools_enabled": {
+          "type": "boolean"
+         },
+         "synchronous": {
+          "type": "boolean"
+         },
+         "reuse_conversation": {
+          "type": "boolean"
+         },
+         "reuse_rounds": {
+          "type": "integer"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Updated."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "webhooks"
+    ],
+    "summary": "Delete a webhook",
+    "operationId": "deleteWebhook",
+    "responses": {
+     "204": {
+      "description": "Deleted."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/webhooks/{id}/toggle": {
+   "post": {
+    "tags": [
+     "webhooks"
+    ],
+    "summary": "Enable / disable a webhook",
+    "operationId": "toggleWebhook",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "enabled"
+        ],
+        "properties": {
+         "enabled": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Toggled."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/webhooks/{id}/rotate": {
+   "post": {
+    "tags": [
+     "webhooks"
+    ],
+    "summary": "Rotate the trigger secret",
+    "operationId": "rotateWebhook",
+    "responses": {
+     "200": {
+      "description": "The new gwh_ secret — shown exactly once; the old one stops working immediately."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/webhooks/{id}/runs": {
+   "get": {
+    "tags": [
+     "webhooks"
+    ],
+    "summary": "The run history",
+    "operationId": "listWebhookRuns",
+    "responses": {
+     "200": {
+      "description": "The last 50 runs."
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   }
   }
  },
  "components": {
