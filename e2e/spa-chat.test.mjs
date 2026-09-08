@@ -106,3 +106,24 @@ test("a turn streams into the SPA over the JSON event protocol", async (t) => {
         .waitFor({ state: "visible", timeout: 10_000 });
     await ctx.close();
 });
+
+test("the voice-mode modal opens with its tap-to-talk control", async () => {
+    const cookieValue = await devSessionCookie();
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/app/chat`, { waitUntil: "networkidle" });
+    await page.locator('button:has-text("New chat")').click();
+    await page.waitForURL((u) => /\/app\/chat\/.+/.test(u.pathname), { timeout: 5000 });
+    await page.locator("textarea").waitFor();
+
+    await page.locator('button[aria-label="Voice mode"]').click();
+    // The modal renders with its state control and the idle caption. (The
+    // actual mic capture can't run headless — capability errors surface as
+    // the modal's note, which is itself the wiring under test.)
+    await page.locator("dialog.modal-open").waitFor({ timeout: 5000 });
+    await page.waitForSelector("text=Tap to talk", { timeout: 5000 });
+    await page.locator('dialog.modal-open .modal-action button:has-text("Close")').click();
+    await page.locator("dialog.modal-open").waitFor({ state: "detached", timeout: 5000 });
+    await ctx.close();
+});

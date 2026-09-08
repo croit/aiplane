@@ -3,6 +3,7 @@
 	import { base } from '$app/paths';
 	import { api, ApiError } from '$lib/api';
 	import { createConversationController } from '$lib/chat.svelte';
+	import { createVoiceController } from '$lib/voice.svelte';
 	import { renderMarkdown } from '$lib/markdown';
 	import type { ChatSession } from '$lib/chat-protocol';
 
@@ -57,6 +58,47 @@
 		controller = c;
 		void loadMeta();
 		return () => c.destroy();
+	});
+
+	const voiceOpen = $state({ open: false });
+	let voice = $state<ReturnType<typeof createVoiceController> | null>(null);
+
+	/** Voice turns submit exactly like typed ones — plus the flag. */
+	async function submitVoiceTurn(text: string) {
+		if (!model.trim() || sending) return;
+		sending = true;
+		try {
+			await api.sendChatMessage(id, { model: model.trim(), message: text, voice: true });
+			controller?.attach();
+		} catch (err) {
+			notice = String(err);
+		} finally {
+			sending = false;
+		}
+	}
+
+	function openVoice() {
+		voice = createVoiceController(submitVoiceTurn);
+		voiceOpen.open = true;
+	}
+
+	function closeVoice() {
+		voice?.close();
+		voice = null;
+		voiceOpen.open = false;
+	}
+
+	// Feed the live reply into the voice controller whenever a
+	// voice-submitted turn is streaming (state drives it, no DOM observers).
+	$effect(() => {
+		if (!voice || !controller) return;
+		const liveId = controller.state.liveTurnId;
+		if (!liveId) return;
+		const live = controller.state.turns.find((t) => t.turn.id === liveId);
+		const content = live?.turn.content ?? '';
+		const finalized = live?.turn.status !== 'in_progress';
+		if (finalized && content === '') return;
+		voice.feedReplyText(content, finalized);
 	});
 
 	async function send() {
@@ -251,6 +293,63 @@
 					Send
 				</button>
 			{/if}
+			<button class="btn btn-ghost btn-square" onclick={openVoice} aria-label="Voice mode" title="Voice mode">
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="inline-block align-text-bottom" aria-hidden="true">
+					<rect x="9" y="2" width="6" height="11" rx="3" />
+					<path d="M5 10v1a7 7 0 0 0 14 0v-1" />
+					<path d="M12 18v3" />
+					<path d="M8 22h8" />
+				</svg>
+			</button>
 		</div>
 	</div>
 </div>
+
+{#if voiceOpen.open && voice}
+	<dialog class="modal modal-open" aria-label="Voice mode">
+		<div class="modal-box max-w-sm">
+			<div class="flex flex-col items-center gap-4 py-4">
+				<button
+					class="btn btn-circle btn-lg {voice.state.phase === 'listening'
+						? 'btn-error animate-pulse'
+						: voice.state.phase === 'speaking'
+							? 'btn-primary'
+							: 'btn-neutral'}"
+					onclick={() => voice?.tap(model)}
+					aria-label={voice.state.phase === 'listening' ? 'Stop and send' : 'Talk'}
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<rect x="9" y="2" width="6" height="11" rx="3" />
+						<path d="M5 10v1a7 7 0 0 0 14 0v-1" />
+						<path d="M12 18v3" />
+						<path d="M8 22h8" />
+					</svg>
+				</button>
+				<p class="text-sm font-medium">
+					{#if voice.state.phase === 'listening'}
+						Listening — tap to send
+					{:else if voice.state.phase === 'working'}
+						Working…
+					{:else if voice.state.phase === 'speaking'}
+						Speaking — tap to interrupt
+					{:else}
+						Tap to talk
+					{/if}
+				</p>
+				{#if voice.state.captionUser}
+					<p class="text-xs text-base-content/60 w-full text-left"><strong>You:</strong> {voice.state.captionUser}</p>
+				{/if}
+				{#if voice.state.captionAi}
+					<p class="text-xs text-base-content/60 w-full text-left"><strong>AI:</strong> {voice.state.captionAi}</p>
+				{/if}
+				{#if voice.state.note}
+					<div class="alert alert-warning py-2"><span>{voice.state.note}</span></div>
+				{/if}
+			</div>
+			<div class="modal-action">
+				<button class="btn btn-ghost btn-sm" onclick={closeVoice}>Close</button>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop"><button onclick={closeVoice}>close</button></form>
+	</dialog>
+{/if}
