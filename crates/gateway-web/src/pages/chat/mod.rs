@@ -53,6 +53,7 @@ use gateway_core::server::db::users::User;
 use gateway_features::server::chat_attachments;
 use gateway_runtime::rama_server::state::RamaState;
 
+pub mod json_api;
 mod render;
 mod title;
 
@@ -975,15 +976,6 @@ pub async fn chat_message_send(
         Err(err) => return sse_submit_error_response(&err.to_string()),
     };
 
-    // Rate-limit / quota gate — before reserving a worker or touching the DB,
-    // so an over-budget user is turned away cleanly (details on `/usage`).
-    {
-        let role_ids = state.role_ids_for(&user.roles);
-        if state.enforcer.check(&user.id, &role_ids).await.is_err() {
-            return sse_submit_error_response(&t(lang, "chat-error-rate-limited"));
-        }
-    }
-
     // Snapshot the request's content-type header before consuming
     // the request — we need it to find the multipart boundary.
     let content_type = req
@@ -1003,14 +995,11 @@ pub async fn chat_message_send(
         Ok(b) => b,
         Err(msg) => return sse_submit_error_response(&msg),
     };
-    // Pre-generate both turn ids:
-    //   * `assistant_turn_id` keys the worker-registry slot below
-    //     and (later) the in-progress assistant row.
-    //   * `user_turn_id` keys the user-message row AND the S3
-    //     prefix for any attachments uploaded on this submit. Same
-    //     id at upload time + at render-refresh time so a hard
-    //     reload re-presigns against the same object key.
-    let assistant_turn_id = uuid::Uuid::new_v4().to_string();
+    // Pre-generate the user turn id: it keys the user-message row AND the
+    // S3 prefix for any attachments uploaded on this submit. Same id at
+    // upload time + at render-refresh time so a hard reload re-presigns
+    // against the same object key. The assistant turn id is minted inside
+    // `submit_turn`, where the worker slot is reserved.
     let user_turn_id = uuid::Uuid::new_v4().to_string();
     let submit = match parse_chat_submit(&content_type, body, &user_turn_id, &state).await {
         Ok(s) => s,
@@ -1020,13 +1009,110 @@ pub async fn chat_message_send(
         return sse_submit_error_response(&t(lang, "chat-error-message-empty"));
     }
 
+    let ctx = RequestCtx {
+        client_ip,
+        secure,
+        voice_mode: submit.voice,
+    };
+    let submitted = match submit_turn(&state, &user, &active, submit, ctx).await {
+        Ok(s) => s,
+        Err(SubmitTurnError::NotFound) => {
+            return sse_submit_error_response(&t(lang, "chat-error-conversation-not-found"));
+        }
+        Err(SubmitTurnError::RateLimited) => {
+            return sse_submit_error_response(&t(lang, "chat-error-rate-limited"));
+        }
+        Err(SubmitTurnError::Busy) => {
+            return sse_turn_busy_response(&t(lang, "chat-error-still-streaming"));
+        }
+        Err(SubmitTurnError::Db(msg)) => return sse_submit_error_response(&msg),
+    };
+
+    // Initial SSE event: append the two new bubbles to the
+    // conversation.
+    let initial_html = format!(
+        "{}{}",
+        session_core::render::render_user_turn(&submitted.user_turn, Some("/chat"), lang),
+        session_core::render::render_assistant_turn(
+            &chat::TurnWithTools {
+                turn: submitted.assistant_turn.clone(),
+                tool_calls: Vec::new(),
+            },
+            Some("/chat"),
+            lang
+        )
+    );
+    let initial_patch = armed_initial_patch(sse_patch(
+        Some("#conversation"),
+        Some("append"),
+        &initial_html,
+    ));
+
+    spawn_session_stream_response(
+        state.db.clone(),
+        active.id.clone(),
+        submitted.assistant_turn.id.clone(),
+        submitted.broadcast_rx,
+        Some(initial_patch),
+        gateway_sidebar_emitter(state.clone(), user.id.clone(), active.id.clone(), lang),
+        Some("/chat".to_string()),
+        lang,
+    )
+}
+
+/// Why a submit was refused, before anything was persisted. Both submit
+/// surfaces (the legacy multipart → SSE-HTML composer and the JSON API)
+/// map these onto their own response shapes.
+#[derive(Debug)]
+pub(crate) enum SubmitTurnError {
+    NotFound,
+    RateLimited,
+    /// This user's previous turn is still streaming — the registry refused.
+    Busy,
+    /// A DB write failed after the worker slot was reserved; the message is
+    /// the human-readable cause. The slot has been released by the time this
+    /// travels to the caller.
+    Db(String),
+}
+
+/// A turn accepted into the worker: both rows persisted, worker spawned,
+/// title generation scheduled. `broadcast_rx` is subscribed *before* the
+/// spawn (broadcast channels don't replay), so the caller that feeds an SSE
+/// response from it cannot miss the first tick.
+pub(crate) struct SubmittedTurn {
+    pub user_turn: chat::Turn,
+    pub assistant_turn: chat::Turn,
+    pub broadcast_rx: tokio::sync::broadcast::Receiver<TurnUpdate>,
+}
+
+/// The submit core shared by the HTML composer and the JSON API: rate/quota
+/// gate, worker-slot reservation, turn persistence, heuristic title, worker
+/// spawn, LLM title generation. Errors leave no rows behind and release the
+/// worker slot.
+///
+/// Ordering is load-bearing and commented where it's subtle — see the inline
+/// notes; they were part of [`chat_message_send`] before the extraction and
+/// describe bugs the order prevents.
+pub(crate) async fn submit_turn(
+    state: &Arc<RamaState>,
+    user: &User,
+    active: &chat::Session,
+    submit: ChatSubmit,
+    req: RequestCtx,
+) -> Result<SubmittedTurn, SubmitTurnError> {
+    // Rate-limit / quota gate — before reserving a worker or touching the DB,
+    // so an over-budget user is turned away cleanly (details on `/usage`).
+    {
+        let role_ids = state.role_ids_for(&user.roles);
+        if state.enforcer.check(&user.id, &role_ids).await.is_err() {
+            return Err(SubmitTurnError::RateLimited);
+        }
+    }
+
     // Build the final user_text: typed text + per-attachment marker
     // (and an inlined fenced block for `text/*`-like attachments so
     // the model reads the bytes directly on the current turn).
-    let user_msg = augment_user_text(&user_turn_id, &submit);
-    // Per-turn voice-mode flag (drives the brevity directive in the driver).
-    // Captured before `submit` is consumed below.
-    let voice_mode = submit.voice;
+    let user_msg = augment_user_text(&submit.user_turn_id, &submit);
 
     // Reserve the per-user worker slot BEFORE persisting anything.
     // The old order (create turns → register) leaked orphaned
@@ -1038,24 +1124,24 @@ pub async fn chat_message_send(
     // (user + completed-assistant) pair. The pre-generated id is the
     // turn we'll insert immediately below, so the worker entry's
     // `turn_id` always matches the row that exists.
+    let assistant_turn_id = uuid::Uuid::new_v4().to_string();
     let outcome = state
         .chats
         .register(&user.id, &assistant_turn_id, &active.id);
     let worker = match outcome {
         RegisterOutcome::Registered { worker } => worker,
-        RegisterOutcome::Busy { .. } => {
-            return sse_turn_busy_response(&t(lang, "chat-error-still-streaming"));
-        }
+        RegisterOutcome::Busy { .. } => return Err(SubmitTurnError::Busy),
     };
 
     // Slot held. Any early-return from here must `state.chats.clear`
     // the worker so the next submit isn't permanently blocked.
+    let user_turn_id = submit.user_turn_id.clone();
     let user_turn =
         match chat::create_user_turn(&state.db, &active.id, &user_turn_id, &user_msg).await {
             Ok(t) => t,
             Err(err) => {
                 state.chats.clear(&user.id, &worker);
-                return sse_submit_error_response(&err.to_string());
+                return Err(SubmitTurnError::Db(err.to_string()));
             }
         };
     // Auto-title on the first user turn. Two-stage so the sidebar
@@ -1088,7 +1174,7 @@ pub async fn chat_message_send(
         Ok(t) => t,
         Err(err) => {
             state.chats.clear(&user.id, &worker);
-            return sse_submit_error_response(&err.to_string());
+            return Err(SubmitTurnError::Db(err.to_string()));
         }
     };
     let _ = chat::touch_session(&state.db, &active.id).await;
@@ -1111,17 +1197,13 @@ pub async fn chat_message_send(
     }
 
     spawn_assistant_worker(
-        &state,
-        &user,
+        state,
+        user,
         &active.id,
         &assistant_turn_id,
         &submit.model,
         &worker,
-        RequestCtx {
-            client_ip,
-            secure,
-            voice_mode,
-        },
+        req,
     )
     .await;
 
@@ -1139,36 +1221,11 @@ pub async fn chat_message_send(
         ));
     }
 
-    // Initial SSE event: append the two new bubbles to the
-    // conversation.
-    let initial_html = format!(
-        "{}{}",
-        session_core::render::render_user_turn(&user_turn, Some("/chat"), lang),
-        session_core::render::render_assistant_turn(
-            &chat::TurnWithTools {
-                turn: assistant_turn.clone(),
-                tool_calls: Vec::new(),
-            },
-            Some("/chat"),
-            lang
-        )
-    );
-    let initial_patch = armed_initial_patch(sse_patch(
-        Some("#conversation"),
-        Some("append"),
-        &initial_html,
-    ));
-
-    spawn_session_stream_response(
-        state.db.clone(),
-        active.id.clone(),
-        assistant_turn.id.clone(),
+    Ok(SubmittedTurn {
+        user_turn,
+        assistant_turn,
         broadcast_rx,
-        Some(initial_patch),
-        gateway_sidebar_emitter(state.clone(), user.id.clone(), active.id.clone(), lang),
-        Some("/chat".to_string()),
-        lang,
-    )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2212,13 +2269,18 @@ async fn list_chat_models(
 // bytes are then dropped — we don't keep them in memory past the
 // upload.
 
-struct ChatSubmit {
-    model: String,
-    user_text: String,
-    attachments: Vec<UploadedAttachment>,
+pub(crate) struct ChatSubmit {
+    pub(crate) model: String,
+    pub(crate) user_text: String,
+    pub(crate) attachments: Vec<UploadedAttachment>,
     /// This turn was submitted from voice-conversation mode — the worker
     /// injects the brevity/spoken-style directive. Per-turn only; not persisted.
-    voice: bool,
+    pub(crate) voice: bool,
+    /// The pre-generated user-turn id. Attachment uploads are keyed by it
+    /// *before* the turn row exists (the S3 prefix must match the row that
+    /// lands later), so whoever parses the submit mints it and it travels
+    /// with the payload into [`submit_turn`].
+    pub(crate) user_turn_id: String,
 }
 
 struct UploadedAttachment {
@@ -2231,6 +2293,8 @@ async fn parse_chat_submit(
     turn_id: &str,
     state: &RamaState,
 ) -> Result<ChatSubmit, String> {
+    // Kept in a local so the returned struct can own it without borrowing
+    // the parameter.
     let boundary = multer::parse_boundary(content_type).map_err(|err| {
         format!(
             "expected multipart/form-data submit (the composer should set \
@@ -2245,6 +2309,7 @@ async fn parse_chat_submit(
     let mut user_text = String::new();
     let mut attachments: Vec<UploadedAttachment> = Vec::new();
     let mut voice = false;
+    let user_turn_id = turn_id.to_string();
 
     // Track the filenames already claimed under this turn so each upload
     // lands on a distinct S3 key. Seeded with any filenames already
@@ -2332,6 +2397,7 @@ async fn parse_chat_submit(
         user_text: user_text.trim().to_string(),
         attachments,
         voice,
+        user_turn_id,
     })
 }
 

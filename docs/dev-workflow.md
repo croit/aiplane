@@ -325,6 +325,8 @@ Open `http://localhost:5173/app`. Vite proxies `/api`, `/v1`, and `/auth` to the
 
 The SPA's API contract is `docs/openapi.json`, enforced against `router.rs` by the `openapi_drift` test — adding a `/api/v0/*` route without a spec entry fails CI, and vice versa.
 
+The chat surface (issue #22 P2) is live in the SPA at `/app/chat`: sessions list, conversation view, and live streaming over the JSON-SSE event protocol (`session_core::chat_json` — `snapshot` / `turn_delta` / `tool_call_done` / `turn_finalized` … events; the DB snapshot on every attach is the reconnect replay). The composer submits `POST /api/v0/chat/sessions/{id}/messages` and the reply arrives on `GET …/events` — the same endpoints the legacy datastar wire's `/chat/{id}/messages` + `/tail` pair drive, running side by side until phase 6 removes the legacy pages. `mise run test-web` unit-tests the client's event fold (`web/src/lib/chat-protocol.test.ts`); `e2e/spa-chat.test.mjs` drives the full round trip against `dev-ui`.
+
 ## CI
 
 GitHub Actions is wired up in `.github/workflows/ci.yml`. It triggers on pushes to `main`, on tags, and on pull requests. The toolchain comes from `mise.toml` via `jdx/mise-action`; `Swatinem/rust-cache` caches the cargo registry + `target/` across runs (CI does **not** use sccache). There are four jobs:

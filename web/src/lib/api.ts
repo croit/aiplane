@@ -95,6 +95,62 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+	// --- Chat (issue #22 phase 2; wire shapes in chat-protocol.ts) --------
+
+	/** GET /api/v0/chat/sessions — the sidebar list (pinned first). */
+	listChatSessions: () =>
+		request<{ sessions: import('./chat-protocol.js').ChatSession[] }>('/api/v0/chat/sessions'),
+
+	/** POST /api/v0/chat/sessions — mint an empty conversation. */
+	createChatSession: () =>
+		request<{ session: import('./chat-protocol.js').ChatSession }>('/api/v0/chat/sessions', {
+			method: 'POST'
+		}),
+
+	/** GET /api/v0/chat/sessions/{id} — full snapshot (owner or shared). */
+	getChatSession: (id: string) =>
+		request<{
+			session: import('./chat-protocol.js').ChatSession;
+			turns: import('./chat-protocol.js').TurnWithTools[];
+		}>(`/api/v0/chat/sessions/${encodeURIComponent(id)}`),
+
+	/** DELETE /api/v0/chat/sessions/{id} — owner-only. */
+	deleteChatSession: async (id: string) => {
+		await fetch(`/api/v0/chat/sessions/${encodeURIComponent(id)}`, {
+			method: 'DELETE',
+			credentials: 'same-origin'
+		});
+	},
+
+	/** POST /api/v0/chat/sessions/{id}/pin — explicit value, idempotent. */
+	pinChatSession: (id: string, pinned: boolean) =>
+		request<{ pinned: boolean }>(`/api/v0/chat/sessions/${encodeURIComponent(id)}/pin`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ pinned })
+		}),
+
+	/** POST /api/v0/chat/sessions/{id}/messages — 202, reply on the events stream. */
+	sendChatMessage: (id: string, body: { model: string; message: string; voice?: boolean }) =>
+		request<{ user_turn_id: string; assistant_turn_id: string }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/messages`,
+			{
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(body)
+			}
+		),
+
+	/** POST /api/v0/chat/sessions/{id}/cancel — idempotent stop request. */
+	cancelChatTurn: (id: string) =>
+		request<{ cancelled: boolean }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/cancel`,
+			{ method: 'POST' }
+		),
+
+	/** The events stream URL — for `new EventSource` (cookies ride along same-origin). */
+	chatEventsUrl: (id: string) => `/api/v0/chat/sessions/${encodeURIComponent(id)}/events`,
+
 	/** GET /api/v0/me — identity + role grants; 401 when signed out. */
 	me: () => request<Me>('/api/v0/me'),
 

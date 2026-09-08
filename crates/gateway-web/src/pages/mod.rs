@@ -1333,6 +1333,67 @@ pub(super) async fn require_session_or_redirect(
     }
 }
 
+/// The JSON twin of [`require_session_or_redirect`]: same lookup, but a
+/// miss is a 401 with the error envelope a fetch/EventSource client
+/// understands, not a 303 to an HTML login page. Shape-matched with
+/// `gateway::rama_server::api`'s envelope — one `/api/v0` contract.
+pub(crate) async fn require_session_json(
+    state: &RamaState,
+    req: &Request,
+) -> Result<(Session, users::User), Response> {
+    let session = match state.sessions.lookup_from_headers(req.headers()).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return Err(json_error(
+                rama::http::StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "no active session — sign in at /auth/login",
+            ));
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "session lookup");
+            return Err(json_error(
+                rama::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "session lookup failed",
+            ));
+        }
+    };
+    match users::find_by_id(&state.db, &session.user_id).await {
+        Ok(Some(u)) => Ok((session, u)),
+        Ok(None) => Err(json_error(
+            rama::http::StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "no active session — sign in at /auth/login",
+        )),
+        Err(_) => Err(json_error(
+            rama::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "user lookup failed",
+        )),
+    }
+}
+
+/// A JSON error response in the `/api/v0` envelope
+/// (`{"error":{"message","type","code"}}`). Mirrors
+/// `gateway::rama_server::api::error_envelope` — the SPA sees one
+/// contract, so the two must stay in sync.
+pub(crate) fn json_error(status: rama::http::StatusCode, code: &str, message: &str) -> Response {
+    use rama::http::header;
+    let body = serde_json::json!({
+        "error": {
+            "message": message,
+            "type": code,
+            "code": code,
+        }
+    });
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(body.to_string().into())
+        .expect("static JSON response")
+}
+
 /// Bounce an unauthenticated request to `/login`, preserving the originally
 /// requested URL as `?return_to=…` so a deep link — e.g. a shared chat handed
 /// to a colleague who isn't signed in yet — survives the OIDC round-trip
@@ -1427,7 +1488,7 @@ struct LoginPageQuery {
 // renderers all live in `chat.rs`. We pub-re-export the four handler
 // entry points so the router (which calls `pages::chat_index` etc.)
 // doesn't have to know about the split.
-mod chat;
+pub mod chat;
 pub use chat::{
     chat_attachment, chat_attachment_remove, chat_cancel, chat_capabilities_toggle,
     chat_document_edit, chat_document_view, chat_edit, chat_effort_set, chat_export_markdown,

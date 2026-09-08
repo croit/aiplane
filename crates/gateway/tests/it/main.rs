@@ -15,6 +15,7 @@ mod chat_actions;
 mod chat_attachment;
 mod chat_document_edit;
 mod chat_fork;
+mod chat_json_api;
 mod chat_pin;
 mod chat_search;
 mod chat_sharing;

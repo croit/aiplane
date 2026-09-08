@@ -315,6 +315,12 @@ sources = [
 dir = "{{ config_root }}"
 run = "node --test 'ui/ts/**/*.test.mjs' 'crates/session-core/ui/ts/**/*.test.mjs'"
 
+[tasks.test-web]
+description = "Unit-test the SvelteKit SPA's TypeScript (node --test, Node's own type stripping). Tests live next to their module as `*.test.ts` in web/src/lib — the pure, framework-free halves of the SPA (chat event protocol, markdown), so they pin wire behaviour without jsdom."
+sources = ["web/src/lib/**/*.ts"]
+dir = "{{ config_root }}"
+run = "node --test 'web/src/lib/**/*.test.ts'"
+
 [tasks.lint]
 description = "Clippy + rustfmt + tsc --noEmit + svelte-check."
 depends = ["build-assets", "typecheck", "check-web"]
@@ -341,11 +347,11 @@ run = "gitleaks git . --staged --redact --no-banner"
 
 [tasks.ci]
 description = "Everything CI runs: lint + tests (Rust + browser TS) + release build of the gateway binary + SPA build. mise fans out via the DAG. Locally prefer `verify` — same gate, minus the release build you don't need."
-depends = ["lint", "test", "test-js", "build", "build-web"]
+depends = ["lint", "test", "test-js", "test-web", "build", "build-web"]
 
 [tasks.verify]
 description = "The local pre-push gate: lint + Rust tests + browser-TS tests + SPA build. Same checks as `ci` minus the release build — nothing in `ci` catches a compile error that `test` doesn't, and the release build is a THIRD full compile of the workspace (dev for clippy, test for nextest, release for the binary). Run this once before pushing; use `test-crate` / `lint-crate` while iterating."
-depends = ["lint", "test", "test-js", "build-web"]
+depends = ["lint", "test", "test-js", "test-web", "build-web"]
 
 [tasks.test-crate]
 description = "Tests for ONE crate — the iteration loop. `mise run test-crate gateway-web [filter]`. Seconds instead of the ~20 min a full `test` costs after touching a root crate, because it links that crate's test binaries only."

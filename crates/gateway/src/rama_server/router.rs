@@ -380,7 +380,42 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             rag_api::reindex_collection,
         )
         .with_post("/api/v0/comfyui/reload", comfyui_api::reload)
-        .with_get("/api/v0/comfyui/catalog", comfyui_api::catalog);
+        .with_get("/api/v0/comfyui/catalog", comfyui_api::catalog)
+        // Chat JSON API for the SvelteKit SPA (issue #22 phase 2). The
+        // legacy form/SSE-HTML chat routes under `/chat/*` stay alive
+        // beside these until phase 6.
+        .with_get(
+            "/api/v0/chat/sessions",
+            pages::chat::json_api::sessions_list,
+        )
+        .with_post(
+            "/api/v0/chat/sessions",
+            pages::chat::json_api::session_create,
+        )
+        .with_get(
+            "/api/v0/chat/sessions/{id}",
+            pages::chat::json_api::session_get,
+        )
+        .with_delete(
+            "/api/v0/chat/sessions/{id}",
+            pages::chat::json_api::session_delete,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{id}/pin",
+            pages::chat::json_api::session_pin,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{id}/messages",
+            pages::chat::json_api::message_send,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{id}/cancel",
+            pages::chat::json_api::session_cancel,
+        )
+        .with_get(
+            "/api/v0/chat/sessions/{id}/events",
+            pages::chat::json_api::session_events,
+        );
     // Debug-only dev/e2e seeding. Registered before the SPA catch-all (which
     // must remain the last routes) and absent from release binaries entirely —
     // see `rama_server::dev_seed` for why there are two endpoints.

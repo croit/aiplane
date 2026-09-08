@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { page } from '$app/state';
+	import { base } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { api, loginUrl } from '$lib/api';
 	import { loadMe, me } from '$lib/session.svelte';
@@ -37,7 +38,8 @@
 <div class="min-h-dvh bg-base-100 text-base-content">
 	<header class="navbar border-b border-base-300 bg-base-200 px-4">
 		<div class="flex-1 gap-2">
-			<a href="/app" class="text-lg font-semibold">LLM Gateway</a>
+			<a href="{base}" class="text-lg font-semibold">LLM Gateway</a>
+			<a href="{base}/chat" class="btn btn-ghost btn-sm">Chat</a>
 			{#if me.value}
 				<span class="badge badge-outline badge-sm">{me.value.email}</span>
 			{/if}

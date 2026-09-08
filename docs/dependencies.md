@@ -2,7 +2,7 @@
 
 ## Hard rules
 
-1. **No NPM / Node in the runtime tree.** Cargo only. The single carve-out is **test tooling**: Node + `@playwright/cli` (via mise's `npm:` backend) for the e2e browser tests and the screenshot driver. This is the same shape as wiremock for upstream mocking — test-only, never linked into the gateway binary or the CLI. Documented in the test-tooling section below.
+1. **No Node in the runtime tree.** The gateway binary and everything it serves at runtime are built without a Node process: Rust for the server, and the SvelteKit SPA (`web/`, issue #22) is *compiled ahead of time* by Vite into static files the binary serves from `GATEWAY_STATIC_DIR`. Node appears in two build/test-only places, each documented in its section below: the **SPA build toolchain** (`web/package.json`, pinned versions, invoked via the `mise run *-web` tasks) and **test tooling** (Node + `@playwright/cli` via mise's `npm:` backend for the e2e suite). Neither ships in the container image.
 2. **Every Cargo dep needs a justification.** Add it to the table below in the same PR that introduces it. A one-line "why" is enough.
 3. **Prefer stdlib.** Don't pull in `chrono` for a single `Instant::now()`. Don't pull in `lazy_static` — use `std::sync::OnceLock` or `LazyLock`.
 4. **Prefer crates rama already brings in.** rama re-exports `tokio`, `hyper`, `http`, `http-body`, and tower-style traits. Adding features to existing crates doesn't grow the tree — pulling in a parallel implementation does.
@@ -93,6 +93,20 @@ Used by:
 - `.claude/skills/take-screenshots/screenshot.mjs` — generates the README screenshots (`docs/img/*.png`) against the seeded `dev_ui` example. See that skill for the flow.
 
 Neither file pulls in a project-level `package.json` or `node_modules` — both scripts `import` Playwright directly out of the mise tool's install directory (path overridable via `$PLAYWRIGHT_DIR`). Adding any other Node tool needs the same justification step as a Cargo dep.
+
+## SPA build dependencies (`web/package.json`)
+
+Compiled away at build time — nothing here runs in production; the container
+image contains only the Rust binary plus the static `target/frontend/build/`
+output (see the Dockerfile).
+
+| Package | Why |
+|---|---|
+| `svelte`, `@sveltejs/kit`, `@sveltejs/adapter-static`, `@sveltejs/vite-plugin-svelte`, `vite` | The SPA framework + static-output adapter (issue #22). Output is plain files; no Node server at runtime. |
+| `tailwindcss` + `daisyui` (v5) | Same styling stack as the legacy UI, so the SPA shares its look. Compiled to one content-hashed CSS bundle. |
+| `marked` | Client-side Markdown rendering of chat replies (issue #22 P2): the JSON event wire carries markdown text, and rendering moved to the client by design. |
+| `dompurify` | Sanitises `marked` output before `{@html}` — model output is untrusted input like any other. |
+| `typescript`, `svelte-check`, `@types/node` | `mise run check-web` / `mise run test-web` gates. |
 
 ## Explicitly not allowed (yet)
 

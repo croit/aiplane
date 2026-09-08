@@ -302,6 +302,9 @@ pub fn spawn_session_stream_response(
                         // Forward pre-framed bytes straight through — transient UI
                         // (e.g. a tool's location prompt) that the DB-driven
                         // re-render must not own.
+                        // Structured twin of Inject for the JSON wire —
+                        // the datastar loop has no use for it.
+                        Ok(TurnUpdate::Prompt(_)) => {}
                         Ok(TurnUpdate::Inject(bytes)) => {
                             if tx.send(Ok(bytes.as_ref().clone())).await.is_err() {
                                 return;
@@ -420,6 +423,8 @@ pub fn spawn_thinking_stream_response(
                         }
                         // Transient UI the thinking body doesn't own.
                         Ok(TurnUpdate::Inject(_)) | Ok(TurnUpdate::InfoMessage(_)) => {}
+                        // Structured twin of Inject for the JSON wire.
+                        Ok(TurnUpdate::Prompt(_)) => {}
                         Err(broadcast::error::RecvError::Closed) => return,
                         Err(broadcast::error::RecvError::Lagged(_)) => {
                             dirty = true;

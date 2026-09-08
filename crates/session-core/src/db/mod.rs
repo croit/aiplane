@@ -81,13 +81,14 @@ pub struct Session {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TurnRole {
     User,
     Assistant,
 }
 
 impl TurnRole {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::User => "user",
             Self::Assistant => "assistant",
@@ -106,6 +107,7 @@ impl TurnRole {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TurnStatus {
     /// Streaming in progress. Only valid for assistant turns.
     InProgress,
@@ -120,7 +122,7 @@ pub enum TurnStatus {
 }
 
 impl TurnStatus {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::InProgress => "in_progress",
             Self::Completed => "completed",
@@ -143,6 +145,7 @@ impl TurnStatus {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolCallStatus {
     Running,
     Completed,
@@ -150,7 +153,7 @@ pub enum ToolCallStatus {
 }
 
 impl ToolCallStatus {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
             Self::Completed => "completed",

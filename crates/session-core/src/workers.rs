@@ -45,6 +45,54 @@ pub enum TurnUpdate {
     /// activated — image described by {model}"). Subscribers render it as a
     /// daisyUI alert via a datastar patch.
     InfoMessage(String),
+    /// Structured twin of [`TurnUpdate::Inject`] for the JSON event
+    /// protocol: a human-in-loop tool prompt (`ask_user`,
+    /// `get_user_location`) that the *client* renders itself. Interactive
+    /// tools broadcast both — `Inject` (pre-framed datastar, legacy wire)
+    /// and `Prompt` (JSON wire) — and each subscriber loop consumes the
+    /// variant it understands and ignores the other. See
+    /// [`ToolPromptEvent`].
+    Prompt(Arc<ToolPromptEvent>),
+}
+
+/// A human-in-loop tool prompt for JSON subscribers: render a prompt,
+/// collect the user's answer, POST it to the session API
+/// (`/api/v0/me/ask/feedback/{turn_id}` or `/location/feedback/{turn_id}`),
+/// and the parked tool picks it up.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToolPrompt {
+    /// The assistant turn the prompt belongs to (also the feedback
+    /// endpoint's path parameter).
+    pub turn_id: String,
+    /// Which tool is asking — drives the client's rendering and the
+    /// reply shape.
+    pub kind: ToolPromptKind,
+    /// The question to put in front of the user. For
+    /// [`ToolPromptKind::Location`] this is the fallback explanation shown
+    /// next to the browser's own permission prompt.
+    pub question: String,
+    /// Pre-supplied answers for [`ToolPromptKind::AskUser`]; empty when
+    /// the model wants free text.
+    pub options: Vec<String>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolPromptKind {
+    AskUser,
+    Location,
+}
+
+/// Show or tear down a [`ToolPrompt`]. Mirrors the Inject pair (card +
+/// cleanup frame) the datastar wire sends.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum ToolPromptEvent {
+    Show(ToolPrompt),
+    /// Remove the prompt again — answered, timed out, or the turn ended.
+    Hide {
+        turn_id: String,
+    },
 }
 
 /// One live session worker, indexed by user id in `SessionWorkers`.

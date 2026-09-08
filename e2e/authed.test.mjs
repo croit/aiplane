@@ -182,8 +182,16 @@ test("the chat surface renders the composer and model picker", async () => {
     await page.goto(`${BASE}/chat`, { waitUntil: "networkidle" });
     await page.waitForURL((u) => /^\/chat\/.+/.test(u.pathname), { timeout: 5000 });
 
-    assert.equal(await page.locator('textarea[name="message"]').count(), 1);
-    assert.equal(await page.locator('input[name="model"]').count(), 1);
+    // `#message` — the composer; the page also carries a hidden edit
+    // textarea (same name) inside each turn's edit affordance.
+    assert.equal(await page.locator('textarea#message[name="message"]').count(), 1);
+    // The model picker is a <select> when the gateway has chat models on
+    // offer (dev-ui) and falls back to a free-text <input> when it has
+    // none (a bare `mise run dev`) — both are "the model picker".
+    assert.ok(
+        (await page.locator('select[name="model"], input[name="model"]').count()) >= 1,
+        "a model picker must be present (select when models are on offer, free-text input otherwise)",
+    );
     assert.equal(await page.locator("button.chat-composer__send").count(), 1);
     await ctx.close();
 });
