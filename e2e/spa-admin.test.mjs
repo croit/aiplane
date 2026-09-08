@@ -44,10 +44,11 @@ test("the admin layout renders its section nav", async () => {
     const page = await ctx.newPage();
     await page.goto(`${BASE}/app/admin/groups`, { waitUntil: "networkidle" });
     await page.waitForSelector("text=Groups", { timeout: 5000 });
+    // The nav is the VERTICAL sidebar (root layout) with active highlighting:
     for (const label of ["Users", "Models", "Limits", "Settings", "Tokens", "Upstreams"]) {
         assert.ok(
-            (await page.locator(`a:has-text("${label}")`).count()) >= 1,
-            `the ${label} section link must be present`,
+            (await page.locator(`aside a:has-text("${label}")`).count()) >= 1,
+            `the sidebar must link to ${label}`,
         );
     }
     await ctx.close();
