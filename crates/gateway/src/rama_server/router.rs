@@ -37,6 +37,8 @@ use rama::rt::Executor;
 use serde_json::json;
 
 use crate::rama_server::RamaState;
+#[cfg(debug_assertions)]
+use crate::rama_server::dev_seed;
 use crate::rama_server::first_run::FirstRunLayer;
 use crate::rama_server::{
     api, comfyui_api, messages, oidc_handlers, pages, proxy, rag_api, sandbox_api, spa,
@@ -47,7 +49,7 @@ use session_core::assets;
 /// Builds the rama router. State is shared via `Arc` since handlers
 /// borrow it immutably.
 pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
-    Router::new_with_state(state)
+    let router = Router::new_with_state(state)
         .with_get("/healthz", async || Json(json!({"status": "ok"})))
         // `/healthz` is liveness — the process is up. `/readyz` is readiness,
         // and an unconfigured gateway is not ready: it cannot serve a single
@@ -378,7 +380,15 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             rag_api::reindex_collection,
         )
         .with_post("/api/v0/comfyui/reload", comfyui_api::reload)
-        .with_get("/api/v0/comfyui/catalog", comfyui_api::catalog)
+        .with_get("/api/v0/comfyui/catalog", comfyui_api::catalog);
+    // Debug-only dev/e2e seeding. Registered before the SPA catch-all (which
+    // must remain the last routes) and absent from release binaries entirely —
+    // see `rama_server::dev_seed` for why there are two endpoints.
+    #[cfg(debug_assertions)]
+    let router = router
+        .with_get("/__dev/seed-session", dev_seed::reset)
+        .with_get("/__dev/session", dev_seed::sign_in);
+    router
         // Static SPA (SvelteKit `adapter-static` build) served from disk.
         // MUST be the LAST routes: they sit under the `/app` prefix (which
         // collides with nothing) and the `{*name}` form is a catch-all, so

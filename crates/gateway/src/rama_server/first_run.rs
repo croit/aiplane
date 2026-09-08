@@ -77,6 +77,14 @@ fn serves_before_setup(path: &str) -> bool {
     ) {
         return true;
     }
+    // Debug-only dev/e2e seeding (see `rama_server::dev_seed`). These are
+    // how a fresh dev database *becomes* set up, so gating them would be
+    // self-blocking. The routes only exist in debug builds; on a release
+    // binary this exemption answers a route that was never registered,
+    // which falls through to the ordinary 404.
+    if cfg!(debug_assertions) && (path == "/__dev/seed-session" || path == "/__dev/session") {
+        return true;
+    }
     // Liveness must answer while the operator is still in the wizard;
     // readiness answers *and reports not-ready* (see the `/readyz` handler).
     if matches!(path, "/healthz" | "/readyz") {
@@ -205,6 +213,22 @@ mod tests {
             assert!(
                 serves_before_setup(path),
                 "{path} must get its own 401/404, not an HTML redirect"
+            );
+        }
+    }
+
+    #[test]
+    fn dev_seeding_answers_on_a_fresh_database() {
+        // The seed endpoints are what flips a fresh dev database to
+        // setup-completed, so the first-run gate must let them through —
+        // otherwise they could never do their one job. Debug builds only.
+        if !cfg!(debug_assertions) {
+            return;
+        }
+        for path in ["/__dev/seed-session", "/__dev/session"] {
+            assert!(
+                serves_before_setup(path),
+                "{path} must reach its handler before setup completes"
             );
         }
     }

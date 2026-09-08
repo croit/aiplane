@@ -47,6 +47,7 @@ const UNDOCUMENTED: &[&str] = &[
     "/admin/upstreams/*",    // admin topology reload endpoint
     "/admin/backends/*",     // backend CRUD form-submit endpoints
     "/admin/pools/*",        // pool CRUD page + form-submit endpoints
+    "/__dev/*",              // debug-only e2e seeding — does not exist in release builds
 ];
 
 /// `pat` covers concrete path `actual`. A trailing `/*` is a prefix glob;

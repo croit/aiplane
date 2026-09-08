@@ -15,6 +15,8 @@
 
 pub mod api;
 pub mod comfyui_api;
+#[cfg(debug_assertions)]
+pub mod dev_seed;
 pub mod first_run;
 pub mod messages;
 pub mod oidc_handlers;

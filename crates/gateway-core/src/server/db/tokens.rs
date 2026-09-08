@@ -303,6 +303,33 @@ pub async fn delete_if_revoked(
     Ok(result.rows_affected() > 0)
 }
 
+/// Remove **every** token owned by `user_id`, active or revoked. This is the
+/// bulk reset behind the debug-only `/__dev/seed-session` endpoint — no
+/// production path may call it. Sweeps the per-token `limits` rows too, for
+/// the same reason [`delete_if_revoked`] does.
+///
+/// Deliberately NOT one transaction: these statements run while the e2e
+/// suite's parallel files also seed (`/__dev/session` upserts), and a
+/// deferred SQLite transaction that reads (`SELECT id …`) before writing
+/// can hit `BUSY_SNAPSHOT` when another writer commits in between — an
+/// error `busy_timeout` cannot rescue, only avoid. Standalone statements
+/// contend politely instead. The lost atomicity is fine for a dev-only
+/// reset: the worst mid-crash state is an orphaned `limits` row.
+pub async fn delete_for_user(pool: &Pool, user_id: &str) -> Result<(), DbError> {
+    sqlx::query(
+        "DELETE FROM limits WHERE subject_type = 'token' \
+         AND subject_id IN (SELECT id FROM tokens WHERE user_id = ?)",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    sqlx::query("DELETE FROM tokens WHERE user_id = ?")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Bumps `last_used_at`. Cheap, fire-and-forget. Caller decides whether to
 /// debounce (e.g. only every minute per token).
 pub async fn touch(pool: &Pool, token_id: &str) -> Result<(), DbError> {
@@ -422,6 +449,73 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    /// `delete_for_user` is the bulk reset behind the debug-only
+    /// `/__dev/seed-session` endpoint: it must take *every* token its owner
+    /// has (active ones too — `delete_if_revoked` refuses those), sweep the
+    /// per-token `limits` rows the FK cannot cascade, and leave other
+    /// owners' tokens alone.
+    #[tokio::test]
+    async fn delete_for_user_takes_everything_the_owner_has_and_sweeps_limits() {
+        use super::super::limits;
+        let (pool, user_id) = setup().await;
+        insert(&pool, &fixture(&user_id, "tok-a", "hash-a"))
+            .await
+            .unwrap();
+        insert(&pool, &fixture(&user_id, "tok-b", "hash-b"))
+            .await
+            .unwrap();
+        let other = "bob".to_string();
+        let now = Timestamp::now();
+        users::upsert(
+            &pool,
+            &users::User {
+                id: other.clone(),
+                email: "bob@example.com".into(),
+                name: None,
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        insert(&pool, &fixture(&other, "tok-bob", "hash-bob"))
+            .await
+            .unwrap();
+        limits::upsert(
+            &pool,
+            limits::SubjectType::Token,
+            "tok-a",
+            None,
+            limits::Dimension::Requests,
+            limits::Window::Day,
+            10.0,
+        )
+        .await
+        .unwrap();
+
+        delete_for_user(&pool, &user_id).await.unwrap();
+
+        assert!(
+            list_for_user(&pool, &user_id).await.unwrap().is_empty(),
+            "the owner's tokens are gone, active or not"
+        );
+        assert!(
+            limits::applicable_for_token(&pool, "tok-a")
+                .await
+                .unwrap()
+                .is_empty(),
+            "the swept tokens' limit rules went with them"
+        );
+        assert_eq!(
+            list_for_user(&pool, &other).await.unwrap().len(),
+            1,
+            "another owner's token is untouched"
         );
     }
 

@@ -9,7 +9,7 @@
 | **Unit** | `#[cfg(test)] mod tests` next to the code | Pure functions, parsers, picker strategies, config validation |
 | **Integration (in-process)** | `crates/gateway/tests/` | Build a `RamaState` against an in-memory SQLite + wiremock upstreams, then call `router(state).serve(req)` directly — no socket binding, since `rama`'s service is a plain async function. Shared setup lives in `tests/common/mod.rs`. |
 | **Integration (mocked upstreams)** | `crates/gateway/tests/` | `wiremock` instances stand in for LLM backends; verify routing, the tool-call loop, streaming, the full OIDC login flow (`oidc_integration.rs`), and the datastar SSE wire shape. |
-| **E2E (browser ↔ gateway)** | `e2e/*.test.mjs` | Playwright + Node's `node:test` against a running `mise run dev`. Anonymous page flows, authenticated flows (session seeded via the debug-only `/__dev/seed-session` endpoint), and plain-`fetch` checks of the public HTTP surface. See `e2e/README.md`. |
+| **E2E (browser ↔ gateway)** | `e2e/*.test.mjs` | Playwright + Node's `node:test` against a running `mise run dev`. Anonymous page flows, authenticated flows (sessions seeded via the debug-only `/__dev/*` endpoints), the SvelteKit SPA at `/app`, and plain-`fetch` checks of the public HTTP surface. See `e2e/README.md`. |
 
 ## Style: test-first, Chicago / Classicist
 
@@ -58,7 +58,7 @@ The version-controlled pre-push git hook (`.githooks/pre-push`, enabled with `mi
 - Run with `mise run e2e` against a live `mise run dev` in another terminal. The task points `PLAYWRIGHT_DIR` at the mise-installed `npm:@playwright/cli` automatically. See `e2e/README.md` for first-time setup (shared libs + a one-time Chromium download).
 - `GATEWAY_URL` (default `http://localhost:8080`) targets a specific gateway; `CHROMIUM_HEADED=1` shows the browser instead of running headless.
 - **Not part of the CI default** — the browser suite needs a running gateway and Chromium, so it stays a local/opt-in loop.
-- Authenticated flows (`e2e/authed.test.mjs`) don't need OIDC: they seed a session through the debug-only `/__dev/seed-session` endpoint, which is compiled in under `cfg(debug_assertions)` and never present in a release build.
+- Authenticated flows (`e2e/authed.test.mjs`, the SPA's signed-in test) don't need OIDC: they sign in through the debug-only `/__dev/*` seeding endpoints (`rama_server::dev_seed`), compiled in under `cfg(debug_assertions)` and never present in a release build. `/__dev/seed-session` resets the canonical fixture (user `alice@example.com` + her three tokens) and is reserved for the one file that asserts those counts; everything else uses the delete-free `/__dev/session`. Completing setup is also how the suite makes `/readyz` deterministic on a fresh dev database.
 
 ## Performance / load tests
 

@@ -4,19 +4,23 @@
 import { test, before } from "node:test";
 import assert from "node:assert";
 
-import { BASE, gatewayIsUp } from "./helpers.mjs";
+import { BASE, ensureDevFixture, gatewayIsUp } from "./helpers.mjs";
 
 before(async () => {
     assert.ok(
         await gatewayIsUp(),
         `gateway is not reachable at ${BASE}; run \`mise run dev\` in another terminal`,
     );
+    // /readyz answers 503 `setup_required` until setup completes; make that
+    // deterministic instead of depending on file ordering. Idempotent and
+    // delete-free, so it cannot race the parallel test files.
+    await ensureDevFixture();
 });
 
 test("/healthz returns 200 ok", async () => {
     const r = await fetch(`${BASE}/healthz`);
     assert.equal(r.status, 200);
-    assert.equal((await r.text()).trim(), "ok");
+    assert.equal((await r.json()).status, "ok");
 });
 
 test("/readyz returns 200", async () => {
@@ -24,12 +28,12 @@ test("/readyz returns 200", async () => {
     assert.equal(r.status, 200);
 });
 
-test("/api/v0/me returns 401 with the OpenAI-shaped envelope when anonymous", async () => {
+test("/api/v0/me returns 401 with the error envelope when anonymous", async () => {
     const r = await fetch(`${BASE}/api/v0/me`);
     assert.equal(r.status, 401);
     const body = await r.json();
     assert.equal(body.error.code, "unauthorized");
-    assert.equal(body.error.type, "invalid_request_error");
+    assert.equal(body.error.type, "unauthorized");
 });
 
 test("/api/v0/tokens returns 401 when anonymous", async () => {

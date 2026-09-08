@@ -290,6 +290,14 @@ curl -b "$COOKIE" http://127.0.0.1:8080/chat        # any authed GET page
 
 The chat composer submits to `POST /chat/{id}/messages` (create a session first with `POST /chat/sessions`), which streams the reply back as datastar SSE. The wiremock backend resolves every prompt in ~no time, so the full submit → SSE → DOM-update cycle is observable without flake.
 
+### Signing in to the real `mise run dev` gateway
+
+`dev-ui` is its own server with mock backends. To poke at an authed page of the *real* dev gateway (your actual `./gateway.sqlite`), the same trick exists as debug-only endpoints (`rama_server::dev_seed`): `GET /__dev/session` signs you in as the fixture user `alice@example.com` without touching anything, and `GET /__dev/seed-session` additionally resets her tokens to the canonical three — the same pair the e2e suite drives (`mise run e2e`):
+
+```bash
+curl -si http://127.0.0.1:8080/__dev/session | grep -i set-cookie   # id=…
+```
+
 ### From a browser / automation
 
 Open any origin page (e.g. `http://127.0.0.1:8080/login`), then inject the cookie via devtools (`document.cookie = 'id=…; Path=/'`) or your automation tool's cookie API, and navigate to the page you want. From there the page runs with real datastar SSE streaming against the mock backend.

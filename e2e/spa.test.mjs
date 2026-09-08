@@ -7,18 +7,15 @@
 // need a running gateway with GATEWAY_STATIC_DIR pointing at the built SPA
 // (`mise run dev` sets that for you) — they run via `mise run e2e`.
 //
-// The signed-in test additionally needs a session. There is no OIDC in a
-// local run and no seed endpoint (e2e is not CI-gated, and a
-// `/__dev/seed-session` referenced by older docs does not exist — verified
-// 2026-09), so the session is supplied the same way the curl workflow in
-// docs/dev-workflow.md does it: run `mise run dev-ui`, copy the printed
-// `id=<cookie>` line, and export it as GATEWAY_SESSION_COOKIE. Without it
-// the authed test is skipped, not failed.
+// The signed-in test logs in through the debug-only, delete-free
+// /__dev/session endpoint (same one the other files' before() hooks use),
+// so this file never races the resetting /__dev/seed-session that
+// authed.test.mjs owns.
 
 import { test, before, after } from "node:test";
 import assert from "node:assert";
 
-import { BASE, launchBrowser, gatewayIsUp } from "./helpers.mjs";
+import { BASE, devSessionCookie, gatewayIsUp, launchBrowser } from "./helpers.mjs";
 
 let browser;
 
@@ -45,8 +42,13 @@ after(async () => {
 
 test("the SPA shell loads at /app (client bundle boots, not the 404/503 fallback)", async () => {
     const ctx = await browser.newContext();
+    // A signed-out shell redirects itself into the OIDC flow as soon as
+    // /api/v0/me answers 401 (see the next test). Park that request — a
+    // route handler that never fulfils — so the shell stays put: what this
+    // test pins is the boot, not the redirect.
+    await ctx.route("**/api/v0/me", () => {});
     const page = await ctx.newPage();
-    await page.goto(`${BASE}/app`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE}/app`, { waitUntil: "domcontentloaded" });
 
     // The app header is only in the DOM once Svelte has mounted and hydrated —
     // a 503 "not deployed" or the router's 404 would have no such markup.
@@ -67,26 +69,21 @@ test("a signed-out visitor is redirected into the OIDC login flow", async () => 
     await ctx.close();
 });
 
-// Runs only when a session cookie was supplied. `mise run dev-ui` prints one;
-// the test trims a pasted "id=<value>" line so either form works.
-const rawCookie = process.env.GATEWAY_SESSION_COOKIE?.trim() ?? "";
-const cookie = rawCookie.startsWith("id=") ? rawCookie : rawCookie && `id=${rawCookie}`;
-
-(cookie ? test : test.skip)("a signed-in user sees their identity from GET /api/v0/me", async () => {
+test("a signed-in user sees their identity from GET /api/v0/me", async () => {
     const ctx = await browser.newContext();
     await ctx.addCookies([
         {
             name: "id",
-            value: cookie.replace(/^id=/, ""),
+            value: await devSessionCookie(),
             url: BASE,
         },
     ]);
     const page = await ctx.newPage();
     await page.goto(`${BASE}/app`, { waitUntil: "networkidle" });
 
-    // The /api/v0/me value renders into the identity card (the dev_ui seed
-    // user is dev@example.com).
-    await page.waitForSelector("text=Signed in", { timeout: 5000 });
-    await page.waitForSelector("text=@example.com", { timeout: 5000 });
+    // The /api/v0/me value renders into the header (badge + sign-out
+    // affordance only exist for a known identity).
+    await page.waitForSelector("text=alice@example.com", { timeout: 5000 });
+    await page.waitForSelector('button:has-text("Sign out")', { timeout: 5000 });
     await ctx.close();
 });

@@ -23,6 +23,8 @@ mod comfyui_integration;
 mod comfyui_routes;
 mod common;
 mod cors;
+#[cfg(debug_assertions)]
+mod dev_seed;
 mod healthz;
 mod icon_smoke;
 mod landing;
