@@ -236,6 +236,16 @@
 		promptText = '';
 	}
 
+	function ts(iso: string | null): string {
+		return iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+	}
+
+	function thinkingLabel(entry: (typeof turns)[number], live: boolean): string {
+		const streaming = live && entry.turn.status === 'in_progress';
+		const secs = entry.turn.reasoning_elapsed_ms ?? 0;
+		return streaming ? 'Thinking…' : `Thought for ${(secs / 1000).toFixed(1)}s`;
+	}
+
 	function onKeydown(event: KeyboardEvent) {
 		if (event.key === 'Enter' && !event.shiftKey) {
 			event.preventDefault();
@@ -326,21 +336,30 @@
 				<div class="chat-bubble chat-bubble-ghost w-full max-w-[min(90vw,48rem)] p-0">
 					<div class="p-3 flex flex-col gap-2">
 						{#if entry.turn.reasoning}
-							<details class="text-sm">
-								<summary class="cursor-pointer text-base-content/60">Thinking…</summary>
-								<div class="mt-2 whitespace-pre-wrap text-xs text-base-content/70 max-h-64 overflow-y-auto">
+							<details class="collapse collapse-arrow text-sm -ms-2">
+								<summary class="collapse-title cursor-pointer text-base-content/60 py-1 min-h-0 h-7">
+									{thinkingLabel(entry, false)}
+								</summary>
+								<div class="collapse-content whitespace-pre-wrap text-xs text-base-content/70 max-h-64 overflow-y-auto">
 									{entry.turn.reasoning}
 								</div>
 							</details>
 						{/if}
 
 						{#each entry.tool_calls as call (call.id)}
-							<details class="text-sm">
-								<summary class="cursor-pointer">
-									<span class="badge badge-sm badge-outline me-1">{call.status}</span>
-									{call.name}
+							<details class="collapse collapse-arrow bg-base-200/60 rounded-lg mb-1">
+								<summary class="collapse-title text-sm py-1.5 min-h-0 h-8 flex items-center gap-2">
+									{#if call.status === 'completed'}
+										<span class="text-success">✓</span>
+									{:else if call.status === 'errored'}
+										<span class="text-error">✗</span>
+									{:else}
+										<span class="loading loading-spinner loading-xs"></span>
+									{/if}
+									<span class="text-base-content/60">Used</span>
+									<span class="font-medium">{call.name}</span>
 								</summary>
-								<div class="mt-1 text-xs text-base-content/70">
+								<div class="collapse-content text-xs text-base-content/70">
 									<div class="font-mono break-all">{call.arguments_json}</div>
 									{#if call.output_json}
 										<pre class="mt-1 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">{call.output_json}</pre>
