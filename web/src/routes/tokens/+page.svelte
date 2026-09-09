@@ -25,6 +25,10 @@
 	let quotaWindow = $state('day');
 	let quotaValue = $state('');
 	let allModels = $state<string[]>([]);
+	// Per-token MCP "ask" policy. Write-only on the server (there is no read
+	// endpoint), so this mirrors what this page last set rather than claiming
+	// to show stored state.
+	let mcpAllow = $state<Record<string, boolean>>({});
 
 	async function refresh() {
 		try {
@@ -68,6 +72,21 @@
 				value: parseFloat(quotaValue)
 			});
 			notice = 'Quota saved.';
+		} catch (err) {
+			notice = String(err);
+		}
+	}
+
+	/** An `ask`-level MCP connector has nobody to prompt when the caller is a
+	 * token, so it blocks by default; this is the owner's explicit opt-in. */
+	async function saveMcpPolicy(t: TokenSummary, allow: boolean) {
+		notice = null;
+		try {
+			await adminPut(`/api/v0/tokens/${t.id}/mcp-policy`, { allow });
+			mcpAllow[t.id] = allow;
+			notice = allow
+				? 'Connectors that ask for approval will run for this token.'
+				: 'Connectors that ask for approval are blocked for this token.';
 		} catch (err) {
 			notice = String(err);
 		}
@@ -277,6 +296,21 @@
 										</select>
 										<input class="input input-bordered input-xs w-24" type="number" min="0" placeholder="max" bind:value={quotaValue} />
 										<button class="btn btn-ghost btn-xs" onclick={() => saveQuota(token)}>Add quota</button>
+									</div>
+								</div>
+								<div>
+									<div class="text-xs font-medium mb-1">MCP connectors</div>
+									<div class="flex flex-wrap gap-2 items-center">
+										<span class="text-xs text-base-content/60">
+											Connectors that ask for approval have nobody to ask when the caller is a
+											token.
+										</span>
+										<button
+											class="btn btn-ghost btn-xs"
+											onclick={() => saveMcpPolicy(token, !(mcpAllow[token.id] ?? false))}
+										>
+											{(mcpAllow[token.id] ?? false) ? 'Block them' : 'Let them run'}
+										</button>
 									</div>
 								</div>
 							</div>

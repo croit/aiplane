@@ -101,6 +101,13 @@
 					<button class="btn btn-ghost btn-xs" onclick={() => toggle(skill.name)}>
 						{expanded === skill.name ? 'Hide' : 'View'}
 					</button>
+					<a
+						class="btn btn-ghost btn-xs"
+						href="/api/v0/skills/{encodeURIComponent(skill.name)}/archive"
+						download="{skill.name}.skill"
+					>
+						Download
+					</a>
 					{#if data?.user_skills_enabled}
 						<button class="btn btn-ghost btn-xs text-error" onclick={() => remove(skill.name)}>Delete</button>
 					{/if}

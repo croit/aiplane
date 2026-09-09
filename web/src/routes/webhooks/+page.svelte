@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { adminJson, adminPost, adminPut, adminDelete } from '$lib/admin-client';
 
 	interface Hook {
@@ -10,6 +12,15 @@
 		tools_enabled: boolean;
 		synchronous: boolean;
 		enabled: boolean;
+	}
+	interface Run {
+		id: string;
+		status: string;
+		error: string | null;
+		fired_at: string;
+		source: string;
+		session_id: string | null;
+		prompt: string | null;
 	}
 	interface Data {
 		webhooks: Hook[];
@@ -24,6 +35,11 @@
 	let fname = $state('');
 	let fprompt = $state('');
 	let fmodel = $state('');
+	// Run history + rerun composer for whichever webhook is expanded.
+	let runsFor = $state<string | null>(null);
+	let runs = $state<Run[]>([]);
+	let rerunPrompt = $state('');
+	let rerunning = $state(false);
 
 	async function refresh() {
 		try {
@@ -70,6 +86,47 @@
 		if (!confirm('Delete this webhook?')) return;
 		await adminDelete(`/api/v0/webhooks/${id}`);
 		await refresh();
+	}
+
+	/** Show a webhook's recent fires, each linking to the chat it produced. */
+	async function showRuns(h: Hook) {
+		if (runsFor === h.id) {
+			runsFor = null;
+			return;
+		}
+		runsFor = h.id;
+		rerunPrompt = h.prompt;
+		try {
+			runs = (await adminJson<{ runs: Run[] }>(`/api/v0/webhooks/${h.id}/runs`)).runs ?? [];
+		} catch (err) {
+			runs = [];
+			notice = String(err);
+		}
+	}
+
+	/** Replay a stored payload through a (usually different) prompt. The run
+	 * completes server-side before answering, so this waits. */
+	async function rerun(h: Hook, runId: string | null) {
+		const prompt = rerunPrompt.trim();
+		if (!prompt) return;
+		rerunning = true;
+		notice = null;
+		try {
+			const res = await adminPost<{ session_id: string; status: string; error: string | null }>(
+				`/api/v0/webhooks/${h.id}/rerun`,
+				{ prompt, run: runId }
+			);
+			notice =
+				res.status === 'ok'
+					? `Rerun finished — opening the conversation.`
+					: `Rerun ${res.status}${res.error ? `: ${res.error}` : ''}`;
+			if (res.status === 'ok') await goto(`${base}/chat/${res.session_id}`);
+			else await showRuns(h);
+		} catch (err) {
+			notice = String(err);
+		} finally {
+			rerunning = false;
+		}
 	}
 
 	onMount(refresh);
@@ -127,10 +184,62 @@
 					<span class="flex-1"></span>
 					<button class="btn btn-ghost btn-xs" onclick={() => toggle(h)}>{h.enabled ? 'Disable' : 'Enable'}</button>
 					<button class="btn btn-ghost btn-xs" onclick={() => rotate(h)}>Rotate</button>
+					<button class="btn btn-ghost btn-xs" onclick={() => showRuns(h)}>
+						{runsFor === h.id ? 'Hide runs' : 'Runs'}
+					</button>
 					<button class="btn btn-ghost btn-xs" onclick={() => { editing = h.id; fname = h.name; fprompt = h.prompt; fmodel = h.model; }}>Edit</button>
 					<button class="btn btn-ghost btn-xs text-error" onclick={() => remove(h.id)}>Delete</button>
 				</div>
 				<p class="text-xs text-base-content/60 line-clamp-2">{h.prompt}</p>
+
+				{#if runsFor === h.id}
+					<div class="border-t border-base-300 mt-2 pt-2 flex flex-col gap-2">
+						<ul class="flex flex-col gap-1">
+							{#each runs as r (r.id)}
+								<li class="flex items-center gap-2 text-xs flex-wrap">
+									<span
+										class="badge badge-xs {r.status === 'ok' ? 'badge-success' : 'badge-error'}"
+									>{r.status}</span>
+									<span class="text-base-content/50">{new Date(r.fired_at).toLocaleString()}</span>
+									<span class="badge badge-ghost badge-xs">{r.source}</span>
+									{#if r.error}<span class="text-error truncate max-w-64">{r.error}</span>{/if}
+									<span class="flex-1"></span>
+									{#if r.session_id}
+										<a class="btn btn-ghost btn-xs" href="{base}/chat/{r.session_id}">Conversation</a>
+									{/if}
+									<button
+										class="btn btn-ghost btn-xs"
+										onclick={() => rerun(h, r.id)}
+										disabled={rerunning}
+									>
+										Replay this payload
+									</button>
+								</li>
+							{:else}
+								<li class="text-xs text-base-content/50">No runs yet.</li>
+							{/each}
+						</ul>
+						<div class="flex flex-col gap-1">
+							<span class="label-text text-xs">
+								Rerun prompt — the stored payload is replayed through this
+							</span>
+							<textarea
+								class="textarea textarea-bordered text-sm"
+								rows="2"
+								bind:value={rerunPrompt}
+							></textarea>
+							<div class="flex justify-end">
+								<button
+									class="btn btn-primary btn-xs"
+									onclick={() => rerun(h, null)}
+									disabled={rerunning || !rerunPrompt.trim()}
+								>
+									{rerunning ? 'Running…' : 'Rerun latest payload'}
+								</button>
+							</div>
+						</div>
+					</div>
+				{/if}
 			</div>
 		</li>
 	{/each}
