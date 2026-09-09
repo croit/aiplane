@@ -1478,16 +1478,8 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
             &format!("a pool named {name} already exists — resend with overwrite to replace it"),
         );
     }
-    const KINDS: &[&str] = &[
-        "chat",
-        "transcription",
-        "embedding",
-        "image",
-        "speech",
-        "ocr",
-    ];
     const STRATEGIES: &[&str] = &["prefix_affinity", "least_inflight", "round_robin"];
-    if !KINDS.contains(&parsed.kind.as_str()) {
+    if !POOL_KINDS.contains(&parsed.kind.as_str()) {
         return bad_request(format!("unknown pool kind: {}", parsed.kind));
     }
     let strategy = if STRATEGIES.contains(&parsed.strategy.as_str()) {
@@ -1528,6 +1520,19 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
         serde_json::json!({ "name": name, "dirty": dirty }),
     )
 }
+
+/// The pool kinds `upstreams_config` understands. One list, because both the
+/// pool upsert and the fallback setter validate against it — and the fallback
+/// setter had no validation at all, so a typo wrote a row under a kind
+/// nothing ever reads and the fallback silently did not exist.
+const POOL_KINDS: &[&str] = &[
+    "chat",
+    "transcription",
+    "embedding",
+    "image",
+    "speech",
+    "ocr",
+];
 
 /// DELETE /api/v0/admin/pools/{name}
 pub async fn pools_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -1576,6 +1581,9 @@ pub async fn topology_fallback(State(state): State<Arc<RamaState>>, req: Request
         Ok(p) => p,
         Err(err) => return bad_request(format!("parsing the fallback body: {err}")),
     };
+    if !POOL_KINDS.contains(&parsed.kind.as_str()) {
+        return bad_request(format!("unknown pool kind: {}", parsed.kind));
+    }
     let model = parsed.model.trim();
     let value = if model.is_empty() { None } else { Some(model) };
     if let Err(err) = upstreams_config::set_fallback(&state.db, &parsed.kind, value).await {

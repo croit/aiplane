@@ -781,6 +781,7 @@ export const en: Catalog = {
  "nav-search-title": "Search conversations",
  "nav-settings": "Settings",
  "nav-sign-out": "Sign out",
+ "nav-sign-out-failed": "Signing out failed, so you are still signed in: {error}",
  "nav-skills": "Skills",
  "nav-source-line": "Source · AGPL-3.0 · {version}",
  "nav-source-title": "Source code (AGPL-3.0)",

@@ -781,6 +781,7 @@ export const es: Catalog = {
  "nav-search-title": "Buscar conversaciones",
  "nav-settings": "Ajustes",
  "nav-sign-out": "Cerrar sesión",
+ "nav-sign-out-failed": "No se pudo cerrar la sesión, sigues conectado: {error}",
  "nav-skills": "Habilidades",
  "nav-source-line": "Fuente · AGPL-3.0 · {version}",
  "nav-source-title": "Código fuente (AGPL-3.0)",

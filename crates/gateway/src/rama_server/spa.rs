@@ -132,7 +132,7 @@ async fn serve(root: &Path, req: &Request) -> Response {
                 .and_then(|n| n.to_str().map(str::to_string))
                 .unwrap_or_default();
             let content_type = content_type(&ext);
-            let cache_control = cache_control(&ext, &filename);
+            let cache_control = cache_control(&ext, &filename, rel);
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, content_type)
@@ -250,23 +250,30 @@ fn content_type(ext: &str) -> &'static str {
     }
 }
 
-/// Cache-Control for a file, by kind. Content-hashed SvelteKit assets live
-/// under `/assets/_app/immutable/` and never change at a given URL →
-/// `immutable`. The entry point and service worker must revalidate →
-/// `no-cache`. Everything else stable → short max-age.
-fn cache_control(ext: &str, filename: &str) -> &'static str {
+/// Cache-Control for a file, by kind.
+///
+/// Only content-hashed assets may be `immutable`, and the one reliable signal
+/// for that is the path: SvelteKit puts them under `_app/immutable/`, where
+/// the filename carries a content hash so the URL genuinely never changes
+/// meaning.
+///
+/// Everything in `web/static/` is copied through verbatim — `pcm-recorder.js`,
+/// `favicon.svg`, `robots.txt`, `icons/*`, `_app/version.json`. Those keep
+/// their names across deploys, so a year of `immutable` would mean a browser
+/// that cached one can never be handed a fixed version: a bug in the audio
+/// worklet would be permanent for that user. They get a short max-age.
+///
+/// (The previous rule was "anything that is not index/sw/manifest is hashed",
+/// which was simply not true of that directory.)
+fn cache_control(ext: &str, filename: &str, rel_path: &str) -> &'static str {
+    let _ = ext;
     if filename == "index.html" || filename == "sw.js" {
         NO_CACHE
-    } else if ext == "webmanifest" {
-        SHORT_CACHE
-    } else {
-        // All hashed bundle files and static assets. SvelteKit puts the
-        // immutable set under a path that contains `immutable/`, but a file
-        // reaching here that is not index/sw/manifest is a hashed asset —
-        // safe to cache long. (Serving a *non-hashed*, mutable file would
-        // require naming it explicitly; the SPA build does not emit any
-        // beyond the ones handled above.)
+    } else if rel_path.contains("_app/immutable/") {
         IMMUTABLE_CACHE
+    } else {
+        // The manifest and every verbatim-copied static file.
+        SHORT_CACHE
     }
 }
 
@@ -464,13 +471,44 @@ mod tests {
 
     #[test]
     fn entry_and_sw_never_use_immutable_cache() {
-        assert_eq!(cache_control("html", "index.html"), NO_CACHE);
-        assert_eq!(cache_control("js", "sw.js"), NO_CACHE);
+        assert_eq!(cache_control("html", "index.html", "index.html"), NO_CACHE);
+        assert_eq!(cache_control("js", "sw.js", "sw.js"), NO_CACHE);
         assert_eq!(
-            cache_control("webmanifest", "manifest.webmanifest"),
+            cache_control(
+                "webmanifest",
+                "manifest.webmanifest",
+                "manifest.webmanifest"
+            ),
             SHORT_CACHE
         );
-        // A hashed JS asset caches immutable.
-        assert!(cache_control("js", "START-AbC123.js").contains("immutable"));
+        // A hashed asset — and only because of where it lives.
+        assert!(
+            cache_control(
+                "js",
+                "START-AbC123.js",
+                "_app/immutable/entry/START-AbC123.js"
+            )
+            .contains("immutable")
+        );
+    }
+
+    /// Files copied verbatim out of `web/static/` keep their names forever,
+    /// so `immutable` would make a bad one unfixable for anyone who cached
+    /// it — a broken audio worklet that no deploy can replace.
+    #[test]
+    fn verbatim_static_files_are_not_immutable() {
+        for (ext, name, rel) in [
+            ("js", "pcm-recorder.js", "pcm-recorder.js"),
+            ("svg", "favicon.svg", "favicon.svg"),
+            ("txt", "robots.txt", "robots.txt"),
+            ("png", "icon-192.png", "icons/icon-192.png"),
+            ("json", "version.json", "_app/version.json"),
+        ] {
+            assert_eq!(
+                cache_control(ext, name, rel),
+                SHORT_CACHE,
+                "{rel} is not content-hashed, so it must stay replaceable"
+            );
+        }
     }
 }

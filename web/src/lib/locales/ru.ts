@@ -785,6 +785,7 @@ export const ru: Catalog = {
  "nav-search-title": "Искать по беседам",
  "nav-settings": "Настройки",
  "nav-sign-out": "Выйти",
+ "nav-sign-out-failed": "Не удалось выйти, вы всё ещё в системе: {error}",
  "nav-skills": "Навыки",
  "nav-source-line": "Исходный код · AGPL-3.0 · {version}",
  "nav-source-title": "Исходный код (AGPL-3.0)",

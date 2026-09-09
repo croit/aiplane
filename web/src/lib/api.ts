@@ -129,10 +129,13 @@ export const api = {
 
 	/** DELETE /api/v0/chat/sessions/{id} — owner-only. */
 	deleteChatSession: async (id: string) => {
-		await fetch(`/api/v0/chat/sessions/${encodeURIComponent(id)}`, {
+		const res = await fetch(`/api/v0/chat/sessions/${encodeURIComponent(id)}`, {
 			method: 'DELETE',
 			credentials: 'same-origin'
 		});
+		// Checked like every other call: a swallowed failure here means the
+		// row is still there while the UI has already dropped it from the list.
+		if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
 	},
 
 	/** POST /api/v0/chat/sessions/{id}/pin — explicit value, idempotent. */
@@ -278,10 +281,14 @@ export const api = {
 
 	/** POST /auth/logout — clear the session (form-style endpoint). */
 	logout: async () => {
-		await fetch('/auth/logout', {
+		const res = await fetch('/auth/logout', {
 			method: 'POST',
 			credentials: 'same-origin'
 		});
+		// A sign-out that failed server-side leaves the session cookie live.
+		// Telling the user they are signed out when they are not is the one
+		// outcome this must never produce silently.
+		if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
 	},
 
 	// --- Tokens (gateway bearer secrets for the /v1 surface) --------------

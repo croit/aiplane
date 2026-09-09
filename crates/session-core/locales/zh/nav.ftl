@@ -65,3 +65,7 @@ nav-close-menu = 关闭菜单
 nav-open-menu = 打开菜单
 nav-main-aria = 主导航
 nav-search-close-aria = 关闭搜索
+
+# A failed sign-out. Silence here would show a signed-out shell over a
+# live session, which on a shared machine is the worst outcome.
+nav-sign-out-failed = 退出登录失败，您仍处于登录状态：{ $error }

@@ -781,6 +781,7 @@ export const fr: Catalog = {
  "nav-search-title": "Rechercher dans les conversations",
  "nav-settings": "Paramètres",
  "nav-sign-out": "Se déconnecter",
+ "nav-sign-out-failed": "La déconnexion a échoué, vous êtes toujours connecté : {error}",
  "nav-skills": "Compétences",
  "nav-source-line": "Source · AGPL-3.0 · {version}",
  "nav-source-title": "Code source (AGPL-3.0)",

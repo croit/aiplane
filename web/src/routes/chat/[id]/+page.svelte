@@ -274,14 +274,27 @@
 		e.preventDefault();
 	}
 
+	/// POST a JSON body and fail loudly.
+	///
+	/// `fetch` resolves for a 4xx/5xx — only a network error rejects — so a
+	/// bare `await fetch(...)` silently accepts "409 a turn is already
+	/// streaming" and then re-attaches as if it had worked. Every action here
+	/// funnels through this so a refusal reaches the notice bar.
+	async function postJson(path: string, body: unknown): Promise<void> {
+		const res = await fetch(path, {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+		if (!res.ok) throw new Error((await res.text()).slice(0, 200) || res.statusText);
+	}
+
 	async function retry(turnId: string) {
 		if (!model.trim() || streaming) return;
 		try {
-			await fetch(`/api/v0/chat/sessions/${id}/turns/${turnId}/retry`, {
-				method: 'POST',
-				credentials: 'same-origin',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ model: model.trim() })
+			await postJson(`/api/v0/chat/sessions/${id}/turns/${turnId}/retry`, {
+				model: model.trim()
 			});
 			controller?.attach();
 		} catch (err) {
@@ -293,11 +306,9 @@
 		const text = window.prompt(t('render-edit-prompt'), current)?.trim();
 		if (!text || !model.trim() || streaming || text === current) return;
 		try {
-			await fetch(`/api/v0/chat/sessions/${id}/turns/${turnId}/edit`, {
-				method: 'POST',
-				credentials: 'same-origin',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ model: model.trim(), message: text })
+			await postJson(`/api/v0/chat/sessions/${id}/turns/${turnId}/edit`, {
+				model: model.trim(),
+				message: text
 			});
 			controller?.attach();
 		} catch (err) {
@@ -307,12 +318,12 @@
 
 	async function toggleShare() {
 		const shared = !(session?.shared ?? false);
-		await fetch(`/api/v0/chat/sessions/${id}/share`, {
-			method: 'POST',
-			credentials: 'same-origin',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ shared })
-		});
+		try {
+			await postJson(`/api/v0/chat/sessions/${id}/share`, { shared });
+		} catch (err) {
+			notice = String(err);
+			return;
+		}
 		await loadMeta();
 	}
 
@@ -397,12 +408,9 @@
 				? { dismissed: true }
 				: { choices: choice === null ? [] : [choice], text: freeText ?? null };
 		try {
-			await fetch(`/api/v0/me/ask/feedback/${encodeURIComponent(prompt.turn_id)}`, {
-				method: 'POST',
-				credentials: 'same-origin',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(payload)
-			});
+			await postJson(`/api/v0/me/ask/feedback/${encodeURIComponent(prompt.turn_id)}`, payload);
+		} catch (err) {
+			notice = String(err);
 		} finally {
 			if (controller) controller.state.prompt = null;
 		}

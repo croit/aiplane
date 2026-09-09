@@ -772,6 +772,7 @@ export const zh: Catalog = {
  "nav-search-title": "搜索对话",
  "nav-settings": "设置",
  "nav-sign-out": "退出登录",
+ "nav-sign-out-failed": "退出登录失败，您仍处于登录状态：{error}",
  "nav-skills": "技能",
  "nav-source-line": "源代码 · AGPL-3.0 · {version}",
  "nav-source-title": "源代码 (AGPL-3.0)",

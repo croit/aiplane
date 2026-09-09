@@ -24,17 +24,22 @@ export const sidebar = $state({
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Which refresh is the current one. Responses do not necessarily arrive in
+// the order they were asked for — a broad query is slower than the narrower
+// one typed after it — so a slow earlier response would otherwise land last
+// and leave the list showing results for a query the box no longer holds.
+let refreshSeq = 0;
+
 export async function refreshSidebar(): Promise<void> {
+	const seq = ++refreshSeq;
 	try {
-		if (sidebar.searching && sidebar.query.trim()) {
-			const data = await adminJson<{ sessions: SidebarSession[] }>(
-				`/api/v0/chat/sessions?q=${encodeURIComponent(sidebar.query.trim())}`
-			);
-			sidebar.sessions = data.sessions;
-		} else {
-			const data = await adminJson<{ sessions: SidebarSession[] }>('/api/v0/chat/sessions');
-			sidebar.sessions = data.sessions;
-		}
+		const query = sidebar.searching ? sidebar.query.trim() : '';
+		const url = query
+			? `/api/v0/chat/sessions?q=${encodeURIComponent(query)}`
+			: '/api/v0/chat/sessions';
+		const data = await adminJson<{ sessions: SidebarSession[] }>(url);
+		if (seq !== refreshSeq) return; // superseded while in flight
+		sidebar.sessions = data.sessions;
 	} catch {
 		/* signed out / offline — the layout's own redirect handles 401 */
 	}

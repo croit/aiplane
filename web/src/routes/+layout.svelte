@@ -43,7 +43,15 @@
 	}
 
 	async function signOut() {
-		await api.logout();
+		try {
+			await api.logout();
+		} catch (err) {
+			// Navigating away regardless would show a signed-out shell while
+			// the cookie is still live on the server — the one failure mode
+			// that must not be silent.
+			signOutError = String(err);
+			return;
+		}
 		window.location.href = `${base}/`;
 	}
 
@@ -58,6 +66,9 @@
 
 	// ---- collapsible nav groups (same three as the legacy shell) ----------
 	let langOpen = $state(false);
+	/// Surfaced only when sign-out fails; a silent failure would leave the
+	/// session alive behind a signed-out-looking shell.
+	let signOutError = $state<string | null>(null);
 	let workspaceOpen = $state(true);
 	let accountOpen = $state(true);
 	let adminOpen = $state(true);
@@ -322,6 +333,17 @@
 			</div>
 		</main>
 	</div>
+
+	{#if signOutError}
+		<div class="toast toast-end z-50">
+			<div class="alert alert-error text-sm">
+				<span>{t('nav-sign-out-failed', { error: signOutError })}</span>
+				<button class="btn btn-ghost btn-xs" onclick={() => (signOutError = null)}>
+					{t('feedback-close-aria')}
+				</button>
+			</div>
+		</div>
+	{/if}
 
 	{#if feedback.enabled && me.value}
 		<button class="btn btn-circle btn-neutral fixed bottom-4 right-4 z-40" onclick={openDialog} aria-label={t('feedback-fab-aria')}>

@@ -781,6 +781,7 @@ export const de: Catalog = {
  "nav-search-title": "Unterhaltungen durchsuchen",
  "nav-settings": "Einstellungen",
  "nav-sign-out": "Abmelden",
+ "nav-sign-out-failed": "Die Abmeldung ist fehlgeschlagen, du bist noch angemeldet: {error}",
  "nav-skills": "Skills",
  "nav-source-line": "Quelle · AGPL-3.0 · {version}",
  "nav-source-title": "Quellcode (AGPL-3.0)",

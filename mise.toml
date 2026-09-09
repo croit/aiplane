@@ -217,7 +217,24 @@ sources = ["web/src/**/*", "web/static/**/*", "web/vite.config.ts", "web/package
 outputs = ["target/frontend/build/index.html"]
 run = """
 set -eu
+# Start from a clean output tree. A `vite build` over a previous one can leave
+# the emitted index.html and the JS chunks disagreeing about SvelteKit's
+# per-build global (`__sveltekit_<id>`) — the bootstrap then reads `.data` off
+# an undefined global and the app dies on load with a blank page and a single
+# console exception. Nothing downstream catches that: the files are all
+# present, so the build "succeeds" and every e2e page assertion fails at once.
+rm -rf web/build
 npm --prefix web run build
+
+# Prove the build is internally consistent before shipping it.
+html_id=$(grep -o '__sveltekit_[a-z0-9]*' web/build/index.html | sort -u)
+js_id=$(grep -roh '__sveltekit_[a-z0-9]*' web/build/_app | sort -u)
+if [ "$html_id" != "$js_id" ]; then
+  echo "torn SPA build: index.html uses '$html_id' but the JS uses '$js_id'." >&2
+  echo "The app would load to a blank page. Remove web/.svelte-kit and rebuild." >&2
+  exit 1
+fi
+
 rm -rf target/frontend
 mkdir -p target/frontend
 cp -r web/build target/frontend/build

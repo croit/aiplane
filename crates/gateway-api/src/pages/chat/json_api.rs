@@ -1056,11 +1056,14 @@ pub async fn documents_list(
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    if matches!(
-        readable_session(&state, &user.id, &session_id).await,
-        Ok(None)
-    ) {
-        return not_found_conversation();
+    // Every arm, not just `Ok(None)`: matching only the "definitely not
+    // readable" case let a DB error fall straight THROUGH the authorization
+    // check and on into serving the documents. An authorization gate that
+    // cannot answer must refuse, not shrug.
+    match readable_session(&state, &user.id, &session_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found_conversation(),
+        Err(resp) => return resp,
     }
     match documents::list_for_session(&state.db, &session_id, false).await {
         Ok(docs) => ok_json(
@@ -1094,11 +1097,14 @@ pub async fn document_get(
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    if matches!(
-        readable_session(&state, &user.id, &session_id).await,
-        Ok(None)
-    ) {
-        return not_found_conversation();
+    // Every arm, not just `Ok(None)`: matching only the "definitely not
+    // readable" case let a DB error fall straight THROUGH the authorization
+    // check and on into serving the documents. An authorization gate that
+    // cannot answer must refuse, not shrug.
+    match readable_session(&state, &user.id, &session_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found_conversation(),
+        Err(resp) => return resp,
     }
     let version = req.uri().query().and_then(super::parse_version_query);
     let (doc, ver) = match documents::get_version(&state.db, &session_id, &doc_id, version).await {
@@ -1363,13 +1369,31 @@ fn attachment_delete_path_parts(path: &str) -> Option<(String, String, String)> 
 /// `<conversation title>.<ext>`, path-separator free — the name the browser
 /// saves the download under.
 fn export_filename(session: &chat::Session, ext: &str) -> String {
-    let stem = session
+    // The title is user-controlled and this lands inside a quoted string in
+    // `Content-Disposition`, so an allowlist rather than a list of characters
+    // to strip: a `"` would close the quoting early and let the rest of the
+    // title be read as header parameters, and a newline would split the
+    // header outright. (The page this replaced ran the title through
+    // `slugify`; the port swapped in a two-character `replace`.)
+    let stem: String = session
         .title
         .as_deref()
         .map(super::first_message_title)
         .unwrap_or_else(|| session.id.clone())
-        .replace(['/', ' '], "-");
-    format!("{}.{ext}", stem.trim_matches('-'))
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let stem = stem.trim_matches('-');
+    if stem.is_empty() {
+        return format!("{}.{ext}", session.id);
+    }
+    format!("{stem}.{ext}")
 }
 
 /// A file download response (`Content-Disposition: attachment`).
