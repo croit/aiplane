@@ -1,11 +1,9 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
-tokens-page-title = Tokens de API — LLM Gateway
 tokens-page-heading = Tokens de API
 tokens-intro = Tokens Bearer para la API compatible con OpenAI. El texto plano solo se muestra al crearlo — guárdelo en un lugar seguro.
 
 tokens-create-heading = Crear token
-tokens-create-description = Genere un nuevo token Bearer para la API compatible con OpenAI.
 tokens-name-label = Nombre
 tokens-name-placeholder = p. ej. laptop, ci-runner
 tokens-ttl-label = TTL (días)
@@ -26,11 +24,7 @@ tokens-last-used-never = nunca
 
 tokens-tool-use-aria = Uso de herramientas
 tokens-tool-use-label = Uso de herramientas
-tokens-tool-use-description = Permitir que este token llame a las herramientas del gateway (búsqueda web, RAG, …).
-tokens-capabilities-summary = Capacidades
 
-tokens-mcp-allow-aria = Permitir herramientas MCP en modo "ask" a través de la API
-tokens-mcp-allow-label = Permitir herramientas MCP “ask” a través de la API
 tokens-mcp-allow-description = Las herramientas de conector que requieren aprobación no pueden solicitar confirmación a través de la API; al activarlo se ejecutan sin preguntar.
 
 tokens-minted-heading = Token creado
@@ -39,56 +33,16 @@ tokens-copy-aria = Copiar token
 tokens-copy-title = Copiar token
 tokens-minted-name = Nombre: { $name }
 
-tokens-account-heading = Cuenta
-tokens-signed-in-as = Conectado como { $email }
 tokens-account-user-id-label = ID de usuario
-tokens-account-oidc-label = Roles OIDC
-tokens-account-rbac-label = IDs de rol RBAC
-tokens-roles-none = ninguno
-tokens-roles-none-granted = ninguno concedido
 
-tokens-malformed-form = formulario inválido: { $err }
-tokens-name-length = El nombre del token debe tener entre 1 y 128 caracteres.
-tokens-store-failed = No se pudo guardar el token.
-tokens-created-toast = Token creado.
-
-tokens-revoked-not-found = Token revocado no encontrado.
-tokens-revoked-toast = Token revocado.
-tokens-already-revoked = El token ya estaba revocado.
-tokens-revoke-failed = Error al revocar.
-
-tokens-load-failed = No se pudo cargar el token.
-tokens-not-found-or-revoked = Token no encontrado o ya revocado.
-tokens-rotated-not-found = Token rotado no encontrado.
-tokens-rotated-toast = Token rotado — copie el nuevo valor.
-tokens-rotate-failed = Error al rotar.
-
-tokens-removed-toast = Token eliminado.
-tokens-still-active = El token sigue activo — revóquelo primero.
-tokens-remove-failed = Error al eliminar.
-
-tokens-not-found = Token no encontrado.
-tokens-update-failed = No se pudo actualizar el token.
-tokens-tool-use-enabled-toast = Uso de herramientas activado para este token.
-tokens-tool-use-disabled-toast = Uso de herramientas desactivado para este token.
 tokens-mcp-ask-enabled-toast = Herramientas MCP "ask" a través de la API activadas para este token.
 tokens-mcp-ask-disabled-toast = Herramientas MCP "ask" a través de la API desactivadas para este token.
 
-tokens-unknown-tool = Herramienta desconocida.
-tokens-save-pref-failed = No se pudo guardar la preferencia.
-tokens-capability-enabled-toast = { $name } activado para este token.
-tokens-capability-disabled-toast = { $name } desactivado para este token.
-
 # Web Push "turn complete" opt-in card (rendered by `render_push_card`; wired
 # client-side by `ui/ts/push.ts`). Device-local notification settings.
-tokens-push-heading = Notificaciones
-tokens-push-description = Recibe una notificación en este dispositivo cuando termine una respuesta que iniciaste mientras estás fuera de la aplicación.
 tokens-push-enable = Activar en este dispositivo
 tokens-push-disable = Desactivar en este dispositivo
 tokens-push-on = Las notificaciones están activadas para este dispositivo.
-tokens-push-off = Las notificaciones están desactivadas para este dispositivo.
-tokens-push-denied = Este navegador ha bloqueado las notificaciones. Permítelas en la configuración del navegador para activarlas.
-tokens-push-unsupported = Este navegador no admite notificaciones.
 tokens-push-enabled = Notificaciones activadas en este dispositivo.
 tokens-push-disabled = Notificaciones desactivadas en este dispositivo.
 tokens-push-error = No se pudo cambiar la configuración de notificaciones.
@@ -99,21 +53,11 @@ tokens-models-summary-all = Modelos: todos
 tokens-models-summary-restricted = Modelos: { $count } seleccionados
 tokens-models-help = Desactivado, este token sigue tu propio acceso, incluidos los modelos añadidos más adelante. Activado, solo puede usar los modelos que marques: un modelo añadido después queda bloqueado hasta que también lo marques aquí.
 tokens-models-restrict-label = Limitar este token a modelos concretos
-tokens-models-none-picked = Marca al menos un modelo o desactiva el límite.
 tokens-models-save = Guardar modelos
 tokens-models-saved-toast = Token limitado a { $count } modelos.
 tokens-models-cleared-toast = El token puede usar todos tus modelos.
-tokens-limits-summary-none = Cuota: ninguna
-tokens-limits-summary-some = Cuota: { $count } regla(s)
-tokens-limits-help = Un tope solo para este token. Tu propio presupuesto sigue aplicándose, así que esto solo puede reducir lo que el token gasta, nunca ampliarlo.
 tokens-limits-add = Añadir cuota
-tokens-limits-remove = Quitar
 tokens-limits-saved-toast = Cuota del token guardada.
-tokens-limits-removed-toast = Cuota del token eliminada.
-tokens-limits-not-yours = Esa cuota no es tuya para eliminarla.
-tokens-limits-admin-set = Un administrador fijó esa cuota en este token; solo puede cambiarse en la página de límites de administración.
-tokens-limits-admin-badge = fijada por el administrador
-tokens-models-admin-set = Un operador también restringe este token a: { $models }. Tu selección solo puede reducir eso, no ampliarlo.
 
 # SPA-only: the Svelte /tokens row panels and their confirm prompts.
 tokens-models-heading = Lista de modelos permitidos

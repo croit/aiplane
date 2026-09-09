@@ -4,7 +4,6 @@
 # chrome.ftl per the shared-translation-source architecture (both
 # binaries render the same chrome).
 
-nav-chat = Chat
 nav-memory = Memory
 nav-scheduled = Scheduled
 nav-webhooks = Webhooks
@@ -36,27 +35,8 @@ nav-unpin-conversation = Unpin conversation
 nav-delete-conversation = Delete conversation
 nav-search-placeholder = Search…
 nav-search-aria = Search
-nav-search-title = Search conversations
-nav-search-results-heading = Search results for “{ $query }”
-nav-search-no-results = No conversations matched.
 
 nav-sign-out = Sign out
-nav-open-menu-aria = Open menu
-nav-close-menu-aria = Close menu
-
-nav-source-title = Source code (AGPL-3.0)
-nav-source-line = Source · AGPL-3.0 · { $version }
-
-login-heading = Sign in to LLM Gateway
-login-description = Authenticate with your company's OIDC provider to mint API tokens and route LLM requests.
-login-continue-button = Continue with OIDC →
-login-source-link = Source code · AGPL-3.0
-
-impersonation-banner-prefix = You are impersonating
-impersonation-return-button = Return to your account
-
-error-internal-heading = Internal error
-error-forbidden-heading = Forbidden
 
 nav-my-skills = My Skills
 nav-settings = Settings

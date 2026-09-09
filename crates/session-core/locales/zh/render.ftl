@@ -5,69 +5,26 @@
 # and any future consumer of this crate render through these functions.
 
 render-edit-button = ✎ 编辑
-render-edit-confirm = 保存并重新生成？这将删除下方的所有消息。
-render-edit-save = 保存并重新生成
-render-edit-cancel = 取消
 
 render-retry-button = ↻ 重试
-render-retry-confirm = 重新生成此回复？这将删除该回复及其下方的所有内容。
 
-render-attachment-unavailable-title = 此附件已不可用
-render-attachment-unavailable-meta = 不可用
-render-attachment-open-title = 打开 { $filename } · { $mime } · { $size }
-render-attachment-title = { $filename } · { $mime } · { $size }
-render-attachment-chip-title = { $mime } · { $size }
 render-attachment-remove-aria = 删除附件
-render-attachment-remove-confirm = 删除 { $filename }？此操作无法撤销。
-
-# 多媒体回复中每个生成媒体的标签，便于引用（“把第 2 张图片做成视频”）。
-render-media-label = { $kind ->
-    [image] 图片 { $n }
-    [video] 视频 { $n }
-    [audio] 音频 { $n }
-   *[other] 媒体 { $n }
-}
 
 # 回复中代码块上的复制按钮（仅图标，因此这是其提示文本 / 无障碍名称）。
-render-code-copy = 复制代码
-render-code-copied = 已复制
 
 render-thinking-spinner = 思考中…
-render-still-working-spinner = 仍在处理…
 render-thinking-finalized = 思考了 { $secs } 秒
-render-thinking-in-progress = 思考中…（{ $secs } 秒）
 
-render-tools-running = 工具运行中
-render-tools-errored = 工具调用
-render-tools-used = 已使用的工具
-render-tools-summary = { $count } 次调用 · { $breakdown }
-
-render-tool-status-calling = 调用中
 render-tool-status-used = 已使用
-render-tool-status-error = 工具错误
-render-tool-input-label = 输入
-render-tool-output-label = 输出
-render-tool-output-truncated = 显示已截断 — 完整的 { $bytes } 字节仍可供模型使用并保存在数据库中；此处显示前 { $chars } 个字符
 
-render-canvas-version-by-you = 你
-render-canvas-hand-edited = 你已编辑
 render-canvas-edit-button = ✎ 编辑
 render-canvas-save = 另存为新版本
 render-canvas-cancel = 取消
-render-canvas-edit-hint = 将保存为新版本；助手会知道你做了修改。
-render-canvas-close-title = 关闭
-render-canvas-close-aria = 关闭文档面板
-render-canvas-document-aria = 文档
-render-canvas-version-aria = 版本
 
 render-composer-attach-aria = 添加附件
 render-composer-attach-title = 添加附件（也可拖放/粘贴）
-render-composer-record-aria = 录制语音消息
-render-composer-record-title = 录音
 render-composer-send = 发送
 render-composer-stop = 停止
-
-render-compaction-divider = 已压缩早期消息以节省上下文
 
 # The browser prompt behind the ✎ Edit button, and the per-file title on
 # an attachment's remove button.

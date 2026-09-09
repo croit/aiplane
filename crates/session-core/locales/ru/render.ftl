@@ -5,71 +5,27 @@
 # and any future consumer of this crate render through these functions.
 
 render-edit-button = ✎ Изменить
-render-edit-confirm = Сохранить и сгенерировать заново? Это удалит все сообщения ниже.
-render-edit-save = Сохранить и сгенерировать заново
-render-edit-cancel = Отмена
 
 render-retry-button = ↻ Повторить
-render-retry-confirm = Сгенерировать этот ответ заново? Это удалит его и всё, что ниже.
 
-render-attachment-unavailable-title = Этот вложенный файл больше недоступен
-render-attachment-unavailable-meta = недоступно
-render-attachment-open-title = Открыть { $filename } · { $mime } · { $size }
-render-attachment-title = { $filename } · { $mime } · { $size }
-render-attachment-chip-title = { $mime } · { $size }
 render-attachment-remove-aria = Удалить вложение
-render-attachment-remove-confirm = Удалить { $filename }? Это действие нельзя отменить.
-
-# Подпись к каждому сгенерированному медиа в ответе с несколькими медиа,
-# чтобы на него можно было сослаться («сделай видео из 2-й картинки»).
-render-media-label = { $kind ->
-    [image] Изображение { $n }
-    [video] Видео { $n }
-    [audio] Аудио { $n }
-   *[other] Медиа { $n }
-}
 
 # Кнопка копирования у блока кода в ответе (только значок, поэтому это
 # подсказка / доступное имя).
-render-code-copy = Копировать код
-render-code-copied = Скопировано
 
 render-thinking-spinner = Думает…
-render-still-working-spinner = Ещё работает…
 render-thinking-finalized = Думал { $secs } с
-render-thinking-in-progress = Думает… ({ $secs } с)
 
-render-tools-running = Инструменты выполняются
-render-tools-errored = Вызовы инструментов
-render-tools-used = Использованные инструменты
-render-tools-summary = { $count } вызовов · { $breakdown }
-
-render-tool-status-calling = Вызывается
 render-tool-status-used = Использован
-render-tool-status-error = Ошибка инструмента
-render-tool-input-label = Входные данные
-render-tool-output-label = Результат
-render-tool-output-truncated = усечено для отображения — все { $bytes } байт по-прежнему доступны модели и сохранены в базе данных; отображаются первые { $chars } симв.
 
-render-canvas-version-by-you = вы
-render-canvas-hand-edited = изменено вами
 render-canvas-edit-button = ✎ Редактировать
 render-canvas-save = Сохранить как новую версию
 render-canvas-cancel = Отмена
-render-canvas-edit-hint = Сохраняется как новая версия; ассистент узнает о вашей правке.
-render-canvas-close-title = Закрыть
-render-canvas-close-aria = Закрыть панель документа
-render-canvas-document-aria = Документ
-render-canvas-version-aria = Версия
 
 render-composer-attach-aria = Прикрепить файлы
 render-composer-attach-title = Прикрепить файлы (также перетаскиванием / вставкой)
-render-composer-record-aria = Записать голосовое сообщение
-render-composer-record-title = Запись
 render-composer-send = Отправить
 render-composer-stop = Стоп
-
-render-compaction-divider = Ранние сообщения свёрнуты для экономии контекста
 
 # The browser prompt behind the ✎ Edit button, and the per-file title on
 # an attachment's remove button.

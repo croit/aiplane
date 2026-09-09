@@ -5,33 +5,18 @@
 # `sandbox.runner_url` -> `settings-f-sandbox-runner_url`。
 # 源文本见 locales/en/settings.ftl。
 
-settings-heading = 设置
-settings-intro = 本网关的运维设置。它们保存在数据库中，无需配置文件——每个字段还会显示它所替代的 TOML 键名。
 settings-save = 保存本节
 settings-saved = 已保存，下一个请求起生效。
-settings-saved-restart = 已保存。本节中部分字段需重启后才生效。
-settings-save-failed = 无法保存这些设置。
-settings-cleared = 已清除，重新使用内置默认值。
-settings-restart-badge = 需重启
 settings-restart-note = 标记为“需重启”的字段仅在网关启动时读取，修改后需重启才能生效。
 settings-secret-set = 已存储——输入新值即可替换
 settings-secret-unset = 未设置
 settings-secret-clear = 清除
-
-settings-no-backend-heading = 尚未配置模型后端
-settings-no-backend-body = 登录已配置好，但在添加后端之前，本网关不提供任何模型。在此之前，聊天和 /v1 接口都会拒绝请求。
-settings-no-backend-cta = 前往 /admin/upstreams 添加后端 →
 
 settings-tab-chat = 聊天
 settings-tab-tools = 工具
 settings-tab-data = 内容与数据
 settings-tab-access = 访问与用量
 settings-tab-notifications = 通知
-settings-show-fields = 显示另外 { $count } 项设置
-settings-model-automatic = 自动 — 使用第一个可用模型
-settings-model-none-configured = 尚未配置此类型的模型。请在 /admin/upstreams 添加相应的池，它就会出现在这里。
-settings-model-unavailable = { $model }（已配置，但当前不可用）
-settings-restart-pending-heading = 待重启
 settings-restart-pending-body = 以下设置已保存，但需重启网关后才会生效：
 
 # ─── 分区卡片 ─────────────────────────────────────────────────────────────────

@@ -259,7 +259,8 @@ description = "Run tests with stdout/stderr visible."
 run = "cargo nextest run --workspace --no-capture"
 
 [tasks.parity-gap]
-description = "Report .ftl keys with no consumer — the size of the SPA's feature gap against the UI it replaced. See docs/spa-parity-gap.md."
+description = "Fail if any .ftl key has no consumer. The corpus is the product's string contract; an unreferenced key is either a page that was never finished or a string nobody removed. See docs/spa-parity-gap.md."
+sources = ["crates/session-core/locales/**/*.ftl", "crates/**/*.rs", "web/src/**/*"]
 run = "python3 web/scripts/parity-gap.py"
 
 [tasks.gen-locales]
@@ -301,11 +302,11 @@ run = "gitleaks git . --staged --redact --no-banner"
 
 [tasks.ci]
 description = "Everything CI runs: lint + tests + release build of the gateway binary + SPA build. mise fans out via the DAG. Locally prefer `verify` — same gate, minus the release build you don't need."
-depends = ["lint", "test", "test-web", "build", "build-web"]
+depends = ["lint", "test", "test-web", "build", "build-web", "parity-gap"]
 
 [tasks.verify]
 description = "The local pre-push gate: lint + Rust tests + SPA checks and build. Same checks as `ci` minus the release build — nothing in `ci` catches a compile error that `test` doesn't, and the release build is a THIRD full compile of the workspace (dev for clippy, test for nextest, release for the binary). Run this once before pushing; use `test-crate` / `lint-crate` while iterating."
-depends = ["lint", "test", "test-web", "build-web"]
+depends = ["lint", "test", "test-web", "build-web", "parity-gap"]
 
 [tasks.test-crate]
 description = "Tests for ONE crate — the iteration loop. `mise run test-crate gateway-api [filter]`. Seconds instead of the ~20 min a full `test` costs after touching a root crate, because it links that crate's test binaries only."

@@ -1,35 +1,17 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
-integrations-page-title = 集成 — LLM Gateway
 integrations-heading = 集成
 integrations-intro = 连接您自己的账户，让助手可以代表您执行操作——读取您的邮件、日历、文件、代码仓库等。每个连接都使用您自己的权限，随时可以断开。
 integrations-empty = 目前还没有可用的连接器。管理员可以在“管理 → 连接器”中启用它们。
 
 integrations-badge-connected = 已连接
-integrations-badge-needs-reconnect = 需要重新连接
-integrations-badge-needs-admin-setup = 需要管理员设置
 
-integrations-reconnect-title = 重新建立连接（重新授权 / 重试）
-integrations-reconnect-button = 重新连接
 integrations-disconnect-button = 断开连接
 integrations-disconnect-confirm = 断开此集成？您存储的访问令牌将被删除。
 integrations-connect-button = 连接
 
 integrations-token-label = 您的 API 令牌
 integrations-token-placeholder = 粘贴您的令牌
-
-integrations-tools-error-prefix = 无法加载此连接器的工具：
-integrations-tools-error-hint = 请检查 MCP 服务器 URL / 您的令牌，然后使用上方的“重新连接”。
-integrations-tools-error-hint-reauth = 您的授权已失效 — 请使用上方的“重新连接”重新登录。
-integrations-tools-empty = 此连接器不提供任何工具。
-integrations-tools-header = 工具权限（{ $count }）
-integrations-set-all-label = 全部设置：
-integrations-mode-always = 始终
-integrations-mode-ask = 询问
-integrations-mode-off = 关闭
-integrations-tools-toggle = 显示 / 隐藏各个工具
-integrations-tool-kind-read = 读取
-integrations-tool-kind-write = 写入
 
 integrations-error-unknown-connector = 未知或已禁用的连接器
 integrations-error-forbidden-role = 您无权访问此连接器
@@ -52,16 +34,6 @@ integrations-error-connector-missing-client-id = 该连接器缺少其 OAuth 客
 integrations-error-sealing-access-token = 封存访问令牌失败：{ $error }
 integrations-error-sealing-refresh-token = 封存刷新令牌失败：{ $error }
 integrations-error-saving-connection = 保存连接失败：{ $error }
-integrations-error-not-token-based = 此连接器不基于令牌
-integrations-error-token-required = 需要提供令牌
-integrations-error-sealing-token = 封存令牌失败：{ $error }
-integrations-error-unknown-connector-plain = 未知连接器
-integrations-error-invalid-mode = 无效的权限模式
-integrations-error-saving-tool-permission = 保存工具权限失败：{ $error }
-integrations-error-saving-permissions = 保存权限失败：{ $error }
-integrations-error-listing-tools = 列出工具失败：{ $error }
-integrations-error-disconnecting = 断开连接失败：{ $error }
-integrations-error-connection-unavailable = 连接不可用
 
 # SPA-only: the Svelte /integrations connector list.
 integrations-badge-not-connected = 未连接

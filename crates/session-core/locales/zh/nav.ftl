@@ -1,6 +1,5 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
-nav-chat = 聊天
 nav-memory = 记忆
 nav-scheduled = 计划任务
 nav-webhooks = Webhook
@@ -31,27 +30,8 @@ nav-unpin-conversation = 取消置顶
 nav-delete-conversation = 删除对话
 nav-search-placeholder = 搜索…
 nav-search-aria = 搜索
-nav-search-title = 搜索对话
-nav-search-results-heading = “{ $query }” 的搜索结果
-nav-search-no-results = 未找到匹配的对话。
 
 nav-sign-out = 退出登录
-nav-open-menu-aria = 打开菜单
-nav-close-menu-aria = 关闭菜单
-
-nav-source-title = 源代码 (AGPL-3.0)
-nav-source-line = 源代码 · AGPL-3.0 · { $version }
-
-login-heading = 登录 LLM Gateway
-login-description = 通过贵公司的 OIDC 提供商进行身份验证，以创建 API 令牌并路由 LLM 请求。
-login-continue-button = 使用 OIDC 继续 →
-login-source-link = 源代码 · AGPL-3.0
-
-impersonation-banner-prefix = 您正在以以下身份操作：
-impersonation-return-button = 返回您的账户
-
-error-internal-heading = 内部错误
-error-forbidden-heading = 禁止访问
 
 nav-groups = 组
 

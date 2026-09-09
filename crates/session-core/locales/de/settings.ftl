@@ -5,33 +5,18 @@
 # abgeleitet: `sandbox.runner_url` -> `settings-f-sandbox-runner_url`.
 # Siehe locales/en/settings.ftl für die Quelle.
 
-settings-heading = Einstellungen
-settings-intro = Betriebseinstellungen dieses Gateways. Sie liegen in der Datenbank, eine Konfigurationsdatei ist nicht nötig — jedes Feld zeigt zusätzlich den TOML-Schlüssel, den es ersetzt.
 settings-save = Abschnitt speichern
 settings-saved = Gespeichert. Ab der nächsten Anfrage aktiv.
-settings-saved-restart = Gespeichert. Einige Felder dieses Abschnitts greifen erst nach einem Neustart.
-settings-save-failed = Diese Einstellungen konnten nicht gespeichert werden.
-settings-cleared = Zurückgesetzt. Es gilt wieder der Standardwert.
-settings-restart-badge = Neustart
 settings-restart-note = Mit „Neustart“ markierte Felder werden nur beim Start gelesen; Änderungen greifen erst nach einem Neustart.
 settings-secret-set = gespeichert — neuen Wert eingeben, um ihn zu ersetzen
 settings-secret-unset = nicht gesetzt
 settings-secret-clear = Löschen
-
-settings-no-backend-heading = Noch kein Modell-Backend
-settings-no-backend-body = Die Anmeldung ist eingerichtet, aber dieses Gateway liefert erst Modelle, wenn ein Backend hinzugefügt ist. Bis dahin lehnen Chat und die /v1-API Anfragen ab.
-settings-no-backend-cta = Backend unter /admin/upstreams hinzufügen →
 
 settings-tab-chat = Chat
 settings-tab-tools = Werkzeuge
 settings-tab-data = Inhalte & Daten
 settings-tab-access = Zugriff & Nutzung
 settings-tab-notifications = Benachrichtigungen
-settings-show-fields = { $count } weitere Einstellungen anzeigen
-settings-model-automatic = Automatisch — erstes verfügbares Modell verwenden
-settings-model-none-configured = Für diesen Zweck ist noch kein Modell konfiguriert. Legen Sie unter /admin/upstreams einen passenden Pool an, dann erscheint es hier.
-settings-model-unavailable = { $model } (konfiguriert, aber derzeit nicht verfügbar)
-settings-restart-pending-heading = Neustart ausstehend
 settings-restart-pending-body = Diese Einstellungen sind gespeichert, greifen aber erst nach einem Neustart des Gateways:
 
 # ─── Abschnittskarten ────────────────────────────────────────────────────────

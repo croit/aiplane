@@ -6,33 +6,18 @@
 # `sandbox.runner_url` -> `settings-f-sandbox-runner_url`.
 # Véase locales/en/settings.ftl para la fuente.
 
-settings-heading = Ajustes
-settings-intro = Ajustes de operación de esta pasarela. Se guardan en la base de datos, así que no hace falta ningún fichero de configuración — cada campo muestra además la clave TOML a la que sustituye.
 settings-save = Guardar sección
 settings-saved = Guardado. Activo desde la siguiente petición.
-settings-saved-restart = Guardado. Algunos campos de esta sección solo se aplican tras reiniciar.
-settings-save-failed = No se han podido guardar estos ajustes.
-settings-cleared = Restablecido. Vuelve a aplicarse el valor por defecto.
-settings-restart-badge = reinicio
 settings-restart-note = Los campos marcados con «reinicio» se leen solo al arrancar; cambiarlos requiere reiniciar.
 settings-secret-set = guardado — escribe un valor nuevo para sustituirlo
 settings-secret-unset = sin definir
 settings-secret-clear = Borrar
-
-settings-no-backend-heading = Todavía no hay backend de modelos
-settings-no-backend-body = El inicio de sesión ya está configurado, pero esta pasarela no sirve ningún modelo hasta que añadas un backend. Hasta entonces, el chat y la API /v1 rechazan las peticiones.
-settings-no-backend-cta = Añadir un backend en /admin/upstreams →
 
 settings-tab-chat = Chat
 settings-tab-tools = Herramientas
 settings-tab-data = Contenido y datos
 settings-tab-access = Acceso y uso
 settings-tab-notifications = Notificaciones
-settings-show-fields = Mostrar { $count } ajustes más
-settings-model-automatic = Automático — usar el primer modelo disponible
-settings-model-none-configured = Todavía no hay ningún modelo de este tipo configurado. Añade un pool en /admin/upstreams y aparecerá aquí.
-settings-model-unavailable = { $model } (configurado, pero no disponible ahora)
-settings-restart-pending-heading = Reinicio pendiente
 settings-restart-pending-body = Estos ajustes están guardados, pero solo se aplican tras reiniciar la pasarela:
 
 # ─── Tarjetas de sección ─────────────────────────────────────────────────────

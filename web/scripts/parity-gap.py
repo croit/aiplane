@@ -12,6 +12,7 @@ someone has to remember to update.
 import os
 import re
 import subprocess
+import sys
 
 ROOT = os.getcwd()
 LOCALES = os.path.join(ROOT, 'crates/session-core/locales')
@@ -87,5 +88,17 @@ if out:
         for src, key in orphans:
             fh.write('%s\t%s\n' % (src, key))
     print('\nwrote %s' % out)
-else:
+elif orphans:
     print('\nSet PARITY_GAP_OUT=<path> to dump the full key list.')
+
+if orphans:
+    print(
+        '\nFAIL: the corpus must have no unreferenced keys.\n'
+        '  Add the key in the same change that uses it, or drop it.\n'
+        '  A key built at runtime from a prefix is excluded automatically —\n'
+        '  if yours is and it still shows up here, the scan did not spot the\n'
+        '  prefix (it looks for `t(`p-${...}`)` and `format!("p-{...}")`).',
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+print('\nOK: every key has a consumer.')

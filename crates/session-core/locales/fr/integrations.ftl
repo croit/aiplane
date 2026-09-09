@@ -1,35 +1,17 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
-integrations-page-title = Intégrations — LLM Gateway
 integrations-heading = Intégrations
 integrations-intro = Connectez vos propres comptes pour que l'assistant puisse agir en votre nom — lire vos e-mails, votre calendrier, vos fichiers, vos dépôts, et plus encore. Chaque connexion utilise vos propres autorisations et peut être déconnectée à tout moment.
 integrations-empty = Aucun connecteur n'est encore disponible. Un administrateur peut les activer dans Admin → Connecteurs.
 
 integrations-badge-connected = Connecté
-integrations-badge-needs-reconnect = Reconnexion nécessaire
-integrations-badge-needs-admin-setup = Configuration admin nécessaire
 
-integrations-reconnect-title = Rétablir la connexion (réauthentification / nouvelle tentative)
-integrations-reconnect-button = Reconnecter
 integrations-disconnect-button = Déconnecter
 integrations-disconnect-confirm = Déconnecter cette intégration ? Votre jeton d'accès enregistré sera supprimé.
 integrations-connect-button = Connecter
 
 integrations-token-label = Votre jeton API
 integrations-token-placeholder = collez votre jeton
-
-integrations-tools-error-prefix = Impossible de charger les outils de ce connecteur :
-integrations-tools-error-hint = Vérifiez l'URL du serveur MCP / votre jeton, puis utilisez Reconnecter ci-dessus.
-integrations-tools-error-hint-reauth = Votre autorisation n'est plus valide — utilisez Reconnecter ci-dessus pour vous reconnecter.
-integrations-tools-empty = Ce connecteur n'expose aucun outil.
-integrations-tools-header = Autorisations des outils ({ $count })
-integrations-set-all-label = Tout définir :
-integrations-mode-always = Toujours
-integrations-mode-ask = Demander
-integrations-mode-off = Désactivé
-integrations-tools-toggle = Afficher / masquer les outils individuels
-integrations-tool-kind-read = lecture
-integrations-tool-kind-write = écriture
 
 integrations-error-unknown-connector = connecteur inconnu ou désactivé
 integrations-error-forbidden-role = vous n'avez pas accès à ce connecteur
@@ -52,16 +34,6 @@ integrations-error-connector-missing-client-id = il manque l'identifiant client 
 integrations-error-sealing-access-token = scellement du jeton d'accès : { $error }
 integrations-error-sealing-refresh-token = scellement du jeton de rafraîchissement : { $error }
 integrations-error-saving-connection = enregistrement de la connexion : { $error }
-integrations-error-not-token-based = ce connecteur n'est pas basé sur un jeton
-integrations-error-token-required = un jeton est requis
-integrations-error-sealing-token = scellement du jeton : { $error }
-integrations-error-unknown-connector-plain = connecteur inconnu
-integrations-error-invalid-mode = mode d'autorisation invalide
-integrations-error-saving-tool-permission = enregistrement de l'autorisation de l'outil : { $error }
-integrations-error-saving-permissions = enregistrement des autorisations : { $error }
-integrations-error-listing-tools = liste des outils : { $error }
-integrations-error-disconnecting = déconnexion : { $error }
-integrations-error-connection-unavailable = connexion indisponible
 
 # SPA-only: the Svelte /integrations connector list.
 integrations-badge-not-connected = Non connecté

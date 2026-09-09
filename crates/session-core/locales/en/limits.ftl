@@ -1,10 +1,7 @@
 # Admin rate-limit / quota editor (/admin/limits).
 limits-heading = Rate limits & quotas
-limits-intro = Cap how many requests, tokens, or how much spend a caller may use over a rolling window. Rules resolve most-specific-first: a user's own rule wins, else the most generous of their roles, else the global default. With no rules, everyone is unlimited. A rule on an API token is an additional ceiling checked alongside its owner's budget, so it can only narrow what that token may spend. Only pools with enforce_limits = true count toward a limit (self-hosted pools set enforce_limits = false are still recorded on /usage but exempt), and a user's whole budget is shared across their API tokens, chat, and scheduled runs.
 limits-add-heading = Add or update a limit
 limits-field-subject = Applies to
-limits-field-subject-id = Role / user / token
-limits-field-subject-id-ph = role id, user email, or token id
 limits-field-model = Model
 limits-field-model-ph = all models
 limits-field-dimension = Limit
@@ -26,19 +23,11 @@ limits-col-subject = Applies to
 limits-col-scope = Model
 limits-col-limit = Limit
 limits-col-window = Window
-limits-col-value = Value
-limits-col-actions = Actions
 limits-none = No limits configured — everyone is unlimited.
 limits-all-models = all models
 limits-delete = Delete
 limits-saved = saved limit for { $subject }
-limits-deleted = removed limit
-limits-invalid-value = value `{ $value }` must be a non-negative number
-limits-unknown-role = unknown role `{ $role }`
-limits-unknown-user = no user matches `{ $user }`
-limits-missing-subject-id = enter a role id, a user email, or a token id
 limits-subject-token = API token
-limits-unknown-token = no token matches `{ $token }`
 
 # SPA rule table: its heading, the "managed by" column, and the delete prompt.
 limits-rules-heading = Rules

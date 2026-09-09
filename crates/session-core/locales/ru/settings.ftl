@@ -5,33 +5,18 @@
 # `sandbox.runner_url` -> `settings-f-sandbox-runner_url`.
 # Источник — locales/en/settings.ftl.
 
-settings-heading = Настройки
-settings-intro = Эксплуатационные настройки этого шлюза. Они хранятся в базе данных, файл конфигурации не нужен — рядом с каждым полем показан ключ TOML, который оно заменяет.
 settings-save = Сохранить раздел
 settings-saved = Сохранено. Действует со следующего запроса.
-settings-saved-restart = Сохранено. Некоторые поля этого раздела вступят в силу только после перезапуска.
-settings-save-failed = Не удалось сохранить эти настройки.
-settings-cleared = Сброшено. Снова действует значение по умолчанию.
-settings-restart-badge = перезапуск
 settings-restart-note = Поля с пометкой «перезапуск» читаются только при старте; чтобы изменения подействовали, нужен перезапуск.
 settings-secret-set = сохранено — введите новое значение, чтобы заменить
 settings-secret-unset = не задано
 settings-secret-clear = Очистить
-
-settings-no-backend-heading = Бэкенд моделей ещё не добавлен
-settings-no-backend-body = Вход настроен, но шлюз не выдаёт ни одной модели, пока не добавлен бэкенд. До этого чат и API /v1 будут отклонять запросы.
-settings-no-backend-cta = Добавить бэкенд в /admin/upstreams →
 
 settings-tab-chat = Чат
 settings-tab-tools = Инструменты
 settings-tab-data = Контент и данные
 settings-tab-access = Доступ и использование
 settings-tab-notifications = Уведомления
-settings-show-fields = Показать ещё { $count } настроек
-settings-model-automatic = Автоматически — использовать первую доступную модель
-settings-model-none-configured = Модель такого типа ещё не настроена. Добавьте соответствующий пул в /admin/upstreams, и она появится здесь.
-settings-model-unavailable = { $model } (настроена, но сейчас недоступна)
-settings-restart-pending-heading = Требуется перезапуск
 settings-restart-pending-body = Эти настройки сохранены, но вступят в силу только после перезапуска шлюза:
 
 # ─── Карточки разделов ───────────────────────────────────────────────────────

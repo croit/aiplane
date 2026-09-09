@@ -5,33 +5,18 @@
 # `sandbox.runner_url` -> `settings-f-sandbox-runner_url`.
 # Voir locales/en/settings.ftl pour la source.
 
-settings-heading = Paramètres
-settings-intro = Paramètres d'exploitation de cette passerelle. Ils sont stockés en base, aucun fichier de configuration n'est nécessaire — chaque champ affiche aussi la clé TOML qu'il remplace.
 settings-save = Enregistrer la section
 settings-saved = Enregistré. Actif dès la prochaine requête.
-settings-saved-restart = Enregistré. Certains champs de cette section ne prennent effet qu'après un redémarrage.
-settings-save-failed = Impossible d'enregistrer ces paramètres.
-settings-cleared = Réinitialisé. La valeur par défaut s'applique de nouveau.
-settings-restart-badge = redémarrage
 settings-restart-note = Les champs marqués « redémarrage » ne sont lus qu'au démarrage ; les modifier exige un redémarrage.
 settings-secret-set = enregistré — saisissez une nouvelle valeur pour le remplacer
 settings-secret-unset = non défini
 settings-secret-clear = Effacer
-
-settings-no-backend-heading = Aucun backend de modèle
-settings-no-backend-body = La connexion est configurée, mais cette passerelle ne sert aucun modèle avant l'ajout d'un backend. D'ici là, le chat et l'API /v1 refusent les requêtes.
-settings-no-backend-cta = Ajouter un backend dans /admin/upstreams →
 
 settings-tab-chat = Chat
 settings-tab-tools = Outils
 settings-tab-data = Contenu & données
 settings-tab-access = Accès & utilisation
 settings-tab-notifications = Notifications
-settings-show-fields = Afficher { $count } réglages supplémentaires
-settings-model-automatic = Automatique — utiliser le premier modèle disponible
-settings-model-none-configured = Aucun modèle de ce type n'est encore configuré. Ajoutez un pool correspondant dans /admin/upstreams et il apparaîtra ici.
-settings-model-unavailable = { $model } (configuré, mais indisponible actuellement)
-settings-restart-pending-heading = Redémarrage en attente
 settings-restart-pending-body = Ces réglages sont enregistrés mais ne prendront effet qu'après un redémarrage de la passerelle :
 
 # ─── Cartes de section ───────────────────────────────────────────────────────
