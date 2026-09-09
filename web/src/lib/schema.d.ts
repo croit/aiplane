@@ -1704,6 +1704,171 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v0/chat/sessions/{id}/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The conversation's tool overlay
+         * @description Every tool the caller's roles grant, with this conversation's on/off state.
+         */
+        get: operations["listChatCapabilities"];
+        put?: never;
+        /** Set one tool's overlay state */
+        post: operations["setChatCapability"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/tokens/{id}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace the owner's model allowlist for a token
+         * @description Owner-scoped. restrict=false clears the owner list; intersected with any admin list at routing time.
+         */
+        put: operations["setOwnerTokenModels"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/tokens/{id}/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add an owner-set quota to one token
+         * @description Narrowing only — the owner's own budget still applies. ManagedBy::Owner.
+         */
+        post: operations["addOwnerTokenQuota"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/chat/sessions/{id}/export.pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export the conversation as a typeset PDF
+         * @description Rendered through typst. Answers 503 where the gateway ships no typst binary — PDF export being unavailable is a deployment fact, not a bad request.
+         */
+        get: operations["exportChatPdf"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/chat/sessions/{id}/fork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fork a readable conversation into the caller's own chats
+         * @description Recipient-only: the source must be readable (owner or shared) and must not already belong to the caller. Copies the turns and their attachment objects.
+         */
+        post: operations["forkChatSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/chat/sessions/{id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Canvas documents in this conversation
+         * @description Most-recently-updated first; soft-deleted documents are hidden.
+         */
+        get: operations["listChatDocuments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/chat/sessions/{id}/documents/{doc_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One canvas document with its content and history
+         * @description `?version=N` reads an older revision; absent means the current one.
+         */
+        get: operations["getChatDocument"];
+        /**
+         * Save a hand edit as a new version (owner only)
+         * @description A no-op save mints no version, so the history stays a list of real changes. Content is capped at the same ceiling the document tools write against.
+         */
+        put: operations["editChatDocument"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/chat/sessions/{id}/turns/{turn_id}/attachments/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove one attachment from a message (owner only)
+         * @description Drops the attachment marker from the turn and reclaims the stored object. Does not regenerate the turn.
+         */
+        delete: operations["removeChatAttachment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1898,6 +2063,17 @@ export interface components {
             output_units?: number;
             cost?: number;
             errors?: number;
+        };
+        /** @description A canvas document belonging to a conversation. */
+        CanvasDocument: {
+            id: string;
+            title: string;
+            format: string;
+            current_ver: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
         };
     };
     responses: {
@@ -4957,6 +5133,349 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    listChatCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The conversation's UUID. */
+                id: components["parameters"]["ChatSessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The tool list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setChatCapability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The conversation's UUID. */
+                id: components["parameters"]["ChatSessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    tool_key: string;
+                    enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setOwnerTokenModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    restrict: boolean;
+                    models?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addOwnerTokenQuota: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    dimension: "requests" | "tokens" | "cost";
+                    /** @enum {string} */
+                    window: "hour" | "day" | "week" | "month";
+                    value: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    exportChatPdf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The conversation's UUID. */
+                id: components["parameters"]["ChatSessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An application/pdf attachment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            /** @description PDF export is not available on this gateway. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forkChatSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The conversation's UUID. */
+                id: components["parameters"]["ChatSessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new conversation. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        title?: string | null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            /** @description The conversation is already the caller's. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listChatDocuments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The conversation's UUID. */
+                id: components["parameters"]["ChatSessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The document list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        documents: components["schemas"]["CanvasDocument"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getChatDocument: {
+        parameters: {
+            query?: {
+                /** @description Revision to read; the current one when omitted. */
+                version?: number;
+            };
+            header?: never;
+            path: {
+                /** @description The conversation's UUID. */
+                id: components["parameters"]["ChatSessionId"];
+                /** @description Document id. */
+                doc_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The document, the requested version's content, and the version history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        document: components["schemas"]["CanvasDocument"];
+                        version: {
+                            version: number;
+                            content: string;
+                            summary?: string | null;
+                            turn_id?: string | null;
+                            /** @enum {string} */
+                            author: "user" | "assistant";
+                            /** Format: date-time */
+                            created_at: string;
+                        };
+                        history: {
+                            version: number;
+                            summary?: string | null;
+                            /** Format: date-time */
+                            created_at: string;
+                            chars: number;
+                            /** @enum {string} */
+                            author: "user" | "assistant";
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    editChatDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The conversation's UUID. */
+                id: components["parameters"]["ChatSessionId"];
+                /** @description Document id. */
+                doc_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    content: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The document after the save. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        document: components["schemas"]["CanvasDocument"];
+                        unchanged: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            /** @description The document is too large to save. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    removeChatAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The conversation's UUID. */
+                id: components["parameters"]["ChatSessionId"];
+                /** @description Chat turn id. */
+                turn_id: components["parameters"]["TurnId"];
+                /** @description Attachment filename, percent-encoded. Case-sensitive. */
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        removed: string;
+                    };
+                };
+            };
+            /** @description Malformed attachment path. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
         };
     };
 }

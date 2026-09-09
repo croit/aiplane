@@ -1,13 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { base } from '$app/paths';
+	import { goto } from '$app/navigation';
 	import { api, ApiError } from '$lib/api';
+	import type { CanvasDocument } from '$lib/api';
 	import { createConversationController } from '$lib/chat.svelte';
 	import { createVoiceController } from '$lib/voice.svelte';
 	import { refreshSidebar } from '$lib/sidebar.svelte';
 	import { renderMarkdown } from '$lib/markdown';
 	import { parseUserContent } from '$lib/chat-protocol';
 	import type { ChatSession } from '$lib/chat-protocol';
+	import { me } from '$lib/session.svelte';
 
 	let { data } = $props<{ data: { id: string } }>();
 	const id = $derived(data.id);
@@ -30,9 +33,24 @@
 	let sending = $state(false);
 	let notice = $state<string | null>(null);
 
+	// Canvas documents (the panel the document tools write into).
+	let documents = $state<CanvasDocument[]>([]);
+	let openDoc = $state<{
+		document: CanvasDocument;
+		content: string;
+		history: { version: number; created_at: string; chars: number; author: string }[];
+	} | null>(null);
+	let docDraft = $state('');
+	let docEditing = $state(false);
+	let docSaving = $state(false);
+
 	const turns = $derived(controller ? controller.state.turns : []);
 	const streaming = $derived(controller !== null && controller.state.liveTurnId !== null);
 	const prompt = $derived(controller?.state.prompt ?? null);
+	/** A conversation shared *with* you renders read-only, plus a Fork action. */
+	const isOwner = $derived(
+		session === null || me.value === null || session.user_id === me.value.id
+	);
 
 	async function loadMeta() {
 		try {
@@ -90,10 +108,17 @@
 	onMount(() => {
 		void loadTools();
 		const c = createConversationController(id);
-		c.onSidebarChanged = () => { void loadMeta(); void refreshSidebar(); };
+		c.onSidebarChanged = () => {
+			void loadMeta();
+			void refreshSidebar();
+			// A turn that wrote to the canvas bumps the sidebar too, so this is
+			// also the cue to re-read the document list.
+			void loadDocuments();
+		};
 		c.attach();
 		controller = c;
 		void loadMeta();
+		void loadDocuments();
 		return () => c.destroy();
 	});
 
@@ -249,6 +274,63 @@
 		}
 	}
 
+	/** Take a conversation shared with you into your own chats, then open it. */
+	async function fork() {
+		try {
+			const forked = await api.forkChatSession(id);
+			await refreshSidebar();
+			await goto(`${base}/chat/${forked.id}`);
+		} catch (err) {
+			notice = String(err);
+		}
+	}
+
+	async function removeAttachment(turnId: string, filename: string) {
+		try {
+			await api.removeChatAttachment(id, turnId, filename);
+			// The turn's markers changed in the DB. Re-attaching replays a
+			// snapshot (which replaces the turns wholesale), so the bubble shows
+			// what is stored rather than a locally patched copy.
+			controller?.attach();
+		} catch (err) {
+			notice = String(err);
+		}
+	}
+
+	async function loadDocuments() {
+		try {
+			documents = (await api.listChatDocuments(id)).documents;
+		} catch {
+			// A conversation with no canvas is the normal case — stay quiet.
+			documents = [];
+		}
+	}
+
+	async function openDocument(docId: string) {
+		try {
+			const got = await api.getChatDocument(id, docId);
+			openDoc = { document: got.document, content: got.version.content, history: got.history };
+			docDraft = got.version.content;
+			docEditing = false;
+		} catch (err) {
+			notice = String(err);
+		}
+	}
+
+	async function saveDocument() {
+		if (!openDoc) return;
+		docSaving = true;
+		try {
+			await api.editChatDocument(id, openDoc.document.id, docDraft);
+			await openDocument(openDoc.document.id);
+			await loadDocuments();
+		} catch (err) {
+			notice = String(err);
+		} finally {
+			docSaving = false;
+		}
+	}
+
 	async function answerPrompt(text: string | null) {
 		if (!prompt || prompt.action !== 'show') return;
 		try {
@@ -293,11 +375,85 @@
 		{session?.title?.trim() || 'Untitled chat'}
 	</h1>
 	<a href="{base}/chat" class="btn btn-ghost btn-sm">All chats</a>
-	<button class="btn btn-ghost btn-sm" onclick={toggleShare}>
-		{session?.shared ? 'Unshare' : 'Share'}
-	</button>
-	<a class="btn btn-ghost btn-sm" href="/api/v0/chat/sessions/{id}/export.md">Export</a>
+	{#if isOwner}
+		<button class="btn btn-ghost btn-sm" onclick={toggleShare}>
+			{session?.shared ? 'Unshare' : 'Share'}
+		</button>
+	{:else}
+		<!-- Shared *with* you: the copy is how you keep (and can edit) it. -->
+		<button class="btn btn-ghost btn-sm" onclick={fork}>Save a copy</button>
+	{/if}
+	<div class="dropdown dropdown-end">
+		<button class="btn btn-ghost btn-sm" popovertarget="export-menu" style="anchor-name:--export">
+			Export
+		</button>
+		<ul
+			class="dropdown-content menu rounded-box bg-base-200 p-2 shadow z-10 w-40"
+			popover
+			id="export-menu"
+			style="position-anchor:--export"
+		>
+			<li><a href="/api/v0/chat/sessions/{id}/export.md" download>Markdown</a></li>
+			<li><a href="/api/v0/chat/sessions/{id}/export.pdf" download>PDF</a></li>
+		</ul>
+	</div>
 </div>
+
+{#if documents.length > 0}
+	<div class="card border border-base-300 bg-base-200 mb-4">
+		<div class="card-body p-3 gap-2">
+			<div class="flex items-center gap-2 flex-wrap">
+				<span class="text-sm font-medium">Documents</span>
+				{#each documents as doc (doc.id)}
+					<button
+						class="btn btn-xs {openDoc?.document.id === doc.id ? 'btn-primary' : 'btn-ghost'}"
+						onclick={() => (openDoc?.document.id === doc.id ? (openDoc = null) : openDocument(doc.id))}
+					>
+						{doc.title}
+						<span class="badge badge-ghost badge-xs">v{doc.current_ver}</span>
+					</button>
+				{/each}
+			</div>
+
+			{#if openDoc}
+				{@const shown = openDoc}
+				<div class="flex items-center gap-2">
+					<span class="text-xs opacity-60">
+						v{shown.document.current_ver} · {shown.history.length} revision{shown.history
+							.length === 1
+							? ''
+							: 's'}
+					</span>
+					<div class="flex-1"></div>
+					{#if isOwner}
+						{#if docEditing}
+							<button class="btn btn-xs" onclick={() => { docEditing = false; docDraft = shown.content; }}>
+								Cancel
+							</button>
+							<button class="btn btn-xs btn-primary" onclick={saveDocument} disabled={docSaving}>
+								{docSaving ? 'Saving…' : 'Save'}
+							</button>
+						{:else}
+							<button class="btn btn-xs" onclick={() => (docEditing = true)}>Edit</button>
+						{/if}
+					{/if}
+				</div>
+				{#if docEditing}
+					<textarea
+						class="textarea textarea-bordered w-full font-mono text-sm"
+						rows="14"
+						bind:value={docDraft}
+					></textarea>
+				{:else}
+					<div class="prose prose-sm max-w-none overflow-x-auto">
+						<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+						{@html renderMarkdown(shown.content)}
+					</div>
+				{/if}
+			{/if}
+		</div>
+	</div>
+{/if}
 
 {#if notice}
 	<div class="alert alert-warning mb-4"><span>{notice}</span></div>
@@ -343,15 +499,27 @@
 					{#if parsed.attachments.length > 0}
 						<div class="flex flex-wrap gap-2 mb-2 justify-end">
 							{#each parsed.attachments as att (att.url)}
-								{#if att.mime.startsWith('image/')}
-									<a href={att.url} target="_blank" rel="noopener">
-										<img src={att.url} alt={att.filename} class="rounded-lg max-h-48" />
-									</a>
-								{:else}
-									<a href={att.url} class="btn btn-sm" download={att.filename}>
-										{att.filename} ({Math.round(att.size / 1024)} KB)
-									</a>
-								{/if}
+								<div class="relative group">
+									{#if att.mime.startsWith('image/')}
+										<a href={att.url} target="_blank" rel="noopener">
+											<img src={att.url} alt={att.filename} class="rounded-lg max-h-48" />
+										</a>
+									{:else}
+										<a href={att.url} class="btn btn-sm" download={att.filename}>
+											{att.filename} ({Math.round(att.size / 1024)} KB)
+										</a>
+									{/if}
+									{#if isOwner && !streaming}
+										<button
+											class="btn btn-xs btn-circle btn-error absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 focus:opacity-100"
+											aria-label="Remove {att.filename}"
+											title="Remove {att.filename}"
+											onclick={() => removeAttachment(entry.turn.id, att.filename)}
+										>
+											✕
+										</button>
+									{/if}
+								</div>
 							{/each}
 						</div>
 					{/if}
@@ -359,7 +527,7 @@
 						<div class="whitespace-pre-wrap">{parsed.text}</div>
 					{/if}
 				</div>
-				{#if !streaming}
+				{#if isOwner && !streaming}
 					<div class="chat-footer opacity-60">
 						<button class="btn btn-ghost btn-xs" onclick={() => editTurn(entry.turn.id, entry.turn.user_content ?? '')}>Edit</button>
 					</div>
@@ -415,7 +583,7 @@
 							<div class="text-xs text-base-content/50">stopped</div>
 						{/if}
 						<div class="text-xs opacity-50">{ts(entry.turn.created_at)}</div>
-						{#if entry.turn.status !== 'in_progress' && !streaming}
+						{#if isOwner && entry.turn.status !== 'in_progress' && !streaming}
 							<div class="flex gap-1 mt-1">
 								<button class="btn btn-ghost btn-xs" onclick={() => retry(entry.turn.id)}>Retry</button>
 							</div>

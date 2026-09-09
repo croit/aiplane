@@ -32,7 +32,7 @@ use gateway_runtime::rama_server::state::RamaState;
 
 use gateway_core::server::db::users::User;
 
-use super::{ChatSubmit, RequestCtx, SubmitTurnError, TurnPath, submit_turn};
+use super::{ChatSubmit, DocumentPath, RequestCtx, SubmitTurnError, TurnPath, submit_turn};
 use crate::pages::{json_error, require_session_json};
 use session_core::db as chat;
 
@@ -223,6 +223,80 @@ pub async fn session_pin(
 #[derive(Deserialize)]
 struct PinBody {
     pinned: bool,
+}
+
+/// POST /api/v0/chat/sessions/{id}/fork — take a readable conversation into
+/// the caller's own chats as an editable copy.
+///
+/// Recipient-only, exactly like the legacy handler: the source must be
+/// readable (owner or shared) and must NOT already be the caller's. Forking
+/// your own conversation is a no-op rather than a clone — the affordance only
+/// renders for read-only viewers, but a hand-crafted POST must not let anyone
+/// clone-spam their own sessions either.
+pub async fn session_fork(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let src = match readable_session(&state, &user.id, &session_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found_conversation(),
+        Err(resp) => return resp,
+    };
+    if src.user_id == user.id {
+        return json_error(
+            StatusCode::CONFLICT,
+            "already_yours",
+            "this conversation is already in your chats",
+        );
+    }
+
+    let (new_session, copies) = match chat::fork_session(&state.db, &src, &user.id).await {
+        Ok(v) => v,
+        Err(err) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            );
+        }
+    };
+
+    // Best-effort attachment copy, same policy as the legacy fork: a failed
+    // object copy leaves a marker pointing at an empty key (a broken preview)
+    // while the conversation text — the thing being forked — still lands, so
+    // it warns rather than rolling the whole fork back.
+    if let Some(cfg) = state.config().chat.s3.as_ref() {
+        for c in &copies {
+            if let Err(err) = gateway_features::server::chat_attachments::copy_object(
+                cfg,
+                &c.from_turn_id,
+                &c.to_turn_id,
+                &c.filename,
+            )
+            .await
+            {
+                tracing::warn!(
+                    from = %c.from_turn_id, file = %c.filename,
+                    "fork: failed to copy attachment object: {err}"
+                );
+            }
+        }
+    } else if !copies.is_empty() {
+        tracing::warn!(
+            count = copies.len(),
+            "fork: chat attachments not configured; copied conversation references unreachable files"
+        );
+    }
+
+    ok_json(
+        StatusCode::CREATED,
+        json!({ "id": new_session.id, "title": new_session.title }),
+    )
 }
 
 #[derive(Deserialize)]
@@ -843,7 +917,6 @@ pub async fn session_export_markdown(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    use rama::http::header;
     let (_session, user) = match require_session_json(&state, &req).await {
         Ok(v) => v,
         Err(resp) => return resp,
@@ -867,21 +940,413 @@ pub async fn session_export_markdown(
         base_url: &state.public_url(),
     };
     let body = session_core::export::to_markdown(&session, &turns, &opts);
-    let filename = format!(
-        "{}.md",
-        session
-            .title
-            .as_deref()
-            .map(super::first_message_title)
-            .unwrap_or_else(|| session.id.clone())
-            .replace(['/', ' '], "-")
+    download(
+        "text/markdown; charset=utf-8",
+        &export_filename(&session, "md"),
+        body.into_bytes(),
+    )
+}
+
+/// GET /api/v0/chat/sessions/{id}/export.pdf — the same conversation as a
+/// typeset PDF.
+///
+/// Needs the `typst` binary the container ships; where it is absent the
+/// legacy page answers 503 and so does this, rather than a generic 500 —
+/// "PDF export is not available on this deployment" is an operator fact, not
+/// a bug in the request.
+pub async fn session_export_pdf(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let session = match readable_session(&state, &user.id, &session_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found_conversation(),
+        Err(resp) => return resp,
+    };
+    let turns = match chat::list_turns(&state.db, &session_id).await {
+        Ok(t) => t,
+        Err(err) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            );
+        }
+    };
+    let opts = session_core::export::ExportOpts {
+        base_url: &state.public_url(),
+    };
+    let source = session_core::export::to_typst(&session, &turns, &opts);
+    match gateway_features::server::typst::compile_source(&source).await {
+        Ok(pdf) => download("application/pdf", &export_filename(&session, "pdf"), pdf),
+        Err(gateway_features::server::typst::CompileError::BinaryNotFound) => json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "PDF export is not available on this gateway (no typst binary)",
+        ),
+        Err(err) => {
+            tracing::error!(error = %err, %session_id, "chat PDF export compile");
+            json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "could not render the conversation as a PDF",
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Canvas documents
+//
+// The legacy panel is a server-rendered HTML canvas patched over SSE; here the
+// same documents are plain JSON so the SPA can render (and diff) them itself.
+// Reads follow the conversation's readability (owner or shared); the hand-edit
+// is owner-only.
+
+/// GET /api/v0/chat/sessions/{id}/documents — the conversation's documents,
+/// most-recently-updated first. Soft-deleted ones stay hidden, as in the
+/// legacy listing.
+pub async fn documents_list(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    use gateway_core::server::db::documents;
+
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if matches!(
+        readable_session(&state, &user.id, &session_id).await,
+        Ok(None)
+    ) {
+        return not_found_conversation();
+    }
+    match documents::list_for_session(&state.db, &session_id, false).await {
+        Ok(docs) => ok_json(
+            StatusCode::OK,
+            json!({
+                "documents": docs.iter().map(document_summary).collect::<Vec<_>>(),
+            }),
+        ),
+        Err(err) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        ),
+    }
+}
+
+/// GET /api/v0/chat/sessions/{id}/documents/{doc_id} — one document with its
+/// content and version history. `?version=N` reads an older revision; absent
+/// means the current one.
+pub async fn document_get(
+    Path(DocumentPath {
+        id: session_id,
+        doc_id,
+    }): Path<DocumentPath>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    use gateway_core::server::db::documents;
+
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if matches!(
+        readable_session(&state, &user.id, &session_id).await,
+        Ok(None)
+    ) {
+        return not_found_conversation();
+    }
+    let version = req.uri().query().and_then(super::parse_version_query);
+    let (doc, ver) = match documents::get_version(&state.db, &session_id, &doc_id, version).await {
+        Ok(Some(pair)) => pair,
+        Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such document"),
+        Err(err) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            );
+        }
+    };
+    let history = documents::list_versions(&state.db, &session_id, &doc_id)
+        .await
+        .unwrap_or_default();
+    ok_json(
+        StatusCode::OK,
+        json!({
+            "document": document_summary(&doc),
+            "version": {
+                "version": ver.version,
+                "content": ver.content,
+                "summary": ver.summary,
+                "turn_id": ver.turn_id,
+                "author": ver.author.as_str(),
+                "created_at": ver.created_at.to_string(),
+            },
+            "history": history.iter().map(|v| json!({
+                "version": v.version,
+                "summary": v.summary,
+                "created_at": v.created_at.to_string(),
+                "chars": v.chars,
+                "author": v.author.as_str(),
+            })).collect::<Vec<_>>(),
+        }),
+    )
+}
+
+#[derive(Deserialize)]
+struct DocumentEditBody {
+    content: String,
+}
+
+/// PUT /api/v0/chat/sessions/{id}/documents/{doc_id} — save a hand edit as a
+/// new version.
+///
+/// Owner-only (a shared conversation is read-only). Mirrors the legacy
+/// handler's two guards: the same size ceiling the document *tools* write
+/// against, so a hand edit can never produce a document the model is then
+/// unable to save back; and a no-op save mints no version, keeping the
+/// history a list of actual changes.
+pub async fn document_edit(
+    Path(DocumentPath {
+        id: session_id,
+        doc_id,
+    }): Path<DocumentPath>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    use gateway_core::server::db::documents;
+
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if !user_owns(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+    };
+    let parsed: DocumentEditBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("parsing the document body: {err}"),
+            );
+        }
+    };
+    if parsed.content.len() > documents::MAX_CONTENT_BYTES {
+        return json_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "too_large",
+            "this document is too large to save",
+        );
+    }
+    // Normalise CRLFs the way the legacy textarea path does: browsers submit
+    // `\r\n` per the HTML spec, and leaving them in shows up as a diff on
+    // every line of an otherwise-untouched document (and confuses the model's
+    // anchored find/replace, which matches on `\n`).
+    let content = parsed.content.replace("\r\n", "\n");
+
+    let doc = match documents::get(&state.db, &session_id, &doc_id).await {
+        Ok(Some(d)) if !d.is_deleted() => d,
+        Ok(_) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such document"),
+        Err(err) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            );
+        }
+    };
+    let unchanged = match documents::get_version(&state.db, &session_id, &doc_id, None).await {
+        Ok(Some((_, ver))) => ver.content == content,
+        Ok(None) => false,
+        Err(err) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            );
+        }
+    };
+    if !unchanged
+        && let Err(err) = documents::append_version(
+            &state.db,
+            &session_id,
+            &doc_id,
+            &content,
+            Some("Edited by you"),
+            None,
+            documents::VersionAuthor::User,
+        )
+        .await
+    {
+        return json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        );
+    }
+    tracing::info!(
+        user_id = %user.id, %session_id, document_id = %doc_id,
+        title = %doc.title, unchanged, "canvas document hand-edited",
     );
+    // Answer with the document as it now stands so the client does not have
+    // to guess the new version number.
+    let current = documents::get(&state.db, &session_id, &doc_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(doc);
+    ok_json(
+        StatusCode::OK,
+        json!({ "document": document_summary(&current), "unchanged": unchanged }),
+    )
+}
+
+/// The wire shape of a document. Hand-written rather than a `Serialize` derive
+/// on the DB row: the API contract and the table are free to drift.
+fn document_summary(doc: &gateway_core::server::db::documents::Document) -> serde_json::Value {
+    json!({
+        "id": doc.id,
+        "title": doc.title,
+        "format": doc.format.as_str(),
+        "current_ver": doc.current_ver,
+        "created_at": doc.created_at.to_string(),
+        "updated_at": doc.updated_at.to_string(),
+    })
+}
+
+/// DELETE /api/v0/chat/sessions/{id}/turns/{turn_id}/attachments/{filename}
+/// — drop one attachment from a message.
+///
+/// Removes the `[gw-attachment …]` marker from whichever column owns it
+/// (`user_content` for uploads, `content` for model-generated files) and
+/// reclaims the object. Unlike edit/retry this does NOT regenerate the turn.
+///
+/// The filename is read from the raw URI rather than the `Path` extractor:
+/// that extractor lowercases segments, and both the marker match and the S3
+/// key need the name verbatim (`pic.PNG` is not `pic.png`).
+pub async fn attachment_remove(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let Some((session_id, turn_id, filename)) = attachment_delete_path_parts(req.uri().path())
+    else {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "malformed attachment path",
+        );
+    };
+    // Owner-only: removing content is a mutation, so a shared (read-only)
+    // viewer must not reach it even though they can read the turn.
+    if !user_owns(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
+    let turn = match chat::get_turn(&state.db, &session_id, &turn_id).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such message"),
+        Err(err) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            );
+        }
+    };
+
+    let is_user = turn.role == chat::TurnRole::User;
+    let content = if is_user {
+        turn.user_content.clone().unwrap_or_default()
+    } else {
+        turn.content.clone().unwrap_or_default()
+    };
+    let new_content =
+        session_core::attachments::remove_markers_where(&content, |a| a.filename == filename);
+    let write = if is_user {
+        chat::update_user_turn_content(&state.db, &session_id, &turn_id, &new_content)
+            .await
+            .map(|_| ())
+    } else {
+        chat::set_content(&state.db, &turn_id, &new_content).await
+    };
+    if let Err(err) = write {
+        return json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        );
+    }
+
+    // Reclaim the bytes. Best-effort, exactly as the legacy handler: the
+    // marker is already gone, so a failed delete only orphans an object (a
+    // later retry is safe — DELETE is idempotent) and must not fail the
+    // user's action.
+    if let Some(cfg) = state.config().chat.s3.as_ref()
+        && let Err(err) =
+            gateway_features::server::chat_attachments::delete(cfg, &turn_id, &filename).await
+    {
+        tracing::warn!(error = %err, %turn_id, %filename, "attachment S3 delete (marker already removed)");
+    }
+
+    ok_json(StatusCode::OK, json!({ "removed": filename }))
+}
+
+/// Split `/api/v0/chat/sessions/{id}/turns/{turn_id}/attachments/{filename}`
+/// into its three parts, with the filename percent-decoded and its case
+/// preserved. `None` when the shape does not match or the filename is empty.
+fn attachment_delete_path_parts(path: &str) -> Option<(String, String, String)> {
+    let (head, file) = path.rsplit_once("/attachments/")?;
+    let filename = super::percent_decode_segment(file);
+    if filename.is_empty() || filename.contains('/') {
+        return None;
+    }
+    let (head, turn_id) = head.rsplit_once("/turns/")?;
+    let session_id = head.rsplit_once("/sessions/")?.1;
+    if session_id.is_empty() || turn_id.is_empty() || session_id.contains('/') {
+        return None;
+    }
+    Some((session_id.to_string(), turn_id.to_string(), filename))
+}
+
+/// `<conversation title>.<ext>`, path-separator free — the name the browser
+/// saves the download under.
+fn export_filename(session: &chat::Session, ext: &str) -> String {
+    let stem = session
+        .title
+        .as_deref()
+        .map(super::first_message_title)
+        .unwrap_or_else(|| session.id.clone())
+        .replace(['/', ' '], "-");
+    format!("{}.{ext}", stem.trim_matches('-'))
+}
+
+/// A file download response (`Content-Disposition: attachment`).
+fn download(content_type: &str, filename: &str, body: Vec<u8>) -> Response {
+    use rama::http::header;
     Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+        .header(header::CONTENT_TYPE, content_type)
         .header(
             header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{}\"", filename.trim_matches('-')),
+            format!("attachment; filename=\"{filename}\""),
         )
         .body(body.into())
         .expect("static file response")

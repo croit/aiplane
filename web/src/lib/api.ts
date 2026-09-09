@@ -29,6 +29,16 @@ export interface Me {
 	allowed_tools: ToolSummary[];
 }
 
+/** A canvas document belonging to a conversation. */
+export interface CanvasDocument {
+	id: string;
+	title: string;
+	format: string;
+	current_ver: number;
+	created_at: string;
+	updated_at: string;
+}
+
 /** Mirrors `shared::api::TokenSummary`. Timestamps are jiff RFC 3339 strings. */
 export interface TokenSummary {
 	id: string;
@@ -153,6 +163,56 @@ export const api = {
 
 	/** The events stream URL — for `new EventSource` (cookies ride along same-origin). */
 	chatEventsUrl: (id: string) => `/api/v0/chat/sessions/${encodeURIComponent(id)}/events`,
+
+	/**
+	 * POST /api/v0/chat/sessions/{id}/fork — copy a conversation shared with
+	 * you into your own chats. Refused (409) for one you already own.
+	 */
+	forkChatSession: (id: string) =>
+		request<{ id: string; title: string | null }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/fork`,
+			{ method: 'POST' }
+		),
+
+	/** GET /api/v0/chat/sessions/{id}/documents — the canvas documents. */
+	listChatDocuments: (id: string) =>
+		request<{ documents: CanvasDocument[] }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/documents`
+		),
+
+	/** GET /api/v0/chat/sessions/{id}/documents/{docId} — content + history. */
+	getChatDocument: (id: string, docId: string) =>
+		request<{
+			document: CanvasDocument;
+			version: { version: number; content: string; author: string; created_at: string };
+			history: { version: number; created_at: string; chars: number; author: string }[];
+		}>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/documents/${encodeURIComponent(docId)}`
+		),
+
+	/** PUT /api/v0/chat/sessions/{id}/documents/{docId} — save a hand edit. */
+	editChatDocument: (id: string, docId: string, content: string) =>
+		request<{ document: CanvasDocument; unchanged: boolean }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/documents/${encodeURIComponent(docId)}`,
+			{
+				method: 'PUT',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ content })
+			}
+		),
+
+	/**
+	 * DELETE …/turns/{turnId}/attachments/{filename} — drop one attachment.
+	 *
+	 * The filename is encoded but its case is preserved end to end: the server
+	 * matches the marker and the stored object verbatim.
+	 */
+	removeChatAttachment: (id: string, turnId: string, filename: string) =>
+		request<{ removed: string }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}` +
+				`/attachments/${encodeURIComponent(filename)}`,
+			{ method: 'DELETE' }
+		),
 
 	/** GET /api/v0/models — the caller's chat models (compliance flags included). */
 	listChatModels: () =>

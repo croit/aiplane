@@ -833,3 +833,244 @@ async fn multipart_submit_uploads_attachments_into_the_turn() {
         "a refused upload must not leave rows"
     );
 }
+
+/// Forking is how a *recipient* keeps a conversation someone shared with
+/// them. The two guards that matter: a conversation you cannot read cannot be
+/// forked, and forking your own is refused rather than silently cloned (the
+/// affordance only renders for read-only viewers, but the endpoint has to hold
+/// the line on its own).
+#[tokio::test]
+async fn forking_copies_a_shared_conversation_to_the_recipient() {
+    let upstream = MockServer::start().await;
+    let (state, alice) = setup(&upstream.uri()).await;
+    let bob = common::seed_session(&state, "bob", "bob@example.com").await;
+    let app = router(state.clone());
+
+    // Alice owns a conversation with one turn, and shares it.
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    chat::create_user_turn(&state.db, &session.id, "t-user", "hello from alice")
+        .await
+        .unwrap();
+    chat::set_shared(&state.db, "alice", &session.id, true)
+        .await
+        .unwrap();
+
+    // Bob forks it: a new conversation, owned by Bob, carrying the turn.
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/fork", session.id),
+            &bob,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let forked: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    let new_id = forked["id"].as_str().expect("fork returns the new id");
+    assert_ne!(new_id, session.id, "a fork is a new conversation");
+
+    let mine = chat::get_session(&state.db, "bob", new_id).await.unwrap();
+    assert!(mine.is_some(), "the fork belongs to the forker");
+    let turns = chat::list_turns(&state.db, new_id).await.unwrap();
+    assert_eq!(turns.len(), 1, "the conversation came with it");
+    assert_eq!(
+        turns[0].turn.user_content.as_deref(),
+        Some("hello from alice")
+    );
+
+    // Alice forking her own conversation is a refusal, not a clone.
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/fork", session.id),
+            &alice,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    // And an unshared conversation of Alice's is invisible to Bob.
+    let private = chat::create_session(&state.db, "alice").await.unwrap();
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/fork", private.id),
+            &bob,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// The canvas as JSON: read a document with its history, hand-edit it into a
+/// new version, and — the guard that keeps the history meaningful — save the
+/// identical text again without minting one.
+#[tokio::test]
+async fn canvas_documents_read_and_hand_edit() {
+    use gateway_core::server::db::documents;
+
+    let upstream = MockServer::start().await;
+    let (state, alice) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    documents::create(
+        &state.db,
+        "doc-1",
+        &session.id,
+        "alice",
+        "Notes",
+        documents::DocumentFormat::Markdown,
+        "first draft",
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Listing shows it.
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/documents", session.id),
+            &alice,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(listed["documents"][0]["id"], "doc-1");
+    assert_eq!(listed["documents"][0]["title"], "Notes");
+
+    // Reading returns the current content plus the version history.
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/documents/doc-1", session.id),
+            &alice,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let got: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(got["version"]["content"], "first draft");
+    assert_eq!(got["history"].as_array().unwrap().len(), 1);
+
+    // A hand edit mints a version…
+    let resp = app
+        .serve(json_req(
+            Method::PUT,
+            format!("/api/v0/chat/sessions/{}/documents/doc-1", session.id),
+            &alice,
+            Some(r#"{"content":"second draft"}"#.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let saved: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(saved["unchanged"], false);
+    assert_eq!(saved["document"]["current_ver"], 2);
+
+    // …and saving the same text again does not.
+    let resp = app
+        .serve(json_req(
+            Method::PUT,
+            format!("/api/v0/chat/sessions/{}/documents/doc-1", session.id),
+            &alice,
+            Some(r#"{"content":"second draft"}"#.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let again: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(again["unchanged"], true, "a no-op save mints no version");
+    assert_eq!(again["document"]["current_ver"], 2);
+
+    // A read-only viewer cannot write. (Shared makes it readable, not writable.)
+    let bob = common::seed_session(&state, "bob", "bob@example.com").await;
+    chat::set_shared(&state.db, "alice", &session.id, true)
+        .await
+        .unwrap();
+    let resp = app
+        .serve(json_req(
+            Method::PUT,
+            format!("/api/v0/chat/sessions/{}/documents/doc-1", session.id),
+            &bob,
+            Some(r#"{"content":"bob was here"}"#.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let (_, ver) = documents::get_version(&state.db, &session.id, "doc-1", None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        ver.content, "second draft",
+        "the viewer's write was refused"
+    );
+}
+
+/// Removing an attachment drops its marker and leaves the rest of the message
+/// alone. The filename is matched verbatim: the `Path` extractor lowercases
+/// segments, so a handler reading it from there would fail to match
+/// `Bericht.PNG` and silently remove nothing.
+#[tokio::test]
+async fn removing_an_attachment_drops_only_its_marker() {
+    let upstream = MockServer::start().await;
+    let (state, alice) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let keep = session_core::attachments::marker_line(
+        "keep.txt",
+        "text/plain",
+        "https://example.com/keep.txt",
+        4,
+    );
+    let drop = session_core::attachments::marker_line(
+        "Bericht.PNG",
+        "image/png",
+        "https://example.com/Bericht.PNG",
+        9,
+    );
+    let content = format!("look at these\n{keep}\n{drop}");
+    chat::create_user_turn(&state.db, &session.id, "t-user", &content)
+        .await
+        .unwrap();
+
+    let resp = app
+        .serve(json_req(
+            Method::DELETE,
+            format!(
+                "/api/v0/chat/sessions/{}/turns/t-user/attachments/Bericht.PNG",
+                session.id
+            ),
+            &alice,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let turn = chat::get_turn(&state.db, &session.id, "t-user")
+        .await
+        .unwrap()
+        .unwrap();
+    let after = turn.user_content.unwrap_or_default();
+    assert!(
+        !after.contains("Bericht.PNG"),
+        "the removed attachment's marker must be gone: {after}"
+    );
+    assert!(
+        after.contains("keep.txt"),
+        "the other attachment must survive: {after}"
+    );
+    assert!(
+        after.contains("look at these"),
+        "the typed text must survive: {after}"
+    );
+}

@@ -648,6 +648,33 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/chat/sessions/{id}/export.md",
             pages::chat::json_api::session_export_markdown,
         )
+        .with_get(
+            "/api/v0/chat/sessions/{id}/export.pdf",
+            pages::chat::json_api::session_export_pdf,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{id}/fork",
+            pages::chat::json_api::session_fork,
+        )
+        // Canvas documents. The static `/documents` list must precede the
+        // `{doc_id}` form — rama matches in registration order, so the
+        // parameterised route would otherwise swallow it.
+        .with_get(
+            "/api/v0/chat/sessions/{id}/documents",
+            pages::chat::json_api::documents_list,
+        )
+        .with_get(
+            "/api/v0/chat/sessions/{id}/documents/{doc_id}",
+            pages::chat::json_api::document_get,
+        )
+        .with_put(
+            "/api/v0/chat/sessions/{id}/documents/{doc_id}",
+            pages::chat::json_api::document_edit,
+        )
+        .with_delete(
+            "/api/v0/chat/sessions/{id}/turns/{turn_id}/attachments/{filename}",
+            pages::chat::json_api::attachment_remove,
+        )
         .with_post(
             "/api/v0/chat/sessions/{id}/turns/{turn_id}/retry",
             pages::chat::json_api::turn_retry,
