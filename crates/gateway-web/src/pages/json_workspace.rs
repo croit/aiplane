@@ -677,3 +677,133 @@ fn run_json(r: &webhooks::WebhookRun) -> serde_json::Value {
         "prompt": r.prompt,
     })
 }
+
+#[derive(serde::Deserialize)]
+pub struct RerunBody {
+    /// The prompt to run the payload through — the point of a rerun is
+    /// usually to try a *different* one against the same input.
+    pub prompt: String,
+    /// Which past run's payload to replay; the webhook's last one by default.
+    #[serde(default)]
+    pub run: Option<String>,
+}
+
+/// POST /api/v0/webhooks/{id}/rerun — replay a stored payload through a
+/// prompt of the caller's choosing.
+///
+/// Runs to completion before answering rather than handing back a session to
+/// tail: a headless run is not registered with the live worker registry, so
+/// there is nothing for the chat stream to attach to. The response carries
+/// the finished conversation's id.
+pub async fn webhooks_rerun(
+    Path(id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    use gateway_core::server::db::usage::UsageSource;
+    use gateway_runtime::server::headless::{self, DriveParams, OpenParams};
+
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return bad_request(msg),
+    };
+    let parsed: RerunBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => return bad_request(format!("parsing the rerun body: {err}")),
+    };
+    let prompt = parsed.prompt.trim();
+    if prompt.is_empty() || prompt.len() > 8000 {
+        return bad_request("the prompt must be 1..=8000 characters");
+    }
+    let hook = match webhooks::get(&state.db, &user.id, &id).await {
+        Ok(Some(h)) => h,
+        Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such webhook"),
+        Err(err) => return internal(err),
+    };
+    // A named run replays that run's payload; otherwise the latest one.
+    let payload = match &parsed.run {
+        Some(run_id) => webhooks::get_run(&state.db, &hook.id, run_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.payload),
+        None => hook.last_payload.clone(),
+    };
+    let Some(payload) = payload else {
+        return bad_request("this webhook has no stored payload to replay");
+    };
+
+    // Same framing as a live fire — the replayed payload stays an untrusted
+    // block — with the caller's prompt in front of it.
+    let input = super::webhooks::build_input(prompt, "(replayed webhook payload)", "", &payload);
+    let roles = if hook.tools_enabled {
+        user.roles.clone()
+    } else {
+        Vec::new()
+    };
+    // A rerun is an ad-hoc experiment, so it always opens a fresh chat.
+    let (session_id, assistant_turn_id) = match headless::open_session(
+        &state.db,
+        OpenParams {
+            user_id: &hook.user_id,
+            title: &hook.name,
+            prompt: &input,
+            model: &hook.model,
+            existing_session: None,
+        },
+    )
+    .await
+    {
+        Ok(ids) => ids,
+        Err(err) => return internal(err),
+    };
+    let run_id = match webhooks::record_run_start(
+        &state.db,
+        &hook.id,
+        &session_id,
+        prompt,
+        &payload,
+        "rerun",
+    )
+    .await
+    {
+        Ok(id) => Some(id),
+        Err(err) => {
+            tracing::warn!(webhook = %hook.id, error = %err, "recording webhook rerun");
+            None
+        }
+    };
+    headless::drive(
+        &state,
+        DriveParams {
+            user_id: hook.user_id.clone(),
+            roles,
+            session_id: session_id.clone(),
+            assistant_turn_id: assistant_turn_id.clone(),
+            model: hook.model.clone(),
+            source: UsageSource::Webhook,
+            history_limit: None,
+        },
+    )
+    .await;
+    let (status, error, _out) =
+        super::webhooks::outcome(&state.db, &session_id, &assistant_turn_id).await;
+    super::webhooks::finalize_run(
+        &state,
+        &hook.id,
+        run_id.as_deref(),
+        status,
+        &session_id,
+        error.as_deref(),
+    )
+    .await;
+    json_ok(
+        StatusCode::OK,
+        serde_json::json!({ "session_id": session_id, "status": status, "error": error }),
+    )
+}

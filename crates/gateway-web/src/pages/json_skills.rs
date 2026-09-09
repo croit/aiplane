@@ -116,6 +116,52 @@ pub async fn skill_body(
     }
 }
 
+/// GET /api/v0/skills/{name}/archive — the skill packaged as a `.skill`
+/// archive, so one can be moved between gateways (or kept as a backup).
+///
+/// A file download, not JSON: the body is the archive. Resolves against the
+/// caller's private registry first and falls back to the operator set, the
+/// same order `skill_body` uses.
+pub async fn skill_archive(
+    Path(name): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let registry = match state.user_skills() {
+        Some(store) => store.registry_for(&user.id),
+        None => match state.skills() {
+            Some(s) => s.current(),
+            None => return json_error(StatusCode::NOT_FOUND, "not_found", "no such skill"),
+        },
+    };
+    let Some(skill) = registry.get(&name) else {
+        return json_error(StatusCode::NOT_FOUND, "not_found", "no such skill");
+    };
+    match skill.to_archive() {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(rama::http::header::CONTENT_TYPE, "application/zip")
+            .header(rama::http::header::CONTENT_LENGTH, bytes.len())
+            .header(
+                rama::http::header::CONTENT_DISPOSITION,
+                // `name` is validated to `[A-Za-z0-9._-]` on save, so it is
+                // safe to interpolate into the filename unescaped.
+                format!("attachment; filename=\"{name}.skill\""),
+            )
+            .header(rama::http::header::CACHE_CONTROL, "no-store")
+            .body(bytes.into())
+            .unwrap_or_else(|_| internal("packaging the skill failed")),
+        Err(err) => {
+            tracing::warn!(skill = %name, error = %err, "packaging skill for download");
+            internal(err)
+        }
+    }
+}
+
 /// POST /api/v0/skills — upload a private `.skill` archive (multipart with
 /// a `file` part) or author inline (`{"name":…, "manifest":"…"}`).
 pub async fn skills_upload(State(state): State<Arc<RamaState>>, req: Request) -> Response {

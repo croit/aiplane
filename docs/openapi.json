@@ -882,6 +882,76 @@
             "$ref": "#/components/responses/Forbidden"
           }
         }
+      },
+      "post": {
+        "tags": [
+          "rag"
+        ],
+        "summary": "Create an extraction profile",
+        "operationId": "createRagProfile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "prompt"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/RagProfileField"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid profile, or the name is taken."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
       }
     },
     "/api/v0/rag/collections": {
@@ -3915,6 +3985,107 @@
             "$ref": "#/components/responses/NotFound"
           }
         }
+      },
+      "post": {
+        "tags": [
+          "rag"
+        ],
+        "summary": "Add sources to a collection",
+        "description": "Takes a list because the collections this exists for aggregate tens of repositories; adding one is the one-element case. An entry without `git_ref` inherits the collection's. A duplicate is skipped rather than fatal, so resubmitting a list is idempotent.",
+        "operationId": "addRagRefs",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RagCollectionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "sources"
+                ],
+                "properties": {
+                  "sources": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "url"
+                      ],
+                      "properties": {
+                        "url": {
+                          "type": "string"
+                        },
+                        "git_ref": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was added and how many duplicates were skipped.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "added": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "git_url": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "git_ref": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "skipped": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "added",
+                    "skipped"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No usable source urls."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
       }
     },
     "/api/v0/rag/collections/{id}/refs/{ref_id}": {
@@ -4940,6 +5111,469 @@
           }
         }
       }
+    },
+    "/api/v0/rag/test-source": {
+      "post": {
+        "tags": [
+          "rag"
+        ],
+        "summary": "Probe a source configuration without saving it",
+        "description": "Answers 200 either way: `ok:true` with what the provider reported, or `ok:false` with the reason it could not be reached — the operator asked a question and an unreachable source is a valid answer. A `git` source has nothing to probe (the clone is the test) and is refused. Passing `collection_id` lets that collection's stored secret stand in for a blank password field, but only for the settings it was stored against.",
+        "operationId": "testRagSource",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "source_kind"
+                ],
+                "properties": {
+                  "source_kind": {
+                    "type": "string"
+                  },
+                  "source_config": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "collection_id": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The probe result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "account": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "root_entries": {
+                      "type": "integer"
+                    },
+                    "server": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unusable source configuration."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v0/rag/profiles/{name}": {
+      "put": {
+        "tags": [
+          "rag"
+        ],
+        "summary": "Replace a profile's prompt and fields",
+        "description": "Bumps the profile version, which invalidates every extraction cached under it: the collections named in the response have to re-index before they answer with the new shape.",
+        "operationId": "updateRagProfile",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Profile name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "prompt"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/RagProfileField"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "reindex_required_by": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "reindex_required_by"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid profile."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "rag"
+        ],
+        "summary": "Delete an extraction profile",
+        "description": "Refused while a collection still points at it — a collection whose profile vanished indexes without fields, which reads as a puzzle rather than an error. Built-in profiles are never deletable.",
+        "operationId": "deleteRagProfile",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Profile name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "deleted"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Built-in, or still in use."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v0/rag/collections/{id}/refs/{ref_id}/primary": {
+      "post": {
+        "tags": [
+          "rag"
+        ],
+        "summary": "Make one source the collection's search default",
+        "operationId": "setRagPrimaryRef",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RagCollectionId"
+          },
+          {
+            "name": "ref_id",
+            "in": "path",
+            "required": true,
+            "description": "Source (ref) id.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "primary": {
+                      "type": "integer"
+                    },
+                    "collection": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "primary",
+                    "collection"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v0/skills/{name}/archive": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Download a skill as a .skill archive",
+        "description": "A file download, not JSON. Resolves against the caller's private registry first, then the operator set.",
+        "operationId": "downloadSkillArchive",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Skill name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An application/zip attachment."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v0/webhooks/{id}/rerun": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Replay a stored payload through a chosen prompt",
+        "description": "Runs to completion before answering rather than handing back a session to tail: a headless run is not registered with the live worker registry, so there is nothing for the chat stream to attach to. Omitting `run` replays the webhook's most recent payload.",
+        "operationId": "rerunWebhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "run": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The finished conversation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "session_id",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad prompt, or nothing stored to replay."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v0/tokens/{id}/mcp-policy": {
+      "put": {
+        "tags": [
+          "tokens"
+        ],
+        "summary": "Decide what an ask-level MCP connector does for this token",
+        "description": "A token has nobody to prompt, so the default is to block. Allowing it is the owner's explicit \"run these unattended\" for their own token.",
+        "operationId": "setTokenMcpPolicy",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TokenId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "allow"
+                ],
+                "properties": {
+                  "allow": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allow": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "allow"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5693,6 +6327,42 @@
           "created_at",
           "updated_at"
         ]
+      },
+      "RagProfileField": {
+        "type": "object",
+        "description": "One field an extraction profile asks the model to fill in.",
+        "required": [
+          "key",
+          "label",
+          "type"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Allowed values for an enum field."
+          },
+          "filterable": {
+            "type": "boolean"
+          },
+          "sortable": {
+            "type": "boolean"
+          }
+        }
       }
     }
   }

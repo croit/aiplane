@@ -609,3 +609,230 @@ async fn update_can_clear_pat() {
     let v: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
     assert_eq!(v["pat_set"], false);
 }
+
+/// Sources are what a collection actually indexes, so adding them is the
+/// endpoint that makes the rest useful. Covers the aggregate shape (a list in
+/// one call), the idempotence a re-paste depends on, and the primary switch.
+#[tokio::test]
+async fn refs_add_list_primary_and_dedupe() {
+    let state = common::state_with_admin_rbac("http://unused.invalid").await;
+    let cookie = seed_admin(&state, "boss").await;
+    let app = common::app(state);
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/collections",
+            &cookie,
+            Some(create_body()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    let id = created["id"].as_i64().unwrap();
+
+    // Two sources in one call; the second names its own ref, the first
+    // inherits the collection's.
+    let body = json!({
+        "sources": [
+            { "url": "https://example.invalid/one.git" },
+            { "url": "https://example.invalid/two.git", "git_ref": "develop" },
+        ]
+    })
+    .to_string();
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            &format!("/api/v0/rag/collections/{id}/refs"),
+            &cookie,
+            Some(&body),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let added: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(added["added"].as_array().unwrap().len(), 2);
+    assert_eq!(added["skipped"], 0);
+    assert_eq!(
+        added["added"][0]["git_ref"], "main",
+        "an entry without a ref inherits the collection's"
+    );
+    assert_eq!(added["added"][1]["git_ref"], "develop");
+
+    // Re-submitting the same list adds nothing: a bulk re-paste is idempotent.
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            &format!("/api/v0/rag/collections/{id}/refs"),
+            &cookie,
+            Some(&body),
+        ))
+        .await
+        .unwrap();
+    let again: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(again["added"].as_array().unwrap().len(), 0);
+    assert_eq!(again["skipped"], 2);
+
+    // The first source of an empty collection became the primary.
+    let resp = app
+        .serve(req_with_cookie(
+            Method::GET,
+            &format!("/api/v0/rag/collections/{id}/refs"),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let listed: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    let refs = listed["data"].as_array().unwrap();
+    assert_eq!(refs.len(), 2);
+    let first = refs.iter().find(|r| r["is_primary"] == true).unwrap();
+    let second = refs.iter().find(|r| r["is_primary"] == false).unwrap();
+    let second_id = second["id"].as_i64().unwrap();
+
+    // Switching the primary moves it, rather than adding a second one.
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            &format!("/api/v0/rag/collections/{id}/refs/{second_id}/primary"),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = app
+        .serve(req_with_cookie(
+            Method::GET,
+            &format!("/api/v0/rag/collections/{id}/refs"),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let listed: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    let primaries: Vec<i64> = listed["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["is_primary"] == true)
+        .map(|r| r["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        primaries,
+        vec![second_id],
+        "exactly one primary, and it moved"
+    );
+
+    // A ref id from another collection must not repoint this one's primary.
+    let first_id = first["id"].as_i64().unwrap();
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            &format!(
+                "/api/v0/rag/collections/{}/refs/{first_id}/primary",
+                id + 999
+            ),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Extraction profiles: create, edit, and the two refusals that keep a
+/// collection from losing the fields it indexes against.
+#[tokio::test]
+async fn profiles_create_update_and_guarded_delete() {
+    let state = common::state_with_admin_rbac("http://unused.invalid").await;
+    let cookie = seed_admin(&state, "boss").await;
+    let app = common::app(state);
+
+    let body = json!({
+        "name": "invoices",
+        "description": "invoice metadata",
+        "prompt": "Extract the invoice fields.",
+        "fields": [{ "key": "total", "label": "Total", "type": "number" }],
+    })
+    .to_string();
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/profiles",
+            &cookie,
+            Some(&body),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // The name is the handle, so a second profile cannot take it.
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/profiles",
+            &cookie,
+            Some(&body),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Editing reports which collections must re-index — none yet.
+    let edit = json!({
+        "name": "invoices",
+        "prompt": "Extract the invoice fields, including tax.",
+        "fields": [{ "key": "total", "label": "Total", "type": "number" }],
+    })
+    .to_string();
+    let resp = app
+        .serve(req_with_cookie(
+            Method::PUT,
+            "/api/v0/rag/profiles/invoices",
+            &cookie,
+            Some(&edit),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let saved: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(saved["reindex_required_by"].as_array().unwrap().len(), 0);
+
+    // An empty prompt is refused rather than silently stored.
+    let resp = app
+        .serve(req_with_cookie(
+            Method::PUT,
+            "/api/v0/rag/profiles/invoices",
+            &cookie,
+            Some(r#"{"name":"invoices","prompt":"  ","fields":[]}"#),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Unknown names 404 on both verbs.
+    let resp = app
+        .serve(req_with_cookie(
+            Method::DELETE,
+            "/api/v0/rag/profiles/nope",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Deleting an unused profile works.
+    let resp = app
+        .serve(req_with_cookie(
+            Method::DELETE,
+            "/api/v0/rag/profiles/invoices",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}

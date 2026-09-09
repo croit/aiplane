@@ -322,7 +322,8 @@ export interface paths {
         /** Saved RAG source profiles */
         get: operations["listRagProfiles"];
         put?: never;
-        post?: never;
+        /** Create an extraction profile */
+        post: operations["createRagProfile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1473,7 +1474,11 @@ export interface paths {
         /** List a collection's sources/refs */
         get: operations["listRagRefs"];
         put?: never;
-        post?: never;
+        /**
+         * Add sources to a collection
+         * @description Takes a list because the collections this exists for aggregate tens of repositories; adding one is the one-element case. An entry without `git_ref` inherits the collection's. A duplicate is skipped rather than fatal, so resubmitting a list is idempotent.
+         */
+        post: operations["addRagRefs"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1869,6 +1874,127 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v0/rag/test-source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe a source configuration without saving it
+         * @description Answers 200 either way: `ok:true` with what the provider reported, or `ok:false` with the reason it could not be reached — the operator asked a question and an unreachable source is a valid answer. A `git` source has nothing to probe (the clone is the test) and is refused. Passing `collection_id` lets that collection's stored secret stand in for a blank password field, but only for the settings it was stored against.
+         */
+        post: operations["testRagSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/rag/profiles/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace a profile's prompt and fields
+         * @description Bumps the profile version, which invalidates every extraction cached under it: the collections named in the response have to re-index before they answer with the new shape.
+         */
+        put: operations["updateRagProfile"];
+        post?: never;
+        /**
+         * Delete an extraction profile
+         * @description Refused while a collection still points at it — a collection whose profile vanished indexes without fields, which reads as a puzzle rather than an error. Built-in profiles are never deletable.
+         */
+        delete: operations["deleteRagProfile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/rag/collections/{id}/refs/{ref_id}/primary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make one source the collection's search default */
+        post: operations["setRagPrimaryRef"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/skills/{name}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a skill as a .skill archive
+         * @description A file download, not JSON. Resolves against the caller's private registry first, then the operator set.
+         */
+        get: operations["downloadSkillArchive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/webhooks/{id}/rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replay a stored payload through a chosen prompt
+         * @description Runs to completion before answering rather than handing back a session to tail: a headless run is not registered with the live worker registry, so there is nothing for the chat stream to attach to. Omitting `run` replays the webhook's most recent payload.
+         */
+        post: operations["rerunWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v0/tokens/{id}/mcp-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Decide what an ask-level MCP connector does for this token
+         * @description A token has nobody to prompt, so the default is to block. Allowing it is the owner's explicit "run these unattended" for their own token.
+         */
+        put: operations["setTokenMcpPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2074,6 +2200,17 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description One field an extraction profile asks the model to fill in. */
+        RagProfileField: {
+            key: string;
+            label: string;
+            type: string;
+            description?: string;
+            /** @description Allowed values for an enum field. */
+            values?: string[];
+            filterable?: boolean;
+            sortable?: boolean;
         };
     };
     responses: {
@@ -2686,6 +2823,46 @@ export interface operations {
                         data?: Record<string, never>[];
                     };
                 };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createRagProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                    description?: string | null;
+                    prompt: string;
+                    fields?: components["schemas"]["RagProfileField"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Created. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        name: string;
+                    };
+                };
+            };
+            /** @description Invalid profile, or the name is taken. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -4798,6 +4975,55 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    addRagRefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description RAG collection id (row id). */
+                id: components["parameters"]["RagCollectionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    sources: {
+                        url: string;
+                        git_ref?: string | null;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description What was added and how many duplicates were skipped. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        added: {
+                            id?: number;
+                            git_url?: string | null;
+                            git_ref?: string;
+                        }[];
+                        skipped: number;
+                    };
+                };
+            };
+            /** @description No usable source urls. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     deleteRagRef: {
         parameters: {
             query?: never;
@@ -5473,6 +5699,261 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    testRagSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    source_kind: string;
+                    source_config?: {
+                        [key: string]: string;
+                    };
+                    collection_id?: number | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The probe result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                        account?: string | null;
+                        root_entries?: number;
+                        server?: string | null;
+                        error?: string;
+                    };
+                };
+            };
+            /** @description Unusable source configuration. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    updateRagProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Profile name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                    description?: string | null;
+                    prompt: string;
+                    fields?: components["schemas"]["RagProfileField"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        name: string;
+                        reindex_required_by: string[];
+                    };
+                };
+            };
+            /** @description Invalid profile. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteRagProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Profile name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deleted: boolean;
+                    };
+                };
+            };
+            /** @description Built-in, or still in use. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setRagPrimaryRef: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description RAG collection id (row id). */
+                id: components["parameters"]["RagCollectionId"];
+                /** @description Source (ref) id. */
+                ref_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Set. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        primary: number;
+                        collection: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    downloadSkillArchive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Skill name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An application/zip attachment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    rerunWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Webhook id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    prompt: string;
+                    run?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The finished conversation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        session_id: string;
+                        status: string;
+                        error?: string | null;
+                    };
+                };
+            };
+            /** @description Bad prompt, or nothing stored to replay. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setTokenMcpPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Token id (uuid). */
+                id: components["parameters"]["TokenId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    allow: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        allow: boolean;
+                    };
+                };
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];

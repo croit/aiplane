@@ -234,7 +234,7 @@ pub async fn webhook_trigger(
 /// any way to act — and is explicitly **not** a hard security boundary. No
 /// prompt wrapper is: a model has no enforced trust split between instructions
 /// and data. Treat a tools-enabled webhook as trusting whoever holds its URL.
-fn build_input(prompt: &str, method: &str, content_type: &str, payload: &str) -> String {
+pub(super) fn build_input(prompt: &str, method: &str, content_type: &str, payload: &str) -> String {
     let ct = if content_type.is_empty() {
         "(none)"
     } else {
@@ -264,7 +264,7 @@ fn build_input(prompt: &str, method: &str, content_type: &str, payload: &str) ->
 }
 
 /// Classify a finished run: `("ok" | "error", error_message, output_text)`.
-async fn outcome(
+pub(super) async fn outcome(
     db: &gateway_core::server::db::Pool,
     session_id: &str,
     turn_id: &str,
@@ -301,7 +301,7 @@ async fn record_fire(
 /// Finalize a run: stamp its outcome in the run history (when we have a run id)
 /// and update the webhook's denormalized last-fire summary. Errors are logged,
 /// never fatal.
-async fn finalize_run(
+pub(super) async fn finalize_run(
     state: &RamaState,
     hook_id: &str,
     run_id: Option<&str>,

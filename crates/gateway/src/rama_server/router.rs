@@ -370,7 +370,11 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         )
         .with_post("/api/v0/me/ask/feedback/{turn_id}", api::ask_feedback)
         .with_get("/api/v0/rag/providers", rag_api::list_providers)
+        .with_post("/api/v0/rag/test-source", rag_api::test_source)
         .with_get("/api/v0/rag/profiles", rag_api::list_profiles)
+        .with_post("/api/v0/rag/profiles", rag_api::create_profile)
+        .with_put("/api/v0/rag/profiles/{name}", rag_api::update_profile)
+        .with_delete("/api/v0/rag/profiles/{name}", rag_api::delete_profile)
         .with_get("/api/v0/rag/collections", rag_api::list_collections)
         .with_post("/api/v0/rag/collections", rag_api::create_collection)
         .with_get("/api/v0/rag/collections/{id}", rag_api::get_collection)
@@ -381,6 +385,7 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             rag_api::reindex_collection,
         )
         .with_get("/api/v0/rag/collections/{id}/refs", rag_api::list_refs)
+        .with_post("/api/v0/rag/collections/{id}/refs", rag_api::add_refs)
         .with_delete(
             "/api/v0/rag/collections/{id}/refs/{ref_id}",
             rag_api::delete_ref,
@@ -388,6 +393,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         .with_post(
             "/api/v0/rag/collections/{id}/refs/{ref_id}/rebuild",
             rag_api::rebuild_ref,
+        )
+        .with_post(
+            "/api/v0/rag/collections/{id}/refs/{ref_id}/primary",
+            rag_api::set_primary_ref,
         )
         .with_post(
             "/api/v0/rag/collections/{id}/sync-token",
@@ -480,6 +489,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         .with_get("/api/v0/skills", pages::json_skills::skills_list)
         .with_post("/api/v0/skills", pages::json_skills::skills_upload)
         .with_get("/api/v0/skills/{name}/body", pages::json_skills::skill_body)
+        .with_get(
+            "/api/v0/skills/{name}/archive",
+            pages::json_skills::skill_archive,
+        )
         .with_delete("/api/v0/skills/{name}", pages::json_skills::skills_delete)
         .with_get(
             "/api/v0/admin/skills",
@@ -583,6 +596,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/webhooks/{id}/runs",
             pages::json_workspace::webhooks_runs,
         )
+        .with_post(
+            "/api/v0/webhooks/{id}/rerun",
+            pages::json_workspace::webhooks_rerun,
+        )
         .with_get("/api/v0/tools", pages::tools::tools_list_json)
         .with_post("/api/v0/tools/toggle", pages::tools::tools_toggle_json)
         // Chat JSON API for the SvelteKit SPA (issue #22 phase 2). The
@@ -643,6 +660,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         .with_post(
             "/api/v0/tokens/{id}/quota",
             pages::chat::json_api::owner_token_quota,
+        )
+        .with_put(
+            "/api/v0/tokens/{id}/mcp-policy",
+            pages::chat::json_api::owner_token_mcp_policy,
         )
         .with_get(
             "/api/v0/chat/sessions/{id}/export.md",

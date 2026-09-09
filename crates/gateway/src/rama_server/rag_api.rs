@@ -396,6 +396,348 @@ fn source_registry(state: &RamaState) -> &gateway_features::server::rag::source:
     state.provider_registry()
 }
 
+#[derive(Deserialize)]
+pub struct AddRefsRequest {
+    /// One or more sources. Each entry is a URL plus an optional ref; an
+    /// entry without one inherits the collection's `git_ref`, which is what
+    /// makes pasting a list of repositories work.
+    pub sources: Vec<AddRefEntry>,
+}
+
+#[derive(Deserialize)]
+pub struct AddRefEntry {
+    pub url: String,
+    #[serde(default)]
+    pub git_ref: Option<String>,
+}
+
+/// POST /api/v0/rag/collections/{id}/refs — add sources to a collection.
+///
+/// Takes a list rather than a single entry because the collections this
+/// exists for are aggregates of tens of repositories; adding one is the
+/// one-element case. A duplicate (same url+ref already present) is skipped
+/// rather than fatal, so re-submitting a list is idempotent.
+pub async fn add_refs(
+    State(state): State<Arc<RamaState>>,
+    Path(id): Path<i64>,
+    req: Request,
+) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    let collection = match rag_db::find_collection_by_id(&state.db, id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return not_found(&format!("no collection {id}")),
+        Err(err) => {
+            tracing::warn!(error = %err, %id, "adding refs: collection lookup");
+            return internal_error("collection lookup failed");
+        }
+    };
+    let body = match read_json::<AddRefsRequest>(req).await {
+        Ok(b) => b,
+        Err(resp) => return resp,
+    };
+    let entries: Vec<(String, String)> = body
+        .sources
+        .into_iter()
+        .filter_map(|e| {
+            let url = e.url.trim().to_string();
+            if url.is_empty() {
+                return None;
+            }
+            let git_ref = e
+                .git_ref
+                .map(|r| r.trim().trim_start_matches('@').to_string())
+                .filter(|r| !r.is_empty())
+                .unwrap_or_else(|| collection.git_ref.clone());
+            Some((url, git_ref))
+        })
+        .collect();
+    if entries.is_empty() {
+        return invalid_request("`sources` must contain at least one url");
+    }
+
+    let had_refs = rag_db::list_refs(&state.db, id)
+        .await
+        .map(|r| !r.is_empty())
+        .unwrap_or(false);
+    let mut added = Vec::new();
+    let mut skipped = 0usize;
+    for (i, (url, git_ref)) in entries.iter().enumerate() {
+        // The first source of an empty collection becomes primary — harmless
+        // in aggregate mode (search ignores primacy there) but it keeps the
+        // one-primary invariant the UI reads.
+        let is_primary = !had_refs && i == 0;
+        match rag_db::add_ref(&state.db, id, git_ref, Some(url.as_str()), is_primary).await {
+            Ok(r) => {
+                if let Some(indexer) = state.indexer.as_ref() {
+                    let _ = indexer.request_reindex(r.id).await;
+                }
+                added.push(json!({ "id": r.id, "git_url": r.git_url, "git_ref": r.git_ref }));
+            }
+            Err(_) => skipped += 1,
+        }
+    }
+    json_ok(&json!({ "added": added, "skipped": skipped }))
+}
+
+/// POST /api/v0/rag/collections/{id}/refs/{ref_id}/primary — make one ref the
+/// collection's search default.
+pub async fn set_primary_ref(
+    State(state): State<Arc<RamaState>>,
+    Path(RagRefPath { id, ref_id }): Path<RagRefPath>,
+    req: Request,
+) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    // Scope the ref to the collection in the path: an id belonging to another
+    // collection would otherwise repoint *its* primary through this route.
+    match rag_db::find_ref_by_id(&state.db, ref_id).await {
+        Ok(Some(r)) if r.collection_id == id => {}
+        Ok(_) => return not_found(&format!("no ref {ref_id} in collection {id}")),
+        Err(err) => {
+            tracing::warn!(error = %err, ref_id, "primary: ref lookup");
+            return internal_error("ref lookup failed");
+        }
+    }
+    match rag_db::set_primary(&state.db, ref_id).await {
+        Ok(()) => json_ok(&json!({ "primary": ref_id, "collection": id })),
+        Err(err) => {
+            tracing::warn!(error = %err, ref_id, "setting primary ref");
+            internal_error("setting the primary ref failed")
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ProfileRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub prompt: String,
+    #[serde(default)]
+    pub fields: Vec<rag_documents::ProfileField>,
+}
+
+impl ProfileRequest {
+    /// Validate and lower into the DB input. The rules match the web form's:
+    /// a profile needs a name and a prompt, and every field needs a key the
+    /// query tool can filter on.
+    fn into_input(self) -> Result<rag_documents::ProfileInput, String> {
+        let name = self.name.trim().to_string();
+        if name.is_empty() || name.len() > 64 {
+            return Err("`name` must be 1..=64 characters".into());
+        }
+        let prompt = self.prompt.trim().to_string();
+        if prompt.is_empty() {
+            return Err("`prompt` must not be empty".into());
+        }
+        for f in &self.fields {
+            if f.key.trim().is_empty() {
+                return Err("every field needs a `key`".into());
+            }
+        }
+        Ok(rag_documents::ProfileInput {
+            name,
+            description: self
+                .description
+                .map(|d| d.trim().to_string())
+                .filter(|d| !d.is_empty()),
+            prompt,
+            fields: self.fields,
+        })
+    }
+}
+
+/// POST /api/v0/rag/profiles — create an extraction profile.
+pub async fn create_profile(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    let body = match read_json::<ProfileRequest>(req).await {
+        Ok(b) => b,
+        Err(resp) => return resp,
+    };
+    let input = match body.into_input() {
+        Ok(i) => i,
+        Err(msg) => return invalid_request(&msg),
+    };
+    if let Ok(Some(_)) = rag_documents::find_profile_by_name(&state.db, &input.name).await {
+        return invalid_request(&format!("a profile named `{}` already exists", input.name));
+    }
+    match rag_documents::create_profile(&state.db, &input).await {
+        Ok(_) => json_ok(&json!({ "name": input.name })),
+        Err(err) => {
+            tracing::warn!(error = %err, "creating extraction profile");
+            internal_error("creating the profile failed")
+        }
+    }
+}
+
+/// PUT /api/v0/rag/profiles/{name} — replace a profile's prompt and fields.
+///
+/// The write bumps the profile version, which invalidates every extraction
+/// cached under it: the collections listed in the response have to re-index
+/// before they answer with the new shape. Saying which ones beats an operator
+/// wondering why nothing changed.
+pub async fn update_profile(
+    Path(name): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    let existing = match rag_documents::find_profile_by_name(&state.db, &name).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return not_found("no such profile"),
+        Err(err) => {
+            tracing::warn!(error = %err, "looking up extraction profile");
+            return internal_error("profile lookup failed");
+        }
+    };
+    let body = match read_json::<ProfileRequest>(req).await {
+        Ok(b) => b,
+        Err(resp) => return resp,
+    };
+    let input = match body.into_input() {
+        Ok(i) => i,
+        Err(msg) => return invalid_request(&msg),
+    };
+    if let Err(err) = rag_documents::update_profile(&state.db, existing.id, &input).await {
+        tracing::warn!(error = %err, id = existing.id, "updating extraction profile");
+        return internal_error("saving the profile failed");
+    }
+    let affected = rag_documents::collections_using_profile(&state.db, existing.id)
+        .await
+        .unwrap_or_default();
+    json_ok(&json!({ "name": input.name, "reindex_required_by": affected }))
+}
+
+/// DELETE /api/v0/rag/profiles/{name} — remove a profile.
+///
+/// Refused while a collection still points at it: a collection whose profile
+/// vanished indexes without fields, which reads as a puzzle rather than an
+/// error. Built-in profiles are not deletable at all.
+pub async fn delete_profile(
+    Path(name): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    let existing = match rag_documents::find_profile_by_name(&state.db, &name).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return not_found("no such profile"),
+        Err(err) => {
+            tracing::warn!(error = %err, "looking up extraction profile");
+            return internal_error("profile lookup failed");
+        }
+    };
+    if existing.builtin {
+        return invalid_request("a built-in profile cannot be deleted");
+    }
+    let users = rag_documents::collections_using_profile(&state.db, existing.id)
+        .await
+        .unwrap_or_default();
+    if !users.is_empty() {
+        return invalid_request(&format!(
+            "still used by: {} — point them at another profile first",
+            users.join(", ")
+        ));
+    }
+    match rag_documents::delete_profile(&state.db, existing.id).await {
+        Ok(true) => json_ok(&json!({ "deleted": true })),
+        Ok(false) => not_found("no such profile"),
+        Err(err) => {
+            tracing::warn!(error = %err, "deleting extraction profile");
+            internal_error("deleting the profile failed")
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct TestSourceRequest {
+    pub source_kind: String,
+    #[serde(default)]
+    pub source_config: std::collections::BTreeMap<String, String>,
+    /// An existing collection whose stored secret may stand in for a blank
+    /// password field, so testing an edit does not require retyping it.
+    #[serde(default)]
+    pub collection_id: Option<i64>,
+}
+
+/// POST /api/v0/rag/test-source — reach the configured source and report what
+/// came back, before anything is saved.
+///
+/// The point is to fail on the operator's screen rather than silently on the
+/// indexing timeline hours later: wrong host, wrong credentials and wrong
+/// folder all look identical in a collection that simply never fills up.
+///
+/// `git` has nothing to probe (the clone is the test), so it is refused
+/// explicitly rather than answering a meaningless success.
+pub async fn test_source(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    use gateway_features::server::rag::source::ProviderConfig;
+
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    let body = match read_json::<TestSourceRequest>(req).await {
+        Ok(b) => b,
+        Err(resp) => return resp,
+    };
+    if body.source_kind == "git" {
+        return invalid_request("a git source is tested by indexing it, not by probing");
+    }
+    // Only the collection's *own* stored secret may stand in, and only for the
+    // settings it was stored against — otherwise this probe would present a
+    // saved credential to whatever host the caller named.
+    let existing = match body.collection_id {
+        Some(id) => rag_db::find_collection_by_id(&state.db, id)
+            .await
+            .ok()
+            .flatten()
+            .map(|c| c.source)
+            .filter(|spec| spec.kind == body.source_kind),
+        None => None,
+    };
+    let spec = match build_source(
+        &state,
+        &body.source_kind,
+        &body.source_config,
+        existing.as_ref(),
+    ) {
+        Ok(spec) => spec,
+        Err(msg) => return invalid_request(&msg),
+    };
+    let registry = source_registry(&state);
+    let secrets = spec.open_secrets(&state.crypto);
+    let provider = match registry.build(
+        &spec.kind,
+        &ProviderConfig::new(spec.config, secrets),
+        state.http.clone(),
+    ) {
+        Ok(p) => p,
+        Err(err) => return invalid_request(&err.to_string()),
+    };
+    match provider.probe().await {
+        Ok(report) => json_ok(&json!({
+            "ok": true,
+            "account": report.account,
+            "root_entries": report.root_entries,
+            "server": report.server,
+        })),
+        // A failed probe is the endpoint working: the operator asked whether
+        // this source is reachable and the answer is no, with the reason.
+        Err(err) => json_ok(&json!({
+            "ok": false,
+            "error": err.to_string(),
+        })),
+    }
+}
+
 /// GET /api/v0/rag/providers — the source kinds this gateway can index, and
 /// the settings each one takes.
 ///

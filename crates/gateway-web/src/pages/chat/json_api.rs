@@ -1598,3 +1598,73 @@ pub async fn owner_token_quota(
         ),
     }
 }
+
+#[derive(serde::Deserialize)]
+pub struct McpPolicyBody {
+    /// `true` treats an `ask` connector as `always` for calls made with this
+    /// token; `false` blocks them with a "needs approval" tool error.
+    pub allow: bool,
+}
+
+/// PUT /api/v0/tokens/{id}/mcp-policy — decide what an `ask`-level MCP
+/// connector does when the caller is a bearer token rather than a person.
+///
+/// A token has nobody to prompt, so the default is to block; allowing it is
+/// the owner's explicit "run these unattended" for their own token. Stored
+/// against `*` — the whole connector set — mirroring the legacy toggle.
+pub async fn owner_token_mcp_policy(
+    Path(token_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    use gateway_core::server::db::user_mcp::{AskOverApi, set_token_policy};
+
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    // Owner-only, and a foreign token reads as missing (no probing for live
+    // ids across accounts).
+    match gateway_core::server::db::tokens::find_by_id(&state.db, &token_id).await {
+        Ok(Some(t)) if t.user_id == user.id => {}
+        Ok(_) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such token"),
+        Err(err) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            );
+        }
+    }
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+    };
+    let parsed: McpPolicyBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("parsing the policy body: {err}"),
+            );
+        }
+    };
+    let policy = if parsed.allow {
+        AskOverApi::Allow
+    } else {
+        AskOverApi::Block
+    };
+    match set_token_policy(&state.db, &token_id, "*", policy).await {
+        Ok(()) => ok_json(StatusCode::OK, serde_json::json!({ "allow": parsed.allow })),
+        Err(err) => {
+            tracing::warn!(error = %err, %token_id, "set token mcp policy");
+            json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            )
+        }
+    }
+}
