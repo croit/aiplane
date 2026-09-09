@@ -8,7 +8,7 @@ publish.workspace = true
 
 # The request runtime: the tool API (Tool trait, ToolContext, registry, catalog,
 # runner, MCP manager, sandbox client), `AppState`/`RamaState`, the streaming chat
-# driver, and the workers that need state. `gateway-tools` and `gateway-web` both
+# driver, and the workers that need state. `gateway-tools` and `gateway-api` both
 # sit above this and neither depends on the other. See docs/architecture.md.
 
 [dependencies]

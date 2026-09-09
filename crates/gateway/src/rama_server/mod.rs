@@ -5,10 +5,10 @@
 //!
 //! Reuses the database, OIDC client, upstream registry, RBAC resolver, and tool
 //! registry from `gateway_core::server` unchanged — those modules are
-//! framework-neutral — and mounts the HTML handlers from `gateway_web::pages`.
+//! framework-neutral — and mounts the HTML handlers from `gateway_api::pages`.
 //! Only the routes themselves live here.
 //!
-//! The pieces both this crate and `gateway-web` need — [`RamaState`], the
+//! The pieces both this crate and `gateway-api` need — [`RamaState`], the
 //! signed-cookie session store, the `/v1` bearer middleware, and CORS — sit
 //! below both in `gateway_core::rama_server`, and are re-exported here so the
 //! router and the integration tests keep a single import path.
@@ -29,7 +29,7 @@ pub mod setup_api;
 pub mod spa;
 pub mod vad;
 
+pub use gateway_api::pages;
 pub use gateway_core::rama_server::{SessionStore, cors, session};
 pub use gateway_runtime::rama_server::{RamaState, auth, state};
-pub use gateway_web::pages;
 pub use router::router;

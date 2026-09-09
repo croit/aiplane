@@ -22,7 +22,7 @@
 //! bounded across many compactions.
 //!
 //! The summariser is a one-shot, non-streaming, capped, best-effort model call
-//! modelled on `gateway_web::pages::chat::title`. The folded turns are
+//! modelled on `gateway_api::pages::chat::title`. The folded turns are
 //! never deleted — they stay in `chat_turns` and remain visible in the
 //! transcript; they are simply not sent upstream.
 

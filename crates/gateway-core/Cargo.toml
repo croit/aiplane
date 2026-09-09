@@ -9,7 +9,7 @@ publish.workspace = true
 # The gateway's application body: config, DB + migrations, crypto, RBAC,
 # upstream registry, tool registry + tools, the feature subsystems, and the
 # shared `AppState`/`RamaState` handles. Everything here is below the HTML
-# presentation layer (`gateway-web`) and the routing glue (`gateway`), so a
+# presentation layer (`gateway-api`) and the routing glue (`gateway`), so a
 # page or router edit never recompiles it. See docs/architecture.md.
 
 [dependencies]

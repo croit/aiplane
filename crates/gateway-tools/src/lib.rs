@@ -15,7 +15,7 @@
 //! that `gateway`'s `main.rs` builds, and granting it to one or more roles in
 //! `[rbac]`. We do **not** discover tools at runtime.
 //!
-//! This crate sits above `gateway-core` and beside `gateway-web`: only the
+//! This crate sits above `gateway-core` and beside `gateway-api`: only the
 //! binary's wiring depends on it, so adding or editing a tool is a leaf-crate
 //! rebuild. See `docs/architecture.md`.
 

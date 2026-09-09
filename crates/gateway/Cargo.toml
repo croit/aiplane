@@ -8,7 +8,7 @@ publish.workspace = true
 
 # The binary and its routing glue: the rama router, the `/v1` proxy, the
 # session-authed `/api/v0` JSON surface, the OIDC handlers, and `main`. The
-# application body lives in `gateway-core`, the HTML in `gateway-web`; this
+# application body lives in `gateway-core`, the HTML in `gateway-api`; this
 # crate only wires them to routes. Integration tests live here because they
 # drive the router. See docs/architecture.md.
 
@@ -21,7 +21,7 @@ gateway-core = { path = "../gateway-core" }
 gateway-features = { path = "../gateway-features" }
 gateway-runtime = { path = "../gateway-runtime" }
 gateway-tools = { path = "../gateway-tools" }
-gateway-web = { path = "../gateway-web" }
+gateway-api = { path = "../gateway-api" }
 shared = { path = "../shared" }
 session-core = { path = "../session-core" }
 serde = { workspace = true }

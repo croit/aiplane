@@ -32,11 +32,11 @@ use shared::api::{
 };
 use uuid::Uuid;
 
+use gateway_api::pages::{entries_for_roles, valid_keys};
 use gateway_core::rama_server::session::Session;
 use gateway_core::server::auth::token;
 use gateway_core::server::db::{token_tool_prefs, tokens, users};
 use gateway_runtime::rama_server::state::RamaState;
-use gateway_web::pages::{entries_for_roles, valid_keys};
 
 // ---------------------------------------------------------------------------
 // Session gate

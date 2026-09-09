@@ -140,7 +140,7 @@ USER gateway
 ENV IP=0.0.0.0 \
     PORT=8080 \
     GATEWAY_DATA_DIR=/var/lib/gateway \
-    RUST_LOG=info,gateway=info,gateway_core=info,gateway_features=info,gateway_runtime=info,gateway_tools=info,gateway_web=info \
+    RUST_LOG=info,gateway=info,gateway_core=info,gateway_features=info,gateway_runtime=info,gateway_tools=info,gateway_api=info \
     PDFIUM_LIB_PATH=/usr/local/lib/libpdfium.so \
     GATEWAY_STATIC_DIR=/usr/share/gateway/ui
 

@@ -7,7 +7,7 @@ members = [
     "crates/gateway-features",
     "crates/gateway-runtime",
     "crates/gateway-tools",
-    "crates/gateway-web",
+    "crates/gateway-api",
     "crates/gateway",
     "crates/sandbox-runner",
 ]

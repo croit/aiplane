@@ -16,7 +16,7 @@ Dropbox, plain WebDAV. Once phase 3 lands it collapses into an operator-facing
 | Provider-agnostic concurrent tree walker with subtree pruning, cycle and size bounds | `…/source/tree.rs` |
 | `source_kind` / `source_config_json` / sealed `source_secrets`, per-ref `dir_versions_json` + `delta_cursor` | migration `0058_fileshare_rag.sql`, `db/rag.rs` |
 | Worker branch: enumerate → fetch → chunk → embed, sharing the whole indexing path with git | `…/rag/worker.rs` (`gather_remote`, `index_items`, `read_item`) |
-| Admin surface: source picker + credential form rendered from each provider's declared fields, secret sealing, **Test connection** | `gateway-web/src/pages/rag_source.rs`, `pages/rag.rs`, `POST /rag/test-source` |
+| Admin surface: source picker + credential form rendered from each provider's declared fields, secret sealing, **Test connection** | `gateway-api/src/pages/rag_source.rs`, `pages/rag.rs`, `POST /rag/test-source` |
 | JSON API: `source_kind` + `source_config` on create and PATCH, `GET /api/v0/rag/providers` for field discovery | `gateway/src/rama_server/rag_api.rs` |
 | **Extraction ladder**: text → PDF text layer → OCR → office, with page-accurate provenance | `…/rag/extract.rs`, `…/rag/chunk.rs`, migration-free store DDL change (`loc_kind`/`loc_from`/`loc_to`) |
 | Office reading shared with `fetch_attachment` — one python extractor, two consumers | `gateway-runtime/…/sandbox/office.rs` |

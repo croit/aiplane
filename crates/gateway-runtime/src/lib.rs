@@ -14,7 +14,7 @@
 //!   background workers that need state: `scheduled`, `webhooks`, `compaction`,
 //!   `headless`.
 //!
-//! `gateway-tools` and `gateway-web` both depend on this and on nothing of each
+//! `gateway-tools` and `gateway-api` both depend on this and on nothing of each
 //! other, so a tool edit and a page edit stay independent.
 
 pub mod loop_guard;

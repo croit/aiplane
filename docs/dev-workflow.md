@@ -81,8 +81,8 @@ So climb the ladder, and only step up when the rung below is green:
 
 ```bash
 mise run check                      # ~seconds — does it type-check at all?
-mise run test-crate gateway-web     # the crate you're editing (+ optional filter)
-mise run lint-crate gateway-web     # clippy for that crate
+mise run test-crate gateway-api     # the crate you're editing (+ optional filter)
+mise run lint-crate gateway-api     # clippy for that crate
 mise run verify                     # ONCE, before pushing: lint + all tests
 ```
 
@@ -181,7 +181,7 @@ Not in the repo, because it's a machine-level choice: a user-global
 and `test` profiles. They do **not** conflict — cargo compiles only *workspace*
 crates incrementally and never registry dependencies, so incremental owns the
 edit loop while sccache owns the dependency graph across cold builds, branch
-switches and profile changes. Measured here, one-line edit in `gateway-web`
+switches and profile changes. Measured here, one-line edit in `gateway-api`
 then `cargo nextest run --workspace`: **102 s → 59 s**. Give sccache a cache
 big enough for this dependency graph (100 GiB in its own config file); at the
 10 GiB default it evicted as fast as it wrote and measured a 0% hit rate.
@@ -213,7 +213,7 @@ mise run dev
 
 Env config is layered through mise, not a `.env` file:
 
-- **`mise.toml` `[env]`** holds the non-secret defaults committed to the repo (`RUST_BACKTRACE=1`, `RUST_LOG=info,gateway=debug,gateway_core=debug,gateway_features=debug,gateway_runtime=debug,gateway_tools=debug,gateway_web=debug`).
+- **`mise.toml` `[env]`** holds the non-secret defaults committed to the repo (`RUST_BACKTRACE=1`, `RUST_LOG=info,gateway=debug,gateway_core=debug,gateway_features=debug,gateway_runtime=debug,gateway_tools=debug,gateway_api=debug`).
 - **`mise.local.toml` `[env]`** holds secrets and machine-local overrides — it is **gitignored**. This is where local dev keys go: `GATEWAY_SESSION_KEY`, `GATEWAY_OIDC_CLIENT_SECRET`, `GATEWAY_ENCRYPTION_KEY`, provider keys (`OPENAI_API_KEY`, `ZAI_API_KEY`, …), etc.
 
 Web-search settings are **not** environment variables any more. Provider, SearXNG URL, and Brave API key live in the database and are set under **Web search** on `/admin/models` (the key sealed at rest like every other gateway secret). `SEARCH_PROVIDER`, `SEARXNG_URL`, and `BRAVE_SEARCH_API_KEY` are still read **once**, at first boot, to fill settings that are still empty — after that they're ignored and the gateway logs that it ignored them.
@@ -234,7 +234,7 @@ now emits under six targets rather than one:
 | `gateway_features` | RAG, skills, ComfyUI, push, geoip, typst discovery, attachments, PDF/OCR/speech |
 | `gateway_runtime` | the tool registry/catalog/runner, `AppState`, the chat driver, scheduler, webhooks |
 | `gateway_tools` | the tool implementations (`fetch_url`, `search_web`, typst, document, …) |
-| `gateway_web` | the `/api/v0` JSON handlers, including the chat event stream |
+| `gateway_api` | the `/api/v0` JSON handlers, including the chat event stream |
 
 A bare `RUST_LOG=info,gateway=debug` therefore only raises the level for the
 routing glue — page and tool logs stay at `info`. The committed defaults in
@@ -408,7 +408,7 @@ reaches the right command, but the failure mode that actually bit was a silent
 omission in a new fixture, and that is now impossible to add unnoticed.
 
 Build scripts need the same treatment and cannot import from the workspace —
-`crates/gateway-web/build.rs` repeats the list. A build run from inside a hook
+`crates/gateway-api/build.rs` repeats the list. A build run from inside a hook
 would otherwise resolve `HEAD` in the calling repository and stamp a foreign
 SHA into `GATEWAY_GIT_SHA`, defeating the AGPL §13 source link it exists for.
 

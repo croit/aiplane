@@ -173,7 +173,7 @@ It appears in the chat composer **only when a `speech` upstream pool is configur
 
 ## Built with
 
-- **Rust** (edition 2024, toolchain pinned to 1.95 via [mise](https://mise.jdx.dev/)) — a workspace of nine crates: `gateway` (the binary and its `/v1` proxy), `gateway-core`, `gateway-runtime`, `gateway-features`, `gateway-tools`, `gateway-web`, `session-core`, `shared`, and `sandbox-runner`.
+- **Rust** (edition 2024, toolchain pinned to 1.95 via [mise](https://mise.jdx.dev/)) — a workspace of nine crates: `gateway` (the binary and its `/v1` proxy), `gateway-core`, `gateway-runtime`, `gateway-features`, `gateway-tools`, `gateway-api`, `session-core`, `shared`, and `sandbox-runner`.
 - **[rama 0.3.0-rc1](https://ramaproxy.org/)** — HTTP server, router, middleware, and proxying.
 - **[SvelteKit](https://svelte.dev/docs/kit) 2 / Svelte 5** (`web/`) — the web UI, built with `adapter-static` into plain files. Chat streams over a JSON event protocol on SSE; every other action is a typed call against the `/api/v0` OpenAPI contract.
 - **[daisyUI v5](https://daisyui.com/) + Tailwind v4** — design system, compiled to a single content-hashed CSS bundle at build time.

@@ -77,7 +77,7 @@ services:
     env_file:
       - gateway.env
     environment:
-      RUST_LOG: info,gateway=info,gateway_core=info,gateway_features=info,gateway_runtime=info,gateway_tools=info,gateway_web=info
+      RUST_LOG: info,gateway=info,gateway_core=info,gateway_features=info,gateway_runtime=info,gateway_tools=info,gateway_api=info
     volumes:
       # The image's GATEWAY_DATA_DIR=/var/lib/gateway already puts the SQLite
       # database and the RAG index store on this volume — mounting it is all

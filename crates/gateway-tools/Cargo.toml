@@ -8,7 +8,7 @@ publish.workspace = true
 
 # The gateway's tool implementations. Sits above `gateway-core` (which owns the
 # Tool trait, ToolContext, the registry, the catalog, the runner, the MCP manager
-# and the sandbox client) and beside `gateway-web`: only the binary's wiring
+# and the sandbox client) and beside `gateway-api`: only the binary's wiring
 # depends on it, so adding or editing a tool is a leaf-crate rebuild.
 # See docs/architecture.md.
 

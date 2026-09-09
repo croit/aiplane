@@ -1841,11 +1841,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "earshot",
+ "gateway-api",
  "gateway-core",
  "gateway-features",
  "gateway-runtime",
  "gateway-tools",
- "gateway-web",
  "http-body-util",
  "jiff",
  "jsonwebtoken",
@@ -1868,6 +1868,27 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "wiremock",
+]
+
+[[package]]
+name = "gateway-api"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-features",
+ "gateway-runtime",
+ "jiff",
+ "multer",
+ "rama",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "session-core",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2017,27 +2038,6 @@ dependencies = [
  "wiremock",
  "x509-parser 0.16.0",
  "zip",
-]
-
-[[package]]
-name = "gateway-web"
-version = "0.1.0"
-dependencies = [
- "gateway-core",
- "gateway-features",
- "gateway-runtime",
- "jiff",
- "multer",
- "rama",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "session-core",
- "sqlx",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]

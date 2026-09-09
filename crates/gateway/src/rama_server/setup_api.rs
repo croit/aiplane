@@ -4,7 +4,7 @@
 //! The setup wizard as JSON (issue #22 P5/P6) — the SPA at `/setup`
 //! drives the first-run flow: enter provider settings → a real OIDC test
 //! login → pick the admin claim → finish. Lives in the `gateway` crate (not
-//! `gateway-web`) so it survived phase 6's removal of the legacy page stack.
+//! `gateway-api`) so it survived phase 6's removal of the legacy page stack.
 //!
 //! Auth model: the wizard is deliberately UNauthenticated on a first run
 //! (an empty box has no accounts to authenticate against) and token-gated

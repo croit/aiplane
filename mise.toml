@@ -46,7 +46,7 @@ gitleaks = "8.30"
 
 [env]
 RUST_BACKTRACE = "1"
-RUST_LOG = "info,gateway=debug,gateway_core=debug,gateway_features=debug,gateway_runtime=debug,gateway_tools=debug,gateway_web=debug"
+RUST_LOG = "info,gateway=debug,gateway_core=debug,gateway_features=debug,gateway_runtime=debug,gateway_tools=debug,gateway_api=debug"
 # Secrets (API keys, tokens) go in the gitignored `mise.local.toml`, not
 # here. Web-search settings are the exception in the other direction: they
 # live in the DB and are set under "Web search" on /admin/models (the legacy
@@ -284,16 +284,16 @@ description = "The local pre-push gate: lint + Rust tests + SPA checks and build
 depends = ["lint", "test", "test-web", "build-web"]
 
 [tasks.test-crate]
-description = "Tests for ONE crate — the iteration loop. `mise run test-crate gateway-web [filter]`. Seconds instead of the ~20 min a full `test` costs after touching a root crate, because it links that crate's test binaries only."
+description = "Tests for ONE crate — the iteration loop. `mise run test-crate gateway-api [filter]`. Seconds instead of the ~20 min a full `test` costs after touching a root crate, because it links that crate's test binaries only."
 usage = '''
-arg "<crate>" help="workspace crate, e.g. gateway-web"
+arg "<crate>" help="workspace crate, e.g. gateway-api"
 arg "[filter]" help="optional nextest name filter"
 '''
 run = 'cargo nextest run -p "$usage_crate" ${usage_filter:-}'
 
 [tasks.lint-crate]
-description = "Clippy for ONE crate: `mise run lint-crate gateway-web`. Use while iterating; `mise run verify` before pushing."
-usage = 'arg "<crate>" help="workspace crate, e.g. gateway-web"'
+description = "Clippy for ONE crate: `mise run lint-crate gateway-api`. Use while iterating; `mise run verify` before pushing."
+usage = 'arg "<crate>" help="workspace crate, e.g. gateway-api"'
 run = 'cargo clippy -p "$usage_crate" --all-targets -- -D warnings'
 
 [tasks.e2e]

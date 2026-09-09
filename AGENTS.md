@@ -37,7 +37,7 @@ Built on **rama 0.3** (HTTP server + router + middleware), **plait** (inline-in-
     ├── gateway-features/        # optional subsystems: rag, skills, comfyui, push, …
     ├── gateway-runtime/         # tool API + AppState/RamaState + chat driver
     ├── gateway-tools/           # the tool implementations
-    ├── gateway-web/             # the server-rendered HTML pages
+    ├── gateway-api/             # the server-rendered HTML pages
     ├── gateway/                 # the binary: router, proxy, api, main
     └── sandbox-runner/          # the sandboxed-tool execution service
 ```
@@ -51,7 +51,7 @@ crate depends only on the ones beneath it.
 
 ```
 gateway            bin + router/proxy/api/oidc      6.5k  ← thinnest, most-edited
-   ├── gateway-web     server-rendered HTML pages  25.5k  ← siblings: neither
+   ├── gateway-api     server-rendered HTML pages  25.5k  ← siblings: neither
    └── gateway-tools   the tool implementations    14.5k  ←   depends on the other
           └── gateway-runtime  tool API + AppState/RamaState + chat driver  14.7k
                  ├── gateway-features  RAG, skills, ComfyUI, push, geoip, …  13.9k
@@ -59,11 +59,11 @@ gateway            bin + router/proxy/api/oidc      6.5k  ← thinnest, most-edi
 ```
 
 Lines that must recompile after a one-line edit: `gateway` 6.5k, `gateway-tools`
-21k, `gateway-web` 32k, `gateway-runtime` 61k, `gateway-features` 75k,
+21k, `gateway-api` 32k, `gateway-runtime` 61k, `gateway-features` 75k,
 `gateway-core` 97k — against **97k for any edit** before the split. The gains are
 front-loaded on purpose: the layers that churn most are the cheapest to rebuild.
 
-`gateway-web` and `gateway-tools` are siblings: neither depends on the other, so
+`gateway-api` and `gateway-tools` are siblings: neither depends on the other, so
 editing a page doesn't rebuild the tools and vice versa.
 
 Two rules keep it that way, and both are easy to break by accident:
@@ -129,7 +129,7 @@ new tool in the `ToolRegistry` that `gateway`'s `main.rs` builds, and grant it i
 `[rbac]`. `tests/` holds the two test modules that need both the machinery and the
 real tools (catalog grouping, `AppState` authorization).
 
-Inside `crates/gateway-web/src/`:
+Inside `crates/gateway-api/src/`:
 
 ```
 build_info.rs             # git SHA / version label (build.rs stamps it) — page chrome only

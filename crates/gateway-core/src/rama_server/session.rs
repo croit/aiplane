@@ -593,7 +593,7 @@ fn base64url_decode_nopad(s: &str) -> Option<Vec<u8>> {
 ///
 /// Lives here rather than next to the `/auth/*` handlers because both the
 /// OIDC callback (in the `gateway` crate) and the page chrome's login links
-/// (in `gateway-web`) must agree on it. `session_core::chrome` carries a
+/// (in `gateway-api`) must agree on it. `session_core::chrome` carries a
 /// deliberate duplicate for the driver-agnostic renderers.
 pub fn is_safe_return_to(p: &str) -> bool {
     let p = p.trim_start_matches(|c: char| c.is_ascii_whitespace());

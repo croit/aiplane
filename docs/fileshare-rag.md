@@ -92,7 +92,7 @@ allow twice the configured concurrency.
 | `gateway-core/src/server/db/rag.rs` | collections, refs, files, chunks |
 | `gateway-core/src/server/db/rag_documents.rs` | profiles, documents, fields, the structured query |
 | `gateway-tools/src/rag*.rs` | the six model-facing tools |
-| `gateway-web/src/pages/rag*.rs` | `/rag`, the source form, the profile editor |
+| `gateway-api/src/pages/rag*.rs` | `/rag`, the source form, the profile editor |
 
 ## Providers: the extension point
 

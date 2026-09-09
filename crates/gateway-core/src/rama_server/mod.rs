@@ -3,7 +3,7 @@
 
 //! The rama-flavoured shared handles the HTTP surface is built on.
 //!
-//! Everything here is needed by *both* the HTML pages (`gateway-web`) and the
+//! Everything here is needed by *both* the HTML pages (`gateway-api`) and the
 //! routing glue (the `gateway` crate), so it sits below both: the
 //! [`state::RamaState`] handle, the hand-rolled signed-cookie
 //! [`session::SessionStore`], the `/v1` bearer middleware in [`auth`], and the

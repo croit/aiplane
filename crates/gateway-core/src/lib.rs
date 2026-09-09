@@ -2,7 +2,7 @@
 // Copyright (C) 2026 croit GmbH
 
 //! The gateway's application body — everything below the HTML presentation
-//! layer ([`gateway_web`](../gateway_web/index.html)) and the routing glue
+//! layer ([`gateway_api`](../gateway_api/index.html)) and the routing glue
 //! (the `gateway` binary crate).
 //!
 //! - [`server`] — framework-neutral building blocks: config, DB, OIDC,

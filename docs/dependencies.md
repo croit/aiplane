@@ -16,7 +16,7 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 | Crate | Used in | Why |
 |---|---|---|
 | `rama` | `gateway` | HTTP framework + proxying primitives. Features `http-full` + `tower`; rustls deliberately off (aws-lc-sys is cmake-only). |
-| `serde_urlencoded` | `gateway`, `gateway-web` | Query-string encode/decode: building the `return_to` parameter on the sign-in redirect and parsing the OIDC callback's query. (It used to parse form bodies for the page POST handlers; those are gone.) |
+| `serde_urlencoded` | `gateway`, `gateway-api` | Query-string encode/decode: building the `return_to` parameter on the sign-in redirect and parsing the OIDC callback's query. (It used to parse form bodies for the page POST handlers; those are gone.) |
 | `tokio` | `gateway`, `cli` | Async runtime. |
 | `serde`, `serde_json` | all | Data interchange (OpenAI schema, config). |
 | `thiserror` | all | Library-style error types. |

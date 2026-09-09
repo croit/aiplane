@@ -43,7 +43,7 @@ it — never what sits below.
 
 ```
 gateway            bin + router/proxy/api/oidc      6.5k  ← thinnest, most-edited glue
-   ├── gateway-web     the /api/v0 JSON handlers   25.5k  ← siblings: neither
+   ├── gateway-api     the /api/v0 JSON handlers   25.5k  ← siblings: neither
    └── gateway-tools   the tool implementations    14.5k  ←   depends on the other
           └── gateway-runtime  tool API + AppState/RamaState + chat driver   14.7k
                  ├── gateway-features  RAG, skills, ComfyUI, push, geoip, …  13.9k
@@ -59,7 +59,7 @@ What that buys, in lines that must recompile after a one-line edit:
 | pre-split monolith | **97,310** (one unit) |
 | `gateway` | 6,510 |
 | `gateway-tools` | 21,041 |
-| `gateway-web` | 32,017 |
+| `gateway-api` | 32,017 |
 | `gateway-runtime` | 61,266 |
 | `gateway-features` | 75,124 |
 | `gateway-core` | 97,189 |
@@ -69,7 +69,7 @@ glue — about 60% of file touches over six months) are the cheapest to rebuild,
 `gateway-core` — the one that still costs a full rebuild — is the least-edited.
 
 Those counts are the measurement that motivated the split, taken before the SPA
-migration deleted the server-rendered page stack; `gateway-web` is roughly a third
+migration deleted the server-rendered page stack; `gateway-api` is roughly a third
 of the size quoted above now. The ordering — and therefore the rule below — is
 unchanged, and UI work no longer recompiles Rust at all.
 
@@ -123,7 +123,7 @@ Where the world gets tied together:
 - `server/{scheduled,webhooks,compaction,headless}` — the background workers that need state.
 - `server/comfyui_tool.rs` — the ComfyUI `Tool`/`ToolSource` impls and the `ComfyuiHandle` that `AppState` holds. Split out of `gateway-features`' `comfyui/` because it needs the tool API.
 
-`gateway-tools` and `gateway-web` both sit on this and neither depends on the
+`gateway-tools` and `gateway-api` both sit on this and neither depends on the
 other, so a tool edit and a page edit stay independent.
 
 ### `crates/gateway-tools`
@@ -133,7 +133,7 @@ The tool implementations — one module per tool family (`fetch_url`,
 `gateway-runtime` and are registered into the `ToolRegistry` that `gateway`'s
 `main.rs` builds.
 
-A pure sink like `gateway-web`, and a sibling of it. Two tests live in
+A pure sink like `gateway-api`, and a sibling of it. Two tests live in
 `tests/` rather than beside their code because they span both layers — the
 catalog-grouping and `AppState`-authorization tests need the machinery from
 `gateway-runtime` *and* the real concrete tools from here. A unit test inside
@@ -143,7 +143,7 @@ constraint is why a handful of test-support helpers (`ToolContext::for_test`,
 `pdf::test_support`, `comfyui::Client::with_http`) are plain `pub` rather than
 `#[cfg(test)]`.
 
-### `crates/gateway-web`
+### `crates/gateway-api`
 The `/api/v0` JSON handlers the SPA calls — everything the deleted page stack used
 to render server-side, now answering JSON instead. `pages/mod.rs` carries the
 shared helpers every handler uses — `require_session_json` / `require_admin_json`
@@ -164,11 +164,11 @@ invalidating `gateway-core`.
 
 ### `crates/gateway`
 The binary and its routing glue — deliberately thin:
-- `router.rs` — builds the `rama::http::service::web::Router`, mounting handlers from `gateway-web` and this crate.
+- `router.rs` — builds the `rama::http::service::web::Router`, mounting handlers from `gateway-api` and this crate.
 - `proxy.rs` — `/v1/{models,chat/completions,audio/transcriptions,audio/speech,embeddings,images/generations,images/edits}` handlers. The chat path branches between a streaming fast-path (no tool grants) and the buffered tool-call loop; embeddings, images, and speech are byte-dumb relays to their pool kind.
 - `api.rs` — session-authed JSON at `/api/v0/*`.
 - `oidc_handlers.rs` — `/auth/{login,callback,logout}`, backed by a `pending_logins` row keyed by the OIDC `state` parameter.
-- `rag_api.rs`, `sandbox_api.rs`, `comfyui_api.rs`, `setup_api.rs` — the remaining JSON surfaces. (`setup_api.rs` lives here rather than in `gateway-web` so the first-run wizard's API survived the removal of the page stack.)
+- `rag_api.rs`, `sandbox_api.rs`, `comfyui_api.rs`, `setup_api.rs` — the remaining JSON surfaces. (`setup_api.rs` lives here rather than in `gateway-api` so the first-run wizard's API survived the removal of the page stack.)
 - `spa.rs` — serves the built SvelteKit SPA from `GATEWAY_STATIC_DIR`: content-type map, cache policy, traversal guard, and the `index.html` history fallback. Its `GET /` + `GET /{*name}` catch-all is registered **last**, because rama matches in registration order.
 - `first_run.rs` — the layer that redirects everything to `/setup` until setup completes, with an allowlist for the SPA's static shell.
 - `vad.rs` — neural voice-activity detection, trimming silence off uploaded voice notes before Whisper sees them.
