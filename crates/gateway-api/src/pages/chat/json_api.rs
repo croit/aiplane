@@ -32,7 +32,7 @@ use gateway_runtime::rama_server::state::RamaState;
 use gateway_core::server::db::users::User;
 
 use super::{ChatSubmit, DocumentPath, RequestCtx, SubmitTurnError, TurnPath, submit_turn};
-use crate::pages::{json_error, json_ok as ok_json, require_session_json};
+use crate::pages::{bad_request, internal, json_error, json_ok as ok_json, not_found, read_json};
 use session_core::db as chat;
 
 /// The request facts a turn needs, read off the request while it is intact.
@@ -67,10 +67,7 @@ pub async fn sessions_list(
     >,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     if let Some(q) = params.q.filter(|q| !q.trim().is_empty()) {
         let hits = chat::search_sessions(&state.db, &user.id, q.trim(), 50)
             .await
@@ -90,11 +87,7 @@ pub async fn sessions_list(
     }
     match chat::list_sessions(&state.db, &user.id).await {
         Ok(sessions) => ok_json(StatusCode::OK, json!({ "sessions": sessions })),
-        Err(err) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        ),
+        Err(err) => internal(err),
     }
 }
 
@@ -105,17 +98,10 @@ pub struct SessionsQuery {
 
 /// POST /api/v0/chat/sessions — mint an empty conversation.
 pub async fn session_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     match chat::create_session(&state.db, &user.id).await {
         Ok(session) => ok_json(StatusCode::CREATED, json!({ "session": session })),
-        Err(err) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        ),
+        Err(err) => internal(err),
     }
 }
 
@@ -126,10 +112,7 @@ pub async fn session_get(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let session = match readable_session(&state, &user.id, &session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found_conversation(),
@@ -138,11 +121,7 @@ pub async fn session_get(
     let turns = match chat::list_turns(&state.db, &session_id).await {
         Ok(t) => t,
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     };
     ok_json(
@@ -158,10 +137,7 @@ pub async fn session_delete(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
@@ -171,11 +147,7 @@ pub async fn session_delete(
     let deleted = match chat::delete_session(&state.db, &user.id, &session_id).await {
         Ok(v) => v,
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     };
     if deleted {
@@ -198,36 +170,19 @@ pub async fn session_pin(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: PinBody = match serde_json::from_slice(&bytes) {
+    let parsed: PinBody = match read_json(body, "the pin body").await {
         Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the pin body: {err}"),
-            );
-        }
+        Err(resp) => return resp,
     };
     match chat::set_pinned(&state.db, &user.id, &session_id, parsed.pinned).await {
         Ok(true) => ok_json(StatusCode::OK, json!({ "pinned": parsed.pinned })),
         Ok(false) => not_found_conversation(),
-        Err(err) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        ),
+        Err(err) => internal(err),
     }
 }
 
@@ -249,10 +204,7 @@ pub async fn session_fork(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let src = match readable_session(&state, &user.id, &session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found_conversation(),
@@ -269,11 +221,7 @@ pub async fn session_fork(
     let (new_session, copies) = match chat::fork_session(&state.db, &src, &user.id).await {
         Ok(v) => v,
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     };
 
@@ -329,10 +277,7 @@ pub async fn message_send(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Two request shapes, one code path: JSON `{model, message}` for plain
     // text, multipart/form-data (like the legacy composer) when attachments
     // ride along — they must upload under the user-turn's S3 prefix, which
@@ -357,11 +302,7 @@ pub async fn message_send(
         Ok(Some(s)) => s,
         Ok(None) => return not_found_conversation(),
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     };
 
@@ -387,11 +328,7 @@ pub async fn message_send(
         let parsed: MessageBody = match serde_json::from_slice(&bytes) {
             Ok(p) => p,
             Err(err) => {
-                return json_error(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_request",
-                    &format!("parsing the message body: {err}"),
-                );
+                return bad_request(format!("parsing the message body: {err}"));
             }
         };
         ChatSubmit {
@@ -404,11 +341,7 @@ pub async fn message_send(
     };
     let has_attachments = !submit.attachments.is_empty();
     if submit.user_text.is_empty() && !has_attachments {
-        return json_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "message must not be empty",
-        );
+        return bad_request("message must not be empty");
     }
 
     ctx.voice_mode = submit.voice;
@@ -444,10 +377,7 @@ pub async fn session_cancel(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
@@ -474,10 +404,7 @@ pub async fn session_events(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     match readable_session(&state, &user.id, &session_id).await {
         Ok(Some(_)) => {}
         Ok(None) => return not_found_conversation(),
@@ -501,11 +428,7 @@ pub async fn session_events(
             let turns = match chat::list_turns(&state.db, &session_id).await {
                 Ok(t) => t,
                 Err(err) => {
-                    return json_error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "internal_error",
-                        &err.to_string(),
-                    );
+                    return internal(err);
                 }
             };
             let (tx, rx) = rama::futures::channel::mpsc::unbounded::<
@@ -529,11 +452,7 @@ pub async fn session_events(
             let turns = match chat::list_turns(&state.db, &session_id).await {
                 Ok(t) => t,
                 Err(err) => {
-                    return json_error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "internal_error",
-                        &err.to_string(),
-                    );
+                    return internal(err);
                 }
             };
             session_core::chrome::sse_response(&[
@@ -565,11 +484,7 @@ async fn readable_session(
 ) -> Result<Option<chat::Session>, Response> {
     match chat::get_session_readable(&state.db, user_id, session_id).await {
         Ok(s) => Ok(s),
-        Err(err) => Err(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        )),
+        Err(err) => Err(internal(err)),
     }
 }
 
@@ -596,45 +511,24 @@ pub async fn turn_retry(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Read off the whole request, before `into_parts` takes it apart.
     let ctx = request_ctx(&state, &req, false);
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: RetryBody = match serde_json::from_slice(&bytes) {
+    let parsed: RetryBody = match read_json(body, "the retry body").await {
         Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the retry body: {err}"),
-            );
-        }
+        Err(resp) => return resp,
     };
     let turn = match load_owned_turn(&state, &user, &session_id, &turn_id).await {
         Ok(t) => t,
         Err(resp) => return resp,
     };
     if turn.role != chat::TurnRole::Assistant {
-        return json_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "only assistant turns can be retried",
-        );
+        return bad_request("only assistant turns can be retried");
     }
     let orphaned = super::doomed_attachments(&state, &session_id, turn.seq).await;
     if let Err(err) = chat::delete_turns_from_seq(&state.db, &session_id, turn.seq).await {
-        return json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        );
+        return internal(err);
     }
     super::reclaim_attachments(&state, orphaned);
     match start_regeneration_json(&state, &user, &session_id, parsed.model, ctx).await {
@@ -659,61 +553,32 @@ pub async fn turn_edit(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Read off the whole request, before `into_parts` takes it apart.
     let ctx = request_ctx(&state, &req, false);
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: EditBody = match serde_json::from_slice(&bytes) {
+    let parsed: EditBody = match read_json(body, "the edit body").await {
         Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the edit body: {err}"),
-            );
-        }
+        Err(resp) => return resp,
     };
     let text = parsed.message.trim().to_string();
     if text.is_empty() {
-        return json_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "the message must not be empty",
-        );
+        return bad_request("the message must not be empty");
     }
     let turn = match load_owned_turn(&state, &user, &session_id, &turn_id).await {
         Ok(t) => t,
         Err(resp) => return resp,
     };
     if turn.role != chat::TurnRole::User {
-        return json_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "only your own messages can be edited",
-        );
+        return bad_request("only your own messages can be edited");
     }
     if let Err(err) = chat::update_user_turn_content(&state.db, &session_id, &turn_id, &text).await
     {
-        return json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        );
+        return internal(err);
     }
     let orphaned = super::doomed_attachments(&state, &session_id, turn.seq + 1).await;
     if let Err(err) = chat::delete_turns_from_seq(&state.db, &session_id, turn.seq + 1).await {
-        return json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        );
+        return internal(err);
     }
     super::reclaim_attachments(&state, orphaned);
     match start_regeneration_json(&state, &user, &session_id, parsed.model, ctx).await {
@@ -764,11 +629,7 @@ async fn start_regeneration_json(
         Ok(t) => t,
         Err(err) => {
             state.chats.clear(&user.id, &worker);
-            return Err(json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            ));
+            return Err(internal(err));
         }
     };
     let _ = chat::touch_session(&state.db, session_id).await;
@@ -797,32 +658,16 @@ async fn load_owned_turn(
     match chat::get_session(&state.db, &user.id, session_id).await {
         Ok(Some(_)) => {}
         Ok(None) => {
-            return Err(json_error(
-                StatusCode::NOT_FOUND,
-                "not_found",
-                "no such conversation",
-            ));
+            return Err(not_found("no such conversation"));
         }
         Err(err) => {
-            return Err(json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            ));
+            return Err(internal(err));
         }
     }
     match chat::get_turn(&state.db, session_id, turn_id).await {
         Ok(Some(t)) => Ok(t),
-        Ok(None) => Err(json_error(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "no such turn",
-        )),
-        Err(err) => Err(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        )),
+        Ok(None) => Err(not_found("no such turn")),
+        Err(err) => Err(internal(err)),
     }
 }
 
@@ -838,38 +683,21 @@ pub async fn session_share(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: ShareBody = match serde_json::from_slice(&bytes) {
+    let parsed: ShareBody = match read_json(body, "the share body").await {
         Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the share body: {err}"),
-            );
-        }
+        Err(resp) => return resp,
     };
     match chat::set_shared(&state.db, &user.id, &session_id, parsed.shared).await {
         Ok(_) => ok_json(
             StatusCode::OK,
             serde_json::json!({ "shared": parsed.shared }),
         ),
-        Err(err) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        ),
+        Err(err) => internal(err),
     }
 }
 
@@ -886,34 +714,17 @@ pub async fn session_effort(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: EffortBody = match serde_json::from_slice(&bytes) {
+    let parsed: EffortBody = match read_json(body, "the effort body").await {
         Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the effort body: {err}"),
-            );
-        }
+        Err(resp) => return resp,
     };
     if !matches!(parsed.effort.as_str(), "fast" | "standard" | "deep" | "max") {
-        return json_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "effort must be fast | standard | deep | max",
-        );
+        return bad_request("effort must be fast | standard | deep | max");
     }
     match gateway_core::server::db::chat_session_settings::set_effort(
         &state.db,
@@ -926,11 +737,7 @@ pub async fn session_effort(
             StatusCode::OK,
             serde_json::json!({ "effort": parsed.effort }),
         ),
-        Err(err) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        ),
+        Err(err) => internal(err),
     }
 }
 
@@ -941,10 +748,7 @@ pub async fn session_export_markdown(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let session = match readable_session(&state, &user.id, &session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found_conversation(),
@@ -953,11 +757,7 @@ pub async fn session_export_markdown(
     let turns = match chat::list_turns(&state.db, &session_id).await {
         Ok(t) => t,
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     };
     let opts = session_core::export::ExportOpts {
@@ -983,10 +783,7 @@ pub async fn session_export_pdf(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let session = match readable_session(&state, &user.id, &session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found_conversation(),
@@ -995,11 +792,7 @@ pub async fn session_export_pdf(
     let turns = match chat::list_turns(&state.db, &session_id).await {
         Ok(t) => t,
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     };
     let opts = session_core::export::ExportOpts {
@@ -1015,11 +808,7 @@ pub async fn session_export_pdf(
         ),
         Err(err) => {
             tracing::error!(error = %err, %session_id, "chat PDF export compile");
-            json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                "could not render the conversation as a PDF",
-            )
+            internal("could not render the conversation as a PDF")
         }
     }
 }
@@ -1042,10 +831,7 @@ pub async fn documents_list(
 ) -> Response {
     use gateway_core::server::db::documents;
 
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Every arm, not just `Ok(None)`: matching only the "definitely not
     // readable" case let a DB error fall straight THROUGH the authorization
     // check and on into serving the documents. An authorization gate that
@@ -1062,11 +848,7 @@ pub async fn documents_list(
                 "documents": docs.iter().map(document_summary).collect::<Vec<_>>(),
             }),
         ),
-        Err(err) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        ),
+        Err(err) => internal(err),
     }
 }
 
@@ -1083,10 +865,7 @@ pub async fn document_get(
 ) -> Response {
     use gateway_core::server::db::documents;
 
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Every arm, not just `Ok(None)`: matching only the "definitely not
     // readable" case let a DB error fall straight THROUGH the authorization
     // check and on into serving the documents. An authorization gate that
@@ -1101,11 +880,7 @@ pub async fn document_get(
         Ok(Some(pair)) => pair,
         Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such document"),
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     };
     let history = documents::list_versions(&state.db, &session_id, &doc_id)
@@ -1157,27 +932,14 @@ pub async fn document_edit(
 ) -> Response {
     use gateway_core::server::db::documents;
 
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: DocumentEditBody = match serde_json::from_slice(&bytes) {
+    let parsed: DocumentEditBody = match read_json(body, "the document body").await {
         Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the document body: {err}"),
-            );
-        }
+        Err(resp) => return resp,
     };
     if parsed.content.len() > documents::MAX_CONTENT_BYTES {
         return json_error(
@@ -1196,22 +958,14 @@ pub async fn document_edit(
         Ok(Some(d)) if !d.is_deleted() => d,
         Ok(_) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such document"),
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     };
     let unchanged = match documents::get_version(&state.db, &session_id, &doc_id, None).await {
         Ok(Some((_, ver))) => ver.content == content,
         Ok(None) => false,
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     };
     if !unchanged
@@ -1226,11 +980,7 @@ pub async fn document_edit(
         )
         .await
     {
-        return json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        );
+        return internal(err);
     }
     tracing::info!(
         user_id = %user.id, %session_id, document_id = %doc_id,
@@ -1273,17 +1023,10 @@ fn document_summary(doc: &gateway_core::server::db::documents::Document) -> serd
 /// that extractor lowercases segments, and both the marker match and the S3
 /// key need the name verbatim (`pic.PNG` is not `pic.png`).
 pub async fn attachment_remove(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let Some((session_id, turn_id, filename)) = attachment_delete_path_parts(req.uri().path())
     else {
-        return json_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "malformed attachment path",
-        );
+        return bad_request("malformed attachment path");
     };
     // Owner-only: removing content is a mutation, so a shared (read-only)
     // viewer must not reach it even though they can read the turn.
@@ -1294,11 +1037,7 @@ pub async fn attachment_remove(State(state): State<Arc<RamaState>>, req: Request
         Ok(Some(t)) => t,
         Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such message"),
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     };
 
@@ -1318,11 +1057,7 @@ pub async fn attachment_remove(State(state): State<Arc<RamaState>>, req: Request
         chat::set_content(&state.db, &turn_id, &new_content).await
     };
     if let Err(err) = write {
-        return json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        );
+        return internal(err);
     }
 
     // Reclaim the bytes. Best-effort, exactly as the legacy handler: the
@@ -1410,10 +1145,7 @@ pub async fn capabilities_list(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
@@ -1470,27 +1202,14 @@ pub async fn capabilities_set(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: CapabilityBody = match serde_json::from_slice(&bytes) {
+    let parsed: CapabilityBody = match read_json(body, "the capability body").await {
         Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the capability body: {err}"),
-            );
-        }
+        Err(resp) => return resp,
     };
     // The overlay is three-valued — On (row, enabled=1), Auto (no row) and
     // Off (row, enabled=0) — and the difference between the last two matters:
@@ -1545,11 +1264,7 @@ pub async fn capabilities_set(
             StatusCode::OK,
             serde_json::json!({ "tool_key": parsed.tool_key, "state": wanted }),
         ),
-        Err(err) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        ),
+        Err(err) => internal(err),
     }
 }
 
@@ -1575,10 +1290,7 @@ pub async fn owner_token_models(
     use gateway_core::server::db::token_models;
     use gateway_core::server::db::tokens;
 
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Owner-only: the token must exist AND belong to the caller. Someone
     // else's token is reported the same as a missing one — no probing for
     // live token ids across accounts.
@@ -1587,26 +1299,12 @@ pub async fn owner_token_models(
         _ => return json_error(StatusCode::NOT_FOUND, "not_found", "no such token"),
     }
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: OwnerModelsBody = match serde_json::from_slice(&bytes) {
+    let parsed: OwnerModelsBody = match read_json(body, "the models body").await {
         Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the models body: {err}"),
-            );
-        }
+        Err(resp) => return resp,
     };
     if parsed.restrict && parsed.models.is_empty() {
-        return json_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "restricting to an empty list would block every model",
-        );
+        return bad_request("restricting to an empty list would block every model");
     }
     let to_store: Vec<String> = if parsed.restrict {
         parsed.models
@@ -1617,11 +1315,7 @@ pub async fn owner_token_models(
         .await
     {
         Ok(()) => ok_json(StatusCode::OK, serde_json::json!({ "models": to_store })),
-        Err(err) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        ),
+        Err(err) => internal(err),
     }
 }
 
@@ -1641,10 +1335,7 @@ pub async fn owner_token_quota(
 ) -> Response {
     use gateway_core::server::db::limits::{self, Dimension, ManagedBy, SubjectType, Window};
 
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Owner-only: another user's token reads as missing — no cross-account
     // probing.
     let is_owner = matches!(
@@ -1655,36 +1346,18 @@ pub async fn owner_token_quota(
         return json_error(StatusCode::NOT_FOUND, "not_found", "no such token");
     }
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: OwnerQuotaBody = match serde_json::from_slice(&bytes) {
+    let parsed: OwnerQuotaBody = match read_json(body, "the quota body").await {
         Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the quota body: {err}"),
-            );
-        }
+        Err(resp) => return resp,
     };
     let Some(dimension) = Dimension::parse(&parsed.dimension) else {
-        return json_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "unknown dimension",
-        );
+        return bad_request("unknown dimension");
     };
     let Some(window) = Window::parse(&parsed.window) else {
         return json_error(StatusCode::BAD_REQUEST, "invalid_request", "unknown window");
     };
     if !parsed.value.is_finite() || parsed.value < 0.0 {
-        return json_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "value must be ≥ 0",
-        );
+        return bad_request("value must be ≥ 0");
     }
     match limits::upsert_checked(
         &state.db,
@@ -1699,11 +1372,7 @@ pub async fn owner_token_quota(
     .await
     {
         Ok(_) => ok_json(StatusCode::OK, serde_json::json!({ "ok": true })),
-        Err(err) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        ),
+        Err(err) => internal(err),
     }
 }
 
@@ -1724,33 +1393,18 @@ pub async fn owner_token_quota_delete(
 ) -> Response {
     use gateway_core::server::db::limits;
 
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     match gateway_core::server::db::tokens::find_by_id(&state.db, &token_id).await {
         Ok(Some(t)) if t.user_id == user.id => {}
         Ok(_) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such token"),
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     }
     match limits::delete_owner_rule(&state.db, &token_id, &rule_id).await {
         Ok(true) => ok_json(StatusCode::OK, serde_json::json!({ "deleted": true })),
-        Ok(false) => json_error(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "no such quota rule on this token",
-        ),
-        Err(err) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        ),
+        Ok(false) => not_found("no such quota rule on this token"),
+        Err(err) => internal(err),
     }
 }
 
@@ -1780,37 +1434,20 @@ pub async fn owner_token_mcp_policy(
 ) -> Response {
     use gateway_core::server::db::user_mcp::{AskOverApi, set_token_policy};
 
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Owner-only, and a foreign token reads as missing (no probing for live
     // ids across accounts).
     match gateway_core::server::db::tokens::find_by_id(&state.db, &token_id).await {
         Ok(Some(t)) if t.user_id == user.id => {}
         Ok(_) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such token"),
         Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
+            return internal(err);
         }
     }
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: McpPolicyBody = match serde_json::from_slice(&bytes) {
+    let parsed: McpPolicyBody = match read_json(body, "the policy body").await {
         Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the policy body: {err}"),
-            );
-        }
+        Err(resp) => return resp,
     };
     let policy = if parsed.allow {
         AskOverApi::Allow
@@ -1821,11 +1458,7 @@ pub async fn owner_token_mcp_policy(
         Ok(()) => ok_json(StatusCode::OK, serde_json::json!({ "allow": parsed.allow })),
         Err(err) => {
             tracing::warn!(error = %err, %token_id, "set token mcp policy");
-            json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            )
+            internal(err)
         }
     }
 }

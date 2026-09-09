@@ -18,7 +18,7 @@ use rama::http::service::web::extract::State;
 use rama::http::{Request, Response};
 
 use super::tool_toggles;
-use super::{json_error, json_ok, require_session_json};
+use super::{internal, json_ok, not_found, read_json};
 
 use gateway_core::server::db::user_tool_prefs;
 use gateway_runtime::rama_server::state::RamaState;
@@ -33,10 +33,7 @@ use gateway_runtime::rama_server::state::RamaState;
 /// every tool their roles grant, with its per-user enabled state and the
 /// same grouping the page renders.
 pub async fn tools_list_json(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let entries = tool_toggles::entries_for_roles(&state, &user.roles);
     let disabled = user_tool_prefs::disabled_for_user(&state.db, &user.id)
         .await
@@ -70,45 +67,24 @@ pub struct ToolsToggleBody {
 pub async fn tools_toggle_json(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     use rama::http::StatusCode;
 
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
-    };
-    let parsed: ToolsToggleBody = match serde_json::from_slice(&bytes) {
+    let parsed: ToolsToggleBody = match read_json(body, "the toggle body").await {
         Ok(p) => p,
-        Err(err) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                &format!("parsing the toggle body: {err}"),
-            );
-        }
+        Err(resp) => return resp,
     };
     // Refuse keys the caller's roles don't grant — toggling a tool you
     // cannot use would render a switch that lies.
     let entries = tool_toggles::entries_for_roles(&state, &user.roles);
     if !entries.iter().any(|e| e.key == parsed.tool_key) {
-        return json_error(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "no such tool for your roles",
-        );
+        return not_found("no such tool for your roles");
     }
     match user_tool_prefs::set(&state.db, &user.id, &parsed.tool_key, parsed.enabled).await {
         Ok(()) => json_ok(
             StatusCode::OK,
             serde_json::json!({ "tool_key": parsed.tool_key, "enabled": parsed.enabled }),
         ),
-        Err(err) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &err.to_string(),
-        ),
+        Err(err) => internal(err),
     }
 }
 

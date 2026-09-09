@@ -13,26 +13,7 @@ use rama::http::{Request, Response, StatusCode};
 use gateway_core::server::db;
 use gateway_runtime::rama_server::state::RamaState;
 
-use super::{json_error, json_ok, raw_path_segment, require_admin_json, require_session_json};
-
-fn bad_request(message: impl Into<String>) -> Response {
-    json_error(StatusCode::BAD_REQUEST, "invalid_request", &message.into())
-}
-
-fn internal(message: impl std::fmt::Display) -> Response {
-    json_error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "internal_error",
-        &message.to_string(),
-    )
-}
-
-fn no_content() -> Response {
-    Response::builder()
-        .status(StatusCode::NO_CONTENT)
-        .body(rama::http::Body::empty())
-        .expect("static empty response")
-}
+use super::{bad_request, internal, json_error, json_ok, no_content, raw_path_segment};
 
 // ---------------------------------------------------------------------------
 // Skills (user + admin)
@@ -53,10 +34,7 @@ fn skill_json(
 /// GET /api/v0/skills — the caller's effective skills: the global set their
 /// roles grant plus their private ones (which shadow on name collision).
 pub async fn skills_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let Some(user_store) = state.user_skills() else {
         // The feature is off, so the caller has no personal skills — and this
         // is the personal-skills surface. Falling back to `state.skills()`
@@ -84,10 +62,7 @@ pub async fn skills_list(State(state): State<Arc<RamaState>>, req: Request) -> R
 /// GET /api/v0/skills/{name}/body — the SKILL.md body (frontmatter
 /// stripped) for the caller's effective registry.
 pub async fn skill_body(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, and a skill name is stored with its case intact.
     let Some(name) = raw_path_segment(&req, 1) else {
@@ -119,10 +94,7 @@ pub async fn skill_body(State(state): State<Arc<RamaState>>, req: Request) -> Re
 /// A file download, not JSON: the body is the archive. Resolves against the
 /// caller's private registry only — see the note in the body.
 pub async fn skill_archive(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, and a skill name is stored with its case intact.
     let Some(name) = raw_path_segment(&req, 1) else {
@@ -163,10 +135,7 @@ pub async fn skill_archive(State(state): State<Arc<RamaState>>, req: Request) ->
 /// POST /api/v0/skills — upload a private `.skill` archive (multipart with
 /// a `file` part) or author inline (`{"name":…, "manifest":"…"}`).
 pub async fn skills_upload(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let Some(store) = state.user_skills() else {
         return json_error(
             StatusCode::FORBIDDEN,
@@ -237,10 +206,7 @@ pub async fn skills_upload(State(state): State<Arc<RamaState>>, req: Request) ->
 
 /// DELETE /api/v0/skills/{name} — remove one of the caller's private skills.
 pub async fn skills_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, and a skill name is stored with its case intact.
     let Some(name) = raw_path_segment(&req, 0) else {
@@ -265,10 +231,7 @@ pub async fn skills_delete(State(state): State<Arc<RamaState>>, req: Request) ->
 
 /// GET /api/v0/admin/skills — the global catalog + the role-grant overlay.
 pub async fn admin_skills_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let skills = match state.skills() {
         Some(store) => {
             let registry = store.current();
@@ -307,10 +270,7 @@ pub async fn admin_skills_list(State(state): State<Arc<RamaState>>, req: Request
 /// POST /api/v0/admin/skills — install a `.skill` archive into the global
 /// catalog (multipart `file` part). Live without a restart.
 pub async fn admin_skills_upload(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let Some(store) = state.skills() else {
         return internal("the skills directory is not configured");
     };
@@ -356,10 +316,7 @@ pub async fn admin_skills_upload(State(state): State<Arc<RamaState>>, req: Reque
 
 /// DELETE /api/v0/admin/skills/{name} — remove a global skill + its grants.
 pub async fn admin_skills_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, and a skill name is stored with its case intact.
     let Some(name) = raw_path_segment(&req, 0) else {
@@ -386,10 +343,7 @@ pub struct SkillGrantsBody {
 /// (on top of the static `[[roles]].skills` config), live via the RBAC
 /// overlay.
 pub async fn admin_skills_grants(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -417,10 +371,7 @@ pub async fn admin_skills_grants(State(state): State<Arc<RamaState>>, req: Reque
 
 /// GET /api/v0/admin/connectors — the MCP catalog + recent audit.
 pub async fn admin_connectors_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let connectors = db::mcp_catalog::list_all(&state.db)
         .await
         .unwrap_or_default();
@@ -470,10 +421,7 @@ pub struct ConnectorInputBody {
 /// PUT /api/v0/admin/connectors — create/update a catalog entry. The
 /// client secret is sealed before storage.
 pub async fn admin_connectors_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -553,10 +501,7 @@ pub async fn admin_connectors_toggle(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, and a connector key is stored with its case intact.
     let Some(key) = raw_path_segment(&req, 1) else {
@@ -585,10 +530,7 @@ pub async fn admin_connectors_delete(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, and a connector key is stored with its case intact.
     let Some(key) = raw_path_segment(&req, 0) else {
@@ -607,10 +549,7 @@ pub async fn admin_connectors_restore_defaults(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     match db::mcp_catalog::seed_defaults(&state.db).await {
         Ok(count) => json_ok(StatusCode::OK, serde_json::json!({ "seeded": count })),
         Err(err) => internal(err),
@@ -623,10 +562,7 @@ pub async fn admin_connectors_restore_defaults(
 /// GET /api/v0/integrations — the enabled connectors + the caller's
 /// connection state per connector.
 pub async fn integrations_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let connectors = db::mcp_catalog::list_enabled(&state.db)
         .await
         .unwrap_or_default();
@@ -672,10 +608,7 @@ pub async fn integrations_connect_token(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, and a connector key is stored with its case intact.
     let Some(key) = raw_path_segment(&req, 1) else {
@@ -765,10 +698,7 @@ pub async fn integrations_disconnect(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, and a connector key is stored with its case intact.
     let Some(key) = raw_path_segment(&req, 1) else {

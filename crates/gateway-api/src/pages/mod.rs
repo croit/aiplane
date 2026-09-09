@@ -44,6 +44,30 @@ macro_rules! require_session {
     };
 }
 
+/// The JSON twin of [`require_session!`]: resolve the caller or `return` the
+/// 401 envelope. Binding stays at the call site, so both shapes work:
+/// `let (session, user) = require_session_json!(state, req);`
+/// `let (_, user) = require_session_json!(state, req);`
+macro_rules! require_session_json {
+    ($state:expr, $req:expr) => {
+        match crate::pages::require_session_json(&$state, &$req).await {
+            Ok(v) => v,
+            Err(resp) => return resp,
+        }
+    };
+}
+
+/// Admin gate, same shape. A non-admin gets 403, not a redirect — an API
+/// caller has nowhere to be redirected to.
+macro_rules! require_admin_json {
+    ($state:expr, $req:expr) => {
+        match crate::pages::require_admin_json(&$state, &$req).await {
+            Ok(v) => v,
+            Err(resp) => return resp,
+        }
+    };
+}
+
 /// True when the user holds any role flagged `admin = true` in config.
 /// Used to gate `/admin/*` routes and conditionally render the Admin
 /// sidebar entry.
@@ -237,6 +261,56 @@ pub(crate) fn json_error(status: rama::http::StatusCode, code: &str, message: &s
         .header(header::CONTENT_TYPE, "application/json")
         .body(body.to_string().into())
         .expect("static JSON response")
+}
+
+// ---------------------------------------------------------------------------
+// Shared shapes for the `/api/v0` handlers.
+
+/// 400 with the error envelope.
+pub(crate) fn bad_request(message: impl Into<String>) -> Response {
+    json_error(StatusCode::BAD_REQUEST, "invalid_request", &message.into())
+}
+
+/// 500 with the error envelope. Takes anything printable so a `Display` error
+/// can go straight in.
+pub(crate) fn internal(message: impl std::fmt::Display) -> Response {
+    json_error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_error",
+        &message.to_string(),
+    )
+}
+
+/// 404 with the error envelope.
+pub(crate) fn not_found(message: impl Into<String>) -> Response {
+    json_error(StatusCode::NOT_FOUND, "not_found", &message.into())
+}
+
+/// 204, for a handler whose success carries no body.
+pub(crate) fn no_content() -> Response {
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .body(rama::http::Body::empty())
+        .expect("static empty response")
+}
+
+/// Drain a request body and deserialize it, or hand back the 400 to return.
+///
+/// `what` names the payload for the error message — "the action body", "the
+/// token body" — because "invalid JSON" on its own tells a caller nothing
+/// about which of several bodies an endpoint accepts was wrong.
+///
+/// Takes the body rather than the `Request` because most handlers need the
+/// request first (the auth gate borrows it, and anything reading a raw path
+/// segment or a header must do so before `into_parts` consumes it).
+pub(crate) async fn read_json<T: serde::de::DeserializeOwned>(
+    body: rama::http::Body,
+    what: &str,
+) -> Result<T, Response> {
+    let bytes = session_core::chrome::read_body_to_bytes(body)
+        .await
+        .map_err(bad_request)?;
+    serde_json::from_slice(&bytes).map_err(|err| bad_request(format!("parsing {what}: {err}")))
 }
 
 /// Bounce an unauthenticated request to `/login`, preserving the originally

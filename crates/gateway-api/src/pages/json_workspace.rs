@@ -17,29 +17,14 @@ use gateway_runtime::rama_server::state::RamaState;
 use gateway_runtime::server::scheduled::{self, cron::Cron};
 use gateway_runtime::server::webhooks;
 
-use super::{json_error, json_ok, require_session_json};
-
-fn bad_request(message: impl Into<String>) -> Response {
-    json_error(StatusCode::BAD_REQUEST, "invalid_request", &message.into())
-}
-
-fn internal(message: impl std::fmt::Display) -> Response {
-    json_error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "internal_error",
-        &message.to_string(),
-    )
-}
+use super::{bad_request, internal, json_error, json_ok};
 
 // ---------------------------------------------------------------------------
 // Memories
 
 /// GET /api/v0/memories — the caller's structured memories.
 pub async fn memories_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     match db::user_memories::list_for_user(&state.db, &user.id, 500).await {
         Ok(rows) => json_ok(
             StatusCode::OK,
@@ -75,10 +60,7 @@ fn parse_kind(kind: &str) -> Option<db::user_memories::MemoryKind> {
 
 /// POST /api/v0/memories
 pub async fn memories_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -110,10 +92,7 @@ pub async fn memories_update(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -143,10 +122,7 @@ pub async fn memories_delete(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     match db::user_memories::delete(&state.db, &user.id, &id).await {
         Ok(true) => Response::builder()
             .status(StatusCode::NO_CONTENT)
@@ -180,10 +156,7 @@ fn action_json(a: &scheduled::ScheduledAction) -> serde_json::Value {
 
 /// GET /api/v0/scheduled — the caller's actions.
 pub async fn scheduled_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     match scheduled::list_for_user(&state.db, &user.id).await {
         Ok(rows) => json_ok(
             StatusCode::OK,
@@ -222,10 +195,7 @@ async fn compute_next(cron: &str, tz_name: &str) -> Result<Option<jiff::Timestam
 
 /// POST /api/v0/scheduled
 pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -292,10 +262,7 @@ pub async fn scheduled_update(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -358,10 +325,7 @@ pub async fn scheduled_toggle(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -402,10 +366,7 @@ pub async fn scheduled_delete(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     match scheduled::delete(&state.db, &user.id, &id).await {
         Ok(true) => Response::builder()
             .status(StatusCode::NO_CONTENT)
@@ -426,10 +387,7 @@ pub struct CronPreviewBody {
 /// POST /api/v0/scheduled/preview — validate + describe a cron expression,
 /// with its next three fire times. Pure computation, no writes.
 pub async fn scheduled_preview(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -486,10 +444,7 @@ fn webhook_json(w: &webhooks::Webhook) -> serde_json::Value {
 
 /// GET /api/v0/webhooks — the caller's webhooks.
 pub async fn webhooks_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     match webhooks::list_for_user(&state.db, &user.id).await {
         Ok(rows) => json_ok(
             StatusCode::OK,
@@ -539,10 +494,7 @@ fn validate_webhook(parsed: &WebhookBody) -> Result<(), String> {
 /// POST /api/v0/webhooks — create; the trigger secret is minted once and
 /// returned exactly once.
 pub async fn webhooks_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -582,10 +534,7 @@ pub async fn webhooks_update(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -626,10 +575,7 @@ pub async fn webhooks_toggle(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -656,10 +602,7 @@ pub async fn webhooks_rotate(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (secret, hash) = auth_token::mint_webhook();
     match webhooks::rotate_secret(&state.db, &user.id, &id, &hash).await {
         Ok(true) => json_ok(StatusCode::OK, serde_json::json!({ "secret": secret })),
@@ -674,10 +617,7 @@ pub async fn webhooks_delete(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     match webhooks::delete(&state.db, &user.id, &id).await {
         Ok(true) => Response::builder()
             .status(StatusCode::NO_CONTENT)
@@ -700,10 +640,7 @@ pub async fn webhooks_runs(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let hook = match webhooks::get(&state.db, &user.id, &id).await {
         Ok(Some(h)) => h,
         Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such webhook"),
@@ -755,10 +692,7 @@ pub async fn webhooks_rerun(
     use gateway_core::server::db::usage::UsageSource;
     use gateway_runtime::server::headless::{self, DriveParams, OpenParams};
 
-    let (_session, user) = match require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,

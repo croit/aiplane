@@ -26,19 +26,7 @@ use gateway_core::server::settings;
 use gateway_core::server::upstreams;
 use gateway_runtime::rama_server::state::RamaState;
 
-use super::{json_error, json_ok, raw_path_segment, require_admin_json};
-
-fn bad_request(message: impl Into<String>) -> Response {
-    json_error(StatusCode::BAD_REQUEST, "invalid_request", &message.into())
-}
-
-fn internal(message: impl std::fmt::Display) -> Response {
-    json_error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "internal_error",
-        &message.to_string(),
-    )
-}
+use super::{bad_request, internal, json_error, json_ok, raw_path_segment};
 
 // ---------------------------------------------------------------------------
 // Groups
@@ -46,10 +34,7 @@ fn internal(message: impl std::fmt::Display) -> Response {
 /// GET /api/v0/admin/groups — the RBAC groups with their OIDC mappings,
 /// tool grants, and skill grants, plus the pickers' option sets.
 pub async fn groups_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let mut groups = Vec::new();
     for g in db::gateway_groups::list_groups(&state.db)
         .await
@@ -115,10 +100,7 @@ pub struct GroupSaveBody {
 /// PUT /api/v0/admin/groups — upsert a group and replace its mappings and
 /// grants, then reload the RBAC resolver so the change is live.
 pub async fn groups_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -163,10 +145,7 @@ pub async fn groups_save(State(state): State<Arc<RamaState>>, req: Request) -> R
 /// DELETE /api/v0/admin/groups/{name} — remove a group (cascades its
 /// mappings + grants), then reload the resolver.
 pub async fn groups_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, which would turn a group name into something
     // that matches no row — reported as a successful delete of nothing.
@@ -190,10 +169,7 @@ pub async fn groups_delete(State(state): State<Arc<RamaState>>, req: Request) ->
 
 /// GET /api/v0/admin/users — every known user with their roles.
 pub async fn users_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let all = match db::users::list_all(&state.db).await {
         Ok(v) => v,
         Err(err) => return internal(err),
@@ -220,10 +196,7 @@ pub async fn users_impersonate(State(state): State<Arc<RamaState>>, req: Request
     use gateway_core::rama_server::session::secure_cookies;
     use rama::http::header;
 
-    let (session, admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (session, admin) = require_admin_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, which would turn a case-sensitive OIDC subject into something
     // that matches no row — reported as "No such user" for a user who exists.
@@ -245,11 +218,7 @@ pub async fn users_impersonate(State(state): State<Arc<RamaState>>, req: Request
         );
     }
     if user_id == admin.id {
-        return json_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "You can't impersonate yourself.",
-        );
+        return bad_request("You can't impersonate yourself.");
     }
     let target = match db::users::find_by_id(&state.db, &user_id).await {
         Ok(Some(u)) => u,
@@ -297,10 +266,7 @@ pub async fn impersonate_stop(State(state): State<Arc<RamaState>>, req: Request)
     use gateway_core::rama_server::session::secure_cookies;
     use rama::http::header;
 
-    let (session, _target) = match super::require_session_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (session, _target) = require_session_json!(state, req);
     let Some(admin_id) = session.impersonator_id.clone() else {
         return json_ok(
             StatusCode::OK,
@@ -356,10 +322,7 @@ pub async fn impersonate_stop(State(state): State<Arc<RamaState>>, req: Request)
 pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     use gateway_core::server::feature_defaults::{self, Feature};
 
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let offered: Vec<String> = state.upstreams.all_models();
     // One read of the overrides table, then pure in-memory joining. Reading
     // per model made this page cost a round-trip per offered model, twice.
@@ -453,10 +416,7 @@ fn model_defaults_json(d: &db::model_defaults::ModelDefaults) -> serde_json::Val
 /// body mirrors the legacy form's string fields verbatim (blank = clear),
 /// so the shared validation core sees identical input from both surfaces.
 pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -509,10 +469,7 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
 
 /// DELETE /api/v0/admin/models/{name} — drop a model's stored overrides.
 pub async fn models_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, which would turn a model id like `Qwen/Qwen3-32B` into something
     // that matches no row — reported as 204 No Content for a row that is still there.
@@ -539,10 +496,7 @@ pub struct FeatureDefaultBody {
 pub async fn models_feature_default(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     use gateway_core::server::feature_defaults::{self, Feature};
 
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -582,10 +536,7 @@ pub struct SearchSettingsBody {
 pub async fn models_search_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     use gateway_features::server::search_settings::{self, SearchProvider};
 
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -622,10 +573,7 @@ pub async fn models_search_save(State(state): State<Arc<RamaState>>, req: Reques
 
 /// GET /api/v0/admin/limits — every rule with the pickers' option sets.
 pub async fn limits_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let rules = match limits::list_all(&state.db).await {
         Ok(v) => v,
         Err(err) => return internal(err),
@@ -683,10 +631,7 @@ pub struct LimitBody {
 /// POST /api/v0/admin/limits — upsert one rule (admin rules outrank owner
 /// rules; same validations as the form path).
 pub async fn limits_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -765,10 +710,7 @@ pub async fn limits_delete(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     match limits::delete(&state.db, &id).await {
         Ok(()) => Response::builder()
             .status(StatusCode::NO_CONTENT)
@@ -786,10 +728,7 @@ pub async fn limits_delete(
 /// the restart-pending list. The SPA renders its own labels; the spec's
 /// i18n keys are for the legacy page and omitted here.
 pub async fn settings_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let effective = settings::effective(&state.config());
     let restart_pending = settings::restart_pending(&state.db)
         .await
@@ -854,10 +793,7 @@ pub struct SettingsSaveBody {
 /// coercion rules, mark settings operator-owned, push the hot reload
 /// (config snapshot + session policy), and track restart-pending fields.
 pub async fn settings_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -954,10 +890,7 @@ pub struct SettingsClearBody {
 /// POST /api/v0/admin/settings/clear — drop one stored value (the only way
 /// to remove a secret); the built-in default applies again.
 pub async fn settings_clear(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -984,10 +917,7 @@ pub async fn settings_clear(State(state): State<Arc<RamaState>>, req: Request) -
 /// (owner vs admin lists), per-token limits, month-to-date usage, and the
 /// pickable model set.
 pub async fn tokens_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (session, _admin) = require_admin_json!(state, req);
     let tokens = match db::tokens::list_all_with_owner(&state.db).await {
         Ok(v) => v,
         Err(err) => return internal(err),
@@ -1086,10 +1016,7 @@ pub async fn tokens_models(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -1127,10 +1054,7 @@ use gateway_core::server::db::upstreams_config::{self, AliasRow, BackendRow, Poo
 /// GET /api/v0/admin/upstreams — the DB topology, the live registry health,
 /// the last hour of per-backend request counts, and the dirty counter.
 pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let snapshot = match upstreams_config::load_snapshot(&state.db).await {
         Ok(s) => s,
         Err(err) => return internal(err),
@@ -1263,10 +1187,7 @@ pub struct AliasBody {
 /// drain state) and optionally set its pool membership. Marks the topology
 /// dirty; the registry picks it up on the apply.
 pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -1367,10 +1288,7 @@ pub struct EnabledBody {
 /// POST /api/v0/admin/backends/{name}/enabled — drain/undrain. Mirrors the
 /// form path: this one IS live (registry flip, no reload needed, no dirty).
 pub async fn backends_enabled(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, which would turn a backend name into something
     // that matches no row — reported as a drain that silently did nothing.
@@ -1399,10 +1317,7 @@ pub async fn backends_enabled(State(state): State<Arc<RamaState>>, req: Request)
 
 /// DELETE /api/v0/admin/backends/{name} — remove from the DB topology.
 pub async fn backends_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, which would turn a backend name into something
     // that matches no row — reported as 204 No Content for a row that is still there.
@@ -1458,10 +1373,7 @@ pub struct VoiceBody {
 
 /// PUT /api/v0/admin/pools — upsert a pool row. Marks the topology dirty.
 pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -1542,10 +1454,7 @@ fn pool_kind_exists(kind: &str) -> bool {
 
 /// DELETE /api/v0/admin/pools/{name}
 pub async fn pools_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, which would turn a pool name into something
     // that matches no row — reported as 204 No Content for a row that is still there.
@@ -1574,10 +1483,7 @@ pub struct FallbackBody {
 /// PUT /api/v0/admin/upstreams/fallback — set/clear a kind's unknown-model
 /// fallback. Live immediately: fallbacks are re-read per model miss.
 pub async fn topology_fallback(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -1605,10 +1511,7 @@ pub async fn topology_fallback(State(state): State<Arc<RamaState>>, req: Request
 /// registry (unsealing keys, carrying live model sets), respawn the health
 /// probes, reset the dirty counter.
 pub async fn topology_reload(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let snapshot = match upstreams_config::load_snapshot(&state.db).await {
         Ok(s) => s,
         Err(err) => return internal(err),
@@ -1631,10 +1534,7 @@ pub async fn topology_reload(State(state): State<Arc<RamaState>>, req: Request) 
 /// comment keepalive every 20 s. The JSON twin of the legacy
 /// `/admin/upstreams/live` HTML-patch stream.
 pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = match require_admin_json(&state, &req).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
+    let (_session, _admin) = require_admin_json!(state, req);
     let (tx, rx) =
         rama::futures::channel::mpsc::unbounded::<Result<rama::bytes::Bytes, std::io::Error>>();
     let state = state.clone();
