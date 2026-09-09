@@ -54,7 +54,14 @@ const PAGES = [
 
 for (const [path, label] of PAGES) {
     const isAdminPage = path.startsWith("/admin");
-    (isAdminPage && !adminOk ? test.skip : test)(`page renders: ${path}${isAdminPage && !adminOk ? " (skipped: no admin session — set GATEWAY_SESSION_COOKIE)" : ""}`, async () => {
+    test(`page renders: ${path}`, async (t) => {
+        // Decide to skip HERE, not in the test *name*: the module body runs
+        // before before(), so `adminOk` was still false at declaration time
+        // and every admin page skipped even with a working admin session.
+        if (isAdminPage && !adminOk) {
+            t.skip("no admin session — set GATEWAY_SESSION_COOKIE");
+            return;
+        }
         const ctx = await browser.newContext({ colorScheme: "dark" });
         await ctx.addCookies([
             { name: "id", value: isAdminPage && adminCookie ? adminCookie : await devSessionCookie(), url: BASE },

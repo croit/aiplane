@@ -62,7 +62,15 @@ test("/v1/chat/completions returns 401 with a malformed bearer", async () => {
     assert.equal(r.status, 401);
 });
 
-test("unknown route returns 404", async () => {
+// An unknown path belongs to the SPA, not to the server: the client router
+// decides whether it is a real route or a typo, so the server hands back the
+// app shell. What must NOT happen is the catch-all swallowing the API, so the
+// assertion that carries weight is the second one.
+test("an unknown route serves the app, but does not shadow the API", async () => {
     const r = await fetch(`${BASE}/this-route-does-not-exist`);
-    assert.equal(r.status, 404);
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get("content-type") ?? "", /text\/html/);
+
+    const api = await fetch(`${BASE}/api/v0/this-endpoint-does-not-exist`);
+    assert.equal(api.status, 404, "the API must still 404 rather than return the shell");
 });

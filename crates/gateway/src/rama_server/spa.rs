@@ -76,11 +76,32 @@ pub async fn spa_get(req: Request) -> Response {
     serve(&STATIC_ROOT, &req).await
 }
 
+/// Namespaces that belong to the API, not to the client router.
+///
+/// The catch-all is registered last, so a request for an endpoint that does
+/// not exist — a typo, or one that was removed — would otherwise fall through
+/// to here and be answered with the app shell and a 200. A caller then gets
+/// HTML where it expected JSON and a success code where it expected 404,
+/// which is a genuinely confusing thing to debug. Anything under these
+/// prefixes gets an honest 404 instead.
+const API_PREFIXES: [&str; 3] = ["/api/", "/v1/", "/auth/"];
+
 /// Serve the SPA for `req`, rooted at `root`. Pure with respect to the
 /// filesystem (reads via `tokio::fs`) and the request — no global state — so
 /// it is directly unit-testable against a temp dir.
 async fn serve(root: &Path, req: &Request) -> Response {
     let path = req.uri().path();
+
+    if API_PREFIXES.iter().any(|p| path.starts_with(p)) {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"error":{"message":"no such endpoint","type":"not_found","code":"not_found"}}"#,
+            ))
+            .expect("static JSON 404");
+    }
+
     // `path` is the original-case URI path (rama lowercases only the matched
     // prefix for routing), so a content-hashed filename keeps its case here.
     // Everything below the root is relative to the build directory.
@@ -370,6 +391,40 @@ mod tests {
         let empty = std::path::Path::new("/nonexistent-gateway-static-dir-xyz");
         let resp = serve(empty, &get("/")).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// An unknown API path must not be answered with the app shell.
+    ///
+    /// The catch-all is registered last, so every mistyped or removed endpoint
+    /// lands here. Serving index.html with a 200 would hand an API caller HTML
+    /// where it expected JSON, and success where it expected 404 — the sort of
+    /// answer that sends someone debugging their own client for an hour.
+    #[tokio::test]
+    async fn an_unknown_api_path_is_a_json_404_not_the_app_shell() {
+        let (_d, root) = spa_tempdir();
+        for uri in [
+            "/api/v0/no-such-endpoint",
+            "/v1/no-such-endpoint",
+            "/auth/no-such-endpoint",
+        ] {
+            let resp = serve(&root, &get(uri)).await;
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{uri}");
+            let ct = resp
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            assert!(ct.contains("json"), "{uri} answered {ct}, not JSON");
+        }
+
+        // …while a client route with the same shape still gets the shell.
+        let resp = serve(&root, &get("/apiary")).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "only the API namespaces are excluded, not any path starting with those letters"
+        );
     }
 
     #[test]

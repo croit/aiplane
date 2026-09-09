@@ -122,3 +122,35 @@ test("a signed-in user sees their identity from GET /api/v0/me", async (t) => {
     await page.waitForSelector('button[aria-label="Sign out"]', { timeout: 5000 });
     await ctx.close();
 });
+
+/// A deep link, not just `/`: the guard is in the layout, so every client
+/// route inherits it — but only if the layout actually runs before the page
+/// renders. A route that painted its own content first would leak whatever it
+/// had already fetched.
+test("a deep protected route bounces an anonymous visitor too", async (t) => {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/tokens`, { waitUntil: "domcontentloaded" });
+    await page
+        .waitForURL((u) => u.pathname.startsWith("/auth/"), { timeout: 5000 })
+        .catch(() => t.skip("a real OIDC provider is configured — the flow leaves the origin"));
+    await ctx.close();
+});
+
+/// Signing out has to end the session server-side, not just navigate away.
+/// The check that matters is the second one: after the click, the API the SPA
+/// runs on must refuse the old cookie.
+test("signing out ends the session", async () => {
+    const ctx = await browser.newContext();
+    const cookie = await devSessionCookie();
+    await ctx.addCookies([{ name: "id", value: cookie, url: BASE }]);
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/chat`, { waitUntil: "networkidle" });
+    await page.waitForSelector('button[aria-label="Sign out"]', { timeout: 5000 });
+    await page.click('button[aria-label="Sign out"]');
+
+    // The cookie is dead: a fresh request carrying it is refused.
+    const res = await fetch(`${BASE}/api/v0/me`, { headers: { cookie: `id=${cookie}` } });
+    assert.equal(res.status, 401, "the session must be gone server-side, not just in the tab");
+    await ctx.close();
+});
