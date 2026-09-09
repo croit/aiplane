@@ -455,7 +455,21 @@ pub async fn setup_finish(State(state): State<Arc<RamaState>>, req: Request) -> 
     if !parsed.manual_claim.trim().is_empty() && !parsed.manual_value.trim().is_empty() {
         admin_claim = parsed.manual_claim.trim().to_owned();
         admin_value = parsed.manual_value.trim().to_owned();
-    } else if let (Some(c), Some(v)) = (parsed.claim.as_deref(), parsed.value.as_deref()) {
+    } else if let (Some(c), Some(v)) = (
+        // Empty is not a choice. Without this a caller could write
+        // `roles_claim: Some("")` and map the admin group to `[""]`, which is
+        // a gateway whose administrator is "whoever has a blank claim".
+        parsed
+            .claim
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty()),
+        parsed
+            .value
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+    ) {
         admin_claim = c.to_owned();
         admin_value = v.to_owned();
     } else {

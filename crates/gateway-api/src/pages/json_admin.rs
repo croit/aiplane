@@ -25,7 +25,7 @@ use gateway_core::server::db::limits;
 use gateway_core::server::settings;
 use gateway_runtime::rama_server::state::RamaState;
 
-use super::{json_error, json_ok, require_admin_json};
+use super::{json_error, json_ok, raw_path_segment, require_admin_json};
 
 fn bad_request(message: impl Into<String>) -> Response {
     json_error(StatusCode::BAD_REQUEST, "invalid_request", &message.into())
@@ -161,14 +161,16 @@ pub async fn groups_save(State(state): State<Arc<RamaState>>, req: Request) -> R
 
 /// DELETE /api/v0/admin/groups/{name} — remove a group (cascades its
 /// mappings + grants), then reload the resolver.
-pub async fn groups_delete(
-    Path(name): Path<String>,
-    State(state): State<Arc<RamaState>>,
-    req: Request,
-) -> Response {
+pub async fn groups_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = match require_admin_json(&state, &req).await {
         Ok(v) => v,
         Err(resp) => return resp,
+    };
+    // Raw URI, not the `Path` extractor: rama lowercases path segments and
+    // never percent-decodes them, which would turn a group name into something
+    // that matches no row — reported as a successful delete of nothing.
+    let Some(name) = raw_path_segment(&req, 0) else {
+        return bad_request("the URL is missing its group name");
     };
     // Skill grants live in their own table without an FK — clear explicitly.
     let _ = db::skill_grants::set_skills_for_role(&state.db, &name, &[]).await;
@@ -213,17 +215,19 @@ pub async fn users_list(State(state): State<Arc<RamaState>>, req: Request) -> Re
 /// POST /api/v0/admin/users/{id}/impersonate — mint an impersonation
 /// session for the target and hand it back as a Set-Cookie (the SPA
 /// reloads to become the target).
-pub async fn users_impersonate(
-    Path(user_id): Path<String>,
-    State(state): State<Arc<RamaState>>,
-    req: Request,
-) -> Response {
+pub async fn users_impersonate(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     use gateway_core::rama_server::session::secure_cookies;
     use rama::http::header;
 
     let (session, admin) = match require_admin_json(&state, &req).await {
         Ok(v) => v,
         Err(resp) => return resp,
+    };
+    // Raw URI, not the `Path` extractor: rama lowercases path segments and
+    // never percent-decodes them, which would turn a case-sensitive OIDC subject into something
+    // that matches no row — reported as "No such user" for a user who exists.
+    let Some(user_id) = raw_path_segment(&req, 1) else {
+        return bad_request("the URL is missing its user id");
     };
     if !state.config().gateway.allow_impersonation {
         return json_error(
@@ -502,14 +506,16 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
 }
 
 /// DELETE /api/v0/admin/models/{name} — drop a model's stored overrides.
-pub async fn models_delete(
-    Path(name): Path<String>,
-    State(state): State<Arc<RamaState>>,
-    req: Request,
-) -> Response {
+pub async fn models_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = match require_admin_json(&state, &req).await {
         Ok(v) => v,
         Err(resp) => return resp,
+    };
+    // Raw URI, not the `Path` extractor: rama lowercases path segments and
+    // never percent-decodes them, which would turn a model id like `Qwen/Qwen3-32B` into something
+    // that matches no row — reported as 204 No Content for a row that is still there.
+    let Some(name) = raw_path_segment(&req, 0) else {
+        return bad_request("the URL is missing its model id");
     };
     match db::model_defaults::delete(&state.db, &name).await {
         Ok(()) => Response::builder()
@@ -1351,14 +1357,16 @@ pub struct EnabledBody {
 
 /// POST /api/v0/admin/backends/{name}/enabled — drain/undrain. Mirrors the
 /// form path: this one IS live (registry flip, no reload needed, no dirty).
-pub async fn backends_enabled(
-    Path(name): Path<String>,
-    State(state): State<Arc<RamaState>>,
-    req: Request,
-) -> Response {
+pub async fn backends_enabled(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = match require_admin_json(&state, &req).await {
         Ok(v) => v,
         Err(resp) => return resp,
+    };
+    // Raw URI, not the `Path` extractor: rama lowercases path segments and
+    // never percent-decodes them, which would turn a backend name into something
+    // that matches no row — reported as a drain that silently did nothing.
+    let Some(name) = raw_path_segment(&req, 1) else {
+        return bad_request("the URL is missing its backend name");
     };
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
@@ -1381,14 +1389,16 @@ pub async fn backends_enabled(
 }
 
 /// DELETE /api/v0/admin/backends/{name} — remove from the DB topology.
-pub async fn backends_delete(
-    Path(name): Path<String>,
-    State(state): State<Arc<RamaState>>,
-    req: Request,
-) -> Response {
+pub async fn backends_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = match require_admin_json(&state, &req).await {
         Ok(v) => v,
         Err(resp) => return resp,
+    };
+    // Raw URI, not the `Path` extractor: rama lowercases path segments and
+    // never percent-decodes them, which would turn a backend name into something
+    // that matches no row — reported as 204 No Content for a row that is still there.
+    let Some(name) = raw_path_segment(&req, 0) else {
+        return bad_request("the URL is missing its backend name");
     };
     if let Err(err) = upstreams_config::delete_backend(&state.db, &name).await {
         return internal(err);
@@ -1520,14 +1530,16 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
 }
 
 /// DELETE /api/v0/admin/pools/{name}
-pub async fn pools_delete(
-    Path(name): Path<String>,
-    State(state): State<Arc<RamaState>>,
-    req: Request,
-) -> Response {
+pub async fn pools_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = match require_admin_json(&state, &req).await {
         Ok(v) => v,
         Err(resp) => return resp,
+    };
+    // Raw URI, not the `Path` extractor: rama lowercases path segments and
+    // never percent-decodes them, which would turn a pool name into something
+    // that matches no row — reported as 204 No Content for a row that is still there.
+    let Some(name) = raw_path_segment(&req, 0) else {
+        return bad_request("the URL is missing its pool name");
     };
     if let Err(err) = upstreams_config::delete_pool(&state.db, &name).await {
         return internal(err);

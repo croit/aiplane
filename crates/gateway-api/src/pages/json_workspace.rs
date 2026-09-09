@@ -235,8 +235,8 @@ pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request)
         Ok(p) => p,
         Err(err) => return bad_request(format!("parsing the action body: {err}")),
     };
-    if parsed.name.trim().is_empty() || parsed.prompt.trim().is_empty() {
-        return bad_request("an action needs a name and a prompt");
+    if let Err(msg) = validate_scheduled(&parsed) {
+        return bad_request(msg);
     }
     let tz = if parsed.timezone.trim().is_empty() {
         user.timezone.clone().unwrap_or_else(|| "UTC".into())
@@ -265,6 +265,27 @@ pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request)
     }
 }
 
+/// The field rules both the create and the update path must apply.
+///
+/// One validator, called from both, because the split is how the update path
+/// ended up with none: a `PUT` carrying empty strings left a live cron action
+/// firing an empty prompt at an empty model id every minute. The caps match
+/// the ones the form enforced.
+fn validate_scheduled(parsed: &ScheduledBody) -> Result<(), String> {
+    let name = parsed.name.trim();
+    if name.is_empty() || name.len() > 128 {
+        return Err("`name` must be 1..=128 characters".into());
+    }
+    let prompt = parsed.prompt.trim();
+    if prompt.is_empty() || prompt.len() > 8000 {
+        return Err("`prompt` must be 1..=8000 characters".into());
+    }
+    if parsed.model.trim().is_empty() {
+        return Err("`model` must not be empty".into());
+    }
+    Ok(())
+}
+
 /// PUT /api/v0/scheduled/{id}
 pub async fn scheduled_update(
     Path(id): Path<String>,
@@ -284,7 +305,17 @@ pub async fn scheduled_update(
         Ok(p) => p,
         Err(err) => return bad_request(format!("parsing the action body: {err}")),
     };
-    let next = match compute_next(&parsed.cron, &parsed.timezone).await {
+    if let Err(msg) = validate_scheduled(&parsed) {
+        return bad_request(msg);
+    }
+    // Same fallback the create and preview paths apply. Without it a body that
+    // omits `timezone` 400s here while succeeding there.
+    let tz = if parsed.timezone.trim().is_empty() {
+        user.timezone.clone().unwrap_or_else(|| "UTC".into())
+    } else {
+        parsed.timezone.trim().to_string()
+    };
+    let next = match compute_next(&parsed.cron, &tz).await {
         Ok(n) => n,
         Err(e) => return bad_request(e),
     };
@@ -293,7 +324,7 @@ pub async fn scheduled_update(
         prompt: parsed.prompt,
         model: parsed.model,
         cron: parsed.cron,
-        timezone: parsed.timezone,
+        timezone: tz,
         tools_enabled: parsed.tools_enabled,
         reuse_conversation: parsed.reuse_conversation,
         reuse_rounds: parsed.reuse_rounds,
@@ -487,6 +518,24 @@ pub struct WebhookBody {
     pub reuse_rounds: i64,
 }
 
+/// The field rules both webhook paths must apply — same story as
+/// [`validate_scheduled`]: the update path had none, so a `PUT` could leave a
+/// live trigger URL pointed at an empty prompt and an empty model id.
+fn validate_webhook(parsed: &WebhookBody) -> Result<(), String> {
+    let name = parsed.name.trim();
+    if name.is_empty() || name.len() > 128 {
+        return Err("`name` must be 1..=128 characters".into());
+    }
+    let prompt = parsed.prompt.trim();
+    if prompt.is_empty() || prompt.len() > 8000 {
+        return Err("`prompt` must be 1..=8000 characters".into());
+    }
+    if parsed.model.trim().is_empty() {
+        return Err("`model` must not be empty".into());
+    }
+    Ok(())
+}
+
 /// POST /api/v0/webhooks — create; the trigger secret is minted once and
 /// returned exactly once.
 pub async fn webhooks_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -503,8 +552,8 @@ pub async fn webhooks_create(State(state): State<Arc<RamaState>>, req: Request) 
         Ok(p) => p,
         Err(err) => return bad_request(format!("parsing the webhook body: {err}")),
     };
-    if parsed.name.trim().is_empty() || parsed.prompt.trim().is_empty() {
-        return bad_request("a webhook needs a name and a prompt");
+    if let Err(msg) = validate_webhook(&parsed) {
+        return bad_request(msg);
     }
     let (secret, hash) = auth_token::mint_webhook();
     let new = webhooks::NewWebhook {
@@ -546,6 +595,9 @@ pub async fn webhooks_update(
         Ok(p) => p,
         Err(err) => return bad_request(format!("parsing the webhook body: {err}")),
     };
+    if let Err(msg) = validate_webhook(&parsed) {
+        return bad_request(msg);
+    }
     let edit = webhooks::EditWebhook {
         name: parsed.name.trim().to_string(),
         prompt: parsed.prompt,

@@ -36,6 +36,8 @@ use session_core::db as chat;
 
 use gateway_core::server::db::users::User;
 use gateway_features::server::chat_attachments;
+
+use crate::pages::percent_decode_segment;
 use gateway_runtime::rama_server::state::RamaState;
 
 pub mod json_api;
@@ -804,35 +806,6 @@ fn attachment_path_parts(path: &str) -> Option<(String, String)> {
         return None;
     }
     Some((turn_id, filename))
-}
-
-/// Percent-decode one path segment. `+` stays a literal plus (it is not a
-/// space in a path — that's `application/x-www-form-urlencoded`, which is why
-/// this isn't `pages::skills::percent_decode`). Malformed escapes pass
-/// through untouched rather than eating characters.
-fn percent_decode_segment(s: &str) -> String {
-    if !s.contains('%') {
-        return s.to_string();
-    }
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let (Some(hi), Some(lo)) = (
-                (bytes[i + 1] as char).to_digit(16),
-                (bytes[i + 2] as char).to_digit(16),
-            )
-        {
-            out.push((hi * 16 + lo) as u8);
-            i += 3;
-            continue;
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Stream one attachment's bytes through the gateway, gated by the

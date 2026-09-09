@@ -97,6 +97,57 @@ pub(super) async fn require_admin_or_403(
     Ok((session, user))
 }
 
+/// One path segment, read off the **raw** request URI, counted from the end.
+///
+/// The `Path` extractor cannot be used wherever the value's exact bytes
+/// matter. rama's router matches on `uri.path().to_lowercase()` and the
+/// `UriParams` it hands the extractor come from that lowercased string, and it
+/// never percent-decodes them. So a case-sensitive OIDC subject, a model id
+/// like `Qwen/Qwen3-32B` (whose `/` the client sends as `%2F`), a skill name
+/// or a pool name all arrive mangled — and because the lookups they feed
+/// simply match nothing, the endpoints answer "not found" or, worse, report
+/// success for a row they never touched.
+///
+/// `from_end` is 0 for the last segment, 1 for the one before it, and so on;
+/// counting from the end keeps a caller independent of the route's prefix.
+/// Returns `None` when there is no such segment or it is empty.
+pub(crate) fn raw_path_segment(req: &Request, from_end: usize) -> Option<String> {
+    let path = req.uri().path();
+    let segment = path.rsplit('/').nth(from_end)?;
+    if segment.is_empty() {
+        return None;
+    }
+    Some(percent_decode_segment(segment))
+}
+
+/// Percent-decode one path segment. `+` stays a literal plus (a path is not a
+/// form body), and a malformed escape passes through untouched rather than
+/// eating the characters after it.
+pub(crate) fn percent_decode_segment(s: &str) -> String {
+    if !s.contains('%') {
+        return s.to_string();
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (
+                (bytes[i + 1] as char).to_digit(16),
+                (bytes[i + 2] as char).to_digit(16),
+            )
+        {
+            out.push((hi * 16 + lo) as u8);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Auth gate that redirects to /login on miss (vs the API gate which
 /// returns 401 JSON). Returns either the resolved session or the
 /// redirect Response that the caller should `return`.
@@ -403,4 +454,49 @@ pub(super) fn flow_error_page(status: StatusCode, message: &str) -> Response {
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
         .body(body.into())
         .expect("static error page")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get(path: &str) -> Request {
+        Request::builder()
+            .uri(format!("http://gw.example.com{path}"))
+            .body(rama::http::Body::empty())
+            .expect("test request")
+    }
+
+    /// The whole reason this helper exists instead of the `Path` extractor.
+    ///
+    /// rama matches on `uri.path().to_lowercase()` and cuts the extractor's
+    /// params out of that lowercased string, never percent-decoding them. So
+    /// `Qwen/Qwen3-32B` reaches a handler as `qwen%2fqwen3-32b`, matches no
+    /// row, and `model_defaults::delete` reports success for a row it never
+    /// found — a 204 for an override that is still there.
+    #[test]
+    fn a_raw_segment_keeps_its_case_and_decodes_escapes() {
+        assert_eq!(
+            raw_path_segment(&get("/api/v0/admin/models/Qwen%2FQwen3-32B"), 0).as_deref(),
+            Some("Qwen/Qwen3-32B"),
+        );
+        assert_eq!(
+            raw_path_segment(&get("/api/v0/skills/Deck-Builder/archive"), 1).as_deref(),
+            Some("Deck-Builder"),
+            "counted from the end, so the trailing `/archive` is segment 0",
+        );
+        assert_eq!(
+            raw_path_segment(&get("/api/v0/admin/users/AzureAD%7C42/impersonate"), 1).as_deref(),
+            Some("AzureAD|42"),
+            "an OIDC subject is case-sensitive and may carry escaped characters",
+        );
+    }
+
+    /// An empty or absent segment is `None`, not an empty-string lookup that
+    /// would silently address the wrong row.
+    #[test]
+    fn a_missing_segment_is_none() {
+        assert_eq!(raw_path_segment(&get("/api/v0/admin/models/"), 0), None);
+        assert_eq!(raw_path_segment(&get("/api/v0"), 5), None);
+    }
 }

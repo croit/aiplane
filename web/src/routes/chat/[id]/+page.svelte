@@ -89,9 +89,12 @@
 		}
 	}
 
+	/// The composer's checkbox is "pin this tool for the conversation", so
+	/// unticking is `'auto'` (no override) — never `'off'`, which blocks the
+	/// tool for the rest of the conversation and has no UI to undo it.
 	async function toggleCapability(key: string, current: boolean) {
 		try {
-			await api.setChatCapability(id, key, !current);
+			await api.setChatCapability(id, key, current ? 'auto' : 'on');
 			tools = tools.map((tool) => (tool.key === key ? { ...tool, enabled: !current } : tool));
 		} catch (err) {
 			notice = String(err);

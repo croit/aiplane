@@ -1410,13 +1410,25 @@ pub async fn capabilities_list(
     )
     .await
     .unwrap_or_default();
+    let blocked = gateway_core::server::db::chat_session_tools::disabled_keys_for_session(
+        &state.db,
+        &session_id,
+    )
+    .await
+    .unwrap_or_default();
+    // `state` distinguishes Auto from Off; `enabled` stays for older clients.
+    // Rendering the two identically hid the fact that a tool had been blocked
+    // for the whole conversation.
     let tools: Vec<_> = entries
         .into_iter()
         .map(|e| {
+            let on = overlay.contains(&e.key);
+            let off = blocked.contains(&e.key);
             serde_json::json!({
                 "key": e.key,
                 "title": e.title,
-                "enabled": overlay.contains(&e.key),
+                "enabled": on,
+                "state": if on { "on" } else if off { "off" } else { "auto" },
             })
         })
         .collect();
@@ -1426,6 +1438,14 @@ pub async fn capabilities_list(
 #[derive(serde::Deserialize)]
 pub struct CapabilityBody {
     pub tool_key: String,
+    /// `"on"` pins the tool for this conversation, `"auto"` removes the
+    /// override, `"off"` blocks it. Optional so the older `{tool_key,
+    /// enabled}` shape keeps working.
+    #[serde(default)]
+    pub state: Option<String>,
+    /// Legacy two-state form. `false` means `"auto"`, NOT `"off"` — see
+    /// [`capabilities_set`].
+    #[serde(default)]
     pub enabled: bool,
 }
 
@@ -1458,18 +1478,58 @@ pub async fn capabilities_set(
             );
         }
     };
-    match gateway_core::server::db::chat_session_tools::set(
-        &state.db,
-        &session_id,
-        &parsed.tool_key,
-        parsed.enabled,
-        "manual",
-    )
-    .await
-    {
+    // The overlay is three-valued — On (row, enabled=1), Auto (no row) and
+    // Off (row, enabled=0) — and the difference between the last two matters:
+    // an Off row is consulted by `enable_tools` and `openai_driver` as a hard
+    // block for the rest of the conversation. Writing `set(false)` whenever a
+    // box was unticked therefore turned "I do not want this pinned" into
+    // "this tool is banned here", with no way back through any endpoint.
+    // Unticking is Auto; blocking is an explicit `"off"`.
+    let wanted = parsed
+        .state
+        .as_deref()
+        .unwrap_or(if parsed.enabled { "on" } else { "auto" });
+    let result = match wanted {
+        "on" => {
+            gateway_core::server::db::chat_session_tools::set(
+                &state.db,
+                &session_id,
+                &parsed.tool_key,
+                true,
+                "manual",
+            )
+            .await
+        }
+        "off" => {
+            gateway_core::server::db::chat_session_tools::set(
+                &state.db,
+                &session_id,
+                &parsed.tool_key,
+                false,
+                "manual",
+            )
+            .await
+        }
+        "auto" => {
+            gateway_core::server::db::chat_session_tools::clear(
+                &state.db,
+                &session_id,
+                &parsed.tool_key,
+            )
+            .await
+        }
+        other => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("`state` must be `on`, `auto` or `off` (got `{other}`)"),
+            );
+        }
+    };
+    match result {
         Ok(()) => ok_json(
             StatusCode::OK,
-            serde_json::json!({ "tool_key": parsed.tool_key, "enabled": parsed.enabled }),
+            serde_json::json!({ "tool_key": parsed.tool_key, "state": wanted }),
         ),
         Err(err) => json_error(
             StatusCode::INTERNAL_SERVER_ERROR,

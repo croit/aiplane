@@ -224,14 +224,21 @@ export const api = {
 			`/api/v0/chat/sessions/${encodeURIComponent(id)}/capabilities`
 		),
 
-	/** POST /api/v0/chat/sessions/{id}/capabilities — set one overlay state. */
-	setChatCapability: (id: string, toolKey: string, enabled: boolean) =>
-		request<{ tool_key: string; enabled: boolean }>(
+	/**
+	 * POST /api/v0/chat/sessions/{id}/capabilities — set one overlay state.
+	 *
+	 * Three states, not two. `'on'` pins the tool for this conversation and
+	 * `'off'` blocks it for the rest of the conversation — `enable_tools` and
+	 * the driver both refuse a blocked key. `'auto'` (no override) is what a
+	 * composer checkbox means when it is unticked: "not pinned", not "banned".
+	 */
+	setChatCapability: (id: string, toolKey: string, state: 'on' | 'auto' | 'off') =>
+		request<{ tool_key: string; state: string }>(
 			`/api/v0/chat/sessions/${encodeURIComponent(id)}/capabilities`,
 			{
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ tool_key: toolKey, enabled })
+				body: JSON.stringify({ tool_key: toolKey, state })
 			}
 		),
 
