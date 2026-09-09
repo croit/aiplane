@@ -26,6 +26,15 @@ use gateway_core::server::setup::{self, Draft, Proof, SetupAccess};
 use gateway_runtime::rama_server::state::RamaState;
 use gateway_runtime::server::state::RuntimeSettings;
 
+/// Where a probe started by *this* (SPA) wizard comes back to, stored as the
+/// pending row's `return_to`.
+///
+/// It doubles as the discriminator the OIDC callback dispatches on: both
+/// wizards run in parallel during the migration and share one `Purpose::Setup`,
+/// so `return_to` is the only thing that says which of them started a given
+/// probe. See `oidc_handlers`'s `Purpose::Setup` arm.
+pub const SPA_RETURN_TO: &str = "/app/setup";
+
 fn json(status: StatusCode, body: serde_json::Value) -> Response {
     Response::builder()
         .status(status)
@@ -239,7 +248,8 @@ pub async fn setup_test(State(state): State<Arc<RamaState>>, req: Request) -> Re
         );
     }
     let start = client.begin();
-    if let Err(err) = pending::insert(&state.db, &start, Some("/app/setup"), Purpose::Setup).await {
+    if let Err(err) = pending::insert(&state.db, &start, Some(SPA_RETURN_TO), Purpose::Setup).await
+    {
         return error_json(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
@@ -480,7 +490,7 @@ pub async fn setup_probe_callback(
     // Back to the SPA wizard.
     Response::builder()
         .status(StatusCode::SEE_OTHER)
-        .header(header::LOCATION, "/app/setup")
+        .header(header::LOCATION, SPA_RETURN_TO)
         .body(rama::http::Body::empty())
         .expect("static redirect")
 }

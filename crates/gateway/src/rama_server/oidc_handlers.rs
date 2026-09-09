@@ -162,19 +162,40 @@ pub async fn callback(State(state): State<Arc<RamaState>>, req: Request) -> Resp
         );
     };
     match purpose {
-        // A setup probe finishes in the wizard: it verifies the code against
-        // the *draft* provider being tested (the live one is typically absent
-        // on a fresh install), then hands the claims back. Deliberately no user
-        // upsert and no session — nothing has authorised anyone yet.
+        // A setup probe finishes in the wizard it was started from: it
+        // verifies the code against the *draft* provider being tested (the
+        // live one is typically absent on a fresh install), then hands the
+        // claims back. Deliberately no user upsert and no session — nothing
+        // has authorised anyone yet.
+        //
+        // Both wizards run in parallel during the migration (the SPA at
+        // `/app/setup`, the server-rendered pages at `/setup`) and share this
+        // one purpose, so the stored `return_to` is what says which of them
+        // began this probe. Dispatching on it unconditionally to one of them
+        // stranded the other: a probe started in the legacy wizard answered
+        // with the SPA's redirect and dropped the operator into a different
+        // wizard mid-flow, losing the draft they had just proven.
         Purpose::Setup => {
-            return crate::rama_server::setup_api::setup_probe_callback(
-                &state,
-                req.headers(),
-                &code,
-                &verifier,
-                &nonce,
-            )
-            .await;
+            let spa = return_to.as_deref() == Some(crate::rama_server::setup_api::SPA_RETURN_TO);
+            return if spa {
+                crate::rama_server::setup_api::setup_probe_callback(
+                    &state,
+                    req.headers(),
+                    &code,
+                    &verifier,
+                    &nonce,
+                )
+                .await
+            } else {
+                gateway_web::pages::setup_probe_callback(
+                    &state,
+                    req.headers(),
+                    &code,
+                    &verifier,
+                    &nonce,
+                )
+                .await
+            };
         }
         Purpose::Login => {}
     }

@@ -765,3 +765,92 @@ fn urlencoding_of(value: &str) -> String {
         .trim_start_matches("v=")
         .to_string()
 }
+
+/// A probe returns to the wizard it was started from.
+///
+/// Both wizards run in parallel through the migration (the SPA at
+/// `/app/setup`, the server-rendered pages at `/setup`) and share one
+/// `Purpose::Setup` pending row, so the stored `return_to` is the only thing
+/// that distinguishes them. Dispatching the callback to one of them
+/// unconditionally is a real regression, not a redirect cosmetic: the
+/// operator proves a draft in one wizard and lands in the other, which shows
+/// a different (unproven) draft — so the proof they just completed appears to
+/// have vanished. The legacy direction is covered by
+/// `the_wizard_configures_the_gateway_without_a_restart`; this pins the SPA
+/// direction, so neither can be hardcoded again without a red test.
+#[tokio::test]
+async fn a_spa_probe_comes_back_to_the_spa_wizard() {
+    let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
+    let public_key = RsaPublicKey::from(&private_key);
+    let idp = mock_idp(&public_key).await;
+    let issuer = idp.uri();
+
+    let state = unconfigured_state().await;
+    let app = service(Arc::new(state.clone()));
+
+    // Start the probe through the SPA's JSON endpoint — the legacy test starts
+    // the same flow through the form-POST one.
+    let body = json!({
+        "public_url": PUBLIC_URL,
+        "issuer": issuer,
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "scopes": ["email", "profile", "groups"],
+        "roles_claim": "groups",
+    })
+    .to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/v0/setup/test")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "the SPA starts a probe as JSON"
+    );
+
+    let (csrf, nonce, purpose): (String, String, String) =
+        sqlx::query_as("SELECT state, nonce, purpose FROM pending_logins LIMIT 1")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(purpose, "setup");
+
+    let id_token = sign_id_token(&private_key, &issuer, CLIENT_ID, &nonce);
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "test-access",
+            "id_token": id_token,
+            "token_type": "Bearer",
+            "expires_in": 3600,
+        })))
+        .mount(&idp)
+        .await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/auth/callback?code=test-code&state={csrf}"))
+        .header("cookie", format!("gw_oidc={csrf}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        location(&resp),
+        "/app/setup",
+        "a probe started in the SPA wizard must land back in the SPA wizard"
+    );
+
+    // Same invariant as the legacy probe: proving a provider authorises nobody.
+    assert!(
+        users::find_by_id(&state.db, SUBJECT)
+            .await
+            .unwrap()
+            .is_none(),
+        "a probe must not create a user"
+    );
+}
