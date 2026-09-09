@@ -70,3 +70,10 @@ feedback-err-not-configured = Feedback is not configured
 feedback-err-title-required = Title is required (at least 4 characters)
 feedback-err-description-required = Description is required
 feedback-err-submit-failed = Could not file the issue — please try again
+
+# The SPA keeps the dialog open after submitting and shows a thank-you
+# panel in place of the form; the server-rendered widget did not.
+feedback-thanks-heading = Thank you
+feedback-thanks-body = Your feedback was filed as an issue.
+feedback-done-button = Done
+feedback-sending = Sending…

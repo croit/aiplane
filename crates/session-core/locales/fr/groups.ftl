@@ -14,3 +14,10 @@ groups-field-skills = Compétences
 groups-save = Enregistrer
 groups-delete = Supprimer
 groups-error-name-required = Un nom de groupe est requis.
+
+# Éditeur de groupes de la SPA : titre d'édition, indice sur les valeurs
+# observées, résumé par ligne et confirmation de suppression.
+groups-edit-heading = Modifier { $name }
+groups-observed-values = Observé : { $values }
+groups-summary-counts = { $oidc } OIDC · { $tools } outils · { $skills } compétences
+groups-delete-confirm = Supprimer le groupe { $name } ? Ses correspondances et ses autorisations disparaissent avec lui.

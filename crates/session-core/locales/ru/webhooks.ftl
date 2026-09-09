@@ -96,3 +96,15 @@ webhooks-reuse-toggle-label = Повторно использовать бесе
 webhooks-reuse-rounds-prefix = воспроизводя последние
 webhooks-reuse-rounds-suffix = раундов
 webhooks-reuse-rounds-aria = Сколько раундов истории воспроизводить
+
+# SPA-only: the Svelte /webhooks page — inline form, run list, rerun composer.
+webhooks-new-heading = Новый вебхук
+webhooks-prompt-untrusted-label = Промпт (полезная нагрузка поступает как недоверенный ввод)
+webhooks-runs-show = Запуски
+webhooks-runs-hide = Скрыть запуски
+webhooks-rerun-prompt-label = Промпт для повторного запуска — сохранённая нагрузка воспроизводится через него
+webhooks-rerun-latest = Повторить последнюю нагрузку
+webhooks-rerun-running = Выполняется…
+webhooks-toast-rerun-failed = Повторный запуск: { $status }
+webhooks-rotate-confirm = Выпустить новый секрет триггера? Старый URL сразу перестанет работать.
+webhooks-delete-confirm = Удалить этот вебхук?

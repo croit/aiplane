@@ -45,3 +45,9 @@ skills-save-access-button = Guardar acceso
 skills-from-config-badge = desde la configuración
 
 skills-error-no-dir-access = Sin acceso al directorio de habilidades — comprueba que existe y que la puerta de enlace puede leerlo y escribirlo:
+
+# Gestión de skills en la SPA: aviso de instalación, confirmación de borrado y
+# etiqueta de ausencia de concesiones.
+skills-installed = { $name } instalado.
+skills-delete-confirm = ¿Eliminar el skill global { $name } y sus concesiones?
+skills-no-extra-grants = sin concesiones adicionales

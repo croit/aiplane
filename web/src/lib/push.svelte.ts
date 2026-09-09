@@ -7,6 +7,7 @@
  * State here is device-local, not server state — two browsers of the same
  * user subscribe independently.
  */
+import { t } from './i18n.svelte';
 
 interface PushConfig {
 	enabled: boolean;
@@ -90,9 +91,9 @@ export async function enablePush(): Promise<void> {
 			body: JSON.stringify(sub.toJSON())
 		});
 		if (!res.ok) throw new Error(`subscribe ${res.status}`);
-		push.note = 'Notifications enabled on this device.';
+		push.note = t('tokens-push-enabled');
 	} catch {
-		push.note = 'Could not enable notifications.';
+		push.note = t('tokens-push-error');
 	} finally {
 		await refreshPushState();
 	}
@@ -112,9 +113,9 @@ export async function disablePush(): Promise<void> {
 				body: JSON.stringify({ endpoint })
 			});
 		}
-		push.note = 'Notifications disabled on this device.';
+		push.note = t('tokens-push-disabled');
 	} catch {
-		push.note = 'Could not disable notifications.';
+		push.note = t('tokens-push-error');
 	} finally {
 		await refreshPushState();
 	}

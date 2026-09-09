@@ -10,6 +10,7 @@
  * parameter (the SPA serves it at `${base}/pcm-recorder.js`) and the
  * DOM-level meter tap is dropped (the SPA modal animates off CSS state).
  */
+import { t } from './i18n.svelte';
 
 export const TARGET_RATE = 16000;
 
@@ -120,10 +121,10 @@ export type { VoiceRecorder };
 /** Capability check — runs at click time so a fresh mount re-verifies. */
 export const recordingUnavailableReason = (): string | null => {
 	if (!navigator.mediaDevices || !window.isSecureContext) {
-		return 'Voice recording requires HTTPS or localhost — disabled on plain http.';
+		return t('voice-mic-insecure-context');
 	}
 	if (!(window.AudioContext && 'audioWorklet' in AudioContext.prototype)) {
-		return 'Voice recording requires AudioWorklet support.';
+		return t('voice-mic-no-worklet');
 	}
 	return null;
 };
@@ -162,14 +163,14 @@ export const startRecording = async (workletUrl: string): Promise<VoiceRecorder>
 export const recordingErrorMessage = (err: unknown): string => {
 	const name = (err instanceof Error && err.name) || 'Error';
 	if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-		return 'Microphone access denied. Allow it in the browser and retry.';
+		return t('voice-mic-denied');
 	}
 	if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-		return 'No microphone found.';
+		return t('voice-mic-not-found');
 	}
 	if (name === 'NotReadableError') {
-		return 'Microphone is busy — another app may be using it.';
+		return t('voice-mic-busy');
 	}
 	const message = err instanceof Error ? err.message : String(err);
-	return `Mic error: ${message}`;
+	return t('voice-mic-error', { error: message });
 };

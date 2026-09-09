@@ -26,3 +26,13 @@ memory-error-update-failed = Erinnerung konnte nicht aktualisiert werden.
 memory-toast-removed = Erinnerung entfernt.
 memory-info-already-gone = Erinnerung war bereits weg.
 memory-error-remove-failed = Erinnerung konnte nicht entfernt werden.
+
+# SPA-only: the Svelte /memory page's inline add/edit form.
+memory-edit-heading = Erinnerung bearbeiten
+memory-kind-label = Art
+memory-kind-preference = Vorliebe
+memory-kind-project = Projekt
+memory-kind-fact = Fakt
+memory-content-label = Inhalt
+memory-add-button = Hinzufügen
+memory-delete-confirm = Diese Erinnerung löschen?

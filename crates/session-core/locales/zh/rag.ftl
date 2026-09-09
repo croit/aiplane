@@ -226,3 +226,18 @@ rag-oauth-no-refresh-token = 提供方未返回刷新令牌，网关将无法在
 rag-oauth-store-failed = 无法保存凭据。
 rag-badge-no-files = 未索引任何文件
 rag-ref-files = { $files } 个文件
+
+# SPA 集合管理：创建表单、同步 URL 卡片、源列表行，以及旧页面不需要的确认提示。
+rag-button-new-collection = 新建集合
+rag-label-git-url = Git URL
+rag-source-testing = 测试中…
+rag-button-create = 创建
+rag-button-rebuild = 重建
+rag-sync-url-heading = 同步 URL——仅显示一次
+rag-sync-token-confirm = 要生成新的同步 URL 吗？旧的将失效。
+rag-delete-collection-confirm = 要删除集合 { $name } 及其索引吗？
+rag-remove-source-confirm = 要移除源 { $source } 吗？
+rag-toast-rebuild-queued = 已请求完整重建。
+rag-ref-indexed-at = 已于 { $date } 建立索引
+rag-no-sources = 暂无源——在添加源之前，此集合不会索引任何内容。
+rag-add-sources-hint = 每行一个源；添加 { $at } 可覆盖此集合的 { $ref }。

@@ -102,3 +102,9 @@ backends-key-env-unset-badge = env { $var } NON DÉFINIE
 backends-key-env-unset-title = Ce backend n'a pas de clé stockée et la variable d'environnement qu'il nomme n'est pas définie dans le processus du gateway : aucune identification n'est envoyée. Si l'upstream en exige une, chaque sonde reçoit 401, la découverte des modèles reste désactivée et le backend n'annonce rien. Saisissez la clé dans le champ « Clé API », ou définissez la variable et redémarrez.
 # Live name-clash note on the add form (U9).
 backends-name-taken = Un backend portant ce nom existe déjà — enregistrer l'écraserait, URL de base, clé, modèles et pool compris. Choisissez un autre nom pour ajouter un second backend.
+
+# Lignes de backend de la SPA : bascule de drainage, charge horaire, suppression.
+backends-drain-button = Drainer
+backends-undrain-button = Réactiver
+backends-requests-per-hour = { $count } req/h
+backends-delete-confirm = Supprimer le backend { $name } ? Appliquez la topologie ensuite.

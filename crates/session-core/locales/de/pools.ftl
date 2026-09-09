@@ -71,3 +71,8 @@ upstreams-diff-backend-leaves = { $backend } verlässt Pool { $pool } und nimmt 
 upstreams-diff-backend-url = { $backend }: Basis-URL { $from } → { $to } (die erkannten Modelle werden neu geprobt)
 upstreams-diff-backend-limits = { $backend }: Gewicht { $weight }, max. parallel { $inflight }
 upstreams-diff-backend-health-path = { $backend }: Health-Pfad → { $to }
+
+# Pool-Karten der SPA: die beiden Kurzübersichten und die Löschbestätigung.
+pools-summary-backends = { $count } Backend(s): { $list }
+pools-summary-models = { $count } Modell(e): { $list }
+pools-delete-confirm = Pool { $name } löschen? Danach die Topologie übernehmen.

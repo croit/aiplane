@@ -98,3 +98,15 @@ webhooks-reuse-toggle-label = Reuse the conversation (each fire continues the pr
 webhooks-reuse-rounds-prefix = replaying the last
 webhooks-reuse-rounds-suffix = rounds
 webhooks-reuse-rounds-aria = Rounds of history to replay
+
+# SPA-only: the Svelte /webhooks page — inline form, run list, rerun composer.
+webhooks-new-heading = New webhook
+webhooks-prompt-untrusted-label = Prompt (the payload arrives as untrusted input)
+webhooks-runs-show = Runs
+webhooks-runs-hide = Hide runs
+webhooks-rerun-prompt-label = Rerun prompt — the stored payload is replayed through this
+webhooks-rerun-latest = Rerun latest payload
+webhooks-rerun-running = Running…
+webhooks-toast-rerun-failed = Rerun { $status }
+webhooks-rotate-confirm = Issue a new trigger secret? The old URL stops working immediately.
+webhooks-delete-confirm = Delete this webhook?

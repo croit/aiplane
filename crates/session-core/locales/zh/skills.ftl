@@ -45,3 +45,8 @@ skills-save-access-button = 保存访问权限
 skills-from-config-badge = 来自配置
 
 skills-error-no-dir-access = 无法访问技能目录——请检查它是否存在，以及网关能否读写：
+
+# SPA 技能管理：上传提示、删除确认与无额外授权时的说明。
+skills-installed = 已安装 { $name }。
+skills-delete-confirm = 要移除全局技能 { $name } 及其授权吗？
+skills-no-extra-grants = 无额外授权

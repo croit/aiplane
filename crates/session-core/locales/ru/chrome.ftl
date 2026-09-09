@@ -14,3 +14,9 @@ push-turn-error-body = Запрос завершился ошибкой.
 # `tools::mcp::worker`). { $connector } — отображаемое имя коннектора.
 push-connector-reconnect-title = Подключение требует входа
 push-connector-reconnect-body = { $connector } отключён — откройте «Интеграции», чтобы подключить заново.
+
+# SPA-only: the root route, which only routes on to /chat.
+chrome-opening-conversations = Открываем ваши диалоги…
+
+# SPA-only: /login, which exists to bounce straight to the IdP.
+chrome-redirecting-to-sign-in = Переход к входу…

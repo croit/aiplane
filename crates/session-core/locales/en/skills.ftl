@@ -53,3 +53,8 @@ skills-save-access-button = Save access
 skills-from-config-badge = from config
 
 skills-error-no-dir-access = No access to the skills directory — check that it exists and the gateway can read and write it:
+
+# SPA skill manager: upload toast, delete prompt, and the empty grant label.
+skills-installed = Installed { $name }.
+skills-delete-confirm = Remove the global skill { $name } and its grants?
+skills-no-extra-grants = no extra grants

@@ -140,3 +140,24 @@ admin-search-brave-key-clear = 删除已存储的密钥
 admin-search-save = 保存网页搜索
 admin-search-saved = 网页搜索设置已保存
 admin-search-unknown-provider = 未知的搜索提供方 `{ $provider }`
+
+# ─── SvelteKit 管理端 SPA ─────────────────────────────────────────────────────
+# 管理外壳的角色校验、/admin/comfyui 工作流目录，以及旧页面没有的模型编辑器部分。
+
+admin-needs-admin-role = 这些页面需要管理员角色。
+admin-overwrite-existing = 覆盖已有条目
+admin-comfyui-reload = 重新加载目录
+admin-comfyui-reloaded = 已重新加载 { $count } 个工作流。
+admin-comfyui-empty = 未加载任何工作流——请检查内容目录。
+admin-defaults-model-aria = { $feature } 的默认模型
+admin-defaults-set = 设置
+admin-search-provider-none = 无
+admin-add-overrides-heading = 添加模型覆盖设置
+admin-edit-model-heading = 编辑 { $model }
+admin-add-model = 添加…
+admin-pricing-unit-label = 计价单位
+admin-pricing-unit-mtok = 每 Mtok
+admin-pricing-unit-ktok = 每 Ktok
+admin-pricing-unit-kimgs = 每 1000 张图片
+admin-clear-overrides-confirm = 要删除 { $model } 的全部已保存覆盖设置吗？
+admin-users-col-email = 电子邮件

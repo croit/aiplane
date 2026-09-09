@@ -19,3 +19,6 @@ tools-toast-unknown-tool = unknown tool
 tools-toast-save-error = could not save preference
 tools-toast-enabled = { $name } enabled.
 tools-toast-disabled = { $name } disabled.
+
+# SPA-only: the Svelte /tools toggle list.
+tools-toggle-aria = Toggle { $name }

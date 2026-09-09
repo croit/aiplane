@@ -95,3 +95,9 @@ connectors-error-needs-client-id = ce connecteur nécessite un identifiant clien
 connectors-error-toggling = bascule du connecteur : { $error }
 connectors-error-deleting = suppression du connecteur : { $error }
 connectors-error-restoring = restauration des valeurs par défaut : { $error }
+
+# Formulaire de connecteur de la SPA : champ de scopes séparés par des virgules,
+# champ secret/jeton combiné et confirmation de restauration.
+connectors-restore-defaults-confirm = Réinstaller les entrées de catalogue intégrées ?
+connectors-field-scopes-csv-label = Scopes (séparés par des virgules)
+connectors-field-secret-or-token-label = Secret client / jeton

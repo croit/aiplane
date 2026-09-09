@@ -102,3 +102,9 @@ backends-key-env-unset-badge = 环境变量 { $var } 未设置
 backends-key-env-unset-title = 该后端没有已保存的密钥，而它指定的环境变量在网关进程中未设置，因此完全不会发送凭据。如果上游需要凭据，每次探测都会得到 401，模型发现保持关闭，后端也不会公布任何模型。请改在“API 密钥”字段中填入密钥，或设置该变量后重启。
 # Live name-clash note on the add form (U9).
 backends-name-taken = 同名的后端已存在——保存会覆盖它，包括基础 URL、密钥、模型和所属池。请换一个名称以添加第二个后端。
+
+# SPA 后端行：分流开关、每小时负载与删除确认。
+backends-drain-button = 停止分流
+backends-undrain-button = 恢复分流
+backends-requests-per-hour = { $count } 次请求/小时
+backends-delete-confirm = 要删除后端 { $name } 吗？之后请应用拓扑。

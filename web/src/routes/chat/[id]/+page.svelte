@@ -11,6 +11,7 @@
 	import { parseUserContent } from '$lib/chat-protocol';
 	import type { ChatSession } from '$lib/chat-protocol';
 	import { me } from '$lib/session.svelte';
+	import { t, time, n } from '$lib/i18n.svelte';
 
 	let { data } = $props<{ data: { id: string } }>();
 	const id = $derived(data.id);
@@ -24,12 +25,9 @@
 	let tools = $state<{ key: string; title: string; enabled: boolean }[]>([]);
 	let toolsOpen = $state(false);
 	let effort = $state('standard');
-	const EFFORTS: [string, string][] = [
-		['fast', 'Thinking: Fast'],
-		['standard', 'Thinking: Standard'],
-		['deep', 'Thinking: Deep'],
-		['max', 'Thinking: Max']
-	];
+	// Levels, not labels: the option text is looked up in the template so a
+	// language switch re-renders the picker (same reason as the layout's nav).
+	const EFFORTS = ['fast', 'standard', 'deep', 'max'] as const;
 	let sending = $state(false);
 	let notice = $state<string | null>(null);
 
@@ -60,7 +58,7 @@
 			// turn — the "keep talking to what you were talking to" default.
 			const lastModel = [...snap.turns]
 				.reverse()
-				.find((t) => t.turn.role === 'assistant' && t.turn.model)?.turn.model;
+				.find((e) => e.turn.role === 'assistant' && e.turn.model)?.turn.model;
 			if (!model && lastModel) model = lastModel;
 		} catch (err) {
 			notice = String(err);
@@ -91,7 +89,7 @@
 	async function toggleCapability(key: string, current: boolean) {
 		try {
 			await api.setChatCapability(id, key, !current);
-			tools = tools.map((t) => (t.key === key ? { ...t, enabled: !current } : t));
+			tools = tools.map((tool) => (tool.key === key ? { ...tool, enabled: !current } : tool));
 		} catch (err) {
 			notice = String(err);
 		}
@@ -157,7 +155,7 @@
 		if (!voice || !controller) return;
 		const liveId = controller.state.liveTurnId;
 		if (!liveId) return;
-		const live = controller.state.turns.find((t) => t.turn.id === liveId);
+		const live = controller.state.turns.find((e) => e.turn.id === liveId);
 		const content = live?.turn.content ?? '';
 		const finalized = live?.turn.status !== 'in_progress';
 		if (finalized && content === '') return;
@@ -193,7 +191,7 @@
 		} catch (err) {
 			notice =
 				err instanceof ApiError && err.status === 409
-					? 'The previous reply is still streaming — stop it first.'
+					? t('chat-error-still-streaming')
 					: String(err);
 		} finally {
 			sending = false;
@@ -240,7 +238,7 @@
 	}
 
 	async function editTurn(turnId: string, current: string) {
-		const text = window.prompt('Edit your message:', current)?.trim();
+		const text = window.prompt(t('render-edit-prompt'), current)?.trim();
 		if (!text || !model.trim() || streaming || text === current) return;
 		try {
 			await fetch(`/api/v0/chat/sessions/${id}/turns/${turnId}/edit`, {
@@ -352,14 +350,12 @@
 		promptText = '';
 	}
 
-	function ts(iso: string | null): string {
-		return iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-	}
-
 	function thinkingLabel(entry: (typeof turns)[number], live: boolean): string {
 		const streaming = live && entry.turn.status === 'in_progress';
 		const secs = entry.turn.reasoning_elapsed_ms ?? 0;
-		return streaming ? 'Thinking…' : `Thought for ${(secs / 1000).toFixed(1)}s`;
+		return streaming
+			? t('render-thinking-spinner')
+			: t('render-thinking-finalized', { secs: n(secs / 1000, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) });
 	}
 
 	function onKeydown(event: KeyboardEvent) {
@@ -372,20 +368,28 @@
 
 <div class="flex items-center justify-between mb-4 gap-2">
 	<h1 class="text-lg font-semibold truncate flex-1 min-w-0">
-		{session?.title?.trim() || 'Untitled chat'}
+		{session?.title?.trim() || t('nav-untitled-chat')}
 	</h1>
-	<a href="{base}/chat" class="btn btn-ghost btn-sm">All chats</a>
+	<a href="{base}/chat" class="btn btn-ghost btn-sm">{t('chat-all-chats')}</a>
 	{#if isOwner}
-		<button class="btn btn-ghost btn-sm" onclick={toggleShare}>
-			{session?.shared ? 'Unshare' : 'Share'}
+		<button class="btn btn-ghost btn-sm" onclick={toggleShare} title={t('chat-render-share-tooltip')}>
+			{session?.shared ? t('chat-render-share-label-on') : t('chat-render-share-label-off')}
 		</button>
 	{:else}
 		<!-- Shared *with* you: the copy is how you keep (and can edit) it. -->
-		<button class="btn btn-ghost btn-sm" onclick={fork}>Save a copy</button>
+		<button class="btn btn-ghost btn-sm" onclick={fork} title={t('chat-render-fork-tooltip')}>
+			{t('chat-render-fork-label')}
+		</button>
 	{/if}
 	<div class="dropdown dropdown-end">
-		<button class="btn btn-ghost btn-sm" popovertarget="export-menu" style="anchor-name:--export">
-			Export
+		<button
+			class="btn btn-ghost btn-sm"
+			popovertarget="export-menu"
+			style="anchor-name:--export"
+			aria-label={t('chat-render-export-aria')}
+			title={t('chat-render-export-tooltip')}
+		>
+			{t('chat-render-export-label')}
 		</button>
 		<ul
 			class="dropdown-content menu rounded-box bg-base-200 p-2 shadow z-10 w-40"
@@ -393,8 +397,8 @@
 			id="export-menu"
 			style="position-anchor:--export"
 		>
-			<li><a href="/api/v0/chat/sessions/{id}/export.md" download>Markdown</a></li>
-			<li><a href="/api/v0/chat/sessions/{id}/export.pdf" download>PDF</a></li>
+			<li><a href="/api/v0/chat/sessions/{id}/export.md" download>{t('chat-render-export-md')}</a></li>
+			<li><a href="/api/v0/chat/sessions/{id}/export.pdf" download>{t('chat-render-export-pdf')}</a></li>
 		</ul>
 	</div>
 </div>
@@ -403,7 +407,7 @@
 	<div class="card border border-base-300 bg-base-200 mb-4">
 		<div class="card-body p-3 gap-2">
 			<div class="flex items-center gap-2 flex-wrap">
-				<span class="text-sm font-medium">Documents</span>
+				<span class="text-sm font-medium">{t('chat-render-documents-label')}</span>
 				{#each documents as doc (doc.id)}
 					<button
 						class="btn btn-xs {openDoc?.document.id === doc.id ? 'btn-primary' : 'btn-ghost'}"
@@ -419,22 +423,23 @@
 				{@const shown = openDoc}
 				<div class="flex items-center gap-2">
 					<span class="text-xs opacity-60">
-						v{shown.document.current_ver} · {shown.history.length} revision{shown.history
-							.length === 1
-							? ''
-							: 's'}
+						v{shown.document.current_ver} · {t('chat-render-revision-count', {
+							count: shown.history.length
+						})}
 					</span>
 					<div class="flex-1"></div>
 					{#if isOwner}
 						{#if docEditing}
 							<button class="btn btn-xs" onclick={() => { docEditing = false; docDraft = shown.content; }}>
-								Cancel
+								{t('render-canvas-cancel')}
 							</button>
 							<button class="btn btn-xs btn-primary" onclick={saveDocument} disabled={docSaving}>
-								{docSaving ? 'Saving…' : 'Save'}
+								{docSaving ? t('chat-render-canvas-saving') : t('render-canvas-save')}
 							</button>
 						{:else}
-							<button class="btn btn-xs" onclick={() => (docEditing = true)}>Edit</button>
+							<button class="btn btn-xs" onclick={() => (docEditing = true)}>
+								{t('render-canvas-edit-button')}
+							</button>
 						{/if}
 					{/if}
 				</div>
@@ -463,7 +468,7 @@
 	{@const shown = prompt}
 	<div class="card border border-warning mb-4">
 		<div class="card-body">
-			<h2 class="card-title text-base">The assistant asks</h2>
+			<h2 class="card-title text-base">{t('chat-prompt-heading')}</h2>
 			<p>{shown.question}</p>
 			{#if shown.options.length > 0}
 				<div class="flex flex-wrap gap-2 mt-1">
@@ -477,13 +482,15 @@
 			<div class="join mt-2">
 				<input
 					class="input input-bordered input-sm join-item w-full"
-					placeholder="Type an answer…"
+					placeholder={t('chat-prompt-placeholder')}
 					bind:value={promptText}
 					onkeydown={(e) => e.key === 'Enter' && submitPrompt()}
 				/>
-				<button class="btn btn-primary btn-sm join-item" onclick={submitPrompt}>Answer</button>
+				<button class="btn btn-primary btn-sm join-item" onclick={submitPrompt}>
+					{t('chat-prompt-answer')}
+				</button>
 				<button class="btn btn-ghost btn-sm join-item" onclick={() => answerPrompt(null)}>
-					Skip
+					{t('chat-prompt-skip')}
 				</button>
 			</div>
 		</div>
@@ -506,14 +513,16 @@
 										</a>
 									{:else}
 										<a href={att.url} class="btn btn-sm" download={att.filename}>
-											{att.filename} ({Math.round(att.size / 1024)} KB)
+											{att.filename} ({t('chat-render-attachment-size-kb', {
+												size: n(Math.round(att.size / 1024))
+											})})
 										</a>
 									{/if}
 									{#if isOwner && !streaming}
 										<button
 											class="btn btn-xs btn-circle btn-error absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 focus:opacity-100"
-											aria-label="Remove {att.filename}"
-											title="Remove {att.filename}"
+											aria-label={t('render-attachment-remove-aria')}
+											title={t('render-attachment-remove-title', { filename: att.filename })}
 											onclick={() => removeAttachment(entry.turn.id, att.filename)}
 										>
 											✕
@@ -529,7 +538,9 @@
 				</div>
 				{#if isOwner && !streaming}
 					<div class="chat-footer opacity-60">
-						<button class="btn btn-ghost btn-xs" onclick={() => editTurn(entry.turn.id, entry.turn.user_content ?? '')}>Edit</button>
+						<button class="btn btn-ghost btn-xs" onclick={() => editTurn(entry.turn.id, entry.turn.user_content ?? '')}>
+							{t('render-edit-button')}
+						</button>
 					</div>
 				{/if}
 			</div>
@@ -558,7 +569,7 @@
 									{:else}
 										<span class="loading loading-spinner loading-xs"></span>
 									{/if}
-									<span class="text-base-content/60">Used</span>
+									<span class="text-base-content/60">{t('render-tool-status-used')}</span>
 									<span class="font-medium">{call.name}</span>
 								</summary>
 								<div class="collapse-content text-xs text-base-content/70">
@@ -580,12 +591,14 @@
 						{#if entry.turn.status === 'errored'}
 							<div class="alert alert-error py-2"><span>{entry.turn.error_message}</span></div>
 						{:else if entry.turn.status === 'cancelled'}
-							<div class="text-xs text-base-content/50">stopped</div>
+							<div class="text-xs text-base-content/50">{t('chat-turn-stopped')}</div>
 						{/if}
-						<div class="text-xs opacity-50">{ts(entry.turn.created_at)}</div>
+						<div class="text-xs opacity-50">{time(entry.turn.created_at)}</div>
 						{#if isOwner && entry.turn.status !== 'in_progress' && !streaming}
 							<div class="flex gap-1 mt-1">
-								<button class="btn btn-ghost btn-xs" onclick={() => retry(entry.turn.id)}>Retry</button>
+								<button class="btn btn-ghost btn-xs" onclick={() => retry(entry.turn.id)}>
+									{t('render-retry-button')}
+								</button>
 							</div>
 						{/if}
 					</div>
@@ -598,33 +611,49 @@
 <div class="card border border-base-300 sticky bottom-0">
 	<div class="card-body p-3 gap-2">
 		<div class="flex flex-wrap gap-2 items-center mb-2">
-			<button class="btn btn-ghost btn-xs gap-1" onclick={() => (toolsOpen = !toolsOpen)}>
-				+ Tools
+			<button
+				class="btn btn-ghost btn-xs gap-1"
+				onclick={() => (toolsOpen = !toolsOpen)}
+				title={t('chat-render-tools-tooltip')}
+			>
+				+ {t('chat-render-tools-label')}
 			</button>
-			{#each tools.filter((t) => t.enabled) as t (t.key)}
+			{#each tools.filter((tool) => tool.enabled) as tool (tool.key)}
 				<span class="badge badge-outline badge-sm gap-1">
-					{t.title}
-					<button class="text-error" aria-label="Disable {t.title}" onclick={() => toggleCapability(t.key, true)}>✕</button>
+					{tool.title}
+					<button
+						class="text-error"
+						aria-label={t('chat-render-tool-disable-aria', { name: tool.title })}
+						onclick={() => toggleCapability(tool.key, true)}>✕</button
+					>
 				</span>
 			{/each}
 			<span class="flex-1"></span>
-			<select class="select select-bordered select-xs" aria-label="Reasoning effort" bind:value={effort} onchange={saveEffort}>
-				{#each EFFORTS as [value, label] (value)}
-					<option value={value}>{label}</option>
+			<select
+				class="select select-bordered select-xs"
+				aria-label={t('chat-render-effort-title')}
+				title={t('chat-render-effort-tooltip')}
+				bind:value={effort}
+				onchange={saveEffort}
+			>
+				{#each EFFORTS as level (level)}
+					<option value={level}>
+						{t('chat-render-effort-label-prefix')} {t(`chat-render-effort-${level}`)}
+					</option>
 				{/each}
 			</select>
 		</div>
 		{#if toolsOpen}
 			<div class="flex flex-wrap gap-2 mb-2 border border-base-300 rounded-lg p-2">
-				{#each tools as t (t.key)}
+				{#each tools as tool (tool.key)}
 					<label class="label cursor-pointer gap-1">
 						<input
 							type="checkbox"
 							class="checkbox checkbox-xs"
-							checked={t.enabled}
-							onchange={() => toggleCapability(t.key, t.enabled)}
+							checked={tool.enabled}
+							onchange={() => toggleCapability(tool.key, tool.enabled)}
 						/>
-						<span class="label-text text-xs">{t.title}</span>
+						<span class="label-text text-xs">{tool.title}</span>
 					</label>
 				{/each}
 			</div>
@@ -633,12 +662,17 @@
 			{#if models.length > 0}
 				<select
 					class="select select-bordered select-sm w-56"
-					aria-label="Model"
+					aria-label={t('chat-render-model-aria')}
 					bind:value={model}
 					disabled={streaming || sending}
 				>
 					{#each models as m (m.id)}
-						<option value={m.id} title="{m.gdpr ? 'GDPR region' : ''} {m.nda ? 'NDA-covered' : ''}">
+						<option
+							value={m.id}
+							title="{m.gdpr ? t('chat-render-model-gdpr-region') : ''} {m.nda
+								? t('chat-render-model-nda-covered')
+								: ''}"
+						>
 							{m.id}{m.gdpr ? ' · gdpr' : ''}{m.nda ? ' · nda' : ''}
 						</option>
 					{/each}
@@ -646,8 +680,8 @@
 			{:else}
 				<input
 					class="input input-bordered input-sm w-56"
-					placeholder="model (e.g. gpt-4o-mini)"
-					aria-label="Model"
+					placeholder={t('chat-render-model-placeholder')}
+					aria-label={t('chat-render-model-aria')}
 					bind:value={model}
 					disabled={streaming || sending}
 				/>
@@ -655,7 +689,7 @@
 			<textarea
 				class="textarea textarea-bordered flex-1 min-h-11 max-h-48"
 				rows="1"
-				placeholder="Message the model…"
+				placeholder={t('chat-render-composer-placeholder')}
 				bind:value={draft}
 				onkeydown={onKeydown}
 				onpaste={onPaste}
@@ -663,18 +697,27 @@
 				ondrop={onDrop}
 				disabled={streaming}
 			></textarea>
-			<label class="btn btn-ghost btn-square" aria-label="Attach files" title="Attach files">
+			<label
+				class="btn btn-ghost btn-square"
+				aria-label={t('render-composer-attach-aria')}
+				title={t('render-composer-attach-title')}
+			>
 				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
 				<input type="file" multiple class="hidden" onchange={(e) => { addFiles((e.currentTarget as HTMLInputElement).files); (e.currentTarget as HTMLInputElement).value = ''; }} />
 			</label>
 			{#if streaming}
-				<button class="btn btn-error" onclick={stop}>Stop</button>
+				<button class="btn btn-error" onclick={stop}>{t('render-composer-stop')}</button>
 			{:else}
 				<button class="btn btn-primary" onclick={send} disabled={(!draft.trim() && files.length === 0) || !model.trim() || sending}>
-					Send
+					{t('render-composer-send')}
 				</button>
 			{/if}
-			<button class="btn btn-ghost btn-square" onclick={openVoice} aria-label="Voice mode" title="Voice mode">
+			<button
+				class="btn btn-ghost btn-square"
+				onclick={openVoice}
+				aria-label={t('voice-toggle-title')}
+				title={t('voice-toggle-title')}
+			>
 				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="inline-block align-text-bottom" aria-hidden="true">
 					<rect x="9" y="2" width="6" height="11" rx="3" />
 					<path d="M5 10v1a7 7 0 0 0 14 0v-1" />
@@ -687,7 +730,7 @@
 </div>
 
 {#if voiceOpen.open && voice}
-	<dialog class="modal modal-open" aria-label="Voice mode">
+	<dialog class="modal modal-open" aria-label={t('voice-modal-title')}>
 		<div class="modal-box max-w-sm">
 			<div class="flex flex-col items-center gap-4 py-4">
 				<button
@@ -697,7 +740,9 @@
 							? 'btn-primary'
 							: 'btn-neutral'}"
 					onclick={() => voice?.tap(model)}
-					aria-label={voice.state.phase === 'listening' ? 'Stop and send' : 'Talk'}
+					aria-label={voice.state.phase === 'listening'
+						? t('voice-hint-tap-to-send')
+						: t('voice-hint-tap-to-talk')}
 				>
 					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 						<rect x="9" y="2" width="6" height="11" rx="3" />
@@ -708,29 +753,37 @@
 				</button>
 				<p class="text-sm font-medium">
 					{#if voice.state.phase === 'listening'}
-						Listening — tap to send
+						{t('voice-phase-listening')}
 					{:else if voice.state.phase === 'working'}
-						Working…
+						{t('voice-status-working')}
 					{:else if voice.state.phase === 'speaking'}
-						Speaking — tap to interrupt
+						{t('voice-phase-speaking')}
 					{:else}
-						Tap to talk
+						{t('voice-hint-tap-to-talk')}
 					{/if}
 				</p>
 				{#if voice.state.captionUser}
-					<p class="text-xs text-base-content/60 w-full text-left"><strong>You:</strong> {voice.state.captionUser}</p>
+					<p class="text-xs text-base-content/60 w-full text-left">
+						<strong>{t('voice-caption-you')}:</strong>
+						{voice.state.captionUser}
+					</p>
 				{/if}
 				{#if voice.state.captionAi}
-					<p class="text-xs text-base-content/60 w-full text-left"><strong>AI:</strong> {voice.state.captionAi}</p>
+					<p class="text-xs text-base-content/60 w-full text-left">
+						<strong>{t('voice-caption-ai')}:</strong>
+						{voice.state.captionAi}
+					</p>
 				{/if}
 				{#if voice.state.note}
 					<div class="alert alert-warning py-2"><span>{voice.state.note}</span></div>
 				{/if}
 			</div>
 			<div class="modal-action">
-				<button class="btn btn-ghost btn-sm" onclick={closeVoice}>Close</button>
+				<button class="btn btn-ghost btn-sm" onclick={closeVoice}>{t('chat-render-close')}</button>
 			</div>
 		</div>
-		<form method="dialog" class="modal-backdrop"><button onclick={closeVoice}>close</button></form>
+		<form method="dialog" class="modal-backdrop">
+			<button onclick={closeVoice}>{t('chat-render-close')}</button>
+		</form>
 	</dialog>
 {/if}

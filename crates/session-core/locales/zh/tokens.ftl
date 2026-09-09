@@ -114,3 +114,16 @@ tokens-limits-not-yours = 该配额不由你移除。
 tokens-limits-admin-set = 该配额由管理员为此令牌设置，只能在管理员限额页面更改。
 tokens-limits-admin-badge = 由管理员设置
 tokens-models-admin-set = 运营方还将此令牌限制为：{ $models }。你的选择只能在此基础上进一步收紧，无法放宽。
+
+# SPA-only: the Svelte /tokens row panels and their confirm prompts.
+tokens-models-heading = 模型白名单
+tokens-models-input-placeholder = 模型 id，用逗号分隔
+tokens-quota-heading = 配额
+tokens-quota-per = 每
+tokens-quota-max-placeholder = 上限
+tokens-mcp-heading = MCP 连接器
+tokens-mcp-allow-button = 允许运行
+tokens-mcp-block-button = 阻止运行
+tokens-revoke-confirm = 撤销此令牌？正在使用它的客户端会立即失效。
+tokens-rotate-confirm = 生成新的密钥？旧密钥会立即失效。
+tokens-remove-confirm = 永久删除此令牌记录？

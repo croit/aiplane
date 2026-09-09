@@ -26,3 +26,13 @@ memory-error-update-failed = Не удалось обновить запись.
 memory-toast-removed = Запись удалена.
 memory-info-already-gone = Запись уже была удалена.
 memory-error-remove-failed = Не удалось удалить запись.
+
+# SPA-only: the Svelte /memory page's inline add/edit form.
+memory-edit-heading = Изменить запись
+memory-kind-label = Тип
+memory-kind-preference = Предпочтение
+memory-kind-project = Проект
+memory-kind-fact = Факт
+memory-content-label = Содержимое
+memory-add-button = Добавить
+memory-delete-confirm = Удалить эту запись?

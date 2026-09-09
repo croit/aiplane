@@ -97,3 +97,12 @@ scheduled-pause-title = Приостановить
 scheduled-resume-title = Возобновить
 scheduled-edit-title = Изменить
 scheduled-delete-title = Удалить
+
+# SPA-only: the Svelte /scheduled page's builder form and action list.
+scheduled-new-heading = Новое запланированное действие
+scheduled-weekdays-label = Дни недели
+scheduled-day-of-month-label = День месяца
+scheduled-update-preview = Обновить предпросмотр
+scheduled-err-invalid-schedule = Неверное расписание.
+scheduled-badge-last-run-failed = последний запуск не удался
+scheduled-delete-confirm = Удалить это запланированное действие?

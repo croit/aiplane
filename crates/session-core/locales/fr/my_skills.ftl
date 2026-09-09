@@ -31,3 +31,9 @@ my-skills-error-no-file = Aucun fichier importé — choisissez une archive .ski
 my-skills-error-no-name = Ajoutez une ligne `name:` à l'en-tête du SKILL.md.
 my-skills-error-install-failed = Impossible d'installer la compétence : { $error }
 my-skills-error-save-failed = Impossible d'enregistrer la compétence : { $error }
+
+# SPA-only: the Svelte /skills list (inline body preview + upload toasts).
+my-skills-view-button = Afficher
+my-skills-hide-button = Masquer
+my-skills-toast-installed = { $name } installé.
+my-skills-delete-confirm = Supprimer votre skill privé { $name } ?

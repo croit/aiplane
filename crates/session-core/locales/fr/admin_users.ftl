@@ -25,3 +25,6 @@ admin-users-audit-col-when = Date
 admin-users-audit-col-action = Action
 admin-users-audit-col-admin = Admin
 admin-users-audit-col-target = Cible
+
+# Confirmation avant usurpation d'identité (liste des utilisateurs de la SPA).
+admin-users-impersonate-confirm = Agir en tant que cet utilisateur ? Votre session d'administration est conservée ; arrêtez depuis l'en-tête.

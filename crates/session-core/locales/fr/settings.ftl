@@ -206,3 +206,6 @@ settings-f-gateway-session_absolute_max_days = Âge maximal de session
 settings-f-gateway-session_absolute_max_days-help = Plafond strict en jours depuis la connexion, qu'aucune activité ne prolonge. Il force aussi un passage périodique par le fournisseur d'identité, le seul moment où les revendications de groupe sont relues.
 settings-f-gateway-allow_impersonation = Autoriser l'usurpation d'identité
 settings-f-gateway-allow_impersonation-help = Permet aux administrateurs d'agir en tant qu'un autre utilisateur pour le débogage. Chaque usurpation est auditée et affiche une bannière permanente ; désactivé, les boutons disparaissent et le point d'accès refuse.
+
+# Confirmation avant d'effacer un réglage enregistré (éditeur de la SPA).
+settings-clear-confirm = Réinitialiser { $key } à sa valeur par défaut intégrée ?

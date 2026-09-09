@@ -62,3 +62,7 @@ integrations-error-saving-permissions = 保存权限失败：{ $error }
 integrations-error-listing-tools = 列出工具失败：{ $error }
 integrations-error-disconnecting = 断开连接失败：{ $error }
 integrations-error-connection-unavailable = 连接不可用
+
+# SPA-only: the Svelte /integrations connector list.
+integrations-badge-not-connected = 未连接
+integrations-toast-connected = 已连接 { $name }。

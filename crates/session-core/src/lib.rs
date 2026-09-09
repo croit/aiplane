@@ -28,6 +28,7 @@ pub mod db;
 pub mod driver;
 pub mod export;
 pub mod i18n;
+mod i18n_drift;
 pub mod text;
 pub mod worker;
 pub mod workers;

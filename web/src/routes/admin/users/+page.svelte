@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminJson, adminPost } from '$lib/admin-client';
+	import { t, dt } from '$lib/i18n.svelte';
 
 	interface AdminUser {
 		id: string;
@@ -25,7 +26,7 @@
 	}
 
 	async function impersonate(id: string) {
-		if (!confirm(`Act as this user? Your admin session is preserved; stop from the header.`)) return;
+		if (!confirm(t('admin-users-impersonate-confirm'))) return;
 		try {
 			await adminPost(`/api/v0/admin/users/${encodeURIComponent(id)}/impersonate`);
 			location.reload();
@@ -42,10 +43,18 @@
 
 <div class="card border border-base-300">
 	<div class="card-body">
-		<h2 class="card-title text-base">Users</h2>
+		<h2 class="card-title text-base">{t('admin-users-heading')}</h2>
 		<div class="overflow-x-auto">
 			<table class="table table-sm">
-				<thead><tr><th>Email</th><th>User ID</th><th>Roles</th><th>Created</th><th></th></tr></thead>
+				<thead>
+					<tr>
+						<th>{t('admin-users-col-email')}</th>
+						<th>{t('tokens-account-user-id-label')}</th>
+						<th>{t('admin-users-col-gateway-roles')}</th>
+						<th>{t('admin-users-col-joined')}</th>
+						<th></th>
+					</tr>
+				</thead>
 				<tbody>
 					{#each users as u (u.id)}
 						<tr>
@@ -54,9 +63,11 @@
 							<td>
 								{#each u.roles as r (r)}<span class="badge badge-outline badge-sm me-1">{r}</span>{/each}
 							</td>
-							<td class="text-xs">{new Date(u.created_at).toLocaleDateString()}</td>
+							<td class="text-xs">{dt(u.created_at, { dateStyle: 'medium' })}</td>
 							<td>
-								<button class="btn btn-ghost btn-xs" onclick={() => impersonate(u.id)}>Impersonate</button>
+								<button class="btn btn-ghost btn-xs" onclick={() => impersonate(u.id)}>
+									{t('admin-users-impersonate-button')}
+								</button>
 							</td>
 						</tr>
 					{/each}

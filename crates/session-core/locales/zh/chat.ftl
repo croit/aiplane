@@ -36,3 +36,19 @@ chat-error-attachments-not-configured = 聊天附件未配置
 chat-error-bad-filename = 文件名无效
 chat-error-attachment-not-found = 未找到
 chat-error-rate-limited = 您已达到使用限制。详情及重置时间请见 /usage。
+
+# SPA-only chat chrome (`web/src/routes/chat/*`): the conversation list,
+# the conversation header, the assistant's ask-back card, and the
+# turn-status line the server never renders itself.
+chat-list-empty = 还没有对话。在上方开始一个吧。
+chat-list-pinned-badge = 已置顶
+chat-list-pin = 置顶
+chat-list-unpin = 取消置顶
+chat-list-delete = 删除
+chat-push-invite = 回复完成时通知你。
+chat-all-chats = 所有聊天
+chat-turn-stopped = 已停止
+chat-prompt-heading = 助手提问
+chat-prompt-placeholder = 输入答案…
+chat-prompt-answer = 回答
+chat-prompt-skip = 跳过

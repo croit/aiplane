@@ -36,3 +36,19 @@ chat-error-attachments-not-configured = les pièces jointes du chat ne sont pas 
 chat-error-bad-filename = nom de fichier invalide
 chat-error-attachment-not-found = introuvable
 chat-error-rate-limited = Vous avez atteint une limite d'utilisation. Voir /usage pour les détails et la réinitialisation.
+
+# SPA-only chat chrome (`web/src/routes/chat/*`): the conversation list,
+# the conversation header, the assistant's ask-back card, and the
+# turn-status line the server never renders itself.
+chat-list-empty = Aucune conversation pour l'instant. Lancez-en une ci-dessus.
+chat-list-pinned-badge = épinglée
+chat-list-pin = Épingler
+chat-list-unpin = Désépingler
+chat-list-delete = Supprimer
+chat-push-invite = Soyez averti dès qu'une réponse est terminée.
+chat-all-chats = Toutes les discussions
+chat-turn-stopped = arrêté
+chat-prompt-heading = L'assistant demande
+chat-prompt-placeholder = Saisissez une réponse…
+chat-prompt-answer = Répondre
+chat-prompt-skip = Ignorer

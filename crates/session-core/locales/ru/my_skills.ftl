@@ -31,3 +31,9 @@ my-skills-error-no-file = Файл не загружен — выберите а
 my-skills-error-no-name = Добавьте строку `name:` в заголовок SKILL.md.
 my-skills-error-install-failed = Не удалось установить навык: { $error }
 my-skills-error-save-failed = Не удалось сохранить навык: { $error }
+
+# SPA-only: the Svelte /skills list (inline body preview + upload toasts).
+my-skills-view-button = Показать
+my-skills-hide-button = Скрыть
+my-skills-toast-installed = { $name } установлен.
+my-skills-delete-confirm = Удалить ваш личный навык { $name }?

@@ -41,3 +41,8 @@ limits-unknown-user = kein Benutzer passt zu `{ $user }`
 limits-missing-subject-id = Rollen-ID, Benutzer-E-Mail oder Token-ID eingeben
 limits-subject-token = API-Token
 limits-unknown-token = kein Token passt zu `{ $token }`
+
+# Regeltabelle der SPA: Überschrift, Spalte „verwaltet von“ und Löschabfrage.
+limits-rules-heading = Regeln
+limits-col-managed-by = Von
+limits-delete-confirm = Diese Regel löschen?

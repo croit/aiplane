@@ -41,3 +41,13 @@ setup-manual-help = Utilisez ceci si le groupe administrateur n'est pas un group
 setup-finish-button = Terminer la configuration
 setup-back-button = Retour aux paramètres du fournisseur
 setup-show-token = Afficher tout ce que le fournisseur a envoyé
+
+# The one state the server-rendered form had no equivalent of.
+setup-testing = Test en cours…
+
+# The SPA wizard: its own page heading, the closed-for-business
+# notice, and two inline states the server-rendered form had no
+# equivalent of.
+setup-page-heading = Configuration de la passerelle
+setup-closed = La configuration est terminée sur cette passerelle. Connectez-vous normalement, ou lancez restore-setup sur l'hôte pour rouvrir l'assistant.
+setup-secret-set-hint = défini — laissez vide pour le conserver

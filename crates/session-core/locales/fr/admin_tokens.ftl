@@ -17,3 +17,11 @@ admin-tokens-models-help = Une restriction de l'opérateur sur ce jeton, distinc
 admin-tokens-models-restrict-label = Limiter ce jeton à des modèles précis
 admin-tokens-models-saved-toast = Restriction de l'opérateur définie : { $count } modèles.
 admin-tokens-models-cleared-toast = Restriction de l'opérateur supprimée.
+
+# Registre des jetons de la SPA : titre de l'éditeur de liste blanche et cellules compactes.
+admin-tokens-allowlist-heading = Liste blanche de modèles (admin)
+admin-tokens-col-this-month = Ce mois-ci
+admin-tokens-usage-off = suivi désactivé
+admin-tokens-models-button = Modèles
+admin-tokens-tools-on = activé
+admin-tokens-tools-off = désactivé

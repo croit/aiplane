@@ -99,3 +99,12 @@ scheduled-pause-title = Pause
 scheduled-resume-title = Resume
 scheduled-edit-title = Edit
 scheduled-delete-title = Delete
+
+# SPA-only: the Svelte /scheduled page's builder form and action list.
+scheduled-new-heading = New scheduled action
+scheduled-weekdays-label = Weekdays
+scheduled-day-of-month-label = Day of month
+scheduled-update-preview = Update preview
+scheduled-err-invalid-schedule = Invalid schedule.
+scheduled-badge-last-run-failed = last run failed
+scheduled-delete-confirm = Delete this scheduled action?

@@ -45,3 +45,9 @@ skills-save-access-button = Enregistrer l'accès
 skills-from-config-badge = depuis la configuration
 
 skills-error-no-dir-access = Pas d’accès au répertoire des compétences — vérifiez qu’il existe et que la passerelle peut y lire et écrire :
+
+# Gestion des skills dans la SPA : message d'installation, confirmation de
+# suppression et libellé d'absence d'autorisation.
+skills-installed = { $name } installé.
+skills-delete-confirm = Supprimer le skill global { $name } et ses autorisations ?
+skills-no-extra-grants = aucune autorisation supplémentaire

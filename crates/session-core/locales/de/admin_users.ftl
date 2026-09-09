@@ -25,3 +25,6 @@ admin-users-audit-col-when = Zeitpunkt
 admin-users-audit-col-action = Aktion
 admin-users-audit-col-admin = Admin
 admin-users-audit-col-target = Ziel
+
+# Bestätigung vor dem Identitätswechsel (Nutzerliste der SPA).
+admin-users-impersonate-confirm = Als dieser Nutzer handeln? Deine Admin-Sitzung bleibt erhalten; beenden lässt es sich in der Kopfzeile.

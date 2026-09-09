@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { adminJson, adminPost, adminPut, adminDelete } from '$lib/admin-client';
+	import { t, dt } from '$lib/i18n.svelte';
 
 	interface Hook {
 		id: string;
@@ -73,7 +74,7 @@
 	}
 
 	async function rotate(h: Hook) {
-		if (!confirm('Issue a new trigger secret? The old URL stops working immediately.')) return;
+		if (!confirm(t('webhooks-rotate-confirm'))) return;
 		try {
 			const res = await adminPost<{ secret: string }>(`/api/v0/webhooks/${h.id}/rotate`);
 			secret = res.secret;
@@ -83,7 +84,7 @@
 	}
 
 	async function remove(id: string) {
-		if (!confirm('Delete this webhook?')) return;
+		if (!confirm(t('webhooks-delete-confirm'))) return;
 		await adminDelete(`/api/v0/webhooks/${id}`);
 		await refresh();
 	}
@@ -118,8 +119,9 @@
 			);
 			notice =
 				res.status === 'ok'
-					? `Rerun finished — opening the conversation.`
-					: `Rerun ${res.status}${res.error ? `: ${res.error}` : ''}`;
+					? t('webhooks-toast-rerun-started')
+					: t('webhooks-toast-rerun-failed', { status: res.status }) +
+						(res.error ? `: ${res.error}` : '');
 			if (res.status === 'ok') await goto(`${base}/chat/${res.session_id}`);
 			else await showRuns(h);
 		} catch (err) {
@@ -133,11 +135,11 @@
 </script>
 
 <div class="flex items-center justify-between mb-4">
-	<h1 class="text-2xl font-bold">Webhooks</h1>
+	<h1 class="text-2xl font-bold">{t('webhooks-heading')}</h1>
 </div>
 
 <p class="text-base-content/60 text-sm mb-6">
-	Prompt endpoints: POST any payload to the trigger URL and the stored prompt runs over it (headless).
+	{t('webhooks-intro')}
 </p>
 
 {#if error}<div class="alert alert-error mb-4"><span>{error}</span></div>{/if}
@@ -146,7 +148,8 @@
 {#if secret}
 	<div class="card border border-success mb-6">
 		<div class="card-body">
-			<h2 class="card-title text-base">Trigger URL — copy it now, it is shown once</h2>
+			<h2 class="card-title text-base">{t('webhooks-reveal-heading')}</h2>
+			<p class="text-sm text-base-content/70">{t('webhooks-reveal-note')}</p>
 			<pre class="bg-base-100 border border-base-300 rounded-md p-3 font-mono text-xs select-all break-all whitespace-pre-wrap">curl -X POST "{location.origin}/hooks/{secret}" -d 'your payload'</pre>
 		</div>
 	</div>
@@ -154,20 +157,36 @@
 
 <div class="card border border-base-300 mb-6">
 	<div class="card-body">
-		<h2 class="card-title text-base">{editing ? 'Edit webhook' : 'New webhook'}</h2>
+		<h2 class="card-title text-base">
+			{editing ? t('webhooks-edit-heading') : t('webhooks-new-heading')}
+		</h2>
 		<div class="grid sm:grid-cols-2 gap-3">
-			<label class="flex flex-col gap-1"><span class="label-text">Name</span>
-				<input class="input input-bordered input-sm" bind:value={fname} /></label>
-			<label class="flex flex-col gap-1"><span class="label-text">Model</span>
-				<input class="input input-bordered input-sm" bind:value={fmodel} list="hook-models" />
+			<label class="flex flex-col gap-1"><span class="label-text">{t('webhooks-name-label')}</span>
+				<input
+					class="input input-bordered input-sm"
+					bind:value={fname}
+					placeholder={t('webhooks-name-placeholder')}
+				/></label>
+			<label class="flex flex-col gap-1"><span class="label-text">{t('webhooks-model-label')}</span>
+				<input
+					class="input input-bordered input-sm"
+					bind:value={fmodel}
+					list="hook-models"
+					placeholder={t('webhooks-model-placeholder')}
+				/>
 				<datalist id="hook-models">{#each data?.models ?? [] as m (m)}<option value={m}></option>{/each}</datalist>
 			</label>
-			<label class="flex flex-col gap-1 sm:col-span-2"><span class="label-text">Prompt (the payload rides in as untrusted input)</span>
-				<textarea class="textarea textarea-bordered text-sm" rows="3" bind:value={fprompt}></textarea></label>
+			<label class="flex flex-col gap-1 sm:col-span-2"><span class="label-text">{t('webhooks-prompt-untrusted-label')}</span>
+				<textarea
+					class="textarea textarea-bordered text-sm"
+					rows="3"
+					bind:value={fprompt}
+					placeholder={t('webhooks-prompt-placeholder')}
+				></textarea></label>
 		</div>
 		<div class="card-actions justify-end mt-2">
-			{#if editing}<button class="btn btn-ghost btn-sm" onclick={() => { editing = null; fname=''; fprompt=''; }}>Cancel</button>{/if}
-			<button class="btn btn-primary btn-sm" onclick={save} disabled={!fname.trim() || !fprompt.trim() || !fmodel.trim()}>Save</button>
+			{#if editing}<button class="btn btn-ghost btn-sm" onclick={() => { editing = null; fname=''; fprompt=''; }}>{t('admin-cancel')}</button>{/if}
+			<button class="btn btn-primary btn-sm" onclick={save} disabled={!fname.trim() || !fprompt.trim() || !fmodel.trim()}>{t('groups-save')}</button>
 		</div>
 	</div>
 </div>
@@ -177,18 +196,18 @@
 		<li class="card border border-base-300">
 			<div class="card-body py-3">
 				<div class="flex items-center gap-3 flex-wrap">
-					{#if h.enabled}<span class="badge badge-success badge-sm">enabled</span>{:else}<span class="badge badge-ghost badge-sm">disabled</span>{/if}
+					{#if h.enabled}<span class="badge badge-success badge-sm">{t('webhooks-badge-active')}</span>{:else}<span class="badge badge-ghost badge-sm">{t('webhooks-badge-paused')}</span>{/if}
 					<span class="font-medium">{h.name}</span>
 					<span class="font-mono text-xs text-base-content/50">{h.model}</span>
-					{#if h.synchronous}<span class="badge badge-outline badge-sm">synchronous</span>{/if}
+					{#if h.synchronous}<span class="badge badge-outline badge-sm">{t('webhooks-mode-sync')}</span>{/if}
 					<span class="flex-1"></span>
-					<button class="btn btn-ghost btn-xs" onclick={() => toggle(h)}>{h.enabled ? 'Disable' : 'Enable'}</button>
-					<button class="btn btn-ghost btn-xs" onclick={() => rotate(h)}>Rotate</button>
+					<button class="btn btn-ghost btn-xs" onclick={() => toggle(h)}>{h.enabled ? t('webhooks-pause-title') : t('webhooks-resume-title')}</button>
+					<button class="btn btn-ghost btn-xs" onclick={() => rotate(h)}>{t('webhooks-rotate-title')}</button>
 					<button class="btn btn-ghost btn-xs" onclick={() => showRuns(h)}>
-						{runsFor === h.id ? 'Hide runs' : 'Runs'}
+						{runsFor === h.id ? t('webhooks-runs-hide') : t('webhooks-runs-show')}
 					</button>
-					<button class="btn btn-ghost btn-xs" onclick={() => { editing = h.id; fname = h.name; fprompt = h.prompt; fmodel = h.model; }}>Edit</button>
-					<button class="btn btn-ghost btn-xs text-error" onclick={() => remove(h.id)}>Delete</button>
+					<button class="btn btn-ghost btn-xs" onclick={() => { editing = h.id; fname = h.name; fprompt = h.prompt; fmodel = h.model; }}>{t('webhooks-edit-title')}</button>
+					<button class="btn btn-ghost btn-xs text-error" onclick={() => remove(h.id)}>{t('webhooks-delete-title')}</button>
 				</div>
 				<p class="text-xs text-base-content/60 line-clamp-2">{h.prompt}</p>
 
@@ -200,28 +219,28 @@
 									<span
 										class="badge badge-xs {r.status === 'ok' ? 'badge-success' : 'badge-error'}"
 									>{r.status}</span>
-									<span class="text-base-content/50">{new Date(r.fired_at).toLocaleString()}</span>
+									<span class="text-base-content/50">{dt(r.fired_at)}</span>
 									<span class="badge badge-ghost badge-xs">{r.source}</span>
 									{#if r.error}<span class="text-error truncate max-w-64">{r.error}</span>{/if}
 									<span class="flex-1"></span>
 									{#if r.session_id}
-										<a class="btn btn-ghost btn-xs" href="{base}/chat/{r.session_id}">Conversation</a>
+										<a class="btn btn-ghost btn-xs" href="{base}/chat/{r.session_id}">{t('webhooks-run-open')}</a>
 									{/if}
 									<button
 										class="btn btn-ghost btn-xs"
 										onclick={() => rerun(h, r.id)}
 										disabled={rerunning}
 									>
-										Replay this payload
+										{t('webhooks-run-rerun')}
 									</button>
 								</li>
 							{:else}
-								<li class="text-xs text-base-content/50">No runs yet.</li>
+								<li class="text-xs text-base-content/50">{t('webhooks-runs-empty')}</li>
 							{/each}
 						</ul>
 						<div class="flex flex-col gap-1">
 							<span class="label-text text-xs">
-								Rerun prompt — the stored payload is replayed through this
+								{t('webhooks-rerun-prompt-label')}
 							</span>
 							<textarea
 								class="textarea textarea-bordered text-sm"
@@ -234,7 +253,7 @@
 									onclick={() => rerun(h, null)}
 									disabled={rerunning || !rerunPrompt.trim()}
 								>
-									{rerunning ? 'Running…' : 'Rerun latest payload'}
+									{rerunning ? t('webhooks-rerun-running') : t('webhooks-rerun-latest')}
 								</button>
 							</div>
 						</div>
@@ -242,5 +261,7 @@
 				{/if}
 			</div>
 		</li>
+	{:else}
+		<li class="text-sm text-base-content/50">{t('webhooks-list-empty')}</li>
 	{/each}
 </ul>

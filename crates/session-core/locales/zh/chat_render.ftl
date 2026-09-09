@@ -85,3 +85,15 @@ chat-render-export-aria = 导出对话
 chat-render-export-label = 导出
 chat-render-export-pdf = PDF 文档
 chat-render-export-md = Markdown (.md)
+
+# SPA-only chat-page chrome (`web/src/routes/chat/[id]`): the canvas
+# document list and its save state, the composer's per-tool remove
+# button, the model picker's compliance tooltips, and the attachment
+# size chip.
+chat-render-documents-label = 文档
+chat-render-revision-count = { $count } 个版本
+chat-render-canvas-saving = 正在保存…
+chat-render-tool-disable-aria = 停用 { $name }
+chat-render-model-gdpr-region = GDPR 区域
+chat-render-model-nda-covered = 受 NDA 保护
+chat-render-attachment-size-kb = { $size } KB

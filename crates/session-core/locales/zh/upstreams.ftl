@@ -32,3 +32,6 @@ upstreams-unassigned-heading = 未分配
 upstreams-unassigned-description = 未分配给任何池的后端。将其加入某个池以向其路由流量。
 
 upstreams-empty = 尚未配置任何池或后端。添加一个池或后端即可开始。
+
+# SPA 应用待生效拓扑后的提示。
+upstreams-applied = 拓扑已应用。

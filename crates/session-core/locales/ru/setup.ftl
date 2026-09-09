@@ -41,3 +41,13 @@ setup-manual-help = Используйте это, если администра
 setup-finish-button = Завершить настройку
 setup-back-button = Назад к настройкам провайдера
 setup-show-token = Показать всё, что прислал провайдер
+
+# The one state the server-rendered form had no equivalent of.
+setup-testing = Проверка…
+
+# The SPA wizard: its own page heading, the closed-for-business
+# notice, and two inline states the server-rendered form had no
+# equivalent of.
+setup-page-heading = Настройка шлюза
+setup-closed = Настройка этого шлюза завершена. Войдите обычным способом или выполните restore-setup на хосте, чтобы снова открыть мастер.
+setup-secret-set-hint = задан — оставьте пустым, чтобы сохранить

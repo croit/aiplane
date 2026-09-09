@@ -114,3 +114,16 @@ tokens-limits-not-yours = Ce quota n'est pas le vôtre à supprimer.
 tokens-limits-admin-set = Un administrateur a défini ce quota sur ce jeton ; il ne peut être modifié que sur la page des limites d'administration.
 tokens-limits-admin-badge = défini par l'administrateur
 tokens-models-admin-set = Un opérateur restreint aussi ce jeton à : { $models }. Votre sélection ne peut que réduire cela, pas l'élargir.
+
+# SPA-only: the Svelte /tokens row panels and their confirm prompts.
+tokens-models-heading = Liste blanche de modèles
+tokens-models-input-placeholder = identifiants de modèles, séparés par des virgules
+tokens-quota-heading = Quota
+tokens-quota-per = par
+tokens-quota-max-placeholder = max
+tokens-mcp-heading = Connecteurs MCP
+tokens-mcp-allow-button = Les laisser s'exécuter
+tokens-mcp-block-button = Les bloquer
+tokens-revoke-confirm = Révoquer ce jeton ? Les clients qui l'utilisent cessent de fonctionner immédiatement.
+tokens-rotate-confirm = Émettre un nouveau secret ? L'ancien cesse de fonctionner immédiatement.
+tokens-remove-confirm = Supprimer définitivement cette ligne de jeton ?

@@ -67,3 +67,12 @@ usage-key-token = API 令牌
 usage-token-none = 聊天与定时任务（无令牌）
 usage-token-all = 全部令牌
 usage-filter-token = 令牌
+
+# SPA-only: the Svelte /usage period picker and grouped-table column head.
+usage-period-today = 今天
+usage-period-24h = 最近 24 小时
+usage-period-this-week = 本周
+usage-period-last-week = 上周
+usage-period-this-month = 本月
+usage-period-last-month = 上月
+usage-col-name = 名称

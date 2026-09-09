@@ -206,3 +206,6 @@ settings-f-gateway-session_absolute_max_days = 会话最长存续时间
 settings-f-gateway-session_absolute_max_days-help = 自登录起的硬性上限，以天计，任何活动都无法延长。它同时强制定期回到身份提供方——那是唯一会重新读取组声明的时刻。
 settings-f-gateway-allow_impersonation = 允许模拟用户
 settings-f-gateway-allow_impersonation-help = 允许管理员以其他用户身份进行调试。每次模拟都会被审计并显示常驻横幅；关闭时按钮隐藏，端点也会拒绝。
+
+# 清除某项已保存设置前的确认（SPA 设置编辑器）。
+settings-clear-confirm = 要将 { $key } 重置为内置默认值吗？

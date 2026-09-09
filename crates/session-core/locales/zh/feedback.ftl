@@ -68,3 +68,10 @@ feedback-err-not-configured = 反馈功能未配置
 feedback-err-title-required = 需要填写标题（至少 4 个字符）
 feedback-err-description-required = 需要填写描述
 feedback-err-submit-failed = 无法创建工单 —— 请重试
+
+# The SPA keeps the dialog open after submitting and shows a thank-you
+# panel in place of the form; the server-rendered widget did not.
+feedback-thanks-heading = 谢谢
+feedback-thanks-body = 您的反馈已作为工单提交。
+feedback-done-button = 完成
+feedback-sending = 发送中…

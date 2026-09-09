@@ -31,3 +31,9 @@ my-skills-error-no-file = 未上传文件——请选择一个 .skill 归档。
 my-skills-error-no-name = 请在 SKILL.md 前置元数据中添加 `name:` 行。
 my-skills-error-install-failed = 无法安装技能：{ $error }
 my-skills-error-save-failed = 无法保存技能：{ $error }
+
+# SPA-only: the Svelte /skills list (inline body preview + upload toasts).
+my-skills-view-button = 查看
+my-skills-hide-button = 隐藏
+my-skills-toast-installed = 已安装 { $name }。
+my-skills-delete-confirm = 删除你的私有技能 { $name }？

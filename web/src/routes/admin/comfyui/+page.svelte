@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminJson, adminPost } from '$lib/admin-client';
+	import { t } from '$lib/i18n.svelte';
 
 	interface Workflow {
 		id: string;
@@ -30,7 +31,7 @@
 			const res = await adminPost<{ report: { loaded: number; errors: string[] } }>(
 				'/api/v0/comfyui/reload'
 			);
-			notice = `Reloaded: ${res.report?.loaded ?? 0} workflow(s).`;
+			notice = t('admin-comfyui-reloaded', { count: res.report?.loaded ?? 0 });
 			await refresh();
 		} catch (err) {
 			notice = String(err);
@@ -42,7 +43,7 @@
 
 <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
 	<h1 class="text-2xl font-bold">ComfyUI</h1>
-	<button class="btn btn-primary btn-sm" onclick={reload}>Reload catalog</button>
+	<button class="btn btn-primary btn-sm" onclick={reload}>{t('admin-comfyui-reload')}</button>
 </div>
 
 {#if error}<div class="alert alert-error mb-4"><span>{error}</span></div>{/if}
@@ -57,6 +58,6 @@
 			</div>
 		</li>
 	{:else}
-		<li class="text-base-content/60 text-sm">No workflows loaded — check the content directory.</li>
+		<li class="text-base-content/60 text-sm">{t('admin-comfyui-empty')}</li>
 	{/each}
 </ul>

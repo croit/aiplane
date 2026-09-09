@@ -36,3 +36,6 @@ upstreams-unassigned-heading = Nicht zugewiesen
 upstreams-unassigned-description = Backends, die keinem Pool zugewiesen sind. Weise eines einem Pool zu, um Anfragen dorthin zu leiten.
 
 upstreams-empty = Noch keine Pools oder Backends konfiguriert. Füge einen Pool oder ein Backend hinzu, um zu beginnen.
+
+# Hinweis, nachdem die SPA die ausstehende Topologie übernommen hat.
+upstreams-applied = Topologie übernommen.

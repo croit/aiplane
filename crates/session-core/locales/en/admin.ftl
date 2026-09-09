@@ -149,3 +149,25 @@ admin-search-brave-key-clear = Remove the stored key
 admin-search-save = Save web search
 admin-search-saved = web-search settings saved
 admin-search-unknown-provider = unknown search provider `{ $provider }`
+
+# ─── SvelteKit admin SPA ─────────────────────────────────────────────────────
+# The admin shell's role guard, the /admin/comfyui workflow catalog, and the
+# bits of the /admin/models editor the SPA renders that the legacy page didn't.
+
+admin-needs-admin-role = These pages need the admin role.
+admin-overwrite-existing = overwrite existing
+admin-comfyui-reload = Reload catalog
+admin-comfyui-reloaded = Reloaded { $count } workflow(s).
+admin-comfyui-empty = No workflows loaded — check the content directory.
+admin-defaults-model-aria = Default model for { $feature }
+admin-defaults-set = Set
+admin-search-provider-none = None
+admin-add-overrides-heading = Add model overrides
+admin-edit-model-heading = Edit { $model }
+admin-add-model = Add…
+admin-pricing-unit-label = Pricing unit
+admin-pricing-unit-mtok = per Mtok
+admin-pricing-unit-ktok = per Ktok
+admin-pricing-unit-kimgs = per 1k images
+admin-clear-overrides-confirm = Drop all stored overrides for { $model }?
+admin-users-col-email = Email

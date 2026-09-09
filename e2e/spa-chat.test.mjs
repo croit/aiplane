@@ -83,7 +83,7 @@ test("a turn streams into the SPA over the JSON event protocol", async (t) => {
 
     // The SPA home funnels into the chat list; start a fresh conversation.
     await page.goto(`${BASE}/chat`, { waitUntil: "networkidle" });
-    await page.locator('button:has-text("New chat")').click();
+    await page.locator('button:has-text("New conversation")').click();
     await page.waitForURL((u) => /\/chat\/.+/.test(u.pathname), { timeout: 5000 });
 
     // With SSR off, the composer only exists once Svelte has booted —
@@ -119,11 +119,14 @@ test("the voice-mode modal opens with its tap-to-talk control", async () => {
     await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
     const page = await ctx.newPage();
     await page.goto(`${BASE}/chat`, { waitUntil: "networkidle" });
-    await page.locator('button:has-text("New chat")').click();
+    await page.locator('button:has-text("New conversation")').click();
     await page.waitForURL((u) => /\/chat\/.+/.test(u.pathname), { timeout: 5000 });
     await page.locator("textarea").waitFor();
 
-    await page.locator('button[aria-label="Voice mode"]').click();
+    // `voice-toggle-title` in the Fluent corpus — the composer's controls are
+    // translated, so the label is the catalog's wording, not a literal we get
+    // to choose here. The browser is pinned to en-US in `launchBrowser`.
+    await page.locator('button[aria-label="Start voice conversation"]').click();
     // The modal renders with its state control and the idle caption. (The
     // actual mic capture can't run headless — capability errors surface as
     // the modal's note, which is itself the wiring under test.)

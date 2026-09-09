@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminJson, adminPut, adminDelete, adminPost } from '$lib/admin-client';
+	import { adminJson, adminPut, adminDelete } from '$lib/admin-client';
+	import { t, n } from '$lib/i18n.svelte';
 
 	interface ModelEntry {
 		name: string;
@@ -82,7 +83,7 @@
 	}
 
 	async function clear(name: string) {
-		if (!confirm(`Drop all stored overrides for ${name}?`)) return;
+		if (!confirm(t('admin-clear-overrides-confirm', { model: name }))) return;
 		try {
 			await adminDelete(`/api/v0/admin/models/${encodeURIComponent(name)}`);
 			await refresh();
@@ -113,7 +114,7 @@
 				clear_brave_key: false
 			});
 			searchKey = '';
-			notice = 'Search settings saved.';
+			notice = t('admin-search-saved');
 			await refresh();
 		} catch (err) {
 			notice = String(err);
@@ -136,7 +137,7 @@
 {#if data}
 	<div class="card border border-base-300 mb-6">
 		<div class="card-body">
-			<h2 class="card-title text-base">Feature defaults</h2>
+			<h2 class="card-title text-base">{t('admin-defaults-heading')}</h2>
 			<div class="grid sm:grid-cols-2 gap-3">
 				{#each data.feature_defaults as fd (fd.feature)}
 					<form
@@ -150,10 +151,10 @@
 						<span class="badge badge-outline badge-sm self-center me-2">{fd.feature}</span>
 						<input
 							class="input input-bordered input-sm join-item w-full"
-							placeholder={fd.model ?? '(none)'}
-							aria-label="Default {fd.feature} model"
+							placeholder={fd.model ?? t('backends-field-pool-none')}
+							aria-label={t('admin-defaults-model-aria', { feature: fd.feature })}
 						/>
-						<button class="btn btn-outline btn-sm join-item" type="submit">Set</button>
+						<button class="btn btn-outline btn-sm join-item" type="submit">{t('admin-defaults-set')}</button>
 					</form>
 				{/each}
 			</div>
@@ -162,25 +163,34 @@
 
 	<div class="card border border-base-300 mb-6">
 		<div class="card-body">
-			<h2 class="card-title text-base">Web search</h2>
+			<h2 class="card-title text-base">{t('admin-search-heading')}</h2>
 			<div class="flex flex-wrap gap-3 items-end">
 				<label class="flex flex-col gap-1 w-40">
-					<span class="label-text">Provider</span>
+					<span class="label-text">{t('admin-search-provider-label')}</span>
 					<select class="select select-bordered select-sm" bind:value={searchProvider}>
-						<option value="searxng">SearXNG</option>
-						<option value="brave">Brave</option>
-						<option value="none">None</option>
+						<option value="searxng">{t('admin-search-provider-searxng')}</option>
+						<option value="brave">{t('admin-search-provider-brave')}</option>
+						<option value="none">{t('admin-search-provider-none')}</option>
 					</select>
 				</label>
 				<label class="flex flex-col gap-1 flex-1 min-w-48">
-					<span class="label-text">SearXNG URL</span>
-					<input class="input input-bordered input-sm" bind:value={searchUrl} placeholder="https://searxng…" />
+					<span class="label-text">{t('admin-search-searxng-url-label')}</span>
+					<input
+						class="input input-bordered input-sm"
+						bind:value={searchUrl}
+						placeholder={t('admin-search-searxng-url-placeholder')}
+					/>
 				</label>
 				<label class="flex flex-col gap-1 flex-1 min-w-48">
-					<span class="label-text">Brave API key {data.search.brave_key_set ? '(set — blank keeps)' : ''}</span>
-					<input class="input input-bordered input-sm" type="password" bind:value={searchKey} placeholder="" />
+					<span class="label-text">{t('admin-search-brave-key-label')}</span>
+					<input
+						class="input input-bordered input-sm"
+						type="password"
+						bind:value={searchKey}
+						placeholder={data.search.brave_key_set ? t('admin-search-brave-key-placeholder') : ''}
+					/>
 				</label>
-				<button class="btn btn-primary btn-sm" onclick={saveSearch}>Save</button>
+				<button class="btn btn-primary btn-sm" onclick={saveSearch}>{t('admin-search-save')}</button>
 			</div>
 		</div>
 	</div>
@@ -188,40 +198,58 @@
 	{#if editing !== null}
 		<div class="card border border-base-300 mb-6">
 			<div class="card-body">
-				<h2 class="card-title text-base">{editing === '' ? 'Add model overrides' : `Edit ${editing}`}</h2>
+				<h2 class="card-title text-base">
+					{editing === ''
+						? t('admin-add-overrides-heading')
+						: t('admin-edit-model-heading', { model: editing })}
+				</h2>
 				<div class="grid sm:grid-cols-2 gap-3">
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Model name</span>
+						<span class="label-text">{t('admin-col-model')}</span>
 						<input class="input input-bordered" bind:value={fname} />
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Context window</span>
-						<input class="input input-bordered" bind:value={fcontext} placeholder="blank = default" />
+						<span class="label-text">{t('admin-context-window-full-label')}</span>
+						<input
+							class="input input-bordered"
+							bind:value={fcontext}
+							placeholder={t('admin-context-window-placeholder')}
+						/>
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Input price / {data.currency}</span>
-						<input class="input input-bordered" bind:value={finput} placeholder="blank = none" />
+						<span class="label-text">{t('admin-price-in-label')} ({data.currency})</span>
+						<input
+							class="input input-bordered"
+							bind:value={finput}
+							placeholder={t('admin-price-in-placeholder')}
+						/>
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Output price / {data.currency}</span>
-						<input class="input input-bordered" bind:value={foutput} placeholder="blank = none" />
+						<span class="label-text">{t('admin-price-out-label')} ({data.currency})</span>
+						<input
+							class="input input-bordered"
+							bind:value={foutput}
+							placeholder={t('admin-price-out-placeholder')}
+						/>
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Pricing unit</span>
+						<span class="label-text">{t('admin-pricing-unit-label')}</span>
 						<select class="select select-bordered" bind:value={funit}>
-							<option value="per_mtok">per Mtok</option>
-							<option value="per_ktok">per Ktok</option>
-							<option value="per_1k_imgs">per 1k images</option>
+							<option value="per_mtok">{t('admin-pricing-unit-mtok')}</option>
+							<option value="per_ktok">{t('admin-pricing-unit-ktok')}</option>
+							<option value="per_1k_imgs">{t('admin-pricing-unit-kimgs')}</option>
 						</select>
 					</label>
 					<label class="flex flex-col gap-1 sm:col-span-2">
-						<span class="label-text">Defaults TOML (advanced)</span>
+						<span class="label-text">{t('admin-toml-defaults-label')}</span>
 						<textarea class="textarea textarea-bordered font-mono text-xs" rows="4" bind:value={ftoml}></textarea>
 					</label>
 				</div>
 				<div class="card-actions justify-end mt-2">
-					<button class="btn btn-ghost btn-sm" onclick={() => (editing = null)}>Cancel</button>
-					<button class="btn btn-primary btn-sm" onclick={save} disabled={!fname.trim()}>Save</button>
+					<button class="btn btn-ghost btn-sm" onclick={() => (editing = null)}>{t('admin-cancel')}</button>
+					<button class="btn btn-primary btn-sm" onclick={save} disabled={!fname.trim()}>
+						{t('admin-save-model')}
+					</button>
 				</div>
 			</div>
 		</div>
@@ -230,8 +258,10 @@
 	<div class="card border border-base-300">
 		<div class="card-body">
 			<div class="flex justify-between items-center mb-2">
-				<h2 class="card-title text-base">Models</h2>
-				<button class="btn btn-ghost btn-sm" onclick={() => { editing = ''; fname = ''; finput = ''; foutput = ''; fcontext = ''; ftoml = ''; }}>Add…</button>
+				<h2 class="card-title text-base">{t('admin-heading')}</h2>
+				<button class="btn btn-ghost btn-sm" onclick={() => { editing = ''; fname = ''; finput = ''; foutput = ''; fcontext = ''; ftoml = ''; }}>
+					{t('admin-add-model')}
+				</button>
 			</div>
 			<ul class="flex flex-col divide-y divide-base-300">
 				{#each data.models as m (m.name)}
@@ -239,17 +269,25 @@
 						<span class="font-mono text-sm">{m.name}</span>
 						{#if m.defaults?.input_price != null || m.defaults?.output_price != null}
 							<span class="badge badge-ghost badge-sm">
-								{m.defaults?.input_price ?? '–'} / {m.defaults?.output_price ?? '–'} {data.currency}
+								{m.defaults?.input_price != null ? n(m.defaults.input_price) : '–'} /
+								{m.defaults?.output_price != null ? n(m.defaults.output_price) : '–'}
+								{data.currency}
 							</span>
 						{/if}
 						{#if m.defaults?.context_window != null}
-							<span class="badge badge-ghost badge-sm">{m.defaults.context_window} ctx</span>
+							<span class="badge badge-ghost badge-sm">
+								{n(m.defaults.context_window)} {t('admin-badge-ctx')}
+							</span>
 						{/if}
-						{#if !m.configured}<span class="text-xs text-base-content/50">no overrides</span>{/if}
+						{#if !m.configured}
+							<span class="text-xs text-base-content/50">{t('admin-not-configured')}</span>
+						{/if}
 						<span class="flex-1"></span>
-						<button class="btn btn-ghost btn-sm" onclick={() => openEdit(m)}>Edit</button>
+						<button class="btn btn-ghost btn-sm" onclick={() => openEdit(m)}>{t('rag-button-edit')}</button>
 						{#if m.configured}
-							<button class="btn btn-ghost btn-sm text-error" onclick={() => clear(m.name)}>Clear</button>
+							<button class="btn btn-ghost btn-sm text-error" onclick={() => clear(m.name)}>
+								{t('settings-secret-clear')}
+							</button>
 						{/if}
 					</li>
 				{/each}

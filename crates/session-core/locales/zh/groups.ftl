@@ -14,3 +14,9 @@ groups-field-skills = 技能
 groups-save = 保存
 groups-delete = 删除
 groups-error-name-required = 需要提供组名。
+
+# SPA 组编辑器：编辑标题、已观察到的声明值提示、每行摘要与删除确认。
+groups-edit-heading = 编辑 { $name }
+groups-observed-values = 已观察到：{ $values }
+groups-summary-counts = { $oidc } 个 OIDC · { $tools } 个工具 · { $skills } 个技能
+groups-delete-confirm = 要删除组 { $name } 吗？其映射和授权也会一并删除。

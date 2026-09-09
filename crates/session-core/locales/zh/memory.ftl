@@ -26,3 +26,13 @@ memory-error-update-failed = 无法更新记忆。
 memory-toast-removed = 记忆已删除。
 memory-info-already-gone = 该记忆已被删除。
 memory-error-remove-failed = 无法删除记忆。
+
+# SPA-only: the Svelte /memory page's inline add/edit form.
+memory-edit-heading = 编辑记忆
+memory-kind-label = 类型
+memory-kind-preference = 偏好
+memory-kind-project = 项目
+memory-kind-fact = 事实
+memory-content-label = 内容
+memory-add-button = 添加
+memory-delete-confirm = 删除这条记忆？

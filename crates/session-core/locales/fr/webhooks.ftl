@@ -96,3 +96,15 @@ webhooks-reuse-toggle-label = Réutiliser la conversation (chaque déclenchement
 webhooks-reuse-rounds-prefix = en rejouant les
 webhooks-reuse-rounds-suffix = derniers tours
 webhooks-reuse-rounds-aria = Tours d'historique à rejouer
+
+# SPA-only: the Svelte /webhooks page — inline form, run list, rerun composer.
+webhooks-new-heading = Nouveau webhook
+webhooks-prompt-untrusted-label = Prompt (la charge utile arrive comme entrée non fiable)
+webhooks-runs-show = Exécutions
+webhooks-runs-hide = Masquer les exécutions
+webhooks-rerun-prompt-label = Prompt de réexécution — la charge utile enregistrée est rejouée à travers celui-ci
+webhooks-rerun-latest = Réexécuter la dernière charge utile
+webhooks-rerun-running = En cours…
+webhooks-toast-rerun-failed = Réexécution { $status }
+webhooks-rotate-confirm = Émettre un nouveau secret de déclenchement ? L'ancienne URL cesse de fonctionner immédiatement.
+webhooks-delete-confirm = Supprimer ce webhook ?

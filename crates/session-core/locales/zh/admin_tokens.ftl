@@ -17,3 +17,11 @@ admin-tokens-models-help = 针对此令牌的运营方限制，与所有者自�
 admin-tokens-models-restrict-label = 将此令牌限制为特定模型
 admin-tokens-models-saved-toast = 已设置运营方限制：{ $count } 个模型。
 admin-tokens-models-cleared-toast = 已移除运营方限制。
+
+# SPA 令牌总览：白名单编辑器标题与紧凑表格单元格。
+admin-tokens-allowlist-heading = 管理员模型白名单
+admin-tokens-col-this-month = 本月
+admin-tokens-usage-off = 用量统计已关闭
+admin-tokens-models-button = 模型
+admin-tokens-tools-on = 开
+admin-tokens-tools-off = 关

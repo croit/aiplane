@@ -15,3 +15,9 @@ push-turn-error-body = The turn ended with an error.
 # `tools::mcp::worker`). { $connector } is the connector's display name.
 push-connector-reconnect-title = Connection needs your sign-in
 push-connector-reconnect-body = { $connector } was disconnected — open Integrations to reconnect.
+
+# SPA-only: the root route, which only routes on to /chat.
+chrome-opening-conversations = Opening your conversations…
+
+# SPA-only: /login, which exists to bounce straight to the IdP.
+chrome-redirecting-to-sign-in = Redirecting to sign-in…

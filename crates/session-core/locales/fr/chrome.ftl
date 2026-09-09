@@ -14,3 +14,9 @@ push-turn-error-body = Le tour s'est terminé par une erreur.
 # proactif, `tools::mcp::worker`). { $connector } est le nom affiché.
 push-connector-reconnect-title = La connexion nécessite votre connexion
 push-connector-reconnect-body = { $connector } a été déconnecté — ouvrez Intégrations pour vous reconnecter.
+
+# SPA-only: the root route, which only routes on to /chat.
+chrome-opening-conversations = Ouverture de vos conversations…
+
+# SPA-only: /login, which exists to bounce straight to the IdP.
+chrome-redirecting-to-sign-in = Redirection vers la connexion…

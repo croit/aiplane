@@ -72,3 +72,8 @@ upstreams-diff-backend-leaves = { $backend } quitte le pool { $pool } et ne reç
 upstreams-diff-backend-url = { $backend } : URL de base { $from } → { $to } (ses modèles découverts sont re-sondés)
 upstreams-diff-backend-limits = { $backend } : poids { $weight }, max en vol { $inflight }
 upstreams-diff-backend-health-path = { $backend } : chemin de santé → { $to }
+
+# Cartes de pool de la SPA : les deux résumés d'une ligne et la suppression.
+pools-summary-backends = { $count } backend(s) : { $list }
+pools-summary-models = { $count } modèle(s) : { $list }
+pools-delete-confirm = Supprimer le pool { $name } ? Appliquez la topologie ensuite.

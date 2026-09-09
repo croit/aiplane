@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminJson, adminPost, adminDelete } from '$lib/admin-client';
+	import { t, dt } from '$lib/i18n.svelte';
 
 	interface Collection {
 		id: number;
@@ -137,9 +138,15 @@
 				source_kind: form.source_kind,
 				source_config: sourceConfig
 			});
-			notice = res.ok
-				? `Connected${res.account ? ` as ${res.account}` : ''} — ${res.root_entries} entries at the root${res.server ? ` (${res.server})` : ''}.`
-				: `Could not connect: ${res.error}`;
+			if (!res.ok) {
+				notice = t('rag-source-test-failed', { error: res.error ?? '' });
+			} else {
+				const entries = res.root_entries ?? 0;
+				const head = res.account
+					? t('rag-source-test-ok', { account: res.account, entries })
+					: t('rag-source-test-ok-plain', { entries });
+				notice = res.server ? `${head} ${t('rag-source-detected', { server: res.server })}` : head;
+			}
 		} catch (err) {
 			notice = String(err);
 		} finally {
@@ -167,7 +174,7 @@
 	async function reindex(c: Collection) {
 		try {
 			await adminPost(`/api/v0/rag/collections/${c.id}/reindex`);
-			notice = `Reindex requested for ${c.name}.`;
+			notice = t('rag-toast-reindex-queued-ref', { ref: c.name });
 			await refresh();
 		} catch (err) {
 			notice = String(err);
@@ -175,7 +182,7 @@
 	}
 
 	async function rotateToken(c: Collection) {
-		if (!confirm('Mint a new sync token? The old hook URL stops working.')) return;
+		if (!confirm(t('rag-sync-token-confirm'))) return;
 		try {
 			const res = await adminPost<{ token: string; url_hint: string }>(
 				`/api/v0/rag/collections/${c.id}/sync-token`
@@ -188,7 +195,7 @@
 	}
 
 	async function remove(c: Collection) {
-		if (!confirm(`Delete collection ${c.name} and its index?`)) return;
+		if (!confirm(t('rag-delete-collection-confirm', { name: c.name }))) return;
 		try {
 			await adminDelete(`/api/v0/rag/collections/${c.id}`);
 			await refresh();
@@ -200,7 +207,7 @@
 	async function rebuildRef(ref: Ref) {
 		try {
 			await adminPost(`/api/v0/rag/collections/${ref.collection_id}/refs/${ref.id}/rebuild`);
-			notice = 'Full rebuild requested.';
+			notice = t('rag-toast-rebuild-queued');
 		} catch (err) {
 			notice = String(err);
 		}
@@ -234,8 +241,9 @@
 				{ sources }
 			);
 			notice =
-				`Added ${res.added.length} source${res.added.length === 1 ? '' : 's'}` +
-				(res.skipped > 0 ? ` (${res.skipped} already present).` : '.');
+				res.skipped > 0
+					? t('rag-toast-bulk-queued-skipped', { added: res.added.length, skipped: res.skipped })
+					: t('rag-toast-bulk-queued', { added: res.added.length });
 			sourceDraft[collectionId] = '';
 			addingTo = null;
 			await reloadRefs(collectionId);
@@ -254,7 +262,7 @@
 	}
 
 	async function removeRef(ref: Ref) {
-		if (!confirm(`Remove source ${ref.git_url ?? ref.git_ref}?`)) return;
+		if (!confirm(t('rag-remove-source-confirm', { source: ref.git_url ?? ref.git_ref }))) return;
 		try {
 			await adminDelete(`/api/v0/rag/collections/${ref.collection_id}/refs/${ref.id}`);
 			await reloadRefs(ref.collection_id);
@@ -275,6 +283,13 @@
 		);
 	}
 
+	/** The wire values match `rag-status-*`; anything unknown shows verbatim. */
+	function statusLabel(status: string): string {
+		const key = `rag-status-${status}`;
+		const value = t(key);
+		return value === key ? status : value;
+	}
+
 	onMount(() => {
 		void refresh();
 		void loadFormData();
@@ -282,31 +297,31 @@
 </script>
 
 <div class="flex items-center justify-between mb-4">
-	<h1 class="text-2xl font-bold">RAG collections</h1>
+	<h1 class="text-2xl font-bold">{t('rag-heading')}</h1>
 	<button class="btn btn-primary btn-sm" onclick={() => (creating = !creating)}>
-		{creating ? 'Cancel' : 'New collection'}
+		{creating ? t('rag-button-cancel') : t('rag-button-new-collection')}
 	</button>
 </div>
 
 {#if creating}
 	<div class="card border border-base-300 bg-base-200 mb-6">
 		<div class="card-body gap-3">
-			<h2 class="card-title text-base">New collection</h2>
+			<h2 class="card-title text-base">{t('rag-button-new-collection')}</h2>
 			<div class="grid gap-3 sm:grid-cols-2">
 				<label class="flex flex-col gap-1">
-					<span class="text-xs">Name</span>
+					<span class="text-xs">{t('rag-label-name')}</span>
 					<input class="input input-bordered input-sm" bind:value={form.name} />
 				</label>
 				<label class="flex flex-col gap-1">
-					<span class="text-xs">Embedding model</span>
+					<span class="text-xs">{t('rag-label-embedding-model')}</span>
 					<input class="input input-bordered input-sm" bind:value={form.embedding_model} />
 				</label>
 				<label class="flex flex-col gap-1 sm:col-span-2">
-					<span class="text-xs">Description</span>
+					<span class="text-xs">{t('rag-label-description')}</span>
 					<input class="input input-bordered input-sm" bind:value={form.description} />
 				</label>
 				<label class="flex flex-col gap-1">
-					<span class="text-xs">Source kind</span>
+					<span class="text-xs">{t('rag-label-source-kind')}</span>
 					<select class="select select-bordered select-sm" bind:value={form.source_kind}>
 						{#each providers as p (p.kind)}
 							<option value={p.kind}>{p.label}</option>
@@ -314,9 +329,9 @@
 					</select>
 				</label>
 				<label class="flex flex-col gap-1">
-					<span class="text-xs">Extraction profile</span>
+					<span class="text-xs">{t('rag-label-profile')}</span>
 					<select class="select select-bordered select-sm" bind:value={form.profile}>
-						<option value="">None</option>
+						<option value="">{t('rag-option-profile-none')}</option>
 						{#each profiles as p (p.name)}
 							<option value={p.name}>{p.name}</option>
 						{/each}
@@ -325,11 +340,11 @@
 
 				{#if form.source_kind === 'git'}
 					<label class="flex flex-col gap-1">
-						<span class="text-xs">Repository URL</span>
+						<span class="text-xs">{t('rag-label-git-url')}</span>
 						<input class="input input-bordered input-sm" bind:value={form.git_url} />
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="text-xs">Ref</span>
+						<span class="text-xs">{t('rag-label-branch-tag')}</span>
 						<input class="input input-bordered input-sm" bind:value={form.git_ref} />
 					</label>
 				{:else if selectedProvider}
@@ -351,7 +366,7 @@
 				{/if}
 
 				<label class="flex flex-col gap-1">
-					<span class="text-xs">Chunk size</span>
+					<span class="text-xs">{t('rag-label-chunk-size')}</span>
 					<input
 						class="input input-bordered input-sm"
 						type="number"
@@ -359,7 +374,7 @@
 					/>
 				</label>
 				<label class="flex flex-col gap-1">
-					<span class="text-xs">Chunk overlap</span>
+					<span class="text-xs">{t('rag-label-chunk-overlap')}</span>
 					<input
 						class="input input-bordered input-sm"
 						type="number"
@@ -368,14 +383,12 @@
 				</label>
 			</div>
 			{#if selectedProvider && selectedProvider.auth.kind === 'oauth2'}
-				<p class="text-xs opacity-70">
-					This provider authorises through a browser: save the collection first, then connect it.
-				</p>
+				<p class="text-xs opacity-70">{t('rag-source-consent-save-first')}</p>
 			{/if}
 			<div class="flex gap-2 justify-end">
 				{#if form.source_kind !== 'git'}
 					<button class="btn btn-sm" onclick={testSource} disabled={testing}>
-						{testing ? 'Testing…' : 'Test connection'}
+						{testing ? t('rag-source-testing') : t('rag-source-test-button')}
 					</button>
 				{/if}
 				<button
@@ -383,7 +396,7 @@
 					onclick={createCollection}
 					disabled={!form.name.trim() || !form.embedding_model.trim()}
 				>
-					Create
+					{t('rag-button-create')}
 				</button>
 			</div>
 		</div>
@@ -396,7 +409,7 @@
 {#if secret}
 	<div class="card border border-success mb-6">
 		<div class="card-body">
-			<h2 class="card-title text-base">Sync hook URL — shown once</h2>
+			<h2 class="card-title text-base">{t('rag-sync-url-heading')}</h2>
 			<pre class="bg-base-100 border border-base-300 rounded-md p-3 font-mono text-xs select-all break-all whitespace-pre-wrap">curl -X POST "{secret}"</pre>
 		</div>
 	</div>
@@ -407,45 +420,47 @@
 		<li class="card border border-base-300">
 			<div class="card-body py-3">
 				<div class="flex items-center gap-3 flex-wrap">
-					<span class="badge {statusBadge(c.status)} badge-sm">{c.status}</span>
+					<span class="badge {statusBadge(c.status)} badge-sm">{statusLabel(c.status)}</span>
 					<button class="font-medium link link-hover" onclick={() => open(c)}>{c.name}</button>
 					<span class="font-mono text-xs text-base-content/50 truncate max-w-56">{c.git_url}</span>
-					{#if c.sync_hook_set}<span class="badge badge-outline badge-sm">hook</span>{/if}
+					{#if c.sync_hook_set}<span class="badge badge-outline badge-sm">{t('rag-badge-sync-hook')}</span>{/if}
 					<span class="flex-1"></span>
-					<button class="btn btn-ghost btn-xs" onclick={() => reindex(c)}>Reindex</button>
-					<button class="btn btn-ghost btn-xs" onclick={() => rotateToken(c)}>Sync token</button>
-					<button class="btn btn-ghost btn-xs text-error" onclick={() => remove(c)}>Delete</button>
+					<button class="btn btn-ghost btn-xs" onclick={() => reindex(c)}>{t('rag-button-reindex')}</button>
+					<button class="btn btn-ghost btn-xs" onclick={() => rotateToken(c)}>{t('rag-button-sync-token')}</button>
+					<button class="btn btn-ghost btn-xs text-error" onclick={() => remove(c)}>{t('groups-delete')}</button>
 				</div>
 				{#if c.description}<p class="text-xs text-base-content/60">{c.description}</p>{/if}
 				{#if expanded === c.id}
 					<ul class="mt-2 flex flex-col gap-1 border-t border-base-300 pt-2">
 						{#each refs[c.id] ?? [] as ref (ref.id)}
 							<li class="flex items-center gap-2 text-xs flex-wrap">
-								<span class="badge badge-sm {statusBadge(ref.status)}">{ref.status}</span>
-								{#if ref.is_primary}<span class="badge badge-outline badge-xs">primary</span>{/if}
+								<span class="badge badge-sm {statusBadge(ref.status)}">{statusLabel(ref.status)}</span>
+								{#if ref.is_primary}<span class="badge badge-outline badge-xs">{t('rag-badge-primary')}</span>{/if}
 								<span class="font-mono">{ref.git_ref}</span>
 								{#if ref.git_url}
 									<span class="font-mono text-base-content/50 truncate max-w-64">{ref.git_url}</span>
 								{/if}
 								{#if ref.last_indexed_at}
-									<span class="text-base-content/50">indexed {new Date(ref.last_indexed_at).toLocaleString()}</span>
+									<span class="text-base-content/50">
+										{t('rag-ref-indexed-at', { date: dt(ref.last_indexed_at) })}
+									</span>
 								{/if}
 								{#if ref.last_error}<span class="text-error truncate max-w-64">{ref.last_error}</span>{/if}
 								<span class="flex-1"></span>
 								{#if !ref.is_primary}
 									<button class="btn btn-ghost btn-xs" onclick={() => makePrimary(ref)}>
-										Make primary
+										{t('rag-button-set-primary')}
 									</button>
 								{/if}
-								<button class="btn btn-ghost btn-xs" onclick={() => rebuildRef(ref)}>Rebuild</button>
+								<button class="btn btn-ghost btn-xs" onclick={() => rebuildRef(ref)}>
+									{t('rag-button-rebuild')}
+								</button>
 								<button class="btn btn-ghost btn-xs text-error" onclick={() => removeRef(ref)}>
-									Remove
+									{t('rag-button-remove')}
 								</button>
 							</li>
 						{:else}
-							<li class="text-xs text-base-content/50">
-								No sources — this collection indexes nothing until one is added.
-							</li>
+							<li class="text-xs text-base-content/50">{t('rag-no-sources')}</li>
 						{/each}
 
 						<li class="mt-2">
@@ -458,20 +473,19 @@
 									oninput={(e) => (sourceDraft[c.id] = e.currentTarget.value)}
 								></textarea>
 								<p class="text-xs opacity-60 mt-1">
-									One source per line; add <code>@ref</code> to override this collection's
-									<code>{c.git_ref}</code>.
+									{t('rag-add-sources-hint', { at: '@ref', ref: c.git_ref })}
 								</p>
 								<div class="flex gap-2 justify-end mt-1">
 									<button class="btn btn-ghost btn-xs" onclick={() => (addingTo = null)}>
-										Cancel
+										{t('rag-button-cancel')}
 									</button>
 									<button class="btn btn-primary btn-xs" onclick={() => addSources(c.id)}>
-										Add sources
+										{t('rag-button-add-bulk')}
 									</button>
 								</div>
 							{:else}
 								<button class="btn btn-ghost btn-xs" onclick={() => (addingTo = c.id)}>
-									+ Add sources
+									+ {t('rag-button-add-source')}
 								</button>
 							{/if}
 						</li>

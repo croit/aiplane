@@ -28,3 +28,13 @@ memory-error-update-failed = Could not update memory.
 memory-toast-removed = Memory removed.
 memory-info-already-gone = Memory was already gone.
 memory-error-remove-failed = Could not remove memory.
+
+# SPA-only: the Svelte /memory page's inline add/edit form.
+memory-edit-heading = Edit memory
+memory-kind-label = Kind
+memory-kind-preference = Preference
+memory-kind-project = Project
+memory-kind-fact = Fact
+memory-content-label = Content
+memory-add-button = Add
+memory-delete-confirm = Delete this memory?

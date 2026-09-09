@@ -17,3 +17,6 @@ tools-toast-unknown-tool = неизвестный инструмент
 tools-toast-save-error = не удалось сохранить настройку
 tools-toast-enabled = { $name } включён.
 tools-toast-disabled = { $name } отключён.
+
+# SPA-only: the Svelte /tools toggle list.
+tools-toggle-aria = Переключить { $name }

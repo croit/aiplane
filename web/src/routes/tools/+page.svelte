@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminJson, adminPost } from '$lib/admin-client';
+	import { t } from '$lib/i18n.svelte';
 
 	interface ToolEntry {
 		key: string;
@@ -56,11 +57,11 @@
 </script>
 
 <div class="flex items-center justify-between mb-4">
-	<h1 class="text-2xl font-bold">Tools</h1>
+	<h1 class="text-2xl font-bold">{t('tools-heading')}</h1>
 </div>
 
 <p class="text-base-content/60 text-sm mb-6">
-	The tools your roles grant. Switching one off hides it from every conversation for your account.
+	{t('tools-description')}
 </p>
 
 {#if error}
@@ -87,7 +88,7 @@
 							checked={tool.enabled}
 							disabled={saving === tool.key}
 							onchange={() => toggle(tool)}
-							aria-label="Toggle {tool.title}"
+							aria-label={t('tools-toggle-aria', { name: tool.title })}
 						/>
 					</li>
 				{/each}
@@ -98,7 +99,7 @@
 	{#if !error}
 		<div class="card border border-base-300">
 			<div class="card-body">
-				<p class="text-base-content/60 text-sm">No tools granted to your roles.</p>
+				<p class="text-base-content/60 text-sm">{t('tools-none-granted')}</p>
 			</div>
 		</div>
 	{/if}

@@ -105,3 +105,9 @@ connectors-error-needs-client-id = this connector needs an OAuth client id befor
 connectors-error-toggling = toggling connector: { $error }
 connectors-error-deleting = deleting connector: { $error }
 connectors-error-restoring = restoring defaults: { $error }
+
+# SPA connector form: the compact comma-separated scope field, the combined
+# secret/token field, and the restore-defaults confirmation.
+connectors-restore-defaults-confirm = Re-seed the built-in catalog entries?
+connectors-field-scopes-csv-label = Scopes (comma-separated)
+connectors-field-secret-or-token-label = Client secret / token

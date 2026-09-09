@@ -207,3 +207,6 @@ settings-f-gateway-session_absolute_max_days = Edad máxima de la sesión
 settings-f-gateway-session_absolute_max_days-help = Tope estricto en días desde el inicio de sesión, que ninguna actividad prolonga. También obliga a pasar periódicamente por el proveedor de identidad, el único momento en que se releen las reclamaciones de grupo.
 settings-f-gateway-allow_impersonation = Permitir la suplantación
 settings-f-gateway-allow_impersonation-help = Deja que los administradores actúen como otro usuario para depurar. Cada suplantación queda auditada y muestra un aviso permanente; desactivado, los botones se ocultan y el endpoint rechaza.
+
+# Confirmación antes de borrar un ajuste guardado (editor de la SPA).
+settings-clear-confirm = ¿Restablecer { $key } a su valor predeterminado integrado?

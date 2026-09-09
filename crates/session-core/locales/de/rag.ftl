@@ -226,3 +226,19 @@ rag-oauth-no-refresh-token = Der Anbieter hat kein Refresh-Token geliefert; unbe
 rag-oauth-store-failed = Die Zugangsdaten konnten nicht gespeichert werden.
 rag-badge-no-files = keine Dateien indexiert
 rag-ref-files = { $files } Dateien
+
+# Sammlungsverwaltung der SPA: Anlegeformular, Sync-URL-Karte, Quellzeilen und
+# die Rückfragen, die die alte Seite nicht brauchte.
+rag-button-new-collection = Neue Sammlung
+rag-label-git-url = Git-URL
+rag-source-testing = Wird getestet…
+rag-button-create = Anlegen
+rag-button-rebuild = Neu aufbauen
+rag-sync-url-heading = Sync-URL — wird nur einmal angezeigt
+rag-sync-token-confirm = Neue Sync-URL erzeugen? Die alte funktioniert dann nicht mehr.
+rag-delete-collection-confirm = Sammlung { $name } samt Index löschen?
+rag-remove-source-confirm = Quelle { $source } entfernen?
+rag-toast-rebuild-queued = Vollständiger Neuaufbau angefordert.
+rag-ref-indexed-at = indexiert { $date }
+rag-no-sources = Keine Quellen — diese Sammlung indexiert nichts, bis eine hinzugefügt wird.
+rag-add-sources-hint = Eine Quelle pro Zeile; ergänze { $at }, um den Ref { $ref } dieser Sammlung zu überschreiben.

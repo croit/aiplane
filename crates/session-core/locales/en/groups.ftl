@@ -14,3 +14,10 @@ groups-field-skills = Skills
 groups-save = Save
 groups-delete = Delete
 groups-error-name-required = A group name is required.
+
+# SPA group editor: the edit heading, the observed-claim hint, the per-row
+# grant summary, and the delete confirmation.
+groups-edit-heading = Edit { $name }
+groups-observed-values = Observed: { $values }
+groups-summary-counts = { $oidc } OIDC · { $tools } tools · { $skills } skills
+groups-delete-confirm = Delete group { $name }? Its mappings and grants go with it.

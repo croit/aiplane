@@ -31,3 +31,9 @@ my-skills-error-no-file = Es wurde keine Datei hochgeladen — wähle ein .skill
 my-skills-error-no-name = Füge dem SKILL.md-Frontmatter eine `name:`-Zeile hinzu.
 my-skills-error-install-failed = Skill konnte nicht installiert werden: { $error }
 my-skills-error-save-failed = Skill konnte nicht gespeichert werden: { $error }
+
+# SPA-only: the Svelte /skills list (inline body preview + upload toasts).
+my-skills-view-button = Ansehen
+my-skills-hide-button = Ausblenden
+my-skills-toast-installed = { $name } installiert.
+my-skills-delete-confirm = Privaten Skill { $name } löschen?

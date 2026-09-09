@@ -16,6 +16,7 @@
  */
 import { base } from '$app/paths';
 import { api } from './api';
+import { t } from './i18n.svelte';
 import {
 	recordingErrorMessage,
 	recordingUnavailableReason,
@@ -163,7 +164,7 @@ export function createVoiceController(submit: (text: string) => Promise<void>) {
 			const data = (await resp.json()) as { text?: string; language?: string };
 			const text = (data.text ?? '').trim();
 			if (!text) {
-				state.note = 'Nothing caught — try again.';
+				state.note = t('voice-not-caught');
 				state.phase = 'idle';
 				return;
 			}
@@ -174,7 +175,7 @@ export function createVoiceController(submit: (text: string) => Promise<void>) {
 			await submit(text);
 			state.phase = 'working';
 		} catch (err) {
-			state.note = `network error: ${err}`;
+			state.note = t('voice-network-error', { error: String(err) });
 			state.phase = 'idle';
 		}
 	};
@@ -190,7 +191,7 @@ export function createVoiceController(submit: (text: string) => Promise<void>) {
 			try {
 				wav = await current.stop();
 			} catch (err) {
-				state.note = `recording stop failed: ${err}`;
+				state.note = t('voice-recording-stop-failed', { error: String(err) });
 				state.phase = 'idle';
 				return;
 			}

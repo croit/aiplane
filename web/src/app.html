@@ -18,6 +18,19 @@
 				const m = document.cookie.match(/(?:^|;\s*)theme=(dark|light)(?:;|$)/);
 				document.documentElement.dataset.theme =
 					m ? m[1] : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+
+				// Language, same story: `$lib/i18n` resolves the `lang` cookie
+				// then the browser's own preference list, and the app fixes up
+				// `<html lang>` once it mounts. Doing it here too means the
+				// attribute is right for the *first* paint, which is what a
+				// screen reader announcing the page and the browser's
+				// hyphenation and spellcheck actually read.
+				const langs = ['en', 'de', 'fr', 'es', 'ru', 'zh'];
+				const c = document.cookie.match(/(?:^|;\s*)lang=([a-zA-Z-]+)/);
+				const wanted = [c && c[1], ...(navigator.languages || [])]
+					.map((tag) => tag && tag.split('-')[0].toLowerCase())
+					.find((tag) => langs.includes(tag));
+				if (wanted) document.documentElement.lang = wanted;
 			})();
 		</script>
 		%sveltekit.head%

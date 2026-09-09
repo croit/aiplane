@@ -25,3 +25,6 @@ admin-users-audit-col-when = Cuándo
 admin-users-audit-col-action = Acción
 admin-users-audit-col-admin = Administrador
 admin-users-audit-col-target = Objetivo
+
+# Confirmación antes de suplantar (lista de usuarios de la SPA).
+admin-users-impersonate-confirm = ¿Actuar como este usuario? Tu sesión de administrador se conserva; puedes detenerlo desde la cabecera.

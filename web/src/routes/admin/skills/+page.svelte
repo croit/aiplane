@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminJson, adminPut, adminDelete } from '$lib/admin-client';
+	import { t } from '$lib/i18n.svelte';
 
 	interface Skill { name: string; title: string; description: string; }
 	interface Data { skills: Skill[]; grants: { skill: string; roles: string[] }[]; groups: string[]; }
@@ -29,7 +30,7 @@
 		try {
 			const res = await fetch('/api/v0/admin/skills', { method: 'POST', body: fd });
 			if (!res.ok) throw new Error((await res.text()).slice(0, 200));
-			notice = `Installed ${file.name}.`;
+			notice = t('skills-installed', { name: file.name });
 			await refresh();
 		} catch (err) {
 			notice = String(err);
@@ -52,7 +53,7 @@
 	}
 
 	async function remove(name: string) {
-		if (!confirm(`Remove the global skill ${name} and its grants?`)) return;
+		if (!confirm(t('skills-delete-confirm', { name }))) return;
 		try {
 			await adminDelete(`/api/v0/admin/skills/${encodeURIComponent(name)}`);
 			await refresh();
@@ -65,9 +66,9 @@
 </script>
 
 <div class="flex items-center justify-between mb-4">
-	<h1 class="text-2xl font-bold">Skills</h1>
+	<h1 class="text-2xl font-bold">{t('skills-heading')}</h1>
 	<label class="btn btn-primary btn-sm cursor-pointer">
-		Upload .skill
+		{t('skills-upload-button')}
 		<input type="file" accept=".skill,.zip" class="hidden" onchange={upload} />
 	</label>
 </div>
@@ -86,14 +87,22 @@
 					<span class="flex-1"></span>
 					{#if editing === skill.name}
 						<input class="input input-bordered input-sm w-64" bind:value={editRoles} placeholder="role-a, role-b" />
-						<button class="btn btn-primary btn-xs" onclick={() => saveGrants(skill.name)}>Save</button>
-						<button class="btn btn-ghost btn-xs" onclick={() => (editing = null)}>Cancel</button>
+						<button class="btn btn-primary btn-xs" onclick={() => saveGrants(skill.name)}>
+							{t('skills-save-access-button')}
+						</button>
+						<button class="btn btn-ghost btn-xs" onclick={() => (editing = null)}>
+							{t('skills-cancel-button')}
+						</button>
 					{:else}
 						<span class="text-xs text-base-content/60">
-							{grants?.roles.length ? grants.roles.join(', ') : 'no extra grants'}
+							{grants?.roles.length ? grants.roles.join(', ') : t('skills-no-extra-grants')}
 						</span>
-						<button class="btn btn-ghost btn-xs" onclick={() => { editing = skill.name; editRoles = (grants?.roles ?? []).join(', '); }}>Grants</button>
-						<button class="btn btn-ghost btn-xs text-error" onclick={() => remove(skill.name)}>Delete</button>
+						<button class="btn btn-ghost btn-xs" onclick={() => { editing = skill.name; editRoles = (grants?.roles ?? []).join(', '); }}>
+							{t('skills-edit-access-button')}
+						</button>
+						<button class="btn btn-ghost btn-xs text-error" onclick={() => remove(skill.name)}>
+							{t('skills-delete-button')}
+						</button>
 					{/if}
 				</div>
 				<p class="text-xs text-base-content/60">{skill.description}</p>

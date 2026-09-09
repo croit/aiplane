@@ -68,3 +68,8 @@ render-composer-send = 发送
 render-composer-stop = 停止
 
 render-compaction-divider = 已压缩早期消息以节省上下文
+
+# The browser prompt behind the ✎ Edit button, and the per-file title on
+# an attachment's remove button.
+render-edit-prompt = 编辑你的消息：
+render-attachment-remove-title = 移除 { $filename }

@@ -151,3 +151,25 @@ admin-search-brave-key-clear = Gespeicherten Key entfernen
 admin-search-save = Websuche speichern
 admin-search-saved = Websuche-Einstellungen gespeichert
 admin-search-unknown-provider = unbekannter Suchanbieter `{ $provider }`
+
+# ─── SvelteKit-Admin-SPA ─────────────────────────────────────────────────────
+# Die Rollenprüfung der Admin-Hülle, der Workflow-Katalog unter /admin/comfyui
+# und die Teile des Modell-Editors, die es auf der alten Seite nicht gab.
+
+admin-needs-admin-role = Diese Seiten erfordern die Administratorrolle.
+admin-overwrite-existing = vorhandenen Eintrag überschreiben
+admin-comfyui-reload = Katalog neu laden
+admin-comfyui-reloaded = { $count } Workflow(s) neu geladen.
+admin-comfyui-empty = Keine Workflows geladen — prüfe das Inhaltsverzeichnis.
+admin-defaults-model-aria = Standardmodell für { $feature }
+admin-defaults-set = Setzen
+admin-search-provider-none = Keine
+admin-add-overrides-heading = Modell-Überschreibungen hinzufügen
+admin-edit-model-heading = { $model } bearbeiten
+admin-add-model = Hinzufügen…
+admin-pricing-unit-label = Preiseinheit
+admin-pricing-unit-mtok = pro Mtok
+admin-pricing-unit-ktok = pro Ktok
+admin-pricing-unit-kimgs = pro 1000 Bilder
+admin-clear-overrides-confirm = Alle gespeicherten Überschreibungen für { $model } verwerfen?
+admin-users-col-email = E-Mail

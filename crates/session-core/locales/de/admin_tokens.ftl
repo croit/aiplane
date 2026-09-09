@@ -17,3 +17,11 @@ admin-tokens-models-help = Eine Betreiber-Beschränkung für dieses Token, getre
 admin-tokens-models-restrict-label = Dieses Token auf bestimmte Modelle beschränken
 admin-tokens-models-saved-toast = Betreiber-Beschränkung gesetzt: { $count } Modelle.
 admin-tokens-models-cleared-toast = Betreiber-Beschränkung entfernt.
+
+# Token-Register der SPA: Überschrift des Allowlist-Editors und die kompakten Tabellenzellen.
+admin-tokens-allowlist-heading = Admin-Modell-Allowlist
+admin-tokens-col-this-month = Dieser Monat
+admin-tokens-usage-off = Nutzungserfassung aus
+admin-tokens-models-button = Modelle
+admin-tokens-tools-on = an
+admin-tokens-tools-off = aus

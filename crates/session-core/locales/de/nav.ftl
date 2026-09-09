@@ -56,3 +56,11 @@ error-forbidden-heading = Zugriff verweigert
 
 nav-my-skills = Meine Skills
 nav-settings = Einstellungen
+
+# The SPA shell's own chrome: the mobile drawer and the theme toggle,
+# which the server-rendered shell had no equivalent of.
+nav-comfyui = ComfyUI
+nav-close-menu = Menü schließen
+nav-open-menu = Menü öffnen
+nav-main-aria = Hauptnavigation
+nav-search-close-aria = Suche schließen

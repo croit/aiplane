@@ -72,3 +72,8 @@ upstreams-diff-backend-leaves = { $backend } выходит из пула { $poo
 upstreams-diff-backend-url = { $backend }: базовый URL { $from } → { $to } (обнаруженные модели будут опрошены заново)
 upstreams-diff-backend-limits = { $backend }: вес { $weight }, макс. параллельно { $inflight }
 upstreams-diff-backend-health-path = { $backend }: health-путь → { $to }
+
+# Карточки пулов в SPA: две однострочные сводки и подтверждение удаления.
+pools-summary-backends = { $count } бэкенд(ов): { $list }
+pools-summary-models = { $count } модель(ей): { $list }
+pools-delete-confirm = Удалить пул { $name }? После этого примените топологию.

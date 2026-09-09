@@ -41,3 +41,8 @@ limits-unknown-user = 没有用户匹配 `{ $user }`
 limits-missing-subject-id = 请输入角色 id、用户邮箱或令牌 id
 limits-subject-token = API 令牌
 limits-unknown-token = 没有与 `{ $token }` 匹配的令牌
+
+# SPA 规则表：标题、“来源”列与删除确认。
+limits-rules-heading = 规则
+limits-col-managed-by = 来源
+limits-delete-confirm = 要删除此规则吗？

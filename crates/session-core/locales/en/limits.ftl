@@ -39,3 +39,8 @@ limits-unknown-user = no user matches `{ $user }`
 limits-missing-subject-id = enter a role id, a user email, or a token id
 limits-subject-token = API token
 limits-unknown-token = no token matches `{ $token }`
+
+# SPA rule table: its heading, the "managed by" column, and the delete prompt.
+limits-rules-heading = Rules
+limits-col-managed-by = By
+limits-delete-confirm = Delete this rule?

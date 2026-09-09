@@ -226,3 +226,19 @@ rag-oauth-no-refresh-token = Провайдер не вернул refresh-ток
 rag-oauth-store-failed = Не удалось сохранить учётные данные.
 rag-badge-no-files = файлы не проиндексированы
 rag-ref-files = файлов: { $files }
+
+# Управление коллекциями в SPA: форма создания, карточка URL синхронизации,
+# строки источников и подтверждения, которых не было на старой странице.
+rag-button-new-collection = Новая коллекция
+rag-label-git-url = URL Git
+rag-source-testing = Проверка…
+rag-button-create = Создать
+rag-button-rebuild = Пересобрать
+rag-sync-url-heading = URL синхронизации — показывается один раз
+rag-sync-token-confirm = Создать новый URL синхронизации? Старый перестанет работать.
+rag-delete-collection-confirm = Удалить коллекцию { $name } вместе с её индексом?
+rag-remove-source-confirm = Удалить источник { $source }?
+rag-toast-rebuild-queued = Запрошена полная пересборка индекса.
+rag-ref-indexed-at = проиндексировано { $date }
+rag-no-sources = Источников нет — коллекция ничего не индексирует, пока не добавлен хотя бы один.
+rag-add-sources-hint = По одному источнику в строке; добавьте { $at }, чтобы переопределить ref { $ref } этой коллекции.

@@ -14,3 +14,10 @@ groups-field-skills = Навыки
 groups-save = Сохранить
 groups-delete = Удалить
 groups-error-name-required = Требуется имя группы.
+
+# Редактор групп в SPA: заголовок правки, подсказка с наблюдаемыми значениями,
+# сводка по строке и подтверждение удаления.
+groups-edit-heading = Изменить { $name }
+groups-observed-values = Обнаружено: { $values }
+groups-summary-counts = OIDC: { $oidc } · инструментов: { $tools } · навыков: { $skills }
+groups-delete-confirm = Удалить группу { $name }? Её сопоставления и права исчезнут вместе с ней.

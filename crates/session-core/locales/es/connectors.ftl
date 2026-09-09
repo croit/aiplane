@@ -95,3 +95,9 @@ connectors-error-needs-client-id = este conector necesita un id de cliente OAuth
 connectors-error-toggling = cambiando el conector: { $error }
 connectors-error-deleting = eliminando el conector: { $error }
 connectors-error-restoring = restaurando los valores predeterminados: { $error }
+
+# Formulario de conector de la SPA: campo de scopes separados por comas, campo
+# combinado de secreto/token y confirmación de restauración.
+connectors-restore-defaults-confirm = ¿Reinstalar las entradas integradas del catálogo?
+connectors-field-scopes-csv-label = Scopes (separados por comas)
+connectors-field-secret-or-token-label = Secreto de cliente / token

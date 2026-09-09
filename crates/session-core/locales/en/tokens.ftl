@@ -117,3 +117,16 @@ tokens-limits-not-yours = That quota isn't yours to remove.
 tokens-limits-admin-set = An administrator set that quota on this token; it can only be changed on the admin limits page.
 tokens-limits-admin-badge = set by admin
 tokens-models-admin-set = An operator also restricts this token to: { $models }. Your own selection narrows that further; it cannot widen it.
+
+# SPA-only: the Svelte /tokens row panels and their confirm prompts.
+tokens-models-heading = Model allowlist
+tokens-models-input-placeholder = model ids, comma-separated
+tokens-quota-heading = Quota
+tokens-quota-per = per
+tokens-quota-max-placeholder = max
+tokens-mcp-heading = MCP connectors
+tokens-mcp-allow-button = Let them run
+tokens-mcp-block-button = Block them
+tokens-revoke-confirm = Revoke this token? Clients using it stop working immediately.
+tokens-rotate-confirm = Issue a new secret? The old one stops working immediately.
+tokens-remove-confirm = Delete this token row for good?

@@ -57,3 +57,11 @@ nav-groups = Groupes
 
 nav-my-skills = Mes compétences
 nav-settings = Paramètres
+
+# The SPA shell's own chrome: the mobile drawer and the theme toggle,
+# which the server-rendered shell had no equivalent of.
+nav-comfyui = ComfyUI
+nav-close-menu = Fermer le menu
+nav-open-menu = Ouvrir le menu
+nav-main-aria = Navigation principale
+nav-search-close-aria = Fermer la recherche

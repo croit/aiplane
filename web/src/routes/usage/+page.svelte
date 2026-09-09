@@ -1,21 +1,29 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { UsageResponse, UsageGroup } from '$lib/usage-types';
+	import type { UsageResponse } from '$lib/usage-types';
+	import { t, n } from '$lib/i18n.svelte';
 
 	let data = $state<UsageResponse | null>(null);
 	let error = $state<string | null>(null);
 	let period = $state('today');
 	let allUsers = $state(false);
 
+	// Keys, not labels: the picker re-renders on a language switch because the
+	// lookup happens in the template.
 	const PERIODS: [string, string][] = [
-		['today', 'Today'],
-		['24h', 'Last 24 h'],
-		['this_week', 'This week'],
-		['last_week', 'Last week'],
-		['this_month', 'This month'],
-		['last_month', 'Last month']
+		['today', 'usage-period-today'],
+		['24h', 'usage-period-24h'],
+		['this_week', 'usage-period-this-week'],
+		['last_week', 'usage-period-last-week'],
+		['this_month', 'usage-period-this-month'],
+		['last_month', 'usage-period-last-month']
 	];
+
+	/** Money: always two decimals, but with the locale's own separators. */
+	function money(value: number): string {
+		return n(value, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+	}
 
 	async function refresh() {
 		error = null;
@@ -46,18 +54,22 @@
 </script>
 
 <div class="flex items-center justify-between mb-4 gap-2 flex-wrap">
-	<h1 class="text-2xl font-bold">Usage</h1>
+	<h1 class="text-2xl font-bold">{t('nav-usage')}</h1>
 	<div class="flex gap-2 items-center">
 		{#if data?.scope === 'all'}
-			<span class="badge badge-outline badge-sm">all users</span>
+			<span class="badge badge-outline badge-sm">{t('usage-toggle-all')}</span>
 		{/if}
 		<label class="label cursor-pointer gap-2 text-sm">
-			<span class="label-text">All users</span>
+			<span class="label-text">{t('usage-toggle-all')}</span>
 			<input type="checkbox" class="toggle toggle-sm" bind:checked={allUsers} />
 		</label>
-		<select class="select select-bordered select-sm" bind:value={period} aria-label="Period">
+		<select
+			class="select select-bordered select-sm"
+			bind:value={period}
+			aria-label={t('usage-filter-period')}
+		>
 			{#each PERIODS as [value, label] (value)}
-				<option {value}>{label}</option>
+				<option {value}>{t(label)}</option>
 			{/each}
 		</select>
 	</div>
@@ -71,21 +83,25 @@
 	{#if data.unpriced_models.length > 0}
 		<div class="alert alert-warning mb-4 text-sm">
 			<span>
-				Models with traffic but no configured price (spend under-counted):
-				{data.unpriced_models.join(', ')}
+				{t('usage-unpriced-warning', { models: data.unpriced_models.join(', ') })}
 			</span>
 		</div>
 	{/if}
 
 	{@const cards = [
-			{ label: 'Requests', value: data.summary.requests.toLocaleString() },
-			{ label: 'Tokens', value: data.summary.total_tokens.toLocaleString() },
+			{ label: t('usage-stat-requests-title'), value: n(data.summary.requests) },
+			{ label: t('usage-stat-tokens-title'), value: n(data.summary.total_tokens) },
 			...(data.summary.total_cost > 0
-				? [{ label: `Cost (${data.currency})`, value: data.summary.total_cost.toFixed(2) }]
+				? [
+						{
+							label: t('limits-dim-cost', { cur: data.currency }),
+							value: money(data.summary.total_cost)
+						}
+					]
 				: []),
-			{ label: 'Errors', value: data.summary.errors.toLocaleString() },
+			{ label: t('usage-stat-errors-title'), value: n(data.summary.errors) },
 			...(data.scope === 'all'
-				? [{ label: 'Users', value: data.summary.unique_users.toLocaleString() }]
+				? [{ label: t('usage-stat-users-title'), value: n(data.summary.unique_users) }]
 				: [])
 		]}
 	<div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
@@ -102,7 +118,7 @@
 	{#if data.limits.length > 0}
 		<div class="card border border-base-300 mb-6">
 			<div class="card-body">
-				<h2 class="card-title text-base">Your limits</h2>
+				<h2 class="card-title text-base">{t('usage-limits-heading')}</h2>
 				{#each data.limits as limit (limit.dimension + limit.window + (limit.model ?? ''))}
 					<div class="mb-2">
 						<div class="flex justify-between text-xs mb-1">
@@ -110,7 +126,9 @@
 								{limit.dimension} / {limit.window}{limit.model ? ` · ${limit.model}` : ''}
 							</span>
 							<span class="text-base-content/60">
-								{limit.used.toFixed(0)} / {limit.limit.toFixed(0)}
+								{n(limit.used, { maximumFractionDigits: 0 })} / {n(limit.limit, {
+									maximumFractionDigits: 0
+								})}
 							</span>
 						</div>
 						<progress class="progress {pct(limit.used, limit.limit) >= 90 ? 'progress-error' : 'progress-primary'} w-full" value={pct(limit.used, limit.limit)} max={100}></progress>
@@ -121,10 +139,10 @@
 	{/if}
 
 	{@const sections = [
-			{ title: 'By model', groups: data.by_model },
-			{ title: 'By source', groups: data.by_source },
-			{ title: 'By backend', groups: data.by_backend },
-			{ title: 'By token', groups: data.by_token }
+			{ title: t('usage-table-by-model'), groups: data.by_model },
+			{ title: t('usage-table-by-source'), groups: data.by_source },
+			{ title: t('usage-table-by-backend'), groups: data.by_backend },
+			{ title: t('usage-table-by-token'), groups: data.by_token }
 		]}
 	{#each sections as section (section.title)}
 		{#if section.groups.length > 0}
@@ -134,16 +152,16 @@
 					<div class="overflow-x-auto">
 						<table class="table table-sm">
 							<thead>
-								<tr><th>Name</th><th>Requests</th><th>Tokens</th><th>Errors</th>{#if data.summary.total_cost > 0}<th>Cost</th>{/if}</tr>
+								<tr><th>{t('usage-col-name')}</th><th>{t('usage-col-requests')}</th><th>{t('usage-col-tokens')}</th><th>{t('usage-col-errors')}</th>{#if data.summary.total_cost > 0}<th>{t('usage-col-cost')}</th>{/if}</tr>
 							</thead>
 							<tbody>
 								{#each section.groups as g (g.key)}
 									<tr>
-										<td>{g.label || g.key || '(no token)'}</td>
-										<td>{g.requests.toLocaleString()}</td>
-										<td>{g.total_tokens.toLocaleString()}</td>
-										<td>{g.errors.toLocaleString()}</td>
-										{#if data.summary.total_cost > 0}<td>{g.cost.toFixed(2)}</td>{/if}
+										<td>{g.label || g.key || t('usage-token-none')}</td>
+										<td>{n(g.requests)}</td>
+										<td>{n(g.total_tokens)}</td>
+										<td>{n(g.errors)}</td>
+										{#if data.summary.total_cost > 0}<td>{money(g.cost)}</td>{/if}
 									</tr>
 								{/each}
 							</tbody>
@@ -157,7 +175,7 @@
 	{#if data.summary.requests === 0}
 		<div class="card border border-base-300">
 			<div class="card-body">
-				<p class="text-base-content/60">No usage in this period.</p>
+				<p class="text-base-content/60">{t('usage-no-activity')}</p>
 			</div>
 		</div>
 	{/if}

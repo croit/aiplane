@@ -14,3 +14,9 @@ push-turn-error-body = El turno terminó con un error.
 # proactivo, `tools::mcp::worker`). { $connector } es el nombre visible.
 push-connector-reconnect-title = La conexión necesita tu inicio de sesión
 push-connector-reconnect-body = { $connector } se desconectó: abre Integraciones para reconectar.
+
+# SPA-only: the root route, which only routes on to /chat.
+chrome-opening-conversations = Abriendo tus conversaciones…
+
+# SPA-only: /login, which exists to bounce straight to the IdP.
+chrome-redirecting-to-sign-in = Redirigiendo al inicio de sesión…

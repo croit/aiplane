@@ -17,6 +17,13 @@ export async function launchBrowser() {
     return chromium.launch({
         // Honour CHROMIUM_HEADED=1 when iterating locally; defaults to headless.
         headless: process.env.CHROMIUM_HEADED !== "1",
+        // The SPA picks its language from the `lang` cookie, then from
+        // `navigator.languages` (see `web/src/lib/i18n.svelte.ts`). Without
+        // this the suite would render in whatever language the machine
+        // running it prefers, so a developer with a German desktop would see
+        // different text than CI does. Pin it: tests that care about a
+        // language set the cookie themselves.
+        args: ["--lang=en-US"],
     });
 }
 

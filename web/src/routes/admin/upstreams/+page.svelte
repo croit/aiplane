@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminJson, adminPut, adminPost, adminDelete } from '$lib/admin-client';
+	import { t, n } from '$lib/i18n.svelte';
 
 	interface Live {
 		healthy: boolean;
@@ -73,7 +74,7 @@
 	async function apply() {
 		try {
 			await adminPost('/api/v0/admin/upstreams/reload');
-			notice = 'Topology applied.';
+			notice = t('upstreams-applied');
 			await refresh();
 		} catch (err) {
 			notice = String(err);
@@ -126,7 +127,7 @@
 	}
 
 	async function deleteBackend(name: string) {
-		if (!confirm(`Delete backend ${name}? Apply afterwards.`)) return;
+		if (!confirm(t('backends-delete-confirm', { name }))) return;
 		try {
 			await adminDelete(`/api/v0/admin/backends/${encodeURIComponent(name)}`);
 			await refresh();
@@ -136,7 +137,7 @@
 	}
 
 	async function deletePool(name: string) {
-		if (!confirm(`Delete pool ${name}? Apply afterwards.`)) return;
+		if (!confirm(t('pools-delete-confirm', { name }))) return;
 		try {
 			await adminDelete(`/api/v0/admin/pools/${encodeURIComponent(name)}`);
 			await refresh();
@@ -158,32 +159,36 @@
 {#if data}
 	{#if data.dirty > 0}
 		<div class="alert alert-warning mb-4 sticky top-0 z-10 shadow">
-			<span>{data.dirty} unsaved topology change{data.dirty === 1 ? '' : 's'} — not live yet.</span>
-			<button class="btn btn-primary btn-sm" onclick={apply}>Apply changes</button>
+			<span>{n(data.dirty)} {t('upstreams-apply-count')} {t('upstreams-apply-note')}</span>
+			<button class="btn btn-primary btn-sm" onclick={apply}>{t('backends-apply-changes')}</button>
 		</div>
 	{/if}
 
 	<div class="flex justify-between items-center mb-4 flex-wrap gap-2">
-		<h2 class="text-lg font-semibold">Pools</h2>
-		<button class="btn btn-primary btn-sm" onclick={() => (showPoolForm = !showPoolForm)}>New pool</button>
+		<h2 class="text-lg font-semibold">{t('pools-heading')}</h2>
+		<button class="btn btn-primary btn-sm" onclick={() => (showPoolForm = !showPoolForm)}>
+			{t('pools-add-pool')}
+		</button>
 	</div>
 
 	{#if showPoolForm}
 		<div class="card border border-base-300 mb-4">
 			<div class="card-body">
 				<div class="flex flex-wrap gap-3 items-end">
-					<label class="flex flex-col gap-1"><span class="label-text">Name</span>
+					<label class="flex flex-col gap-1"><span class="label-text">{t('pools-field-name')}</span>
 						<input class="input input-bordered input-sm" bind:value={pName} /></label>
-					<label class="flex flex-col gap-1"><span class="label-text">Kind</span>
+					<label class="flex flex-col gap-1"><span class="label-text">{t('pools-field-kind')}</span>
 						<select class="select select-bordered select-sm" bind:value={pKind}>
 							<option>chat</option><option>transcription</option><option>embedding</option>
 							<option>image</option><option>speech</option><option>ocr</option>
 						</select></label>
-					<label class="flex flex-col gap-1 flex-1 min-w-48"><span class="label-text">Backends (comma-sep)</span>
+					<label class="flex flex-col gap-1 flex-1 min-w-48"><span class="label-text">{t('pools-field-backends')}</span>
 						<input class="input input-bordered input-sm" bind:value={pBackends} placeholder={data.backends.map((b) => b.name).join(', ')} /></label>
-					<label class="flex flex-col gap-1 flex-1 min-w-48"><span class="label-text">Models (comma-sep)</span>
+					<label class="flex flex-col gap-1 flex-1 min-w-48"><span class="label-text">{t('pools-field-models')}</span>
 						<input class="input input-bordered input-sm" bind:value={pModels} /></label>
-					<button class="btn btn-primary btn-sm" onclick={savePool} disabled={!pName.trim()}>Save</button>
+					<button class="btn btn-primary btn-sm" onclick={savePool} disabled={!pName.trim()}>
+						{t('pools-save-pool')}
+					</button>
 				</div>
 			</div>
 		</div>
@@ -197,13 +202,21 @@
 						<span class="font-medium">{pool.name}</span>
 						<span class="badge badge-outline badge-sm">{pool.kind}</span>
 						<span class="flex-1"></span>
-						<button class="btn btn-ghost btn-xs text-error" onclick={() => deletePool(pool.name)}>Delete</button>
+						<button class="btn btn-ghost btn-xs text-error" onclick={() => deletePool(pool.name)}>
+							{t('pools-delete-pool')}
+						</button>
 					</div>
 					<div class="text-xs text-base-content/60">
-						{pool.backends.length} backend(s): {pool.backends.join(', ') || '—'}
+						{t('pools-summary-backends', {
+							count: pool.backends.length,
+							list: pool.backends.join(', ') || '—'
+						})}
 					</div>
 					<div class="text-xs text-base-content/60">
-						{pool.models.length} model(s): {pool.models.join(', ') || '—'}
+						{t('pools-summary-models', {
+							count: pool.models.length,
+							list: pool.models.join(', ') || '—'
+						})}
 					</div>
 				</div>
 			</div>
@@ -211,30 +224,34 @@
 	</div>
 
 	<div class="flex justify-between items-center mb-4 flex-wrap gap-2">
-		<h2 class="text-lg font-semibold">Backends</h2>
-		<button class="btn btn-primary btn-sm" onclick={() => (showBackendForm = !showBackendForm)}>New backend</button>
+		<h2 class="text-lg font-semibold">{t('backends-heading')}</h2>
+		<button class="btn btn-primary btn-sm" onclick={() => (showBackendForm = !showBackendForm)}>
+			{t('backends-add-backend')}
+		</button>
 	</div>
 
 	{#if showBackendForm}
 		<div class="card border border-base-300 mb-4">
 			<div class="card-body">
 				<div class="flex flex-wrap gap-3 items-end">
-					<label class="flex flex-col gap-1"><span class="label-text">Name</span>
+					<label class="flex flex-col gap-1"><span class="label-text">{t('backends-field-name')}</span>
 						<input class="input input-bordered input-sm" bind:value={bName} /></label>
-					<label class="flex flex-col gap-1 flex-1 min-w-56"><span class="label-text">Base URL</span>
+					<label class="flex flex-col gap-1 flex-1 min-w-56"><span class="label-text">{t('backends-field-base-url')}</span>
 						<input class="input input-bordered input-sm" bind:value={bUrl} placeholder="https://api.example.com/v1" /></label>
-					<label class="flex flex-col gap-1"><span class="label-text">API key</span>
-						<input class="input input-bordered input-sm" type="password" bind:value={bKey} placeholder="blank = keep/env" /></label>
-					<label class="flex flex-col gap-1"><span class="label-text">Pool</span>
+					<label class="flex flex-col gap-1"><span class="label-text">{t('backends-field-api-key')}</span>
+						<input class="input input-bordered input-sm" type="password" bind:value={bKey} placeholder={t('backends-field-api-key-keep')} /></label>
+					<label class="flex flex-col gap-1"><span class="label-text">{t('backends-field-pool')}</span>
 						<select class="select select-bordered select-sm" bind:value={bPool}>
-							<option value="">(none)</option>
+							<option value="">{t('backends-field-pool-none')}</option>
 							{#each data.pools as pool (pool.name)}<option value={pool.name}>{pool.name}</option>{/each}
 						</select></label>
 					<label class="label cursor-pointer gap-1">
 						<input type="checkbox" class="checkbox checkbox-sm" bind:checked={bOverwrite} />
-						<span class="label-text text-xs">overwrite existing</span>
+						<span class="label-text text-xs">{t('admin-overwrite-existing')}</span>
 					</label>
-					<button class="btn btn-primary btn-sm" onclick={saveBackend} disabled={!bName.trim() || !bUrl.trim()}>Save</button>
+					<button class="btn btn-primary btn-sm" onclick={saveBackend} disabled={!bName.trim() || !bUrl.trim()}>
+						{t('backends-save-backend')}
+					</button>
 				</div>
 			</div>
 		</div>
@@ -248,29 +265,37 @@
 						<div class="flex items-center gap-3 flex-wrap">
 							{#if backend.live}
 								{#if !backend.live.enabled}
-									<span class="badge badge-warning badge-sm">drained</span>
+									<span class="badge badge-warning badge-sm">{t('backends-status-drained')}</span>
 								{:else if backend.live.healthy}
-									<span class="badge badge-success badge-sm">up</span>
+									<span class="badge badge-success badge-sm">{t('backends-status-up')}</span>
 								{:else}
-									<span class="badge badge-error badge-sm">down</span>
+									<span class="badge badge-error badge-sm">{t('backends-status-down')}</span>
 								{/if}
 							{:else}
-								<span class="badge badge-ghost badge-sm">pending apply</span>
+								<span class="badge badge-ghost badge-sm">{t('upstreams-backend-pending')}</span>
 							{/if}
 							<span class="font-medium">{backend.name}</span>
 							<span class="text-xs text-base-content/50 truncate max-w-64">{backend.base_url}</span>
 							{#if backend.live}
 								<span class="text-xs text-base-content/50">
-									{backend.live.inflight}/{backend.live.max_inflight} in-flight · {lastHour(backend.name)} req/h
+									{t('backends-inflight-label', {
+										load: `${n(backend.live.inflight)}/${n(backend.live.max_inflight)}`
+									})} · {t('backends-requests-per-hour', { count: n(lastHour(backend.name)) })}
 								</span>
 							{/if}
 							<span class="flex-1"></span>
 							{#if backend.live?.enabled}
-								<button class="btn btn-ghost btn-xs" onclick={() => toggleBackend(backend.name, false)}>Drain</button>
+								<button class="btn btn-ghost btn-xs" onclick={() => toggleBackend(backend.name, false)}>
+									{t('backends-drain-button')}
+								</button>
 							{:else}
-								<button class="btn btn-ghost btn-xs" onclick={() => toggleBackend(backend.name, true)}>Undrain</button>
+								<button class="btn btn-ghost btn-xs" onclick={() => toggleBackend(backend.name, true)}>
+									{t('backends-undrain-button')}
+								</button>
 							{/if}
-							<button class="btn btn-ghost btn-xs text-error" onclick={() => deleteBackend(backend.name)}>Delete</button>
+							<button class="btn btn-ghost btn-xs text-error" onclick={() => deleteBackend(backend.name)}>
+								{t('backends-delete-backend')}
+							</button>
 						</div>
 					</div>
 				</div>

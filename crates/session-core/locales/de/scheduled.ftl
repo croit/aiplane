@@ -97,3 +97,12 @@ scheduled-pause-title = Pausieren
 scheduled-resume-title = Fortsetzen
 scheduled-edit-title = Bearbeiten
 scheduled-delete-title = Löschen
+
+# SPA-only: the Svelte /scheduled page's builder form and action list.
+scheduled-new-heading = Neue geplante Aktion
+scheduled-weekdays-label = Wochentage
+scheduled-day-of-month-label = Tag des Monats
+scheduled-update-preview = Vorschau aktualisieren
+scheduled-err-invalid-schedule = Ungültiger Zeitplan.
+scheduled-badge-last-run-failed = letzter Lauf fehlgeschlagen
+scheduled-delete-confirm = Diese geplante Aktion löschen?

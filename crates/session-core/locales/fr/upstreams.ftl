@@ -33,3 +33,6 @@ upstreams-unassigned-heading = Non assignés
 upstreams-unassigned-description = Backends non assignés à un pool. Ajoutez-en un à un pool pour y acheminer le trafic.
 
 upstreams-empty = Aucun pool ni backend configuré pour l'instant. Ajoutez un pool ou un backend pour commencer.
+
+# Message affiché après l'application de la topologie en attente par la SPA.
+upstreams-applied = Topologie appliquée.

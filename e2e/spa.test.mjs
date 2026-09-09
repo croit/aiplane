@@ -154,3 +154,50 @@ test("signing out ends the session", async () => {
     assert.equal(res.status, 401, "the session must be gone server-side, not just in the tab");
     await ctx.close();
 });
+
+/// The product ships in six languages, and the SPA is where that promise is
+/// kept or broken: the catalogs are generated from the Fluent `.ftl` corpus
+/// (`web/scripts/ftl-to-ts.py`) and bundled, so a build that forgot to
+/// regenerate them, or a switcher wired to nothing, would still render a
+/// perfectly working English app — which is exactly the failure nobody
+/// notices until a German user opens it.
+///
+/// Three things have to hold, and only a browser can check them together:
+/// the switcher changes the rendered text, `<html lang>` follows (screen
+/// readers and hyphenation read that, not our state), and the choice is
+/// stored as a cookie the Rust side reads too, so a server-rendered error
+/// page comes back in the same language the app is in.
+test("the language switcher translates the app, and the choice sticks", async () => {
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "id", value: await devSessionCookie(), url: BASE }]);
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/chat`, { waitUntil: "networkidle" });
+
+    // English to begin with: the browser is launched with --lang=en-US and no
+    // `lang` cookie has been set.
+    await page.waitForSelector("text=Conversations", { timeout: 5000 });
+
+    await page.click('button[aria-label="Choose language"]');
+    await page.click("text=Deutsch");
+
+    // The nav re-renders. This is the assertion that fails if the labels were
+    // resolved once at module scope instead of through `t()` in the template.
+    await page.waitForSelector("text=Unterhaltungen", { timeout: 5000 });
+
+    assert.equal(
+        await page.evaluate(() => document.documentElement.lang),
+        "de",
+        "<html lang> must follow the switcher",
+    );
+    const cookies = await ctx.cookies(BASE);
+    assert.equal(
+        cookies.find((c) => c.name === "lang")?.value,
+        "de",
+        "the choice must be a `lang` cookie — session_core::i18n reads the same one",
+    );
+
+    // And it survives a reload, which is the part `$state` alone cannot do.
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector("text=Unterhaltungen", { timeout: 5000 });
+    await ctx.close();
+});

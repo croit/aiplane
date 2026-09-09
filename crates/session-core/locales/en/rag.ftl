@@ -228,3 +228,19 @@ rag-oauth-no-refresh-token = The provider returned no refresh token, so the gate
 rag-oauth-store-failed = Could not store the credentials.
 rag-badge-no-files = no files indexed
 rag-ref-files = { $files } files
+
+# SPA collection manager: the create form, the sync-URL card, the per-source
+# rows, and the confirmations the legacy page did not need.
+rag-button-new-collection = New collection
+rag-label-git-url = Git URL
+rag-source-testing = Testing…
+rag-button-create = Create
+rag-button-rebuild = Rebuild
+rag-sync-url-heading = Sync URL — shown once
+rag-sync-token-confirm = Mint a new sync URL? The old one stops working.
+rag-delete-collection-confirm = Delete collection { $name } and its index?
+rag-remove-source-confirm = Remove source { $source }?
+rag-toast-rebuild-queued = Full rebuild requested.
+rag-ref-indexed-at = indexed { $date }
+rag-no-sources = No sources — this collection indexes nothing until one is added.
+rag-add-sources-hint = One source per line; add { $at } to override this collection's { $ref }.

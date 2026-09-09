@@ -214,3 +214,6 @@ settings-f-gateway-session_absolute_max_days = Maximum session age
 settings-f-gateway-session_absolute_max_days-help = Hard cap in days on a browser login since sign-in, which no amount of activity extends. It also forces a periodic trip through the identity provider, the only point at which group claims are re-read.
 settings-f-gateway-allow_impersonation = Allow impersonation
 settings-f-gateway-allow_impersonation-help = Let admins act as another user for debugging. Every impersonation is audited and shows a persistent banner; off hides the buttons and the endpoint refuses.
+
+# Confirmation before clearing one stored setting (SPA settings editor).
+settings-clear-confirm = Reset { $key } to its built-in default?

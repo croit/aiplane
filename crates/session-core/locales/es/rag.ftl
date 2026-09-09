@@ -226,3 +226,19 @@ rag-oauth-no-refresh-token = El proveedor no devolvió un token de actualizació
 rag-oauth-store-failed = No se pudieron guardar las credenciales.
 rag-badge-no-files = sin archivos indexados
 rag-ref-files = { $files } archivos
+
+# Gestor de colecciones de la SPA: formulario de creación, tarjeta de URL de
+# sincronización, filas de fuente y las confirmaciones propias de la SPA.
+rag-button-new-collection = Nueva colección
+rag-label-git-url = URL de Git
+rag-source-testing = Probando…
+rag-button-create = Crear
+rag-button-rebuild = Reconstruir
+rag-sync-url-heading = URL de sincronización — se muestra una sola vez
+rag-sync-token-confirm = ¿Generar una nueva URL de sincronización? La anterior dejará de funcionar.
+rag-delete-collection-confirm = ¿Eliminar la colección { $name } y su índice?
+rag-remove-source-confirm = ¿Quitar la fuente { $source }?
+rag-toast-rebuild-queued = Reconstrucción completa solicitada.
+rag-ref-indexed-at = indexado el { $date }
+rag-no-sources = Sin fuentes — esta colección no indexa nada hasta que se añada una.
+rag-add-sources-hint = Una fuente por línea; añade { $at } para sustituir la ref { $ref } de esta colección.

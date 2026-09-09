@@ -141,3 +141,25 @@ admin-search-brave-key-clear = Supprimer la clé enregistrée
 admin-search-save = Enregistrer la recherche web
 admin-search-saved = paramètres de recherche web enregistrés
 admin-search-unknown-provider = fournisseur de recherche inconnu `{ $provider }`
+
+# ─── SPA d'administration SvelteKit ──────────────────────────────────────────
+# Le garde-fou de rôle du shell admin, le catalogue de workflows /admin/comfyui
+# et les parties de l'éditeur de modèles absentes de l'ancienne page.
+
+admin-needs-admin-role = Ces pages nécessitent le rôle administrateur.
+admin-overwrite-existing = écraser l'existant
+admin-comfyui-reload = Recharger le catalogue
+admin-comfyui-reloaded = { $count } workflow(s) rechargé(s).
+admin-comfyui-empty = Aucun workflow chargé — vérifiez le répertoire de contenu.
+admin-defaults-model-aria = Modèle par défaut pour { $feature }
+admin-defaults-set = Définir
+admin-search-provider-none = Aucun
+admin-add-overrides-heading = Ajouter des surcharges de modèle
+admin-edit-model-heading = Modifier { $model }
+admin-add-model = Ajouter…
+admin-pricing-unit-label = Unité de tarification
+admin-pricing-unit-mtok = par Mtok
+admin-pricing-unit-ktok = par Ktok
+admin-pricing-unit-kimgs = par 1000 images
+admin-clear-overrides-confirm = Supprimer toutes les surcharges enregistrées pour { $model } ?
+admin-users-col-email = E-mail

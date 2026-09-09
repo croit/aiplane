@@ -41,3 +41,8 @@ limits-unknown-user = aucun utilisateur ne correspond à `{ $user }`
 limits-missing-subject-id = saisissez un id de rôle, un e-mail d'utilisateur ou un id de jeton
 limits-subject-token = Jeton d'API
 limits-unknown-token = aucun jeton ne correspond à `{ $token }`
+
+# Tableau des règles de la SPA : titre, colonne « géré par » et confirmation.
+limits-rules-heading = Règles
+limits-col-managed-by = Par
+limits-delete-confirm = Supprimer cette règle ?

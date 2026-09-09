@@ -40,3 +40,13 @@ setup-manual-help = Use this if the group that should be admin is not one you ar
 setup-finish-button = Finish setup
 setup-back-button = Back to provider settings
 setup-show-token = Show everything the provider sent
+
+# The one state the server-rendered form had no equivalent of.
+setup-testing = Testing…
+
+# The SPA wizard: its own page heading, the closed-for-business
+# notice, and two inline states the server-rendered form had no
+# equivalent of.
+setup-page-heading = Gateway setup
+setup-closed = Setup is closed on this gateway. Sign in normally, or run restore-setup on the host to reopen the wizard.
+setup-secret-set-hint = set — leave blank to keep it

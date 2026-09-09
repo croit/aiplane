@@ -96,3 +96,15 @@ webhooks-reuse-toggle-label = Konversation wiederverwenden (jede Auslösung setz
 webhooks-reuse-rounds-prefix = die letzten
 webhooks-reuse-rounds-suffix = Runden wiederholen
 webhooks-reuse-rounds-aria = Anzahl der wiederzugebenden Verlaufsrunden
+
+# SPA-only: the Svelte /webhooks page — inline form, run list, rerun composer.
+webhooks-new-heading = Neuer Webhook
+webhooks-prompt-untrusted-label = Prompt (die Nutzlast kommt als nicht vertrauenswürdige Eingabe an)
+webhooks-runs-show = Läufe
+webhooks-runs-hide = Läufe ausblenden
+webhooks-rerun-prompt-label = Prompt für den erneuten Lauf — die gespeicherte Nutzlast wird damit erneut verarbeitet
+webhooks-rerun-latest = Letzte Nutzlast erneut ausführen
+webhooks-rerun-running = Läuft …
+webhooks-toast-rerun-failed = Erneuter Lauf: { $status }
+webhooks-rotate-confirm = Ein neues Trigger-Secret erzeugen? Die alte URL funktioniert sofort nicht mehr.
+webhooks-delete-confirm = Diesen Webhook löschen?

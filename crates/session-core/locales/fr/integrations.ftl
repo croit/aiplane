@@ -62,3 +62,7 @@ integrations-error-saving-permissions = enregistrement des autorisations : { $er
 integrations-error-listing-tools = liste des outils : { $error }
 integrations-error-disconnecting = déconnexion : { $error }
 integrations-error-connection-unavailable = connexion indisponible
+
+# SPA-only: the Svelte /integrations connector list.
+integrations-badge-not-connected = Non connecté
+integrations-toast-connected = { $name } connecté.

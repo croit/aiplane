@@ -40,3 +40,13 @@ setup-manual-help = Nutzen Sie das, wenn die Admin-Gruppe eine ist, in der Sie s
 setup-finish-button = Einrichtung abschließen
 setup-back-button = Zurück zu den Provider-Einstellungen
 setup-show-token = Alles anzeigen, was der Provider gesendet hat
+
+# The one state the server-rendered form had no equivalent of.
+setup-testing = Wird getestet …
+
+# The SPA wizard: its own page heading, the closed-for-business
+# notice, and two inline states the server-rendered form had no
+# equivalent of.
+setup-page-heading = Gateway-Einrichtung
+setup-closed = Die Einrichtung ist auf diesem Gateway abgeschlossen. Melde dich normal an oder führe restore-setup auf dem Host aus, um den Assistenten erneut zu öffnen.
+setup-secret-set-hint = gesetzt — leer lassen, um es zu behalten

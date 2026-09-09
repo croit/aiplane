@@ -95,3 +95,8 @@ connectors-error-needs-client-id = 此连接器需要 OAuth 客户端 ID 才能�
 connectors-error-toggling = 切换连接器时出错:{ $error }
 connectors-error-deleting = 删除连接器时出错:{ $error }
 connectors-error-restoring = 恢复默认值时出错:{ $error }
+
+# SPA 连接器表单：逗号分隔的作用域字段、密钥/令牌合并字段与恢复默认的确认。
+connectors-restore-defaults-confirm = 要重新写入内置目录条目吗？
+connectors-field-scopes-csv-label = 作用域(以逗号分隔)
+connectors-field-secret-or-token-label = 客户端密钥 / 令牌

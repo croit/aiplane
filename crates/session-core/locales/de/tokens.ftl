@@ -114,3 +114,16 @@ tokens-limits-not-yours = Dieses Kontingent können Sie nicht entfernen.
 tokens-limits-admin-set = Ein Administrator hat dieses Kontingent für dieses Token gesetzt; es lässt sich nur auf der Admin-Limits-Seite ändern.
 tokens-limits-admin-badge = vom Administrator gesetzt
 tokens-models-admin-set = Ein Betreiber beschränkt dieses Token zusätzlich auf: { $models }. Ihre eigene Auswahl kann das nur weiter einschränken, nicht erweitern.
+
+# SPA-only: the Svelte /tokens row panels and their confirm prompts.
+tokens-models-heading = Modell-Zulassungsliste
+tokens-models-input-placeholder = Modell-IDs, kommagetrennt
+tokens-quota-heading = Kontingent
+tokens-quota-per = pro
+tokens-quota-max-placeholder = max.
+tokens-mcp-heading = MCP-Konnektoren
+tokens-mcp-allow-button = Ausführen zulassen
+tokens-mcp-block-button = Blockieren
+tokens-revoke-confirm = Dieses Token widerrufen? Clients, die es verwenden, funktionieren sofort nicht mehr.
+tokens-rotate-confirm = Ein neues Secret erzeugen? Das alte funktioniert sofort nicht mehr.
+tokens-remove-confirm = Diesen Token-Eintrag endgültig löschen?

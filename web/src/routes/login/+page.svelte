@@ -7,6 +7,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { loginUrl } from '$lib/api';
+	import { t } from '$lib/i18n.svelte';
 
 	onMount(() => {
 		const back = page.url.searchParams.get('return_to') ?? '/';
@@ -14,4 +15,4 @@
 	});
 </script>
 
-<p class="mt-8 text-center text-base-content/60">Redirecting to sign-in…</p>
+<p class="mt-8 text-center text-base-content/60">{t('chrome-redirecting-to-sign-in')}</p>

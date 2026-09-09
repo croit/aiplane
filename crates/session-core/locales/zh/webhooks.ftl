@@ -96,3 +96,15 @@ webhooks-reuse-toggle-label = 复用对话（每次触发都接续上一次的�
 webhooks-reuse-rounds-prefix = 重放最近
 webhooks-reuse-rounds-suffix = 轮
 webhooks-reuse-rounds-aria = 要重放的历史轮数
+
+# SPA-only: the Svelte /webhooks page — inline form, run list, rerun composer.
+webhooks-new-heading = 新建 Webhook
+webhooks-prompt-untrusted-label = 提示词（负载将作为不可信输入传入）
+webhooks-runs-show = 运行记录
+webhooks-runs-hide = 隐藏运行记录
+webhooks-rerun-prompt-label = 重跑提示词——已保存的负载将通过它重新执行
+webhooks-rerun-latest = 重跑最近一次负载
+webhooks-rerun-running = 运行中…
+webhooks-toast-rerun-failed = 重跑 { $status }
+webhooks-rotate-confirm = 生成新的触发密钥？旧的 URL 会立即失效。
+webhooks-delete-confirm = 删除此 Webhook？

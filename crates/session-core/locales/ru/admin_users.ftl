@@ -25,3 +25,6 @@ admin-users-audit-col-when = Когда
 admin-users-audit-col-action = Действие
 admin-users-audit-col-admin = Администратор
 admin-users-audit-col-target = Цель
+
+# Подтверждение перед входом от имени пользователя (список пользователей SPA).
+admin-users-impersonate-confirm = Действовать от имени этого пользователя? Ваш сеанс администратора сохранится; завершить можно в шапке.

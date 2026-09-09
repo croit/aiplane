@@ -41,3 +41,13 @@ setup-manual-help = 如果应当成为管理员的组你自己并不在其中，
 setup-finish-button = 完成安装
 setup-back-button = 返回提供方设置
 setup-show-token = 显示提供方发送的全部内容
+
+# The one state the server-rendered form had no equivalent of.
+setup-testing = 测试中…
+
+# The SPA wizard: its own page heading, the closed-for-business
+# notice, and two inline states the server-rendered form had no
+# equivalent of.
+setup-page-heading = 网关设置
+setup-closed = 此网关的设置已关闭。请正常登录，或在主机上运行 restore-setup 重新打开向导。
+setup-secret-set-hint = 已设置 —— 留空则保持不变

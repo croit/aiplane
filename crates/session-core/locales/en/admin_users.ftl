@@ -27,3 +27,6 @@ admin-users-audit-col-when = When
 admin-users-audit-col-action = Action
 admin-users-audit-col-admin = Admin
 admin-users-audit-col-target = Target
+
+# Impersonation confirmation prompt (SPA user roster).
+admin-users-impersonate-confirm = Act as this user? Your admin session is preserved; stop from the header.

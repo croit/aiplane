@@ -141,3 +141,25 @@ admin-search-brave-key-clear = Удалить сохранённый ключ
 admin-search-save = Сохранить веб-поиск
 admin-search-saved = настройки веб-поиска сохранены
 admin-search-unknown-provider = неизвестный провайдер поиска `{ $provider }`
+
+# ─── Админ-SPA на SvelteKit ──────────────────────────────────────────────────
+# Проверка роли в оболочке админки, каталог рабочих процессов /admin/comfyui и
+# те части редактора моделей, которых не было на старой странице.
+
+admin-needs-admin-role = Для этих страниц нужна роль администратора.
+admin-overwrite-existing = перезаписать существующий
+admin-comfyui-reload = Перезагрузить каталог
+admin-comfyui-reloaded = Перезагружено рабочих процессов: { $count }.
+admin-comfyui-empty = Рабочие процессы не загружены — проверьте каталог с содержимым.
+admin-defaults-model-aria = Модель по умолчанию для { $feature }
+admin-defaults-set = Задать
+admin-search-provider-none = Нет
+admin-add-overrides-heading = Добавить переопределения модели
+admin-edit-model-heading = Изменить { $model }
+admin-add-model = Добавить…
+admin-pricing-unit-label = Единица тарификации
+admin-pricing-unit-mtok = за Mtok
+admin-pricing-unit-ktok = за Ktok
+admin-pricing-unit-kimgs = за 1000 изображений
+admin-clear-overrides-confirm = Удалить все сохранённые переопределения для { $model }?
+admin-users-col-email = Эл. почта

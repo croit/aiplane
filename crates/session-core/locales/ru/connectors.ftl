@@ -95,3 +95,9 @@ connectors-error-needs-client-id = этому коннектору нужен OA
 connectors-error-toggling = переключение коннектора: { $error }
 connectors-error-deleting = удаление коннектора: { $error }
 connectors-error-restoring = восстановление значений по умолчанию: { $error }
+
+# Форма коннектора в SPA: поле scopes через запятую, объединённое поле
+# «секрет/токен» и подтверждение восстановления встроенного каталога.
+connectors-restore-defaults-confirm = Восстановить встроенные записи каталога?
+connectors-field-scopes-csv-label = Scopes (через запятую)
+connectors-field-secret-or-token-label = Секрет клиента / токен

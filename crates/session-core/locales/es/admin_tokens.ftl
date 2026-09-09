@@ -17,3 +17,11 @@ admin-tokens-models-help = Una restricción del operador sobre este token, indep
 admin-tokens-models-restrict-label = Limitar este token a modelos concretos
 admin-tokens-models-saved-toast = Restricción del operador fijada: { $count } modelos.
 admin-tokens-models-cleared-toast = Restricción del operador eliminada.
+
+# Registro de tokens de la SPA: título del editor de lista permitida y celdas compactas.
+admin-tokens-allowlist-heading = Lista de modelos permitidos (admin)
+admin-tokens-col-this-month = Este mes
+admin-tokens-usage-off = uso desactivado
+admin-tokens-models-button = Modelos
+admin-tokens-tools-on = activado
+admin-tokens-tools-off = desactivado

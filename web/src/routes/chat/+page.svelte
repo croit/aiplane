@@ -6,6 +6,7 @@
 	import { api } from '$lib/api';
 	import { refreshSidebar, sidebar } from '$lib/sidebar.svelte';
 	import { push, enablePush, disablePush, refreshPushState } from '$lib/push.svelte';
+	import { t, dt } from '$lib/i18n.svelte';
 	import type { ChatSession } from '$lib/chat-protocol';
 
 	let sessions = $state<ChatSession[]>([]);
@@ -51,8 +52,10 @@
 </script>
 
 <div class="flex items-center justify-between mb-4">
-	<h1 class="text-2xl font-bold">Chat</h1>
-	<button class="btn btn-primary btn-sm" onclick={newChat} disabled={busy}>New chat</button>
+	<h1 class="text-2xl font-bold">{t('chat-default-title')}</h1>
+	<button class="btn btn-primary btn-sm" onclick={newChat} disabled={busy}>
+		{t('nav-new-conversation-title')}
+	</button>
 </div>
 
 {#if error}
@@ -64,13 +67,13 @@
 		<div class="card-body py-3">
 			<div class="flex items-center gap-3">
 				<span class="text-sm flex-1">
-					{push.ui.phase === 'on' ? 'Notifications are on for this device.' : 'Get notified when a reply finishes.'}
+					{push.ui.phase === 'on' ? t('tokens-push-on') : t('chat-push-invite')}
 					{#if push.note}<span class="text-base-content/60"> {push.note}</span>{/if}
 				</span>
 				{#if push.ui.phase === 'on'}
-					<button class="btn btn-ghost btn-sm" onclick={disablePush}>Disable</button>
+					<button class="btn btn-ghost btn-sm" onclick={disablePush}>{t('tokens-push-disable')}</button>
 				{:else if push.ui.phase === 'off'}
-					<button class="btn btn-outline btn-sm" onclick={enablePush}>Enable on this device</button>
+					<button class="btn btn-outline btn-sm" onclick={enablePush}>{t('tokens-push-enable')}</button>
 				{:else if push.ui.phase === 'busy'}
 					<span class="loading loading-spinner loading-sm"></span>
 				{/if}
@@ -82,7 +85,7 @@
 {#if sessions.length === 0 && !error}
 	<div class="card border border-base-300">
 		<div class="card-body">
-			<p class="text-base-content/60">No conversations yet. Start one above.</p>
+			<p class="text-base-content/60">{t('chat-list-empty')}</p>
 		</div>
 	</div>
 {/if}
@@ -96,25 +99,25 @@
 			>
 				<div class="card-body flex-row items-center gap-3 py-3">
 					<a href="{base}/chat/{session.id}" class="flex-1 min-w-0 hover:underline">
-						<span class="font-medium">{session.title?.trim() || 'Untitled chat'}</span>
+						<span class="font-medium">{session.title?.trim() || t('nav-untitled-chat')}</span>
 						<span class="block text-xs text-base-content/60">
-							{new Date(session.updated_at).toLocaleString()}
+							{dt(session.updated_at)}
 						</span>
 					</a>
-					{#if session.pinned}<span class="badge badge-outline badge-sm">pinned</span>{/if}
+					{#if session.pinned}<span class="badge badge-outline badge-sm">{t('chat-list-pinned-badge')}</span>{/if}
 					<button
 						class="btn btn-ghost btn-xs"
 						onclick={() => togglePin(session)}
-						aria-label={session.pinned ? 'Unpin conversation' : 'Pin conversation'}
+						aria-label={session.pinned ? t('nav-unpin-conversation') : t('nav-pin-conversation')}
 					>
-						{session.pinned ? 'Unpin' : 'Pin'}
+						{session.pinned ? t('chat-list-unpin') : t('chat-list-pin')}
 					</button>
 					<button
 						class="btn btn-ghost btn-xs text-error"
 						onclick={() => remove(session.id)}
-						aria-label="Delete conversation"
+						aria-label={t('nav-delete-conversation')}
 					>
-						Delete
+						{t('chat-list-delete')}
 					</button>
 				</div>
 			</div>

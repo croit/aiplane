@@ -67,3 +67,12 @@ usage-key-token = API-токен
 usage-token-none = Чат и запланированные запуски (без токена)
 usage-token-all = Все токены
 usage-filter-token = Токен
+
+# SPA-only: the Svelte /usage period picker and grouped-table column head.
+usage-period-today = Сегодня
+usage-period-24h = Последние 24 ч
+usage-period-this-week = Эта неделя
+usage-period-last-week = Прошлая неделя
+usage-period-this-month = Этот месяц
+usage-period-last-month = Прошлый месяц
+usage-col-name = Название

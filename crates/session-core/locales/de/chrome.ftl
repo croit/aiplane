@@ -14,3 +14,9 @@ push-turn-error-body = Die Anfrage endete mit einem Fehler.
 # Refresh-Lauf, `tools::mcp::worker`). { $connector } ist der Anzeigename.
 push-connector-reconnect-title = Verbindung braucht Ihre Anmeldung
 push-connector-reconnect-body = { $connector } wurde getrennt — öffnen Sie „Integrationen“, um erneut zu verbinden.
+
+# SPA-only: the root route, which only routes on to /chat.
+chrome-opening-conversations = Unterhaltungen werden geöffnet …
+
+# SPA-only: /login, which exists to bounce straight to the IdP.
+chrome-redirecting-to-sign-in = Weiterleitung zur Anmeldung…

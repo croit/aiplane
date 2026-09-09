@@ -68,3 +68,10 @@ feedback-err-not-configured = Le feedback n'est pas configuré
 feedback-err-title-required = Le titre est requis (au moins 4 caractères)
 feedback-err-description-required = La description est requise
 feedback-err-submit-failed = Impossible de créer le ticket — veuillez réessayer
+
+# The SPA keeps the dialog open after submitting and shows a thank-you
+# panel in place of the form; the server-rendered widget did not.
+feedback-thanks-heading = Merci
+feedback-thanks-body = Votre retour a été enregistré comme ticket.
+feedback-done-button = Terminé
+feedback-sending = Envoi…

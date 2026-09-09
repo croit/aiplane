@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, ApiError } from '$lib/api';
+	import { api } from '$lib/api';
 	import type { TokenSummary } from '$lib/api';
 	import { adminPut, adminPost } from '$lib/admin-client';
+	import { t, dt } from '$lib/i18n.svelte';
 
 	let tokens = $state<TokenSummary[]>([]);
 	let error = $state<string | null>(null);
@@ -19,12 +20,10 @@
 	// allowlist draft, and its quota draft.
 	let expanded = $state<string | null>(null);
 	let modelsInput = $state('');
-	let models = $state<string[]>([]);
 	let restrict = $state(false);
 	let quotaDimension = $state('requests');
 	let quotaWindow = $state('day');
 	let quotaValue = $state('');
-	let allModels = $state<string[]>([]);
 	// Per-token MCP "ask" policy. Write-only on the server (there is no read
 	// endpoint), so this mirrors what this page last set rather than claiming
 	// to show stored state.
@@ -39,39 +38,41 @@
 		}
 	}
 
-	function togglePanel(t: TokenSummary) {
-		if (expanded === t.id) {
+	function togglePanel(token: TokenSummary) {
+		if (expanded === token.id) {
 			expanded = null;
 			return;
 		}
-		expanded = t.id;
+		expanded = token.id;
 		quotaValue = '';
 	}
 
-	async function saveModels(t: TokenSummary) {
+	async function saveModels(token: TokenSummary) {
 		notice = null;
 		try {
 			const list = modelsInput
 				.split(',')
 				.map((m) => m.trim())
 				.filter(Boolean);
-			await adminPut(`/api/v0/tokens/${t.id}/models`, { restrict, models: list });
-			notice = 'Model allowlist saved.';
+			await adminPut(`/api/v0/tokens/${token.id}/models`, { restrict, models: list });
+			notice = restrict
+				? t('tokens-models-saved-toast', { count: list.length })
+				: t('tokens-models-cleared-toast');
 			await refresh();
 		} catch (err) {
 			notice = String(err);
 		}
 	}
 
-	async function saveQuota(t: TokenSummary) {
+	async function saveQuota(token: TokenSummary) {
 		notice = null;
 		try {
-			await adminPost(`/api/v0/tokens/${t.id}/quota`, {
+			await adminPost(`/api/v0/tokens/${token.id}/quota`, {
 				dimension: quotaDimension,
 				window: quotaWindow,
 				value: parseFloat(quotaValue)
 			});
-			notice = 'Quota saved.';
+			notice = t('tokens-limits-saved-toast');
 		} catch (err) {
 			notice = String(err);
 		}
@@ -79,14 +80,14 @@
 
 	/** An `ask`-level MCP connector has nobody to prompt when the caller is a
 	 * token, so it blocks by default; this is the owner's explicit opt-in. */
-	async function saveMcpPolicy(t: TokenSummary, allow: boolean) {
+	async function saveMcpPolicy(token: TokenSummary, allow: boolean) {
 		notice = null;
 		try {
-			await adminPut(`/api/v0/tokens/${t.id}/mcp-policy`, { allow });
-			mcpAllow[t.id] = allow;
+			await adminPut(`/api/v0/tokens/${token.id}/mcp-policy`, { allow });
+			mcpAllow[token.id] = allow;
 			notice = allow
-				? 'Connectors that ask for approval will run for this token.'
-				: 'Connectors that ask for approval are blocked for this token.';
+				? t('tokens-mcp-ask-enabled-toast')
+				: t('tokens-mcp-ask-disabled-toast');
 		} catch (err) {
 			notice = String(err);
 		}
@@ -115,7 +116,7 @@
 	}
 
 	async function revoke(id: string) {
-		if (!confirm('Revoke this token? Clients using it stop working immediately.')) return;
+		if (!confirm(t('tokens-revoke-confirm'))) return;
 		try {
 			await api.revokeToken(id);
 			await refresh();
@@ -125,7 +126,7 @@
 	}
 
 	async function rotate(id: string) {
-		if (!confirm('Issue a new secret? The old one stops working immediately.')) return;
+		if (!confirm(t('tokens-rotate-confirm'))) return;
 		try {
 			const res = await api.rotateToken(id);
 			minted = { name: res.token.name, plaintext: res.plaintext };
@@ -136,7 +137,7 @@
 	}
 
 	async function remove(id: string) {
-		if (!confirm('Delete this token row for good?')) return;
+		if (!confirm(t('tokens-remove-confirm'))) return;
 		try {
 			await api.deleteToken(id);
 			await refresh();
@@ -165,11 +166,11 @@
 </script>
 
 <div class="flex items-center justify-between mb-4">
-	<h1 class="text-2xl font-bold">API tokens</h1>
+	<h1 class="text-2xl font-bold">{t('tokens-page-heading')}</h1>
 </div>
 
 <p class="text-base-content/60 text-sm mb-6">
-	Bearer tokens for the OpenAI-compatible API. The plaintext is shown only at creation time — store it somewhere safe.
+	{t('tokens-intro')}
 </p>
 
 {#if error}
@@ -183,43 +184,47 @@
 	<div class="card border border-success mb-6">
 		<div class="card-body">
 			<h2 class="card-title text-base">
-				<span class="text-success">✓</span> Token created — copy it now
+				<span class="text-success">✓</span>
+				{t('tokens-minted-heading')}
 			</h2>
-			<p class="text-sm text-base-content/70">You won't be able to see this value again.</p>
+			<p class="text-sm text-base-content/70">{t('tokens-minted-copy-warning')}</p>
 			<div class="relative">
 				<pre class="bg-base-100 border border-base-300 rounded-md p-3 pr-12 m-0 font-mono text-xs select-all break-all whitespace-pre-wrap">{minted.plaintext}</pre>
 				<button
 					class="btn btn-ghost btn-sm btn-square absolute top-1.5 right-1.5"
 					onclick={copyPlaintext}
-					aria-label="Copy token"
+					aria-label={t('tokens-copy-aria')}
+					title={t('tokens-copy-title')}
 				>
-					Copy
+					{t('webhooks-copy')}
 				</button>
 			</div>
-			<p class="text-xs text-base-content/60 mt-2">Name: {minted.name}</p>
+			<p class="text-xs text-base-content/60 mt-2">
+				{t('tokens-minted-name', { name: minted.name })}
+			</p>
 		</div>
 	</div>
 {/if}
 
 <div class="card border border-base-300 mb-6">
 	<div class="card-body">
-		<h2 class="card-title">Create token</h2>
+		<h2 class="card-title">{t('tokens-create-heading')}</h2>
 		<div class="flex flex-wrap items-end gap-3">
 			<label class="flex flex-col gap-1 flex-1 min-w-48">
-				<span class="label-text">Name</span>
+				<span class="label-text">{t('tokens-name-label')}</span>
 				<input
 					class="input input-bordered w-full"
-					placeholder="e.g. laptop, ci-runner"
+					placeholder={t('tokens-name-placeholder')}
 					bind:value={name}
 					onkeydown={(e) => e.key === 'Enter' && create()}
 				/>
 			</label>
 			<label class="flex flex-col gap-1 w-32">
-				<span class="label-text">TTL (days)</span>
+				<span class="label-text">{t('tokens-ttl-label')}</span>
 				<input class="input input-bordered w-full" type="number" min="1" max="1825" bind:value={ttlDays} />
 			</label>
 			<button class="btn btn-primary" onclick={create} disabled={!name.trim() || busy}>
-				Create token
+				{t('tokens-create-submit')}
 			</button>
 		</div>
 	</div>
@@ -227,25 +232,32 @@
 
 <div class="card border border-base-300">
 	<div class="card-body">
-		<h2 class="card-title">Your tokens</h2>
+		<h2 class="card-title">{t('tokens-list-heading')}</h2>
 		{#if tokens.length === 0}
-			<p class="text-base-content/60 text-sm">No tokens yet. Create one above.</p>
+			<p class="text-base-content/60 text-sm">{t('tokens-list-empty')}</p>
 		{:else}
 			<ul class="flex flex-col divide-y divide-base-300">
 				{#each tokens as token (token.id)}
 					<li class="py-3">
 						<div class="flex items-center gap-4">
 							<div class="flex-1 min-w-0">
-								<div class="text-sm font-medium">{token.name}</div>
+								<button class="text-sm font-medium link link-hover" onclick={() => togglePanel(token)}>
+									{token.name}
+								</button>
 								<div class="text-xs text-base-content/60">
-									created {new Date(token.created_at).toLocaleDateString()} · expires{' '}
-									{new Date(token.expires_at).toLocaleDateString()}
+									{t('tokens-row-meta', {
+										created: dt(token.created_at, { dateStyle: 'medium' }),
+										last_used: token.last_used_at
+											? dt(token.last_used_at, { dateStyle: 'medium' })
+											: t('tokens-last-used-never'),
+										expires: dt(token.expires_at, { dateStyle: 'medium' })
+									})}
 								</div>
 							</div>
 							{#if token.revoked}
-								<span class="badge badge-error">revoked</span>
+								<span class="badge badge-error">{t('tokens-badge-revoked')}</span>
 							{:else}
-								<span class="badge badge-secondary">active</span>
+								<span class="badge badge-secondary">{t('tokens-badge-active')}</span>
 							{/if}
 							<label class="flex items-center gap-2 text-sm">
 								<input
@@ -254,62 +266,80 @@
 									checked={token.tools_enabled}
 									disabled={token.revoked}
 									onchange={() => toggleTools(token)}
+									aria-label={t('tokens-tool-use-aria')}
 								/>
-								<span class="text-base-content/60">Tool use</span>
+								<span class="text-base-content/60">{t('tokens-tool-use-label')}</span>
 							</label>
 							{#if !token.revoked}
-								<button class="btn btn-outline btn-sm" onclick={() => rotate(token.id)}>Rotate</button>
-								<button class="btn btn-error btn-sm" onclick={() => revoke(token.id)}>Revoke</button>
+								<button
+									class="btn btn-outline btn-sm"
+									onclick={() => rotate(token.id)}
+									title={t('tokens-rotate-title')}
+								>
+									{t('tokens-rotate-button')}
+								</button>
+								<button class="btn btn-error btn-sm" onclick={() => revoke(token.id)}>{t('tokens-revoke-button')}</button>
 							{:else}
-								<button class="btn btn-outline btn-sm" onclick={() => remove(token.id)}>Remove</button>
+								<button class="btn btn-outline btn-sm" onclick={() => remove(token.id)}>{t('tokens-remove-button')}</button>
 							{/if}
 						</div>
 						{#if expanded === token.id}
 							<div class="mt-3 pl-1 flex flex-col gap-3">
 								<div>
-									<div class="text-xs font-medium mb-1">Model allowlist</div>
+									<div class="text-xs font-medium mb-1">{t('tokens-models-heading')}</div>
 									<div class="flex flex-wrap gap-2 items-center">
 										<label class="label cursor-pointer gap-1">
 											<input type="checkbox" class="checkbox checkbox-xs" bind:checked={restrict} />
-											<span class="label-text text-xs">Restrict to specific models</span>
+											<span class="label-text text-xs">{t('tokens-models-restrict-label')}</span>
 										</label>
 										{#if restrict}
-											<input class="input input-bordered input-xs flex-1 min-w-48" placeholder="model ids, comma-separated" bind:value={modelsInput} />
+											<input
+												class="input input-bordered input-xs flex-1 min-w-48"
+												placeholder={t('tokens-models-input-placeholder')}
+												bind:value={modelsInput}
+											/>
 										{/if}
-										<button class="btn btn-ghost btn-xs" onclick={() => saveModels(token)}>Save models</button>
+										<button class="btn btn-ghost btn-xs" onclick={() => saveModels(token)}>{t('tokens-models-save')}</button>
 									</div>
 								</div>
 								<div>
-									<div class="text-xs font-medium mb-1">Quota</div>
+									<div class="text-xs font-medium mb-1">{t('tokens-quota-heading')}</div>
 									<div class="flex flex-wrap gap-2 items-center">
 										<select class="select select-bordered select-xs" bind:value={quotaDimension}>
-											<option value="requests">Requests</option>
-											<option value="tokens">Tokens</option>
-											<option value="cost">Cost</option>
+											<option value="requests">{t('limits-dim-requests')}</option>
+											<option value="tokens">{t('limits-dim-tokens')}</option>
+											<option value="cost">{t('limits-dim-cost-short')}</option>
 										</select>
-										<span class="text-xs text-base-content/60">per</span>
+										<span class="text-xs text-base-content/60">{t('tokens-quota-per')}</span>
 										<select class="select select-bordered select-xs" bind:value={quotaWindow}>
-											<option value="hour">Hour</option>
-											<option value="day">Day</option>
-											<option value="week">Week</option>
-											<option value="month">Month</option>
+											<option value="hour">{t('limits-win-hour')}</option>
+											<option value="day">{t('limits-win-day')}</option>
+											<option value="week">{t('limits-win-week')}</option>
+											<option value="month">{t('limits-win-month')}</option>
 										</select>
-										<input class="input input-bordered input-xs w-24" type="number" min="0" placeholder="max" bind:value={quotaValue} />
-										<button class="btn btn-ghost btn-xs" onclick={() => saveQuota(token)}>Add quota</button>
+										<input
+											class="input input-bordered input-xs w-24"
+											type="number"
+											min="0"
+											placeholder={t('tokens-quota-max-placeholder')}
+											bind:value={quotaValue}
+										/>
+										<button class="btn btn-ghost btn-xs" onclick={() => saveQuota(token)}>{t('tokens-limits-add')}</button>
 									</div>
 								</div>
 								<div>
-									<div class="text-xs font-medium mb-1">MCP connectors</div>
+									<div class="text-xs font-medium mb-1">{t('tokens-mcp-heading')}</div>
 									<div class="flex flex-wrap gap-2 items-center">
 										<span class="text-xs text-base-content/60">
-											Connectors that ask for approval have nobody to ask when the caller is a
-											token.
+											{t('tokens-mcp-allow-description')}
 										</span>
 										<button
 											class="btn btn-ghost btn-xs"
 											onclick={() => saveMcpPolicy(token, !(mcpAllow[token.id] ?? false))}
 										>
-											{(mcpAllow[token.id] ?? false) ? 'Block them' : 'Let them run'}
+											{(mcpAllow[token.id] ?? false)
+												? t('tokens-mcp-block-button')
+												: t('tokens-mcp-allow-button')}
 										</button>
 									</div>
 								</div>

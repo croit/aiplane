@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminJson, adminPut } from '$lib/admin-client';
+	import { t, n } from '$lib/i18n.svelte';
 
 	interface AdminToken {
 		id: string;
@@ -74,13 +75,11 @@
 	{#if editing}
 		<div class="card border border-base-300 mb-6">
 			<div class="card-body">
-				<h2 class="card-title text-base">Admin model allowlist</h2>
-				<p class="text-sm text-base-content/60">
-					Restricting limits this token to the ticked models (intersected with its owner's access and any owner-set list).
-				</p>
+				<h2 class="card-title text-base">{t('admin-tokens-allowlist-heading')}</h2>
+				<p class="text-sm text-base-content/60">{t('admin-tokens-models-help')}</p>
 				<label class="label cursor-pointer gap-2 my-1">
 					<input type="checkbox" class="toggle toggle-primary" bind:checked={editRestrict} />
-					<span class="label-text">Restrict to specific models</span>
+					<span class="label-text">{t('admin-tokens-models-restrict-label')}</span>
 				</label>
 				{#if editRestrict}
 					<div class="flex flex-wrap gap-2">
@@ -98,8 +97,8 @@
 					</div>
 				{/if}
 				<div class="card-actions justify-end mt-2">
-					<button class="btn btn-ghost btn-sm" onclick={() => (editing = null)}>Cancel</button>
-					<button class="btn btn-primary btn-sm" onclick={saveModels}>Save</button>
+					<button class="btn btn-ghost btn-sm" onclick={() => (editing = null)}>{t('admin-cancel')}</button>
+					<button class="btn btn-primary btn-sm" onclick={saveModels}>{t('groups-save')}</button>
 				</div>
 			</div>
 		</div>
@@ -107,11 +106,19 @@
 
 	<div class="card border border-base-300">
 		<div class="card-body">
-			<h2 class="card-title text-base">Token register</h2>
+			<h2 class="card-title text-base">{t('admin-tokens-heading')}</h2>
 			<div class="overflow-x-auto">
 				<table class="table table-sm">
 					<thead>
-						<tr><th>Name</th><th>Owner</th><th>Status</th><th>Models</th><th>Tools</th><th>This month</th><th></th></tr>
+						<tr>
+							<th>{t('admin-tokens-col-name')}</th>
+							<th>{t('admin-tokens-col-owner')}</th>
+							<th>{t('admin-tokens-col-state')}</th>
+							<th>{t('admin-tokens-models-button')}</th>
+							<th>{t('admin-cap-tools')}</th>
+							<th>{t('admin-tokens-col-this-month')}</th>
+							<th></th>
+						</tr>
 					</thead>
 					<tbody>
 						{#each data.tokens as token (token.id)}
@@ -119,26 +126,39 @@
 								<td>{token.name}</td>
 								<td class="text-xs">{token.owner_email}</td>
 								<td>
-									{#if token.revoked}<span class="badge badge-error badge-sm">revoked</span>
-									{:else}<span class="badge badge-secondary badge-sm">active</span>{/if}
+									{#if token.revoked}
+										<span class="badge badge-error badge-sm">{t('tokens-badge-revoked')}</span>
+									{:else}
+										<span class="badge badge-secondary badge-sm">{t('tokens-badge-active')}</span>
+									{/if}
 								</td>
 								<td class="text-xs">
 									{#if (token.admin_models?.length ?? 0) > 0}
-										{token.admin_models!.length} restricted
+										{t('admin-tokens-models-summary-restricted', { count: token.admin_models!.length })}
 									{:else}
-										<span class="text-base-content/50">all (admin)</span>
+										<span class="text-base-content/50">{t('admin-tokens-models-summary-all')}</span>
 									{/if}
 								</td>
-								<td>{token.tools_enabled ? 'on' : 'off'}</td>
+								<td>{token.tools_enabled ? t('admin-tokens-tools-on') : t('admin-tokens-tools-off')}</td>
 								<td class="text-xs">
 									{#if data.usage_enabled}
-										{token.usage_this_month.requests.toLocaleString()} req ·
-										{token.usage_this_month.cost.toFixed(2)} {data.currency}
+										{t('tokens-usage-line', {
+											requests: n(token.usage_this_month.requests),
+											tokens: n(token.usage_this_month.total_tokens),
+											cost: `${n(token.usage_this_month.cost, {
+												minimumFractionDigits: 2,
+												maximumFractionDigits: 2
+											})} ${data.currency}`
+										})}
 									{:else}
-										<span class="text-base-content/50">usage off</span>
+										<span class="text-base-content/50">{t('admin-tokens-usage-off')}</span>
 									{/if}
 								</td>
-								<td><button class="btn btn-ghost btn-xs" onclick={() => openEdit(token)}>Models</button></td>
+								<td>
+									<button class="btn btn-ghost btn-xs" onclick={() => openEdit(token)}>
+										{t('admin-tokens-models-button')}
+									</button>
+								</td>
 							</tr>
 						{/each}
 					</tbody>

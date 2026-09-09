@@ -31,3 +31,9 @@ my-skills-error-no-file = No se subió ningún archivo: elige un archivo .skill.
 my-skills-error-no-name = Añade una línea `name:` al encabezado del SKILL.md.
 my-skills-error-install-failed = No se pudo instalar la habilidad: { $error }
 my-skills-error-save-failed = No se pudo guardar la habilidad: { $error }
+
+# SPA-only: the Svelte /skills list (inline body preview + upload toasts).
+my-skills-view-button = Ver
+my-skills-hide-button = Ocultar
+my-skills-toast-installed = { $name } instalado.
+my-skills-delete-confirm = ¿Eliminar tu skill privada { $name }?

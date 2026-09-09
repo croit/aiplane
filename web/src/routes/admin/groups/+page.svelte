@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminJson, adminPut, adminDelete } from '$lib/admin-client';
+	import { t } from '$lib/i18n.svelte';
 
 	interface Group {
 		name: string;
@@ -83,7 +84,7 @@
 	}
 
 	async function remove(name: string) {
-		if (!confirm(`Delete group ${name}? Its mappings and grants go with it.`)) return;
+		if (!confirm(t('groups-delete-confirm', { name }))) return;
 		try {
 			await adminDelete(`/api/v0/admin/groups/${encodeURIComponent(name)}`);
 			await refresh();
@@ -100,54 +101,56 @@
 
 {#if data}
 	<div class="flex justify-between items-center mb-4">
-		<p class="text-base-content/60 text-sm">
-			Groups map OIDC claim values to gateway roles (tool + model + skill grants).
-		</p>
-		<button class="btn btn-primary btn-sm" onclick={openNew}>New group</button>
+		<p class="text-base-content/60 text-sm">{t('groups-intro')}</p>
+		<button class="btn btn-primary btn-sm" onclick={openNew}>{t('groups-new-heading')}</button>
 	</div>
 
 	{#if editing !== null}
 		<div class="card border border-base-300 mb-6">
 			<div class="card-body">
-				<h2 class="card-title text-base">{editing === '' ? 'New group' : `Edit ${editing}`}</h2>
+				<h2 class="card-title text-base">
+					{editing === '' ? t('groups-new-heading') : t('groups-edit-heading', { name: editing })}
+				</h2>
 				<div class="grid sm:grid-cols-2 gap-3">
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Name</span>
+						<span class="label-text">{t('groups-field-name')}</span>
 						<input class="input input-bordered" bind:value={fname} disabled={editing !== ''} />
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Description</span>
+						<span class="label-text">{t('groups-field-description')}</span>
 						<input class="input input-bordered" bind:value={fdescription} />
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="label-text">OIDC values (comma-separated)</span>
+						<span class="label-text">{t('groups-field-oidc')}</span>
 						<input class="input input-bordered" bind:value={foidc} placeholder="team-a, team-b" />
 						{#if data.observed_oidc_values.length > 0}
 							<span class="text-xs text-base-content/50">
-								Observed: {data.observed_oidc_values.join(', ')}
+								{t('groups-observed-values', { values: data.observed_oidc_values.join(', ') })}
 							</span>
 						{/if}
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Tools (comma-separated)</span>
-						<input class="input input-bordered" bind:value={ftools} placeholder="empty = none" />
+						<span class="label-text">{t('groups-field-tools')}</span>
+						<input class="input input-bordered" bind:value={ftools} />
 					</label>
 					<label class="flex flex-col gap-1 sm:col-span-2">
-						<span class="label-text">Skills (comma-separated)</span>
-						<input class="input input-bordered" bind:value={fskills} placeholder="empty = none" />
+						<span class="label-text">{t('groups-field-skills')}</span>
+						<input class="input input-bordered" bind:value={fskills} />
 					</label>
 					<label class="label cursor-pointer gap-2">
 						<input type="checkbox" class="toggle toggle-primary" bind:checked={fisAdmin} />
-						<span class="label-text">Admin role</span>
+						<span class="label-text">{t('groups-field-admin')}</span>
 					</label>
 					<label class="label cursor-pointer gap-2">
 						<input type="checkbox" class="toggle toggle-primary" bind:checked={fisDefault} />
-						<span class="label-text">Default for new users</span>
+						<span class="label-text">{t('groups-field-default')}</span>
 					</label>
 				</div>
 				<div class="card-actions justify-end mt-2">
-					<button class="btn btn-ghost btn-sm" onclick={() => (editing = null)}>Cancel</button>
-					<button class="btn btn-primary btn-sm" onclick={save} disabled={!fname.trim()}>Save</button>
+					<button class="btn btn-ghost btn-sm" onclick={() => (editing = null)}>{t('admin-cancel')}</button>
+					<button class="btn btn-primary btn-sm" onclick={save} disabled={!fname.trim()}>
+						{t('groups-save')}
+					</button>
 				</div>
 			</div>
 		</div>
@@ -165,10 +168,16 @@
 							{#if g.description}<span class="text-base-content/60 text-sm">{g.description}</span>{/if}
 							<span class="flex-1"></span>
 							<span class="text-xs text-base-content/50">
-								{g.oidc_values.length} OIDC · {g.tools.length} tools · {g.skills.length} skills
+								{t('groups-summary-counts', {
+									oidc: g.oidc_values.length,
+									tools: g.tools.length,
+									skills: g.skills.length
+								})}
 							</span>
-							<button class="btn btn-ghost btn-sm" onclick={() => openEdit(g)}>Edit</button>
-							<button class="btn btn-ghost btn-sm text-error" onclick={() => remove(g.name)}>Delete</button>
+							<button class="btn btn-ghost btn-sm" onclick={() => openEdit(g)}>{t('rag-button-edit')}</button>
+							<button class="btn btn-ghost btn-sm text-error" onclick={() => remove(g.name)}>
+								{t('groups-delete')}
+							</button>
 						</div>
 					</div>
 				</div>

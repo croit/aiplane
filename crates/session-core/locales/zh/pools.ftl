@@ -72,3 +72,8 @@ upstreams-diff-backend-leaves = { $backend } 离开池 { $pool } 并停止接收
 upstreams-diff-backend-url = { $backend }：基础 URL { $from } → { $to }（其已发现的模型将重新探测）
 upstreams-diff-backend-limits = { $backend }：权重 { $weight }，最大并发 { $inflight }
 upstreams-diff-backend-health-path = { $backend }：健康检查路径 → { $to }
+
+# SPA 池卡片：两行摘要与删除确认。
+pools-summary-backends = { $count } 个后端：{ $list }
+pools-summary-models = { $count } 个模型：{ $list }
+pools-delete-confirm = 要删除池 { $name } 吗？之后请应用拓扑。

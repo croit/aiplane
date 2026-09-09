@@ -45,3 +45,8 @@ skills-save-access-button = Zugriff speichern
 skills-from-config-badge = aus Konfiguration
 
 skills-error-no-dir-access = Kein Zugriff auf das Verzeichnis — prüfen Sie, ob es existiert und das Gateway darauf lesen und schreiben kann:
+
+# Skill-Verwaltung der SPA: Upload-Hinweis, Löschabfrage und leere Freigabe.
+skills-installed = { $name } installiert.
+skills-delete-confirm = Globalen Skill { $name } samt Freigaben entfernen?
+skills-no-extra-grants = keine zusätzlichen Freigaben

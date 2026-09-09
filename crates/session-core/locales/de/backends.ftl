@@ -102,3 +102,9 @@ backends-key-env-unset-badge = env { $var } NICHT GESETZT
 backends-key-env-unset-title = Dieses Backend hat keinen gespeicherten Schlüssel, und die genannte Umgebungsvariable ist im Gateway-Prozess nicht gesetzt — es werden gar keine Zugangsdaten gesendet. Wenn der Upstream welche verlangt, bekommt jeder Probe 401, die Modell-Erkennung bleibt aus und das Backend meldet nichts. Trage den Schlüssel stattdessen im Feld „API-Schlüssel“ ein, oder setze die Variable und starte neu.
 # Live name-clash note on the add form (U9).
 backends-name-taken = Ein Backend mit diesem Namen existiert bereits — Speichern würde es überschreiben, samt Basis-URL, Schlüssel, Modellen und Pool. Wähle einen anderen Namen, um ein zweites Backend anzulegen.
+
+# Backend-Zeilen der SPA: Wartungsschalter, Last pro Stunde und Löschbestätigung.
+backends-drain-button = Entleeren
+backends-undrain-button = Wieder aufnehmen
+backends-requests-per-hour = { $count } Anfr./h
+backends-delete-confirm = Backend { $name } löschen? Danach die Topologie übernehmen.

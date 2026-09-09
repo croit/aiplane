@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { base } from '$app/paths';
+	import { t } from '$lib/i18n.svelte';
 
 	interface Draft {
 		public_url: string;
@@ -144,55 +145,85 @@
 		return out;
 	});
 
+	// What the provider must be told to allow. Built from the URL field as the
+	// operator types, because it is only correct if it matches that field
+	// exactly — which is the whole reason the field has its own warning.
+	const redirectUri = $derived(
+		fpublicUrl.trim() ? `${fpublicUrl.trim().replace(/\/+$/, '')}/auth/callback` : ''
+	);
+
 	onMount(refresh);
 </script>
 
 <div class="mx-auto max-w-xl">
-	<h1 class="text-2xl font-bold mb-2">Gateway setup</h1>
+	<h1 class="text-2xl font-bold mb-2">{t('setup-page-heading')}</h1>
 
 	{#if error}<div class="alert alert-error mb-4 text-sm"><span>{error}</span></div>{/if}
 	{#if notice}<div class="alert alert-warning mb-4 text-sm"><span>{notice}</span></div>{/if}
 
 	{#if wiz?.access === 'closed'}
-		<div class="alert alert-info mb-4">
-			<span>Setup is closed on this gateway. Sign in normally, or run `restore-setup` on the host to reopen the wizard.</span>
-		</div>
+		<div class="alert alert-info mb-4"><span>{t('setup-closed')}</span></div>
 	{:else if wiz?.proof}
 		<!-- Screen 2: the test login proved the provider; pick the admin claim. -->
 		<div class="card border border-base-300 mb-4">
 			<div class="card-body">
-				<h2 class="card-title text-base">Test login succeeded</h2>
+				<span class="text-xs uppercase tracking-wide text-base-content/50">{t('setup-step-2-of-2')}</span>
+				<h2 class="card-title text-base">{t('setup-admin-heading')}</h2>
 				<p class="text-sm text-base-content/70">
-					Signed in as <strong>{wiz?.proof?.email || wiz?.proof?.subject}</strong>.
-					Pick which claim value should grant administrator access.
+					{t('setup-login-worked')}
+					<strong>{wiz?.proof?.email || wiz?.proof?.subject}</strong>
 				</p>
-				<div class="flex flex-col gap-1 mt-2">
-					{#each claimChoices as choice (choice.label)}
-						<label class="label cursor-pointer justify-start gap-2">
-							<input
-								type="radio"
-								class="radio radio-sm"
-								name="admin-claim"
-								value="{choice.claim}&#0;{choice.value}"
-								bind:group={picked}
-							/>
-							<span class="label-text font-mono text-xs">{choice.label}</span>
-						</label>
-					{/each}
-				</div>
-				<div class="divider text-xs">or type a pair</div>
+				<p class="text-sm text-base-content/70">{t('setup-admin-intro')}</p>
+
+				{#if claimChoices.length === 0}
+					<div class="alert alert-warning text-sm mt-2"><span>{t('setup-no-claims')}</span></div>
+				{:else}
+					<div class="flex flex-col gap-1 mt-2">
+						{#each claimChoices as choice (choice.label)}
+							<label class="label cursor-pointer justify-start gap-2">
+								<input
+									type="radio"
+									class="radio radio-sm"
+									name="admin-claim"
+									value="{choice.claim}&#0;{choice.value}"
+									bind:group={picked}
+								/>
+								<span class="label-text font-mono text-xs">{choice.label}</span>
+							</label>
+						{/each}
+					</div>
+				{/if}
+
+				<div class="divider text-xs">{t('setup-or-manual')}</div>
 				<div class="flex gap-2">
-					<input class="input input-bordered input-sm flex-1" placeholder="claim (e.g. groups)" bind:value={manualClaim} />
-					<input class="input input-bordered input-sm flex-1" placeholder="value (e.g. gateway-admins)" bind:value={manualValue} />
+					<label class="flex flex-col gap-1 flex-1">
+						<span class="label-text text-xs">{t('setup-manual-claim')}</span>
+						<input class="input input-bordered input-sm" placeholder="groups" bind:value={manualClaim} />
+					</label>
+					<label class="flex flex-col gap-1 flex-1">
+						<span class="label-text text-xs">{t('setup-manual-value')}</span>
+						<input class="input input-bordered input-sm" placeholder="gateway-admins" bind:value={manualValue} />
+					</label>
 				</div>
+				<p class="text-xs text-base-content/60">{t('setup-manual-help')}</p>
+
+				<details class="mt-2">
+					<summary class="text-xs cursor-pointer text-base-content/60">{t('setup-show-token')}</summary>
+					<pre class="mt-1 max-h-64 overflow-auto rounded bg-base-200 p-2 text-xs">{JSON.stringify(
+							wiz?.proof?.claims ?? {},
+							null,
+							2
+						)}</pre>
+				</details>
+
 				<div class="card-actions justify-end mt-2">
-					<button class="btn btn-ghost btn-sm" onclick={restart}>Back</button>
+					<button class="btn btn-ghost btn-sm" onclick={restart}>{t('setup-back-button')}</button>
 					<button
 						class="btn btn-primary btn-sm"
 						onclick={finish}
 						disabled={busy || (!picked && !(manualClaim.trim() && manualValue.trim()))}
 					>
-						Finish setup
+						{t('setup-finish-button')}
 					</button>
 				</div>
 			</div>
@@ -201,45 +232,60 @@
 		<!-- Screen 1: provider settings. -->
 		<div class="card border border-base-300">
 			<div class="card-body">
-				<h2 class="card-title text-base">Sign-in provider</h2>
-				<p class="text-sm text-base-content/70">
-					Point the gateway at your OIDC provider and run a real test login.
-				</p>
+				<span class="text-xs uppercase tracking-wide text-base-content/50">{t('setup-step-1-of-2')}</span>
+				<h2 class="card-title text-base">{t('setup-provider-heading')}</h2>
+				<p class="text-sm text-base-content/70">{t('setup-provider-intro')}</p>
 				<div class="flex flex-col gap-3 mt-2">
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Public URL</span>
+						<span class="label-text">{t('setup-field-public-url')}</span>
 						<input class="input input-bordered input-sm" bind:value={fpublicUrl} placeholder="https://gw.example.com" />
+						<span class="text-xs text-base-content/60">{t('setup-field-public-url-help')}</span>
 					</label>
+
+					{#if redirectUri}
+						<div class="rounded border border-warning/40 bg-warning/10 p-2">
+							<p class="text-xs font-semibold">{t('setup-redirect-uri-heading')}</p>
+							<code class="mt-1 block break-all text-xs">{redirectUri}</code>
+							<p class="mt-1 text-xs text-base-content/70">{t('setup-redirect-uri-help')}</p>
+						</div>
+					{/if}
+
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Issuer</span>
+						<span class="label-text">{t('setup-field-issuer')}</span>
 						<input class="input input-bordered input-sm" bind:value={fissuer} placeholder="https://id.example.com" />
+						<span class="text-xs text-base-content/60">{t('setup-field-issuer-help')}</span>
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Client ID</span>
+						<span class="label-text">{t('setup-field-client-id')}</span>
 						<input class="input input-bordered input-sm" bind:value={fclientId} />
 					</label>
 					<label class="flex flex-col gap-1">
 						<span class="label-text">
-							Client secret{wiz?.draft?.client_secret_set ? ' (set — blank keeps)' : ''}
+							{t('setup-field-client-secret')}{wiz?.draft?.client_secret_set
+								? ` (${t('setup-secret-set-hint')})`
+								: ''}
 						</span>
 						<input class="input input-bordered input-sm" type="password" bind:value={fsecret} />
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Scopes</span>
+						<span class="label-text">{t('setup-field-scopes')}</span>
 						<input class="input input-bordered input-sm" bind:value={fscopes} />
+						<span class="text-xs text-base-content/60">{t('setup-field-scopes-help')}</span>
 					</label>
 					<label class="flex flex-col gap-1">
-						<span class="label-text">Roles claim (optional)</span>
+						<span class="label-text">{t('setup-field-roles-claim')}</span>
 						<input class="input input-bordered input-sm" bind:value={frolesClaim} placeholder="groups" />
+						<span class="text-xs text-base-content/60">{t('setup-field-roles-claim-help')}</span>
 					</label>
 				</div>
-				<div class="card-actions justify-end mt-3">
+				<div class="card-actions items-center justify-end mt-3 gap-2">
+					<span class="text-xs text-base-content/60">{t('setup-test-button-help')}</span>
 					<button
 						class="btn btn-primary btn-sm"
 						onclick={testLogin}
 						disabled={busy || !fpublicUrl.trim() || !fissuer.trim() || !fclientId.trim()}
 					>
-						{busy ? 'Testing…' : 'Test login'}
+						{busy ? t('setup-testing') : t('setup-test-button')}
 					</button>
 				</div>
 			</div>

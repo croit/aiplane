@@ -17,3 +17,11 @@ admin-tokens-models-help = Ограничение оператора для эт
 admin-tokens-models-restrict-label = Ограничить этот токен определёнными моделями
 admin-tokens-models-saved-toast = Ограничение оператора задано: { $count } моделей.
 admin-tokens-models-cleared-toast = Ограничение оператора снято.
+
+# Реестр токенов в SPA: заголовок редактора списка разрешённых моделей и ячейки таблицы.
+admin-tokens-allowlist-heading = Список моделей, разрешённых администратором
+admin-tokens-col-this-month = В этом месяце
+admin-tokens-usage-off = учёт выключен
+admin-tokens-models-button = Модели
+admin-tokens-tools-on = вкл
+admin-tokens-tools-off = выкл

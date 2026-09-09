@@ -70,3 +70,8 @@ render-composer-send = Отправить
 render-composer-stop = Стоп
 
 render-compaction-divider = Ранние сообщения свёрнуты для экономии контекста
+
+# The browser prompt behind the ✎ Edit button, and the per-file title on
+# an attachment's remove button.
+render-edit-prompt = Измените своё сообщение:
+render-attachment-remove-title = Удалить { $filename }

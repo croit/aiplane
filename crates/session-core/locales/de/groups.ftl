@@ -14,3 +14,10 @@ groups-field-skills = Skills
 groups-save = Speichern
 groups-delete = Löschen
 groups-error-name-required = Ein Gruppenname ist erforderlich.
+
+# Gruppeneditor der SPA: Bearbeiten-Überschrift, Hinweis auf beobachtete Claims,
+# Kurzübersicht pro Zeile und die Löschbestätigung.
+groups-edit-heading = { $name } bearbeiten
+groups-observed-values = Beobachtet: { $values }
+groups-summary-counts = { $oidc } OIDC · { $tools } Tools · { $skills } Skills
+groups-delete-confirm = Gruppe { $name } löschen? Ihre Zuordnungen und Freigaben verschwinden mit ihr.

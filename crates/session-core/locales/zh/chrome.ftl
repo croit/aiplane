@@ -14,3 +14,9 @@ push-turn-error-body = 该回合以错误结束。
 # { $connector } 为连接器显示名称。
 push-connector-reconnect-title = 连接需要您重新登录
 push-connector-reconnect-body = { $connector } 已断开连接 — 请打开“集成”重新连接。
+
+# SPA-only: the root route, which only routes on to /chat.
+chrome-opening-conversations = 正在打开你的对话…
+
+# SPA-only: /login, which exists to bounce straight to the IdP.
+chrome-redirecting-to-sign-in = 正在跳转到登录…

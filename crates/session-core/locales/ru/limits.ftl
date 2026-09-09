@@ -41,3 +41,8 @@ limits-unknown-user = ни один пользователь не соответ
 limits-missing-subject-id = введите id роли, email пользователя или id токена
 limits-subject-token = API-токен
 limits-unknown-token = не найден токен `{ $token }`
+
+# Таблица правил в SPA: заголовок, колонка «кем задано» и подтверждение удаления.
+limits-rules-heading = Правила
+limits-col-managed-by = Кем
+limits-delete-confirm = Удалить это правило?

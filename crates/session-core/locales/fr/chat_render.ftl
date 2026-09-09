@@ -91,3 +91,18 @@ chat-render-export-aria = Exporter la conversation
 chat-render-export-label = Exporter
 chat-render-export-pdf = Document PDF
 chat-render-export-md = Markdown (.md)
+
+# SPA-only chat-page chrome (`web/src/routes/chat/[id]`): the canvas
+# document list and its save state, the composer's per-tool remove
+# button, the model picker's compliance tooltips, and the attachment
+# size chip.
+chat-render-documents-label = Documents
+chat-render-revision-count = { $count ->
+    [one] { $count } révision
+   *[other] { $count } révisions
+}
+chat-render-canvas-saving = Enregistrement…
+chat-render-tool-disable-aria = Désactiver { $name }
+chat-render-model-gdpr-region = Région RGPD
+chat-render-model-nda-covered = Couvert par un NDA
+chat-render-attachment-size-kb = { $size } Ko

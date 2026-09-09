@@ -114,3 +114,16 @@ tokens-limits-not-yours = Esa cuota no es tuya para eliminarla.
 tokens-limits-admin-set = Un administrador fijó esa cuota en este token; solo puede cambiarse en la página de límites de administración.
 tokens-limits-admin-badge = fijada por el administrador
 tokens-models-admin-set = Un operador también restringe este token a: { $models }. Tu selección solo puede reducir eso, no ampliarlo.
+
+# SPA-only: the Svelte /tokens row panels and their confirm prompts.
+tokens-models-heading = Lista de modelos permitidos
+tokens-models-input-placeholder = ids de modelos, separados por comas
+tokens-quota-heading = Cuota
+tokens-quota-per = por
+tokens-quota-max-placeholder = máx
+tokens-mcp-heading = Conectores MCP
+tokens-mcp-allow-button = Dejar que se ejecuten
+tokens-mcp-block-button = Bloquearlos
+tokens-revoke-confirm = ¿Revocar este token? Los clientes que lo usan dejan de funcionar de inmediato.
+tokens-rotate-confirm = ¿Emitir un secreto nuevo? El anterior deja de funcionar de inmediato.
+tokens-remove-confirm = ¿Eliminar definitivamente esta fila de token?

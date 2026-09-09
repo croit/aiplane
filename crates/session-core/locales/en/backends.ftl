@@ -106,3 +106,10 @@ backends-key-env-unset-badge = env { $var } NOT SET
 backends-key-env-unset-title = This backend has no stored key and the environment variable it names is not set in the gateway process, so it sends no credential at all. If the upstream requires one, every probe gets 401, model discovery stays off, and the backend advertises nothing — enter the key in the "API key" field instead, or set the variable and restart.
 # Live name-clash note on the add form (U9).
 backends-name-taken = A backend with this name already exists — saving would overwrite it, including its base URL, key, models and pool. Pick a different name to add a second backend.
+
+# SPA backend rows: the drain switch, the per-hour load figure, and the
+# delete confirmation.
+backends-drain-button = Drain
+backends-undrain-button = Undrain
+backends-requests-per-hour = { $count } req/h
+backends-delete-confirm = Delete backend { $name }? Apply the topology afterwards.

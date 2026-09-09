@@ -25,3 +25,6 @@ admin-users-audit-col-when = 时间
 admin-users-audit-col-action = 操作
 admin-users-audit-col-admin = 管理员
 admin-users-audit-col-target = 目标
+
+# 模拟用户前的确认（SPA 用户列表）。
+admin-users-impersonate-confirm = 要以该用户身份操作吗？你的管理员会话会被保留；可在页眉处停止。

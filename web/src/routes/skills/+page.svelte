@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminJson, adminPost, adminDelete } from '$lib/admin-client';
+	import { adminJson, adminDelete } from '$lib/admin-client';
+	import { t } from '$lib/i18n.svelte';
 
 	interface Skill {
 		name: string;
@@ -49,7 +50,7 @@
 		try {
 			const res = await fetch('/api/v0/skills', { method: 'POST', body: fd });
 			if (!res.ok) throw new Error((await res.text()).slice(0, 200));
-			notice = `Installed ${file.name}.`;
+			notice = t('my-skills-toast-installed', { name: file.name });
 			await refresh();
 		} catch (err) {
 			notice = String(err);
@@ -59,7 +60,7 @@
 	}
 
 	async function remove(name: string) {
-		if (!confirm(`Delete your private skill ${name}?`)) return;
+		if (!confirm(t('my-skills-delete-confirm', { name }))) return;
 		try {
 			await adminDelete(`/api/v0/skills/${encodeURIComponent(name)}`);
 			await refresh();
@@ -72,17 +73,17 @@
 </script>
 
 <div class="flex items-center justify-between mb-4">
-	<h1 class="text-2xl font-bold">Skills</h1>
+	<h1 class="text-2xl font-bold">{t('my-skills-heading')}</h1>
 	{#if data?.user_skills_enabled}
 		<label class="btn btn-primary btn-sm cursor-pointer">
-			Upload .skill
+			{t('my-skills-upload-button')}
 			<input type="file" accept=".skill,.zip" class="hidden" onchange={upload} />
 		</label>
 	{/if}
 </div>
 
 <p class="text-base-content/60 text-sm mb-6">
-	Skills the model can pull in mid-conversation — your roles' grants plus your private ones.
+	{t('my-skills-intro')}
 </p>
 
 {#if error}<div class="alert alert-error mb-4"><span>{error}</span></div>{/if}
@@ -99,17 +100,24 @@
 					<span class="font-mono text-xs text-base-content/50">{skill.name}</span>
 					<span class="flex-1"></span>
 					<button class="btn btn-ghost btn-xs" onclick={() => toggle(skill.name)}>
-						{expanded === skill.name ? 'Hide' : 'View'}
+						{expanded === skill.name ? t('my-skills-hide-button') : t('my-skills-view-button')}
 					</button>
 					<a
 						class="btn btn-ghost btn-xs"
 						href="/api/v0/skills/{encodeURIComponent(skill.name)}/archive"
 						download="{skill.name}.skill"
+						title={t('my-skills-download-title')}
 					>
-						Download
+						{t('my-skills-download-button')}
 					</a>
 					{#if data?.user_skills_enabled}
-						<button class="btn btn-ghost btn-xs text-error" onclick={() => remove(skill.name)}>Delete</button>
+						<button
+							class="btn btn-ghost btn-xs text-error"
+							onclick={() => remove(skill.name)}
+							title={t('my-skills-delete-title')}
+						>
+							{t('my-skills-delete-button')}
+						</button>
 					{/if}
 				</div>
 				<p class="text-xs text-base-content/60">{skill.description}</p>
@@ -118,5 +126,7 @@
 				{/if}
 			</div>
 		</li>
+	{:else}
+		<li class="text-sm text-base-content/50">{t('my-skills-empty-loaded')}</li>
 	{/each}
 </ul>

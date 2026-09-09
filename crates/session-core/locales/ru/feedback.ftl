@@ -68,3 +68,10 @@ feedback-err-not-configured = Обратная связь не настроен�
 feedback-err-title-required = Требуется заголовок (не менее 4 символов)
 feedback-err-description-required = Требуется описание
 feedback-err-submit-failed = Не удалось создать задачу — попробуйте ещё раз
+
+# The SPA keeps the dialog open after submitting and shows a thank-you
+# panel in place of the form; the server-rendered widget did not.
+feedback-thanks-heading = Спасибо
+feedback-thanks-body = Ваш отзыв зарегистрирован как задача.
+feedback-done-button = Готово
+feedback-sending = Отправка…

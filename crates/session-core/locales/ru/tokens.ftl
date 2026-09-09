@@ -114,3 +114,16 @@ tokens-limits-not-yours = Эту квоту вы удалить не может�
 tokens-limits-admin-set = Эту квоту для токена задал администратор; изменить её можно только на странице лимитов администратора.
 tokens-limits-admin-badge = задано администратором
 tokens-models-admin-set = Оператор дополнительно ограничивает этот токен моделями: { $models }. Ваш выбор может только сузить этот список, но не расширить.
+
+# SPA-only: the Svelte /tokens row panels and their confirm prompts.
+tokens-models-heading = Список разрешённых моделей
+tokens-models-input-placeholder = идентификаторы моделей через запятую
+tokens-quota-heading = Квота
+tokens-quota-per = за
+tokens-quota-max-placeholder = макс
+tokens-mcp-heading = MCP-коннекторы
+tokens-mcp-allow-button = Разрешить выполнение
+tokens-mcp-block-button = Блокировать
+tokens-revoke-confirm = Отозвать этот токен? Клиенты, которые его используют, сразу перестанут работать.
+tokens-rotate-confirm = Выпустить новый секрет? Старый сразу перестанет работать.
+tokens-remove-confirm = Удалить эту запись токена навсегда?

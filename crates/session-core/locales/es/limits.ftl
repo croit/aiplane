@@ -41,3 +41,8 @@ limits-unknown-user = ningún usuario coincide con `{ $user }`
 limits-missing-subject-id = introduce un id de rol, un correo de usuario o un id de token
 limits-subject-token = Token de API
 limits-unknown-token = ningún token coincide con `{ $token }`
+
+# Tabla de reglas de la SPA: título, columna «gestionado por» y confirmación.
+limits-rules-heading = Reglas
+limits-col-managed-by = Por
+limits-delete-confirm = ¿Eliminar esta regla?

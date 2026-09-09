@@ -97,3 +97,12 @@ scheduled-pause-title = 暂停
 scheduled-resume-title = 恢复
 scheduled-edit-title = 编辑
 scheduled-delete-title = 删除
+
+# SPA-only: the Svelte /scheduled page's builder form and action list.
+scheduled-new-heading = 新建定时任务
+scheduled-weekdays-label = 星期
+scheduled-day-of-month-label = 每月的第几天
+scheduled-update-preview = 更新预览
+scheduled-err-invalid-schedule = 计划无效。
+scheduled-badge-last-run-failed = 上次运行失败
+scheduled-delete-confirm = 删除此定时任务？

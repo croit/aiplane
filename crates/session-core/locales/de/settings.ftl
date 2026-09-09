@@ -206,3 +206,6 @@ settings-f-gateway-session_absolute_max_days = Maximales Sitzungsalter
 settings-f-gateway-session_absolute_max_days-help = Harte Obergrenze in Tagen ab der Anmeldung, die keine Aktivität verlängert. Sie erzwingt außerdem regelmäßig den Weg über den Identity-Provider — der einzige Moment, in dem Gruppen-Claims neu gelesen werden.
 settings-f-gateway-allow_impersonation = Identitätsübernahme erlauben
 settings-f-gateway-allow_impersonation-help = Erlaubt Admins, zur Fehlersuche als anderer Nutzer zu handeln. Jede Übernahme wird protokolliert und zeigt ein dauerhaftes Banner; ausgeschaltet sind die Schaltflächen verborgen und der Endpunkt lehnt ab.
+
+# Bestätigung vor dem Zurücksetzen einer gespeicherten Einstellung (SPA-Editor).
+settings-clear-confirm = { $key } auf den eingebauten Standardwert zurücksetzen?
