@@ -81,8 +81,11 @@ print('\nORPHANS: %d of %d (%.0f%%)' % (len(orphans), len(keys), 100 * len(orpha
 for src in sorted(by_file, key=lambda f: -len(by_file[f])):
     print('  %-22s %d' % (src, len(by_file[src])))
 
-out = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'orphan_keys.txt')
-with open(out, 'w') as fh:
-    for src, key in orphans:
-        fh.write('%s\t%s\n' % (src, key))
-print('\nwrote %s' % out)
+out = os.environ.get('PARITY_GAP_OUT')
+if out:
+    with open(out, 'w') as fh:
+        for src, key in orphans:
+            fh.write('%s\t%s\n' % (src, key))
+    print('\nwrote %s' % out)
+else:
+    print('\nSet PARITY_GAP_OUT=<path> to dump the full key list.')
