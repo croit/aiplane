@@ -396,6 +396,36 @@ fn source_registry(state: &RamaState) -> &gateway_features::server::rag::source:
     state.provider_registry()
 }
 
+/// Re-queue one ref for indexing, through the indexer when there is one and
+/// straight into the queue table when there is not.
+async fn requeue_ref(state: &RamaState, ref_id: i64) {
+    if let Some(indexer) = state.indexer.as_ref() {
+        let _ = indexer.request_reindex(ref_id).await;
+    } else {
+        let _ = rag_db::request_ref_reindex(&state.db, ref_id).await;
+    }
+}
+
+/// After a source is added to or removed from an AGGREGATE collection,
+/// re-queue its primary ref.
+///
+/// An aggregate collection keeps ONE unified index, built from every source
+/// and hung off the primary ref. Adding or dropping a source therefore has no
+/// effect at all until that index rebuilds — a removed source keeps answering
+/// searches and a new one is invisible. Versioned collections index their refs
+/// independently, so this is a no-op for them.
+async fn requeue_unified_if_aggregate(state: &RamaState, collection_id: i64) {
+    let Ok(Some(collection)) = rag_db::find_collection_by_id(&state.db, collection_id).await else {
+        return;
+    };
+    if collection.search_mode != rag_db::SearchMode::Aggregate {
+        return;
+    }
+    if let Ok(Some(primary)) = rag_db::primary_ref(&state.db, collection_id).await {
+        requeue_ref(state, primary.id).await;
+    }
+}
+
 #[derive(Deserialize)]
 pub struct AddRefsRequest {
     /// One or more sources. Each entry is a URL plus an optional ref; an
@@ -457,10 +487,14 @@ pub async fn add_refs(
         return invalid_request("`sources` must contain at least one url");
     }
 
+    // Default to "the collection already has refs" when the lookup fails.
+    // The error path must not be the one that mints a second primary: that
+    // breaks the one-primary invariant the UI and aggregate search read, and
+    // nothing downstream repairs it. Not knowing means not promoting.
     let had_refs = rag_db::list_refs(&state.db, id)
         .await
         .map(|r| !r.is_empty())
-        .unwrap_or(false);
+        .unwrap_or(true);
     let mut added = Vec::new();
     let mut skipped = 0usize;
     for (i, (url, git_ref)) in entries.iter().enumerate() {
@@ -477,6 +511,9 @@ pub async fn add_refs(
             }
             Err(_) => skipped += 1,
         }
+    }
+    if !added.is_empty() {
+        requeue_unified_if_aggregate(&state, id).await;
     }
     json_ok(&json!({ "added": added, "skipped": skipped }))
 }
@@ -529,13 +566,38 @@ impl ProfileRequest {
         if name.is_empty() || name.len() > 64 {
             return Err("`name` must be 1..=64 characters".into());
         }
+        // The name addresses the profile in `PUT`/`DELETE /rag/profiles/{name}`,
+        // and rama lowercases path segments before matching. A name carrying
+        // anything outside this set — an uppercase letter included — creates a
+        // row that can never be found again through the API.
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err("`name` may only contain a-z, 0-9, `_` and `-`".into());
+        }
         let prompt = self.prompt.trim().to_string();
         if prompt.is_empty() {
             return Err("`prompt` must not be empty".into());
         }
+        if self.fields.is_empty() {
+            return Err("`fields` must contain at least one field".into());
+        }
+        let mut seen = std::collections::HashSet::new();
         for f in &self.fields {
             if f.key.trim().is_empty() {
                 return Err("every field needs a `key`".into());
+            }
+            // Keys are the EAV table's primary key; a duplicate silently
+            // shadows the other rather than failing.
+            if !seen.insert(f.key.clone()) {
+                return Err(format!("duplicate field key `{}`", f.key));
+            }
+            if f.field_type == rag_documents::FieldType::Enum && f.values.is_empty() {
+                return Err(format!(
+                    "field `{}` is an enum, so it needs at least one value",
+                    f.key
+                ));
             }
         }
         Ok(rag_documents::ProfileInput {
@@ -693,14 +755,55 @@ pub async fn test_source(State(state): State<Arc<RamaState>>, req: Request) -> R
     }
     // Only the collection's *own* stored secret may stand in, and only for the
     // settings it was stored against — otherwise this probe would present a
-    // saved credential to whatever host the caller named.
-    let existing = match body.collection_id {
+    // saved credential to whatever host the caller named. Matching on `kind`
+    // alone is NOT enough for that: `build_source` takes `values` (the URL
+    // included) straight from the request body while seeding `secrets` from
+    // storage, so a body of `{"collection_id": 7, "source_config": {"url":
+    // "https://attacker.example/"}}` would authenticate against the caller's
+    // host using collection 7's sealed credential — one this API deliberately
+    // never returns (`source_secrets_set` is a bool).
+    //
+    // So the whole non-secret config must be byte-for-byte what is stored.
+    // Comparing everything rather than naming the "destination" fields is
+    // deliberate: which settings decide where the bytes go is provider
+    // knowledge, and anything that guessed would be wrong for the first
+    // provider that puts its host somewhere unexpected. The cost is that
+    // after editing a setting the secret has to be retyped to test — which
+    // the error below says.
+    let stored = match body.collection_id {
         Some(id) => rag_db::find_collection_by_id(&state.db, id)
             .await
             .ok()
             .flatten()
             .map(|c| c.source)
             .filter(|spec| spec.kind == body.source_kind),
+        None => None,
+    };
+    let existing = match stored {
+        Some(spec) => {
+            let Some(factory) = source_registry(&state).get(&body.source_kind) else {
+                return invalid_request(&format!("unknown `source_kind` `{}`", body.source_kind));
+            };
+            let secret_keys = factory.secret_keys();
+            let submitted_public: std::collections::BTreeMap<&str, &str> = body
+                .source_config
+                .iter()
+                .filter(|(k, _)| !secret_keys.contains(&k.as_str()))
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            let stored_public: std::collections::BTreeMap<&str, &str> = spec
+                .config
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            if submitted_public != stored_public {
+                return invalid_request(
+                    "the stored credentials can only be reused when the rest of the settings \
+                     are unchanged — re-enter the secret to test these ones",
+                );
+            }
+            Some(spec)
+        }
         None => None,
     };
     let spec = match build_source(
@@ -1241,11 +1344,19 @@ pub async fn delete_ref(
     }
     match rag_db::delete_ref(&state.db, ref_id).await {
         Ok(Some(data_uuid)) => {
-            // The store folder cleanup mirrors the form path: only when the
-            // feature is configured; a None dir means nothing to remove.
-            if let Some(rag) = state.config().rag.as_ref() {
+            // `drop_ref_storage`, not a bare `remove_dir_all`: the indexer's
+            // `indexes`/`stores` maps hold live handles to this ref, so
+            // deleting the files alone leaves RAG search happily answering
+            // from the removed source's in-memory index. Dropping the caches
+            // is the half that actually takes it out of service.
+            if let Some(indexer) = state.indexer.as_ref() {
+                indexer.drop_ref_storage(ref_id, &data_uuid);
+            } else if let Some(rag) = state.config().rag.as_ref() {
+                // No indexer wired: no caches to evict, so the folder is all
+                // there is.
                 let _ = tokio::fs::remove_dir_all(rag.data_dir.join(data_uuid)).await;
             }
+            requeue_unified_if_aggregate(&state, id).await;
             json_ok(&json!({ "deleted": ref_id, "collection": id }))
         }
         Ok(None) => not_found(&format!("no ref {ref_id}")),

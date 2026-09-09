@@ -140,6 +140,19 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/chat/attachment/{turn_id}/{filename}",
             pages::chat_attachment,
         )
+        // …and at the path the attachment markers actually carry. Those URLs
+        // are written into turn content by `chat_attachments::proxy_url` and
+        // parsed back by `session_core::attachments`, so they are a stored
+        // data format: every marker already in a database points here, and
+        // re-pointing them would mean a content migration. Registered BEFORE
+        // the SPA catch-all, which would otherwise answer these with the app
+        // shell at 200 text/html — a broken <img> and a "download" that saves
+        // index.html under the attachment's name. Four segments, so the SPA's
+        // own two-segment `/chat/{id}` route is untouched.
+        .with_get(
+            "/chat/attachment/{turn_id}/{filename}",
+            pages::chat_attachment,
+        )
         // Feedback widget: report a problem, and the config that tells the SPA
         // whether it is wired up at all.
         .with_get("/api/v0/feedback/config", pages::feedback_config)

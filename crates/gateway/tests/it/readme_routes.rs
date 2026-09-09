@@ -48,6 +48,10 @@ const UNDOCUMENTED: &[&str] = &[
     "/admin/backends/*",     // backend CRUD form-submit endpoints
     "/admin/pools/*",        // pool CRUD page + form-submit endpoints
     "/__dev/*",              // debug-only e2e seeding — does not exist in release builds
+    // Compatibility alias, not a public surface: attachment markers stored in
+    // turn content carry this path (`chat_attachments::proxy_url`), so it must
+    // keep resolving. The documented route is `/api/v0/chat/attachment/…`.
+    "/chat/attachment/*",
 ];
 
 /// `pat` covers concrete path `actual`. A trailing `/*` is a prefix glob;

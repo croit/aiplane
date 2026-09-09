@@ -543,7 +543,53 @@ async fn skills_and_connectors_surfaces() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
-    // Static-token connect as the plain user.
+    // A connector is created disabled (`mcp_catalog::create` inserts
+    // `enabled = 0`), and a disabled connector is not connectable — it is not
+    // yet offered to anyone. The credential this endpoint seals is the whole
+    // point of the gate.
+    let resp = app
+        .serve(req(
+            rama::http::Method::POST,
+            "/api/v0/integrations/probe/token",
+            &pleb,
+            Some(r#"{"token":"secret-token"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "a disabled connector must not accept a user token"
+    );
+
+    // An empty token would seal fine and leave the connector permanently
+    // "connected", sending `Authorization: Bearer ` on every call.
+    let resp = app
+        .serve(req(
+            rama::http::Method::POST,
+            "/api/v0/admin/connectors/probe/toggle",
+            &cookie,
+            Some(r#"{"enabled":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "{}", body(resp).await);
+    let resp = app
+        .serve(req(
+            rama::http::Method::POST,
+            "/api/v0/integrations/probe/token",
+            &pleb,
+            Some(r#"{"token":"   "}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "a blank token is not a credential"
+    );
+
+    // Static-token connect as the plain user, now that it is enabled.
     let resp = app
         .serve(req(
             rama::http::Method::POST,

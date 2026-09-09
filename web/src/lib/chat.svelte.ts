@@ -49,6 +49,16 @@ export function createConversationController(sessionId: string): ConversationCon
 	// applyEvent makes to it.
 	const state = $state(newConversationState());
 	let source: EventSource | null = null;
+	// Reconnect budget. Per spec, a non-2xx response or a wrong content type
+	// fails the connection *permanently* and fires `error` — so when the
+	// session cookie expires, or the gateway restarts, or the endpoint answers
+	// 401/404/502, an unconditional re-attach becomes a request→error→request
+	// spin as fast as the browser can issue it, forever, with no visible
+	// symptom beyond a hot laptop. A budget with backoff bounds that, and a
+	// successful `open` earns the budget back for the next genuine drop.
+	const MAX_RETRIES = 6;
+	let retries = 0;
+	let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const controller: ConversationController = {
 		id: sessionId,
@@ -59,15 +69,25 @@ export function createConversationController(sessionId: string): ConversationCon
 			closeCurrent();
 			const es = new EventSource(api.chatEventsUrl(sessionId));
 			source = es;
+			es.onopen = () => {
+				retries = 0;
+			};
 			es.onerror = () => {
-				// A dropped connection mid-turn: close and re-attach once — the
-				// snapshot replays whatever was missed. `idle`/finalized streams
-				// are closed in `apply` before EventSource can retry them.
-				if (!state.idle) {
-					controller.attach();
-				} else {
+				// A dropped connection mid-turn: re-attach — the snapshot
+				// replays whatever was missed. `idle`/finalized streams are
+				// closed in `apply` before EventSource can retry them.
+				if (state.idle || retries >= MAX_RETRIES) {
 					closeCurrent();
+					return;
 				}
+				// Exponential backoff, capped: 0.5s, 1s, 2s … 16s.
+				const delay = Math.min(500 * 2 ** retries, 16_000);
+				retries += 1;
+				closeCurrent();
+				retryTimer = setTimeout(() => {
+					retryTimer = null;
+					controller.attach();
+				}, delay);
 			};
 			for (const name of EVENT_NAMES) {
 				es.addEventListener(name, (ev) => {
@@ -91,6 +111,10 @@ export function createConversationController(sessionId: string): ConversationCon
 	};
 
 	function closeCurrent() {
+		if (retryTimer !== null) {
+			clearTimeout(retryTimer);
+			retryTimer = null;
+		}
 		source?.close();
 		source = null;
 	}

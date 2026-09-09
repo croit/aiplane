@@ -784,10 +784,19 @@ fn augment_user_text(turn_id: &str, submit: &ChatSubmit) -> String {
 /// `req.uri()` is untouched. Same reason `proxy::retrieve_model` and
 /// `sandbox_api::download` parse by hand.
 ///
+/// Both mount points are accepted: `/api/v0/chat/attachment/…`, the canonical
+/// one the SPA calls, and the bare `/chat/attachment/…` that every stored
+/// attachment marker carries (`chat_attachments::proxy_url` writes it into
+/// turn content, so it is a data format and cannot be renamed without a
+/// content migration). Accepting only one of them was why the route 404'd:
+/// the handler is mounted under `/api/v0` and this stripped the other prefix.
+///
 /// `None` when the path isn't `<turn>/<file>` with both segments non-empty
 /// and no extra segment beyond the filename.
 fn attachment_path_parts(path: &str) -> Option<(String, String)> {
-    let rest = path.strip_prefix("/chat/attachment/")?;
+    let rest = path
+        .strip_prefix("/api/v0/chat/attachment/")
+        .or_else(|| path.strip_prefix("/chat/attachment/"))?;
     let (turn_id, filename) = rest.split_once('/')?;
     let turn_id = percent_decode_segment(turn_id);
     let filename = percent_decode_segment(filename);
@@ -946,6 +955,29 @@ mod tests {
         assert_eq!(
             attachment_path_parts("/chat/attachment/t-1/%C3%9Cbersicht.md"),
             Some(("t-1".to_string(), "Übersicht.md".to_string()))
+        );
+    }
+
+    /// Both mount points resolve.
+    ///
+    /// The handler is registered under `/api/v0/…` for the SPA, and under the
+    /// bare `/chat/attachment/…` that every stored marker carries. Parsing
+    /// only one of them 404'd the other — and for the bare path that 404 was
+    /// invisible, because the SPA catch-all answered it with the app shell at
+    /// 200 text/html: a broken `<img>` and a "download" that saved
+    /// `index.html` under the attachment's name.
+    #[test]
+    fn attachment_path_parses_both_the_api_and_the_stored_prefix() {
+        let expected = Some(("t-1".to_string(), "Bericht.md".to_string()));
+        assert_eq!(
+            attachment_path_parts("/api/v0/chat/attachment/t-1/Bericht.md"),
+            expected,
+            "the route the SPA calls"
+        );
+        assert_eq!(
+            attachment_path_parts("/chat/attachment/t-1/Bericht.md"),
+            expected,
+            "the path `proxy_url` writes into stored turn content"
         );
     }
 

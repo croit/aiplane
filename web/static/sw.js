@@ -6,20 +6,24 @@
 // headers, so the worker carries no fetch cache — installability and push
 // are its whole job; every request passes straight through to the network.
 //
-// The gateway's push payload is the legacy-shaped {title, body, url, tag}
-// with url pointing at the LEGACY conversation path (/chat/{id}) — the
-// server serves both UIs and cannot know which one this browser runs. This
-// worker maps it onto the SPA route before focusing a window.
+// The gateway's push payload is {title, body, url, tag}, with url already
+// the conversation path the SPA serves (/chat/{id}). There is no longer a
+// second UI to disambiguate from — the SPA IS the root — so the URL is used
+// as sent. It used to be rewritten to an `/app` prefix, which no route has
+// answered since the SPA moved to the root: clicking a notification landed
+// on the 404 page, and because the suppression check compared the open tab's
+// `/chat/{id}` against `/app/chat/{id}` it never matched, so every finished
+// turn notified even while the user was looking straight at it.
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', () => self.clients.claim());
 
-/// The SPA route for a (possibly legacy-path) conversation URL.
+/// The route to focus for a pushed conversation URL. Same-origin absolute
+/// paths only — a payload is server-controlled, but this is what a click
+/// navigates to, so anything else falls back to the app root.
 function spaUrl(url) {
-  if (typeof url !== 'string' || !url.startsWith('/')) return '/app';
-  if (url.startsWith('/chat/')) return `/app${url}`;
-  if (url.startsWith('/app')) return url;
-  return '/app';
+  if (typeof url !== 'string' || !url.startsWith('/') || url.startsWith('//')) return '/';
+  return url;
 }
 
 function sameConversation(clientUrl, target) {
@@ -65,7 +69,7 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = (event.notification.data && event.notification.data.url) || '/app';
+  const target = (event.notification.data && event.notification.data.url) || '/';
   event.waitUntil(
     (async () => {
       const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });

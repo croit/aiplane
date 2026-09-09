@@ -799,6 +799,12 @@ pub fn ext_for_mime(mime: &str) -> Option<&'static str> {
 /// gates on the session cookie + verifies the turn belongs to the
 /// caller before pulling the bytes from S3.
 pub fn proxy_url(turn_id: &str, filename: &str) -> String {
+    // This URL is STORED in the turn's content as an attachment marker, and
+    // `session_core::attachments` parses it back by stripping this exact
+    // prefix. So it is a data format, not just a link: changing it would
+    // orphan every marker already in the database and split the parser's
+    // input. The router therefore serves this path as well as the canonical
+    // `/api/v0/...` one — see the alias in `rama_server::router`.
     format!(
         "/chat/attachment/{turn_id}/{}",
         urlencode_path_segment(filename),

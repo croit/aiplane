@@ -166,10 +166,12 @@ pub fn sse_json(event: &ChatEvent) -> rama::bytes::Bytes {
 #[derive(Debug)]
 pub struct JsonTurnFeed {
     assistant_turn_id: String,
-    /// Bytes of `content` already emitted as `turn_delta`s.
-    content_sent: usize,
-    /// Bytes of `reasoning` already emitted.
-    reasoning_sent: usize,
+    /// The `content` already emitted as `turn_delta`s — the text itself, not
+    /// just its length, because only the text can tell an append apart from
+    /// an in-place rewrite. See [`emit_append`].
+    content_sent: String,
+    /// The `reasoning` already emitted, same reasoning.
+    reasoning_sent: String,
     /// Tool calls already announced, with the status last sent. Insertion
     /// order matches the row order (seq), so `started` events replay in the
     /// order the model issued them.
@@ -183,8 +185,8 @@ impl JsonTurnFeed {
     pub fn new(assistant_turn_id: &str) -> Self {
         Self {
             assistant_turn_id: assistant_turn_id.to_string(),
-            content_sent: 0,
-            reasoning_sent: 0,
+            content_sent: String::new(),
+            reasoning_sent: String::new(),
             tools_sent: Vec::new(),
             finalized: false,
         }
@@ -287,34 +289,43 @@ impl JsonTurnFeed {
     }
 }
 
-/// Cursor-based append: emit a delta for everything past `*sent`. A shrink
-/// (or a non-prefix rewrite — a hand-edited row, a retry that reused the id)
-/// cannot be expressed as an append, so the cursor resets and the full text
-/// is re-sent as one delta; the client's per-turn buffer then converges on
-/// exactly the DB's content.
+/// Emit a delta for whatever is new in `text`. A shrink, or a non-prefix
+/// rewrite (a hand-edited row, a retry that reused the id, a tool that
+/// rewrites the content it already wrote), cannot be expressed as an append,
+/// so the whole text is re-sent as one delta flagged `full` and the client's
+/// per-turn buffer converges on exactly the DB's content.
+///
+/// `sent` holds the previously emitted text rather than a byte count, and
+/// that is the whole point. A cursor alone cannot detect a rewrite whose new
+/// length is greater than or equal to what was already sent — which is
+/// exactly what `typst_render` does when it strips its own markers and
+/// appends the next render. With a bare cursor the client kept the stale
+/// first render and appended a fragment of the second, healing only on
+/// reconnect.
 fn emit_append(
     events: &mut Vec<ChatEvent>,
     turn_id: &str,
     text: &str,
-    sent: &mut usize,
+    sent: &mut String,
     make: impl Fn(String, String, bool) -> ChatEvent,
 ) {
-    let reset = if text.get(*sent..).is_some() {
-        // Ordinary append (or nothing new).
-        text.len() < *sent
-    } else {
-        // Cursor stranded mid-char by a rewrite: resend everything.
-        true
-    };
-    if reset {
-        *sent = 0;
+    if text == sent {
+        return; // nothing new — the common case between coalesced ticks
     }
-    let delta = match text.get(*sent..) {
-        Some(delta) if !delta.is_empty() => delta,
-        _ => return,
-    };
+    let reset = !text.starts_with(sent.as_str());
+    let delta = if reset { text } else { &text[sent.len()..] };
+    if delta.is_empty() {
+        // A pure truncation to the empty string still has to reach the
+        // client, or it would keep rendering text the row no longer has.
+        if reset {
+            events.push(make(turn_id.to_string(), String::new(), true));
+            sent.clear();
+        }
+        return;
+    }
     events.push(make(turn_id.to_string(), delta.to_string(), reset));
-    *sent = text.len();
+    sent.clear();
+    sent.push_str(text);
 }
 
 /// The streaming half of the JSON protocol: subscribe to a worker's
@@ -574,6 +585,52 @@ mod tests {
                 text_delta: " + more".into(),
                 full: false
             }]
+        );
+    }
+
+    /// A rewrite that does not shrink is still a rewrite.
+    ///
+    /// This is the shape `typst_render` produces: it strips the markers it
+    /// wrote earlier and appends the next render, so the content changes in
+    /// place and ends up at least as long as before. A length-only cursor
+    /// reads that as an append and tells the client to tack the tail onto a
+    /// buffer whose head is now wrong — two renders in one turn left the
+    /// stale first one on screen with a fragment of the second glued to it,
+    /// healing only on reconnect.
+    #[test]
+    fn an_in_place_rewrite_that_grows_is_still_flagged_full() {
+        let mut feed = JsonTurnFeed::new("t1");
+        let mut row = turn(TurnStatus::InProgress, "[render-a] here it is", "");
+        feed.diff(&row);
+        // Same length class, different prefix — the marker was replaced.
+        row.turn.content = Some("[render-b] here it is, and more".into());
+        assert_eq!(
+            feed.diff(&row),
+            vec![ChatEvent::TurnDelta {
+                turn_id: "t1".into(),
+                text_delta: "[render-b] here it is, and more".into(),
+                full: true
+            }],
+            "the new text does not start with what was already sent, so it \
+             cannot be an append however much longer it got"
+        );
+    }
+
+    /// Clearing the content has to reach the client too.
+    #[test]
+    fn a_rewrite_to_empty_tells_the_client_to_clear() {
+        let mut feed = JsonTurnFeed::new("t1");
+        let mut row = turn(TurnStatus::InProgress, "something", "");
+        feed.diff(&row);
+        row.turn.content = Some(String::new());
+        assert_eq!(
+            feed.diff(&row),
+            vec![ChatEvent::TurnDelta {
+                turn_id: "t1".into(),
+                text_delta: String::new(),
+                full: true
+            }],
+            "an empty `full` delta is the only way to say 'drop what you have'"
         );
     }
 

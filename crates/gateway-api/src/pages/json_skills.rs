@@ -58,20 +58,15 @@ pub async fn skills_list(State(state): State<Arc<RamaState>>, req: Request) -> R
         Err(resp) => return resp,
     };
     let Some(user_store) = state.user_skills() else {
-        // The feature is off: the global set is still listed (read-only
-        // information), same as the legacy page renders.
-        let granted = state.skills().as_ref().map(|s| s.current());
-        let skills = granted
-            .map(|reg| {
-                reg.names()
-                    .filter_map(|n| reg.get(n))
-                    .map(|s| skill_json(s, None))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        // The feature is off, so the caller has no personal skills — and this
+        // is the personal-skills surface. Falling back to `state.skills()`
+        // would list the whole operator catalog, which is NOT role-filtered
+        // by `skill_grants`, so a user would see (and via `/archive`
+        // download) skills granted only to other roles. The page this
+        // replaced returned an empty list here for exactly that reason.
         return json_ok(
             StatusCode::OK,
-            serde_json::json!({ "skills": skills, "user_skills_enabled": false }),
+            serde_json::json!({ "skills": [], "user_skills_enabled": false }),
         );
     };
     let registry = user_store.registry_for(&user.id);
@@ -97,13 +92,14 @@ pub async fn skill_body(
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    let registry = match state.user_skills() {
-        Some(store) => store.registry_for(&user.id),
-        None => match state.skills() {
-            Some(s) => s.current(),
-            None => return json_error(StatusCode::NOT_FOUND, "not_found", "no such skill"),
-        },
+    // No fallback to `state.skills()`: that registry is the operator catalog,
+    // unfiltered by `skill_grants`, so serving it here would hand any signed-in
+    // caller a skill granted only to another role. With personal skills off
+    // there is simply nothing on this surface to resolve.
+    let Some(store) = state.user_skills() else {
+        return json_error(StatusCode::NOT_FOUND, "not_found", "no such skill");
     };
+    let registry = store.registry_for(&user.id);
     let Some(skill) = registry.get(&name) else {
         return json_error(StatusCode::NOT_FOUND, "not_found", "no such skill");
     };
@@ -120,8 +116,7 @@ pub async fn skill_body(
 /// archive, so one can be moved between gateways (or kept as a backup).
 ///
 /// A file download, not JSON: the body is the archive. Resolves against the
-/// caller's private registry first and falls back to the operator set, the
-/// same order `skill_body` uses.
+/// caller's private registry only — see the note in the body.
 pub async fn skill_archive(
     Path(name): Path<String>,
     State(state): State<Arc<RamaState>>,
@@ -131,13 +126,14 @@ pub async fn skill_archive(
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    let registry = match state.user_skills() {
-        Some(store) => store.registry_for(&user.id),
-        None => match state.skills() {
-            Some(s) => s.current(),
-            None => return json_error(StatusCode::NOT_FOUND, "not_found", "no such skill"),
-        },
+    // No fallback to `state.skills()`: that registry is the operator catalog,
+    // unfiltered by `skill_grants`, so serving it here would hand any signed-in
+    // caller a skill granted only to another role. With personal skills off
+    // there is simply nothing on this surface to resolve.
+    let Some(store) = state.user_skills() else {
+        return json_error(StatusCode::NOT_FOUND, "not_found", "no such skill");
     };
+    let registry = store.registry_for(&user.id);
     let Some(skill) = registry.get(&name) else {
         return json_error(StatusCode::NOT_FOUND, "not_found", "no such skill");
     };
@@ -622,6 +618,15 @@ pub async fn integrations_list(State(state): State<Arc<RamaState>>, req: Request
     let connectors = db::mcp_catalog::list_enabled(&state.db)
         .await
         .unwrap_or_default();
+    // A connector carries its own role allowlist, and listing one the caller
+    // cannot use both leaks the operator's integration inventory and offers a
+    // "Connect" button that the connect endpoints correctly refuse.
+    let role_ids = state.rbac.role_ids_for(&user.roles);
+    let is_admin = state.rbac.is_admin(&role_ids);
+    let connectors: Vec<_> = connectors
+        .into_iter()
+        .filter(|c| c.allows(&role_ids, is_admin))
+        .collect();
     let mut out = Vec::with_capacity(connectors.len());
     for c in &connectors {
         let connected = db::user_mcp::get_connection(&state.db, &user.id, &c.key)
@@ -668,7 +673,46 @@ pub async fn integrations_connect_token(
     let Some(connector) = db::mcp_catalog::get(&state.db, &key).await.ok().flatten() else {
         return json_error(StatusCode::NOT_FOUND, "not_found", "no such connector");
     };
-    let sealed = match state.crypto.seal_str(parsed.token.trim()) {
+    // Every one of these gates the *credential* this endpoint seals, so none
+    // of them is cosmetic. The auth-kind check in particular is the only one
+    // there is: `MoreMcp::ensure` sends a stored token as a bearer for any
+    // `auth != None`, so writing a connection row for an OAuth2 connector here
+    // would dispatch its tools with a caller-supplied credential and skip the
+    // PKCE flow, the consent screen and the scope grant entirely.
+    if !connector.enabled {
+        return json_error(StatusCode::NOT_FOUND, "not_found", "no such connector");
+    }
+    let role_ids = state.rbac.role_ids_for(&user.roles);
+    if !connector.allows(&role_ids, state.rbac.is_admin(&role_ids)) {
+        return json_error(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "your roles do not grant this connector",
+        );
+    }
+    if connector.is_global() {
+        // A global static-bearer connector carries one token on the connector
+        // row, set by an admin — there is no per-user credential to write.
+        return json_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this connector is configured globally by an administrator",
+        );
+    }
+    if connector.auth != db::mcp_catalog::AuthKind::StaticBearer {
+        return json_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this connector does not authenticate with a static token",
+        );
+    }
+    let token = parsed.token.trim();
+    if token.is_empty() {
+        // An empty token seals fine and leaves the connector permanently
+        // "connected", sending `Authorization: Bearer ` on every call.
+        return bad_request("a token is required".to_string());
+    }
+    let sealed = match state.crypto.seal_str(token) {
         Ok(s) => s,
         Err(err) => return internal(err),
     };
@@ -689,7 +733,6 @@ pub async fn integrations_connect_token(
     if let Err(err) = db::user_mcp::upsert_connection(&state.db, new).await {
         return internal(err);
     }
-    let _ = connector;
     state.mcp.invalidate(&user.id, &key).await;
     json_ok(
         StatusCode::OK,

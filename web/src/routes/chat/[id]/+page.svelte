@@ -59,7 +59,10 @@
 			const lastModel = [...snap.turns]
 				.reverse()
 				.find((e) => e.turn.role === 'assistant' && e.turn.model)?.turn.model;
-			if (!model && lastModel) model = lastModel;
+			// The switch effect clears `model`, so a fresh conversation (no
+			// assistant turn to learn from) needs the offered default back or
+			// the composer would open with an empty picker and refuse to send.
+			if (!model) model = lastModel ?? models[0]?.id ?? '';
 		} catch (err) {
 			notice = String(err);
 		}
@@ -103,9 +106,38 @@
 		}
 	}
 
+	// The offered models are a property of the gateway, not of a conversation,
+	// so they load once per mount rather than on every switch. (This call was
+	// missing entirely, which left `models` empty and the picker permanently
+	// in its free-text fallback.)
 	onMount(() => {
+		void loadModels();
+	});
+
+	// Keyed on `id`, NOT `onMount`. SvelteKit reuses this component across a
+	// param-only navigation, so clicking another conversation in the sidebar
+	// changes the URL without remounting: an `onMount` here would leave the
+	// message list, the composer and the live SSE stream attached to the
+	// previous conversation, and only a full page reload would recover.
+	// `$effect` re-runs when `id` changes and runs the returned teardown
+	// first, which is exactly the "detach the old, attach the new" order.
+	$effect(() => {
+		const chatId = id;
+
+		// Per-conversation state, reset so the previous chat's leftovers never
+		// show up under the new one's title.
+		session = null;
+		documents = [];
+		openDoc = null;
+		docDraft = '';
+		docEditing = false;
+		notice = null;
+		draft = '';
+		files = [];
+		model = '';
+
 		void loadTools();
-		const c = createConversationController(id);
+		const c = createConversationController(chatId);
 		c.onSidebarChanged = () => {
 			void loadMeta();
 			void refreshSidebar();
@@ -149,17 +181,34 @@
 		voiceOpen.open = false;
 	}
 
-	// Feed the live reply into the voice controller whenever a
-	// voice-submitted turn is streaming (state drives it, no DOM observers).
+	// Which turn the voice controller is currently narrating. A plain `let`,
+	// deliberately NOT `$state`: the effect below both reads and writes it, and
+	// making it reactive would feed the effect its own output.
+	let narratingTurnId: string | null = null;
+
+	// Feed the live reply into the voice controller whenever a voice-submitted
+	// turn is streaming (state drives it, no DOM observers).
+	//
+	// The latch is what makes the *last* sentence audible. `turn_finalized`
+	// sets the turn's status and clears `liveTurnId` in the same synchronous
+	// call, and Svelte only runs effects after that work — so an effect that
+	// bailed on `!liveTurnId` could never observe "finalized". It therefore
+	// never passed `final: true`, and since `splitSentences` holds back the
+	// trailing sentence (it needs whitespace after the terminator to know the
+	// sentence ended), a short reply like "Sure, that's 42." was spoken
+	// entirely never, and `stopFeeding` never ran so the phase machine hung.
 	$effect(() => {
 		if (!voice || !controller) return;
 		const liveId = controller.state.liveTurnId;
-		if (!liveId) return;
-		const live = controller.state.turns.find((e) => e.turn.id === liveId);
-		const content = live?.turn.content ?? '';
-		const finalized = live?.turn.status !== 'in_progress';
-		if (finalized && content === '') return;
+		if (liveId) narratingTurnId = liveId;
+		const tracked = narratingTurnId;
+		if (!tracked) return;
+		const entry = controller.state.turns.find((e) => e.turn.id === tracked);
+		if (!entry) return;
+		const content = entry.turn.content ?? '';
+		const finalized = entry.turn.status !== 'in_progress';
 		voice.feedReplyText(content, finalized);
+		if (finalized) narratingTurnId = null;
 	});
 
 	async function send() {
@@ -329,14 +378,27 @@
 		}
 	}
 
-	async function answerPrompt(text: string | null) {
+	/// Answer the tool's question.
+	///
+	/// A clicked option goes in `choices`; only free text goes in `text`. The
+	/// distinction is load-bearing, not cosmetic: `ask_user::confirm` treats a
+	/// matching entry in `choices` as the ONLY form of consent, precisely so
+	/// that "yes, but move it to 07:00" is read as a change request rather
+	/// than approval. Sending every answer as `text` (which this did) made
+	/// `Confirmation::Approved` unreachable, so a user clicking "Yes, schedule
+	/// it" got a turn reporting that they had declined.
+	async function answerPrompt(choice: string | null, freeText?: string) {
 		if (!prompt || prompt.action !== 'show') return;
+		const payload =
+			choice === null && freeText === undefined
+				? { dismissed: true }
+				: { choices: choice === null ? [] : [choice], text: freeText ?? null };
 		try {
 			await fetch(`/api/v0/me/ask/feedback/${encodeURIComponent(prompt.turn_id)}`, {
 				method: 'POST',
 				credentials: 'same-origin',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(text === null ? { dismissed: true } : { choices: [], text })
+				body: JSON.stringify(payload)
 			});
 		} finally {
 			if (controller) controller.state.prompt = null;
@@ -346,7 +408,9 @@
 	let promptText = $state('');
 	function submitPrompt() {
 		const value = promptText.trim();
-		if (value) void answerPrompt(value);
+		// Free text: no `choices`, so a confirmation reads it as "not approved"
+		// and the model gets the words rather than a yes.
+		if (value) void answerPrompt(null, value);
 		promptText = '';
 	}
 

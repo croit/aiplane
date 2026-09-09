@@ -36,6 +36,27 @@ use super::{ChatSubmit, DocumentPath, RequestCtx, SubmitTurnError, TurnPath, sub
 use crate::pages::{json_error, require_session_json};
 use session_core::db as chat;
 
+/// The request facts a turn needs, read off the request while it is intact.
+///
+/// Must be called before `req.into_parts()`: `peer_ip` wants the whole
+/// request, not just its headers. `client_ip` is the sole input to the GeoIP
+/// path in `get_user_location` — the fallback for when the browser declines
+/// to share a precise position — so a hardcoded `None` leaves that tool
+/// waiting out its timeout and then failing. `transport_is_secure` reads the
+/// forwarded-proto header rather than just the configured public URL, so a
+/// gateway behind a TLS-terminating proxy is not reported as plaintext.
+fn request_ctx(state: &RamaState, req: &Request, voice_mode: bool) -> RequestCtx {
+    RequestCtx {
+        client_ip: gateway_features::server::geoip::client_ip(req.headers())
+            .or_else(|| gateway_features::server::geoip::peer_ip(req)),
+        secure: gateway_features::server::geoip::transport_is_secure(
+            req.headers(),
+            &state.public_url(),
+        ),
+        voice_mode,
+    }
+}
+
 fn ok_json(status: StatusCode, body: serde_json::Value) -> Response {
     use rama::http::header;
     Response::builder()
@@ -332,6 +353,28 @@ pub async fn message_send(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+
+    // The same request facts the HTML composer captured. Read off `req` while
+    // it is still whole — `into_parts` below takes it apart.
+    let mut ctx = request_ctx(&state, &req, false);
+
+    // Ownership BEFORE the body is parsed. Parsing a multipart submit uploads
+    // every attachment to S3 under this turn's prefix, and we will not spend
+    // storage on a turn the caller does not own: no turn row is created on the
+    // 404 path, so `doomed_attachments`/`reclaim_attachments` can never find
+    // those objects to sweep them. The quota enforcer runs later still.
+    let active = match chat::get_session(&state.db, &user.id, &session_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found_conversation(),
+        Err(err) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            );
+        }
+    };
+
     let user_turn_id = uuid::Uuid::new_v4().to_string();
     let (_, body) = req.into_parts();
     let submit = if content_type.starts_with("multipart/form-data") {
@@ -378,24 +421,7 @@ pub async fn message_send(
         );
     }
 
-    let active = match chat::get_session(&state.db, &user.id, &session_id).await {
-        Ok(Some(s)) => s,
-        Ok(None) => return not_found_conversation(),
-        Err(err) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &err.to_string(),
-            );
-        }
-    };
-
-    // Same request facts the HTML composer captures pre-parse.
-    let ctx = RequestCtx {
-        client_ip: None,
-        secure: state.public_url().starts_with("https://"),
-        voice_mode: submit.voice,
-    };
+    ctx.voice_mode = submit.voice;
     match submit_turn(&state, &user, &active, submit, ctx).await {
         Ok(submitted) => ok_json(
             StatusCode::ACCEPTED,
@@ -584,6 +610,8 @@ pub async fn turn_retry(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    // Read off the whole request, before `into_parts` takes it apart.
+    let ctx = request_ctx(&state, &req, false);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -619,7 +647,7 @@ pub async fn turn_retry(
         );
     }
     super::reclaim_attachments(&state, orphaned);
-    match start_regeneration_json(&state, &user, &session_id, parsed.model).await {
+    match start_regeneration_json(&state, &user, &session_id, parsed.model, ctx).await {
         Ok(ids) => ok_json(StatusCode::ACCEPTED, ids),
         Err(resp) => resp,
     }
@@ -645,6 +673,8 @@ pub async fn turn_edit(
         Ok(v) => v,
         Err(resp) => return resp,
     };
+    // Read off the whole request, before `into_parts` takes it apart.
+    let ctx = request_ctx(&state, &req, false);
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -696,7 +726,7 @@ pub async fn turn_edit(
         );
     }
     super::reclaim_attachments(&state, orphaned);
-    match start_regeneration_json(&state, &user, &session_id, parsed.model).await {
+    match start_regeneration_json(&state, &user, &session_id, parsed.model, ctx).await {
         Ok(ids) => ok_json(StatusCode::ACCEPTED, ids),
         Err(resp) => resp,
     }
@@ -705,11 +735,19 @@ pub async fn turn_edit(
 /// The regeneration half shared by retry + edit: reserve the worker, insert
 /// the in-progress assistant row, spawn. Returns the ids a fresh submit
 /// would return.
+/// Re-run the assistant for a conversation whose tail was just removed
+/// (a retry or an edited message).
+///
+/// `ctx` is threaded in rather than rebuilt here: the request facts it carries
+/// — the caller's IP and whether the transport was really TLS — only exist on
+/// the `Request`, and `get_user_location` has nothing but `client_ip` to fall
+/// back on when the browser declines to answer.
 async fn start_regeneration_json(
     state: &Arc<RamaState>,
     user: &User,
     session_id: &str,
     model: String,
+    ctx: super::RequestCtx,
 ) -> Result<serde_json::Value, Response> {
     let assistant_turn_id = uuid::Uuid::new_v4().to_string();
     let worker = match state
@@ -751,11 +789,7 @@ async fn start_regeneration_json(
         &assistant_turn_id,
         &model,
         &worker,
-        super::RequestCtx {
-            client_ip: None,
-            secure: state.public_url().starts_with("https://"),
-            voice_mode: false,
-        },
+        ctx,
     )
     .await;
     Ok(serde_json::json!({
