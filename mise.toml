@@ -258,6 +258,10 @@ run = "cargo nextest run --workspace"
 description = "Run tests with stdout/stderr visible."
 run = "cargo nextest run --workspace --no-capture"
 
+[tasks.parity-gap]
+description = "Report .ftl keys with no consumer — the size of the SPA's feature gap against the UI it replaced. See docs/spa-parity-gap.md."
+run = "python3 web/scripts/parity-gap.py"
+
 [tasks.gen-locales]
 description = "Regenerate web/src/lib/locales/*.ts from the Fluent catalogs in crates/session-core/locales. The .ftl files are canonical for BOTH halves of the product — the server still renders some strings itself — so a translation is added there and flows to the SPA from here. Run after touching any .ftl."
 sources = ["crates/session-core/locales/**/*.ftl"]

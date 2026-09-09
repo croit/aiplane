@@ -62,14 +62,36 @@ test("/v1/chat/completions returns 401 with a malformed bearer", async () => {
     assert.equal(r.status, 401);
 });
 
-// An unknown path belongs to the SPA, not to the server: the client router
-// decides whether it is a real route or a typo, so the server hands back the
-// app shell. What must NOT happen is the catch-all swallowing the API, so the
-// assertion that carries weight is the second one.
-test("an unknown route serves the app, but does not shadow the API", async () => {
-    const r = await fetch(`${BASE}/this-route-does-not-exist`);
-    assert.equal(r.status, 200);
-    assert.match(r.headers.get("content-type") ?? "", /text\/html/);
+// The catch-all serves the app shell only for paths the *client* router owns.
+// `/this-route-does-not-exist` is not one, so nothing serves it and the status
+// says so — while a real client route still gets the shell, and the API is
+// never shadowed.
+test("only the SPA's own routes get the app shell", async () => {
+    // Served by nobody. A plain fetch (Accept: */*) gets the error envelope;
+    // a browser (Accept: text/html) gets the shell so the client can render
+    // its styled 404, but the status is 404 either way.
+    const unknown = await fetch(`${BASE}/this-route-does-not-exist`);
+    assert.equal(unknown.status, 404);
+    assert.match(unknown.headers.get("content-type") ?? "", /json/);
+
+    const asBrowser = await fetch(`${BASE}/this-route-does-not-exist`, {
+        headers: { accept: "text/html" },
+    });
+    assert.equal(asBrowser.status, 404, "a browser still gets 404, not 200");
+    assert.match(asBrowser.headers.get("content-type") ?? "", /text\/html/);
+
+    // A real client route: the shell, with a 200.
+    const clientRoute = await fetch(`${BASE}/chat`, {
+        headers: { accept: "text/html" },
+    });
+    assert.equal(clientRoute.status, 200);
+    assert.match(clientRoute.headers.get("content-type") ?? "", /text\/html/);
+
+    // Server-owned paths that the old denylist missed entirely.
+    for (const path of ["/healthzz", "/rag/typo", "/hooksfoo"]) {
+        const r = await fetch(`${BASE}${path}`);
+        assert.equal(r.status, 404, `${path} must not answer with the app shell`);
+    }
 
     const api = await fetch(`${BASE}/api/v0/this-endpoint-does-not-exist`);
     assert.equal(api.status, 404, "the API must still 404 rather than return the shell");
