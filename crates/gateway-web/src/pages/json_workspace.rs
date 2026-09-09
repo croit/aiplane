@@ -637,16 +637,27 @@ pub async fn webhooks_delete(
 }
 
 /// GET /api/v0/webhooks/{id}/runs — the run history.
+///
+/// Resolve the webhook through the caller first: `list_runs` is keyed only by
+/// webhook id, so querying it straight from the path would hand any signed-in
+/// user another account's run history — prompts and replayed payloads
+/// included — for any id they can name. `webhooks::get` is owner-scoped, and
+/// an id that is not the caller's reads as missing.
 pub async fn webhooks_runs(
     Path(id): Path<String>,
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    let (_session, _user) = match require_session_json(&state, &req).await {
+    let (_session, user) = match require_session_json(&state, &req).await {
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    match webhooks::list_runs(&state.db, &id, 50).await {
+    let hook = match webhooks::get(&state.db, &user.id, &id).await {
+        Ok(Some(h)) => h,
+        Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such webhook"),
+        Err(err) => return internal(err),
+    };
+    match webhooks::list_runs(&state.db, &hook.id, 50).await {
         Ok(runs) => json_ok(
             StatusCode::OK,
             serde_json::json!({ "runs": runs.iter().map(run_json).collect::<Vec<_>>() }),

@@ -448,6 +448,40 @@ async fn workspace_surfaces_round_trip() {
     assert_eq!(resp.status(), StatusCode::CREATED);
     let hook: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
     assert!(hook["secret"].as_str().unwrap().starts_with("gwh_"));
+
+    // The run history is the owner's alone. `webhooks::list_runs` is keyed
+    // only by webhook id, so a handler that queried it straight from the path
+    // would hand a stranger another account's prompts and replayed payloads.
+    let hook_id = hook["webhook"]["id"]
+        .as_str()
+        .expect("create returns the webhook");
+    let intruder = common::seed_session(&state, "mallory", "mallory@example.com").await;
+    let resp = app
+        .serve(req(
+            rama::http::Method::GET,
+            &format!("/api/v0/webhooks/{hook_id}/runs"),
+            &intruder,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "another user's webhook must read as missing, not as a run history"
+    );
+
+    // The owner still gets theirs.
+    let resp = app
+        .serve(req(
+            rama::http::Method::GET,
+            &format!("/api/v0/webhooks/{hook_id}/runs"),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 /// Skills + integrations: list (feature off → global set), connectors
