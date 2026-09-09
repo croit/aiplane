@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, ApiError } from '$lib/api';
 	import type { TokenSummary } from '$lib/api';
+	import { adminPut, adminPost } from '$lib/admin-client';
 
 	let tokens = $state<TokenSummary[]>([]);
 	let error = $state<string | null>(null);
@@ -14,12 +15,61 @@
 
 	let name = $state('');
 	let ttlDays = $state(90);
+	// Per-token panel state: which token's panel is expanded, its model
+	// allowlist draft, and its quota draft.
+	let expanded = $state<string | null>(null);
+	let modelsInput = $state('');
+	let models = $state<string[]>([]);
+	let restrict = $state(false);
+	let quotaDimension = $state('requests');
+	let quotaWindow = $state('day');
+	let quotaValue = $state('');
+	let allModels = $state<string[]>([]);
 
 	async function refresh() {
 		try {
 			tokens = await api.listTokens();
+			error = null;
 		} catch (err) {
 			error = String(err);
+		}
+	}
+
+	function togglePanel(t: TokenSummary) {
+		if (expanded === t.id) {
+			expanded = null;
+			return;
+		}
+		expanded = t.id;
+		quotaValue = '';
+	}
+
+	async function saveModels(t: TokenSummary) {
+		notice = null;
+		try {
+			const list = modelsInput
+				.split(',')
+				.map((m) => m.trim())
+				.filter(Boolean);
+			await adminPut(`/api/v0/tokens/${t.id}/models`, { restrict, models: list });
+			notice = 'Model allowlist saved.';
+			await refresh();
+		} catch (err) {
+			notice = String(err);
+		}
+	}
+
+	async function saveQuota(t: TokenSummary) {
+		notice = null;
+		try {
+			await adminPost(`/api/v0/tokens/${t.id}/quota`, {
+				dimension: quotaDimension,
+				window: quotaWindow,
+				value: parseFloat(quotaValue)
+			});
+			notice = 'Quota saved.';
+		} catch (err) {
+			notice = String(err);
 		}
 	}
 
@@ -195,6 +245,42 @@
 								<button class="btn btn-outline btn-sm" onclick={() => remove(token.id)}>Remove</button>
 							{/if}
 						</div>
+						{#if expanded === token.id}
+							<div class="mt-3 pl-1 flex flex-col gap-3">
+								<div>
+									<div class="text-xs font-medium mb-1">Model allowlist</div>
+									<div class="flex flex-wrap gap-2 items-center">
+										<label class="label cursor-pointer gap-1">
+											<input type="checkbox" class="checkbox checkbox-xs" bind:checked={restrict} />
+											<span class="label-text text-xs">Restrict to specific models</span>
+										</label>
+										{#if restrict}
+											<input class="input input-bordered input-xs flex-1 min-w-48" placeholder="model ids, comma-separated" bind:value={modelsInput} />
+										{/if}
+										<button class="btn btn-ghost btn-xs" onclick={() => saveModels(token)}>Save models</button>
+									</div>
+								</div>
+								<div>
+									<div class="text-xs font-medium mb-1">Quota</div>
+									<div class="flex flex-wrap gap-2 items-center">
+										<select class="select select-bordered select-xs" bind:value={quotaDimension}>
+											<option value="requests">Requests</option>
+											<option value="tokens">Tokens</option>
+											<option value="cost">Cost</option>
+										</select>
+										<span class="text-xs text-base-content/60">per</span>
+										<select class="select select-bordered select-xs" bind:value={quotaWindow}>
+											<option value="hour">Hour</option>
+											<option value="day">Day</option>
+											<option value="week">Week</option>
+											<option value="month">Month</option>
+										</select>
+										<input class="input input-bordered input-xs w-24" type="number" min="0" placeholder="max" bind:value={quotaValue} />
+										<button class="btn btn-ghost btn-xs" onclick={() => saveQuota(token)}>Add quota</button>
+									</div>
+								</div>
+							</div>
+						{/if}
 					</li>
 				{/each}
 			</ul>
