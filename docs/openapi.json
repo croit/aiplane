@@ -4421,6 +4421,135 @@
      }
     }
    }
+  },
+  "/api/v0/tokens/{id}/models": {
+   "put": {
+    "tags": [
+     "tokens"
+    ],
+    "summary": "Replace the owner's model allowlist for a token",
+    "description": "Owner-scoped. restrict=false clears the owner list; intersected with any admin list at routing time.",
+    "operationId": "setOwnerTokenModels",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "restrict"
+        ],
+        "properties": {
+         "restrict": {
+          "type": "boolean"
+         },
+         "models": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Stored."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/api/v0/tokens/{id}/quota": {
+   "post": {
+    "tags": [
+     "tokens"
+    ],
+    "summary": "Add an owner-set quota to one token",
+    "description": "Narrowing only — the owner's own budget still applies. ManagedBy::Owner.",
+    "operationId": "addOwnerTokenQuota",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "dimension",
+         "window",
+         "value"
+        ],
+        "properties": {
+         "dimension": {
+          "type": "string",
+          "enum": [
+           "requests",
+           "tokens",
+           "cost"
+          ]
+         },
+         "window": {
+          "type": "string",
+          "enum": [
+           "hour",
+           "day",
+           "week",
+           "month"
+          ]
+         },
+         "value": {
+          "type": "number"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Stored."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
   }
  },
  "components": {

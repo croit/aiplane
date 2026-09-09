@@ -979,3 +979,157 @@ pub async fn capabilities_set(
         ),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Token self-service: model allowlist + quota (owner-side, like /tokens)
+
+#[derive(serde::Deserialize)]
+pub struct OwnerModelsBody {
+    pub restrict: bool,
+    #[serde(default)]
+    pub models: Vec<String>,
+}
+
+/// PUT /api/v0/chat/sessions/… — no. This is the owner-side token models
+/// allowlist (mirrors the legacy /tokens/{id}/models form with
+/// ManagedBy::Owner).
+pub async fn owner_token_models(
+    Path(token_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    use gateway_core::server::db::limits;
+    use gateway_core::server::db::token_models;
+    use gateway_core::server::db::tokens;
+
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    // Owner-only: the token must exist AND belong to the caller. Someone
+    // else's token is reported the same as a missing one — no probing for
+    // live token ids across accounts.
+    match tokens::find_by_id(&state.db, &token_id).await {
+        Ok(Some(t)) if t.user_id == user.id => {}
+        _ => return json_error(StatusCode::NOT_FOUND, "not_found", "no such token"),
+    }
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+    };
+    let parsed: OwnerModelsBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("parsing the models body: {err}"),
+            );
+        }
+    };
+    if parsed.restrict && parsed.models.is_empty() {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "restricting to an empty list would block every model",
+        );
+    }
+    let to_store: Vec<String> = if parsed.restrict {
+        parsed.models
+    } else {
+        Vec::new()
+    };
+    match token_models::set_for_token(&state.db, &token_id, &to_store, limits::ManagedBy::Owner)
+        .await
+    {
+        Ok(()) => ok_json(StatusCode::OK, serde_json::json!({ "models": to_store })),
+        Err(err) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        ),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct OwnerQuotaBody {
+    pub dimension: String,
+    pub window: String,
+    pub value: f64,
+}
+
+/// POST /api/v0/tokens/{id}/quota — add an owner-set quota to one token
+/// (narrowing only: the owner's own budget still applies).
+pub async fn owner_token_quota(
+    Path(token_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    use gateway_core::server::db::limits::{self, Dimension, ManagedBy, SubjectType, Window};
+
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    // Owner-only: another user's token reads as missing — no cross-account
+    // probing.
+    let is_owner = matches!(
+        gateway_core::server::db::tokens::find_by_id(&state.db, &token_id).await,
+        Ok(Some(t)) if t.user_id == user.id
+    );
+    if !is_owner {
+        return json_error(StatusCode::NOT_FOUND, "not_found", "no such token");
+    }
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+    };
+    let parsed: OwnerQuotaBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("parsing the quota body: {err}"),
+            );
+        }
+    };
+    let Some(dimension) = Dimension::parse(&parsed.dimension) else {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "unknown dimension",
+        );
+    };
+    let Some(window) = Window::parse(&parsed.window) else {
+        return json_error(StatusCode::BAD_REQUEST, "invalid_request", "unknown window");
+    };
+    if !parsed.value.is_finite() || parsed.value < 0.0 {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "value must be ≥ 0",
+        );
+    }
+    match limits::upsert_checked(
+        &state.db,
+        SubjectType::Token,
+        &token_id,
+        None,
+        dimension,
+        window,
+        parsed.value,
+        ManagedBy::Owner,
+    )
+    .await
+    {
+        Ok(_) => ok_json(StatusCode::OK, serde_json::json!({ "ok": true })),
+        Err(err) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        ),
+    }
+}
