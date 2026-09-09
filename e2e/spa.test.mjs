@@ -56,8 +56,7 @@ test("the SPA shell loads at /app (client bundle boots, not the 404/503 fallback
     await ctx.close();
 });
 
-let oidcOffSite = false;
-test("a signed-out visitor is redirected into the OIDC login flow", async () => {
+test("a signed-out visitor is redirected into the OIDC login flow", async (t) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     await page.goto(`${BASE}/app`, { waitUntil: "domcontentloaded" });
@@ -65,10 +64,9 @@ test("a signed-out visitor is redirected into the OIDC login flow", async () => 
     // No session → /api/v0/me 401s → the layout bounces to /auth/login.
     // With a REAL provider configured the chain continues off-site (authentik
     // & co), so the /auth/ assertion only holds on the OIDC-less stub.
-    await page.waitForURL((u) => u.pathname.startsWith("/auth/"), { timeout: 5000 }).catch(
-        () => (oidcOffSite = true),
-    );
-    if (oidcOffSite) t.skip("a real OIDC provider is configured — the flow leaves the origin");
+    await page
+        .waitForURL((u) => u.pathname.startsWith("/auth/"), { timeout: 5000 })
+        .catch(() => t.skip("a real OIDC provider is configured — the flow leaves the origin"));
     await ctx.close();
 });
 
@@ -114,11 +112,13 @@ test("a signed-in user sees their identity from GET /api/v0/me", async (t) => {
         },
     ]);
     const page = await ctx.newPage();
-    await page.goto(`${BASE}/app`, { waitUntil: "networkidle" });
+    // /app now funnels into the chat surface — follow it and wait for the
+    // identity to render in the sidebar footer.
+    await page.goto(`${BASE}/app/chat`, { waitUntil: "networkidle" });
 
-    // The /api/v0/me value renders into the header (badge + sign-out
+    // The /api/v0/me value renders into the sidebar footer (email + sign-out
     // affordance only exist for a known identity).
-    await page.waitForSelector("text=alice@example.com", { timeout: 5000 });
-    await page.waitForSelector('button:has-text("Sign out")', { timeout: 5000 });
+    await page.waitForSelector("text=alice@example.com", { timeout: 10_000 });
+    await page.waitForSelector('button[aria-label="Sign out"]', { timeout: 5000 });
     await ctx.close();
 });

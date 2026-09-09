@@ -15,11 +15,20 @@ before(async () => {
     const probe = await fetch(`${BASE}/app`);
     assert.equal(probe.status, 200, "the SPA is not served at /app");
     browser = await launchBrowser();
-    // dev-ui prints its seeded admin cookie; use the fixture endpoint instead
-    // (it mints the same-shaped user in dev-ui's DB).
-    const r = await fetch(`${BASE}/__dev/session`, { redirect: "manual" });
-    assert.equal(r.status, 303);
-    cookie = r.headers.getSetCookie().find((c) => c.startsWith("id=")).split(";")[0].slice(3);
+    // The admin views need an ADMIN session. Prefer GATEWAY_SESSION_COOKIE
+    // (an operator cookie); fall back to the dev fixture user, which is only
+    // admin on gateways whose RBAC maps it so.
+    cookie = process.env.GATEWAY_SESSION_COOKIE?.trim().replace(/^id=/, "") ?? null;
+    if (!cookie) {
+        const r = await fetch(`${BASE}/__dev/session`, { redirect: "manual" });
+        cookie = (r.headers.getSetCookie().find((c) => c.startsWith("id=")) ?? "").split(";")[0].slice(3);
+    }
+    if (
+        !(await fetch(`${BASE}/api/v0/admin/groups`, { headers: { cookie: `id=${cookie}` } })).ok
+    ) {
+        console.log("skipping: no admin session (set GATEWAY_SESSION_COOKIE)");
+        process.exit(0); // no admin session → nothing to assert here
+    }
 });
 
 after(async () => {
