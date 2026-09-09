@@ -333,7 +333,7 @@ pub async fn run_json_turn_stream(
     assistant_turn_id: String,
     mut broadcast_rx: broadcast::Receiver<TurnUpdate>,
     initial: Vec<ChatEvent>,
-    tx: crate::chat::SseTx,
+    tx: SseTx,
 ) {
     use rama::futures::sink::SinkExt;
 
@@ -412,7 +412,7 @@ async fn flush(
     session_id: &str,
     assistant_turn_id: &str,
     feed: &mut JsonTurnFeed,
-    tx: &mut crate::chat::SseTx,
+    tx: &mut SseTx,
 ) {
     use rama::futures::sink::SinkExt;
     let turns = match db::get_turn_with_tools(pool, session_id, assistant_turn_id).await {
@@ -443,6 +443,32 @@ pub fn json_stream_response(
         .header("x-accel-buffering", "no")
         .body(Body::from_stream(rx))
         .unwrap()
+}
+
+/// Sender end of the per-request SSE channel. The streaming task fills it;
+/// the response body drains it.
+pub type SseTx =
+    rama::futures::channel::mpsc::UnboundedSender<Result<rama::bytes::Bytes, std::io::Error>>;
+
+/// Flip the cancel flag on the active worker for this (user_id, session_id)
+/// pair. Returns true if a worker was found and flagged, false if nothing was
+/// running. Pure registry op — the auth check and the response shape live in
+/// the handler.
+pub fn cancel_turn(
+    workers: &crate::workers::SessionWorkers,
+    user_id: &str,
+    session_id: &str,
+) -> bool {
+    let Some(worker) = workers.get(user_id) else {
+        return false;
+    };
+    if worker.session_id != session_id {
+        return false;
+    }
+    worker
+        .cancel
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    true
 }
 
 #[cfg(test)]

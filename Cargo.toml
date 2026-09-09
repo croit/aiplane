@@ -120,10 +120,6 @@ jsonwebtoken = { version = "10", default-features = false, features = ["use_pem"
 # proxy in deployments; outbound HTTPS uses reqwest's ring-backed rustls.
 rama = { git = "https://github.com/plabayo/rama", rev = "5ba0ada6b89defec9eb8cbdc645b4080c950651e", default-features = false, features = ["http-full", "tower"] }
 
-# HTML templating — `html! { ... }` macro for plait, used in the
-# rama_server::pages module for type-checked server-rendered HTML.
-plait = "0.8"
-
 # Chat-render pipeline. Pinned at the workspace level so `gateway`
 # and `session-core` can't drift apart on the highlighter version.
 # See docs/dependencies.md for the rationale on `lumis`'s grammar set

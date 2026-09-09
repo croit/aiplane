@@ -1,5 +1,5 @@
 // The SPA's tokens surface (issue #22 P3): full CRUD against the existing
-// /api/v0/tokens JSON API through the SvelteKit page at /app/tokens — the
+// /api/v0/tokens JSON API through the SvelteKit page at /tokens — the
 // one-time gwk_ banner, revoke/rotate confirmations, delete, and the
 // master tool toggle.
 //
@@ -18,8 +18,8 @@ before(async () => {
         await gatewayIsUp(),
         `gateway is not reachable at ${BASE}; run \`mise run dev\` in another terminal`,
     );
-    const probe = await fetch(`${BASE}/app`);
-    assert.equal(probe.status, 200, `the SPA is not served at ${BASE}/app`);
+    const probe = await fetch(`${BASE}/`);
+    assert.equal(probe.status, 200, `the SPA is not served at ${BASE}/`);
     browser = await launchBrowser();
 });
 
@@ -34,7 +34,7 @@ test("tokens CRUD through the SPA", async () => {
 
     // Seed the canonical fixture so the list starts from a known state.
     await page.goto(`${BASE}/__dev/seed-session`);
-    await page.goto(`${BASE}/app/tokens`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE}/tokens`, { waitUntil: "networkidle" });
     await page.locator("#token-list, ul.divide-y li, .card-body li").first().waitFor({
         timeout: 5000,
     });
@@ -78,13 +78,13 @@ test("the usage and tools views render their data", async (t) => {
 
     // Usage: the period picker + the summary envelope render (empty data on
     // a fresh stub, but the cards' labels are data-independent).
-    await page.goto(`${BASE}/app/usage`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE}/usage`, { waitUntil: "networkidle" });
     await page.waitForSelector("text=Requests", { timeout: 5000 });
     await page.waitForSelector("text=Errors", { timeout: 5000 });
 
     // Tools: the dev-ui stub grants the full tool set to its admin group —
     // the grouped list renders with toggles.
-    await page.goto(`${BASE}/app/tools`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE}/tools`, { waitUntil: "networkidle" });
     const toggles = page.locator("input.toggle");
     const count = await toggles.count();
     if (count === 0) {

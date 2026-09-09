@@ -22,7 +22,7 @@ The routes are wired in `crates/gateway/src/rama_server/router.rs`; the `/v1/*` 
 
 `POST /v1/audio/translations` is **not** implemented — no route is registered.
 
-> The web UI's page routes (`/`, `/chat`, `/tokens`, `/admin/*`, …) and the session-scoped `/api/v0/*` and `/auth/*` routes are separate surfaces, not part of the OpenAI-compatible API. See [`ui.md`](ui.md).
+> The web UI is a SvelteKit SPA served from `/`; its client routes (`/chat`, `/tokens`, `/admin/*`, …) and the session-scoped `/api/v0/*` and `/auth/*` routes are separate surfaces, not part of the OpenAI-compatible API. See [`ui.md`](ui.md).
 
 ## Authentication
 
@@ -69,7 +69,7 @@ Beyond the relayed upstream headers, the gateway may add:
 
 - Upstream SSE frames are relayed 1:1 — the gateway does not reframe `data:` lines. The deltas are tapped in parallel through a repetition-based loop guard; a model that collapses into a loop is cut off with a terminating error chunk and `[DONE]`, while a long-but-progressing answer streams through untouched.
 - When the caller has tool grants, intermediate tool-loop rounds are executed against the upstream **non-streaming** even though the client asked for a stream; only the final round streams to the client.
-- This is distinct from the page-level chat UI, which hits `POST /chat/{id}/messages` and streams **datastar-patch-elements** SSE (DOM fragments), not OpenAI SSE.
+- This is distinct from the web UI's chat, which posts to `POST /api/v0/chat/sessions/{id}/messages` and reads `GET /api/v0/chat/sessions/{id}/events` — SSE carrying the gateway's own JSON event protocol (`snapshot`, `turn_delta`, `tool_call_done`, …), not OpenAI SSE. See [`ui.md`](ui.md#chat-streaming-the-json-event-protocol).
 
 ## Header handling
 

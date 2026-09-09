@@ -47,8 +47,8 @@ use crate::rama_server::RamaState;
 ///
 /// An allowlist, deliberately: see the [module docs](self).
 fn serves_before_setup(path: &str) -> bool {
-    // The wizard itself. Its own handlers decide whether it may be *reached*
-    // (first run, recovery window, or gone) — see `pages::setup`.
+    // The wizard's client route. Its API (below) decides whether it may be
+    // *used* (first run, recovery window, or gone) — see `setup_api`.
     if path == "/setup" || path.starts_with("/setup/") {
         return true;
     }
@@ -58,22 +58,23 @@ fn serves_before_setup(path: &str) -> bool {
     if path == "/auth/callback" {
         return true;
     }
-    // The page chrome the wizard is rendered with: stylesheet, datastar, the
-    // PWA head links every layout emits, and the language switcher in the
-    // corner of the wizard's own page. All session-free static handlers.
-    if path.starts_with("/assets/") || path.starts_with("/icons/") {
-        return true;
-    }
-    // The SvelteKit SPA static shell (served from disk under `/app`). These
-    // are unauthenticated static files; the SPA's own API calls self-protect
-    // with 401/403, and the OIDC login correctly 303s to the wizard. Loading
-    // the shell before setup is harmless and lets the client render.
-    if path == "/app" || path.starts_with("/app/") {
+    // The SPA's static shell, served from disk at the root: the content-hashed
+    // bundles SvelteKit emits under `/_app/`, plus the loose files in its build
+    // directory. The wizard *is* the SPA now, so gating these would 303 a
+    // JavaScript module request to an HTML page and leave the wizard blank.
+    // They are unauthenticated static files; the SPA's own API calls
+    // self-protect with 401/403.
+    if path.starts_with("/_app/") || path.starts_with("/assets/") || path.starts_with("/icons/") {
         return true;
     }
     if matches!(
         path,
-        "/favicon.ico" | "/manifest.webmanifest" | "/sw.js" | "/lang" | "/theme/toggle"
+        "/favicon.ico"
+            | "/favicon.svg"
+            | "/manifest.webmanifest"
+            | "/sw.js"
+            | "/robots.txt"
+            | "/pcm-recorder.js"
     ) {
         return true;
     }
@@ -179,22 +180,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_wizard_and_the_chrome_it_needs_are_reachable() {
-        // Every one of these is referenced by the wizard's own rendered page.
-        // If one starts redirecting, the wizard renders unstyled, or its
-        // language switcher 303s the operator back to where they already are.
+    fn the_wizard_and_the_shell_it_needs_are_reachable() {
+        // The wizard is a client route of the SPA, so everything the SPA shell
+        // loads to render it has to answer too. If one of these starts
+        // redirecting, the operator gets an HTML page where a script was
+        // expected and the wizard never paints.
         for path in [
             "/setup",
-            "/setup/test",
-            "/setup/finish",
-            "/assets/app.css",
-            "/assets/datastar.js",
+            "/_app/immutable/entry/start.CkY1xNvY.js",
+            "/_app/version.json",
+            "/favicon.svg",
             "/favicon.ico",
             "/manifest.webmanifest",
+            "/sw.js",
             "/icons/icon-192.png",
-            "/lang",
-            "/app",
-            "/app/tokens",
+            "/api/v0/setup/state",
+            "/api/v0/setup/test",
+            "/api/v0/setup/finish",
         ] {
             assert!(serves_before_setup(path), "{path} must serve before setup");
         }
@@ -243,7 +245,9 @@ mod tests {
     }
 
     #[test]
-    fn every_html_page_is_gated() {
+    fn every_spa_route_is_gated() {
+        // Client routes of the SPA, which resolve to `index.html` once setup
+        // is done. Before that they belong at the wizard.
         for path in [
             "/",
             "/chat",
@@ -273,6 +277,7 @@ mod tests {
             "/setupfoo",
             "/v1foo",
             "/assetsfoo",
+            "/_appfoo",
             "/hooksfoo",
             "/nonsense",
         ] {

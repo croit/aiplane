@@ -2,9 +2,8 @@
 #
 # Runtime-only container for the gateway. The binary is built outside
 # the Dockerfile (CI builds it in the `build` job, local devs run
-# `mise run build` first) and dropped in via COPY. The CSS bundle and
-# datastar.js are baked into the binary at compile time via
-# `include_bytes!`, so this image needs no asset directory.
+# `mise run build` first) and dropped in via COPY, alongside the built
+# SvelteKit SPA the binary serves.
 #
 # Minimal apt-get on the critical path: `reqwest` is built with the
 # `rustls-tls` feature which links `webpki-roots` — the Mozilla CA
@@ -99,7 +98,7 @@ COPY --chown=root:root --chmod=0644 target/release/libpdfium.so /usr/local/lib/l
 # `build-web` mise task and staged into target/frontend/build/ so it
 # rides the same artifact pipeline as the binaries (CI's `container` job
 # downloads it alongside gateway/typst/sandbox-runner). No Node in the
-# runtime image — the Rust binary serves these files at `/app` from
+# runtime image — the Rust binary serves these files from the root at
 # `GATEWAY_STATIC_DIR` (rama_server::spa). Read-only layer: the handler
 # only reads.
 COPY --chown=gateway:gateway target/frontend/build /usr/share/gateway/ui
@@ -135,9 +134,9 @@ USER gateway
 # volume and nothing else already does the right thing.
 #
 # PDFIUM_LIB_PATH points the PDF reader at the bundled pdfium above.
-# GATEWAY_STATIC_DIR serves the SPA copied to /usr/share/gateway/ui
-# above at /app (unset in dev — a missing dir 503s only /app, the rest
-# of the gateway is unaffected; see rama_server::spa).
+# GATEWAY_STATIC_DIR serves the SPA copied to /usr/share/gateway/ui above.
+# Unset in dev, where a missing directory only 503s the UI and leaves the
+# API and proxy working; see rama_server::spa.
 ENV IP=0.0.0.0 \
     PORT=8080 \
     GATEWAY_DATA_DIR=/var/lib/gateway \

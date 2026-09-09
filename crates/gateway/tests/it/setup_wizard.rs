@@ -3,18 +3,25 @@
 
 //! The deployment setup wizard, end to end against a mock IdP.
 //!
-//! Three things are worth pinning here, in ascending order of how expensive
-//! they would be to get wrong:
+//! The wizard is a client route of the SPA (`/setup`) driving four JSON
+//! endpoints (`/api/v0/setup/{state,test,restart,finish}`), so everything
+//! asserted here is a status code, a JSON body, or a redirect — never markup.
+//!
+//! Three things are worth pinning, in ascending order of how expensive they
+//! would be to get wrong:
 //!
 //! 1. **First-run routing** — an unconfigured gateway must send every page to
 //!    `/setup`, including `/login`, which otherwise shows a sign-in button that
-//!    can only fail.
+//!    can only fail — while the wizard's own API keeps answering.
 //! 2. **Recovery is not first run** — when `restore-setup` reopens the wizard
-//!    on a live gateway, the gateway must keep serving. If reopening setup ever
-//!    starts redirecting real users to a wizard, one locked-out admin takes the
-//!    whole deployment down while asking for help.
+//!    on a live gateway, the gateway must keep serving, and the reopened wizard
+//!    must demand the one-time token. If reopening setup ever starts
+//!    redirecting real users to a wizard, one locked-out admin takes the whole
+//!    deployment down while asking for help; if it ever stops demanding the
+//!    token, anyone who can reach the box can re-point a live gateway at their
+//!    own identity provider.
 //! 3. **The wizard actually configures the gateway** — the full round trip:
-//!    provider form → real authorization-code login → pick an admin group →
+//!    provider settings → real authorization-code login → pick an admin claim →
 //!    finish, leaving a live OIDC client, a mapped admin group, and no restart
 //!    required.
 
@@ -37,7 +44,7 @@ use gateway_runtime::server::tools::ToolRegistry;
 use jiff::{SignedDuration, Timestamp};
 use rama::http::{Body, Method, Request, StatusCode};
 use rsa::{RsaPrivateKey, RsaPublicKey};
-use serde_json::json;
+use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -81,11 +88,13 @@ async fn mark_configured(state: &RamaState) {
     });
 }
 
-fn post_form(uri: &str, body: &str, cookie: Option<&str>) -> Request {
+/// A JSON POST to one of the wizard's endpoints, optionally carrying the
+/// recovery-claim cookie.
+fn post_json(uri: &str, body: Value, cookie: Option<&str>) -> Request {
     let mut b = Request::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("content-type", "application/x-www-form-urlencoded");
+        .header("content-type", "application/json");
     if let Some(c) = cookie {
         b = b.header("cookie", c);
     }
@@ -97,6 +106,15 @@ fn location(resp: &rama::http::Response) -> String {
         .get(rama::http::header::LOCATION)
         .map(|v| v.to_str().unwrap().to_string())
         .unwrap_or_default()
+}
+
+/// The `gw_setup` cookie a response set, if any.
+fn setup_cookie(resp: &rama::http::Response) -> Option<String> {
+    resp.headers()
+        .get_all(rama::http::header::SET_COOKIE)
+        .iter()
+        .map(|v| v.to_str().unwrap().to_string())
+        .find(|v| v.starts_with("gw_setup="))
 }
 
 /// A plausible provider, for the tests that plant a draft directly rather than
@@ -111,8 +129,14 @@ fn test_params() -> gateway_core::server::auth::oidc::OidcParams {
     }
 }
 
-async fn body_text(resp: rama::http::Response) -> String {
-    String::from_utf8_lossy(&common::read_body(resp).await).into_owned()
+async fn json_body(resp: rama::http::Response) -> Value {
+    let bytes = common::read_body(resp).await;
+    serde_json::from_slice(&bytes).unwrap_or_else(|err| {
+        panic!(
+            "expected JSON, got {:?}: {err}",
+            String::from_utf8_lossy(&bytes)
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +183,7 @@ async fn a_fresh_gateway_sends_every_page_to_the_wizard() {
 
     // The other side of the gate: the wizard cannot work if the callback its
     // own test login lands on is redirected away. It answers for itself (here:
-    // a 400, since this request carries no in-flight login) — anything but a
+    // a 4xx, since this request carries no in-flight login) — anything but a
     // 303 to `/setup`.
     let resp = app
         .serve(common::req(Method::GET, "/auth/callback"))
@@ -171,12 +195,14 @@ async fn a_fresh_gateway_sends_every_page_to_the_wizard() {
         "the probe callback must reach its handler, or setup can never finish"
     );
 
-    // Static chrome keeps serving, or the wizard renders unstyled.
+    // And the wizard's own API answers, or the SPA at `/setup` has nothing to
+    // talk to.
     let resp = app
-        .serve(common::req(Method::GET, "/assets/app.css"))
+        .serve(common::req(Method::GET, "/api/v0/setup/state"))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(json_body(resp).await["access"], "first_run");
 }
 
 #[tokio::test]
@@ -231,7 +257,7 @@ async fn the_wizard_is_open_and_prefilled_on_a_first_run() {
 
     let req = Request::builder()
         .method(Method::GET)
-        .uri("/setup")
+        .uri("/api/v0/setup/state")
         .header("host", "gw.example.com")
         .header("x-forwarded-proto", "https")
         .body(Body::empty())
@@ -239,16 +265,16 @@ async fn the_wizard_is_open_and_prefilled_on_a_first_run() {
     let resp = app.serve(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK, "first run must be open");
 
-    let html = body_text(resp).await;
-    // The public URL is guessed from the request, and the redirect URI the
-    // operator has to whitelist is shown built from it — the single most
-    // commonly mis-typed value in an OIDC setup.
-    assert!(html.contains("https://gw.example.com"), "{html}");
-    assert!(
-        html.contains("https://gw.example.com/auth/callback"),
-        "the redirect URI to whitelist must be shown"
-    );
-    assert!(html.contains("name=\"issuer\""), "provider form missing");
+    let body = json_body(resp).await;
+    assert_eq!(body["access"], "first_run");
+    // The public URL is guessed from the request the operator's browser
+    // actually made, scheme included — it is the value the redirect URI they
+    // have to whitelist is built from, and the single most commonly mis-typed
+    // value in an OIDC setup.
+    assert_eq!(body["suggested_public_url"], "https://gw.example.com");
+    // Nothing has been entered or proven yet.
+    assert!(body["draft"].is_null(), "{body}");
+    assert!(body["proof"].is_null(), "{body}");
 }
 
 #[tokio::test]
@@ -257,12 +283,19 @@ async fn a_configured_gateway_has_no_setup_page() {
     mark_configured(&state).await;
     let app = service(Arc::new(state));
 
-    let resp = app.serve(common::req(Method::GET, "/setup")).await.unwrap();
+    let resp = app
+        .serve(common::req(Method::GET, "/api/v0/setup/state"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     // And a POST cannot sneak past the GET gate.
     let resp = app
-        .serve(post_form("/setup/finish", "pair=groups%1Fadmin", None))
+        .serve(post_json(
+            "/api/v0/setup/finish",
+            json!({"claim": "groups", "value": "admin"}),
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -281,31 +314,66 @@ async fn recovery_needs_the_one_time_token() {
     let app = service(Arc::new(state));
 
     // No token at all.
-    let resp = app.serve(common::req(Method::GET, "/setup")).await.unwrap();
+    let resp = app
+        .serve(common::req(Method::GET, "/api/v0/setup/state"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // Wrong token.
     let resp = app
-        .serve(common::req(Method::GET, "/setup?claim=battery-staple"))
+        .serve(common::req(
+            Method::GET,
+            "/api/v0/setup/state?claim=battery-staple",
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
-    // Right token: in, and handed a cookie so the POSTs that follow work.
+    // A POST is gated exactly like the read — the wizard's writes are the
+    // dangerous half.
     let resp = app
-        .serve(common::req(Method::GET, "/setup?claim=correct-horse"))
+        .serve(post_json("/api/v0/setup/restart", json!({}), None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Right token: in, and handed a cookie so the POSTs that follow work
+    // without pasting the token into every call.
+    let resp = app
+        .serve(common::req(
+            Method::GET,
+            "/api/v0/setup/state?claim=correct-horse",
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let cookie = resp
-        .headers()
-        .get_all(rama::http::header::SET_COOKIE)
-        .iter()
-        .map(|v| v.to_str().unwrap())
-        .find(|v| v.starts_with("gw_setup="))
-        .expect("recovery claim cookie");
-    assert!(cookie.contains("Path=/setup"), "{cookie}");
+    let cookie = setup_cookie(&resp).expect("recovery claim cookie");
+    assert!(cookie.contains("Path=/api/v0/setup"), "{cookie}");
     assert!(cookie.contains("HttpOnly"), "{cookie}");
+    assert_eq!(json_body(resp).await["access"], "recovery");
+
+    // And that cookie is what carries the claim from there on.
+    let resp = app
+        .serve(post_json(
+            "/api/v0/setup/restart",
+            json!({}),
+            Some("gw_setup=correct-horse"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // A forged cookie is not a claim.
+    let resp = app
+        .serve(post_json(
+            "/api/v0/setup/restart",
+            json!({}),
+            Some("gw_setup=battery-staple"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -318,11 +386,12 @@ async fn an_open_recovery_window_does_not_disturb_anyone() {
     setup::open_recovery(&state.db, "token").await.unwrap();
     let app = service(Arc::new(state.clone()));
 
-    // A signed-in user's page still renders rather than bouncing to /setup.
+    // A signed-in user's session still resolves rather than bouncing to the
+    // wizard.
     let cookie = common::seed_session(&state, "bob", "bob@example.com").await;
     let req = Request::builder()
         .method(Method::GET)
-        .uri("/tokens")
+        .uri("/api/v0/me")
         .header("cookie", format!("id={cookie}"))
         .body(Body::empty())
         .unwrap();
@@ -333,12 +402,23 @@ async fn an_open_recovery_window_does_not_disturb_anyone() {
         "an open recovery window must not interrupt signed-in users"
     );
 
-    // And an anonymous visitor is still sent to sign in, not to the wizard.
-    let resp = app.serve(common::req(Method::GET, "/")).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert!(
-        location(&resp).starts_with("/login"),
-        "anonymous users belong at /login, not the wizard: {}",
+    // An anonymous caller gets the ordinary 401 it would get on any configured
+    // gateway — not a first-run redirect into the wizard.
+    let resp = app
+        .serve(common::req(Method::GET, "/api/v0/me"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Same for the SPA shell: whatever it answers, it is not a 303 to `/setup`.
+    let resp = app
+        .serve(common::req(Method::GET, "/tokens"))
+        .await
+        .unwrap();
+    assert_ne!(
+        resp.status(),
+        StatusCode::SEE_OTHER,
+        "a recovery window must not gate the running UI: got a redirect to {}",
         location(&resp)
     );
 }
@@ -359,7 +439,7 @@ async fn an_expired_recovery_window_closes_the_wizard_again() {
     let app = service(Arc::new(state));
 
     let resp = app
-        .serve(common::req(Method::GET, "/setup?claim=token"))
+        .serve(common::req(Method::GET, "/api/v0/setup/state?claim=token"))
         .await
         .unwrap();
     assert_eq!(
@@ -415,24 +495,29 @@ async fn the_wizard_configures_the_gateway_without_a_restart() {
     let app = service(Arc::new(state.clone()));
 
     // --- Screen 1: enter the provider and start the test login. ------------
-    let form = serde_urlencoded::to_string([
-        ("public_url", PUBLIC_URL),
-        ("issuer", issuer.as_str()),
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
-        ("scopes", "email profile groups"),
-        ("roles_claim", "groups"),
-    ])
-    .unwrap();
     let resp = app
-        .serve(post_form("/setup/test", &form, None))
+        .serve(post_json(
+            "/api/v0/setup/test",
+            json!({
+                "public_url": PUBLIC_URL,
+                "issuer": issuer,
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "scopes": ["email", "profile", "groups"],
+                "roles_claim": "groups",
+            }),
+            None,
+        ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.status(), StatusCode::OK);
+    let authorize_url = json_body(resp).await["authorize_url"]
+        .as_str()
+        .expect("the wizard hands the SPA an authorize URL to navigate to")
+        .to_string();
     assert!(
-        location(&resp).starts_with(&format!("{issuer}/auth?")),
-        "should redirect to the provider: {}",
-        location(&resp)
+        authorize_url.starts_with(&format!("{issuer}/auth?")),
+        "should point at the provider: {authorize_url}"
     );
 
     // The probe is recorded as a probe, not as a sign-in.
@@ -449,9 +534,8 @@ async fn the_wizard_configures_the_gateway_without_a_restart() {
     // The authorization request must use the PRODUCTION redirect URI, so the
     // operator whitelists exactly one URI and the test proves the real path.
     assert!(
-        location(&resp).contains(&urlencoding_of(&format!("{PUBLIC_URL}/auth/callback"))),
-        "probe must reuse the production redirect_uri: {}",
-        location(&resp)
+        authorize_url.contains(&urlencoding_of(&format!("{PUBLIC_URL}/auth/callback"))),
+        "probe must reuse the production redirect_uri: {authorize_url}"
     );
 
     // --- The provider signs the operator in. -------------------------------
@@ -475,7 +559,11 @@ async fn the_wizard_configures_the_gateway_without_a_restart() {
         .unwrap();
     let resp = app.serve(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&resp), "/setup");
+    assert_eq!(
+        location(&resp),
+        "/setup",
+        "a probe comes back to the wizard that started it"
+    );
 
     // A probe authorises nobody: no user row, no session cookie.
     assert!(
@@ -491,29 +579,49 @@ async fn the_wizard_configures_the_gateway_without_a_restart() {
     );
 
     // --- Screen 2: the operator's own claims are offered. ------------------
-    let resp = app.serve(common::req(Method::GET, "/setup")).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let html = body_text(resp).await;
-    assert!(html.contains(EMAIL), "should show who signed in: {html}");
-    // Both group values from the token are offered as pickable pairs — the
-    // whole reason the wizard insists on a real login first.
-    assert!(html.contains("engineering"), "{html}");
-    assert!(html.contains("admin"), "{html}");
-
-    // --- Finish. -----------------------------------------------------------
-    let finish = serde_urlencoded::to_string([("pair", "groups\u{1f}admin")]).unwrap();
     let resp = app
-        .serve(post_form("/setup/finish", &finish, None))
+        .serve(common::req(Method::GET, "/api/v0/setup/state"))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    // Sign in, then continue to the settings the wizard deliberately did not
-    // ask about — carried as an ordinary `return_to` so the OIDC round trip
-    // delivers it, rather than as a second landing mechanism.
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = json_body(resp).await;
     assert_eq!(
-        location(&resp),
-        "/login?return_to=%2Fadmin%2Fsettings",
-        "finishing lands on sign-in, then continues to settings"
+        body["proof"]["email"], EMAIL,
+        "should say who signed in: {body}"
+    );
+    // Both group values from the token are handed to the picker — the whole
+    // reason the wizard insists on a real login first.
+    let groups = body["proof"]["claims"]["groups"]
+        .as_array()
+        .expect("the raw claims must reach the picker")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert!(groups.contains(&"engineering"), "{body}");
+    assert!(groups.contains(&"admin"), "{body}");
+    // The secret is never echoed back; only the fact that one is stored.
+    assert_eq!(body["draft"]["client_secret_set"], true, "{body}");
+    assert!(
+        body["draft"].get("client_secret").is_none(),
+        "the stored client secret must never be sent to the browser: {body}"
+    );
+
+    // --- Finish. -----------------------------------------------------------
+    let resp = app
+        .serve(post_json(
+            "/api/v0/setup/finish",
+            json!({"claim": "groups", "value": "admin"}),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    // The SPA continues to the settings the wizard deliberately did not ask
+    // about, signing in on the way.
+    assert_eq!(
+        json_body(resp).await["landing"],
+        "/admin/settings",
+        "finishing hands the SPA the settings page to continue to"
     );
 
     // Live, with no restart: the running state now has an OIDC client and is
@@ -573,14 +681,17 @@ async fn the_wizard_configures_the_gateway_without_a_restart() {
     );
 
     // And the wizard is closed behind us.
-    let resp = app.serve(common::req(Method::GET, "/setup")).await.unwrap();
+    let resp = app
+        .serve(common::req(Method::GET, "/api/v0/setup/state"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn starting_a_new_probe_discards_the_previous_ones_claims() {
     // Two tabs, or a back button: tab 1 proves provider A, tab 2 then submits
-    // provider B. If A's proof survived, `/setup` would show A's claims beside
+    // provider B. If A's proof survived, the wizard would show A's claims beside
     // B's draft, and `setup_finish` would persist provider B with an admin
     // value taken from a token A issued. Proof and draft move together.
     let state = unconfigured_state().await;
@@ -600,17 +711,19 @@ async fn starting_a_new_probe_discards_the_previous_ones_claims() {
 
     // Provider B is unreachable, so the probe never gets far enough to replace
     // the proof itself — which is exactly the case that used to leave A's.
-    let form = serde_urlencoded::to_string([
-        ("public_url", PUBLIC_URL),
-        ("issuer", "http://127.0.0.1:1"),
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
-        ("scopes", "email"),
-        ("roles_claim", "groups"),
-    ])
-    .unwrap();
     let resp = app
-        .serve(post_form("/setup/test", &form, None))
+        .serve(post_json(
+            "/api/v0/setup/test",
+            json!({
+                "public_url": PUBLIC_URL,
+                "issuer": "http://127.0.0.1:1",
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "scopes": ["email"],
+                "roles_claim": "groups",
+            }),
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
@@ -623,13 +736,13 @@ async fn starting_a_new_probe_discards_the_previous_ones_claims() {
         "the previous provider's claims must not survive a new attempt"
     );
     // And the wizard is back on screen 1 rather than showing stale claims.
-    let resp = app.serve(common::req(Method::GET, "/setup")).await.unwrap();
-    let html = body_text(resp).await;
-    assert!(!html.contains("from-provider-a"), "{html}");
-    assert!(
-        html.contains("name=\"issuer\""),
-        "should be back on screen 1"
-    );
+    let resp = app
+        .serve(common::req(Method::GET, "/api/v0/setup/state"))
+        .await
+        .unwrap();
+    let body = json_body(resp).await;
+    assert!(body["proof"].is_null(), "{body}");
+    assert_eq!(body["draft"]["issuer"], "http://127.0.0.1:1", "{body}");
 }
 
 #[tokio::test]
@@ -714,7 +827,7 @@ async fn finishing_without_picking_a_group_is_rejected() {
     let app = service(Arc::new(state.clone()));
 
     let resp = app
-        .serve(post_form("/setup/finish", "", None))
+        .serve(post_json("/api/v0/setup/finish", json!({}), None))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -730,27 +843,37 @@ async fn an_unreachable_provider_does_not_lose_what_was_typed() {
     let app = service(Arc::new(state.clone()));
 
     // Port 1 on loopback: nothing listens, so discovery fails fast.
-    let form = serde_urlencoded::to_string([
-        ("public_url", PUBLIC_URL),
-        ("issuer", "http://127.0.0.1:1"),
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
-        ("scopes", "email"),
-        ("roles_claim", "groups"),
-    ])
-    .unwrap();
     let resp = app
-        .serve(post_form("/setup/test", &form, None))
+        .serve(post_json(
+            "/api/v0/setup/test",
+            json!({
+                "public_url": PUBLIC_URL,
+                "issuer": "http://127.0.0.1:1",
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "scopes": ["email"],
+                "roles_claim": "groups",
+            }),
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
 
-    // Coming back, the form is filled in again — retyping a client secret
-    // because a URL had a typo is exactly the friction this wizard exists to
-    // remove.
-    let resp = app.serve(common::req(Method::GET, "/setup")).await.unwrap();
-    let html = body_text(resp).await;
-    assert!(html.contains("http://127.0.0.1:1"), "{html}");
+    // Coming back, the wizard hands the form its draft again — retyping a
+    // client secret because a URL had a typo is exactly the friction this
+    // wizard exists to remove.
+    let resp = app
+        .serve(common::req(Method::GET, "/api/v0/setup/state"))
+        .await
+        .unwrap();
+    let body = json_body(resp).await;
+    assert_eq!(body["draft"]["issuer"], "http://127.0.0.1:1", "{body}");
+    assert_eq!(body["draft"]["client_id"], CLIENT_ID, "{body}");
+    assert_eq!(
+        body["draft"]["client_secret_set"], true,
+        "a blank secret on the retry keeps the stored one: {body}"
+    );
     assert!(
         !setup::is_completed(&state.db).await.unwrap(),
         "a failed test must not configure anything"
@@ -764,93 +887,4 @@ fn urlencoding_of(value: &str) -> String {
         .unwrap()
         .trim_start_matches("v=")
         .to_string()
-}
-
-/// A probe returns to the wizard it was started from.
-///
-/// Both wizards run in parallel through the migration (the SPA at
-/// `/app/setup`, the server-rendered pages at `/setup`) and share one
-/// `Purpose::Setup` pending row, so the stored `return_to` is the only thing
-/// that distinguishes them. Dispatching the callback to one of them
-/// unconditionally is a real regression, not a redirect cosmetic: the
-/// operator proves a draft in one wizard and lands in the other, which shows
-/// a different (unproven) draft — so the proof they just completed appears to
-/// have vanished. The legacy direction is covered by
-/// `the_wizard_configures_the_gateway_without_a_restart`; this pins the SPA
-/// direction, so neither can be hardcoded again without a red test.
-#[tokio::test]
-async fn a_spa_probe_comes_back_to_the_spa_wizard() {
-    let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
-    let public_key = RsaPublicKey::from(&private_key);
-    let idp = mock_idp(&public_key).await;
-    let issuer = idp.uri();
-
-    let state = unconfigured_state().await;
-    let app = service(Arc::new(state.clone()));
-
-    // Start the probe through the SPA's JSON endpoint — the legacy test starts
-    // the same flow through the form-POST one.
-    let body = json!({
-        "public_url": PUBLIC_URL,
-        "issuer": issuer,
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "scopes": ["email", "profile", "groups"],
-        "roles_claim": "groups",
-    })
-    .to_string();
-    let req = Request::builder()
-        .method(Method::POST)
-        .uri("/api/v0/setup/test")
-        .header("content-type", "application/json")
-        .body(Body::from(body))
-        .unwrap();
-    let resp = app.serve(req).await.unwrap();
-    assert_eq!(
-        resp.status(),
-        StatusCode::OK,
-        "the SPA starts a probe as JSON"
-    );
-
-    let (csrf, nonce, purpose): (String, String, String) =
-        sqlx::query_as("SELECT state, nonce, purpose FROM pending_logins LIMIT 1")
-            .fetch_one(&state.db)
-            .await
-            .unwrap();
-    assert_eq!(purpose, "setup");
-
-    let id_token = sign_id_token(&private_key, &issuer, CLIENT_ID, &nonce);
-    Mock::given(method("POST"))
-        .and(path("/token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "test-access",
-            "id_token": id_token,
-            "token_type": "Bearer",
-            "expires_in": 3600,
-        })))
-        .mount(&idp)
-        .await;
-
-    let req = Request::builder()
-        .method(Method::GET)
-        .uri(format!("/auth/callback?code=test-code&state={csrf}"))
-        .header("cookie", format!("gw_oidc={csrf}"))
-        .body(Body::empty())
-        .unwrap();
-    let resp = app.serve(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        location(&resp),
-        "/app/setup",
-        "a probe started in the SPA wizard must land back in the SPA wizard"
-    );
-
-    // Same invariant as the legacy probe: proving a provider authorises nobody.
-    assert!(
-        users::find_by_id(&state.db, SUBJECT)
-            .await
-            .unwrap()
-            .is_none(),
-        "a probe must not create a user"
-    );
 }

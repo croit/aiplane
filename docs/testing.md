@@ -8,8 +8,10 @@
 |---|---|---|
 | **Unit** | `#[cfg(test)] mod tests` next to the code | Pure functions, parsers, picker strategies, config validation |
 | **Integration (in-process)** | `crates/gateway/tests/` | Build a `RamaState` against an in-memory SQLite + wiremock upstreams, then call `router(state).serve(req)` directly — no socket binding, since `rama`'s service is a plain async function. Shared setup lives in `tests/common/mod.rs`. |
-| **Integration (mocked upstreams)** | `crates/gateway/tests/` | `wiremock` instances stand in for LLM backends; verify routing, the tool-call loop, streaming, the full OIDC login flow (`oidc_integration.rs`), and the datastar SSE wire shape. |
-| **E2E (browser ↔ gateway)** | `e2e/*.test.mjs` | Playwright + Node's `node:test` against a running `mise run dev`. Anonymous page flows, authenticated flows (sessions seeded via the debug-only `/__dev/*` endpoints), the SvelteKit SPA at `/app`, and plain-`fetch` checks of the public HTTP surface. See `e2e/README.md`. |
+| **Integration (mocked upstreams)** | `crates/gateway/tests/` | `wiremock` instances stand in for LLM backends; verify routing, the tool-call loop, streaming, the full OIDC login flow (`oidc_integration.rs`), and the JSON-SSE chat event wire (`chat_json_api.rs`). |
+| **Contract drift** | `crates/gateway/tests/it/` | Guards that fail when two hand-maintained sources disagree: `openapi_drift.rs` (`docs/openapi.json` ↔ the `/api/v0` routes in `router.rs`, both directions), `readme_routes.rs` (the README's HTTP-endpoints table ↔ `router.rs`), `spa_routes.rs` (the SPA catch-all is registered and reaches the SPA handler). |
+| **SPA unit** | `web/src/lib/*.test.ts` | `mise run test-web` — Node's own `node --test` with type stripping, no jsdom. Covers the framework-free halves of the SPA (the chat event fold in `chat-protocol.ts`, markdown rendering), which is what pins client-side wire behaviour. |
+| **E2E (browser ↔ gateway)** | `e2e/*.test.mjs` | Playwright + Node's `node:test` against a running `mise run dev`. The SPA suites are `e2e/spa*.test.mjs` (shell boot, signed-out OIDC redirect, signed-in identity, tokens, admin, a full chat turn streaming in); the rest cover the anonymous sign-in funnel and plain-`fetch` checks of the public HTTP surface. See `e2e/README.md`. |
 
 ## Style: test-first, Chicago / Classicist
 
@@ -28,9 +30,11 @@ Write the test before the code — red, green, refactor (**TDD**). Tests are **s
     - Returns 401 without a bearer / session.
     - Returns 403 when the route is RBAC-gated and the caller isn't authorized (e.g. a non-admin hitting an admin route via `require_admin_or_403`).
     - Returns the documented success shape.
+- New `/api/v0` route → also an entry in `docs/openapi.json` (`openapi_drift` fails otherwise) and a `mise run gen-api-client` run so `web/src/lib/schema.d.ts` matches.
 - New tool → test that invokes it via the registry (with a mocked upstream that fakes a `tool_calls` response).
 - Schema change → round-trip serde test (`from_json(to_json(v)) == v` for a representative fixture).
-- New UI string → a Fluent key in `locales/en/<module>.ftl` **and** its translation in all 5 other locales (`de`/`fr`/`es`/`ru`/`zh`) — not a checklist item you can skip: `session-core/build.rs` won't let the crate compile otherwise. See [`docs/ui.md`](ui.md#i18n--every-user-facing-string-must-be-translated).
+- New chat event or a change to one → a case in `web/src/lib/chat-protocol.test.ts`. The fold is deliberately framework-free so this needs no browser; wire behaviour that can only be checked through a browser is wire behaviour nobody checks.
+- New **server-rendered** string (error envelopes, the chat-render helpers) → a Fluent key in `locales/en/<module>.ftl` **and** its translation in all 5 other locales (`de`/`fr`/`es`/`ru`/`zh`) — not a checklist item you can skip: `session-core/build.rs` won't let the crate compile otherwise. The SPA's own strings have no translation layer yet. See [`docs/ui.md`](ui.md#i18n--what-still-applies).
 
 If a change has no tests, the PR description must explain why and which existing test covers it.
 
@@ -42,23 +46,26 @@ CI (`.github/workflows/ci.yml`) runs a single command:
 mise run ci
 ```
 
-`mise run ci` fans out through mise's task DAG to **lint + test + release build**:
+`mise run ci` fans out through mise's task DAG to **lint + tests + release build + SPA build**:
 
-- `mise run lint` → `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `tsc --noEmit`.
-- `mise run test` → `cargo test --workspace`.
+- `mise run lint` → `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `check-web` (svelte-check).
+- `mise run test` → `cargo nextest run --workspace`.
+- `mise run test-web` → `node --test` over the SPA's unit tests.
 - `mise run build` → the release gateway binary.
+- `mise run build-web` → the SPA into `target/frontend/build/`.
 
-Each of those transitively builds the CSS/JS asset bundles first, so a fresh checkout works without manual steps. The same job then builds the `sandbox-runner` binary and uploads both as artifacts; downstream jobs build the container images.
+The Rust and SPA halves build independently — `cargo` needs no Node and the SPA build needs no `cargo` — so a fresh checkout works without manual steps either way. The same job then builds the `sandbox-runner` binary and uploads the binaries and the SPA as artifacts; downstream jobs build the container images.
 
 The version-controlled pre-push git hook (`.githooks/pre-push`, enabled with `mise run setup-hooks`) mirrors CI's lint + test locally so breakage is caught before a push triggers CI. It skips the release build — a compile error surfaces in the test step anyway. Bypass a WIP push with `git push --no-verify`.
 
 ## E2E browser tests (`e2e/`)
 
 - Driver: Node's built-in `node:test` + Playwright. No project-level `node_modules` — the tests import `playwright` directly out of the mise-installed `npm:@playwright/cli` tool, with the path overridable via `$PLAYWRIGHT_DIR`.
-- Run with `mise run e2e` against a live `mise run dev` in another terminal. The task points `PLAYWRIGHT_DIR` at the mise-installed `npm:@playwright/cli` automatically. See `e2e/README.md` for first-time setup (shared libs + a one-time Chromium download).
+- Run with `mise run e2e` against a live `mise run dev` in another terminal — which is also what deploys the SPA (`GATEWAY_STATIC_DIR`), so the `spa*` suites have a shell to boot. An undeployed SPA answers 503 and those tests say so rather than failing obscurely. The task points `PLAYWRIGHT_DIR` at the mise-installed `npm:@playwright/cli` automatically. See `e2e/README.md` for first-time setup (shared libs + a one-time Chromium download).
+- `e2e/spa-chat.test.mjs` needs a gateway with a chat upstream, so it targets `dev-ui` (`GATEWAY_STATIC_DIR=target/frontend/build mise run dev-ui`) and skips with a pointer at that command when no pool is configured.
 - `GATEWAY_URL` (default `http://localhost:8080`) targets a specific gateway; `CHROMIUM_HEADED=1` shows the browser instead of running headless.
 - **Not part of the CI default** — the browser suite needs a running gateway and Chromium, so it stays a local/opt-in loop.
-- Authenticated flows (`e2e/authed.test.mjs`, the SPA's signed-in test) don't need OIDC: they sign in through the debug-only `/__dev/*` seeding endpoints (`rama_server::dev_seed`), compiled in under `cfg(debug_assertions)` and never present in a release build. `/__dev/seed-session` resets the canonical fixture (user `alice@example.com` + her three tokens) and is reserved for the one file that asserts those counts; everything else uses the delete-free `/__dev/session`. Completing setup is also how the suite makes `/readyz` deterministic on a fresh dev database.
+- Authenticated flows (`e2e/authed.test.mjs`, the `spa*` signed-in tests) don't need OIDC: they sign in through the debug-only `/__dev/*` seeding endpoints (`rama_server::dev_seed`), compiled in under `cfg(debug_assertions)` and never present in a release build. `/__dev/seed-session` resets the canonical fixture (user `alice@example.com` + her three tokens) and is reserved for the one file that asserts those counts; everything else uses the delete-free `/__dev/session`. Completing setup is also how the suite makes `/readyz` deterministic on a fresh dev database.
 
 ## Performance / load tests
 

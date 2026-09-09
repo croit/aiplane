@@ -42,7 +42,16 @@
 
 	async function refresh() {
 		try {
-			const res = await fetch('/api/v0/setup/state', { headers: { accept: 'application/json' } });
+			// A reopened wizard (`restore-setup` on the host) is token-gated: the
+			// operator arrives at `/setup?claim=<one-time token>`. Forward it on
+			// the first read — the response sets the `gw_setup` cookie that
+			// carries the claim through the rest of the run, so it only has to
+			// ride on this one request. A first run has no token and needs none.
+			const claim = new URLSearchParams(location.search).get('claim');
+			const url = claim
+				? `/api/v0/setup/state?claim=${encodeURIComponent(claim)}`
+				: '/api/v0/setup/state';
+			const res = await fetch(url, { headers: { accept: 'application/json' } });
 			const body = await res.json();
 			if (!res.ok) throw new Error(body?.error?.message ?? res.statusText);
 			wiz = body;

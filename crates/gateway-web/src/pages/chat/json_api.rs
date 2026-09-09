@@ -435,7 +435,7 @@ pub async fn session_cancel(
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
-    let cancelled = session_core::chat::cancel_turn(&state.chats, &user.id, &session_id);
+    let cancelled = session_core::chat_json::cancel_turn(&state.chats, &user.id, &session_id);
     ok_json(StatusCode::OK, json!({ "cancelled": cancelled }))
 }
 
@@ -1597,6 +1597,59 @@ pub async fn owner_token_quota(
             &err.to_string(),
         ),
     }
+}
+
+/// DELETE /api/v0/tokens/{id}/quota/{rule_id} — drop one of the owner's own
+/// quota rules.
+///
+/// Scoped to owner-managed rules by `delete_owner_rule`: the rule id comes
+/// from the client, so a plain delete-by-id would let an owner remove an
+/// operator's cap (or a global rule) by naming it. An admin-managed rule
+/// therefore reads as "not found" here, exactly as the form handler behaved.
+pub async fn owner_token_quota_delete(
+    Path(TokenRulePath {
+        id: token_id,
+        rule_id,
+    }): Path<TokenRulePath>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    use gateway_core::server::db::limits;
+
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    match gateway_core::server::db::tokens::find_by_id(&state.db, &token_id).await {
+        Ok(Some(t)) if t.user_id == user.id => {}
+        Ok(_) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such token"),
+        Err(err) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &err.to_string(),
+            );
+        }
+    }
+    match limits::delete_owner_rule(&state.db, &token_id, &rule_id).await {
+        Ok(true) => ok_json(StatusCode::OK, serde_json::json!({ "deleted": true })),
+        Ok(false) => json_error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such quota rule on this token",
+        ),
+        Err(err) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        ),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct TokenRulePath {
+    pub id: String,
+    pub rule_id: String,
 }
 
 #[derive(serde::Deserialize)]

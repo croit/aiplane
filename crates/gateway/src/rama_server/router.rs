@@ -1,26 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! Top-level rama Router. Mirrors the axum router shape in
-//! `gateway_core::server::api::router` — same paths, same methods — but rebuilt
-//! against rama's `web::Router` and handler model.
+//! Top-level rama Router.
 //!
-//! Three groups of routes wired below:
-//!   - **Static + pages**: `/assets/*`, `/`, `/login`, `/tokens`,
-//!     `/chat`, `/theme/toggle` — server-rendered HTML via plait +
-//!     daisyUI, with SSE patches (`datastar-patch-elements`) for
-//!     in-page nav and CRUD.
-//!   - **OpenAI-compatible proxy**: `/v1/models`,
-//!     `/v1/chat/completions`, `/v1/audio/transcriptions`,
-//!     `/v1/embeddings`, `/v1/images/generations` — token-
-//!     authenticated, forwarded to the upstream pool selected by
-//!     model.
-//!   - **Anthropic-compatible proxy**: `/v1/messages` — the same
-//!     pipeline behind the Messages API wire format, so Claude Code
-//!     and other Anthropic-format clients can be pointed here.
-//!   - **Auth + session API**: `/auth/*` (OIDC + CLI device flow) and
-//!     `/api/v0/*` (session-scoped token CRUD + transcription used by
-//!     the chat composer).
+//! Route groups, in the order they are registered — which is the order this
+//! router matches in, so the SPA catch-all must stay last:
+//!   - **Non-UI survivors**: the two public `/hooks` triggers (the URL is the
+//!     credential) and the OAuth round-trips, whose redirect URIs are
+//!     registered with external providers and so cannot move.
+//!   - **OpenAI-compatible proxy**: `/v1/models`, `/v1/chat/completions`,
+//!     `/v1/audio/*`, `/v1/embeddings`, `/v1/images/*` — bearer-authenticated,
+//!     forwarded to the upstream pool selected by model.
+//!   - **Anthropic-compatible proxy**: `/v1/messages` — the same pipeline
+//!     behind the Messages API wire format, so Claude Code and other
+//!     Anthropic-format clients can be pointed here.
+//!   - **Auth + session API**: `/auth/*` (the OIDC browser flow) and
+//!     `/api/v0/*`, the JSON surface the SvelteKit SPA is built on.
+//!   - **The SPA itself**: every other path, served from disk by
+//!     [`spa`], with `index.html` as the history fallback.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -45,7 +42,6 @@ use crate::rama_server::{
     api, comfyui_api, messages, oidc_handlers, pages, proxy, rag_api, sandbox_api, spa,
 };
 use gateway_core::rama_server::cors::V1CorsLayer;
-use session_core::assets;
 
 /// Builds the rama router. State is shared via `Arc` since handlers
 /// borrow it immutably.
@@ -66,260 +62,29 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
                 )
             }
         })
-        // Static asset bundles, baked in via include_bytes.
-        .with_get("/assets/app.css", assets::app_css)
-        .with_get("/assets/datastar.js", assets::datastar_js)
-        .with_get("/assets/app.js", assets::app_js)
-        .with_get("/assets/pcm-recorder.js", assets::pcm_recorder_js)
-        // PWA installability: manifest, service worker, favicon, icons.
-        // All public (no session check) — the SW needs root-scope
-        // access and the manifest/icons are referenced from `<head>`
-        // before any auth redirect.
-        .with_get("/manifest.webmanifest", assets::manifest_webmanifest)
-        .with_get("/sw.js", assets::sw_js)
-        .with_get("/favicon.ico", assets::favicon)
-        .with_get("/icons/{*name}", assets::icon)
-        // Page handlers — server-rendered HTML, plait + daisyUI.
-        // `/` is the chat surface: a plain navigation 303s into the
-        // latest (or a fresh) `/chat/{id}`; a Datastar nav renders chat
-        // in place. There is no separate dashboard landing page — the
-        // old identity card moved into /tokens.
-        .with_get("/", pages::chat_index)
-        .with_get("/login", pages::login)
-        // Deployment setup wizard. Un-gated by design on a first run (there is
-        // no account to authenticate against yet); once setup has completed
-        // these 404 unless `restore-setup` opened a recovery window, which the
-        // handlers check for themselves. See `pages::setup`.
-        .with_get("/setup", pages::setup_index)
-        .with_post("/setup/test", pages::setup_test)
-        .with_post("/setup/restart", pages::setup_restart)
-        .with_post("/setup/finish", pages::setup_finish)
-        .with_get("/tokens", pages::tokens_index)
-        .with_post("/tokens", pages::tokens_create)
-        .with_post("/tokens/{id}/revoke", pages::tokens_revoke)
-        .with_post("/tokens/{id}/rotate", pages::tokens_rotate)
-        .with_post("/tokens/{id}/delete", pages::tokens_delete)
-        .with_post("/tokens/{id}/tools/master", pages::tokens_tools_master)
-        .with_post("/tokens/{id}/tools/toggle", pages::tokens_tools_toggle)
-        .with_post("/tokens/{id}/mcp-policy", pages::tokens_mcp_policy)
-        .with_post("/tokens/{id}/models", pages::tokens_models)
-        // `/limits/delete` before `/limits` would be harmless here (they are
-        // distinct static paths, not a param overlap), but registration order
-        // is how this router disambiguates — keep the more specific first.
-        .with_post("/tokens/{id}/limits/delete", pages::tokens_limits_delete)
-        .with_post("/tokens/{id}/limits", pages::tokens_limits_add)
-        .with_get("/tools", pages::tools_index)
-        .with_post("/tools/toggle", pages::tools_toggle)
-        .with_get("/memory", pages::memory_index)
-        .with_post("/memory", pages::memory_create)
-        .with_post("/memory/{id}/edit", pages::memory_edit)
-        .with_post("/memory/{id}/delete", pages::memory_delete)
-        .with_get("/usage", pages::usage_index)
-        // Feedback widget (JSON endpoints; the FAB + dialog are chrome).
-        .with_get("/feedback/config", pages::feedback_config)
-        .with_post("/feedback/extract", pages::feedback_extract)
-        .with_post("/feedback", pages::feedback_submit)
-        .with_get("/scheduled", pages::scheduled_index)
-        .with_post("/scheduled", pages::scheduled_create)
-        .with_post("/scheduled/preview", pages::scheduled_preview)
-        .with_get("/scheduled/{id}/edit", pages::scheduled_edit_form)
-        .with_post("/scheduled/{id}", pages::scheduled_update)
-        .with_post("/scheduled/{id}/toggle", pages::scheduled_toggle)
-        .with_post("/scheduled/{id}/delete", pages::scheduled_delete)
-        // Webhooks: per-user prompts fired by an inbound HTTP call. The
-        // management pages are session-gated; the public trigger
-        // `/hooks/{secret}` authenticates by the secret in the URL.
-        // Unauthenticated by design: the token in the URL is the credential.
-        // Points a file host's webhook at one RAG collection's re-sync.
+        // --- Non-UI routes that outlived the server-rendered pages --------
+        //
+        // The SPA replaced every page, but these four are not a UI: two are
+        // public triggers whose credential is the URL itself, and two are
+        // OAuth round-trips whose redirect URI is registered with an external
+        // provider, so the path is not ours to change.
+        // Public trigger for one RAG collection's re-sync. Point a file
+        // host's webhook (Nextcloud's `webhook_listeners`, or a cron line) at
+        // it. Unauthenticated by design: the token in the URL is the
+        // credential.
         .with_post("/hooks/rag/{token}", pages::rag_sync_hook)
-        .with_get("/webhooks", pages::webhooks_index)
-        .with_post("/webhooks", pages::webhooks_create)
-        .with_get("/webhooks/{id}/edit", pages::webhooks_edit_form)
-        .with_get("/webhooks/{id}/runs", pages::webhooks_runs)
-        .with_get("/webhooks/{id}/rerun", pages::webhooks_rerun_form)
-        .with_post("/webhooks/{id}/rerun", pages::webhooks_rerun)
-        .with_post("/webhooks/{id}", pages::webhooks_update)
-        .with_post("/webhooks/{id}/toggle", pages::webhooks_toggle)
-        .with_post("/webhooks/{id}/rotate", pages::webhooks_rotate)
-        .with_post("/webhooks/{id}/delete", pages::webhooks_delete)
-        // Public trigger (no session; the secret is the credential). Accepts
-        // GET and POST so simple senders and JSON POSTers both work.
+        // Public webhook trigger. GET and POST so simple senders and JSON
+        // POSTers both work; the secret in the URL is the credential.
         .with_get("/hooks/{secret}", pages::webhook_trigger)
         .with_post("/hooks/{secret}", pages::webhook_trigger)
-        .with_get("/integrations", pages::integrations_index)
-        .with_get("/integrations/callback", pages::integrations_callback)
-        .with_post("/integrations/{key}/connect", pages::integrations_connect)
-        .with_post(
-            "/integrations/{key}/token",
-            pages::integrations_connect_token,
-        )
-        .with_post("/integrations/{key}/retry", pages::integrations_retry)
-        .with_post(
-            "/integrations/{key}/disconnect",
-            pages::integrations_disconnect,
-        )
-        .with_post(
-            "/integrations/{key}/tools/mode",
-            pages::integrations_tool_mode,
-        )
-        .with_post(
-            "/integrations/{key}/tools/all",
-            pages::integrations_tools_all,
-        )
-        .with_get("/chat", pages::chat_index)
-        // `/chat/search` MUST precede `/chat/{id}` — rama matches routes in
-        // registration order, so the `{id}` param would otherwise capture
-        // "search" and hand it to `chat_session_view` (a 303 to /chat).
-        .with_get("/chat/search", pages::chat_search)
-        .with_get("/chat/{id}", pages::chat_session_view)
-        .with_post("/chat/sessions", pages::chat_session_create)
-        .with_post("/chat/{id}/messages", pages::chat_message_send)
-        .with_get("/chat/{id}/tail", pages::chat_tail)
-        .with_get(
-            "/chat/{id}/turns/{turn_id}/thinking",
-            pages::chat_turn_thinking,
-        )
-        .with_get("/chat/{id}/document/{doc_id}", pages::chat_document_view)
-        .with_post(
-            "/chat/{id}/document/{doc_id}/edit",
-            pages::chat_document_edit,
-        )
-        .with_post("/chat/{id}/cancel", pages::chat_cancel)
-        .with_post("/chat/{id}/turns/{turn_id}/retry", pages::chat_retry)
-        .with_post("/chat/{id}/turns/{turn_id}/edit", pages::chat_edit)
-        .with_post(
-            "/chat/{id}/turns/{turn_id}/attachment/{filename}/remove",
-            pages::chat_attachment_remove,
-        )
-        .with_post("/chat/{id}/delete", pages::chat_session_delete)
-        .with_post("/chat/{id}/share", pages::chat_share_toggle)
-        .with_post("/chat/{id}/pin", pages::chat_session_pin)
-        .with_post("/chat/{id}/capabilities", pages::chat_capabilities_toggle)
-        .with_post("/chat/{id}/effort", pages::chat_effort_set)
-        .with_post("/chat/{id}/fork", pages::chat_fork)
-        .with_get("/chat/{id}/export.md", pages::chat_export_markdown)
-        .with_get("/chat/{id}/export.pdf", pages::chat_export_pdf)
-        .with_get(
-            "/chat/attachment/{turn_id}/{filename}",
-            pages::chat_attachment,
-        )
-        // `/admin/models/save` + `/admin/models/defaults` + `/admin/models/clear`
-        // MUST precede the `/admin/models` GET only in that they don't overlap;
-        // registration order is fine since these are distinct static paths.
-        .with_get("/admin/models", pages::admin_models_index)
-        .with_post("/admin/models/save", pages::admin_models_save)
-        .with_post("/admin/models/clear", pages::admin_models_clear)
-        .with_post("/admin/models/defaults", pages::admin_models_defaults_save)
-        .with_post("/admin/models/search", pages::admin_models_search_save)
-        .with_post("/admin/upstreams/reload", pages::admin_upstreams_reload)
-        // Operator settings: the twelve config blocks that moved out of
-        // gateway.toml and into the database.
-        .with_get("/admin/settings", pages::settings_index)
-        .with_post("/admin/settings", pages::settings_save)
-        .with_post("/admin/settings/clear", pages::settings_clear)
-        .with_get("/admin/limits", pages::admin_limits_index)
-        .with_post("/admin/limits", pages::admin_limits_save)
-        .with_post("/admin/limits/delete", pages::admin_limits_delete)
-        // Merged pools + backends page. The old `/admin/backends` and
-        // `/admin/pools` GET routes 302-redirect here; the CRUD POST endpoints
-        // keep their paths (the ids ride in the body, not the URL).
-        .with_get("/admin/upstreams", pages::admin_upstreams_index)
-        // Long-lived SSE feeding the page's per-backend status blocks. Static
-        // path registered before the page's own routes (rama matches in
-        // registration order).
-        .with_get("/admin/upstreams/live", pages::admin_upstreams_live)
-        .with_get("/admin/backends", pages::admin_backends_redirect)
-        .with_post("/admin/backends/save", pages::admin_backends_save)
-        .with_post("/admin/backends/delete", pages::admin_backends_delete)
-        // Maintenance switch. Separate from `/save` because it takes effect on
-        // the live registry immediately, with no "Apply changes" step.
-        .with_post("/admin/backends/enabled", pages::admin_backends_enabled)
-        // Reachability + credential + model-discovery check against the values
-        // currently in the editor. Writes nothing.
-        .with_post("/admin/backends/test", pages::admin_backends_test)
-        .with_get("/admin/pools", pages::admin_pools_redirect)
-        .with_post("/admin/pools/save", pages::admin_pools_save)
-        .with_post("/admin/pools/delete", pages::admin_pools_delete)
-        .with_post("/admin/pools/fallback", pages::admin_pools_fallback_save)
-        .with_get("/admin/tokens", pages::admin_tokens_index)
-        .with_post("/admin/tokens/{id}/models", pages::admin_tokens_models)
-        .with_get("/admin/users", pages::admin_users_index)
-        // Target id rides in the POST body (not the path) — rama lowercases
-        // path segments, which would mangle case-sensitive OIDC subjects.
-        .with_post("/admin/users/impersonate", pages::users_impersonate)
-        .with_post("/impersonate/stop", pages::impersonate_stop)
-        .with_get("/admin/groups", pages::admin_groups_index)
-        .with_post("/admin/groups/save", pages::admin_groups_save)
-        .with_post("/admin/groups/delete", pages::admin_groups_delete)
-        .with_get("/admin/connectors", pages::admin_connectors_index)
-        .with_post("/admin/connectors", pages::admin_connectors_save)
-        .with_post(
-            "/admin/connectors/restore-defaults",
-            pages::admin_connectors_restore,
-        )
-        .with_post(
-            "/admin/connectors/{key}/toggle",
-            pages::admin_connectors_toggle,
-        )
-        .with_post(
-            "/admin/connectors/{key}/delete",
-            pages::admin_connectors_delete,
-        )
-        .with_get(
-            "/admin/connectors/{key}/audit",
-            pages::admin_connectors_audit,
-        )
-        .with_get("/admin/skills", pages::admin_skills_index)
-        .with_get("/admin/skills/download", pages::admin_skills_download)
-        .with_post("/admin/skills/upload", pages::admin_skills_upload)
-        .with_post("/admin/skills/delete", pages::admin_skills_delete)
-        .with_post("/admin/skills/grants", pages::admin_skills_grants_save)
-        .with_get("/admin/comfyui", pages::admin_comfyui_index)
-        .with_post("/admin/comfyui/reload", pages::admin_comfyui_reload)
-        // Per-user private skills (signed-in-user gate, not admin). Distinct
-        // from the /admin/skills operator surface above.
-        .with_get("/skills", pages::user_skills_index)
-        .with_get("/skills/download", pages::user_skills_download)
-        .with_post("/skills/upload", pages::user_skills_upload)
-        .with_post("/skills/save", pages::user_skills_save)
-        .with_post("/skills/delete", pages::user_skills_delete)
-        .with_get("/rag", pages::rag_index)
-        .with_get("/rag/status", pages::rag_status)
-        // Static before {id}: rama matches in registration order, so
-        // `/rag/oauth/callback` must be claimed before `/rag/{id}/...`.
-        .with_get("/rag/oauth/callback", pages::rag_oauth_callback)
+        // RAG source OAuth: `connect` sends the operator to the provider,
+        // `callback` is the redirect URI they registered there.
         .with_get("/rag/{id}/connect", pages::rag_connect)
-        .with_post("/rag", pages::rag_create)
-        .with_post("/rag/test-source", pages::rag_test_source)
-        .with_post("/rag/{id}/sync-token", pages::rag_sync_token)
-        .with_post("/rag/{id}/sync-token/clear", pages::rag_sync_token_clear)
-        // Static paths before the `{id}` routes: rama matches in
-        // registration order, so `/rag/profiles` must be claimed before
-        // anything that could capture `profiles` as an id.
-        .with_get("/rag/profiles", pages::profiles_index)
-        .with_post("/rag/profiles", pages::profile_create)
-        .with_post("/rag/profiles/{id}/update", pages::profile_update)
-        .with_post("/rag/profiles/{id}/delete", pages::profile_delete)
-        .with_post("/rag/{id}/reindex", pages::rag_reindex)
-        .with_post("/rag/{id}/delete", pages::rag_delete)
-        .with_post("/rag/{id}/edit-form", pages::rag_edit_form)
-        .with_post("/rag/{id}/cancel-edit", pages::rag_cancel_edit)
-        .with_post("/rag/{id}/update", pages::rag_update)
-        .with_post("/rag/{id}/refs", pages::rag_add_ref)
-        .with_post("/rag/{id}/refs/bulk", pages::rag_add_sources_bulk)
-        .with_post("/rag/refs/{ref_id}/reindex", pages::rag_ref_reindex)
-        .with_post("/rag/refs/{ref_id}/primary", pages::rag_ref_set_primary)
-        .with_post("/rag/refs/{ref_id}/delete", pages::rag_ref_delete)
-        .with_post("/rag/refs/{ref_id}/edit-form", pages::rag_ref_edit_form)
-        .with_post("/rag/refs/{ref_id}/cancel-edit", pages::rag_ref_cancel_edit)
-        .with_post("/rag/refs/{ref_id}/update", pages::rag_ref_update)
-        .with_get("/rag/refs/{ref_id}/log", pages::rag_ref_log)
-        .with_post("/theme/toggle", session_core::chrome::theme_toggle)
-        .with_post(
-            "/nav/toggle/{section}",
-            session_core::chrome::nav_sections_toggle,
-        )
-        .with_post("/lang", session_core::chrome::lang_set)
+        .with_get("/rag/oauth/callback", pages::rag_oauth_callback)
+        // Per-user MCP connector OAuth, same shape.
+        .with_post("/integrations/{key}/connect", pages::integrations_connect)
+        .with_post("/integrations/{key}/retry", pages::integrations_retry)
+        .with_get("/integrations/callback", pages::integrations_callback)
         .with_get("/v1/models", proxy::list_models)
         // Catch-all param: model ids contain `/` (e.g.
         // `mistralai/Voxtral-Mini-4B-Realtime-2602`).
@@ -369,6 +134,17 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             api::location_feedback,
         )
         .with_post("/api/v0/me/ask/feedback/{turn_id}", api::ask_feedback)
+        // Chat attachment bytes. Under /api/v0 like everything else the SPA
+        // calls; the filename keeps its case (the handler reads the raw URI).
+        .with_get(
+            "/api/v0/chat/attachment/{turn_id}/{filename}",
+            pages::chat_attachment,
+        )
+        // Feedback widget: report a problem, and the config that tells the SPA
+        // whether it is wired up at all.
+        .with_get("/api/v0/feedback/config", pages::feedback_config)
+        .with_post("/api/v0/feedback/extract", pages::feedback_extract)
+        .with_post("/api/v0/feedback", pages::feedback_submit)
         .with_get("/api/v0/rag/providers", rag_api::list_providers)
         .with_post("/api/v0/rag/test-source", rag_api::test_source)
         .with_get("/api/v0/rag/profiles", rag_api::list_profiles)
@@ -665,6 +441,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/tokens/{id}/mcp-policy",
             pages::chat::json_api::owner_token_mcp_policy,
         )
+        .with_delete(
+            "/api/v0/tokens/{id}/quota/{rule_id}",
+            pages::chat::json_api::owner_token_quota_delete,
+        )
         .with_get(
             "/api/v0/chat/sessions/{id}/export.md",
             pages::chat::json_api::session_export_markdown,
@@ -712,20 +492,16 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         .with_get("/__dev/seed-session", dev_seed::reset)
         .with_get("/__dev/session", dev_seed::sign_in);
     router
-        // Static SPA (SvelteKit `adapter-static` build) served from disk.
-        // MUST be the LAST routes: they sit under the `/app` prefix (which
-        // collides with nothing) and the `{*name}` form is a catch-all, so
-        // rama's registration-order matching requires they come after every
-        // other route. They coexist with the server-rendered pages (which own
-        // `/`, `/chat`, `/tokens`, …) during migration — see
-        // `rama_server::spa`.
-        // Two registrations: `/app` (the entry point) and the catch-all
-        // `/app/{*name}` (non-empty remainder) are distinct shapes for the
-        // matcher. The trailing-slash form `/app/` cannot be registered (the
-        // matcher trims trailing slashes on insert but not on lookup) —
-        // `spa::SpaNormalizeLayer` normalises it to `/app` before routing.
-        .with_get("/app", spa::spa_get)
-        .with_get("/app/{*name}", spa::spa_get)
+        // The SPA owns the root now that the server-rendered pages are gone.
+        //
+        // MUST be the LAST routes: `{*name}` is a catch-all, and this router
+        // matches in registration order, so anything registered after it would
+        // be unreachable. Two registrations because they are distinct shapes
+        // to the matcher: `/` (the entry point) and everything below it. Every
+        // path that is not a real file falls back to `index.html` so the
+        // client router can resolve it — see `rama_server::spa`.
+        .with_get("/", spa::spa_get)
+        .with_get("/{*name}", spa::spa_get)
 }
 
 /// The complete HTTP service: the router plus the layers that make it
@@ -759,13 +535,6 @@ pub fn service(
     (
         V1CorsLayer,
         first_run,
-        // Rewrites `/app/` → `/app` before the router looks the path up (the
-        // matcher trims a trailing slash on insert but not on lookup, so a
-        // literal `/app/` never matches). Sits *outside* the error handler:
-        // the handler requires `Error: Into<ErrorResponse>`, which an
-        // infallible service does not satisfy, and the rewrite only needs to
-        // run before route lookup — which happens at the router itself.
-        spa::SpaNormalizeLayer,
         ArcLayer::new(),
         ErrorHandlerLayer::default(),
     )

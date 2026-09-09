@@ -12,8 +12,8 @@ let cookie;
 
 before(async () => {
     assert.ok(await gatewayIsUp(), `gateway is not reachable at ${BASE}`);
-    const probe = await fetch(`${BASE}/app`);
-    assert.equal(probe.status, 200, "the SPA is not served at /app");
+    const probe = await fetch(`${BASE}/`);
+    assert.equal(probe.status, 200, "the SPA is not served at the root");
     browser = await launchBrowser();
     // The admin views need an ADMIN session. Prefer GATEWAY_SESSION_COOKIE
     // (an operator cookie); fall back to the dev fixture user, which is only
@@ -51,7 +51,7 @@ test("the admin layout renders its section nav", async () => {
     const ctx = await browser.newContext();
     await ctx.addCookies([{ name: "id", value: cookie, url: BASE }]);
     const page = await ctx.newPage();
-    await page.goto(`${BASE}/app/admin/groups`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE}/admin/groups`, { waitUntil: "networkidle" });
     await page.waitForSelector("text=Groups", { timeout: 5000 });
     // The nav is the VERTICAL sidebar (root layout) with active highlighting:
     for (const label of ["Users", "Models", "Limits", "Settings", "Tokens", "Upstreams"]) {

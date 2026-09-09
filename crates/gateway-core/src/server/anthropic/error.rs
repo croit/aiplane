@@ -74,7 +74,7 @@ fn upstream_message(body: &[u8]) -> Option<String> {
         // `detail` is sometimes a list of validation errors rather than a
         // string; relaying its JSON keeps the wording the upstream chose.
         if let Some(detail) = v.pointer("/detail").filter(|d| !d.is_null()) {
-            return Some(session_core::render::truncate_chars(
+            return Some(session_core::text::truncate_chars(
                 &detail.to_string(),
                 MAX_RELAYED_BODY,
             ));
@@ -82,7 +82,7 @@ fn upstream_message(body: &[u8]) -> Option<String> {
     }
     let text = String::from_utf8_lossy(body);
     let trimmed = text.trim();
-    (!trimmed.is_empty()).then(|| session_core::render::truncate_chars(trimmed, MAX_RELAYED_BODY))
+    (!trimmed.is_empty()).then(|| session_core::text::truncate_chars(trimmed, MAX_RELAYED_BODY))
 }
 
 #[cfg(test)]

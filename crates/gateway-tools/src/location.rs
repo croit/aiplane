@@ -146,7 +146,7 @@ fn precise_payload(lat: f64, lon: f64, accuracy: Option<f64>) -> Value {
 /// `None` on decline / timeout / no-one-watching — caller falls back to
 /// GeoIP. Always tears the prompt back down before returning.
 async fn request_browser_location(fb: &ChatFeedback, turn_id: &str) -> Option<BrowserFix> {
-    use session_core::workers::TurnUpdate;
+    use session_core::workers::{ToolPrompt, ToolPromptEvent, ToolPromptKind, TurnUpdate};
 
     // Fast path: with no live SSE subscriber nobody can answer, so don't
     // prompt. Best-effort only — the stream could still drop right after
@@ -171,28 +171,26 @@ async fn request_browser_location(fb: &ChatFeedback, turn_id: &str) -> Option<Br
     // the suppressed token-by-token autoscroll; `center` keeps it clear of
     // the floating composer). Both SSE events ride in a single `Inject`
     // frame so the append and scroll arrive — and apply — atomically.
-    let card = prompt_card_html(turn_id);
-    let mut frame =
-        session_core::chrome::sse_patch(Some("#conversation"), Some("append"), &card).to_vec();
-    let scroll = session_core::chrome::sse_script(&format!(
-        "document.getElementById('geo-prompt-{turn_id}')\
-         ?.scrollIntoView({{block:'center',behavior:'smooth'}});"
-    ));
-    frame.extend_from_slice(&scroll);
-    let _ = fb
-        .broadcast
-        .send(TurnUpdate::Inject(std::sync::Arc::new(frame.into())));
+    let _ = fb.broadcast.send(TurnUpdate::Prompt(std::sync::Arc::new(
+        ToolPromptEvent::Show(ToolPrompt {
+            turn_id: turn_id.to_string(),
+            kind: ToolPromptKind::Location,
+            question: PROMPT_QUESTION.to_string(),
+            options: Vec::new(),
+            header: None,
+            multi_select: false,
+        }),
+    )));
 
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(WAIT_SECS), rx).await;
 
-    // Tear the prompt down regardless of how the wait ended (the client
-    // also removes it on click — this covers the timeout case).
-    let cleanup = session_core::chrome::sse_script(&format!(
-        "document.getElementById('geo-prompt-{turn_id}')?.remove();"
-    ));
-    let _ = fb
-        .broadcast
-        .send(TurnUpdate::Inject(std::sync::Arc::new(cleanup)));
+    // Tear the prompt down regardless of how the wait ended (the client also
+    // removes it on answer — this covers the timeout case).
+    let _ = fb.broadcast.send(TurnUpdate::Prompt(std::sync::Arc::new(
+        ToolPromptEvent::Hide {
+            turn_id: turn_id.to_string(),
+        },
+    )));
 
     match outcome {
         Ok(Ok(fix)) => Some(fix),
@@ -230,23 +228,10 @@ fn warn_insecure(fb: &ChatFeedback) {
 /// asking, sitting just under the in-progress reply. `turn_id` is a UUID,
 /// so it's safe to interpolate into both the element id and the
 /// `window.geo.*` calls.
-fn prompt_card_html(turn_id: &str) -> String {
-    format!(
-        "<div id=\"geo-prompt-{tid}\" \
-           class=\"alert bg-base-100 border border-base-300 shadow-sm \
-                  flex flex-col items-start gap-2 self-start max-w-md\">\
-           <span class=\"text-sm\">\u{1F4CD} The assistant wants to use your device's precise \
-             location to answer that. Share it?</span>\
-           <div class=\"flex gap-2 self-end\">\
-             <button type=\"button\" class=\"btn btn-xs btn-ghost\" \
-               data-on:click=\"window.geo.declineForTurn('{tid}')\">Not now</button>\
-             <button type=\"button\" class=\"btn btn-xs btn-primary\" \
-               data-on:click=\"window.geo.shareForTurn('{tid}')\">Share location</button>\
-           </div>\
-         </div>",
-        tid = turn_id
-    )
-}
+/// What the client puts in front of the user beside the browser's own
+/// permission dialog. The browser asks for the capability; this says why.
+const PROMPT_QUESTION: &str =
+    "The assistant wants to use your device's precise location to answer that. Share it?";
 
 /// Shape a coarse GeoIP result. `GeoLocation` already serialises only
 /// its populated fields (`skip_serializing_if = "Option::is_none"`), so

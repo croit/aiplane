@@ -7,39 +7,37 @@ Everything is pinned in `mise.toml`. Run `mise install` once after cloning. It i
 - The **Rust** toolchain pinned to `1.95` (with the `rustfmt`, `clippy`, and `cargo` components).
 - **`cargo-binstall`** — used behind mise's `cargo:` backend to install Rust binaries quickly (prebuilt when available, source build as fallback).
 - **`sccache`** — an rustc wrapper for compilation caching. It's installed but **OFF by default** (no `RUSTC_WRAPPER` is set). Opt in locally with `RUSTC_WRAPPER=sccache` if you want it.
-- **Node 24** — needed for `ui/`'s Tailwind v4 + daisyUI CSS/JS build.
+- **Node 24** — builds the SvelteKit SPA in `web/` and runs its `node:test` suites (`test-web`, `e2e`). Build/test only; nothing Node-shaped ships in the container image.
 - **`typst` 0.15.0** — the CLI backing the `typst_<template>` tools. The `fetch-typst-cli` task copies mise's installed binary into `target/release/typst` so the release build and runtime image pick it up through the same artifact pipeline as the gateway binary.
 
 We **do not** check in a `rust-toolchain.toml`; mise is the single source of truth.
 
 ## Daily commands
 
-The gateway binary `include_bytes!`s its static assets (`app.css`, `datastar.js`, `app.js`, `pcm-recorder.js` — see `crates/session-core/src/assets.rs`), so it won't compile without freshly built bundles in `crates/session-core/assets/`. The mise tasks that build or run the binary (`dev`, `dev-build`, `build`, `dev-ui`, `test`, `lint`) all depend on the composite **`build-assets`** task (which runs `build-css` + `build-js`), so a fresh checkout needs no manual asset step — pick a goal and run it.
+The Rust binary and the UI build separately: `cargo build` needs no Node, and the SPA build needs no `cargo`. The tasks that run the gateway (`dev`) depend on **`build-web`**, so a fresh checkout still needs no manual asset step — pick a goal and run it. UI work does not rebuild Rust at all; see [the SPA loop](#the-sveltekit-spa-web) below.
 
 | Goal | Command |
 |---|---|
-| Run gateway against local config | `mise run dev` |
+| Run gateway against local config (also serves the built SPA) | `mise run dev` |
 | Run a stub gateway for UI debugging (seeded session, mock LLM) | `mise run dev-ui` |
 | Build the gateway debug binary (no run) | `mise run dev-build` |
 | **SvelteKit SPA** dev server (Vite HMR on :5173, proxies API to :8080) | `mise run dev-web` |
+| Install `web/node_modules` (only when the lockfile changed) | `mise run web-install` |
 | Build the SvelteKit SPA into `target/frontend/build/` | `mise run build-web` |
 | svelte-check (TS + a11y diagnostics) on the SPA | `mise run check-web` |
+| Unit-test the SPA's pure TypeScript (`node --test`) | `mise run test-web` |
+| Regenerate the typed API client from `docs/openapi.json` | `mise run gen-api-client` |
 | Fast type-check across the workspace | `mise run check` |
 | **Release** build (slow, for deploys) | `mise run build` |
 | Tests — one crate (the iteration loop) | `mise run test-crate <crate> [filter]` |
 | Tests — whole workspace | `mise run test` |
 | Tests with stdout visible | `mise run test-nocapture` |
 | Lint — one crate | `mise run lint-crate <crate>` |
-| Lint (clippy `-D warnings` + `fmt --check` + `tsc --noEmit` + svelte-check) | `mise run lint` |
+| Lint (clippy `-D warnings` + `fmt --check` + svelte-check) | `mise run lint` |
 | Apply Rust formatting | `mise run fmt` |
-| Tailwind / daisyUI CSS — one-shot | `mise run build-css` |
-| Tailwind / daisyUI CSS — live rebuild | `mise run watch-css` |
-| Bundle the TypeScript page glue — one-shot | `mise run build-js` |
-| Bundle the TypeScript page glue — live rebuild | `mise run watch-js` |
-| TypeScript type-check only (`tsc --noEmit`) | `mise run typecheck` |
-| The pre-push gate (lint + tests, no release build) | `mise run verify` |
+| The pre-push gate (lint + Rust tests + SPA checks and build) | `mise run verify` |
 | Reclaim `target/` (stale artifacts) | `mise run sweep-target [days]` |
-| Everything CI runs (lint + test + release build) | `mise run ci` |
+| Everything CI runs (lint + tests + release build + SPA build) | `mise run ci` |
 | Scan the whole git history for committed secrets | `mise run secrets` |
 | Scan only the staged diff for secrets | `mise run secrets-staged` |
 | Enable the version-controlled git hooks | `mise run setup-hooks` |
@@ -209,7 +207,7 @@ $EDITOR gateway.toml   # set at least one [upstream_pools.*] backend (and [oidc]
 mise run dev
 ```
 
-There's no WASM step, no `dx`, no hot reload of HTML — the rama server serves plain server-rendered HTML and reloads happen via the browser's refresh button. The asset bundles rebuild live if you run `mise run watch-css` and/or `mise run watch-js` in separate terminals, so style/JS changes appear after one refresh. (The committed bundles mean the watchers are optional for plain backend work.)
+`mise run dev` also sets `GATEWAY_STATIC_DIR=target/frontend/build` (built by its `build-web` dependency), so `http://localhost:8080` serves the compiled SPA as production does. For UI work run the Vite dev server alongside it instead of rebuilding — see [the SPA loop](#the-sveltekit-spa-web).
 
 ## Environment
 
@@ -236,7 +234,7 @@ now emits under six targets rather than one:
 | `gateway_features` | RAG, skills, ComfyUI, push, geoip, typst discovery, attachments, PDF/OCR/speech |
 | `gateway_runtime` | the tool registry/catalog/runner, `AppState`, the chat driver, scheduler, webhooks |
 | `gateway_tools` | the tool implementations (`fetch_url`, `search_web`, typst, document, …) |
-| `gateway_web` | the HTML pages and their SSE patch handlers |
+| `gateway_web` | the `/api/v0` JSON handlers, including the chat event stream |
 
 A bare `RUST_LOG=info,gateway=debug` therefore only raises the level for the
 routing glue — page and tool logs stay at `info`. The committed defaults in
@@ -256,18 +254,20 @@ normalised, so it's `gateway_core`, not `gateway-core`.
 
 ## Debugging the UI
 
-Every authed page (`/`, `/tokens`, `/chat`, `/theme/toggle`, the `/admin/*` and `/rag` screens, the `/api/v0/*` JSON routes) is gated by OIDC, which makes ad-hoc browser debugging (browser automation, devtools, screenshotting bugs) annoying — you'd otherwise need a full OIDC provider wired up just to *see* the page. The `dev-ui` mise task short-circuits that:
+Every authed surface — the SPA's screens and the `/api/v0/*` JSON routes behind them — is gated by OIDC, which makes ad-hoc browser debugging (browser automation, devtools, screenshotting bugs) annoying: you'd otherwise need a full OIDC provider wired up just to *see* a page. The `dev-ui` mise task short-circuits that:
 
 ```bash
-mise run dev-ui
+GATEWAY_STATIC_DIR=target/frontend/build mise run dev-ui
 ```
+
+(`dev-ui` does not build or point at the SPA itself, so pass the variable if you want the UI and not just the API. Run `mise run build-web` once first.)
 
 This runs the `dev_ui` example (`crates/gateway/examples/dev_ui.rs`), which boots the real rama gateway on `127.0.0.1:8080` against:
 
 - an **in-memory SQLite**;
 - an in-process **`wiremock` chat pool** that serves `GET /models` (advertising `demo-model` + `demo-model-pro`) and `POST /chat/completions` (a streaming variant emitting two SSE deltas + `[DONE]`, plus non-streaming and feedback-extraction variants);
 - an in-process **`wiremock` transcription pool** that serves `GET /models` (advertising `demo-whisper` + `demo-whisper-large`) and `POST /audio/transcriptions` (a stubbed JSON response);
-- a pre-seeded **`dev@example.com`** user with an `admin` role (every model / tool / skill granted), the `examples/demo-skills` bundle loaded, and representative demo data (a finished chat conversation, scheduled actions, RAG collections, and an MCP connector catalog) so the pages render populated.
+- a pre-seeded **`dev@example.com`** user with an `admin` role (every model / tool / skill granted), the `examples/demo-skills` bundle loaded, and representative demo data (a finished chat conversation, scheduled actions, RAG collections, and an MCP connector catalog) so the screens render populated.
 
 It's a local-only convenience — not a test target, and not run by CI.
 
@@ -281,14 +281,15 @@ seed cookie (paste into playwright / curl):
 
 ### From curl
 
-Paste the cookie to reach any authed page or endpoint:
+Paste the cookie to reach any authed endpoint:
 
 ```bash
 COOKIE='id=…'
-curl -b "$COOKIE" http://127.0.0.1:8080/chat        # any authed GET page
+curl -b "$COOKIE" http://127.0.0.1:8080/api/v0/me
+curl -b "$COOKIE" http://127.0.0.1:8080/api/v0/chat/sessions
 ```
 
-The chat composer submits to `POST /chat/{id}/messages` (create a session first with `POST /chat/sessions`), which streams the reply back as datastar SSE. The wiremock backend resolves every prompt in ~no time, so the full submit → SSE → DOM-update cycle is observable without flake.
+A chat turn is two calls: `POST /api/v0/chat/sessions/{id}/messages` to submit (create a session first with `POST /api/v0/chat/sessions`), and `GET /api/v0/chat/sessions/{id}/events` to watch the reply arrive as JSON-SSE events. The wiremock backend resolves every prompt in ~no time, so the whole submit → stream → finalize cycle is observable without flake.
 
 ### Signing in to the real `mise run dev` gateway
 
@@ -300,17 +301,17 @@ curl -si http://127.0.0.1:8080/__dev/session | grep -i set-cookie   # id=…
 
 ### From a browser / automation
 
-Open any origin page (e.g. `http://127.0.0.1:8080/login`), then inject the cookie via devtools (`document.cookie = 'id=…; Path=/'`) or your automation tool's cookie API, and navigate to the page you want. From there the page runs with real datastar SSE streaming against the mock backend.
+Open any origin page (e.g. `http://127.0.0.1:8080/login`), then inject the cookie via devtools (`document.cookie = 'id=…; Path=/'`) or your automation tool's cookie API, and navigate to the route you want. From there the SPA runs against the mock backend with real streaming.
 
 The repo's README/docs screenshots are produced this way — see the `take-screenshots` helper under `.claude/skills/take-screenshots/`, which drives Playwright with the seeded cookie.
 
 ### Why a seeded session instead of patching out auth?
 
-Every code path under test (cookie parsing, session lookup, RBAC, flash cookies, datastar's preventDefault, …) is the same one production runs. The only things faked are the upstream LLM and the OIDC handoff.
+Every code path under test (cookie parsing, session lookup, RBAC, the session gate, the SSE stream, …) is the same one production runs. The only things faked are the upstream LLM and the OIDC handoff.
 
-## The SvelteKit SPA (`web/`, issue #22)
+## The SvelteKit SPA (`web/`)
 
-The new UI (a SvelteKit SPA mounted at `/app` while the server-rendered pages are migrated away) has **two** development modes:
+The UI has **two** development modes.
 
 **Hot-reload mode — the everyday loop.** Two terminals:
 
@@ -319,21 +320,21 @@ mise run dev       # gateway (Rust) on :8080
 mise run dev-web   # Vite dev server on :5173, HMR on every Svelte save
 ```
 
-Open `http://localhost:5173/app`. Vite proxies `/api`, `/v1`, and `/auth` to the gateway on :8080 (`web/vite.config.ts`), so the session cookie and every backend call behave exactly as in production — while a Svelte-file save re-renders in <100 ms with **no Rust rebuild**. This is the point of the migration: UI iteration no longer pays the Rust compile.
+Open `http://localhost:5173`. Vite proxies `/api`, `/v1`, and `/auth` to the gateway on :8080 (`web/vite.config.ts`), so the session cookie and every backend call behave exactly as in production — while a Svelte-file save re-renders in well under a second with **no Rust rebuild**. That is the point of the SPA: UI iteration no longer pays the Rust compile.
 
-**Served mode — what production looks like.** `mise run dev` additionally sets `GATEWAY_STATIC_DIR=target/frontend/build` (built by its `build-web` dep), so the gateway serves the compiled SPA at `http://localhost:8080/app`. Use this to verify the built artifact, cache headers, and the history fallback. No Node runs in production: the container image just `COPY`s the built `target/frontend/build/` directory in (see the Dockerfile) and the Rust binary serves it (`crates/gateway/src/rama_server/spa.rs`).
+**Served mode — what production looks like.** `mise run dev` additionally sets `GATEWAY_STATIC_DIR=target/frontend/build` (built by its `build-web` dep), so the gateway serves the compiled SPA at `http://localhost:8080`. Use this to check the built artefact, cache headers and the history fallback. No Node runs in production: the container image `COPY`s the built `target/frontend/build/` directory in (see the Dockerfile) and the Rust binary serves it (`crates/gateway/src/rama_server/spa.rs`). With `GATEWAY_STATIC_DIR` unset the UI answers 503 and the API is unaffected.
 
-The SPA's API contract is `docs/openapi.json`, enforced against `router.rs` by the `openapi_drift` test — adding a `/api/v0/*` route without a spec entry fails CI, and vice versa.
+The SPA's API contract is `docs/openapi.json`, enforced against `router.rs` by the `openapi_drift` test — adding a `/api/v0/*` route without a spec entry fails CI, and vice versa. After changing a route, update the spec and run `mise run gen-api-client` to regenerate `web/src/lib/schema.d.ts` (generated output — don't hand-edit it). Note that the SPA does not yet *consume* those types; see [`ui.md`](ui.md#the-json-api-and-the-generated-client).
 
-The chat surface (issue #22 P2) is live in the SPA at `/app/chat`: sessions list, conversation view, and live streaming over the JSON-SSE event protocol (`session_core::chat_json` — `snapshot` / `turn_delta` / `tool_call_done` / `turn_finalized` … events; the DB snapshot on every attach is the reconnect replay). The composer submits `POST /api/v0/chat/sessions/{id}/messages` and the reply arrives on `GET …/events` — the same endpoints the legacy datastar wire's `/chat/{id}/messages` + `/tail` pair drive, running side by side until phase 6 removes the legacy pages. `mise run test-web` unit-tests the client's event fold (`web/src/lib/chat-protocol.test.ts`); `e2e/spa-chat.test.mjs` drives the full round trip against `dev-ui`.
+Chat streams over the JSON-SSE event protocol (`session_core::chat_json` ↔ `web/src/lib/chat-protocol.ts`): the composer posts `POST /api/v0/chat/sessions/{id}/messages` and the reply arrives on `GET …/events` as `snapshot` / `turn_delta` / `tool_call_done` / `turn_finalized` … events, with the DB snapshot on every attach acting as the reconnect replay. `mise run test-web` unit-tests the client's event fold (`web/src/lib/chat-protocol.test.ts`); `e2e/spa-chat.test.mjs` drives the full round trip against `dev-ui`.
 
-The SPA is also a PWA in its own scope: `web/static/sw.js` (Web Push for turn-completed notifications + installability, registered by the layout) and `web/static/manifest.webmanifest` (`start_url`/`scope` `/app/`, icons reusing the gateway-served `/icons/*`). The push payload carries the legacy `/chat/{id}` URL — the server can't know which UI a browser runs — and the SPA's service worker maps it onto `/app/chat/{id}` before focusing a window. The models picker reads `GET /api/v0/models` (compliance flags included). Voice mode is ported too: tap-to-talk in the conversation view — PCM capture via the SPA-scoped `static/pcm-recorder.js` worklet, `/api/v0/transcriptions`, the `voice: true` submit flag, and sentence-peeled TTS playback off `/api/v0/speech` (the legacy TTS-voice picker is not ported yet; the pool default speaks).
+Everything else about the UI — the layout of `web/`, the event table, theming, the PWA and Web Push, voice mode — is in [`ui.md`](ui.md).
 
 ## CI
 
 GitHub Actions is wired up in `.github/workflows/ci.yml`. It triggers on pushes to `main`, on tags, and on pull requests. The toolchain comes from `mise.toml` via `jdx/mise-action`; `Swatinem/rust-cache` caches the cargo registry + `target/` across runs (CI does **not** use sccache). There are four jobs:
 
-1. **ci** — runs `mise run ci`, which fans out via mise's DAG to lint + test + release-build + SPA-build (each transitively depending on `build-assets`). It then builds the `sandbox-runner` binary and uploads two artifacts: `gateway-binaries` (`target/release/{gateway, sandbox-runner, typst, libpdfium.so}`) and `gateway-spa` (`target/frontend/build/`) (7-day retention). Debuginfo is dropped from the dev/test profiles (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`) so the multi-profile compile doesn't run the runner out of disk.
+1. **ci** — runs `mise run ci`, which fans out via mise's DAG to lint + test + release-build + SPA-build. It then builds the `sandbox-runner` binary and uploads two artifacts: `gateway-binaries` (`target/release/{gateway, sandbox-runner, typst, libpdfium.so}`) and `gateway-spa` (`target/frontend/build/`) (7-day retention). Debuginfo is dropped from the dev/test profiles (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`) so the multi-profile compile doesn't run the runner out of disk.
 2. **container** (needs `ci`) — downloads the artifacts and builds the production image from `/Dockerfile` with `docker/build-push-action`. On pull requests it builds with `push: false` (validation only). On the default branch and on tags it pushes to GHCR (`ghcr.io/croit/llm-gateway`) with tags from `docker/metadata-action` (branch, tag, `sha-<short>`, and `latest` on the default branch).
 3. **sandbox-image** (needs `ci`, `push` events only) — builds and pushes the code-execution sandbox gold image (`ghcr.io/croit/llm-gateway-sandbox`) from `sandbox-image/Containerfile`.
 4. **sandbox-runner-image** (needs `ci`, `push` events only) — builds and pushes the sandbox runner image (`ghcr.io/croit/llm-gateway-sandbox-runner`) from `deploy/sandbox-runner/Containerfile`.
@@ -344,11 +345,12 @@ The production `Dockerfile` is **runtime-only** — it compiles nothing. Startin
 
 - `apt-get install`s `git` + `ca-certificates` (the RAG indexer shells out to `git clone`, which validates TLS via the OS trust store, not the Rust binary's baked-in `webpki-roots`);
 - `COPY`s the prebuilt `gateway` binary, plus `typst` (→ `/usr/local/bin/typst`), `libpdfium.so` (→ `/usr/local/lib/`), and the sample `examples/typst-templates` (→ `/opt/typst-templates`);
+- `COPY`s the built SPA (`target/frontend/build` → `/usr/share/gateway/ui`) and sets `GATEWAY_STATIC_DIR` to it — a read-only layer the SPA handler only reads;
 - runs as a non-root `gateway` user and exposes `8080`.
 
-The CSS, `datastar.js`, and JS bundles are `include_bytes!`'d into the binary, so the runtime image ships no separate asset directory. No `cargo`, `npm`, or `tailwindcss` runs in the image build — those all happen in the `ci` job, and the binaries arrive as artifacts.
+The UI is the one thing the image carries outside the binary, and it is plain static files: **no Node runtime**. No `cargo`, `npm` or `vite` runs in the image build — those all happen in the `ci` job, and the outputs arrive as artifacts.
 
-CI never invokes `cargo`, `npm`, or `tailwindcss` directly; everything routes through mise tasks. If you need a new CI step, add a `[tasks.…]` entry to `mise.toml` and call it from the workflow.
+CI never invokes `cargo`, `npm` or `vite` directly; everything routes through mise tasks. If you need a new CI step, add a `[tasks.…]` entry to `mise.toml` and call it from the workflow.
 
 ## Traps that have actually cost us time
 
@@ -482,35 +484,32 @@ nothing, because the gaps are the line height of a wrapping inline paragraph.
 
 **Cause.** `form-control` was daisyUI 4's label-plus-control wrapper and does
 not exist in 5 — the label component's stylesheet under
-`ui/node_modules/daisyui/components` declares two selectors and that is not
+`web/node_modules/daisyui/components` declares two selectors and that is not
 one of them. A label carrying it gets no layout at all, so its children fall
 back to `inline`. `label-text-alt` is gone the same way, and it carried the
 shrink and dim that make a hint read as an aside rather than another paragraph.
 
-**Prevention.** Two tests in `crates/gateway-web/src/pages/mod.rs`:
-`no_page_uses_a_class_daisyui_dropped` fails on `form-control` in any class
-string, and `help_text_sets_its_own_size` fails on a `label-text-alt` without
-an explicit `text-xs`. The house pattern for a labelled control is
-`label(class: "flex flex-col gap-1")` with the help `<span>` **after** the
-input. `label-text` is inert too but deliberately left alone: daisyUI 4 gave
-it `text-sm`, which its ~99 bare uses now inherit anyway.
+**Prevention.** The house pattern for a labelled control is
+`<label class="flex flex-col gap-1">` with the help `<span class="text-xs">`
+**after** the input. `label-text` is inert too but harmless: daisyUI 4 gave it
+`text-sm`, which bare uses inherit anyway.
 
-### Tailwind scans Rust source, including comments
+Pinned by `web/src/lib/markup-drift.test.ts` (`mise run test-web`), which greps
+every `.svelte` file for the dropped classes — the replacement for the two Rust
+drift tests that died with the page stack.
 
-**Symptom.** The committed `crates/session-core/assets/app.css` grows by a
-kilobyte or two, with a component nothing on the page uses.
+### Tailwind scans source text, including comments
 
-**Cause.** The Tailwind scanner reads these files looking for class-name
-candidates and cannot tell a doc comment from markup. Naming a daisyUI class
-in prose is enough to emit its CSS.
+**Symptom.** The CSS bundle grows by a kilobyte or two, carrying a component
+nothing on screen uses.
+
+**Cause.** The Tailwind scanner reads source files looking for class-name
+candidates and cannot tell a comment from markup. Naming a daisyUI class in
+prose inside a scanned file is enough to emit its CSS. Under the SPA the
+scanned set is `web/src` (the Tailwind v4 Vite plugin picks it up
+automatically — no `@source` globs needed), so this now bites in Svelte and TS
+comments rather than Rust doc comments.
 
 **Prevention.** No test for this one — describe a class rather than spelling
-it, and when the CSS bundle changes, check *which* selectors moved rather than
-just that it changed:
-
-```
-tr '}' '\n' < crates/session-core/assets/app.css | grep -oE '^\.[a-zA-Z0-9\\:_-]+' | sort -u
-```
-
-Diff that list before and after. The only entries should be ones your markup
-change explains.
+it, and when the bundle size moves, check *which* selectors moved rather than
+just that it changed.

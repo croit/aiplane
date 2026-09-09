@@ -18,8 +18,8 @@ let adminOk = false;
 
 before(async () => {
     assert.ok(await gatewayIsUp(), `gateway is not reachable at ${BASE}`);
-    const probe = await fetch(`${BASE}/app`);
-    assert.equal(probe.status, 200, "the SPA is not served at /app");
+    const probe = await fetch(`${BASE}/`);
+    assert.equal(probe.status, 200, "the SPA is not served at the root");
     adminOk = adminCookie
         ? (await fetch(`${BASE}/api/v0/admin/groups`, { headers: { cookie: `id=${adminCookie}` } })).ok
         : false;
@@ -31,29 +31,29 @@ after(async () => {
 });
 
 const PAGES = [
-    ["/app/memory", "Add a memory"],
-    ["/app/scheduled", "New scheduled action"],
-    ["/app/webhooks", "New webhook"],
-    ["/app/skills", "Skills"],
-    ["/app/integrations", "Integrations"],
-    ["/app/tokens", "Create token"],
-    ["/app/usage", "Requests"],
-    ["/app/tools", "Tools"],
-    ["/app/admin/groups", "New group"],
-    ["/app/admin/users", "Users"],
-    ["/app/admin/models", "Feature defaults"],
-    ["/app/admin/limits", "Add / update a rule"],
-    ["/app/admin/settings", "Save section"],
-    ["/app/admin/tokens", "Token register"],
-    ["/app/admin/upstreams", "Pools"],
-    ["/app/admin/skills", "Upload .skill"],
-    ["/app/admin/connectors", "New connector"],
-    ["/app/admin/comfyui", "Reload catalog"],
-    ["/app/admin/rag", "RAG collections"],
+    ["/memory", "Add a memory"],
+    ["/scheduled", "New scheduled action"],
+    ["/webhooks", "New webhook"],
+    ["/skills", "Skills"],
+    ["/integrations", "Integrations"],
+    ["/tokens", "Create token"],
+    ["/usage", "Requests"],
+    ["/tools", "Tools"],
+    ["/admin/groups", "New group"],
+    ["/admin/users", "Users"],
+    ["/admin/models", "Feature defaults"],
+    ["/admin/limits", "Add / update a rule"],
+    ["/admin/settings", "Save section"],
+    ["/admin/tokens", "Token register"],
+    ["/admin/upstreams", "Pools"],
+    ["/admin/skills", "Upload .skill"],
+    ["/admin/connectors", "New connector"],
+    ["/admin/comfyui", "Reload catalog"],
+    ["/admin/rag", "RAG collections"],
 ];
 
 for (const [path, label] of PAGES) {
-    const isAdminPage = path.startsWith("/app/admin");
+    const isAdminPage = path.startsWith("/admin");
     (isAdminPage && !adminOk ? test.skip : test)(`page renders: ${path}${isAdminPage && !adminOk ? " (skipped: no admin session — set GATEWAY_SESSION_COOKIE)" : ""}`, async () => {
         const ctx = await browser.newContext({ colorScheme: "dark" });
         await ctx.addCookies([

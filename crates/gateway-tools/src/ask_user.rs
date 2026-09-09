@@ -355,13 +355,14 @@ fn unanswered(reason: &str, note: &str) -> Value {
     })
 }
 
-/// Inject the question, park on the hub, tear the card down again.
+/// Announce the question, park on the hub, take the prompt down again.
 ///
-/// Mirrors `location::request_browser_location`; see the comments there for
-/// why the card is appended to `#conversation` (a `#turn-<id>` patch would
-/// clobber it on the next tick) and why the append + scroll ride in one frame.
+/// The prompt travels as a structured `TurnUpdate::Prompt` event: the client
+/// owns how it looks, the server only says what is being asked and by which
+/// turn. `Hide` is sent whatever the outcome — the client removes its own
+/// prompt on submit, so this covers the timeout and the give-up path.
 async fn request_answer(fb: &ChatFeedback, turn_id: &str, prompt: &Prompt) -> Option<AskReply> {
-    use session_core::workers::TurnUpdate;
+    use session_core::workers::{ToolPrompt, ToolPromptEvent, ToolPromptKind, TurnUpdate};
 
     // Nobody subscribed → nobody can answer. The timeout below is the real
     // backstop if the stream drops right after this check.
@@ -371,28 +372,35 @@ async fn request_answer(fb: &ChatFeedback, turn_id: &str, prompt: &Prompt) -> Op
 
     let rx = fb.ask_hub.register(turn_id);
 
-    let card = prompt_card_html(turn_id, prompt);
-    let mut frame =
-        session_core::chrome::sse_patch(Some("#conversation"), Some("append"), &card).to_vec();
-    let scroll = session_core::chrome::sse_script(&format!(
-        "document.getElementById('ask-prompt-{turn_id}')\
-         ?.scrollIntoView({{block:'center',behavior:'smooth'}});"
-    ));
-    frame.extend_from_slice(&scroll);
-    let _ = fb
-        .broadcast
-        .send(TurnUpdate::Inject(std::sync::Arc::new(frame.into())));
+    let _ = fb.broadcast.send(TurnUpdate::Prompt(std::sync::Arc::new(
+        ToolPromptEvent::Show(ToolPrompt {
+            turn_id: turn_id.to_string(),
+            kind: ToolPromptKind::AskUser,
+            question: prompt.question.clone(),
+            // The wire carries the labels; a description is a UI nicety the
+            // client can fetch from nowhere else, so it rides along appended.
+            options: prompt
+                .options
+                .iter()
+                .map(|o| match &o.description {
+                    Some(d) if !d.is_empty() => format!("{} — {}", o.label, d),
+                    _ => o.label.clone(),
+                })
+                .collect(),
+            header: prompt.header.clone(),
+            multi_select: prompt.multi_select,
+        }),
+    )));
 
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(WAIT_SECS), rx).await;
 
-    // Tear down regardless of how the wait ended. The client removes the card
-    // itself on submit; this covers timeout and dismissal-by-navigation.
-    let cleanup = session_core::chrome::sse_script(&format!(
-        "document.getElementById('ask-prompt-{turn_id}')?.remove();"
-    ));
-    let _ = fb
-        .broadcast
-        .send(TurnUpdate::Inject(std::sync::Arc::new(cleanup)));
+    // Tear down regardless of how the wait ended. The client removes its own
+    // prompt on submit; this covers timeout and dismissal-by-navigation.
+    let _ = fb.broadcast.send(TurnUpdate::Prompt(std::sync::Arc::new(
+        ToolPromptEvent::Hide {
+            turn_id: turn_id.to_string(),
+        },
+    )));
 
     match outcome {
         Ok(Ok(reply)) => Some(reply),
@@ -402,109 +410,6 @@ async fn request_answer(fb: &ChatFeedback, turn_id: &str, prompt: &Prompt) -> Op
             None
         }
     }
-}
-
-/// Escape text for interpolation into the card's HTML.
-///
-/// The question and the option labels are **model-generated**, and a model can
-/// be steered by the page it just read — so this is not merely defensive
-/// hygiene. Hand-rolled because the card is assembled as a string (the same way
-/// `location`'s is) rather than through plait's auto-escaping templates.
-fn esc(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
-/// Escape for a single-quoted JavaScript string literal inside an attribute.
-/// Runs *after* [`esc`], so the value is safe in both contexts.
-fn esc_js(s: &str) -> String {
-    esc(&s.replace('\\', "\\\\").replace('\'', "\\'"))
-}
-
-/// The injected card: the question, optional choice buttons, and a free-text
-/// field with a submit button. Appended to `#conversation` so it reads as the
-/// assistant asking, just under the in-progress reply.
-///
-/// `turn_id` is a UUID, so it is safe to interpolate into element ids and the
-/// `window.ask.*` calls.
-fn prompt_card_html(turn_id: &str, prompt: &Prompt) -> String {
-    let mut html = String::with_capacity(512);
-    html.push_str(&format!(
-        "<div id=\"ask-prompt-{tid}\" \
-           class=\"alert bg-base-100 border border-base-300 shadow-sm \
-                  flex flex-col items-start gap-2 self-start max-w-md\">",
-        tid = turn_id
-    ));
-    if let Some(header) = &prompt.header {
-        html.push_str(&format!(
-            "<span class=\"badge badge-sm badge-ghost\">{}</span>",
-            esc(header)
-        ));
-    }
-    html.push_str(&format!(
-        "<span class=\"text-sm\">\u{2753} {}</span>",
-        esc(&prompt.question)
-    ));
-
-    if !prompt.options.is_empty() {
-        let multi = if prompt.multi_select { "true" } else { "false" };
-        html.push_str("<div class=\"flex flex-col gap-1 w-full\">");
-        for opt in &prompt.options {
-            html.push_str(&format!(
-                "<button type=\"button\" class=\"btn btn-sm btn-outline justify-start \
-                   h-auto py-1 flex-col items-start gap-0\" \
-                   data-ask-option=\"{label_attr}\" \
-                   data-on:click=\"window.ask.pick('{tid}', this, {multi})\">\
-                   <span class=\"text-sm font-medium\">{label}</span>",
-                tid = turn_id,
-                multi = multi,
-                label_attr = esc(&opt.label),
-                label = esc(&opt.label),
-            ));
-            if let Some(d) = &opt.description {
-                html.push_str(&format!(
-                    "<span class=\"text-xs opacity-70 font-normal\">{}</span>",
-                    esc(d)
-                ));
-            }
-            html.push_str("</button>");
-        }
-        html.push_str("</div>");
-    }
-
-    // Always offered, even with options: forcing a user into a preset answer
-    // when none fits produces a confidently wrong turn.
-    let placeholder = if prompt.options.is_empty() {
-        "Your answer…"
-    } else {
-        "Something else…"
-    };
-    html.push_str(&format!(
-        "<div class=\"flex gap-2 w-full\">\
-           <input type=\"text\" id=\"ask-text-{tid}\" placeholder=\"{ph}\" \
-             class=\"input input-bordered input-sm flex-1\" \
-             data-on:keydown=\"evt.key === 'Enter' && window.ask.submit('{tid_js}')\">\
-           <button type=\"button\" class=\"btn btn-sm btn-primary\" \
-             data-on:click=\"window.ask.submit('{tid_js}')\">Send</button>\
-         </div>\
-         <button type=\"button\" class=\"btn btn-xs btn-ghost self-end\" \
-           data-on:click=\"window.ask.dismiss('{tid_js}')\">Skip</button>\
-         </div>",
-        tid = turn_id,
-        tid_js = esc_js(turn_id),
-        ph = placeholder,
-    ));
-    html
 }
 
 #[cfg(test)]
@@ -621,72 +526,6 @@ mod tests {
             .unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("assumption"), "{msg}");
-    }
-
-    #[test]
-    fn card_escapes_model_supplied_text() {
-        // The question and labels come from the model, which may itself have
-        // been steered by a page it just read. They must not be able to inject
-        // markup into the chat DOM.
-        let prompt = Prompt::validate(args(json!({
-            "question": "<img src=x onerror=alert(1)> & \"quoted\"",
-            "options": [
-                {"label": "</button><script>evil()</script>"},
-                {"label": "it's fine", "description": "<b>bold</b>"}
-            ]
-        })))
-        .unwrap();
-        let html = prompt_card_html("turn-1", &prompt);
-        assert!(!html.contains("<img"), "{html}");
-        assert!(!html.contains("<script"), "{html}");
-        assert!(!html.contains("<b>bold"), "{html}");
-        assert!(html.contains("&lt;img"), "{html}");
-        assert!(html.contains("&#39;"), "apostrophe must be escaped: {html}");
-    }
-
-    #[test]
-    fn card_wires_every_control_to_the_client_helpers() {
-        let prompt = Prompt::validate(args(json!({
-            "question": "Which?",
-            "options": [{"label": "a"}, {"label": "b"}]
-        })))
-        .unwrap();
-        let html = prompt_card_html("t-9", &prompt);
-        // The element id the server's own teardown script targets.
-        assert!(html.contains("id=\"ask-prompt-t-9\""), "{html}");
-        assert!(html.contains("id=\"ask-text-t-9\""), "{html}");
-        // Every handler the client must expose.
-        assert!(html.contains("window.ask.pick('t-9'"), "{html}");
-        assert!(html.contains("window.ask.submit('t-9')"), "{html}");
-        assert!(html.contains("window.ask.dismiss('t-9')"), "{html}");
-        // Option labels ride on the element so the client can read them back.
-        assert!(html.contains("data-ask-option=\"a\""), "{html}");
-    }
-
-    #[test]
-    fn open_question_still_offers_free_text_and_no_option_buttons() {
-        let prompt = Prompt::validate(args(json!({"question": "Which region?"}))).unwrap();
-        let html = prompt_card_html("t-1", &prompt);
-        assert!(html.contains("ask-text-t-1"), "{html}");
-        assert!(!html.contains("data-ask-option"), "{html}");
-        assert!(html.contains("Your answer"), "{html}");
-    }
-
-    #[test]
-    fn multi_select_is_passed_to_the_client() {
-        for (multi, expected) in [(true, "true"), (false, "false")] {
-            let prompt = Prompt::validate(args(json!({
-                "question": "Which?",
-                "multi_select": multi,
-                "options": [{"label": "a"}, {"label": "b"}]
-            })))
-            .unwrap();
-            let html = prompt_card_html("t", &prompt);
-            assert!(
-                html.contains(&format!("this, {expected})")),
-                "multi_select={multi} should pass {expected}: {html}"
-            );
-        }
     }
 
     #[test]

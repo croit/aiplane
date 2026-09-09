@@ -817,7 +817,7 @@ fn canvas_doc_title(template: &Template, data: &Value) -> String {
                 if !s.is_empty() {
                     // The panel shows this next to the format badge, so keep it
                     // to one line's worth of characters.
-                    return session_core::render::truncate_chars(s, 60);
+                    return session_core::text::truncate_chars(s, 60);
                 }
             }
         }

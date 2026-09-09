@@ -168,34 +168,18 @@ pub async fn callback(State(state): State<Arc<RamaState>>, req: Request) -> Resp
         // claims back. Deliberately no user upsert and no session — nothing
         // has authorised anyone yet.
         //
-        // Both wizards run in parallel during the migration (the SPA at
-        // `/app/setup`, the server-rendered pages at `/setup`) and share this
-        // one purpose, so the stored `return_to` is what says which of them
-        // began this probe. Dispatching on it unconditionally to one of them
-        // stranded the other: a probe started in the legacy wizard answered
-        // with the SPA's redirect and dropped the operator into a different
-        // wizard mid-flow, losing the draft they had just proven.
+        // There is one wizard now (the SPA), so the probe always lands back
+        // in it. The pending row still carries a `return_to` and the handler
+        // still redirects there; it simply has nothing to disambiguate.
         Purpose::Setup => {
-            let spa = return_to.as_deref() == Some(crate::rama_server::setup_api::SPA_RETURN_TO);
-            return if spa {
-                crate::rama_server::setup_api::setup_probe_callback(
-                    &state,
-                    req.headers(),
-                    &code,
-                    &verifier,
-                    &nonce,
-                )
-                .await
-            } else {
-                gateway_web::pages::setup_probe_callback(
-                    &state,
-                    req.headers(),
-                    &code,
-                    &verifier,
-                    &nonce,
-                )
-                .await
-            };
+            return crate::rama_server::setup_api::setup_probe_callback(
+                &state,
+                req.headers(),
+                &code,
+                &verifier,
+                &nonce,
+            )
+            .await;
         }
         Purpose::Login => {}
     }

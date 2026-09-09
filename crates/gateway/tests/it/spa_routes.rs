@@ -1,30 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! Router wiring for the SvelteKit SPA static shell served under `/app`.
+//! Router wiring for the SvelteKit SPA, which serves the root.
 //!
-//! The full serve behaviour (traversal guard, content types, cache headers,
-//! SPA history fallback) is unit-tested against a temp dir in
-//! `rama_server::spa`. What this file pins is the *wiring*: that the
-//! `/app/{*name}` catch-all is actually registered and dispatches to the SPA
-//! handler — proven by the fact that an undeployed SPA answers **503**
-//! ("not deployed") rather than the router's generic **404** ("unknown path").
+//! The serve behaviour itself (traversal guard, content types, cache headers,
+//! history fallback) is unit-tested against a temp dir in `rama_server::spa`.
+//! What this file pins is the *wiring*: that the catch-all is registered, that
+//! it is registered LAST so it does not shadow the API, and that a client
+//! route with no file behind it still reaches the SPA rather than 404ing.
 //!
-//! We deliberately do NOT set `GATEWAY_STATIC_DIR` here: that env var is read
-//! once into a process-global `LazyLock`, and `cargo nextest` runs every test
-//! in this crate's `it` module in a single process, so setting it would race
-//! across tests. The 503 path (no dir) is the deterministic, env-free proof
-//! that the route reaches `spa` and that the undeployed case is distinct from
-//! a plain 404.
+//! Proven through the undeployed-503 path: with no `GATEWAY_STATIC_DIR` the
+//! handler answers 503 "not deployed", which is distinguishable from the
+//! router's own 404. We deliberately do NOT set that env var here — it is read
+//! once into a process-global `LazyLock`, and `cargo nextest` runs this crate's
+//! `it` module in one process, so setting it would race across tests.
 
 use crate::common;
 
 use common::Service as _;
 use rama::http::{Method, StatusCode, header};
 
-/// Drive a GET through the full layered service. Returns (status, a header
-/// value, the drained body as a lossy string).
-async fn get_app(uri: &str) -> (StatusCode, String, String) {
+/// Drive a GET through the full layered service.
+async fn get(uri: &str) -> (StatusCode, String, String) {
     let state = common::state_with_chat_pool("http://unused.invalid").await;
     let app = common::app(state);
     let resp = app.serve(common::req(Method::GET, uri)).await.unwrap();
@@ -39,23 +36,42 @@ async fn get_app(uri: &str) -> (StatusCode, String, String) {
     (status, ct, body)
 }
 
-/// Probe which request forms reach the SPA handler (503 when undeployed) vs
-/// fall through to the router's 404. This pins the route registration: the
-/// bare `/app`, a sub-route, and a hashed-asset path must all reach the
-/// handler; an unrelated path must not.
+/// Every shape of request the SPA owns reaches its handler: the bare root, a
+/// client route with no file behind it, and a content-hashed asset path
+/// (whose case must survive the router, since the filename is the cache key).
 #[tokio::test]
-async fn app_forms_reach_the_spa_handler() {
+async fn the_spa_owns_every_unclaimed_path() {
     for uri in [
-        "/app",
-        "/app/",
-        "/app/tokens",
-        "/app/assets/_app/immutable/entry/START-AbC123.js",
+        "/",
+        "/chat",
+        "/admin/settings",
+        "/_app/immutable/entry/START-AbC123.js",
     ] {
-        let (status, _ct, _body) = get_app(uri).await;
+        let (status, _ct, _body) = get(uri).await;
         assert_eq!(
             status,
             StatusCode::SERVICE_UNAVAILABLE,
-            "`{uri}` must reach the SPA handler (503 undeployed); a 404 means the route is not registered for this form"
+            "`{uri}` must reach the SPA handler (503 undeployed); a 404 means the catch-all is not \
+             matching this shape"
         );
     }
+}
+
+/// …but it must not shadow the surfaces registered before it. The catch-all is
+/// last precisely so these still answer; if it ever moved up, the whole API
+/// would start returning the SPA shell with a 200 and every client would break
+/// in a way no single test would obviously explain.
+#[tokio::test]
+async fn the_catch_all_does_not_shadow_the_api() {
+    let (status, ct, _) = get("/healthz").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(ct.contains("json"), "healthz must still be JSON, got {ct}");
+
+    // Session-gated, so anonymous is a 401 envelope — not the SPA's 503.
+    let (status, _, _) = get("/api/v0/me").await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the JSON API must answer for itself, not fall through to the SPA"
+    );
 }

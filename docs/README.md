@@ -20,7 +20,7 @@ This directory holds the design docs for the LLM gateway. The agent-facing entry
 | [`fileshare-rag.md`](fileshare-rag.md) | **Fileshare RAG** — indexing a file share (Nextcloud, ownCloud, OpenCloud, WebDAV) into RAG: the provider abstraction, extraction ladder, document profiles, structured queries, incremental sync |
 | [`nextcloud-rag-plan.md`](nextcloud-rag-plan.md) | The design record behind `fileshare-rag.md`: what was decided and why, what is deliberately not built, and the cited external protocol behaviour |
 | [`connectors.md`](connectors.md) | Per-user MCP connector catalog — operator setup for Google/GitHub/Atlassian/GitLab + troubleshooting |
-| [`ui.md`](ui.md) | Server-rendered HTML with plait + daisyUI + datastar (SSE-patch CRUD pattern) |
+| [`ui.md`](ui.md) | The SvelteKit SPA in `web/` — how it is built and served, the JSON API + generated client, the chat event protocol, theming, PWA |
 | [`testing.md`](testing.md) | Test layers, mocking strategy, coverage targets |
 | [`errors.md`](errors.md) | Error type tiers, message anatomy, OpenAI mapping |
 | [`comfyui.md`](comfyui.md) | Headless ComfyUI worker — workflows, manifests, operator config |

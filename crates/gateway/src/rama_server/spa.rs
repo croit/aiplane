@@ -16,7 +16,7 @@
 //! # Layout and caching
 //!
 //! SvelteKit's `adapter-static` emits **content-hashed** asset filenames
-//! (`/assets/_app/immutable/entry/*.js`), so a hashed file never changes
+//! (`/_app/immutable/…`), so a hashed file never changes
 //! content at a given URL — those are cached `immutable` for a year. The
 //! non-hashed surface (`index.html`, the service worker, the manifest) must
 //! **not** be `immutable`, or an update never reaches the browser; those get
@@ -24,7 +24,7 @@
 //!
 //! # SPA history fallback
 //!
-//! A client-side route like `/app/tokens` has no file on disk. Anything that
+//! A client-side route like `/tokens` has no file on disk. Anything that
 //! is not an existing file (and not a traversal) falls back to
 //! `index.html`, which lets the SPA's router take over. This is the standard
 //! SPA-fallback behaviour a static host must provide.
@@ -33,22 +33,19 @@
 //!
 //! rama lowercases the *matched* path for route lookup, but the `Request`
 //! handed to the handler keeps its **original** case (see `router.rs` and the
-//! `assets::icon` / `retrieve_model` precedent). `req.uri().path()` therefore
-//! preserves the case of the content-hashed filename, and `strip_prefix("/app/")`
-//! is case-sensitive on the original. This is why the hashed assets resolve.
+//! `retrieve_model` precedent). `req.uri().path()` therefore preserves the
+//! case of the content-hashed filename, which is why hashed assets resolve.
 //!
-//! # Coexistence during migration
+//! # Mount point
 //!
-//! The SPA is mounted under the `/app` prefix so it coexists with the current
-//! server-rendered pages (which own `/`, `/chat`, `/tokens`, …) until those
-//! are removed in a later phase. Nothing under `/app` collides with an
-//! existing route.
+//! The SPA owns the root: it is the whole UI now that the server-rendered
+//! pages are gone. Its catch-all is registered last so the API, proxy and
+//! auth routes still match first.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use rama::http::{Body, Request, Response, StatusCode, header};
-use rama::{Layer, Service};
 
 /// Env var pointing at the SvelteKit `build/` output directory. When unset
 /// (or the dir is missing) the SPA is not deployed and requests 503 — the
@@ -73,60 +70,10 @@ static STATIC_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
         .unwrap_or_default()
 });
 
-/// `GET /app/{*name}` — the catch-all route handler. Thin wrapper over
+/// `GET /{*name}` — the catch-all route handler. Thin wrapper over
 /// [`serve`] using the env-resolved root.
 pub async fn spa_get(req: Request) -> Response {
     serve(&STATIC_ROOT, &req).await
-}
-
-/// Normalises the trailing-slash form of the SPA root (`/app/` → `/app`)
-/// before routing.
-///
-/// rama's route matcher trims a trailing slash when a route is *inserted*
-/// (`/app` and `/app/` would collide) but does **not** trim it on *lookup*,
-/// so a request for `/app/` — which browsers happily produce, and which the
-/// Vite dev proxy can forward — matches nothing and 404s before any handler
-/// runs. The rewrite applies to exactly `/app/` (with any query preserved);
-/// everything else passes through untouched.
-#[derive(Clone)]
-pub struct SpaNormalizeLayer;
-
-impl<S> Layer<S> for SpaNormalizeLayer {
-    type Service = SpaNormalize<S>;
-
-    fn layer(&self, inner: S) -> Self::Service {
-        SpaNormalize { inner }
-    }
-}
-
-#[derive(Clone)]
-pub struct SpaNormalize<S> {
-    inner: S,
-}
-
-impl<S> Service<Request> for SpaNormalize<S>
-where
-    S: Service<Request, Output = Response, Error = std::convert::Infallible>,
-{
-    type Output = Response;
-    type Error = std::convert::Infallible;
-
-    async fn serve(&self, mut req: Request) -> Result<Self::Output, Self::Error> {
-        if req.uri().path() == "/app/" {
-            let pq = match req.uri().query() {
-                Some(q) => format!("/app?{q}"),
-                None => "/app".to_string(),
-            };
-            // Parsing "/app[?query]" cannot fail; `expect` for a literal we
-            // built ourselves matches the codebase's idiom for infallible
-            // parses (see `first_run.rs`).
-            let mut uri = req.uri().clone().into_parts();
-            uri.path_and_query = Some(pq.parse().expect("static path rewrite parses as a URI"));
-            *req.uri_mut() = rama::http::Uri::from_parts(uri)
-                .expect("re-assembled URI from parts of a valid URI stays valid");
-        }
-        self.inner.serve(req).await
-    }
 }
 
 /// Serve the SPA for `req`, rooted at `root`. Pure with respect to the
@@ -135,13 +82,9 @@ where
 async fn serve(root: &Path, req: &Request) -> Response {
     let path = req.uri().path();
     // `path` is the original-case URI path (rama lowercases only the matched
-    // prefix for routing). Strip the `/app` prefix to get the file's path
-    // relative to `root`. The bare `/app` (no trailing slash) and `/app/`
-    // both resolve to the entry point.
-    let rel: &str = match path {
-        "/app" => "",
-        _ => path.strip_prefix("/app/").unwrap_or(""),
-    };
+    // prefix for routing), so a content-hashed filename keeps its case here.
+    // Everything below the root is relative to the build directory.
+    let rel: &str = path.strip_prefix('/').unwrap_or("");
     // Empty relative path → the SPA entry point.
     let rel = if rel.is_empty() { "index.html" } else { rel };
 
@@ -218,7 +161,7 @@ fn not_deployed() -> Response {
 
 /// Resolve `rel` (a path relative to the SPA root) to a real path, returning
 /// `None` if it would escape `root`. This is the traversal guard: a request
-/// like `/app/../../etc/passwd` must not read files outside the build dir.
+/// like `/../../etc/passwd` must not read files outside the build dir.
 ///
 /// We normalise `rel` **on its own** (not after joining `root`): a leading
 /// `..` with no prior component to consume means the path climbs above the
@@ -365,7 +308,7 @@ mod tests {
     #[tokio::test]
     async fn serves_a_hashed_asset_with_immutable_cache_and_correct_type() {
         let (_d, root) = spa_tempdir();
-        let req = get("/app/assets/_app/immutable/entry/START-AbC123.js");
+        let req = get("/assets/_app/immutable/entry/START-AbC123.js");
         let resp = serve(&root, &req).await;
 
         assert_eq!(resp.status(), StatusCode::OK);
@@ -396,7 +339,7 @@ mod tests {
     #[tokio::test]
     async fn serves_the_entry_point_for_bare_app_prefix() {
         let (_d, root) = spa_tempdir();
-        let resp = serve(&root, &get("/app/")).await;
+        let resp = serve(&root, &get("/")).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let cc = resp
             .headers()
@@ -411,8 +354,8 @@ mod tests {
     #[tokio::test]
     async fn spa_history_route_falls_back_to_index_html() {
         let (_d, root) = spa_tempdir();
-        // `/app/tokens` is a client route with no file on disk.
-        let resp = serve(&root, &get("/app/tokens")).await;
+        // `/tokens` is a client route with no file on disk.
+        let resp = serve(&root, &get("/tokens")).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = drain(resp).await;
         let s = String::from_utf8_lossy(&body);
@@ -425,13 +368,13 @@ mod tests {
     #[tokio::test]
     async fn missing_static_dir_is_a_503_not_a_404() {
         let empty = std::path::Path::new("/nonexistent-gateway-static-dir-xyz");
-        let resp = serve(empty, &get("/app/")).await;
+        let resp = serve(empty, &get("/")).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[test]
     fn traversal_cannot_escape_the_root() {
-        let root = Path::new("/app/ui");
+        let root = Path::new("/srv/ui");
         // Classic climb: `..` segments that reach above the root are refused.
         assert!(resolve_path(root, "../../etc/passwd").is_none());
         assert!(resolve_path(root, "a/../../../etc").is_none());
@@ -442,7 +385,7 @@ mod tests {
 
     #[test]
     fn resolve_path_keeps_descendants_inside_the_root() {
-        let root = Path::new("/app/ui");
+        let root = Path::new("/srv/ui");
         let ok = resolve_path(root, "assets/_app/immutable/entry/START-AbC123.js").unwrap();
         assert_eq!(ok, root.join("assets/_app/immutable/entry/START-AbC123.js"));
 

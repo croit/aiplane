@@ -293,28 +293,28 @@
 		<div class="card-body gap-3">
 			<h2 class="card-title text-base">New collection</h2>
 			<div class="grid gap-3 sm:grid-cols-2">
-				<label class="form-control">
-					<span class="label-text text-xs">Name</span>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs">Name</span>
 					<input class="input input-bordered input-sm" bind:value={form.name} />
 				</label>
-				<label class="form-control">
-					<span class="label-text text-xs">Embedding model</span>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs">Embedding model</span>
 					<input class="input input-bordered input-sm" bind:value={form.embedding_model} />
 				</label>
-				<label class="form-control sm:col-span-2">
-					<span class="label-text text-xs">Description</span>
+				<label class="flex flex-col gap-1 sm:col-span-2">
+					<span class="text-xs">Description</span>
 					<input class="input input-bordered input-sm" bind:value={form.description} />
 				</label>
-				<label class="form-control">
-					<span class="label-text text-xs">Source kind</span>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs">Source kind</span>
 					<select class="select select-bordered select-sm" bind:value={form.source_kind}>
 						{#each providers as p (p.kind)}
 							<option value={p.kind}>{p.label}</option>
 						{/each}
 					</select>
 				</label>
-				<label class="form-control">
-					<span class="label-text text-xs">Extraction profile</span>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs">Extraction profile</span>
 					<select class="select select-bordered select-sm" bind:value={form.profile}>
 						<option value="">None</option>
 						{#each profiles as p (p.name)}
@@ -324,18 +324,18 @@
 				</label>
 
 				{#if form.source_kind === 'git'}
-					<label class="form-control">
-						<span class="label-text text-xs">Repository URL</span>
+					<label class="flex flex-col gap-1">
+						<span class="text-xs">Repository URL</span>
 						<input class="input input-bordered input-sm" bind:value={form.git_url} />
 					</label>
-					<label class="form-control">
-						<span class="label-text text-xs">Ref</span>
+					<label class="flex flex-col gap-1">
+						<span class="text-xs">Ref</span>
 						<input class="input input-bordered input-sm" bind:value={form.git_ref} />
 					</label>
 				{:else if selectedProvider}
 					{#each selectedProvider.fields as f (f.key)}
-						<label class="form-control">
-							<span class="label-text text-xs">
+						<label class="flex flex-col gap-1">
+							<span class="text-xs">
 								{f.label}{f.required ? ' *' : ''}
 							</span>
 							<input
@@ -345,21 +345,21 @@
 								value={sourceConfig[f.key] ?? ''}
 								oninput={(e) => (sourceConfig[f.key] = e.currentTarget.value)}
 							/>
-							{#if f.help}<span class="label-text-alt text-xs opacity-60">{f.help}</span>{/if}
+							{#if f.help}<span class="text-xs opacity-60">{f.help}</span>{/if}
 						</label>
 					{/each}
 				{/if}
 
-				<label class="form-control">
-					<span class="label-text text-xs">Chunk size</span>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs">Chunk size</span>
 					<input
 						class="input input-bordered input-sm"
 						type="number"
 						bind:value={form.chunk_size}
 					/>
 				</label>
-				<label class="form-control">
-					<span class="label-text text-xs">Chunk overlap</span>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs">Chunk overlap</span>
 					<input
 						class="input input-bordered input-sm"
 						type="number"

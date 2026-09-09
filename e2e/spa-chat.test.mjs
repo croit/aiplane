@@ -1,5 +1,5 @@
 // The SPA chat round trip (issue #22, phase 2): the SvelteKit surface at
-// /app talking to the /api/v0/chat JSON API end to end — create a
+// The SPA talking to the /api/v0/chat JSON API end to end — create a
 // conversation, submit a turn, and watch the reply arrive live over the
 // JSON-SSE event stream.
 //
@@ -24,11 +24,11 @@ before(async () => {
         await gatewayIsUp(),
         `gateway is not reachable at ${BASE}; run \`GATEWAY dev server\` in another terminal`,
     );
-    const probe = await fetch(`${BASE}/app`);
+    const probe = await fetch(`${BASE}/`);
     assert.equal(
         probe.status,
         200,
-        `the SPA is not served at ${BASE}/app (got ${probe.status}) — run the server with GATEWAY_STATIC_DIR=target/frontend/build.`,
+        `the SPA is not served at ${BASE} (got ${probe.status}) — run the server with GATEWAY_STATIC_DIR=target/frontend/build.`,
     );
     browser = await launchBrowser();
 });
@@ -82,9 +82,9 @@ test("a turn streams into the SPA over the JSON event protocol", async (t) => {
     const page = await ctx.newPage();
 
     // The SPA home funnels into the chat list; start a fresh conversation.
-    await page.goto(`${BASE}/app/chat`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE}/chat`, { waitUntil: "networkidle" });
     await page.locator('button:has-text("New chat")').click();
-    await page.waitForURL((u) => /\/app\/chat\/.+/.test(u.pathname), { timeout: 5000 });
+    await page.waitForURL((u) => /\/chat\/.+/.test(u.pathname), { timeout: 5000 });
 
     // With SSR off, the composer only exists once Svelte has booted —
     // waiting for it also means its listeners are attached, so the Send
@@ -118,9 +118,9 @@ test("the voice-mode modal opens with its tap-to-talk control", async () => {
     const ctx = await browser.newContext();
     await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
     const page = await ctx.newPage();
-    await page.goto(`${BASE}/app/chat`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE}/chat`, { waitUntil: "networkidle" });
     await page.locator('button:has-text("New chat")').click();
-    await page.waitForURL((u) => /\/app\/chat\/.+/.test(u.pathname), { timeout: 5000 });
+    await page.waitForURL((u) => /\/chat\/.+/.test(u.pathname), { timeout: 5000 });
     await page.locator("textarea").waitFor();
 
     await page.locator('button[aria-label="Voice mode"]').click();

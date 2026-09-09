@@ -24,8 +24,8 @@ cargo-binstall = "latest"
 # has none that execute (the only ` ``` ` fences are `text` blocks), so no
 # separate `cargo test --doc` step is needed. Add one here if that changes.
 "cargo:cargo-nextest" = "latest"
-# Node is here for the Tailwind v4 + daisyUI CSS build in `ui/`, and for the
-# `node:test`-driven e2e suite in `e2e/`.
+# Node builds the SvelteKit SPA in `web/` and runs the `node:test`-driven
+# suites in `web/src/lib` (unit) and `e2e/` (browser).
 node = "24"
 # Playwright, used only by the `e2e` task (browser-driven end-to-end tests).
 # Installed as a mise tool so there's no project-local node_modules; the e2e
@@ -129,8 +129,8 @@ NEXTCLOUD_PASS="$PASSWORD" \
 dir = "{{ config_root }}"
 
 [tasks.dev]
-description = "Run the gateway (debug build) against the local config. Pair with `mise run watch-css` / `mise run watch-js` in another terminal for live asset reload (legacy pages) or `mise run dev-web` for the SvelteKit SPA at :5173 (issue #22) with HMR against this server."
-depends = ["build-assets", "build-web"]
+description = "Run the gateway (debug build) against the local config: the API, the proxy, and the built SPA. Pair with `mise run dev-web` in another terminal for the Vite dev server on :5173 (HMR, no Rust rebuild on UI changes)."
+depends = ["build-web"]
 run = """
 # GATEWAY_SESSION_KEY is mandatory (the gateway refuses to boot without it —
 # see load_session_secret in crates/gateway/src/main.rs). Generate one on first
@@ -144,8 +144,8 @@ if [ ! -f "$KEY_FILE" ]; then
   chmod 600 "$KEY_FILE"
   echo "generated a persistent dev session key at $KEY_FILE (gitignored)"
 fi
-# GATEWAY_STATIC_DIR serves the SvelteKit SPA at /app (issue #22) from the
-# `mise run build-web` output. A missing directory is harmless — only /app
+# GATEWAY_STATIC_DIR serves the SvelteKit SPA from the `mise run build-web`
+# output. A missing directory is harmless — only the UI
 # then 503s, the rest of the gateway is unaffected. Override with your own
 # path (e.g. a prebuilt copy) to point at a different build.
 exec env GATEWAY_STATIC_DIR="${GATEWAY_STATIC_DIR:-target/frontend/build}" GATEWAY_SESSION_KEY="$(cat "$KEY_FILE")" cargo run --package gateway
@@ -154,12 +154,11 @@ dir = "{{ config_root }}"
 
 [tasks.dev-build]
 description = "Debug build only — produces target/debug/gateway. Use this for fast iteration loops (typical ~2 s incremental vs ~11 s for a release build). For deploys / benchmarks use `mise run build` instead."
-depends = ["build-assets"]
 run = "cargo build --package gateway --bin gateway"
 
 [tasks.build]
 description = "Release build of the gateway binary. Slow (~12 s cold incremental, ~70 s from clean) — only use this when you actually want optimised output (deploys, perf measurement). For day-to-day work use `mise run dev` or `mise run dev-build`."
-depends = ["build-assets", "fetch-typst-cli", "fetch-pdfium"]
+depends = ["fetch-typst-cli", "fetch-pdfium"]
 run = "cargo build --release --package gateway --bin gateway"
 
 [tasks.fetch-typst-cli]
@@ -200,65 +199,6 @@ printf '%s' "$PDFIUM_TAG" > "$stamp"
 ls -lh "target/release/$lib"
 """
 
-[tasks.npm-install]
-description = "Install ui/ node_modules. Re-runs only when package.json/lock change."
-sources = ["ui/package.json", "ui/package-lock.json"]
-outputs = ["ui/node_modules/.package-lock.json"]
-run = "npm --prefix ui ci --no-audit --no-fund"
-
-[tasks.build-css]
-description = "Build the daisyUI/Tailwind CSS bundle into crates/session-core/assets/app.css. The gateway embeds this bundle via include_bytes! through session_core::assets; the @source globs in ui/src/main.css scan the gateway-web / gateway-core / gateway and session-core source files so utility classes used in any of them survive the Tailwind tree-shake."
-depends = ["npm-install"]
-sources = [
-    "ui/src/main.css",
-    "crates/gateway-web/src/**/*.rs",
-    "crates/gateway-tools/src/**/*.rs",
-    "crates/gateway-runtime/src/**/*.rs",
-    "crates/gateway-features/src/**/*.rs",
-    "crates/gateway-core/src/**/*.rs",
-    "crates/gateway/src/**/*.rs",
-    "crates/session-core/src/**/*.rs",
-]
-outputs = ["crates/session-core/assets/app.css"]
-run = "npm --prefix ui run build-css"
-
-[tasks.watch-css]
-description = "Tailwind --watch on the CSS bundle. Run alongside `mise run dev`."
-depends = ["npm-install"]
-run = "npm --prefix ui run watch-css"
-
-[tasks.build-js]
-description = "Bundle the TypeScript page glue into crates/session-core/assets/{app,pcm-recorder}.js. Both binaries serve them through session_core::assets."
-depends = ["npm-install"]
-sources = ["ui/ts/**/*.ts", "crates/session-core/ui/ts/**/*.ts", "ui/tsconfig.json"]
-outputs = [
-    "crates/session-core/assets/app.js",
-    "crates/session-core/assets/pcm-recorder.js",
-]
-run = "npm --prefix ui run build-js"
-
-[tasks.watch-js]
-description = "esbuild --watch on the JS bundles. Run alongside `mise run dev`."
-depends = ["npm-install"]
-run = "npm --prefix ui run watch-js"
-
-[tasks.typecheck]
-description = "tsc --noEmit across ui/ts. esbuild strips types without checking; run this for real type errors."
-depends = ["npm-install"]
-sources = ["ui/ts/**/*.ts", "crates/session-core/ui/ts/**/*.ts", "ui/tsconfig.json"]
-run = "npm --prefix ui run typecheck"
-
-[tasks.build-assets]
-description = "Composite: produce both the CSS and JS bundles. Used as the dep for everything that builds the gateway binary so a fresh checkout produces working static assets without manual steps."
-depends = ["build-css", "build-js"]
-
-# --- web/ — the SvelteKit SPA (issue #22) --------------------------------
-# Dev loop: `mise run dev` (gateway :8080) + `mise run dev-web` (Vite :5173
-# with /api, /v1, /auth proxied to :8080, HMR on every Svelte save — zero
-# Rust rebuilds for UI work). Prod: `build-web` emits adapter-static output
-# into target/frontend/build/, which the Dockerfile copies into the image
-# and the gateway serves at /app from GATEWAY_STATIC_DIR.
-
 [tasks.web-install]
 description = "Install web/ node_modules (SvelteKit SPA). Re-runs only when package.json/lock change."
 sources = ["web/package.json", "web/package-lock.json"]
@@ -271,7 +211,7 @@ depends = ["web-install"]
 run = "npm --prefix web run dev"
 
 [tasks.build-web]
-description = "Build the SvelteKit SPA (adapter-static) into target/frontend/build/. The Dockerfile COPYs that directory into the image; `cargo run` serves it at /app when GATEWAY_STATIC_DIR points there."
+description = "Build the SvelteKit SPA (adapter-static) into target/frontend/build/. The Dockerfile COPYs that directory into the image; the gateway serves it from the root when GATEWAY_STATIC_DIR points there."
 depends = ["web-install"]
 sources = ["web/src/**/*", "web/static/**/*", "web/vite.config.ts", "web/package.json"]
 outputs = ["target/frontend/build/index.html"]
@@ -284,36 +224,22 @@ cp -r web/build target/frontend/build
 """
 
 [tasks.check-web]
-description = "svelte-check (typescript + a11y + Svelte diagnostics) across web/src. The SPA counterpart of `typecheck`."
+description = "svelte-check (typescript + a11y + Svelte diagnostics) across web/src."
 depends = ["web-install"]
 sources = ["web/src/**/*", "web/vite.config.ts"]
 run = "npm --prefix web run check"
 
 [tasks.dev-ui]
-description = "Stub gateway for local UI debugging: real rama server on :8080 against a wiremock chat + transcription backend with a pre-seeded session. Prints the session cookie to stdout so playwright (or curl) can drive any authed page (/, /tokens, /chat, /theme/toggle, /api/v0/*) without OIDC. See docs/dev-workflow.md → 'Debugging the UI'."
-depends = ["build-assets"]
+description = "Stub gateway for local UI debugging: real rama server on :8080 against a wiremock chat + transcription backend with a pre-seeded session. Prints the session cookie to stdout so playwright (or curl) can drive any authed page (/, /tokens, /chat, /api/v0/*) without OIDC. See docs/dev-workflow.md → 'Debugging the UI'."
 run = "cargo run --example dev_ui -p gateway"
 
 [tasks.test]
 description = "Run the workspace tests (cargo-nextest — parallel, compact report)."
-depends = ["build-assets"]
 run = "cargo nextest run --workspace"
 
 [tasks.test-nocapture]
 description = "Run tests with stdout/stderr visible."
-depends = ["build-assets"]
 run = "cargo nextest run --workspace --no-capture"
-
-[tasks.test-js]
-description = "Unit-test the browser TypeScript (node --test, Node's own type stripping — no bundler, no jsdom). Tests live next to their module as `*.test.mjs` and stub the DOM surface they need; they pin behaviour that only shows up at runtime, like the conversation's scroll/tail-space geometry."
-sources = [
-    "ui/ts/**/*.ts",
-    "ui/ts/**/*.test.mjs",
-    "crates/session-core/ui/ts/**/*.ts",
-    "crates/session-core/ui/ts/**/*.test.mjs",
-]
-dir = "{{ config_root }}"
-run = "node --test 'ui/ts/**/*.test.mjs' 'crates/session-core/ui/ts/**/*.test.mjs'"
 
 [tasks.gen-api-client]
 description = "Regenerate web/src/lib/schema.d.ts from docs/openapi.json — run after changing any /api/v0 route; the SPA's typed client types come from here."
@@ -326,8 +252,8 @@ dir = "{{ config_root }}"
 run = "node --test 'web/src/lib/**/*.test.ts'"
 
 [tasks.lint]
-description = "Clippy + rustfmt + tsc --noEmit + svelte-check."
-depends = ["build-assets", "typecheck", "check-web"]
+description = "Clippy + rustfmt + svelte-check."
+depends = ["check-web"]
 run = [
     "cargo fmt --all -- --check",
     "cargo clippy --workspace --all-targets -- -D warnings",
@@ -350,16 +276,15 @@ description = "Scan only the staged diff for secrets (gitleaks). Run by the pre-
 run = "gitleaks git . --staged --redact --no-banner"
 
 [tasks.ci]
-description = "Everything CI runs: lint + tests (Rust + browser TS) + release build of the gateway binary + SPA build. mise fans out via the DAG. Locally prefer `verify` — same gate, minus the release build you don't need."
-depends = ["lint", "test", "test-js", "test-web", "build", "build-web"]
+description = "Everything CI runs: lint + tests + release build of the gateway binary + SPA build. mise fans out via the DAG. Locally prefer `verify` — same gate, minus the release build you don't need."
+depends = ["lint", "test", "test-web", "build", "build-web"]
 
 [tasks.verify]
-description = "The local pre-push gate: lint + Rust tests + browser-TS tests + SPA build. Same checks as `ci` minus the release build — nothing in `ci` catches a compile error that `test` doesn't, and the release build is a THIRD full compile of the workspace (dev for clippy, test for nextest, release for the binary). Run this once before pushing; use `test-crate` / `lint-crate` while iterating."
-depends = ["lint", "test", "test-js", "test-web", "build-web"]
+description = "The local pre-push gate: lint + Rust tests + SPA checks and build. Same checks as `ci` minus the release build — nothing in `ci` catches a compile error that `test` doesn't, and the release build is a THIRD full compile of the workspace (dev for clippy, test for nextest, release for the binary). Run this once before pushing; use `test-crate` / `lint-crate` while iterating."
+depends = ["lint", "test", "test-web", "build-web"]
 
 [tasks.test-crate]
 description = "Tests for ONE crate — the iteration loop. `mise run test-crate gateway-web [filter]`. Seconds instead of the ~20 min a full `test` costs after touching a root crate, because it links that crate's test binaries only."
-depends = ["build-assets"]
 usage = '''
 arg "<crate>" help="workspace crate, e.g. gateway-web"
 arg "[filter]" help="optional nextest name filter"
@@ -368,7 +293,6 @@ run = 'cargo nextest run -p "$usage_crate" ${usage_filter:-}'
 
 [tasks.lint-crate]
 description = "Clippy for ONE crate: `mise run lint-crate gateway-web`. Use while iterating; `mise run verify` before pushing."
-depends = ["build-assets"]
 usage = 'arg "<crate>" help="workspace crate, e.g. gateway-web"'
 run = 'cargo clippy -p "$usage_crate" --all-targets -- -D warnings'
 
@@ -435,5 +359,4 @@ echo "swept $swept files older than ${days}d"
 [tasks.check]
 description = "Fast type-check across the workspace (no codegen). The cheapest rung of the ladder: check → test-crate/lint-crate → verify → ci."
 run = "cargo check --workspace --all-targets"
-
 

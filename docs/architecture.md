@@ -2,7 +2,7 @@
 
 ## One-paragraph summary
 
-The gateway is a single Rust binary built on **rama 0.3**, which is a proxy-native HTTP framework. The same process serves the OpenAI-compatible API (`/v1/*`), the OIDC browser flow (`/auth/*`), the session-authed JSON admin API (`/api/v0/*`), and a server-rendered HTML UI (`/`, `/login`, `/tokens`, `/chat`). HTML templates use the **plait** macro inline in handlers; client-side reactivity is **datastar** (self-hosted, ~34 KB JS) — chat replies stream over SSE and token CRUD uses the same SSE-patch pattern for surgical updates; styling is **daisyUI v5 + Tailwind v4** with a shadcn-flavoured neutral palette.
+The gateway is a single Rust binary built on **rama 0.3**, which is a proxy-native HTTP framework. The same process serves the OpenAI-compatible API (`/v1/*`), the OIDC browser flow (`/auth/*`), the session-authed JSON API (`/api/v0/*`), and — from the root `/` — the static files of a **SvelteKit SPA** (Svelte 5, `adapter-static`, built from `web/`). The SPA is compiled ahead of time and served out of `GATEWAY_STATIC_DIR`, so there is still no Node at runtime: one container, one process, one port. Chat streams over a JSON-SSE event protocol (`session_core::chat_json`) rather than server-rendered diffs; styling is **daisyUI v5 + Tailwind v4** with a shadcn-flavoured neutral palette. See [`ui.md`](ui.md).
 
 > Indexing an external file share (Nextcloud / WebDAV / …) into RAG is its
 > own subsystem with its own extension point — see
@@ -15,9 +15,12 @@ The gateway is a single Rust binary built on **rama 0.3**, which is a proxy-nati
                                 │            Gateway (Rust, rama 0.3)          │
                                 │                                              │
    Browser ───── HTTPS ────────►│  ┌─────────────────────┐  ┌───────────────┐  │
-                                │  │  /  /login /tokens  │  │  /auth/*      │──┼──► OIDC provider
-                                │  │  /chat (datastar)   │  │  OIDC flow    │  │   (Keycloak/Authentik/…)
-                                │  └─────────────────────┘  └───────────────┘  │
+                                │  │  /  SPA static      │  │  /auth/*      │──┼──► OIDC provider
+                                │  │     shell (web/)    │  │  OIDC flow    │  │   (Keycloak/Authentik/…)
+                                │  ├─────────────────────┤  └───────────────┘  │
+                                │  │  /api/v0/*  JSON    │                     │
+                                │  │  + chat SSE events  │                     │
+                                │  └─────────────────────┘                     │
                                 │                                              │
    OpenAI SDK ── HTTPS ────────►│  ┌────────────────────────────────────────┐  │
                                 │  │  /v1/chat/completions, /v1/audio/...   │──┼──► Upstream pool A (chat)
@@ -40,7 +43,7 @@ it — never what sits below.
 
 ```
 gateway            bin + router/proxy/api/oidc      6.5k  ← thinnest, most-edited glue
-   ├── gateway-web     server-rendered HTML pages  25.5k  ← siblings: neither
+   ├── gateway-web     the /api/v0 JSON handlers   25.5k  ← siblings: neither
    └── gateway-tools   the tool implementations    14.5k  ←   depends on the other
           └── gateway-runtime  tool API + AppState/RamaState + chat driver   14.7k
                  ├── gateway-features  RAG, skills, ComfyUI, push, geoip, …  13.9k
@@ -61,9 +64,14 @@ What that buys, in lines that must recompile after a one-line edit:
 | `gateway-features` | 75,124 |
 | `gateway-core` | 97,189 |
 
-The gains are front-loaded deliberately: the layers that churn most (pages, tools,
+The gains are front-loaded deliberately: the layers that churn most (handlers, tools,
 glue — about 60% of file touches over six months) are the cheapest to rebuild, and
 `gateway-core` — the one that still costs a full rebuild — is the least-edited.
+
+Those counts are the measurement that motivated the split, taken before the SPA
+migration deleted the server-rendered page stack; `gateway-web` is roughly a third
+of the size quoted above now. The ordering — and therefore the rule below — is
+unchanged, and UI work no longer recompiles Rust at all.
 
 **Rule of thumb when adding code:** put it as high in the stack as it will go.
 Something only belongs in `gateway-core` if code below the feature layer genuinely
@@ -91,15 +99,15 @@ in the tree. No routing, no `AppState`, no tool registry:
 - `reasoning.rs`, `model_defaults.rs`, `feature_defaults.rs` — per-model capability and effort tables.
 - `tool_naming.rs` — the well-known tool ids/prefixes (`comfyui_`, `typst_`, `enable_tools`, `read_skill`) and the slug→title humaniser. Down here because RBAC, the typst discovery pass, and the catalog all need it and they're on three different layers.
 - `usage/`, `limits/` — the metrics sink and the rate-limit/quota enforcer.
-- `rama_server/session.rs` — signed-cookie + sqlite session store, plus the `is_safe_return_to` redirect guard the OIDC callback and the page chrome both need; `rama_server/cors.rs` — the CORS layer. Neither needs `AppState`, so both stay here.
+- `rama_server/session.rs` — signed-cookie + sqlite session store, plus the `is_safe_return_to` redirect guard the OIDC callback needs to bounce a signed-in user back to the SPA route they asked for; `rama_server/cors.rs` — the CORS layer. Neither needs `AppState`, so both stay here.
 
 ### `crates/gateway-features`
 The optional subsystems — what a deployment switches on in `gateway.toml` and can
 run entirely without: `rag/`, `skills.rs`, `comfyui/` (client, store, manifest,
 runner, scheduler), `push/`, `github/`, `geoip/`, `typst.rs`, `image_gen.rs`,
 `chat_attachments.rs`, `embeddings.rs`, `speech.rs`, `pdf.rs`, `ocr.rs`,
-`search_settings.rs`, and `document_canvas.rs` (the chat canvas renderer, shared
-by the chat page above and the document tools above).
+`search_settings.rs`, and `document_canvas.rs` (the chat canvas store, shared
+by the chat document endpoints and the document tools above).
 
 Each stands on `gateway-core` and knows nothing about `AppState`, the tool
 registry, or routing. That ignorance is the whole point — it's what lets this
@@ -136,18 +144,23 @@ constraint is why a handful of test-support helpers (`ToolContext::for_test`,
 `#[cfg(test)]`.
 
 ### `crates/gateway-web`
-The server-rendered HTML: `pages/`, split per route. `mod.rs` carries the shared
-chrome (layout, nav, theme, SSE framing helpers, `Flash`, the session gate,
-`/login`, `/theme/toggle`); `chat/` is a directory module for the
-multi-conversation chat (handlers in `mod.rs`, renderers in `render.rs`,
-auto-titling in `title.rs`); `tokens.rs` owns `/tokens` CRUD; `admin.rs` and its
-siblings own the `/admin/*` screens.
+The `/api/v0` JSON handlers the SPA calls — everything the deleted page stack used
+to render server-side, now answering JSON instead. `pages/mod.rs` carries the
+shared helpers every handler uses — `require_session_json` / `require_admin_json`
+(the 401/403 gates) and `json_ok` / `json_error` (the response envelope) — and
+re-exports the handlers the router mounts.
+`chat/` is a directory module for the multi-conversation chat (`json_api.rs` for
+the endpoints and the event stream, `title.rs` for auto-titling); `json_admin.rs`,
+`json_skills.rs` and `json_workspace.rs` own the admin, skills/connector and
+memory/scheduled/webhook surfaces; `rag*.rs`, `integrations.rs`, `tools.rs`,
+`webhooks.rs` and `feedback.rs` own the rest, including the handful of non-`/api/v0`
+OAuth and webhook-trigger routes that outlived the pages.
 
 This crate is a **pure sink** — nothing in `gateway-core` references it, and only
 the router mounts it. Keep it that way: a back-edge from `gateway-core` into a
-page would collapse the split. `build_info.rs` (and the `build.rs` that stamps the
-git SHA into it) lives here too, because the page chrome is its only consumer and
-that keeps a new commit from invalidating `gateway-core`.
+handler would collapse the split. `build_info.rs` (and the `build.rs` that stamps
+the git SHA into it) lives here too, because it keeps a new commit from
+invalidating `gateway-core`.
 
 ### `crates/gateway`
 The binary and its routing glue — deliberately thin:
@@ -155,7 +168,9 @@ The binary and its routing glue — deliberately thin:
 - `proxy.rs` — `/v1/{models,chat/completions,audio/transcriptions,audio/speech,embeddings,images/generations,images/edits}` handlers. The chat path branches between a streaming fast-path (no tool grants) and the buffered tool-call loop; embeddings, images, and speech are byte-dumb relays to their pool kind.
 - `api.rs` — session-authed JSON at `/api/v0/*`.
 - `oidc_handlers.rs` — `/auth/{login,callback,logout}`, backed by a `pending_logins` row keyed by the OIDC `state` parameter.
-- `rag_api.rs`, `sandbox_api.rs`, `comfyui_api.rs` — the remaining JSON surfaces.
+- `rag_api.rs`, `sandbox_api.rs`, `comfyui_api.rs`, `setup_api.rs` — the remaining JSON surfaces. (`setup_api.rs` lives here rather than in `gateway-web` so the first-run wizard's API survived the removal of the page stack.)
+- `spa.rs` — serves the built SvelteKit SPA from `GATEWAY_STATIC_DIR`: content-type map, cache policy, traversal guard, and the `index.html` history fallback. Its `GET /` + `GET /{*name}` catch-all is registered **last**, because rama matches in registration order.
+- `first_run.rs` — the layer that redirects everything to `/setup` until setup completes, with an allowlist for the SPA's static shell.
 - `vad.rs` — neural voice-activity detection, trimming silence off uploaded voice notes before Whisper sees them.
 
 `main.rs` wires it all: config → db → upstreams → tools → rbac → SessionStore →
@@ -163,9 +178,12 @@ OIDC → `rama_server::router::serve`. The lib target exists so the integration
 tests in `tests/` can build the router and drive it with `router.serve(req)`
 without binding a socket.
 
-Static assets (`app.css`, `datastar.js`, `app.js`, `pcm-recorder.js`) are
-`include_bytes!`'d and served by `session_core::assets` at a
-`?v=<sha256-prefix>` versioned URL with `Cache-Control: immutable`.
+The UI's assets are **not** baked into the binary. `mise run build-web` compiles
+`web/` into `target/frontend/build/`, the container image COPYs that directory in,
+and `rama_server::spa` serves it from `GATEWAY_STATIC_DIR` — content-hashed bundles
+`immutable`, `index.html` and `sw.js` `no-cache`. With the variable unset the UI
+answers 503 and nothing else changes, which is what makes a headless deployment
+(API + proxy only) a supported configuration rather than an accident.
 
 ## Request flow: `POST /v1/chat/completions`
 
@@ -176,14 +194,18 @@ Static assets (`app.css`, `datastar.js`, `app.js`, `pcm-recorder.js`) are
    - *Tool path* — taken whenever the user has tool grants, including when the client brought its own `tools` (unioned in, de-duped by name). The runner in `server::tools::runner` injects tool defs, forces `stream: false`, and loops: acquire pool → forward → if the turn's `tool_calls` are gateway-owned *only*, execute them concurrently and feed the results back as `role: "tool"` messages → re-POST. A turn that calls any client-owned tool is returned to the client unchanged (it drives its own tools). Bounded at 10 rounds. Final response carries an `x-gateway-tool-rounds` header.
 4. **`Acquired::drop`** releases the in-flight slot. The pool's atomic counter decrements on the next pick.
 
-## Request flow: chat page (datastar SSE)
+## Request flow: chat (JSON over SSE)
 
-1. The browser submits the chat composer form with `@post('/chat/{id}/messages', {contentType: 'form'})` — datastar sends `application/x-www-form-urlencoded` and expects `text/event-stream` back.
-2. `pages::chat_message_send` validates the form, resolves the user (session cookie), and confirms they own the session.
-3. It registers a per-user **worker** slot (a broadcast channel keyed by the user id). A second concurrent submit for the same user gets a "still streaming" error rather than a parallel stream.
-4. It persists the user turn + an `in_progress` assistant turn, auto-titles the session (a heuristic title synchronously, then a background LLM-generated one), and spawns the assistant worker. The worker drives the model — including the tool-call loop and reasoning — and pushes `TurnUpdate`s onto its broadcast.
-5. The handler returns an SSE response subscribed to that broadcast. The first event appends a user bubble + an empty assistant bubble to `#conversation`; subsequent `datastar-patch-elements` events patch the assistant turn with the accumulated content, reasoning, and tool-call state, plus sidebar-row updates. The stream closes when the worker finalizes the turn.
-6. `GET /chat/{id}/tail` (`pages::chat_tail`) lets a client that reconnected or reloaded mid-stream re-attach to a live worker's broadcast. If no worker is live for the session it signals `chatStreaming:false` and closes, so the viewer just sees the static snapshot.
+Submitting and reading a reply are two separate requests — the SPA holds one long-lived stream open per conversation and posts messages into it.
+
+1. **`POST /api/v0/chat/sessions/{id}/messages`** (`pages::chat::json_api::message_send`) resolves the user from the session cookie, confirms they own the session, and reads the body (multipart when there are attachments).
+2. It registers a per-user **worker** slot (a broadcast channel keyed by the user id). A second concurrent submit for the same user is refused rather than racing a parallel stream.
+3. It persists the user turn + an `in_progress` assistant turn, auto-titles the session (a heuristic title synchronously, then a background LLM-generated one), and spawns the assistant worker. The worker drives the model — tool-call loop and reasoning included — writing every increment to SQLite and pushing a `TurnUpdate` onto its broadcast after each write. It runs to completion whether or not anyone is listening.
+4. **`GET /api/v0/chat/sessions/{id}/events`** (`session_core::chat_json`) is the read side. It emits a `snapshot` rebuilt from the DB, then subscribes to the broadcast and, on each coalesced flush (≥120 ms), diffs the turn row against what this subscriber has already seen and emits `turn_delta` / `reasoning_delta` / `tool_call_started` / `tool_call_done` / `turn_finalized`. It closes on `turn_finalized`, or emits `idle` and closes when no worker is live.
+5. **Reconnect is just re-attach.** There is no `Last-Event-ID` replay because the DB *is* the replayer: the snapshot on attach subsumes anything missed. That is why closing a tab mid-stream loses nothing.
+6. **`POST /api/v0/chat/sessions/{id}/cancel`** flips the worker's cancel flag; the worker observes it between upstream chunks and exits cleanly into finalize.
+
+The event shapes and the client-side contract (notably `full: true` meaning "replace, don't append") are documented in [`ui.md`](ui.md#chat-streaming-the-json-event-protocol).
 
 ## Configuration
 

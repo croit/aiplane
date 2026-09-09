@@ -1,22 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! The setup wizard as JSON (issue #22 P5/P6) — the SPA at `/app/setup`
-//! drives the same first-run flow the legacy server-rendered wizard did:
-//! enter provider settings → a real OIDC test login → pick the admin claim
-//! → finish. Lives in the `gateway` crate (not `gateway-web`) so it
-//! survives phase 6's removal of the legacy page stack.
+//! The setup wizard as JSON (issue #22 P5/P6) — the SPA at `/setup`
+//! drives the first-run flow: enter provider settings → a real OIDC test
+//! login → pick the admin claim → finish. Lives in the `gateway` crate (not
+//! `gateway-web`) so it survived phase 6's removal of the legacy page stack.
 //!
 //! Auth model: the wizard is deliberately UNauthenticated on a first run
 //! (an empty box has no accounts to authenticate against) and token-gated
-//! during a recovery window. The same `setup::access` state machine gates
-//! every handler here exactly as it gated the pages.
+//! during a recovery window. The `setup::access` state machine gates every
+//! handler here.
 
 use std::sync::Arc;
 
 use rama::http::service::web::extract::State;
 use rama::http::{Request, Response, StatusCode, header};
 
+use session_core::chrome::read_cookie;
+
+use gateway_core::rama_server::session::secure_cookies;
 use gateway_core::server::auth::oidc::OidcClient;
 use gateway_core::server::auth::pending::{self, Purpose};
 use gateway_core::server::db;
@@ -26,14 +28,17 @@ use gateway_core::server::setup::{self, Draft, Proof, SetupAccess};
 use gateway_runtime::rama_server::state::RamaState;
 use gateway_runtime::server::state::RuntimeSettings;
 
-/// Where a probe started by *this* (SPA) wizard comes back to, stored as the
-/// pending row's `return_to`.
+/// Where a setup probe comes back to, stored as the pending row's `return_to`
+/// and used as the redirect target once the probe's claims are recorded.
 ///
-/// It doubles as the discriminator the OIDC callback dispatches on: both
-/// wizards run in parallel during the migration and share one `Purpose::Setup`,
-/// so `return_to` is the only thing that says which of them started a given
-/// probe. See `oidc_handlers`'s `Purpose::Setup` arm.
-pub const SPA_RETURN_TO: &str = "/app/setup";
+/// The SPA owns the root, so this is the client route the wizard lives at —
+/// not an API path.
+pub const SPA_RETURN_TO: &str = "/setup";
+
+/// Carries a verified recovery claim across the wizard's requests, so the
+/// one-time token `restore-setup` prints only has to be presented once.
+/// Scoped to the wizard's own API prefix.
+pub const SETUP_CLAIM_COOKIE: &str = "gw_setup";
 
 fn json(status: StatusCode, body: serde_json::Value) -> Response {
     Response::builder()
@@ -50,22 +55,137 @@ fn error_json(status: StatusCode, code: &str, message: &str) -> Response {
     )
 }
 
-/// The wizard's own access gate, returning the access mode on success.
-async fn gate(state: &RamaState) -> Result<SetupAccess, Response> {
-    match setup::access(&state.db).await {
-        Ok(SetupAccess::FirstRun) => Ok(SetupAccess::FirstRun),
-        Ok(SetupAccess::Recovery) => Ok(SetupAccess::Recovery),
-        Ok(SetupAccess::Closed) => Err(error_json(
+/// What the gate resolved for one request: how setup may be reached, and the
+/// recovery token this request proved (only ever `Some` in a recovery window,
+/// and only when it arrived on the query string — see [`gate`]).
+struct Gated {
+    access: SetupAccess,
+    claim: Option<String>,
+}
+
+/// The wizard's own access gate.
+///
+/// * **First run** — open, no token. There is no account to authenticate
+///   against yet, and a token nobody can retrieve without shell access would
+///   just move the lockout one step earlier.
+/// * **Recovery** — the gateway is configured and `restore-setup` reopened
+///   setup for 30 minutes; every request must present the one-time token that
+///   command printed, either as `?claim=…` or on the [`SETUP_CLAIM_COOKIE`]
+///   this handler set from a previous `?claim=…`. Without this a reopened
+///   window would let any anonymous caller re-point a live gateway's identity
+///   provider at their own.
+/// * **Closed** — the wizard does not exist.
+async fn gate(state: &RamaState, req: &Request) -> Result<Gated, Response> {
+    let access = match setup::access(&state.db).await {
+        Ok(a) => a,
+        Err(err) => {
+            return Err(error_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                &format!("reading setup state: {err}"),
+            ));
+        }
+    };
+    match access {
+        SetupAccess::FirstRun => Ok(Gated {
+            access,
+            claim: None,
+        }),
+        SetupAccess::Recovery => {
+            let from_query = claim_from_query(req);
+            let presented = from_query
+                .clone()
+                .or_else(|| read_cookie(req.headers(), SETUP_CLAIM_COOKIE));
+            match presented {
+                Some(token)
+                    if setup::recovery_token_matches(&state.db, access, &token)
+                        .await
+                        .unwrap_or(false) =>
+                {
+                    Ok(Gated {
+                        access,
+                        // Only a token that arrived on the query string needs
+                        // to be put on a cookie; one that came from the cookie
+                        // is already there.
+                        claim: from_query,
+                    })
+                }
+                _ => Err(error_json(
+                    StatusCode::FORBIDDEN,
+                    "forbidden",
+                    "This gateway is already configured. Reopening setup needs the one-time \
+                     link printed by `restore-setup` on the host.",
+                )),
+            }
+        }
+        SetupAccess::Closed => Err(error_json(
             StatusCode::NOT_FOUND,
             "not_found",
-            "Setup is closed on this gateway.",
-        )),
-        Err(err) => Err(error_json(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            &format!("reading setup state: {err}"),
+            "Setup is closed on this gateway. To reconfigure it, run `restore-setup` on the \
+             host — it prints a one-time link.",
         )),
     }
+}
+
+/// The `claim` query parameter, percent-decoded.
+fn claim_from_query(req: &Request) -> Option<String> {
+    let query = req.uri().query()?;
+    query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == "claim").then(|| percent_decode(value))
+    })
+}
+
+/// Minimal `application/x-www-form-urlencoded` value decoding — enough for a
+/// recovery token, which `restore-setup` prints as hex.
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => match u8::from_str_radix(&value[i + 1..i + 3], 16) {
+                Ok(byte) => {
+                    out.push(byte);
+                    i += 3;
+                }
+                Err(_) => {
+                    out.push(b'%');
+                    i += 1;
+                }
+            },
+            byte => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Attach the recovery claim to a response so the rest of the wizard's calls
+/// work without repeating the token on every one of them.
+///
+/// `Secure` matters more here than on the session cookie: this token
+/// reconfigures a *live* gateway with real users. It dies with the browser
+/// session and is worthless once the window closes, so no `Max-Age`.
+fn with_claim(state: &RamaState, mut resp: Response, claim: Option<&str>) -> Response {
+    let Some(token) = claim else { return resp };
+    let secure = if secure_cookies(&state.public_url()) {
+        "; Secure"
+    } else {
+        ""
+    };
+    let cookie =
+        format!("{SETUP_CLAIM_COOKIE}={token}; Path=/api/v0/setup; HttpOnly; SameSite=Lax{secure}");
+    if let Ok(value) = header::HeaderValue::from_str(&cookie) {
+        resp.headers_mut().append(header::SET_COOKIE, value);
+    }
+    resp
 }
 
 /// GET /api/v0/setup/state — where the wizard stands: the access mode, the
@@ -73,8 +193,8 @@ async fn gate(state: &RamaState) -> Result<SetupAccess, Response> {
 /// Secrets are never echoed; the draft carries the client secret only as
 /// `client_secret_set`.
 pub async fn setup_state(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let access = match gate(&state).await {
-        Ok(a) => a,
+    let Gated { access, claim } = match gate(&state, &req).await {
+        Ok(g) => g,
         Err(resp) => return resp,
     };
     let draft = setup::load_draft(&state.db, &state.crypto)
@@ -103,7 +223,7 @@ pub async fn setup_state(State(state): State<Arc<RamaState>>, req: Request) -> R
             "claims": p.claims,
         })
     });
-    json(
+    let resp = json(
         StatusCode::OK,
         serde_json::json!({
             "access": match access {
@@ -117,7 +237,8 @@ pub async fn setup_state(State(state): State<Arc<RamaState>>, req: Request) -> R
             // browser is actually using.
             "suggested_public_url": public_url_from_request(&req, &state),
         }),
-    )
+    );
+    with_claim(&state, resp, claim.as_deref())
 }
 
 fn public_url_from_request(req: &Request, state: &RamaState) -> String {
@@ -159,7 +280,7 @@ pub struct SetupTestBody {
 /// the SPA to navigate to, plus the browser-binding cookie the callback
 /// will check.
 pub async fn setup_test(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    if let Err(resp) = gate(&state).await {
+    if let Err(resp) = gate(&state, &req).await {
         return resp;
     }
     let (_, body) = req.into_parts();
@@ -204,8 +325,7 @@ pub async fn setup_test(State(state): State<Arc<RamaState>>, req: Request) -> Re
         parsed.client_secret
     };
     // Any proof on file belongs to the previous draft — the proof and the
-    // draft it proves must move together (the same reasoning as the legacy
-    // handler).
+    // draft it proves must move together.
     if let Err(err) = setup::clear_proof(&state.db).await {
         return error_json(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -269,8 +389,8 @@ pub async fn setup_test(State(state): State<Arc<RamaState>>, req: Request) -> Re
 }
 
 /// POST /api/v0/setup/restart — throw the proof away, back to screen 1.
-pub async fn setup_restart(State(state): State<Arc<RamaState>>, _req: Request) -> Response {
-    if let Err(resp) = gate(&state).await {
+pub async fn setup_restart(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    if let Err(resp) = gate(&state, &req).await {
         return resp;
     }
     if let Err(err) = setup::clear_proof(&state.db).await {
@@ -299,11 +419,11 @@ pub struct SetupFinishBody {
 
 /// POST /api/v0/setup/finish — promote the draft to live settings, create
 /// the admin + default groups, mark setup complete, hot-swap the runtime.
-pub async fn setup_finish(State(state): State<Arc<RamaState>>, _req: Request) -> Response {
-    if let Err(resp) = gate(&state).await {
+pub async fn setup_finish(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    if let Err(resp) = gate(&state, &req).await {
         return resp;
     }
-    let (_, body) = _req.into_parts();
+    let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
         Err(msg) => return error_json(StatusCode::BAD_REQUEST, "invalid_request", &msg),
@@ -381,13 +501,18 @@ pub async fn setup_finish(State(state): State<Arc<RamaState>>, _req: Request) ->
     );
     json(
         StatusCode::OK,
-        serde_json::json!({ "ok": true, "landing": "/app/admin/settings" }),
+        serde_json::json!({ "ok": true, "landing": "/admin/settings" }),
     )
 }
 
-/// Group names the wizard creates; kept identical to the legacy handler.
-const ADMIN_GROUP: &str = "admin";
-const DEFAULT_GROUP: &str = "default";
+/// The gateway group the wizard creates for administrators. A name, not a
+/// magic value — the admin can rename or replace it at `/admin/groups`
+/// afterwards; what makes it privileged is its `is_admin` flag.
+const ADMIN_GROUP: &str = "admins";
+/// The group every other signed-in user falls into. Created with no grants on
+/// purpose: who may use which tools, pools and skills is a decision for the
+/// operator, not something a wizard should presume.
+const DEFAULT_GROUP: &str = "users";
 
 /// Write everything the wizard decided, ordered so a failure part-way
 /// leaves the gateway unconfigured.
@@ -423,9 +548,8 @@ async fn persist(
 
 /// Called by `/auth/callback` when the in-flight row was a setup probe:
 /// complete the exchange against the DRAFT provider and record the claims
-/// for screen 2. No user row, no session. This is the function the legacy
-/// wizard exported; it lives here now so the callback keeps working after
-/// phase 6 removes `gateway-web`.
+/// for screen 2. No user row, no session — proving a provider authorises
+/// nobody.
 pub async fn setup_probe_callback(
     state: &RamaState,
     _headers: &header::HeaderMap,

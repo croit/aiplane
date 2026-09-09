@@ -64,7 +64,7 @@ without a restart.
 account to authenticate against and nothing configured worth stealing.
 `SetupAccess::Closed` (configured) 404s. `SetupAccess::Recovery` is opened by
 `restore-setup` on the host for 30 minutes and needs the one-time token that
-command prints, carried afterwards by a `gw_setup` cookie scoped to `/setup`.
+command prints, carried afterwards by a `gw_setup` cookie scoped to `/api/v0/setup`.
 
 **Recovery is not first-run mode.** With a recovery window open the gateway
 keeps serving normally — chats, `/v1`, existing sessions — and only `/setup`

@@ -22,15 +22,13 @@
 
 pub mod assets;
 pub mod attachments;
-pub mod chat;
 pub mod chat_json;
 pub mod chrome;
 pub mod db;
 pub mod driver;
 pub mod export;
 pub mod i18n;
-pub mod icons;
-pub mod render;
+pub mod text;
 pub mod worker;
 pub mod workers;
 

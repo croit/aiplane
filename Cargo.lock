@@ -829,15 +829,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "convert_case"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
-dependencies = [
- "unicode-segmentation",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1859,7 +1850,6 @@ dependencies = [
  "jiff",
  "jsonwebtoken",
  "multer",
- "plait",
  "rama",
  "rand 0.9.4",
  "reqwest 0.12.28",
@@ -2038,7 +2028,6 @@ dependencies = [
  "gateway-runtime",
  "jiff",
  "multer",
- "plait",
  "rama",
  "reqwest 0.12.28",
  "serde",
@@ -3748,29 +3737,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
-name = "plait"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad1c130ff38e521f87bd5b8adca32e02f6a444c5ae271ff14e33e7a7099ac895"
-dependencies = [
- "itoa",
- "plait-macros",
- "ryu",
-]
-
-[[package]]
-name = "plait-macros"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c6895914f77d53072fe710fdb2a77d386e035dbcaf75649be11e727b86c599b"
-dependencies = [
- "convert_case",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5454,7 +5420,6 @@ dependencies = [
  "jiff",
  "lumis",
  "markdown",
- "plait",
  "rama",
  "regex",
  "serde",
@@ -7367,12 +7332,6 @@ name = "unicode-properties"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
-
-[[package]]
-name = "unicode-segmentation"
-version = "1.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "unicode-width"

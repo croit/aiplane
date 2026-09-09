@@ -3,7 +3,7 @@
   "info": {
     "title": "croit LLM Gateway — session API (/api/v0)",
     "version": "0.1.0",
-    "description": "Session-authenticated JSON API used by the web UI (the SvelteKit SPA at /app and, during the migration, the legacy server-rendered pages).\n\nSCOPE (issue #22 phase 1): the /api/v0/* surface only. The OpenAI-compatible /v1/* proxy is documented in docs/gateway-api.md and is intentionally NOT part of this spec — it is a byte-relay to upstream providers whose schema is OpenAI's, not ours. /auth/* is a browser redirect flow (not JSON). The ~150 form-POST page routes are the legacy surface phases 3-5 delete.\n\nHand-maintained rather than derived from code annotations: the wire types in shared::api use jiff::Timestamp (no schemars derive) and the surface churns every phase of #22, so code-first annotations (utoipa) would be re-annotated constantly. THE CONTRACT IS ENFORCED, NOT ASPIRATIONAL: tests/it/openapi_drift.rs fails CI when this spec and the routes registered in src/rama_server/router.rs drift apart in either direction — exactly the shape the generated TS client (openapi-typescript, wired in phase 2) will trust.\n\nAuth: every endpoint is session-gated by the signed session cookie set at /auth/callback (401 OpenAI-envelope when absent/expired). RAG endpoints additionally require the admin role (403).",
+    "description": "Session-authenticated JSON API behind the gateway's web UI.\n\nThe UI is a SvelteKit SPA served from the root by the gateway binary; every screen in it is built on the endpoints below. The OpenAI-compatible /v1/* proxy is documented in docs/gateway-api.md and is deliberately NOT part of this spec — it is a byte-relay whose schema is OpenAI's, not ours. /auth/* is a browser redirect flow, and the four surviving non-UI routes (the two public /hooks triggers and the OAuth round-trips) authenticate by URL rather than by session.\n\nHand-maintained rather than derived from code annotations: the wire types use jiff::Timestamp, which has no schemars derive. THE CONTRACT IS ENFORCED, NOT ASPIRATIONAL: tests/it/openapi_drift.rs fails CI when this spec and the routes registered in src/rama_server/router.rs drift apart in either direction.\n\nAuth: every endpoint is session-gated by the signed cookie set at /auth/callback (401 when absent or expired). Admin surfaces additionally require the admin role (403).",
     "license": {
       "name": "AGPL-3.0-only"
     }
@@ -46,6 +46,10 @@
     {
       "name": "comfyui",
       "description": "ComfyUI workflow catalog."
+    },
+    {
+      "name": "feedback-widget",
+      "description": "Report a problem from inside the app."
     }
   ],
   "paths": {
@@ -5571,6 +5575,188 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v0/tokens/{id}/quota/{rule_id}": {
+      "delete": {
+        "tags": [
+          "tokens"
+        ],
+        "summary": "Delete one of the owner's own quota rules",
+        "description": "Scoped to owner-managed rules: the rule id comes from the client, so a plain delete-by-id would let an owner remove an operator's cap by naming it. An admin-managed rule reads as not found here.",
+        "operationId": "deleteTokenQuota",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TokenId"
+          },
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "description": "Quota rule id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "deleted"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v0/chat/attachment/{turn_id}/{filename}": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Download an attachment's bytes",
+        "description": "Readable by the owner and, for a shared conversation, any signed-in viewer. The filename keeps its case — the handler reads the raw URI, because the path extractor lowercases segments and the stored object key does not.",
+        "operationId": "getChatAttachment",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TurnId"
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "description": "Attachment filename, percent-encoded.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v0/feedback/config": {
+      "get": {
+        "tags": [
+          "feedback"
+        ],
+        "summary": "Whether the feedback widget is wired up",
+        "description": "The SPA asks before offering the affordance: with no issue tracker configured there is nowhere for a report to go.",
+        "operationId": "getFeedbackConfig",
+        "responses": {
+          "200": {
+            "description": "Feedback availability and its options.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v0/feedback": {
+      "post": {
+        "tags": [
+          "feedback"
+        ],
+        "summary": "File a feedback report",
+        "operationId": "submitFeedback",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Filed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Nothing usable in the report."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v0/feedback/extract": {
+      "post": {
+        "tags": [
+          "feedback"
+        ],
+        "summary": "Turn a spoken report into structured fields",
+        "description": "Runs the transcript through a model so the user can dictate a report instead of filling the form in.",
+        "operationId": "extractFeedback",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The extracted fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }

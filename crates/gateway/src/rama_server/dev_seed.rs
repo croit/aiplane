@@ -175,7 +175,7 @@ pub async fn reset(State(state): State<Arc<RamaState>>) -> Response {
         }
         state.reload_runtime().await;
     }
-    match signed_in(&state, "/tokens").await {
+    match signed_in(&state, "/").await {
         Ok(resp) => resp,
         Err(err) => failed("minting the session", err),
     }

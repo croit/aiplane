@@ -2,7 +2,7 @@
  * Web Push opt-in for the SPA (issue #22 P2) — the reactive port of the
  * legacy `ui/ts/push.ts`: reflect this *browser's* subscription state and
  * drive subscribe/unsubscribe through `/api/v0/push/*` + the SPA service
- * worker (`static/sw.js`, scope `/app/`).
+ * worker (`static/sw.js`, scope `/`).
  *
  * State here is device-local, not server state — two browsers of the same
  * user subscribe independently.

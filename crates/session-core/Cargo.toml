@@ -22,7 +22,6 @@ async-trait = { workspace = true }
 # any consumer paints the same bubbles. `lumis` is heavy at compile
 # time (117 tree-sitter grammars via build.rs) but baked into one
 # place rather than each bin.
-plait = { workspace = true }
 markdown = { workspace = true }
 lumis = { workspace = true }
 regex = { workspace = true }

@@ -86,67 +86,30 @@ fn require_live(doc: &documents::Document) -> Result<(), ToolError> {
     Ok(())
 }
 
-/// Push the freshly-changed canvas to the live chat page, if anyone's
-/// watching. Best-effort: off the chat path (no `chat_feedback`) or with
-/// no live subscriber it's a no-op, and the panel renders on the next full
-/// page load instead. Targets the always-present `#document-canvas-slot`
-/// so the first `create_document` of a conversation has a morph target
-/// even though the page loaded with no panel.
-async fn live_update(ctx: &ToolContext, session_id: &str, active_id: &str) {
+/// Tell any live subscriber that this conversation's documents changed.
+///
+/// Best-effort: off the chat path (no `chat_feedback`) or with no live
+/// subscriber it is a no-op, and the client reads the current set on its next
+/// load. The event carries no payload — the client re-reads
+/// `GET /api/v0/chat/sessions/{id}/documents`, which keeps the DB the single
+/// source of truth here exactly as it is for turns.
+async fn live_update(ctx: &ToolContext, _session_id: &str, _active_id: &str) {
     let Some(fb) = ctx.chat_feedback.as_ref() else {
         return;
     };
     if fb.broadcast.receiver_count() == 0 {
         return;
     }
-    // No live HTTP request here (this fires from tool execution, not a page
-    // load) so there's no `lang` cookie to read — falls back to English,
-    // same as `internal_error_html`/`forbidden_html` do for request-less
-    // render paths. The panel picks up the viewer's real language on the
-    // next full page load or nav-patch, both of which do derive it.
-    let html = match gateway_features::server::document_canvas::render_canvas_html(
-        &ctx.db,
-        session_id,
-        Some(active_id),
-        None,
-        session_core::i18n::Lang::En,
-    )
-    .await
-    {
-        Ok(Some(html)) => html,
-        // Nothing to show or a transient read error — skip the live patch;
-        // the next page load reconciles from the DB.
-        _ => return,
-    };
-    // One Inject frame carrying three datastar events: (1) swap the canvas
-    // panel, (2) reveal the header toggle (`hasCanvas`) on any device, and
-    // (3) open the docked panel — but only on a wide viewport, so a mobile
-    // edit never auto-covers the chat. The window event is desktop-gated in
-    // JS; the shell's `data-on:gwcanvasopen__window` flips `canvasOpen`.
-    let mut frame =
-        session_core::chrome::sse_patch(Some("#document-canvas-slot"), Some("inner"), &html)
-            .to_vec();
-    frame.extend_from_slice(&session_core::chrome::sse_signals(
-        r#"{"hasCanvas": true, "hasDocument": true}"#,
-    ));
-    frame.extend_from_slice(&session_core::chrome::sse_script(
-        "if(window.innerWidth>=768){window.dispatchEvent(new CustomEvent('gwcanvasopen'))}",
-    ));
-    let _ = fb.broadcast.send(session_core::workers::TurnUpdate::Inject(
-        std::sync::Arc::new(frame.into()),
-    ));
+    let _ = fb
+        .broadcast
+        .send(session_core::workers::TurnUpdate::SidebarChanged);
 }
 
-/// Tell the live chat page the conversation has no documents left, after the
-/// last one was deleted.
+/// The counterpart to [`live_update`] for the delete path.
 ///
-/// The counterpart to [`live_update`]: that one always has a panel to render,
-/// while this one has to *remove* it. Emptying `#document-canvas-slot` alone
-/// would leave the header toggle and the "Document" tab pointing at nothing,
-/// so the frame also fires `gwcanvasdocgone`; the shell's handler clears
-/// `hasDocument`, recomputes `hasCanvas` from `hasAssets` (only the client
-/// knows whether this turn produced assets) and closes the panel if there is
-/// now nothing at all to show.
+/// Same signal: "this conversation's documents changed, re-read them". The
+/// client discovers the set is now empty and takes the panel down itself,
+/// rather than the server describing that transition.
 async fn live_canvas_cleared(ctx: &ToolContext) {
     let Some(fb) = ctx.chat_feedback.as_ref() else {
         return;
@@ -154,14 +117,9 @@ async fn live_canvas_cleared(ctx: &ToolContext) {
     if fb.broadcast.receiver_count() == 0 {
         return;
     }
-    let mut frame =
-        session_core::chrome::sse_patch(Some("#document-canvas-slot"), Some("inner"), "").to_vec();
-    frame.extend_from_slice(&session_core::chrome::sse_script(
-        "window.dispatchEvent(new CustomEvent('gwcanvasdocgone'));",
-    ));
-    let _ = fb.broadcast.send(session_core::workers::TurnUpdate::Inject(
-        std::sync::Arc::new(frame.into()),
-    ));
+    let _ = fb
+        .broadcast
+        .send(session_core::workers::TurnUpdate::SidebarChanged);
 }
 
 /// Refresh the canvas after a delete/undelete: show whatever document the
@@ -171,9 +129,6 @@ async fn live_after_delete(ctx: &ToolContext, session_id: &str, prefer_id: Optio
     match documents::list_for_session(&ctx.db, session_id, false).await {
         Ok(docs) if docs.is_empty() => live_canvas_cleared(ctx).await,
         Ok(docs) => {
-            // `render_canvas_html` already ignores an `active_id` that isn't
-            // live, but picking the id here keeps the panel on the document
-            // the model just restored rather than the newest one.
             let active = prefer_id
                 .filter(|id| docs.iter().any(|d| d.id == *id))
                 .unwrap_or(&docs[0].id)
@@ -1733,52 +1688,6 @@ mod tests {
         pool
     }
 
-    #[tokio::test]
-    async fn canvas_html_renders_markdown_and_is_none_when_empty() {
-        let pool = seeded_pool().await;
-        // No documents yet → no panel.
-        assert!(
-            gateway_features::server::document_canvas::render_canvas_html(
-                &pool,
-                "s1",
-                None,
-                None,
-                session_core::i18n::Lang::En
-            )
-            .await
-            .unwrap()
-            .is_none()
-        );
-
-        let id = documents::new_id();
-        documents::create(
-            &pool,
-            &id,
-            "s1",
-            "u1",
-            "RGW Guide",
-            DocumentFormat::Markdown,
-            "# Intro\n\nhello world\n",
-            None,
-        )
-        .await
-        .unwrap();
-
-        let html = gateway_features::server::document_canvas::render_canvas_html(
-            &pool,
-            "s1",
-            None,
-            None,
-            session_core::i18n::Lang::En,
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert!(html.contains("RGW Guide"), "title shown: {html}");
-        assert!(html.contains("document-canvas"), "panel class present");
-        assert!(html.contains("<h1"), "markdown rendered to HTML: {html}");
-    }
-
     fn ctx(pool: gateway_core::server::db::Pool, session_id: &str) -> ToolContext {
         ToolContext {
             user_id: "u1".into(),
@@ -2049,113 +1958,5 @@ mod tests {
             .await
             .unwrap();
         assert!(read["content"].as_str().unwrap().contains("8080"));
-    }
-
-    #[tokio::test]
-    async fn version_switcher_url_matches_the_route_pattern() {
-        let pool = seeded_pool().await;
-        let id = documents::new_id();
-        documents::create(
-            &pool,
-            &id,
-            "s1",
-            "u1",
-            "Doc",
-            DocumentFormat::Markdown,
-            "v1 body\n",
-            None,
-        )
-        .await
-        .unwrap();
-        // A second version turns on the version switcher.
-        documents::append_version(
-            &pool,
-            "s1",
-            &id,
-            "v2 body\n",
-            Some("edit"),
-            None,
-            documents::VersionAuthor::Assistant,
-        )
-        .await
-        .unwrap();
-
-        let html = gateway_features::server::document_canvas::render_canvas_html(
-            &pool,
-            "s1",
-            None,
-            None,
-            session_core::i18n::Lang::En,
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        // The @get target must be the path the router serves
-        // (`/chat/{id}/document/{doc_id}`) so the panel's switcher reaches a
-        // real route. This is the UI-directive ↔ endpoint contract.
-        assert!(
-            html.contains(&format!("/chat/s1/document/{id}?version=")),
-            "version switcher points at the document route: {html}"
-        );
-    }
-
-    /// The version switcher marks the revisions the *user* wrote. A history of
-    /// interchangeable `v4 v3 v2 v1` entries hides the one revision anybody
-    /// actually goes back for: their own correction.
-    #[tokio::test]
-    async fn the_version_switcher_marks_the_users_own_revisions() {
-        let pool = seeded_pool().await;
-        let id = documents::new_id();
-        documents::create(
-            &pool,
-            &id,
-            "s1",
-            "u1",
-            "Doc",
-            DocumentFormat::Markdown,
-            "v1\n",
-            None,
-        )
-        .await
-        .unwrap();
-        documents::append_version(
-            &pool,
-            "s1",
-            &id,
-            "v2 mine\n",
-            Some("Edited by you"),
-            None,
-            documents::VersionAuthor::User,
-        )
-        .await
-        .unwrap();
-        documents::append_version(
-            &pool,
-            "s1",
-            &id,
-            "v3\n",
-            Some("model"),
-            None,
-            documents::VersionAuthor::Assistant,
-        )
-        .await
-        .unwrap();
-
-        let html = gateway_features::server::document_canvas::render_canvas_html(
-            &pool,
-            "s1",
-            None,
-            None,
-            session_core::i18n::Lang::En,
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        // v2 carries the marker; the assistant's revisions stay bare.
-        assert!(html.contains(">v2 · you<"), "{html}");
-        assert!(html.contains(">v3<") && html.contains(">v1<"), "{html}");
-        // v3 is the latest, so the panel is showing an assistant revision —
-        // the header badge belongs to the *displayed* version only.
-        assert!(!html.contains("edited by you"), "{html}");
     }
 }

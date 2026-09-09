@@ -74,6 +74,14 @@ pub struct ToolPrompt {
     /// Pre-supplied answers for [`ToolPromptKind::AskUser`]; empty when
     /// the model wants free text.
     pub options: Vec<String>,
+    /// Optional short heading above the question — the model uses it to name
+    /// what is being decided when the question alone is ambiguous.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// Whether more than one option may be chosen. Only meaningful alongside
+    /// `options`.
+    #[serde(default)]
+    pub multi_select: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

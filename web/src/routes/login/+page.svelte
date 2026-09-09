@@ -9,7 +9,7 @@
 	import { loginUrl } from '$lib/api';
 
 	onMount(() => {
-		const back = page.url.searchParams.get('return_to') ?? '/app';
+		const back = page.url.searchParams.get('return_to') ?? '/';
 		window.location.href = loginUrl(back);
 	});
 </script>

@@ -25,8 +25,9 @@
 
 	function setTheme(theme: 'light' | 'dark') {
 		document.documentElement.dataset.theme = theme;
-		// Same cookie the server-rendered chrome reads (session_core::chrome),
-		// so a hop between SPA and legacy pages keeps the theme.
+		// Persisted as a cookie, not localStorage, so the inline script in
+		// app.html can read it before first paint — that is what stops a
+		// flash of the wrong theme on a hard load.
 		document.cookie = `theme=${theme}; path=/; max-age=31536000; samesite=lax`;
 	}
 
@@ -93,21 +94,6 @@
 		}
 	});
 
-	// ---- language switcher (same /lang POST the legacy chrome uses) -------
-	let langOpen = $state(false);
-	const LANGS: [string, string, string][] = [
-		['en', '🇬🇧', 'English'],
-		['de', '🇩🇪', 'Deutsch'],
-		['fr', '🇫🇷', 'Français'],
-		['es', '🇪🇸', 'Español'],
-		['ru', '🇷🇺', 'Русский'],
-		['zh', '🇨🇳', '中文']
-	];
-	function setLang(code: string) {
-		langOpen = false;
-		const next = encodeURIComponent(page.url.pathname + page.url.search);
-		window.location.href = `/lang?lang=${code}&next=${next}`;
-	}
 </script>
 
 <div class="min-h-dvh bg-base-100 text-base-content flex">
@@ -247,32 +233,22 @@
 			<span class="text-xs truncate flex-1 min-w-0" title={me.value?.email ?? ''}>
 				{me.value?.email ?? ''}
 			</span>
-			<div class="relative">
-				<button class="btn btn-ghost btn-xs" onclick={() => (langOpen = !langOpen)} aria-label="Choose language" title="Language">
-					🇬🇧
-				</button>
-				{#if langOpen}
-					<ul class="absolute bottom-9 right-0 z-50 menu bg-base-200 rounded-box border border-base-300 shadow p-1 w-36">
-						{#each LANGS as [code, flag, label] (code)}
-							<li>
-								<button class="text-sm" onclick={() => setLang(code)}>
-									<span aria-hidden="true">{flag}</span> {label}
-								</button>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</div>
-			<form action="/theme/toggle" method="post" onsubmit={(e) => { e.preventDefault(); setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); }}>
-				<button class="btn btn-ghost btn-xs" title="Toggle theme" aria-label="Toggle theme">
+			<button
+				class="btn btn-ghost btn-xs"
+				title="Toggle theme"
+				aria-label="Toggle theme"
+				onclick={() => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark')}
+			>
 					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
-				</button>
-			</form>
-			<form action="/auth/logout" method="post" onsubmit={(e) => { e.preventDefault(); void signOut(); }}>
-				<button class="btn btn-ghost btn-xs" title="Sign out" aria-label="Sign out">
+			</button>
+			<button
+				class="btn btn-ghost btn-xs"
+				title="Sign out"
+				aria-label="Sign out"
+				onclick={() => void signOut()}
+			>
 					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-				</button>
-			</form>
+			</button>
 		</div>
 	</aside>
 

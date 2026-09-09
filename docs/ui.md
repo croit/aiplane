@@ -1,594 +1,241 @@
 # Web UI
 
-The gateway serves its own HTML directly — no SPA, no React, no client framework other than ~34 KB of [datastar](https://data-star.dev/) for live updates. Pages are server-rendered through [plait](https://github.com/devashishdxt/plait)'s `html!` macro inline in rama handlers; styling is [daisyUI v5](https://daisyui.com/) component classes on top of Tailwind v4.
+The UI is a **SvelteKit SPA** (Svelte 5 runes, `adapter-static`) that lives in `web/`, is compiled ahead of time by Vite into plain static files, and is served **from the root `/`** by the Rust binary. It talks to the gateway exclusively over the session-authenticated JSON API at `/api/v0/*`, and streams chat over a JSON-SSE event protocol. Styling is [daisyUI v5](https://daisyui.com/) on Tailwind v4.
+
+There is **no Node at runtime**: still one container, one process, one port. The container image contains the gateway binary plus the built `build/` directory; `GATEWAY_STATIC_DIR` points the binary at it.
 
 The whole stack:
 
 | Layer | Tech | Lives in |
 |---|---|---|
 | HTTP server / router | rama 0.3 | `crates/gateway/src/rama_server/router.rs` |
-| HTML templates | plait `html!` macro | `crates/gateway-web/src/pages/` (`mod.rs` chrome + `chat.rs` / `tokens.rs` / `dashboard.rs`) |
-| Reactivity (chat + tokens) | datastar 1.x (self-hosted, baked in via `include_bytes!`) | `crates/gateway/src/rama_server/assets.rs` |
-| Client-side glue | TypeScript (strict) bundled with esbuild | `ui/ts/` builds → `crates/gateway/assets/app.js` |
-| Styling | Tailwind v4 + daisyUI v5 | `ui/src/main.css` builds → `crates/gateway/assets/app.css` |
+| Static SPA hosting | hand-rolled rama handler over `tokio::fs` | `crates/gateway/src/rama_server/spa.rs` |
+| UI framework | SvelteKit 2 / Svelte 5 (runes), Vite | `web/` |
+| API contract | OpenAPI 3 → generated TS types | `docs/openapi.json` → `web/src/lib/schema.d.ts` |
+| API client | one `fetch` helper + typed wrappers | `web/src/lib/api.ts` (and `client.ts`, see below) |
+| Chat streaming | JSON events over SSE | `crates/session-core/src/chat_json.rs` ↔ `web/src/lib/chat-protocol.ts` |
+| Styling | Tailwind v4 + daisyUI v5 | `web/src/app.css` |
+| Markdown rendering | `marked` + `dompurify`, client-side | `web/src/lib/markdown.ts` |
 
-## Pages
+## How it is served
 
-| Route | What it does | Auth | Response shape |
-|---|---|---|---|
-| `GET /login` | Standalone sign-in page — single button kicks off `GET /auth/login`. | anonymous | HTML |
-| `GET /` | Dashboard. User identity + OIDC roles + RBAC role IDs + link to `/tokens`. | session | HTML |
-| `GET /tokens` | Lists tokens. Inline form to mint a new one. Always emits the `<ul id="token-list">` (empty or not) so SSE patches have a stable target. | session | HTML |
-| `POST /tokens` | Mints a token. Returns `text/event-stream` patches: append the row to `#token-list`, swap `#token-minted-banner` with the filled banner, reset the create form, append success toast. | session | **SSE** |
-| `POST /tokens/{id}/revoke` | Re-renders the row from the freshly-revoked DB record, swaps it in via `mode outer` on `#token-row-<id>`, appends toast. | session | **SSE** |
-| `POST /tokens/{id}/delete` | `mode remove` on `#token-row-<id>` + toast. Refuses active tokens (returns an info toast). | session | **SSE** |
-| `GET /chat` | Redirects to the user's most-recent conversation (creating one if they've never chatted). | session | 303 redirect |
-| `GET /chat/{id}` | Sidebar of all conversations + the chosen one's history + composer. Includes a `data-init` auto-tail when there's still an in-flight assistant turn for this session. | session | HTML |
-| `POST /chat/sessions` | Creates a fresh conversation, nav-patches `<main>` to its URL. | session | **SSE** |
-| `POST /chat/{id}/messages` | Submits a user message. Persists user + assistant turn rows to SQLite, spawns the streaming worker, and SSE-tails the worker's broadcast. | session | **SSE** |
-| `GET /chat/{id}/tail` | Reconnect endpoint. Subscribes to the user's in-flight worker (if any belongs to this session) and emits the same patches the original POST got. Used after backgrounding / network blips / second tab attach. | session | **SSE** |
-| `GET /chat/{id}/turns/{turn_id}/thinking` | On-demand reasoning sub-stream. Expanding a live trace's `<details>` fires its `data-on:toggle` → `@get` against this endpoint, which ships only the `#turn-<id>-thinking-body` interior (snapshot, then coalesced patches) until the turn finalizes. A collapsed trace costs zero bytes — the main stream never carries a still-streaming trace. | session | **SSE** |
-| `POST /chat/{id}/cancel` | Flips the worker's cancel flag. Worker observes between upstream chunks and exits to finalize. | session | **SSE** |
-| `POST /chat/{id}/delete` | Removes the conversation (cascades turns + tool_calls) and nav-patches to the next session. | session | **SSE** |
-| `POST /theme/toggle` | Flips the theme cookie and 303s back. | anonymous | 303 redirect |
-| `POST /lang` | Sets the `lang` cookie (EN/DE/FR/ES/RU/ZH) from the submitted `lang` field and 303s back to `next` (same-origin paths only — anything else falls back to `/`). Unlike the theme toggle this is a plain form-post, not an SSE patch: a language change touches every text node on the page, not one icon. Rendered pre-login too (the switcher sits in the bare `layout()` chrome, not just the authed sidebar), so it works from `/login`. See `session_core::i18n` for the `Lang` resolution rules (page renders are cookie-first with `Accept-Language` as a first-visit default; API JSON responses in `json_err(...)` sites use the opposite priority since bearer/CLI clients never carry the cookie). | anonymous | 303 redirect |
+`crates/gateway/src/rama_server/spa.rs` serves the build directory named by the `GATEWAY_STATIC_DIR` environment variable. It is deliberately hand-rolled rather than a `tower-http::ServeDir`, because the dependency policy keeps the server stack rama-only (see [`dependencies.md`](dependencies.md)); the logic is small and unit-tested end to end.
 
-Assets (every URL is `?v=<sha256-prefix>` cache-busted):
+What it does, and why:
 
-| Route | Source | Notes |
+- **Mounted at the root, registered last.** `GET /` and `GET /{*name}` are the final two routes in `router.rs`. rama matches in registration order, so a catch-all registered any earlier would swallow the API, proxy and auth routes. Anything added after them would be unreachable.
+- **History fallback.** A client route like `/tokens` has no file on disk. Anything that is not an existing file falls back to `index.html` so the client router can resolve it. This is the standard contract an SPA needs from a static host.
+- **Cache policy by kind.** SvelteKit emits content-hashed asset filenames, whose bytes never change at a given URL — those get `public, max-age=31536000, immutable`. `index.html` and `sw.js` get `no-cache`, or an update would never reach a browser; the manifest gets a short revalidating max-age.
+- **Traversal guard.** The relative path is normalised *on its own* before being joined to the root, so a leading `..` with nothing to consume is refused. Normalising after the join would let the root's own components absorb the `..` — safe, but it would silently turn the guard into a no-op.
+- **Case is preserved.** rama lowercases only the *matched* path for route lookup; the `Request` handed to the handler keeps the original URI, so `req.uri().path()` still carries the case of a content-hashed filename. (Same precedent as `retrieve_model` — see [the note in `router.rs`](../crates/gateway/src/rama_server/router.rs).)
+- **503, not 404, when undeployed.** No `GATEWAY_STATIC_DIR` (or a missing directory) answers `503` with a message naming the variable. That is deliberately distinct from the router's 404 so an operator can tell "the SPA build was never copied in" from "that path does not exist". The rest of the gateway is unaffected.
+
+`crates/gateway/tests/it/spa_routes.rs` pins the *wiring* (the catch-all really reaches this handler, proven by the 503); `spa.rs`'s own unit tests pin the serve behaviour against a temp directory.
+
+### The first-run gate
+
+`rama_server::first_run` redirects the whole surface to the setup wizard until setup completes. Because the wizard *is* the SPA now, `serves_before_setup` allowlists the SPA's static shell — `/_app/*`, `/assets/*`, `/icons/*`, `favicon.*`, `manifest.webmanifest`, `sw.js`, `robots.txt`, `pcm-recorder.js` — plus `/setup*` and `/auth/callback`. Gating a JavaScript module request would 303 it to an HTML page and leave the wizard blank. Those files are unauthenticated static bytes; the SPA's own API calls self-protect with 401/403.
+
+## Layout of `web/`
+
+```
+web/
+├── vite.config.ts        adapter-static config + the dev-server proxy
+├── package.json          SPA build toolchain (see docs/dependencies.md)
+├── src/
+│   ├── app.html          the shell: manifest link, icons, pre-paint theme script
+│   ├── app.css           Tailwind entry + the two daisyUI theme blocks
+│   ├── lib/
+│   │   ├── schema.d.ts        GENERATED from docs/openapi.json — do not hand-edit
+│   │   ├── client.ts          openapi-fetch client over schema.d.ts (not wired up yet)
+│   │   ├── api.ts             the fetch helper + typed wrappers + ApiError
+│   │   ├── admin-client.ts    same transport for the admin surfaces
+│   │   ├── chat-protocol.ts   the SSE event fold — framework-free, unit-tested
+│   │   ├── chat.svelte.ts     reactive conversation controller (EventSource lifecycle)
+│   │   ├── session.svelte.ts  identity from GET /api/v0/me
+│   │   ├── sidebar.svelte.ts  conversation list + search + mobile drawer
+│   │   ├── feedback.svelte.ts feedback widget state
+│   │   ├── push.svelte.ts     Web Push opt-in (device-local state)
+│   │   ├── voice.svelte.ts    voice-conversation orchestration
+│   │   ├── voice-recorder.ts  PCM capture + analyser
+│   │   ├── markdown.ts        marked → DOMPurify → {@html}
+│   │   └── usage-types.ts
+│   └── routes/
+│       ├── +layout.svelte     app shell: nav, sidebar, theme, sign-out, feedback
+│       ├── +layout.ts         prerender = false, ssr = false
+│       ├── +page.svelte       dashboard
+│       ├── login/ chat/ chat/[id]/ tokens/ tools/ memory/ scheduled/
+│       ├── webhooks/ skills/ integrations/ usage/ setup/
+│       └── admin/             +layout.svelte + models, upstreams, users, groups,
+│                              tokens, limits, settings, skills, connectors,
+│                              comfyui, rag
+└── static/               copied verbatim into the build output
+    ├── manifest.webmanifest, sw.js, robots.txt
+    ├── favicon.svg, icons/*.png
+    └── pcm-recorder.js   AudioWorklet processor (its own JS realm — not bundled)
+```
+
+`+layout.ts` sets `prerender = false` and `ssr = false`. Prerendering would bake the anonymous shell into every route, and this is a private surface: the identity render would flash "signed out" on first paint anyway, and no per-route HTML should be emitted for an authed page.
+
+## The JSON API and the generated client
+
+Every dynamic thing the SPA does is a `/api/v0/*` call — about 140 operations across ~115 paths. The contract is **`docs/openapi.json`**, hand-maintained (the wire types in `shared::api` use `jiff::Timestamp` and have no `schemars` derive, so code-first annotations would be re-annotated constantly) but **enforced**: `crates/gateway/tests/it/openapi_drift.rs` fails CI when the spec and the routes registered in `router.rs` drift in either direction — an undocumented new endpoint, or a spec entry no route serves.
+
+The SPA's types come from that spec:
+
+```bash
+mise run gen-api-client     # docs/openapi.json → web/src/lib/schema.d.ts
+```
+
+Run it after changing any `/api/v0` route. `schema.d.ts` is generated output — edit the spec, not the file.
+
+**How calls are actually made today.** Every request goes through one helper, `request<T>()` in `lib/api.ts`: a same-origin `fetch` that sends the session cookie, parses the error envelope, and throws an `ApiError` carrying the status and the server's message. `lib/api.ts` then exposes the `api.*` wrappers routes call, with their response shapes declared by hand against `shared::api`. `lib/admin-client.ts` is the same transport for the admin views, flattening the envelope into a plain `Error`.
+
+`lib/client.ts` builds an `openapi-fetch` client over the generated `schema.d.ts` types (`baseUrl: '/api/v0'`, `credentials: 'same-origin'`), which is the intended end state — the compiler would then check every call against the spec. **Nothing imports it yet**, so `schema.d.ts` is currently generated and not consumed: the spec is enforced against the *router* by `openapi_drift`, not against the client. Migrating a hand-declared shape in `api.ts` onto the generated one is a safe, incremental improvement; adding a new hand-declared shape moves in the wrong direction.
+
+A 401 means "signed out": `+layout.svelte` turns "`me` is null after load" into a redirect to `/auth/login` carrying the route the user actually wanted, and never bounces `/setup` (which runs before any account exists).
+
+### Routes that are not `/api/v0`
+
+Six routes outlived the server-rendered pages because they are not a UI:
+
+| Route | Why it is not under `/api/v0` |
+|---|---|
+| `POST /hooks/{secret}`, `POST /hooks/rag/{token}` | Public triggers. The URL *is* the credential; a third party (a file host's webhook, a cron line) calls them. |
+| `GET /rag/{id}/connect`, `GET /rag/oauth/callback` | RAG source OAuth round trip. The redirect URI is registered with an external provider, so the path is not ours to change. |
+| `POST /integrations/{key}/connect`, `POST /integrations/{key}/retry`, `GET /integrations/callback` | Per-user MCP connector OAuth, same shape. |
+
+## Chat streaming: the JSON event protocol
+
+Live chat is a single SSE stream:
+
+```
+GET /api/v0/chat/sessions/{id}/events
+```
+
+Each frame is `event: <name>` plus one JSON `data:` line carrying `{type, …}`. The server side is `crates/session-core/src/chat_json.rs` (`ChatEvent`); the client side is `web/src/lib/chat-protocol.ts`, which folds events into a `ConversationState`.
+
+| Event | Payload | Meaning |
 |---|---|---|
-| `GET /assets/app.css` | `ui/src/main.css` → `crates/gateway/assets/app.css` | Tailwind/daisyUI build |
-| `GET /assets/datastar.js` | `crates/gateway/assets/datastar.js` | Upstream release, vendored |
-| `GET /assets/app.js` | `ui/ts/app.ts` (+ per-feature modules under `ui/ts/`) → `crates/gateway/assets/app.js` | esbuild bundle, minified IIFE |
-| `GET /assets/pcm-recorder.js` | `ui/ts/pcm-recorder.ts` → `crates/gateway/assets/pcm-recorder.js` | AudioWorklet processor for the voice button — separate bundle because it runs in its own JS realm |
+| `snapshot` | `live_turn_id?`, `turns[]` | Full session state, sent once on attach. Rebuilt from the DB. |
+| `turn_delta` | `turn_id`, `text_delta`, `full?` | Text appended to the assistant turn's content. |
+| `reasoning_delta` | `turn_id`, `text_delta`, `full?` | Same, for the reasoning trace. |
+| `tool_call_started` | `turn_id`, `tool_call_id`, `name`, `arguments` | The model invoked a tool. `arguments` is the model's raw JSON string. |
+| `tool_call_done` | `turn_id`, `tool_call_id`, `status`, `output?` | A tool call reached a terminal status. The output is the **full** payload — truncating is a display decision and belongs to the client. |
+| `turn_finalized` | `turn_id`, `status`, `error_message?`, `model?`, `duration_ms` | Terminal: no further deltas for this turn. |
+| `sidebar_changed` | — | Session metadata changed (title generated, pin toggled). Deliberately payload-free: the list endpoint is the source of truth, so the client refetches. |
+| `info` | `message` | Transient notice, rendered as a dismissible banner (e.g. a vision fallback). |
+| `tool_prompt` | a `ToolPromptEvent` | Human-in-the-loop prompt — `ask_user`, a location request, or a tool confirmation — plus its `Hide` counterpart when it is answered, times out, or the turn ends. |
+| `idle` | — | No live worker for this session; nothing more will arrive. |
 
-Everything is `include_bytes!`'d into the binary so the release image doesn't need an asset directory at runtime. Both the CSS and JS bundles are committed to the repo as build outputs — the binary's `cargo build` doesn't depend on node, but a clean `mise run build` rebuilds them.
+Invariants worth knowing before you touch either side:
 
-## Authoring patterns
+- **The DB is the replayer.** There is no `Last-Event-ID` replay. A client that reconnects simply re-attaches, and the first `snapshot` — rebuilt from SQLite — subsumes anything missed. The worker runs to completion independently of any HTTP listener and writes its progress to the DB as it goes, so closing a tab mid-stream loses nothing.
+- **Deltas append, unless `full: true`.** `full` marks a cursor reset: the row was rewritten and `text_delta` carries the *whole* text, so the client must replace its buffer rather than append. A client cannot detect a rewrite on its own, which is why the server says so. There are no delete events by design.
+- **Flushes are coalesced** to ≥120 ms per subscriber with a trailing flush, so the final state always lands. Each flush reads one turn, not the conversation.
+- **The stream ends at `turn_finalized` / `idle`.** The server closes there, so `chat.svelte.ts` closes the `EventSource` too — letting it auto-reconnect would loop snapshot/idle forever on a quiet session. After a submit (or any suspected change) `attach()` reopens, and the fresh snapshot is the replay.
+- **Markdown is the wire format.** The server sends text; the client renders it (`marked` → `DOMPurify` → `{@html}`). Model output is untrusted input like any other, so the sanitise step is not optional.
 
-### `html!` is just Rust expressions
+The rest of the conversation surface is ordinary JSON: `POST …/messages` submits (multipart when there are attachments), `POST …/cancel` flips the worker's cancel flag, `…/fork`, `…/share`, `…/effort`, `…/documents/*` (canvas), `…/export.md` and `…/export.pdf`, `…/turns/{turn_id}/{retry,edit}`.
 
-```rust
-let body = html! {
-    h1(class: "text-2xl font-bold mb-2") { "API tokens" }
-    ul(id: "token-list", class: "flex flex-col divide-y divide-base-300") {
-        for r in rows.iter() {
-            (render_token_row(r))
-        }
-    }
-}.to_html();
-```
+`chat-protocol.ts` is deliberately framework-free — no Svelte, no DOM — so the fold is unit-testable under `node --test` (`chat-protocol.test.ts`, run by `mise run test-web`) and `chat.svelte.ts` stays a thin reactive wrapper around it. Keep it that way: wire behaviour that can only be tested through a browser is wire behaviour nobody tests.
 
-Things to know:
-- Bare strings get HTML-escaped.
-- `(expr)` interpolates an expression via `ToHtml`. A `plait::Html` (already rendered) is *not* re-escaped.
-- `#(raw_string)` splices in already-trusted HTML without escaping. Use sparingly (markdown output, embedded SVG icons).
-- The `html!` macro generates an `Fn` closure under the hood, which means captured `Option<String>` etc. has to be borrowed with `.as_ref()` before destructuring inside the macro.
-- `plait` auto-emits `<!DOCTYPE html>` when the root element is `<html>`. Don't write the literal yourself — it goes through HTML-escaping and renders as `&lt;!DOCTYPE html&gt;`.
-- Empty elements that aren't void (`span`, `div`, etc.) need explicit `{}` — `span;` is a syntax error; `span {}` is fine. Void elements (`input`, `meta`, `link`) use `;`.
+## Reactive state
 
-### i18n — every user-facing string must be translated
+Shared state lives in `.svelte.ts` modules exporting `$state` objects, built as factories rather than classes — `$state` in a module closure is the documented universal-reactivity pattern, and the returned object's methods close over it directly.
 
-**Hard rule: no bare English literals in page bodies.** Any text a user reads —
-headings, labels, button text, `title:`/`placeholder:`/`aria-label:`
-attributes, toast messages, confirm-dialog text — goes through
-`session_core::i18n::{t, t_args}`, never a plain string. The earlier example,
-written correctly:
+- `session.svelte.ts` — `me`, loaded once per app start; `null` while unknown *and* on 401, with a `loaded` flag so the layout can tell the two apart.
+- `sidebar.svelte.ts` — the conversation list, its search box, and the mobile drawer. Pages call `refresh()` after anything that changes a conversation so the list never drifts.
+- `chat.svelte.ts` — one controller per conversation view; owns the `ConversationState` plus the `EventSource` lifecycle.
+- `push.svelte.ts` — Web Push opt-in. This state is **device-local**, not server state: two browsers of the same user subscribe independently.
 
-```rust
-use session_core::i18n::{Lang, t};
+## Theming
 
-fn render_tokens_heading(lang: Lang) -> Html {
-    html! {
-        h1(class: "text-2xl font-bold mb-2") { (t(lang, "tokens-heading")) }
-    }
-}
-```
+`web/src/app.css` registers two daisyUI themes named `light` and `dark` (a shadcn-flavoured neutral palette: the primary action is near-black in light, near-white in dark; only info/success/warning/error carry hue) with daisyUI's built-in palettes switched off. Unlike a Rust-templated UI it needs no `@source` globs — the Tailwind v4 Vite plugin scans the Svelte sources itself.
 
-This isn't just a style preference — it's enforced at compile time.
-`session-core/build.rs` fails the build if any key present in
-`crates/session-core/locales/en/*.ftl` (the source of truth) is missing from
-any of the other 5 locale directories (`de`/`fr`/`es`/`ru`/`zh`), or vice
-versa. Forgetting a translation isn't a review comment, it's a build error —
-`cargo build`/`cargo check`/`cargo test` all refuse to compile the crate
-graph until every language has every key. **This is by design**: partial UI
-translations look like a broken product to a non-English user (some labels
-translated, others not), so we'd rather block the build than ship that.
+The theme is stored in a `theme` cookie (`light` / `dark`) and applied **before first paint** by a small inline script in `app.html`: it reads the cookie and sets `document.documentElement.dataset.theme`, falling back to `prefers-color-scheme` when there is no cookie. Doing it there — before CSS resolves — is what avoids a flash of the wrong theme. The toggle in `+layout.svelte` writes the same cookie and flips the attribute.
 
-Adding new UI text:
-1. Add the key to `crates/session-core/locales/en/<module>.ftl`, where
-   `<module>` matches the source file (`tokens.rs` → `tokens.ftl`,
-   `pages/mod.rs`'s shared chrome → `nav.ftl`/`chrome.ftl`). Naming
-   convention: `<module>-<slug>`, e.g. `tokens-heading`,
-   `nav-group-toggle-aria = Toggle { $label } section`.
-2. Add the same key, translated, to `locales/{de,fr,es,ru,zh}/<module>.ftl`.
-   Fluent supports `{ $var }` interpolation (`t_args` + `i18n::args(...)`)
-   and CLDR plural selectors (`{ $count -> [one] … *[other] … }`) — needed
-   for Russian's three-way plural rule.
-3. Call it from the template: `t(lang, "tokens-heading")` /
-   `t_args(lang, "key", &i18n::args([("name", value.into())]))`.
+**Hard rules (unchanged from the previous UI):**
 
-Every non-English `.ftl` file is LLM-generated for now and carries a
-`# STATUS: llm-generated, unreviewed` banner — functionally correct,
-pending native-speaker QA. That's a content-quality caveat, not a licence to
-skip a language: the build gate doesn't distinguish "reviewed" from
-"unreviewed", it only checks that a translation *exists*.
+- daisyUI semantic component classes (`btn`, `card`, `alert`, `badge`, `input`, `select`, `tabs`, `dropdown`, `toast`, …) plus token utilities (`bg-base-100`, `text-base-content/60`, `border-base-300`, `text-error`, …) and plain Tailwind for layout. No bespoke `.brand-mark` / `.tagline` classes — if a treatment isn't covered by daisyUI + Tailwind, drop the treatment.
+- Override daisyUI focus/borders in `@layer utilities` **unlayered** (`@layer utilities { … }` with no nested sub-layer name). daisyUI emits its components inside `@layer utilities { @layer daisyui.l1.l2.l3 { … } }`, so anything in `@layer components` loses regardless of specificity; per the Cascade Layers spec, unlayered content in a layer comes after its sub-layers, which is the slot we need.
+- **Mobile-first.** Target ~360 px first and use `sm:` to enhance. Touch targets ≥44 px. `dvh`/`dvw`, never `vh`/`vw`. Stack via a parent `gap`, not child `margin-top`.
+- `form-control` and `label-text-alt` do **not** exist in daisyUI 5. The house pattern for a labelled control is a `flex flex-col gap-1` label with the help `<span>` after the input.
 
-The one sanctioned escape hatch is rare failure paths that were never
-request-derived in the first place (`internal_error_html`/`forbidden_html`
-in `pages/mod.rs`, and `document.rs`'s tool-triggered SSE push with no live
-HTTP request to read a cookie from) — those hardcode `Lang::En` the same way
-they already hardcode `Theme::Dark`, rather than threading `lang` through
-every one of their ~80 call sites for a page nobody is meant to see twice.
-Don't reach for this pattern for anything a user would routinely encounter.
+## PWA and Web Push
 
-**Derived keys.** `/admin/settings` is the one page whose keys are computed
-rather than written at the call site. Its spec table
-(`gateway_core::server::settings::SECTIONS`) declares only the TOML path,
-kind, span and restart flag; `FieldSpec::label_key`/`help_key` and
-`SectionSpec::title_key`/`blurb_key` turn that path into a Fluent id by
-replacing dots with dashes (`sandbox.runner_url` →
-`settings-f-sandbox-runner_url`, plus a `-help` sibling). Underscores stay,
-because Fluent identifiers allow `_` and reject `.`, which keeps the mapping
-reversible and greppable both ways.
+The app is an installable PWA. Both halves ship with the SPA in `web/static/` and are served from the root by the same handler as everything else:
 
-The point is that the Rust table holds no operator-facing prose at all — two
-copies, one in Rust for `en` and one in Fluent for the rest, would drift on
-the first edit. `en/settings.ftl` is just another locale file, and two drift
-tests in `pages/settings.rs` close the loop the build gate can't see: one
-asserts every derived key resolves in all six languages (a missing key
-resolves to itself, so that is checkable), the other that no
-`settings-s-*`/`settings-f-*` message outlives the field it described. Adding
-a setting is therefore one table entry plus six locale edits, and forgetting
-either half fails a test.
-
-### Module split
-
-Templates live in a directory module so each page sits in its own file:
-
-```
-crates/gateway-web/src/pages/
-├── mod.rs       shared chrome — layout, nav, theme, SSE framing,
-│                 Flash, session gate, error pages, /login, /theme/toggle
-├── chat/        multi-conversation chat (own directory because of size)
-│   ├── mod.rs   handlers (chat_index / chat_session_view /
-│   │             chat_session_create / chat_message_send / chat_tail /
-│   │             chat_cancel / chat_session_delete) + the shared
-│   │             SSE-streaming task emitting coalesced deltas per tick
-│   ├── worker.rs  run_chat_turn — the per-user streaming loop that
-│   │             walks the upstream SSE, appends to chat_turns /
-│   │             chat_tool_calls in SQLite, and broadcasts a Tick
-│   │             after every DB write
-│   └── render.rs  render_chat_page / render_sidebar / render_turn /
-│                  render_thinking_block / render_tool_call /
-│                  render_composer — pure functions of `chat::Turn` /
-│                  `chat::TurnWithTools` / `chat::Session`
-├── tokens.rs    /tokens CRUD + render_token_row / render_minted_banner /
-│                 empty_banner_placeholder
-└── dashboard.rs /  handler + render_dashboard_body
-```
-
-Each submodule grabs the chrome it needs via `use super::{...}` — `Flash`, `NavItem`, `Theme`, `sse_patch`, `require_session_or_redirect`, `read_body_to_bytes`, etc. The public handlers are pub-re-exported from `mod.rs` (`pub use chat::{chat_index, chat_session_view, …};`) so the router still calls `pages::chat_index` / `pages::tokens_create` / etc. unchanged.
-
-### Layouts
-
-Four helpers in `pages/mod.rs`, in increasing order of chrome:
-
-| Helper | What | Used by |
-|---|---|---|
-| `layout(theme, title, body) -> String` | Bare `<html>` chrome with stylesheet + datastar + the `app.js` bundle. | `html_page` |
-| `layout_authed(theme, active, title, user_email, body) -> String` | Same plus the top nav bar. `active: Option<NavItem>` marks the selected tab. | `html_authed_page` |
-| `html_page(theme, title, body) -> Response` | `layout(...)` → 200 `text/html` response (with `Permissions-Policy` header). | `/login` |
-| `html_authed_page(theme, active, title, user_email, body) -> Response` | `layout_authed(...)` → 200 `text/html` response. | every authed GET |
-
-The chat page swaps `<main>` to a `chat-main` flex column (full viewport height − nav) so the composer is structurally pinned to the bottom. `main_class_for(active)` picks the right class.
-
-### daisyUI tokens + Tailwind utilities
-
-daisyUI ships **semantic component classes** (`btn`, `card`, `alert`, `badge`, `input`, `select`, `tabs`, `dropdown`, …) and a **theme token system** (`--color-base-100`, `--color-primary`, etc.) that lets a global theme override change every page without touching the templates.
-
-We use a **shadcn-flavoured palette** registered as the `light` / `dark` themes via `@plugin "daisyui/theme"` in `ui/src/main.css` — the primary action is near-black (light theme) / near-white (dark theme); only the status colours (info / success / warning / error) carry hue.
-
-Component classes:
-
-```
-btn / btn-primary / btn-ghost / btn-error / btn-outline / btn-sm / btn-circle / btn-square
-card / card-body / card-title / card-actions
-alert / alert-success / alert-error / alert-info
-badge / badge-outline / badge-success / badge-error
-input / select / textarea (+ -bordered)
-tabs / tab / tab-active
-dropdown / dropdown-end / dropdown-content
-toast / toast-bottom / toast-end
-form-control / label / label-text
-```
-
-Token utilities for bespoke layout:
-
-```
-bg-base-100 / bg-base-200 / bg-base-300
-text-base-content / text-base-content/60   (alpha = muted)
-border-base-300 / divide-base-300
-text-primary / text-success / text-error
-border-l-success / border-l-error / border-l-info
-```
-
-Plain Tailwind utilities cover layout (`flex`, `grid`, `gap-4`, `mb-6`, `p-6`, `max-w-md`, …) and don't have daisyUI equivalents.
-
-**Hard rules:**
-- No bespoke `.brand-mark` / `.tagline`-style classes. If a treatment isn't covered by daisyUI + Tailwind, drop it.
-- Override daisyUI focus/borders/etc. in `@layer utilities` *unlayered* (i.e. `@layer utilities { … }` without a nested sub-layer name). daisyUI emits its components inside `@layer utilities { @layer daisyui.l1.l2.l3 { … } }`, so anything you put in `@layer components` always loses regardless of specificity. Per CSS Cascade Layers spec, unlayered content in a layer comes after any sub-layers — that's the slot we need.
-
-### Mobile-first
-
-Every styled rule and utility class should target ~360 px first; `sm:` enhances for wider screens. Touch targets meet 44 px minimum. `dvh`/`dvw`, never `vh`/`vw`. Stack cards via parent `gap`, not child `margin-top`.
-
-## datastar-driven updates
-
-Every interactive surface — chat streaming, every token CRUD action — uses [datastar](https://data-star.dev/reference/sse_events) instead of round-tripping a full page reload. The pattern is the same in every handler:
-
-1. The form template attaches `data-on:submit__prevent="@post('/some/url', {contentType: 'form'})"`. Datastar intercepts the submit, serialises the form, POSTs as `application/x-www-form-urlencoded`.
-2. The handler returns `text/event-stream` with one or more `datastar-patch-elements` (HTML) or `datastar-patch-signals` (state) events.
-3. Datastar applies each patch to the DOM / signal store in place — append / outer / inner / before / after / remove for elements; deep-merge for signals.
-
-There's no flash-cookie roundtrip. Feedback (toasts, banner swaps, row insertions, streaming-flag flips) lives on the **same response** that did the work.
-
-### Datastar attribute idioms
-
-Prefer per-element `data-*` attributes over document-delegated JS listeners. The attributes are scoped to the element, survive every nav patch (datastar re-evaluates them on mount), and read top-to-bottom alongside the HTML.
-
-| Attribute | Use |
+| File | Role |
 |---|---|
-| `data-signals="{name: value, …}"` | Declare reactive state on this element's scope. Datastar surfaces signals as `$name` inside any datastar expression and re-runs every binding when they change. |
-| `data-class="{'classname': $expr}"` | Toggle a class on this element off a signal/expression. |
-| `data-on:<event>="<expression>"` | Inline expression evaluated on the DOM event. The variable `el` is the element, `evt` is the event, `$signalName` reads/writes a signal, and `@post('/url', …)` / `@get(…)` issue SSE-aware fetches. Modifiers like `__prevent`, `__stop`, `__capture`, `__outside`, `__window` tune the listener. |
-| `data-init="<expression>"` | Run an expression on mount **and** on every mutation of the attribute. Use it as the "wire up this element" hook for behaviour that can't fit in an inline expression — call a TS helper, pass `el`. |
+| `manifest.webmanifest` | Name, colours, `display: standalone`, icons. |
+| `sw.js` | Service worker. Registered by `+layout.svelte` on mount. |
+| `icons/*.png`, `favicon.svg` | Installed-app icons. |
 
-When an interaction needs more JS than fits in an attribute (AudioWorklet plumbing, FormData uploads, MutationObservers, walking DOM), the TS side exposes a function on `window.<feature>.*` and the attribute calls it. See [TypeScript glue](#typescript-glue) below for the registered surface and how it's structured.
+The service worker is served **verbatim** — it is not a Vite entry point, so it gets no bundling or type-checking. Keep it hand-valid browser JS. Because the SPA's assets are content-hashed and carry `immutable` server cache headers, the worker carries **no fetch cache at all**: installability and push are its whole job, and every request passes straight through to the network.
 
-#### Worked example: the chat composer's streaming flag
+Turn-complete **Web Push** rides on top. `sw.js` carries the `push` and `notificationclick` handlers, `lib/push.svelte.ts` drives the opt-in and subscription through `/api/v0/push/{config,subscribe,unsubscribe}`, and the server half is [`gateway_features::server::push`](../crates/gateway-features/src/server/push/) (self-generated VAPID keypair, RFC 8291 payload encryption) fired from the assistant worker. Whether a notification is actually *shown* is decided in the worker via `clients.matchAll` — suppressed when a focused tab already has that conversation open. See the README's *Notifications* section for the operator-facing view.
 
-The form owns its own `$chatStreaming` signal; `data-class` drives the CSS button-swap; `data-on:submit__prevent` is a single expression that short-circuits on empty submits, flips the signal, then hands off to datastar's `@post`. End-of-stream, the server emits a `datastar-patch-signals` event that flips the signal back — no client-side state mutation needed.
+Installability requires HTTPS (localhost exempt for dev), and on iOS Web Push needs the PWA installed to the home screen (16.4+).
 
-```rust
-form(
-    id: "chat-form",
-    "data-signals": "{chatStreaming: false}",
-    "data-class": "{'chat-composer--streaming': $chatStreaming}",
-    "data-on:submit__prevent":
-        "window.chatComposer.onSubmit(evt) && \
-         ($chatStreaming = true, @post('/chat/{id}/messages', {contentType: 'form'}))",
-    method: "post",
-    class: "chat-composer"
-) { … }
-```
+## Voice
 
-Then in the chat-stream worker, at the end of the loop:
-
-```rust
-let _ = tx.send(Ok(sse_signals(r#"{"chatStreaming":false}"#))).await;
-```
-
-The form's `data-class` binding reactively un-toggles `chat-composer--streaming` and the send button reappears. No `<script>` payload, no manual `classList.remove`.
-
-### Chat streaming: the delta protocol
-
-The chat turn stream is the one surface where naive full re-renders are
-unacceptable on the wire: a long reply streams hundreds of upstream
-chunks, and re-sending the accumulated bubble per chunk is quadratic
-(a single reply was measured at 225 MB over mobile). The stream
-(`session_core::chat::spawn_session_stream_response` +
-`session_core::render::stream`) therefore emits **deltas**, with the
-DB still the single source of truth:
-
-- **Sealed markdown blocks travel once.** Content is split at safe
-  block boundaries (blank lines outside fenced code, respecting
-  indented continuations; attachment markers seal hard). A sealed
-  block is rendered exactly once and appended to
-  `#turn-<id>-text` inside a stable `.tu` wrapper
-  (`tu-<turn>-<n>`, laid out via `display: contents` so CSS is
-  unchanged). Only the trailing *open* block re-renders — and its
-  patch fragment is the wrapper itself, so it replaces the wrapper
-  (`mode outer`); `mode inner` would nest `#tu-…-<n>` inside
-  itself and duplicate content on every tick.
-- **Shells are phase-gated.** A `mode outer` patch of the whole
-  `#turn-<id>` fires only when the turn's phase signature changes
-  (reasoning appears, first content lands, error), never per delta.
-- **Thinking is opt-in.** While a turn is in progress the reasoning
-  body on the main stream is an empty div — the `<details>` carries
-  `data-on:toggle="el.open && @get('…/turns/{id}/thinking')"` so
-  expanding the trace opens the on-demand sub-stream that carries
-  it. The completed trace travels the main stream exactly once, in
-  the settled render.
-- **Ticks are coalesced** to ≥120 ms apart per subscriber, with a
-  trailing flush — and each flush reads just the one turn
-  (`db::get_turn_with_tools`), not the whole conversation.
-- **Finalize is authoritative.** The settled render replaces the
-  whole bubble once (`render_assistant_turn`), which repairs any
-  transient splitter artefact (e.g. mid-stream list spacing) and
-  adds the Retry control. Fresh / lagged / reconnected subscribers
-  get one full snapshot, then deltas.
-
-When adding to the streaming path, keep those invariants: never let
-a growing body ride a repeating patch, and never special-case a
-settled shape in the streaming renderer — send the phase change and
-let `render_assistant_turn` own the final paint.
-
-### Server-side helpers (`pages/mod.rs`)
-
-All in `crates/gateway-web/src/pages/mod.rs`. Re-use these in new handlers — don't open-code SSE framing.
-
-| Helper | Use |
-|---|---|
-| `sse_patch(selector, mode, elements_html) -> Bytes` | One `datastar-patch-elements` event. `mode` is one of `outer`/`inner`/`append`/`prepend`/`before`/`after`/`remove`. `elements_html` may be empty for `mode remove`. |
-| `sse_signals(signals_json) -> Bytes` | One `datastar-patch-signals` event. Body is a JSON object deep-merged into the global signal store. Use this whenever the server needs to flip reactive client state (e.g. mark a stream done). |
-| `sse_response(&[Bytes]) -> Response` | Bundle N pre-built event payloads into a `text/event-stream` 200 response. |
-| `sse_toast(&Flash) -> Bytes` | A `mode append` patch targeting `#toasts` with one rendered toast item. |
-| `sse_toast_response(kind, msg) -> Response` | (Lives in `pages/tokens.rs`.) Shorthand for the failure / no-op branches: one toast, no body changes. |
-| `sse_script(js) -> Bytes` | Wraps `js` in a self-removing `<script>` and appends it to `<body>` via a patch. Reach for this only when datastar's element/signal patches can't express the action — `form.reset()` is the canonical example. **Prefer `sse_signals` for state transitions** (signal flips); prefer element patches for DOM changes. |
-| `render_toast(&Flash) -> Html` | Single source of truth for toast markup. Reused by `sse_toast` and (via `window.pushToast` in `ui/ts/app.ts`) for client-raised toasts. |
-
-### DRY rule for patch payloads
-
-Every fragment you patch in via SSE **must** also be reachable from the initial server render of the same page. Extract a helper (returning `plait::Html`) and call it from both sites.
-
-Example — the token list:
-
-```rust
-// One row, used by render_tokens_body (initial render) AND by
-// tokens_create (mode append patch) AND by tokens_revoke (mode outer
-// patch). One source of truth means a row's HTML can't drift between
-// the page-load shape and the patched-in shape.
-fn render_token_row(r: &TokenRowData) -> Html { … }
-
-// Initial render — render_tokens_body
-ul(id: "token-list", …) {
-    for r in rows.iter() {
-        (render_token_row(r))
-    }
-}
-
-// SSE patch — tokens_create
-let row_html = render_token_row(&row_data).to_string();
-sse_patch(Some("#token-list"), Some("append"), &row_html)
-```
-
-If you find yourself writing the same `<li class="…">…</li>` markup in two places, stop and extract a helper.
-
-### Stable DOM ids on patch targets
-
-Anything you want to swap or remove via SSE needs an id you can put in the `selector`. Convention is `<resource>-<id>` (`#token-row-abc123`, `#token-minted-banner`, `#conversation`, `#turn-<uuid>`, `#turn-<uuid>-text`, `#tc-<tool-call-id>`).
-
-Chat-side specifically: every assistant turn gets a server-side UUID (the `chat_turns.id` primary key) that shows up in the DOM as `id="turn-<uuid>"` for the bubble, plus matching `…-thinking` / `…-tools` / `…-text` slot ids. Per-turn ids mean two concurrent stream attaches (multiple tabs, a retry after a network blip) can't cross-write each other's DOM.
-
-Long-lived interactive subtrees (`<details>` blocks for the thinking spoiler and tool calls) carry `data-preserve-attr="open"` so datastar's morph leaves the user's collapse state alone when the bubble re-renders.
-
-### Empty-state without server branching
-
-When the SSE patches can transition a list between "has items" and "empty", drive the empty-state visibility from CSS rather than re-rendering the page. The token list does:
-
-```rust
-ul(id: "token-list", class: "token-list …") {
-    for r in rows.iter() { (render_token_row(r)) }
-}
-p(class: "token-list-empty …") { "No tokens yet. Create one above." }
-```
-
-```css
-.token-list-empty { display: none; }
-.token-list:not(:has(li)) + .token-list-empty { display: block; }
-```
-
-The `<ul>` is always present (so SSE patches always have a target); the empty paragraph appears automatically the moment `:has(li)` evaluates to false. `:has()` is ~93%+ supported (Chrome 105+, Safari 15.4+, Firefox 121+).
-
-### Toasts via SSE
-
-Every page already mounts an empty `#toasts` container in the layout. Any handler that needs to surface a notification appends to it:
-
-```rust
-sse_response(&[
-    /* …the actual work… */
-    sse_toast(&Flash { kind: FlashKind::Success, message: "Token revoked.".into() }),
-])
-```
-
-`ui/ts/app.ts`'s MutationObserver on `#toasts` picks up the new `.toast-item` and arms a 5.2 s auto-dismiss timer.
-
-For client-raised toasts (e.g. when a mic capture fails inside `ui/ts/chat/mic.ts`), call `window.pushToast(kind, message)`. It emits the same markup `render_toast` does, so the styling is consistent.
-
-### Worked example: full handler skeleton
-
-```rust
-pub async fn things_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_, user) = match require_session_or_redirect(&state, &req).await {
-        Ok(s) => s,
-        Err(resp) => return resp,
-    };
-    let (_, body) = req.into_parts();
-    let body = match read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return sse_toast_response(FlashKind::Error, msg),
-    };
-    let form: CreateThingForm = match serde_urlencoded::from_bytes(&body) {
-        Ok(f) => f,
-        Err(err) => return sse_toast_response(FlashKind::Error, format!("malformed: {err}")),
-    };
-
-    // …do the work, get a `thing` back…
-    let thing = match things::create(&state.db, &user.id, &form).await {
-        Ok(t) => t,
-        Err(_) => return sse_toast_response(FlashKind::Error, "Create failed."),
-    };
-
-    let row_html = render_thing_row(&thing).to_string();
-    sse_response(&[
-        sse_patch(Some("#thing-list"), Some("append"), &row_html),
-        sse_script("document.getElementById('thing-create-form').reset()"),
-        sse_toast(&Flash {
-            kind: FlashKind::Success,
-            message: "Created.".into(),
-        }),
-    ])
-}
-```
-
-### Persisted chat — multi-session, resume-on-reconnect
-
-The chat page is multi-conversation and DB-backed. Every turn (user, assistant, tool call, reasoning chunk) writes to SQLite as it happens; closing a tab mid-stream doesn't lose the response, because the worker keeps running independent of any HTTP listener and writes its progress to the DB. Any client that reopens the page reads the persisted state and (if the worker's still going) attaches to its broadcast for the rest.
-
-**Schema** (`migrations/0005_chat_persistence.sql`):
-
-| Table | Purpose |
-|---|---|
-| `chat_sessions` | One row per conversation thread, scoped to a user. Sidebar lists these ordered by `updated_at DESC`. |
-| `chat_turns` | One row per message. `role='user'` carries the prompt; `role='assistant'` carries the streamed reply with `status` cycling through `in_progress → completed | cancelled | errored`. Accumulated `content` / `reasoning` strings, `reasoning_elapsed_ms`, optional `model`. |
-| `chat_tool_calls` | Side table; one assistant turn can fan out into many calls across model rounds. Status flips `running → completed | errored`. |
-
-All CRUD lives in `crates/gateway-core/src/server/db/chat.rs` with 14 unit tests against an in-memory pool.
-
-**Worker** (`pages/chat/worker.rs::run_chat_turn`). One worker per user, alive while an assistant turn is producing. For each upstream delta:
-
-  - Appends to `chat_turns.content` / `chat_turns.reasoning` (SQLite `||` concatenation, idempotent on repeat).
-  - Inserts running rows in `chat_tool_calls`, flips them to completed when the tool returns.
-  - Broadcasts a single `TurnUpdate::Tick` on the per-worker channel after every DB write.
-  - On exit: `finalize_turn` writes the final `status` + `completed_at`, `touch_session` bumps the sidebar order, broadcasts `TurnUpdate::Finalized`.
-
-The worker doesn't care if anyone's listening — it runs to completion either way. The DB is the source of truth; nothing flows through the broadcast except "go re-read the row."
-
-**Worker registry** (`rama_server::chat_workers::ChatWorkers`). User-id → `ActiveWorker { turn_id, session_id, cancel: AtomicBool, broadcast }`. `register()` refuses if there's already a worker for this user (concurrent submits get a clean 409 toast, not a race-y duplicate-stream); `cancel()` flips the flag; `get()` is how the tail handler attaches; `clear()` removes the entry when the worker exits.
-
-**The streaming flow**:
-
-1. **`POST /chat/{id}/messages`** validates the form, persists the user turn + an assistant turn in `in_progress`, calls `ChatWorkers::register` (refuses with a toast if busy), spawns `run_chat_turn`, and SSE-tails the broadcast. Initial event is `mode append` of both fresh bubbles onto `#conversation`. Ticks are coalesced to ≥120 ms and each flush re-reads the assistant turn from the DB and emits the [delta protocol](#chat-streaming-the-delta-protocol) patches (sealed-block appends, open-block wrapper replaces, phase-gated shells). `Finalized` emits one authoritative full render plus a `datastar-patch-signals` flipping `$chatStreaming` to false.
-
-2. **`GET /chat/{id}/tail`** is the reconnect path. Looks up the user's active worker; if it belongs to this session, subscribes to the same broadcast and runs the same delta loop without the initial bubble-append (the bubbles are already on the page from the original `GET /chat/{id}` render; the first flush is a full snapshot that re-baselines the subscriber's delta state). If there's no live worker the response sends `chatStreaming=false` and closes — defensive against a stale tab that's optimistically set the flag.
-
-3. **`GET /chat/{id}/turns/{turn_id}/thinking`** is the opt-in reasoning sub-stream (see [the delta protocol](#chat-streaming-the-delta-protocol)): snapshot first, then coalesced `#turn-<id>-thinking-body` inner patches until finalize.
-
-4. **`POST /chat/{id}/cancel`** flips the cancel flag. The worker observes between upstream chunks and exits cleanly into finalize.
-
-`GET /chat/{id}` always reads from the DB. If there's an in-flight assistant turn, the conversation `<section>` emits `data-init="window.chatScroll.init(el); @get('/chat/{id}/tail')"` so the page auto-subscribes to the live worker on mount. Datastar re-fires `data-init` on every nav-patch, so a user backgrounding their phone and unlocking it half a minute later still picks up the live stream.
-
-**Why this shape**: the previous chat handler accumulated all turn state in memory (the channel was the only place the response lived). A datastar retry after a connection abort would race a brand-new worker against the still-finishing previous one, producing two cross-written assistant bubbles. With the DB as the source of truth and an explicit one-worker-per-user registry, retries are idempotent (the tail endpoint attaches to the same worker rather than spawning a fresh one) and concurrent submits get a clear "still streaming" toast.
-
-`ui/ts/chat/composer.ts` no longer collects history client-side — the server reconstructs the upstream message list from `chat_turns`. The composer just validates non-empty, flips `$chatStreaming`, and clears the textarea once the server's initial SSE event lands.
-
-### Voice conversation mode
-
-Distinct from the composer's **dictation** button (`chat/mic.ts`, which just drops a transcript into the textarea), voice mode is a hands-free spoken conversation. A waveform button in the composer opens `#voice-modal` (a native `<dialog>` rendered by `render_voice_modal`); the modal shows a control button, a status line, live captions, and a `<canvas>` audio-frequency visualiser. It's client-orchestrated in `ui/ts/chat/voice.ts` (`window.chatVoice = { open, close, talk }`) over the existing chat streaming machinery — no new server worker.
+Distinct from the composer's dictation button (transcript into the textarea), voice mode is a hands-free spoken conversation, orchestrated client-side in `lib/voice.svelte.ts` over the ordinary chat machinery — no extra server worker.
 
 The turn pipeline is **half-duplex, push-to-talk**:
 
-1. Tap the control (`talk()`) to start recording via the shared `VoiceRecorder` (`ui/ts/voice-recorder.ts` — same PCM→WAV capture as dictation, plus an `AnalyserNode` tap feeding the visualiser). Tap again to stop.
-2. The WAV posts to `POST /api/v0/transcriptions`; the transcript is submitted as an ordinary chat turn with the hidden `voice` flag set, so the server injects the *voice directive* (short spoken replies, no tool-use narration — see [`gateway-api.md`](gateway-api.md) / the driver's `VOICE_DIRECTIVE`).
-3. As the reply streams, `voice.ts` watches the assistant bubble and, sentence by sentence, posts each completed sentence to `POST /api/v0/speech` and plays the returned audio in order. Non-speakable spans (code, tables) are replaced with a short spoken marker. While the assistant speaks, the mic stays inert (no echo loop).
+1. Tap to record via `lib/voice-recorder.ts` (PCM capture through the `static/pcm-recorder.js` AudioWorklet, plus an `AnalyserNode` tap for the visualiser). Tap again to stop.
+2. The WAV posts to `POST /api/v0/transcriptions`; the transcript is submitted as an ordinary chat turn with the `voice` flag set, so the server injects the voice directive (short spoken replies, no tool-use narration — see [`gateway-api.md`](gateway-api.md)).
+3. As the reply streams in, sentences are peeled off and posted to `POST /api/v0/speech`, played in order. While the assistant speaks the mic stays inert, so there is no echo loop.
 
-Everything persists as normal `chat_turns`, so the conversation is fully readable/continuable in text. The opening greeting is a fixed string spoken in the UI language and its TTS is server-side cached (identical `model|voice|text` ⇒ cached bytes), so reopening the modal costs no tokens. The reply's language otherwise follows what the user *spoke*. The composer button — and thus the whole feature — renders only when a `speech` upstream pool **and** a transcription model are both available (`voice_available` in `render.rs`), mirroring how dictation degrades away.
+Everything persists as normal chat turns, so the conversation stays readable and continuable in text. The feature only appears when a `speech` upstream pool **and** a transcription model are both available.
 
-## TypeScript glue
+## i18n — what still applies
 
-Anything genuinely interactive that doesn't fit in a `data-on:*` expression lives in TypeScript under `ui/ts/`. esbuild bundles each entry into the same `crates/gateway/assets/*.js` paths the server's `include_bytes!` already pointed at. `tsc --strict` runs as a separate type-check step (esbuild strips types without checking).
+The SPA's own strings are currently plain English in the Svelte components; there is no client-side translation layer yet.
 
-```
-ui/
-├── tsconfig.json
-├── package.json             # esbuild + typescript + tailwindcss + daisyui
-├── src/
-│   └── main.css             # Tailwind/daisyUI entry, builds to assets/app.css
-└── ts/
-    ├── app.ts               # entry — toasts + timezone + popstate + SW register, imports below
-    ├── global.d.ts          # window.* augmentations
-    ├── clipboard.ts         # window.uiCopy
-    ├── push.ts              # window.gatewayPush (Web Push opt-in; /tokens Notifications card)
-    ├── chat/
-    │   ├── composer.ts      # window.chatComposer (Enter / submit / history)
-    │   ├── mic.ts           # window.chatMic   (AudioWorklet → WAV → /transcriptions)
-    │   ├── voice.ts         # window.chatVoice (voice conversation modal orchestration)
-    │   └── scroll.ts        # window.chatScroll (autoscroll observer)
-    ├── voice-recorder.ts    # shared PCM→WAV recorder + analyser (mic.ts + voice.ts + feedback)
-    └── pcm-recorder.ts      # AudioWorklet processor, separate bundle
+The Fluent gate still applies to the **server-side strings** in `crates/session-core/locales/`, which back what the Rust side still writes in a human language: proxy and API error envelopes, MCP connector status text, the OAuth round-trip responses, and the feedback surface. `crates/session-core/build.rs` fails the build if any key present in `locales/en/*.ftl` is missing from `de`/`fr`/`es`/`ru`/`zh`, or vice versa — `cargo build`/`check`/`test` all refuse to compile the crate graph until every language has every key. That is deliberate: a partially translated UI reads as a broken product to a non-English user, so a missing translation is a build error rather than a review comment.
+
+Adding a server-side string is therefore: add the key to `locales/en/<module>.ftl` (naming convention `<module>-<slug>`), add the same key translated to the other five, then call `t(lang, "key")` / `t_args(...)`. Non-English files are LLM-generated and carry a `# STATUS: llm-generated, unreviewed` banner — a content-quality caveat, not a licence to skip a language.
+
+Note that the `.ftl` files still carry a large set of keys that belonged to the deleted pages (`tokens`, `settings`, `upstreams`, …). They are dead weight until either the SPA grows an i18n layer that reuses them or someone prunes them; the build gate only checks that the six locales agree, not that a key is reachable.
+
+## Development loop
+
+Two terminals:
+
+```bash
+mise run dev       # the Rust gateway (API + proxy) on :8080
+mise run dev-web   # Vite dev server on :5173, HMR on every save
 ```
 
-### Per-feature module pattern
+Open `http://localhost:5173`. Vite proxies `/api`, `/v1` and `/auth` to :8080 (`web/vite.config.ts`), so the session cookie and every backend call behave exactly as in production — while a Svelte save re-renders in well under a second with **no Rust rebuild**. That is the point of the SPA: UI iteration no longer pays the Rust compile.
 
-Each module owns one interactive surface and exposes a minimal entry point on `window.*`. The server-rendered HTML calls it via `data-on:*` / `data-init`. Nothing reaches across modules through DOM IDs — modules talk to each other via `window.*` calls (e.g. the scroll observer pings `window.chatComposer.notifyConversationMutated()` each mutation).
+`mise run dev` also sets `GATEWAY_STATIC_DIR=target/frontend/build` (built by its `build-web` dependency), so `http://localhost:8080` serves the *compiled* SPA. Use that to check the built artefact, cache headers and the history fallback.
 
-```ts
-// ui/ts/clipboard.ts
-const uiCopy = async (btn: HTMLElement): Promise<void> => {
-    const selector = btn.dataset.copyTarget;
-    if (!selector) return;
-    const target = document.querySelector(selector);
-    if (!target) return;
-    try {
-        await navigator.clipboard.writeText(target.textContent ?? '');
-    } catch (err) {
-        window.pushToast('error', `Couldn't copy: ${err}`);
-        return;
-    }
-    window.pushToast('success', 'Copied to clipboard.');
-};
-window.uiCopy = uiCopy;
-```
-
-```rust
-// pages/tokens.rs — minted-banner copy button
-button(
-    type: "button",
-    "data-copy-target": "#minted-token-value",
-    "data-on:click": "window.uiCopy(el)",
-    …
-) { (icons::copy(16)) }
-```
-
-The `window.*` surface is declared in `ui/ts/global.d.ts` (`interface Window { uiCopy(btn: HTMLElement): Promise<void>; chatComposer: { … }; chatMic: { … }; chatVoice: { … }; chatScroll: { … }; gatewayPush: { … }; }`) so call sites stay type-checked.
-
-### PWA + Web Push
-
-The app is an installable PWA. The service worker lives at `crates/session-core/assets/sw.js` and is served **verbatim** — it is NOT one of esbuild's bundle entries (only `app.ts` + `pcm-recorder.ts` are), so it gets no type-checking or transpile; keep it hand-valid browser JS. It cache-firsts the immutable `/assets/*` bundles, network-firsts the PWA metadata/icons, passes streaming/API traffic through untouched, and never caches authed HTML (per-user, often SSE).
-
-Turn-complete **Web Push** rides on top: `sw.js` carries `push` + `notificationclick` handlers, `ui/ts/push.ts` (`window.gatewayPush`) does the opt-in + subscription dance behind the `/tokens` Notifications card, and the server half is [`gateway_features::server::push`](../crates/gateway-features/src/server/push/) (VAPID + RFC 8291) fired from `spawn_assistant_worker`. The card ships every string as `data-msg-*` attributes so its copy stays server-localized despite the logic being client-side; whether to actually show a notification is decided in the SW via `clients.matchAll` (suppressed when a focused tab already has that conversation open). See the README's *Notifications* section for the operator-facing view.
-
-### When to reach for what
-
-| Need | Use |
+| Task | What it does |
 |---|---|
-| Toggle a class off reactive state | `data-signals` + `data-class` (no JS) |
-| Run a server action on click/submit | `data-on:click="@post('/url')"` or `data-on:submit__prevent="@post('/url', {contentType: 'form'})"` |
-| Local computation / state read on event | Inline expression in `data-on:*` — read `$signal`, write `$signal = expr`, call `evt.preventDefault()` etc. |
-| Multi-step work (FormData upload, AudioWorklet, walking DOM) | TS module exposing a `window.<feature>.<fn>(el, evt)` call site, invoked from `data-on:*` |
-| Wire up element-bound state on mount (and re-mount after nav patch) | `data-init="window.<feature>.init(el)"`. Datastar fires `data-init` on every mount; the module's `init` is responsible for being idempotent. |
-| Server-driven state transition (no DOM change) | `sse_signals(json)` from the handler; client signals re-evaluate. Prefer over `sse_script` for state flips. |
-| Server-driven DOM change | `sse_patch(selector, mode, html)`. |
+| `mise run web-install` | `npm ci` in `web/`. Re-runs only when `package.json`/lock change. |
+| `mise run dev-web` | Vite dev server on :5173 with the API proxy. |
+| `mise run build-web` | `vite build` → `target/frontend/build/` (what the Dockerfile COPYs). |
+| `mise run check-web` | `svelte-check` — TypeScript, a11y and Svelte diagnostics. |
+| `mise run test-web` | `node --test` over `web/src/lib/**/*.test.ts` (the pure, framework-free halves). |
+| `mise run gen-api-client` | Regenerate `schema.d.ts` from `docs/openapi.json`. |
 
-### Anti-patterns
+`lint`, `verify` and `ci` all depend on the relevant ones, so a fresh checkout needs no manual step.
 
-- `document.addEventListener('click', e => { const btn = e.target.closest('[data-foo]'); if (!btn) return; … })` — moved to `data-on:click="window.foo(el)"` per-element. The id/closest filter pattern was a workaround for elements being re-rendered by SSE patches; datastar's per-element attrs survive that natively.
-- `window.__appBootstrap` — gone. The previous workaround re-bound MutationObservers after each nav patch from a single global function. Now each element-bound observer is set up via `data-init` on its target, which datastar re-fires automatically.
-- `sse_script("document.getElementById('foo').classList.add('bar')")` — for state, prefer a signal + `sse_signals(…)`. Reserve `sse_script` for things datastar can't express (notably `form.reset()`).
+### Browser debugging — `mise run dev-ui`
 
-## Browser debugging — `mise run dev-ui`
-
-The chat / tokens / dashboard pages are all gated by OIDC, which makes ad-hoc browser debugging annoying. **Don't fabricate hand-rolled `test.html`** — they can't initialise datastar correctly and miss real bugs.
+Every authed surface is gated by OIDC, which makes ad-hoc browser debugging annoying. **Don't fabricate a hand-rolled `test.html`** — it won't boot the real bundle and will miss real bugs.
 
 ```bash
-mise run dev-ui
+GATEWAY_STATIC_DIR=target/frontend/build mise run dev-ui
 ```
 
-Boots the full rama gateway on `127.0.0.1:8080` against an in-memory SQLite, a wiremock chat + transcription backend, and a pre-seeded session. Prints the signed cookie on startup; paste it via `document.cookie` after a `goto`, then drive any authed page with playwright. Full recipe in [`docs/dev-workflow.md`](dev-workflow.md#debugging-the-ui).
+Boots the full rama gateway on `127.0.0.1:8080` against an in-memory SQLite, wiremock chat + transcription backends, and a pre-seeded admin session with demo data. It prints the signed cookie on startup; paste it via `document.cookie` after a `goto`, then drive any page with Playwright. Full recipe in [`dev-workflow.md`](dev-workflow.md#debugging-the-ui).
 
-## Building the assets
+For the *real* dev gateway (your own `gateway.sqlite`), the debug-only `GET /__dev/session` signs you in as the fixture user without touching anything.
 
-```bash
-mise run dev          # build-assets (css + js) then cargo run
-mise run build        # release: build-assets then cargo build --release
+### Browser tests
 
-mise run watch-css    # live rebuild of the CSS bundle
-mise run watch-js     # live rebuild of the JS bundles
-mise run build-css    # one-shot CSS (runs in CI before cargo)
-mise run build-js     # one-shot JS  (runs in CI before cargo)
-mise run typecheck    # tsc --noEmit (runs as part of `mise run lint`)
-mise run build-assets # css + js composite (the dep every Rust task pulls)
-```
-
-`ui/package.json` pins Tailwind v4 + daisyUI v5 + esbuild + typescript. `ui/src/main.css` registers the shadcn-flavoured `light` / `dark` themes and `@source`'s the rama_server `.rs` files so Tailwind picks up class names from the rendered HTML strings (since the templates live inside Rust string literals, the scanner needs to be told where to look). `ui/tsconfig.json` is strict-mode + bundler-resolution; esbuild writes sourcemaps next to each bundle (gitignored — bundles themselves are committed so `cargo build` in CI doesn't strictly need node).
+`e2e/spa*.test.mjs` drive the SPA with Playwright against a running `mise run dev` (`mise run e2e`): shell boot, the signed-out redirect into OIDC, the signed-in identity render, the tokens and admin surfaces, and a full chat turn streaming in over the event protocol. See [`testing.md`](testing.md) and `e2e/README.md`.

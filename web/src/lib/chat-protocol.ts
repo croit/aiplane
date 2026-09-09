@@ -92,6 +92,10 @@ export type ChatEvent =
 			kind: 'ask_user' | 'location';
 			question: string;
 			options: string[];
+			/** Optional heading naming what is being decided. */
+			header?: string;
+			/** Whether more than one option may be picked. */
+			multi_select?: boolean;
 	  }
 	| { type: 'tool_prompt'; action: 'hide'; turn_id: string }
 	| { type: 'idle' };

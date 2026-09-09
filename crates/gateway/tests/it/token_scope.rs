@@ -213,22 +213,70 @@ async fn one_tokens_quota_does_not_bind_another() {
 }
 
 // ---------------------------------------------------------------------------
-// The /tokens save path. What a token *ends up* restricted to is decided here,
-// so the mapping from form to stored rows is worth pinning on its own.
+// The `/api/v0/tokens/{id}/…` self-service path. What a token *ends up*
+// restricted to is decided here, so the mapping from request body to stored
+// rows is worth pinning on its own.
 
-/// A session cookie for `user`, for the form-posting tests below.
+/// A session cookie for `user`, for the JSON-API tests below.
 async fn session_for(state: &gateway_runtime::rama_server::state::RamaState, user: &str) -> String {
     common::seed_session(state, user, &format!("{user}@example.com")).await
 }
 
-fn models_post(cookie: &str, token_id: &str, body: &str) -> Request {
-    common::post_form(&format!("/tokens/{token_id}/models"), cookie, body)
+/// A session-authenticated JSON request — the shape every SPA-driven token
+/// action takes. `body` is passed verbatim so a test can send something
+/// `serde_json::Value` cannot represent (a bare `inf`, say).
+fn json_req(method: Method, uri: &str, cookie: &str, body: Option<&str>) -> Request {
+    let builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("cookie", format!("id={cookie}"));
+    match body {
+        Some(body) => builder
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap(),
+        None => builder.body(Body::empty()).unwrap(),
+    }
+}
+
+/// `PUT /api/v0/tokens/{id}/models` — the owner-side allowlist save.
+fn models_put(cookie: &str, token_id: &str, restrict: bool, models: &[&str]) -> Request {
+    json_req(
+        Method::PUT,
+        &format!("/api/v0/tokens/{token_id}/models"),
+        cookie,
+        Some(&json!({"restrict": restrict, "models": models}).to_string()),
+    )
+}
+
+/// `POST /api/v0/tokens/{id}/quota` — the owner-side quota save. `value` is
+/// spliced in as raw JSON so the rejection tests can send a non-number.
+fn quota_post(cookie: &str, token_id: &str, dimension: &str, window: &str, value: &str) -> Request {
+    json_req(
+        Method::POST,
+        &format!("/api/v0/tokens/{token_id}/quota"),
+        cookie,
+        Some(&format!(
+            r#"{{"dimension":"{dimension}","window":"{window}","value":{value}}}"#
+        )),
+    )
+}
+
+/// `DELETE /api/v0/tokens/{id}/quota/{rule_id}` — the owner-side Remove.
+fn quota_delete(cookie: &str, token_id: &str, rule_id: &str) -> Request {
+    json_req(
+        Method::DELETE,
+        &format!("/api/v0/tokens/{token_id}/quota/{rule_id}"),
+        cookie,
+        None,
+    )
 }
 
 /// The trap: a token restricted to exactly the models the deployment happens
 /// to serve renders with every box ticked. Inferring "all ticked means
 /// unrestricted" would drop the restriction the moment its owner opened the
-/// panel and pressed Save — and hand the token every model added later.
+/// panel and pressed Save — and hand the token every model added later. The
+/// `restrict` flag, not the shape of the list, is what decides.
 #[tokio::test]
 async fn saving_an_all_ticked_picker_keeps_an_existing_restriction() {
     let upstream = MockServer::start().await;
@@ -247,16 +295,24 @@ async fn saving_an_all_ticked_picker_keeps_an_existing_restriction() {
     let db = state.db.clone();
     let app = common::app(state);
 
-    // The panel posts the restrict flag plus both ticks — an untouched save.
+    // The panel sends the restrict flag plus both ticks — an untouched save.
     let resp = app
-        .serve(models_post(
+        .serve(models_put(
             &cookie,
             &token_id,
-            "restrict=on&models=model-a&models=model-b",
+            true,
+            &["model-a", "model-b"],
         ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    let body = common::read_body(resp).await;
+    let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        parsed["models"].as_array().unwrap().len(),
+        2,
+        "the response echoes what was stored: {parsed}"
+    );
 
     let still = token_models::for_token(&db, &token_id).await.unwrap();
     assert!(
@@ -280,9 +336,9 @@ async fn unchecking_the_limit_clears_the_allowlist() {
     let db = state.db.clone();
     let app = common::app(state);
 
-    // No `restrict` field at all — an unchecked checkbox submits nothing.
+    // `restrict: false` — the ticks that came along with it are irrelevant.
     let resp = app
-        .serve(models_post(&cookie, &token_id, "models=model-a"))
+        .serve(models_put(&cookie, &token_id, false, &["model-a"]))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -305,13 +361,13 @@ async fn restricting_to_nothing_is_refused_rather_than_inverted() {
     let app = common::app(state);
 
     let resp = app
-        .serve(models_post(&cookie, &token_id, "restrict=on"))
+        .serve(models_put(&cookie, &token_id, true, &[]))
         .await
         .unwrap();
     assert_eq!(
         resp.status(),
-        StatusCode::OK,
-        "an SSE toast, not an error page"
+        StatusCode::BAD_REQUEST,
+        "the save is refused outright"
     );
 
     let still = token_models::for_token(&db, &token_id).await.unwrap();
@@ -343,10 +399,11 @@ async fn a_stale_allowlist_entry_survives_a_save() {
     let app = common::app(state);
 
     let resp = app
-        .serve(models_post(
+        .serve(models_put(
             &cookie,
             &token_id,
-            "restrict=on&models=model-a&models=retired",
+            true,
+            &["model-a", "retired"],
         ))
         .await
         .unwrap();
@@ -371,14 +428,14 @@ async fn a_stranger_cannot_restrict_someone_elses_token() {
     let app = common::app(state);
 
     let resp = app
-        .serve(models_post(
-            &cookie,
-            &token_id,
-            "restrict=on&models=model-a",
-        ))
+        .serve(models_put(&cookie, &token_id, true, &["model-a"]))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "SSE toast");
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "someone else's token reads as missing — no probing for live token ids"
+    );
     assert_eq!(
         token_models::for_token(&db, &token_id).await.unwrap(),
         None,
@@ -408,30 +465,30 @@ async fn an_owner_cannot_raise_or_delete_an_admin_set_quota() {
     let db = state.db.clone();
     let app = common::app(state);
 
-    // Raise it via the self-service form.
+    // Raise it via the self-service endpoint.
     let resp = app
-        .serve(common::post_form(
-            &format!("/tokens/{token_id}/limits"),
-            &cookie,
-            "dimension=requests&window=day&value=99999",
-        ))
+        .serve(quota_post(&cookie, &token_id, "requests", "day", "99999"))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "SSE toast");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "the request itself is well-formed"
+    );
     let rules = limits::applicable_for_token(&db, &token_id).await.unwrap();
     assert_eq!(rules.len(), 1, "{rules:?}");
     assert_eq!(rules[0].value, 10.0, "the admin's cap stands");
 
     // …and delete it.
     let resp = app
-        .serve(common::post_form(
-            &format!("/tokens/{token_id}/limits/delete"),
-            &cookie,
-            &format!("id={}", rules[0].id),
-        ))
+        .serve(quota_delete(&cookie, &token_id, &rules[0].id))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "SSE toast");
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "an admin-managed rule is not the owner's to address"
+    );
     assert_eq!(
         limits::applicable_for_token(&db, &token_id)
             .await
@@ -453,11 +510,7 @@ async fn an_owner_can_still_manage_their_own_quota() {
     let app = common::app(state);
 
     let resp = app
-        .serve(common::post_form(
-            &format!("/tokens/{token_id}/limits"),
-            &cookie,
-            "dimension=tokens&window=day&value=500",
-        ))
+        .serve(quota_post(&cookie, &token_id, "tokens", "day", "500"))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -467,11 +520,7 @@ async fn an_owner_can_still_manage_their_own_quota() {
     assert_eq!(rules[0].managed_by, ManagedBy::Owner);
 
     let resp = app
-        .serve(common::post_form(
-            &format!("/tokens/{token_id}/limits/delete"),
-            &cookie,
-            &format!("id={}", rules[0].id),
-        ))
+        .serve(quota_delete(&cookie, &token_id, &rules[0].id))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -483,8 +532,10 @@ async fn an_owner_can_still_manage_their_own_quota() {
     );
 }
 
-/// A non-finite quota parses, survives `value.max(0.0)`, and stores a limit
-/// that can never be reached — and renders as `inf`.
+/// A non-finite quota would survive `value.max(0.0)` and store a limit that
+/// can never be reached — and render as `inf`. Whether it arrives as a bare
+/// `inf`/`NaN` token (not JSON at all), as an overflowing literal, or as a
+/// negative number, nothing may be written.
 #[tokio::test]
 async fn a_non_finite_quota_is_rejected() {
     let upstream = MockServer::start().await;
@@ -494,16 +545,16 @@ async fn a_non_finite_quota_is_rejected() {
     let db = state.db.clone();
     let app = common::app(state);
 
-    for value in ["inf", "NaN", "-1"] {
+    for value in ["inf", "NaN", "1e999", "\"inf\"", "-1"] {
         let resp = app
-            .serve(common::post_form(
-                &format!("/tokens/{token_id}/limits"),
-                &cookie,
-                &format!("dimension=requests&window=day&value={value}"),
-            ))
+            .serve(quota_post(&cookie, &token_id, "requests", "day", value))
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK, "SSE toast");
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "`{value}` must be refused"
+        );
         assert!(
             limits::applicable_for_token(&db, &token_id)
                 .await
@@ -577,10 +628,11 @@ async fn an_owner_clearing_their_list_does_not_lift_the_operator_restriction() {
 
     // Owner turns their own restriction off entirely.
     let resp = app
-        .serve(models_post(
+        .serve(models_put(
             &cookie,
             &token_id,
-            "models=model-a&models=model-b",
+            false,
+            &["model-a", "model-b"],
         ))
         .await
         .unwrap();

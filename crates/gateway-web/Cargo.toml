@@ -30,7 +30,6 @@ tracing = { workspace = true }
 # the page handlers return.
 rama = { workspace = true }
 # HTML templating macro for handler-side server-rendered pages.
-plait = { workspace = true }
 # Form-body parsing for the page-level POST handlers.
 serde_urlencoded = { workspace = true }
 # Multipart parsing for the page-level file uploads (skill bundles, chat

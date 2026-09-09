@@ -6,7 +6,6 @@
 
 pub mod chat_attachments;
 pub mod comfyui;
-pub mod document_canvas;
 pub mod embeddings;
 pub mod file_refs;
 pub mod geoip;

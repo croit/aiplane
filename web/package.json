@@ -2,7 +2,7 @@
 	"name": "gateway-web",
 	"private": true,
 	"version": "0.1.0",
-	"description": "SvelteKit SPA (issue #22). adapter-static output is served by the gateway binary at /app from GATEWAY_STATIC_DIR; `vite dev` hot-reloads against the running gateway via the proxy in vite.config.ts.",
+	"description": "The gateway's web UI. adapter-static output is served from the root by the gateway binary out of GATEWAY_STATIC_DIR; `vite dev` hot-reloads against the running gateway via the proxy in vite.config.ts.",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",

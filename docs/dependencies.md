@@ -2,7 +2,7 @@
 
 ## Hard rules
 
-1. **No Node in the runtime tree.** The gateway binary and everything it serves at runtime are built without a Node process: Rust for the server, and the SvelteKit SPA (`web/`, issue #22) is *compiled ahead of time* by Vite into static files the binary serves from `GATEWAY_STATIC_DIR`. Node appears in two build/test-only places, each documented in its section below: the **SPA build toolchain** (`web/package.json`, pinned versions, invoked via the `mise run *-web` tasks) and **test tooling** (Node + `@playwright/cli` via mise's `npm:` backend for the e2e suite). Neither ships in the container image.
+1. **No Node in the runtime tree.** The gateway binary and everything it serves at runtime are built without a Node process: Rust for the server, and the SvelteKit SPA (`web/`) is *compiled ahead of time* by Vite into static files the binary serves from `GATEWAY_STATIC_DIR`. Node appears in two build/test-only places, each documented in its section below: the **SPA build toolchain** (`web/package.json`, pinned versions, invoked via the `mise run *-web` tasks) and **test tooling** (Node + `@playwright/cli` via mise's `npm:` backend for the e2e suite). Neither ships in the container image — it carries the binary plus the static build output and nothing else.
 2. **Every Cargo dep needs a justification.** Add it to the table below in the same PR that introduces it. A one-line "why" is enough.
 3. **Prefer stdlib.** Don't pull in `chrono` for a single `Instant::now()`. Don't pull in `lazy_static` — use `std::sync::OnceLock` or `LazyLock`.
 4. **Prefer crates rama already brings in.** rama re-exports `tokio`, `hyper`, `http`, `http-body`, and tower-style traits. Adding features to existing crates doesn't grow the tree — pulling in a parallel implementation does.
@@ -16,8 +16,7 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 | Crate | Used in | Why |
 |---|---|---|
 | `rama` | `gateway` | HTTP framework + proxying primitives. Features `http-full` + `tower`; rustls deliberately off (aws-lc-sys is cmake-only). |
-| `plait` | `gateway` | `html! { ... }` macro for server-rendered HTML in the rama page handlers. Type-checked, auto-escaping. |
-| `serde_urlencoded` | `gateway` | Form-body parsing for the page-level POST handlers (`/chat/{id}/messages`, etc.). |
+| `serde_urlencoded` | `gateway`, `gateway-web` | Query-string encode/decode: building the `return_to` parameter on the sign-in redirect and parsing the OIDC callback's query. (It used to parse form bodies for the page POST handlers; those are gone.) |
 | `tokio` | `gateway`, `cli` | Async runtime. |
 | `serde`, `serde_json` | all | Data interchange (OpenAI schema, config). |
 | `thiserror` | all | Library-style error types. |
@@ -38,15 +37,15 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 | `anyhow` | `gateway`, `sandbox-runner` (binaries only) | Error chains in binary code paths. **Not** allowed in `shared` or any code whose errors cross an API boundary — those use `thiserror`. See `docs/errors.md`. |
 | `jiff` | `gateway`, `shared` | Timestamps, durations, TTLs (token expiry, health-check intervals, audit-log times). Chosen over `chrono` and `time` for the cleaner API and serde support. |
 | `jsonwebtoken` | `gateway` | RS256 verification of OIDC ID tokens (via `openidconnect`'s plumbing) and signing of test-only ID tokens in `tests/oidc_integration.rs`. |
-| `multer` | `gateway` | Streaming multipart parser for `/v1/audio/transcriptions`, `/v1/audio/translations`, and the chat composer's attachment submit (`POST /chat/{id}/messages` is `multipart/form-data` so each file lands as a `name=attachment` part alongside the `model` + `message` text fields). |
+| `multer` | `gateway` | Streaming multipart parser for `/v1/audio/transcriptions`, `/v1/audio/translations`, and the chat composer's attachment submit (`POST /api/v0/chat/sessions/{id}/messages` is `multipart/form-data` when there are files, so each lands as a `name=attachment` part alongside the `model` + `message` text fields). |
 | `rust-s3` (tokio-rustls-tls) | `gateway` | S3 (or S3-compatible) client for chat attachment uploads. Each attached file lands at `<key_prefix>/<turn_id>/<filename>`; the resulting object URL is what goes into OpenAI's `image_url` content parts + the `[gw-attachment …]` marker we persist in `chat_turns.user_text` for history replay. Path-style requests so MinIO/Backblaze work without DNS gymnastics. |
 | `futures-util` | `gateway` | Stream + sink combinators used in the proxy streaming path. |
 | `bytes` | `gateway` | `Bytes`-typed bodies for rama handlers. |
-| `markdown` | `gateway` | CommonMark→HTML for chat assistant replies + reasoning blocks. GFM features (tables, strikethrough, autolinks); raw HTML and `javascript:` / `vbscript:` URLs rejected by default so a `<script>` inside LLM output renders as escaped text. |
+| `markdown` | `session-core` | CommonMark→HTML on the one server-side path that still produces HTML: conversation export (`session_core::export`, which feeds the Markdown/PDF downloads). GFM features (tables, strikethrough, autolinks); raw HTML and `javascript:` / `vbscript:` URLs rejected by default so a `<script>` inside LLM output renders as escaped text. The chat UI itself renders markdown in the browser now (`marked` + `dompurify`, see the SPA table below) — the JSON wire carries the raw text. |
 | `earshot` | `gateway` | Pure-Rust neural VAD (~110 KiB, no ONNX runtime) on the `/v1/audio/transcriptions` upload path. Strips leading/trailing silence + clips long pauses before forwarding to Whisper, since silence is the dominant source of Whisper hallucinations. |
 | `symphonia` | `gateway` | Pure-Rust audio format probing for transcription billing. Reads frame counts and sample rates from WAV, MP3, FLAC, Ogg/Vorbis, and ISO-MP4 uploads when providers omit duration; decoder features are limited to common transcription formats. |
-| `lumis` (`default-features = false` + explicit grammar list) | `gateway` | Server-side syntax highlighting for fenced code blocks in chat replies. Enables nearly all tree-sitter grammars but excludes `lang-caddy` (GPL-3.0, license-incompatible with our AGPL-3.0 binary). See [Notes](#notes-on-specific-deps) for the licensing/build trade-off and theme handling. |
-| `regex` | `gateway` | Already a transitive dep via `tracing-subscriber`'s env-filter; pulled in explicitly so the chat-render post-pass can match fenced code blocks for the `lumis` rewrite step. |
+| `lumis` (`default-features = false` + explicit grammar list) | `session-core` | Syntax highlighting for fenced code blocks in exported conversations. Enables nearly all tree-sitter grammars but excludes `lang-caddy` (GPL-3.0, license-incompatible with our AGPL-3.0 binary). See [Notes](#notes-on-specific-deps) for the licensing/build trade-off and theme handling. |
+| `regex` | `session-core`, `gateway-runtime`, `gateway-tools` | Already a transitive dep via `tracing-subscriber`'s env-filter, so pulling it in explicitly costs nothing. Used for attachment-marker parsing, RAG chunk matching, and sandbox output scanning. |
 | `ip2location` | `gateway` | Reads an IP2Location LITE DB11 `.BIN` (memory-mapped, sync, `Send + Sync`) to resolve a caller's source IP → coarse city/country/lat-lon for the `get_user_location` tool. Optional at runtime: with no DB file the feature is simply inactive. |
 | `notify` | `gateway` | Filesystem watcher that hot-reloads the GeoIP `.BIN` when it changes (operator drop-in or the weekly updater) without a gateway restart. Cross-platform backend (inotify/FSEvents/…) via default features. |
 | `zip` (default-features off, `deflate` only) | `gateway` | Unpacks the IP2Location LITE distribution downloaded by the optional weekly GeoIP updater. `deflate`-only — the LITE archives use standard deflate, so the C-backed bzip2/lzma/zstd codecs in zip's defaults stay out of the tree. |
@@ -62,7 +61,7 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 
 Detailed rationale that's too long for the table cells above.
 
-**`lumis` — grammar set, licensing, and themes.** We enable lumis' full `all-languages` set **minus `lang-caddy`**: `tree-sitter-caddy` is GPL-3.0, the only copyleft grammar in the set, and would force the binary to GPL — incompatible with our AGPL-3.0 license. The remaining ~116 grammars (all MIT/Apache-2.0) compile via build.rs, adding a few seconds to cold builds. The trade-off is accepted so anything an LLM emits (svelte, zig, terraform, kotlin, …) renders coloured rather than monochrome; only Caddyfile blocks fall back to plain text. Highlighting is rendered to inline-styled spans by the chat-render post-pass — no client-side highlighter on top of datastar. Light/dark switching uses `HtmlMultiThemesBuilder` with `tokyonight_day` + `tokyonight_night` and `default_theme = "light-dark()"`, so the browser flips colours from the document's `color-scheme` (which daisyUI sets per `data-theme`) without a re-render.
+**`lumis` — grammar set, licensing, and themes.** We enable lumis' full `all-languages` set **minus `lang-caddy`**: `tree-sitter-caddy` is GPL-3.0, the only copyleft grammar in the set, and would force the binary to GPL — incompatible with our AGPL-3.0 license. The remaining ~116 grammars (all MIT/Apache-2.0) compile via build.rs, adding a few seconds to cold builds. The trade-off is accepted so anything an LLM emits (svelte, zig, terraform, kotlin, …) renders coloured rather than monochrome; only Caddyfile blocks fall back to plain text. Highlighting is rendered to inline-styled spans by the render post-pass, so no client-side highlighter is shipped. Light/dark switching uses `HtmlMultiThemesBuilder` with `tokyonight_day` + `tokyonight_night` and `default_theme = "light-dark()"`, so the browser flips colours from the document's `color-scheme` (which daisyUI sets per `data-theme`) without a re-render.
 
 **`fluent-templates`/`fluent-bundle` — transitive `once_cell`.** The Fluent stack's own transitive deps (`unic-langid-impl`, `intl-memoizer`) use `once_cell` internally. The "explicitly not allowed" rule below is about *direct* additions to code we write — it doesn't reach into an approved crate's own dependency choices, so this isn't an oversight of that rule.
 
@@ -89,10 +88,11 @@ Pinned in `mise.toml`:
 | `npm:@playwright/cli` | Brings in the `playwright` JS lib + the chromium-headless-shell download. |
 
 Used by:
-- `e2e/*.test.mjs` — Playwright-driven browser tests for the page UI + plain-fetch tests for the public HTTP surface. Run via `mise run e2e`.
+- `e2e/*.test.mjs` — Playwright-driven browser tests for the SPA + plain-fetch tests for the public HTTP surface. Run via `mise run e2e`.
+- `mise run test-web` — Node's own `node --test` (with type stripping) over the SPA's `web/src/lib/*.test.ts` unit tests. No test framework dependency, no jsdom.
 - `.claude/skills/take-screenshots/screenshot.mjs` — generates the README screenshots (`docs/img/*.png`) against the seeded `dev_ui` example. See that skill for the flow.
 
-Neither file pulls in a project-level `package.json` or `node_modules` — both scripts `import` Playwright directly out of the mise tool's install directory (path overridable via `$PLAYWRIGHT_DIR`). Adding any other Node tool needs the same justification step as a Cargo dep.
+None of these touch `web/node_modules`: the Playwright scripts `import` the library directly out of the mise tool's install directory (path overridable via `$PLAYWRIGHT_DIR`), and `test-web` runs on Node alone. The SPA's `package.json` is for building the SPA, not for testing the gateway. Adding any other Node tool needs the same justification step as a Cargo dep.
 
 ## SPA build dependencies (`web/package.json`)
 
@@ -102,23 +102,27 @@ output (see the Dockerfile).
 
 | Package | Why |
 |---|---|
-| `svelte`, `@sveltejs/kit`, `@sveltejs/adapter-static`, `@sveltejs/vite-plugin-svelte`, `vite` | The SPA framework + static-output adapter (issue #22). Output is plain files; no Node server at runtime. |
-| `tailwindcss` + `daisyui` (v5) | Same styling stack as the legacy UI, so the SPA shares its look. Compiled to one content-hashed CSS bundle. |
-| `marked` | Client-side Markdown rendering of chat replies (issue #22 P2): the JSON event wire carries markdown text, and rendering moved to the client by design. |
+| `svelte`, `@sveltejs/kit`, `@sveltejs/adapter-static`, `@sveltejs/vite-plugin-svelte`, `vite` | The SPA framework + static-output adapter. Output is plain files; no Node server at runtime. |
+| `tailwindcss` + `@tailwindcss/vite` + `daisyui` (v5) | The styling stack, compiled to one content-hashed CSS bundle. The Vite plugin scans `web/src` itself, so there are no `@source` globs to keep in sync. |
+| `marked` | Client-side Markdown rendering of chat replies: the JSON event wire carries markdown text, and rendering moved to the client by design. |
 | `dompurify` | Sanitises `marked` output before `{@html}` — model output is untrusted input like any other. |
+| `openapi-typescript` | Generates `web/src/lib/schema.d.ts` from `docs/openapi.json` (`mise run gen-api-client`). Build-time codegen; nothing of it ships. |
+| `openapi-fetch` | The intended runtime half: a tiny typed `fetch` wrapper over those generated types, so every `/api/v0` call would be checked against the spec at compile time. `web/src/lib/client.ts` builds it; nothing imports that yet (the SPA still calls through the hand-written helper in `api.ts`), so this is a dependency on a migration in progress rather than on shipped code. |
 | `typescript`, `svelte-check`, `@types/node` | `mise run check-web` / `mise run test-web` gates. |
 
 ## Explicitly not allowed (yet)
 
 | Crate | Why not |
 |---|---|
-| `tailwindcss` (npm) | NPM ban (runtime). The page UI is built on daisyUI v5 + Tailwind v4 compiled into a single static CSS file at build time via the mise-installed `tailwindcss-cli`; no node_modules at runtime. The test-tooling carve-out above does *not* extend to runtime styling. |
+| any npm package at **runtime** | The image ships the Rust binary plus static files. Everything in `web/package.json` is compiled away by `vite build`; a package that needs a Node process, or that must be fetched by the browser from a CDN, does not belong here. |
 | `chrono`, `time` | `jiff` is the chosen time crate. Don't mix. |
 | `lazy_static`, `once_cell` | `std::sync::OnceLock` / `LazyLock` cover it. |
 | `serde_yaml` | Config is TOML. One format. |
 | `figment` | Hand-roll config layering until it stops being trivial. |
 | `axum`, `tower-sessions`, `tower-http` | The server stack is rama-only. Sessions are hand-rolled (`rama_server::session`); HTTP-layer concerns ride on rama services. Bringing axum back would mean running two routers in parallel. |
-| `dioxus`, `dioxus-primitives`, `dioxus-icons` | Dropped during the rama spike. Replaced by plait (server-rendered HTML) + daisyUI v5 (Tailwind v4 component classes) + datastar (SSE-driven DOM patches). |
+| `dioxus`, `dioxus-primitives`, `dioxus-icons` | Dropped during the rama spike. The UI went server-rendered (plait + datastar) and then, in the SPA migration, to SvelteKit — see `web/` and [`ui.md`](ui.md). Don't reopen this; two UI frameworks is one too many. |
+| `plait` | **Removed** with the server-rendered pages. It provided the `html! { ... }` macro that rendered them inline in rama handlers. The gateway no longer produces HTML for the UI at all: the wire carries JSON, and the SPA owns the pixels. Do not reintroduce it to hand-render a fragment — that is how two UIs start. |
+| `datastar` (vendored JS) | **Removed** with the server-rendered pages. It drove `datastar-patch-elements` SSE DOM patches; the SPA gets structured JSON events instead (`session_core::chat_json`) and renders them itself, so there is no `include_bytes!`'d JS bundle left to vendor. |
 
 ## Adding a dep — checklist
 

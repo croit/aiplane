@@ -20,7 +20,7 @@ export const feedback = $state({
 
 export async function loadConfig() {
 	try {
-		const res = await fetch('/feedback/config', { headers: { accept: 'application/json' } });
+		const res = await fetch('/api/v0/feedback/config', { headers: { accept: 'application/json' } });
 		if (!res.ok) return;
 		const cfg = (await res.json()) as { enabled: boolean };
 		feedback.enabled = cfg.enabled;
@@ -41,7 +41,7 @@ export async function submit() {
 	feedback.busy = true;
 	feedback.error = null;
 	try {
-		const res = await fetch('/feedback', {
+		const res = await fetch('/api/v0/feedback', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({

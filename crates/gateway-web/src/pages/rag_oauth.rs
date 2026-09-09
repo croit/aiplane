@@ -34,7 +34,8 @@ use rama::http::{Request, Response};
 use serde::Deserialize;
 use session_core::i18n::{self, Lang, t, t_args};
 
-use super::{internal_error_html, require_admin_or_403, see_other};
+use super::{flow_error_page, require_admin_or_403, see_other};
+use rama::http::StatusCode;
 
 /// Where Google sends the browser back to. One route for every provider —
 /// the pending row says which collection and which kind it belongs to.
@@ -54,16 +55,27 @@ pub async fn rag_connect(
 
     let collection = match rag_db::find_collection_by_id(&state.db, id).await {
         Ok(Some(c)) => c,
-        Ok(None) => return internal_error_html(&user.email, &t(lang, "rag-toast-vanished")),
+        Ok(None) => {
+            return flow_error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &t(lang, "rag-toast-vanished"),
+            );
+        }
         Err(err) => {
             tracing::warn!(error = %err, %id, "rag oauth: collection lookup");
-            return internal_error_html(&user.email, &t(lang, "rag-oauth-lookup-failed"));
+            return flow_error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &t(lang, "rag-oauth-lookup-failed"),
+            );
         }
     };
 
     let registry = state.provider_registry();
     let Some(factory) = registry.get(&collection.source.kind) else {
-        return internal_error_html(&user.email, &t(lang, "rag-source-unknown-kind"));
+        return flow_error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t(lang, "rag-source-unknown-kind"),
+        );
     };
     let AuthKind::OAuth2 {
         authorize_url,
@@ -73,7 +85,10 @@ pub async fn rag_connect(
         ..
     } = factory.auth()
     else {
-        return internal_error_html(&user.email, &t(lang, "rag-oauth-not-oauth"));
+        return flow_error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t(lang, "rag-oauth-not-oauth"),
+        );
     };
 
     // The client the operator registered with the provider. Its id is plain
@@ -85,7 +100,10 @@ pub async fn rag_connect(
         .get(client_id_key)
         .filter(|s| !s.is_empty())
     else {
-        return internal_error_html(&user.email, &t(lang, "rag-oauth-no-client"));
+        return flow_error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t(lang, "rag-oauth-no-client"),
+        );
     };
 
     let redirect_uri = format!("{}{CALLBACK_PATH}", state.public_url());
@@ -107,7 +125,10 @@ pub async fn rag_connect(
         Ok(u) => u,
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: building the authorize url");
-            return internal_error_html(&user.email, &t(lang, "rag-oauth-bad-authorize-url"));
+            return flow_error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &t(lang, "rag-oauth-bad-authorize-url"),
+            );
         }
     };
 
@@ -122,7 +143,10 @@ pub async fn rag_connect(
     };
     if let Err(err) = oauth_db::create_pending(&state.db, &pending).await {
         tracing::warn!(error = %err, %id, "rag oauth: saving pending consent");
-        return internal_error_html(&user.email, &t(lang, "rag-oauth-start-failed"));
+        return flow_error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t(lang, "rag-oauth-start-failed"),
+        );
     }
     see_other(&authorize)
 }
@@ -150,8 +174,8 @@ pub async fn rag_oauth_callback(
     };
 
     if let Some(err) = params.error {
-        return internal_error_html(
-            &user.email,
+        return flow_error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
             &t_args(
                 lang,
                 "rag-oauth-provider-refused",
@@ -160,26 +184,45 @@ pub async fn rag_oauth_callback(
         );
     }
     let (Some(code), Some(st)) = (params.code, params.state) else {
-        return internal_error_html(&user.email, &t(lang, "rag-oauth-callback-missing"));
+        return flow_error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t(lang, "rag-oauth-callback-missing"),
+        );
     };
 
     // Consumed on read: an unknown, replayed or expired state all look the
     // same from here, and all mean "start again".
     let pending = match oauth_db::take_pending(&state.db, &st).await {
         Ok(Some(p)) => p,
-        Ok(None) => return internal_error_html(&user.email, &t(lang, "rag-oauth-expired")),
+        Ok(None) => {
+            return flow_error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &t(lang, "rag-oauth-expired"),
+            );
+        }
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: reading pending consent");
-            return internal_error_html(&user.email, &t(lang, "rag-oauth-lookup-failed"));
+            return flow_error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &t(lang, "rag-oauth-lookup-failed"),
+            );
         }
     };
 
     let collection = match rag_db::find_collection_by_id(&state.db, pending.collection_id).await {
         Ok(Some(c)) => c,
-        Ok(None) => return internal_error_html(&user.email, &t(lang, "rag-toast-vanished")),
+        Ok(None) => {
+            return flow_error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &t(lang, "rag-toast-vanished"),
+            );
+        }
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: collection lookup");
-            return internal_error_html(&user.email, &t(lang, "rag-oauth-lookup-failed"));
+            return flow_error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &t(lang, "rag-oauth-lookup-failed"),
+            );
         }
     };
 
@@ -188,7 +231,10 @@ pub async fn rag_oauth_callback(
     // Which keys hold the client credentials is the provider's to say, not
     // this handler's to assume.
     let Some(factory) = state.provider_registry().get(&collection.source.kind) else {
-        return internal_error_html(&user.email, &t(lang, "rag-source-unknown-kind"));
+        return flow_error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t(lang, "rag-source-unknown-kind"),
+        );
     };
     let AuthKind::OAuth2 {
         client_id_key,
@@ -196,7 +242,10 @@ pub async fn rag_oauth_callback(
         ..
     } = factory.auth()
     else {
-        return internal_error_html(&user.email, &t(lang, "rag-oauth-not-oauth"));
+        return flow_error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t(lang, "rag-oauth-not-oauth"),
+        );
     };
 
     let mut secrets = collection.source.open_secrets(&state.crypto);
@@ -206,7 +255,10 @@ pub async fn rag_oauth_callback(
         .get(client_id_key)
         .filter(|s| !s.is_empty())
     else {
-        return internal_error_html(&user.email, &t(lang, "rag-oauth-no-client"));
+        return flow_error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t(lang, "rag-oauth-no-client"),
+        );
     };
     let client_secret = secrets.get(client_secret_key).cloned();
 
@@ -225,8 +277,8 @@ pub async fn rag_oauth_callback(
         Ok(t) => t,
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: exchanging the code");
-            return internal_error_html(
-                &user.email,
+            return flow_error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
                 &t_args(
                     lang,
                     "rag-oauth-exchange-failed",
@@ -241,7 +293,10 @@ pub async fn rag_oauth_callback(
     // Google withholds it when the account has already granted consent and the
     // request did not force the prompt, so say what to do about it.
     let Some(refresh_token) = tokens.refresh_token else {
-        return internal_error_html(&user.email, &t(lang, "rag-oauth-no-refresh-token"));
+        return flow_error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t(lang, "rag-oauth-no-refresh-token"),
+        );
     };
     secrets.insert(REFRESH_TOKEN_KEY.to_string(), refresh_token);
 
@@ -249,21 +304,30 @@ pub async fn rag_oauth_callback(
         Ok(j) => j,
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: serialising secrets");
-            return internal_error_html(&user.email, &t(lang, "rag-oauth-store-failed"));
+            return flow_error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &t(lang, "rag-oauth-store-failed"),
+            );
         }
     };
     let sealed = match state.crypto.seal_str(&json) {
         Ok(s) => s,
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: sealing secrets");
-            return internal_error_html(&user.email, &t(lang, "rag-oauth-store-failed"));
+            return flow_error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &t(lang, "rag-oauth-store-failed"),
+            );
         }
     };
     if let Err(err) =
         rag_db::set_source_secrets(&state.db, pending.collection_id, Some(&sealed)).await
     {
         tracing::warn!(error = %err, "rag oauth: storing the refresh token");
-        return internal_error_html(&user.email, &t(lang, "rag-oauth-store-failed"));
+        return flow_error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t(lang, "rag-oauth-store-failed"),
+        );
     }
 
     // Record whose access this corpus is now read through. Asking the

@@ -37,13 +37,22 @@ async fn readyz_returns_ok() {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
+/// An unknown path is the SPA's, not a 404.
+///
+/// The SvelteKit app owns the root and resolves its own routes, so the server
+/// cannot know whether `/no-such-route` is a client route or a typo — it hands
+/// back the SPA entry point and lets the client router decide. In this
+/// harness no build is deployed (`GATEWAY_STATIC_DIR` is unset), so that path
+/// answers 503 "not deployed" rather than the index. Either way it is the SPA
+/// handler answering, which is what this pins: an API 404 would mean the
+/// catch-all had stopped matching.
 #[tokio::test]
-async fn unknown_path_is_404() {
+async fn an_unknown_path_falls_through_to_the_spa() {
     let state = common::state_with_chat_pool("http://unused.invalid").await;
     let app = common::app(state);
     let resp = app
         .serve(common::req(Method::GET, "/no-such-route"))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }

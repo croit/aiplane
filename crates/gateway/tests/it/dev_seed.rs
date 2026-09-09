@@ -7,8 +7,8 @@
 //! The fixture logic itself (canonical three tokens, fixture user) is
 //! unit-tested in the module. What this file pins is the *wiring*: the
 //! routes answer through the full layered service, the seeded cookie is a
-//! real signed session that unlocks `/tokens`, and — the reason the
-//! endpoints exist at all — a fresh database is ready afterwards
+//! real signed session that unlocks `GET /api/v0/tokens`, and — the reason
+//! the endpoints exist at all — a fresh database is ready afterwards
 //! (`/readyz` flips from `setup_required` to `ok`).
 //!
 //! These routes are `cfg(debug_assertions)`, and so are these tests: the
@@ -35,8 +35,8 @@ async fn seed_session_signs_in_and_serves_the_fixture_through_the_router() {
         resp.headers()
             .get(header::LOCATION)
             .and_then(|v| v.to_str().ok()),
-        Some("/tokens"),
-        "the seeded session should land where the fixture is visible"
+        Some("/"),
+        "the seeded session should land in the app"
     );
     let cookie = resp
         .headers()
@@ -46,7 +46,9 @@ async fn seed_session_signs_in_and_serves_the_fixture_through_the_router() {
     let (name, _) = cookie.split_once('=').expect("cookie has a value");
     assert_eq!(name, "id", "the ordinary session cookie, nothing bespoke");
 
-    let mut authed = common::req(Method::GET, "/tokens");
+    // The cookie is a real signed session: it unlocks the API the SPA reads,
+    // and the fixture's three tokens are there.
+    let mut authed = common::req(Method::GET, "/api/v0/tokens");
     authed.headers_mut().insert(
         header::COOKIE,
         header::HeaderValue::from_str(&format!("id={}", &cookie[3..])).unwrap(),
@@ -54,26 +56,27 @@ async fn seed_session_signs_in_and_serves_the_fixture_through_the_router() {
     let resp = app.serve(authed).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = String::from_utf8_lossy(&common::read_body(resp).await).to_string();
-    for expected in [
-        "Signed in as alice@example.com",
-        "engineering, admin",
-        "Local laptop",
-        "CI pipeline",
-        "Production API",
-    ] {
-        assert!(
-            body.contains(expected),
-            "expected {expected:?} in the rendered page"
-        );
+    for expected in ["Local laptop", "CI pipeline", "Production API"] {
+        assert!(body.contains(expected), "expected {expected:?} in {body}");
     }
 
-    // Anonymous /tokens still bounces to sign-in: seeding added a session,
-    // it did not open the page up.
+    // The identity is the fixture user's.
+    let mut me = common::req(Method::GET, "/api/v0/me");
+    me.headers_mut().insert(
+        header::COOKIE,
+        header::HeaderValue::from_str(&format!("id={}", &cookie[3..])).unwrap(),
+    );
+    let resp = app.serve(me).await.unwrap();
+    let body = String::from_utf8_lossy(&common::read_body(resp).await).to_string();
+    assert!(body.contains("alice@example.com"), "{body}");
+
+    // Anonymous still gets a 401: seeding added a session, it did not open
+    // the API up.
     let resp = app
-        .serve(common::req(Method::GET, "/tokens"))
+        .serve(common::req(Method::GET, "/api/v0/tokens"))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

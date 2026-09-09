@@ -16,7 +16,7 @@ That runs every `e2e/*.test.mjs`:
 - `api.test.mjs` — plain `fetch` against the public HTTP surface.
 - `anonymous.test.mjs` — Playwright-driven browser flows for the sign-in funnel an anonymous visitor sees.
 - `authed.test.mjs` — Playwright flows on authenticated pages, each on a fresh seeded fixture session.
-- `spa.test.mjs` — the SvelteKit SPA at `/app`: shell boot, signed-out redirect into OIDC, signed-in identity from `GET /api/v0/me`.
+- `spa.test.mjs` — the SvelteKit SPA at the root: shell boot, signed-out redirect into OIDC, signed-in identity from `GET /api/v0/me`.
 - `spa-chat.test.mjs` — the SPA chat round trip (issue #22 P2): create a conversation, submit a turn, watch the reply stream in over the JSON-SSE event protocol. Needs a gateway with a chat upstream — `GATEWAY_STATIC_DIR=target/frontend/build mise run dev-ui` — and skips with a pointer at that command when the gateway has no pools.
 
 The `e2e` mise task points `PLAYWRIGHT_DIR` at the mise-installed `npm:@playwright/cli` tool automatically; export it yourself only to override.
@@ -52,7 +52,7 @@ Both answer `303` with an ordinary `Set-Cookie: id=…` session.
 - `/healthz`, `/readyz`, 404 routes; `/api/v0/me`, `/api/v0/tokens`: 401
   error envelope when anonymous; `/v1/chat/completions`: 401 without a
   valid bearer.
-- The SPA at `/app`: client bundle boots and hydrates, the signed-out
+- The SPA at the root: client bundle boots and hydrates, the signed-out
   redirect into `/auth/login`, the signed-in identity rendering, and (with
   `dev-ui` as the server) a full chat turn streaming into the SPA.
 - The anonymous funnel: `/` and protected pages bounce to `/login` with
@@ -63,7 +63,7 @@ Both answer `303` with an ordinary `Set-Cookie: id=…` session.
   flipping the row's badge via the SSE patch, sign-out.
 - The authenticated chat scaffold: composer textarea, model picker, send
   button.
-- The SPA at `/app`: client bundle boots and hydrates, the signed-out
+- The SPA at the root: client bundle boots and hydrates, the signed-out
   redirect into `/auth/login`, and the signed-in identity rendering.
 
 ## What's not covered yet

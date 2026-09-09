@@ -1,4 +1,4 @@
-// The SvelteKit SPA (issue #22) served by the gateway at /app.
+// The SvelteKit SPA (issue #22) served by the gateway at the root.
 //
 // The static shell itself is covered by the Rust tests (spa.rs unit +
 // spa_routes integration) and `build-web` in CI. What a *browser* can catch
@@ -26,11 +26,11 @@ before(async () => {
     );
     // Pre-flight: the SPA must be deployed (GATEWAY_STATIC_DIR set). An undeployed
     // SPA answers 503 (rama_server::spa) — distinguish that from a dead server.
-    const probe = await fetch(`${BASE}/app`);
+    const probe = await fetch(`${BASE}/`);
     assert.equal(
         probe.status,
         200,
-        `the SPA is not served at ${BASE}/app (got ${probe.status}). ` +
+        `the SPA is not served at ${BASE} (got ${probe.status}). ` +
             "Run \`mise run build-web\` and restart the gateway with GATEWAY_STATIC_DIR=target/frontend/build.",
     );
     browser = await launchBrowser();
@@ -40,7 +40,7 @@ after(async () => {
     if (browser) await browser.close();
 });
 
-test("the SPA shell loads at /app (client bundle boots, not the 404/503 fallback)", async () => {
+test("the SPA shell loads at the root (client bundle boots, not the 404/503 fallback)", async () => {
     const ctx = await browser.newContext();
     // A signed-out shell redirects itself into the OIDC flow as soon as
     // /api/v0/me answers 401 (see the next test). Park that request — a
@@ -48,7 +48,7 @@ test("the SPA shell loads at /app (client bundle boots, not the 404/503 fallback
     // test pins is the boot, not the redirect.
     await ctx.route("**/api/v0/me", () => {});
     const page = await ctx.newPage();
-    await page.goto(`${BASE}/app`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
 
     // The app header is only in the DOM once Svelte has mounted and hydrated —
     // a 503 "not deployed" or the router's 404 would have no such markup.
@@ -59,7 +59,7 @@ test("the SPA shell loads at /app (client bundle boots, not the 404/503 fallback
 test("a signed-out visitor is redirected into the OIDC login flow", async (t) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    await page.goto(`${BASE}/app`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
 
     // No session → /api/v0/me 401s → the layout bounces to /auth/login.
     // With a REAL provider configured the chain continues off-site (authentik
@@ -76,13 +76,13 @@ test("the SPA is a PWA: manifest, service worker, and push wiring", async () => 
         { name: "id", value: await devSessionCookie(), url: BASE },
     ]);
     // Serve the PWA files at all (the build ships them into static/).
-    for (const path of ["/app/sw.js", "/app/manifest.webmanifest"]) {
+    for (const path of ["/sw.js", "/manifest.webmanifest"]) {
         const r = await fetch(`${BASE}${path}`);
         assert.equal(r.status, 200, `${path} must be served`);
     }
 
     const page = await ctx.newPage();
-    await page.goto(`${BASE}/app`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
     // The manifest is linked…
     const manifest = page.locator('link[rel="manifest"]');
     assert.equal(await manifest.count(), 1);
@@ -96,9 +96,9 @@ test("the SPA is a PWA: manifest, service worker, and push wiring", async () => 
             : null;
     });
     assert.ok(sw, "the SPA service worker must register");
-    assert.match(sw.scope, /\/app\/$/, "the SW must control the /app/ scope");
+    assert.match(sw.scope, /\/$/, "the SW must control the root scope");
     assert.equal(sw.state, "activated");
-    assert.match(sw.script, /\/app\/sw\.js$/);
+    assert.match(sw.script, /\/sw\.js$/);
     await ctx.close();
 });
 
@@ -112,9 +112,9 @@ test("a signed-in user sees their identity from GET /api/v0/me", async (t) => {
         },
     ]);
     const page = await ctx.newPage();
-    // /app now funnels into the chat surface — follow it and wait for the
+    // The root funnels into the chat surface — follow it and wait for the
     // identity to render in the sidebar footer.
-    await page.goto(`${BASE}/app/chat`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE}/chat`, { waitUntil: "networkidle" });
 
     // The /api/v0/me value renders into the sidebar footer (email + sign-out
     // affordance only exist for a known identity).
