@@ -1,28 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! Multi-conversation chat page.
+//! The gateway's chat turn machinery, shared by every submit surface.
 //!
-//! Routes:
+//! Not a page any more — issue #22 moved rendering to the SPA. What lives
+//! here is [`submit_turn`] (the rate/quota gate, worker-slot reservation,
+//! turn persistence and worker spawn that the JSON API calls), the
+//! attachment plumbing, and the attachment byte-streaming handler.
 //!
-//! | Method | Path                       | What |
-//! |--------|----------------------------|------|
-//! | GET    | /chat                      | redirect to latest session (or create one) |
-//! | GET    | /chat/{id}                 | render a specific session |
-//! | POST   | /chat/sessions             | create a fresh session + nav to it |
-//! | POST   | /chat/{id}/messages        | submit a user message; spawns worker; SSE-tails the live broadcast |
-//! | GET    | /chat/{id}/tail            | subscribe to whatever worker is running for this user + session |
-//! | POST   | /chat/{id}/cancel          | flip the worker's cancel flag |
-//! | POST   | /chat/{id}/delete          | remove the session + nav to the next one |
-//!
-//! Worker lifecycle: `POST /chat/{id}/messages` creates the user turn,
-//! creates the assistant turn (status `in_progress`), then spawns
-//! `worker::run_chat_turn`. The worker writes content / reasoning /
-//! tool-call deltas straight to SQLite and broadcasts a `Tick` after
-//! every DB write. All HTTP subscribers (the messages POST itself + any
-//! tail GET) re-read the row from the DB on each tick and emit the
-//! same `mode outer` patch keyed to `#turn-<uuid>`. DB is the source of
-//! truth; nothing the subscriber emits depends on in-memory state.
+//! Worker lifecycle: the submit creates the user turn, creates the assistant
+//! turn (status `in_progress`), then spawns `worker::run_chat_turn`. The
+//! worker writes content / reasoning / tool-call deltas straight to SQLite
+//! and broadcasts a `Tick` after every write. Subscribers re-read the row on
+//! each tick — the DB is the source of truth and nothing a subscriber emits
+//! depends on in-memory state, which is what makes reconnect free.
 
 use std::sync::Arc;
 

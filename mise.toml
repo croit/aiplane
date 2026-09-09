@@ -258,10 +258,6 @@ run = "cargo nextest run --workspace"
 description = "Run tests with stdout/stderr visible."
 run = "cargo nextest run --workspace --no-capture"
 
-[tasks.gen-api-client]
-description = "Regenerate web/src/lib/schema.d.ts from docs/openapi.json — run after changing any /api/v0 route; the SPA's typed client types come from here."
-run = "cd web && npx openapi-typescript ../docs/openapi.json -o src/lib/schema.d.ts"
-
 [tasks.gen-locales]
 description = "Regenerate web/src/lib/locales/*.ts from the Fluent catalogs in crates/session-core/locales. The .ftl files are canonical for BOTH halves of the product — the server still renders some strings itself — so a translation is added there and flows to the SPA from here. Run after touching any .ftl."
 sources = ["crates/session-core/locales/**/*.ftl"]

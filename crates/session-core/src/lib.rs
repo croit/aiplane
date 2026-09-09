@@ -20,7 +20,6 @@
 //!   renderer, SSE primitives, and the bundled CSS/JS.
 //! - `db` — sessions + turns + tool calls.
 
-pub mod assets;
 pub mod attachments;
 pub mod chat_json;
 pub mod chrome;

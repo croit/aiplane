@@ -78,29 +78,54 @@ pub async fn spa_get(req: Request) -> Response {
 
 /// Namespaces that belong to the API, not to the client router.
 ///
-/// The catch-all is registered last, so a request for an endpoint that does
-/// not exist — a typo, or one that was removed — would otherwise fall through
-/// to here and be answered with the app shell and a 200. A caller then gets
-/// HTML where it expected JSON and a success code where it expected 404,
-/// which is a genuinely confusing thing to debug. Anything under these
-/// prefixes gets an honest 404 instead.
-const API_PREFIXES: [&str; 3] = ["/api/", "/v1/", "/auth/"];
+/// The catch-all is registered last, so anything the router did not match
+/// lands here. Answering all of it with the app shell means a typo'd or
+/// removed endpoint returns HTML with a 200 where the caller expected JSON
+/// and a 404 — a genuinely confusing thing to debug.
+///
+/// This is an ALLOWLIST of the client router's own top-level routes, not a
+/// denylist of the server's. A denylist has to be kept in lockstep with a
+/// router it cannot see, and the previous one (`/api/`, `/v1/`, `/auth/`)
+/// already wasn't: `/healthz`, `/readyz`, `/hooks/*`, `/rag/*`,
+/// `/integrations/*` and `/__dev/*` are all server-owned and matched none of
+/// those prefixes, so `GET /healthzz` cheerfully returned the app shell.
+///
+/// Kept in step with `web/src/routes/` by
+/// [`tests::the_client_routes_match_the_spa_source`].
+const SPA_ROUTES: [&str; 12] = [
+    "admin",
+    "chat",
+    "integrations",
+    "login",
+    "memory",
+    "scheduled",
+    "setup",
+    "skills",
+    "tokens",
+    "tools",
+    "usage",
+    "webhooks",
+];
+
+/// Does the SPA's client router own this path?
+///
+/// True for `/`, for a real file in the build directory (handled by the
+/// caller), and for anything under one of [`SPA_ROUTES`]. Everything else
+/// reaching the catch-all is a request for something nobody serves.
+fn is_client_route(path: &str) -> bool {
+    let rel = path.strip_prefix('/').unwrap_or(path);
+    if rel.is_empty() {
+        return true;
+    }
+    let root = rel.split('/').next().unwrap_or("");
+    SPA_ROUTES.contains(&root)
+}
 
 /// Serve the SPA for `req`, rooted at `root`. Pure with respect to the
 /// filesystem (reads via `tokio::fs`) and the request — no global state — so
 /// it is directly unit-testable against a temp dir.
 async fn serve(root: &Path, req: &Request) -> Response {
     let path = req.uri().path();
-
-    if API_PREFIXES.iter().any(|p| path.starts_with(p)) {
-        return Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                r#"{"error":{"message":"no such endpoint","type":"not_found","code":"not_found"}}"#,
-            ))
-            .expect("static JSON 404");
-    }
 
     // `path` is the original-case URI path (rama lowercases only the matched
     // prefix for routing), so a content-hashed filename keeps its case here.
@@ -141,9 +166,37 @@ async fn serve(root: &Path, req: &Request) -> Response {
                 .unwrap()
         }
         Err(_) => {
-            // Not a file: the SPA history fallback serves the entry point so
-            // the client router can resolve the route.
-            serve_entry(root).await
+            // Not a file on disk. Ask for the entry point first, because a
+            // missing entry point means the SPA was never deployed — a 503
+            // the operator needs to see whatever path they happened to
+            // request. Only once we know the app IS deployed does it make
+            // sense to talk about whether this particular path exists.
+            let mut resp = serve_entry(root).await;
+            if resp.status() != StatusCode::OK || is_client_route(path) {
+                return resp;
+            }
+            // Deployed, but the client router does not own this path either,
+            // so nothing serves it. 404 rather than the 200 the shell would
+            // otherwise carry — but the body still follows what the caller
+            // asked for: a browser gets the shell and renders its own styled
+            // 404, anything else gets the error envelope instead of a page of
+            // HTML it cannot parse.
+            let wants_html = req
+                .headers()
+                .get(header::ACCEPT)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|a| a.contains("text/html"));
+            if wants_html {
+                *resp.status_mut() = StatusCode::NOT_FOUND;
+                return resp;
+            }
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"error":{"message":"no such endpoint","type":"not_found","code":"not_found"}}"#,
+                ))
+                .expect("static JSON 404")
         }
     }
 }
@@ -425,12 +478,70 @@ mod tests {
             assert!(ct.contains("json"), "{uri} answered {ct}, not JSON");
         }
 
-        // …while a client route with the same shape still gets the shell.
-        let resp = serve(&root, &get("/apiary")).await;
+        // A real client route still gets the shell, including a deep one the
+        // client router resolves itself.
+        for uri in ["/", "/chat", "/chat/abc-123", "/admin/settings"] {
+            let resp = serve(&root, &get(uri)).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{uri} is a client route");
+        }
+    }
+
+    /// The gap the old denylist left: server-owned paths that start with none
+    /// of `/api/`, `/v1/`, `/auth/`.
+    ///
+    /// `GET /healthzz` used to answer 200 text/html with the whole app. Every
+    /// one of these is served by the router when spelled correctly, so a
+    /// near-miss must 404 rather than pretend to be a page.
+    #[tokio::test]
+    async fn a_typo_on_a_server_route_is_a_404_not_the_app_shell() {
+        let (_d, root) = spa_tempdir();
+        for uri in [
+            "/healthzz",
+            "/readyzz",
+            "/hooksfoo",
+            "/rag/typo",
+            "/__dev/nope",
+            "/apiary",
+            "/nonsense",
+        ] {
+            let resp = serve(&root, &get(uri)).await;
+            assert_eq!(
+                resp.status(),
+                StatusCode::NOT_FOUND,
+                "{uri} is owned by nobody and must not answer with the app shell"
+            );
+        }
+    }
+
+    /// `SPA_ROUTES` matches the SvelteKit source.
+    ///
+    /// The allowlist decides what gets the history fallback, so a new page in
+    /// `web/src/routes/` that nobody adds here would 404 on a hard load while
+    /// working fine via client-side navigation — the kind of bug that only
+    /// shows up for someone who pastes a link.
+    #[test]
+    fn the_client_routes_match_the_spa_source() {
+        let routes_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/src/routes");
+        let mut found: Vec<String> = std::fs::read_dir(&routes_dir)
+            .expect("read web/src/routes")
+            .filter_map(|e| {
+                let entry = e.ok()?;
+                if !entry.file_type().ok()?.is_dir() {
+                    return None;
+                }
+                let name = entry.file_name().to_str()?.to_string();
+                // `+layout`/`+page` files are not directories; a `[param]`
+                // directory is a child route, never a top-level one.
+                (!name.starts_with('+') && !name.starts_with('[')).then_some(name)
+            })
+            .collect();
+        found.sort();
+        let mut declared: Vec<String> = SPA_ROUTES.iter().map(|s| s.to_string()).collect();
+        declared.sort();
         assert_eq!(
-            resp.status(),
-            StatusCode::OK,
-            "only the API namespaces are excluded, not any path starting with those letters"
+            declared, found,
+            "SPA_ROUTES is out of step with web/src/routes — a route missing here \
+             404s on a hard load but works via client navigation"
         );
     }
 

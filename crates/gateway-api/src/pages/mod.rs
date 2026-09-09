@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! Server-rendered HTML pages for the rama gateway.
+//! The `/api/v0` JSON handlers the SvelteKit SPA calls.
 //!
-//! Templates are inline plait `html! { ... }` macros — compile-time
-//! validated, auto-escaping any interpolated `&str` / `String`.
-//! daisyUI's component classes (and Tailwind utilities) give us the
-//! design system without pulling in React; the CSS bundle is served by
-//! `session_core::assets::app_css`.
+//! Despite the module name, nothing here renders a page any more: issue #22
+//! replaced the server-rendered UI with the SPA in `web/`, and what survived
+//! the teardown are the JSON endpoints plus the handful of genuinely
+//! server-rendered surfaces the SPA cannot own — the OAuth callback pages in
+//! `rag_oauth` and `integrations`, which a provider redirects a browser to
+//! before any SPA route exists.
+//!
+//! Shared helpers for that surface live here: the auth gates
+//! ([`require_session_json`], [`require_admin_json`]), the error envelope
+//! ([`json_error`]) and [`raw_path_segment`], which exists because rama's
+//! `Path` extractor mangles case-sensitive ids.
 
 use rama::http::{Method, Request, Response, StatusCode, header};
 
@@ -38,28 +44,6 @@ macro_rules! require_session {
     };
 }
 
-// Two CSS classes (`.chat-prose` and `.thinking-prose`) carry the
-// markdown styling for chat replies + reasoning blocks. See
-// `ui/src/main.css` for the rule set — both share one parameterised
-// block via CSS custom properties; the thinking variant overrides
-// just the knobs (size, contrast, list indent…) plus the left rail.
-//
-// Theme, theme cookie, theme-toggle handler, FlashKind, sse_* helpers,
-// the read-cookie + body-collector + see-other shims, and the bare
-// `<html>` layout all live in `session_core::chrome` — both this
-// crate and the orchestrator import them so the rendered chrome is
-// byte-identical across binaries.
-
-/// The global app sidebar. Replaces the old top nav-bar — brand at
-/// the top, primary nav (Chat / Tools / Tokens), conversation list (always
-/// rendered so "New chat" is reachable from any page), then a compact
-/// user block at the bottom (email + theme toggle + sign-out).
-///
-/// Re-rendered as one unit on each nav patch — `nav_or_html_page`
-/// outer-patches `#app-sidebar`. Keeps the implementation simple
-/// (one selector, one render call) at the cost of re-emitting the
-/// full conversation list per nav, which is acceptable for the small
-/// per-user counts we expect.
 /// True when the user holds any role flagged `admin = true` in config.
 /// Used to gate `/admin/*` routes and conditionally render the Admin
 /// sidebar entry.
@@ -72,11 +56,6 @@ pub(super) fn is_admin(state: &RamaState, user: &users::User) -> bool {
     let role_ids = state.rbac.role_ids_for(&user.roles);
     state.rbac.is_admin(&role_ids)
 }
-
-// The plain (non-authed) `layout` + `html_page` live in
-// `session_core::chrome` — used by the login page.
-
-// The toast auto-dismiss + voice-composer glue lives in
 
 /// Admin gate. Wraps `require_session_or_redirect` + checks the
 /// `admin` role. Anonymous → /login redirect (standard
@@ -293,11 +272,6 @@ fn login_redirect(req: &Request) -> Response {
 pub mod chat;
 pub use chat::chat_attachment;
 
-// SSE helpers (`sse_patch`, `sse_script`, `sse_signals`,
-// `sse_response`, `sse_toast`) live in `session_core::chrome` — both
-// binaries use the exact same wire format, so any drift between
-// gateway and orchestrator would be a bug.
-
 // ---------------------------------------------------------------------------
 // Tokens
 //
@@ -387,7 +361,6 @@ mod rag;
 // The source-kind picker + provider field sets, rendered from each
 // provider's own declared config fields (see `rag_source`).
 mod rag_oauth;
-mod rag_source;
 pub use rag::rag_sync_hook;
 pub use rag_oauth::{rag_connect, rag_oauth_callback};
 

@@ -32,7 +32,7 @@ use tokio::sync::broadcast;
 /// Heartbeat for live subscribers. The worker emits one of these after
 /// every DB write so subscribers know to re-read.
 ///
-/// Not `Copy` because [`TurnUpdate::Inject`] carries an `Arc`. `Clone`
+/// Not `Copy` because [`TurnUpdate::Prompt`] carries an `Arc`. `Clone`
 /// is enough — the broadcast channel clones per subscriber, and an `Arc`
 /// clone is just a refcount bump.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,18 +40,11 @@ pub enum TurnUpdate {
     Tick,
     Finalized,
     SidebarChanged,
-    Inject(Arc<rama::bytes::Bytes>),
-    /// Transient info banner shown in the chat bubble (e.g. "vision fallback
-    /// activated — image described by {model}"). Subscribers render it as a
-    /// daisyUI alert via a datastar patch.
+    /// Transient info banner shown alongside the reply (e.g. "vision fallback
+    /// activated — image described by {model}").
     InfoMessage(String),
-    /// Structured twin of [`TurnUpdate::Inject`] for the JSON event
-    /// protocol: a human-in-loop tool prompt (`ask_user`,
-    /// `get_user_location`) that the *client* renders itself. Interactive
-    /// tools broadcast both — `Inject` (pre-framed datastar, legacy wire)
-    /// and `Prompt` (JSON wire) — and each subscriber loop consumes the
-    /// variant it understands and ignores the other. See
-    /// [`ToolPromptEvent`].
+    /// A human-in-loop tool prompt (`ask_user`, `get_user_location`) that the
+    /// client renders itself. See [`ToolPromptEvent`].
     Prompt(Arc<ToolPromptEvent>),
 }
 

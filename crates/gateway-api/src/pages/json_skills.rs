@@ -639,13 +639,17 @@ pub async fn integrations_list(State(state): State<Arc<RamaState>>, req: Request
         .into_iter()
         .filter(|c| c.allows(&role_ids, is_admin))
         .collect();
+    // One query for the caller's connections, not one per connector.
+    let connections: std::collections::HashSet<String> =
+        db::user_mcp::list_connections(&state.db, &user.id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| c.connector_key)
+            .collect();
     let mut out = Vec::with_capacity(connectors.len());
     for c in &connectors {
-        let connected = db::user_mcp::get_connection(&state.db, &user.id, &c.key)
-            .await
-            .ok()
-            .flatten()
-            .is_some();
+        let connected = connections.contains(&c.key);
         out.push(serde_json::json!({
             "key": c.key,
             "title": c.name,

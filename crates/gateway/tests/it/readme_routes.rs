@@ -18,10 +18,12 @@
 //!   - the README documents a path that no route serves (a stale/typo'd
 //!     entry left behind after a rename/removal).
 //!
-//! Routes that are intentionally absent from the public table (static
-//! assets, the OIDC/CLI auth dance, the theme toggle) are listed in
-//! `UNDOCUMENTED` below — so adding a new internal route still forces a
-//! conscious choice: document it, or allow-list it here.
+//! Routes intentionally absent from the public table (the OIDC browser
+//! dance, the debug-only seeding endpoints) are listed in `UNDOCUMENTED`
+//! below — so adding a new internal route still forces a conscious choice:
+//! document it, or allow-list it here. Keep that list tight: every stale
+//! prefix silently widens the guard, and a future route landing under one
+//! would escape the documentation requirement this test exists to enforce.
 
 use std::path::Path;
 
@@ -33,21 +35,8 @@ const METHODS: &[&str] = &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPT
 /// HTTP endpoints table. Matched with the same coverage rule as the
 /// documented patterns (a `/*` suffix is a prefix glob).
 const UNDOCUMENTED: &[&str] = &[
-    "/assets/*",             // static bundles baked in via include_bytes
-    "/manifest.webmanifest", // PWA manifest — static baked-in asset
-    "/sw.js",                // PWA service worker — static baked-in asset
-    "/favicon.ico",          // PWA favicon — static baked-in asset
-    "/icons/*",              // PWA icon PNGs — static baked-in assets
-    "/app/*",                // SvelteKit SPA static shell (served from disk)
-    "/auth/*",               // OIDC browser flow (covered in prose)
-    "/theme/toggle",         // UI affordance, not an API surface
-    "/nav/toggle",           // UI affordance — collapse/expand a sidebar nav-group
-    "/lang",                 // UI affordance — sets the language-preference cookie
-    "/admin/models/*",       // admin form-submit endpoints (covered by the page prose)
-    "/admin/upstreams/*",    // admin topology reload endpoint
-    "/admin/backends/*",     // backend CRUD form-submit endpoints
-    "/admin/pools/*",        // pool CRUD page + form-submit endpoints
-    "/__dev/*",              // debug-only e2e seeding — does not exist in release builds
+    "/auth/*",  // OIDC browser flow (covered in prose)
+    "/__dev/*", // debug-only e2e seeding — does not exist in release builds
     // Compatibility alias, not a public surface: attachment markers stored in
     // turn content carry this path (`chat_attachments::proxy_url`), so it must
     // keep resolving. The documented route is `/api/v0/chat/attachment/…`.

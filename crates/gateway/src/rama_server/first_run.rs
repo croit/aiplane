@@ -64,7 +64,7 @@ fn serves_before_setup(path: &str) -> bool {
     // JavaScript module request to an HTML page and leave the wizard blank.
     // They are unauthenticated static files; the SPA's own API calls
     // self-protect with 401/403.
-    if path.starts_with("/_app/") || path.starts_with("/assets/") || path.starts_with("/icons/") {
+    if path.starts_with("/_app/") || path.starts_with("/icons/") {
         return true;
     }
     if matches!(
@@ -273,14 +273,7 @@ mod tests {
         // `starts_with` on a path that merely *begins* with an exempt name must
         // not open the gate — `/setupfoo` and `/v1foo` are not `/setup/…` or
         // `/v1/…`, and an unknown path is gated like any other page.
-        for path in [
-            "/setupfoo",
-            "/v1foo",
-            "/assetsfoo",
-            "/_appfoo",
-            "/hooksfoo",
-            "/nonsense",
-        ] {
+        for path in ["/setupfoo", "/v1foo", "/_appfoo", "/hooksfoo", "/nonsense"] {
             assert!(!serves_before_setup(path), "{path} must not be exempt");
         }
     }

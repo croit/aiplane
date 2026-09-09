@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! The `/api/v0/chat/*` JSON surface for the SvelteKit SPA (issue #22,
-//! phase 2): session CRUD, the JSON submit, and the JSON-SSE event stream.
+//! The `/api/v0/chat/*` JSON surface for the SvelteKit SPA: session CRUD,
+//! the submit, and the JSON-SSE event stream.
 //!
-//! The legacy wire (multipart POST → datastar HTML patches) stays alive
-//! unchanged beside it — see `mod.rs` for the shared submit core both
-//! surfaces call. This module only translates: requests to
-//! [`ChatSubmit`]/ids, results to JSON, and the worker broadcast to the
-//! event protocol in `session_core::chat_json`.
+//! This module only translates. The turn machinery lives in `mod.rs`
+//! ([`submit_turn`]) and the wire format in `session_core::chat_json`; what
+//! is here maps requests onto [`ChatSubmit`], results onto JSON, and the
+//! worker's broadcast onto the event protocol.
 //!
 //! Wire contract (also in `docs/openapi.json`, enforced by the drift test):
 //!
@@ -33,7 +32,7 @@ use gateway_runtime::rama_server::state::RamaState;
 use gateway_core::server::db::users::User;
 
 use super::{ChatSubmit, DocumentPath, RequestCtx, SubmitTurnError, TurnPath, submit_turn};
-use crate::pages::{json_error, require_session_json};
+use crate::pages::{json_error, json_ok as ok_json, require_session_json};
 use session_core::db as chat;
 
 /// The request facts a turn needs, read off the request while it is intact.
@@ -55,15 +54,6 @@ fn request_ctx(state: &RamaState, req: &Request, voice_mode: bool) -> RequestCtx
         ),
         voice_mode,
     }
-}
-
-fn ok_json(status: StatusCode, body: serde_json::Value) -> Response {
-    use rama::http::header;
-    Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(body.to_string().into())
-        .expect("static JSON response")
 }
 
 /// GET /api/v0/chat/sessions — every conversation of the signed-in user,

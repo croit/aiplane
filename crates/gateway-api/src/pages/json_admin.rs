@@ -23,6 +23,7 @@ use rama::http::{Request, Response, StatusCode};
 use gateway_core::server::db;
 use gateway_core::server::db::limits;
 use gateway_core::server::settings;
+use gateway_core::server::upstreams;
 use gateway_runtime::rama_server::state::RamaState;
 
 use super::{json_error, json_ok, raw_path_segment, require_admin_json};
@@ -360,33 +361,34 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
         Err(resp) => return resp,
     };
     let offered: Vec<String> = state.upstreams.all_models();
+    // One read of the overrides table, then pure in-memory joining. Reading
+    // per model made this page cost a round-trip per offered model, twice.
+    let mut configured: std::collections::HashMap<String, _> = db::model_defaults::all(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| (d.model_name.clone(), d))
+        .collect();
     let mut models = Vec::new();
     for name in &offered {
-        let defaults = db::model_defaults::get(&state.db, name)
-            .await
-            .ok()
-            .flatten();
+        let defaults = configured.remove(name);
         models.push(serde_json::json!({
             "name": name,
             "configured": defaults.is_some(),
             "defaults": defaults.map(|d| model_defaults_json(&d)),
         }));
     }
-    // Configured-but-no-longer-offered rows keep their editor visible.
-    if let Ok(all_configured) = db::model_defaults::all_names(&state.db).await {
-        for name in all_configured {
-            if !offered.contains(&name) {
-                let defaults = db::model_defaults::get(&state.db, &name)
-                    .await
-                    .ok()
-                    .flatten();
-                models.push(serde_json::json!({
-                    "name": name,
-                    "configured": defaults.is_some(),
-                    "defaults": defaults.map(|d| model_defaults_json(&d)),
-                }));
-            }
-        }
+    // Whatever is left is configured but no longer offered; the editor keeps
+    // those visible so an operator can find and clear them. `remove` above is
+    // what makes this the difference rather than a second scan.
+    let mut leftover: Vec<_> = configured.into_values().collect();
+    leftover.sort_by(|a, b| a.model_name.cmp(&b.model_name));
+    for defaults in leftover {
+        models.push(serde_json::json!({
+            "name": defaults.model_name,
+            "configured": true,
+            "defaults": model_defaults_json(&defaults),
+        }));
     }
     let mut feature_defaults = Vec::new();
     for feature in [
@@ -1207,6 +1209,13 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
             "fallbacks": snapshot.fallbacks,
             "usage_last_hour": usage,
             "dirty": state.topology_dirty_count(),
+            // The vocabulary, so the SPA renders its picker from data rather
+            // than from a hardcoded <option> list that can fall behind the
+            // enum (as it had — `rerank` was missing from every copy).
+            "pool_kinds": upstreams::config::PoolKind::ALL
+                .iter()
+                .map(|k| k.as_str())
+                .collect::<Vec<_>>(),
         }),
     )
 }
@@ -1479,7 +1488,7 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
         );
     }
     const STRATEGIES: &[&str] = &["prefix_affinity", "least_inflight", "round_robin"];
-    if !POOL_KINDS.contains(&parsed.kind.as_str()) {
+    if !pool_kind_exists(&parsed.kind) {
         return bad_request(format!("unknown pool kind: {}", parsed.kind));
     }
     let strategy = if STRATEGIES.contains(&parsed.strategy.as_str()) {
@@ -1521,18 +1530,15 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
     )
 }
 
-/// The pool kinds `upstreams_config` understands. One list, because both the
-/// pool upsert and the fallback setter validate against it — and the fallback
-/// setter had no validation at all, so a typo wrote a row under a kind
-/// nothing ever reads and the fallback silently did not exist.
-const POOL_KINDS: &[&str] = &[
-    "chat",
-    "transcription",
-    "embedding",
-    "image",
-    "speech",
-    "ocr",
-];
+/// Is this a pool kind the config loader accepts?
+///
+/// Asks the enum rather than a hand-kept list. A local list is how `rerank`
+/// came to be rejected here while `PoolKind` had accepted it all along.
+fn pool_kind_exists(kind: &str) -> bool {
+    upstreams::config::PoolKind::ALL
+        .iter()
+        .any(|k| k.as_str() == kind)
+}
 
 /// DELETE /api/v0/admin/pools/{name}
 pub async fn pools_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -1581,7 +1587,7 @@ pub async fn topology_fallback(State(state): State<Arc<RamaState>>, req: Request
         Ok(p) => p,
         Err(err) => return bad_request(format!("parsing the fallback body: {err}")),
     };
-    if !POOL_KINDS.contains(&parsed.kind.as_str()) {
+    if !pool_kind_exists(&parsed.kind) {
         return bad_request(format!("unknown pool kind: {}", parsed.kind));
     }
     let model = parsed.model.trim();
@@ -1642,24 +1648,46 @@ pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) 
         let mut since_send = Duration::ZERO;
         const TICK: Duration = Duration::from_secs(2);
         const KEEPALIVE: Duration = Duration::from_secs(20);
+        /// How often the rolling hour counts are re-aggregated. The tick is
+        /// fast so a health flip lands promptly; this figure is not.
+        const USAGE_REFRESH: Duration = Duration::from_secs(60);
 
-        loop {
-            let snapshot = match upstreams_config::load_snapshot(&state.db).await {
-                Ok(s) => s,
-                Err(_) => {
-                    tokio::time::sleep(TICK).await;
-                    continue;
-                }
-            };
-            let now = jiff::Timestamp::now();
-            let usage = db::usage::recent_buckets_by_backend(&state.db, now, 5, 12)
+        // Both of these are re-read only when they can actually have changed:
+        // the topology when the dirty counter moves, the usage aggregate on
+        // its own slow cadence. The 2 s tick then touches only in-memory
+        // registry state.
+        let mut snapshot = match upstreams_config::load_snapshot(&state.db).await {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let mut snapshot_dirty = state.topology_dirty_count();
+        let mut usage =
+            db::usage::recent_buckets_by_backend(&state.db, jiff::Timestamp::now(), 5, 12)
                 .await
                 .unwrap_or_default();
-            let dirty = state.topology_dirty_count();
+        let mut since_usage = Duration::ZERO;
 
+        loop {
+            let dirty = state.topology_dirty_count();
+            if dirty != snapshot_dirty {
+                if let Ok(s) = upstreams_config::load_snapshot(&state.db).await {
+                    snapshot = s;
+                }
+                snapshot_dirty = dirty;
+            }
+            if since_usage >= USAGE_REFRESH {
+                usage =
+                    db::usage::recent_buckets_by_backend(&state.db, jiff::Timestamp::now(), 5, 12)
+                        .await
+                        .unwrap_or_default();
+                since_usage = Duration::ZERO;
+            }
+
+            // Once per tick, not once per backend: `pools()` takes the
+            // registry lock and allocates.
+            let pools = state.upstreams.pools();
             let mut sent_any = false;
             for (name, backend) in &snapshot.backends {
-                let pools = state.upstreams.pools();
                 let live = pools.iter().find_map(|pool| {
                     pool.backends
                         .iter()
@@ -1714,13 +1742,8 @@ pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) 
                 since_send = Duration::ZERO;
             }
             tokio::time::sleep(TICK).await;
+            since_usage += TICK;
         }
     });
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(rama::http::header::CONTENT_TYPE, "text/event-stream")
-        .header(rama::http::header::CACHE_CONTROL, "no-cache")
-        .header("x-accel-buffering", "no")
-        .body(rama::http::Body::from_stream(rx))
-        .expect("static SSE response")
+    session_core::chat_json::json_stream_response(rx)
 }

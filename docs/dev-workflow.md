@@ -26,7 +26,6 @@ The Rust binary and the UI build separately: `cargo build` needs no Node, and th
 | Build the SvelteKit SPA into `target/frontend/build/` | `mise run build-web` |
 | svelte-check (TS + a11y diagnostics) on the SPA | `mise run check-web` |
 | Unit-test the SPA's pure TypeScript (`node --test`) | `mise run test-web` |
-| Regenerate the typed API client from `docs/openapi.json` | `mise run gen-api-client` |
 | Fast type-check across the workspace | `mise run check` |
 | **Release** build (slow, for deploys) | `mise run build` |
 | Tests — one crate (the iteration loop) | `mise run test-crate <crate> [filter]` |
@@ -324,7 +323,7 @@ Open `http://localhost:5173`. Vite proxies `/api`, `/v1`, and `/auth` to the gat
 
 **Served mode — what production looks like.** `mise run dev` additionally sets `GATEWAY_STATIC_DIR=target/frontend/build` (built by its `build-web` dep), so the gateway serves the compiled SPA at `http://localhost:8080`. Use this to check the built artefact, cache headers and the history fallback. No Node runs in production: the container image `COPY`s the built `target/frontend/build/` directory in (see the Dockerfile) and the Rust binary serves it (`crates/gateway/src/rama_server/spa.rs`). With `GATEWAY_STATIC_DIR` unset the UI answers 503 and the API is unaffected.
 
-The SPA's API contract is `docs/openapi.json`, enforced against `router.rs` by the `openapi_drift` test — adding a `/api/v0/*` route without a spec entry fails CI, and vice versa. After changing a route, update the spec and run `mise run gen-api-client` to regenerate `web/src/lib/schema.d.ts` (generated output — don't hand-edit it). Note that the SPA does not yet *consume* those types; see [`ui.md`](ui.md#the-json-api-and-the-generated-client).
+The SPA's API contract is `docs/openapi.json`, enforced against `router.rs` by the `openapi_drift` test — adding a `/api/v0/*` route without a spec entry fails CI, and vice versa. After changing a route, update the spec. The spec documents the surface and the drift test keeps its route list honest; it does not type the client, which is hand-written in `web/src/lib/api.ts`.
 
 Chat streams over the JSON-SSE event protocol (`session_core::chat_json` ↔ `web/src/lib/chat-protocol.ts`): the composer posts `POST /api/v0/chat/sessions/{id}/messages` and the reply arrives on `GET …/events` as `snapshot` / `turn_delta` / `tool_call_done` / `turn_finalized` … events, with the DB snapshot on every attach acting as the reconnect replay. `mise run test-web` unit-tests the client's event fold (`web/src/lib/chat-protocol.test.ts`); `e2e/spa-chat.test.mjs` drives the full round trip against `dev-ui`.
 

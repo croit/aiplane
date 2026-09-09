@@ -202,24 +202,25 @@ async fn request_browser_location(fb: &ChatFeedback, turn_id: &str) -> Option<Br
     }
 }
 
-/// Inline notice (an auto-dismissing toast in the page's `#toasts`
-/// region) for when we *can't* ask the browser because the origin isn't a
-/// secure context. Tells the user why precise location was skipped; the
-/// tool then falls back to GeoIP. No-op if nobody's watching the turn.
+/// Tell the user why precise location was skipped: the origin is not a secure
+/// context, so the browser will not answer a geolocation request at all. The
+/// tool then falls back to GeoIP. No-op if nobody is watching the turn.
+///
+/// Sent as [`TurnUpdate::InfoMessage`], which the SPA renders as an info
+/// banner. It used to be an `Inject` carrying a datastar HTML patch aimed at
+/// a `#toasts` region — a region that stopped existing with the
+/// server-rendered UI, and `Inject` is discarded by the JSON event loop, so
+/// the warning had silently reached nobody.
 fn warn_insecure(fb: &ChatFeedback) {
     use session_core::workers::TurnUpdate;
     if fb.broadcast.receiver_count() == 0 {
         return;
     }
-    // Matches the `.toast-item` shape `app.ts` arms for auto-dismiss.
-    let html = "<div role=\"status\" class=\"toast-item pointer-events-auto bg-base-100 \
-                text-base-content border border-base-300 border-l-4 border-l-warning \
-                rounded-lg shadow-md px-3 py-2 text-sm max-w-sm\">\u{1F4CD} Precise location \
-                needs a secure (HTTPS) connection — using your approximate location instead.</div>";
-    let patch = session_core::chrome::sse_patch(Some("#toasts"), Some("append"), html);
-    let _ = fb
-        .broadcast
-        .send(TurnUpdate::Inject(std::sync::Arc::new(patch)));
+    let _ = fb.broadcast.send(TurnUpdate::InfoMessage(
+        "Precise location needs a secure (HTTPS) connection — using your approximate \
+         location instead."
+            .to_string(),
+    ));
 }
 
 /// The injected prompt, rendered as an inline card that drops into the

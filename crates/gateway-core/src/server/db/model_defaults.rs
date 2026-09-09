@@ -572,14 +572,27 @@ pub async fn all_prices(
 
 /// Drop the row entirely. No-op if it didn't exist — callers don't
 /// need to pre-check.
-/// Every model with a stored overrides row — the admin editor shows these
-/// even when the registry no longer offers the model.
-pub async fn all_names(pool: &Pool) -> Result<Vec<String>, DbError> {
-    let rows: Vec<String> =
-        sqlx::query_scalar("SELECT model_name FROM model_defaults ORDER BY model_name")
-            .fetch_all(pool)
-            .await?;
-    Ok(rows)
+/// Every stored overrides row.
+///
+/// The admin editor needs the rows themselves, not just their names, and it
+/// needs all of them at once — fetching name-by-name made that page's cost
+/// scale with the number of models the gateway offers.
+pub async fn all(pool: &Pool) -> Result<Vec<ModelDefaults>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT model_name, defaults_toml, reasoning_style,
+                  thinking_budget_standard, thinking_budget_deep, thinking_budget_max,
+                  reasoning_effort_standard, reasoning_effort_deep, reasoning_effort_max,
+                   context_window, input_price, output_price, pricing_unit,
+                  cap_vision, cap_audio_input, cap_pdf_input,
+                  cap_tools, cap_parallel_tools, cap_structured_output,
+                  fallback_vision, fallback_tools,
+                  updated_at
+           FROM model_defaults
+           ORDER BY model_name"#,
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.iter().map(map_row).collect()
 }
 
 pub async fn delete(pool: &Pool, model_name: &str) -> Result<(), DbError> {

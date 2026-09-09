@@ -11,8 +11,8 @@ The whole stack:
 | HTTP server / router | rama 0.3 | `crates/gateway/src/rama_server/router.rs` |
 | Static SPA hosting | hand-rolled rama handler over `tokio::fs` | `crates/gateway/src/rama_server/spa.rs` |
 | UI framework | SvelteKit 2 / Svelte 5 (runes), Vite | `web/` |
-| API contract | OpenAPI 3 → generated TS types | `docs/openapi.json` → `web/src/lib/schema.d.ts` |
-| API client | one `fetch` helper + typed wrappers | `web/src/lib/api.ts` (and `client.ts`, see below) |
+| API contract | OpenAPI 3, route list enforced by `openapi_drift` | `docs/openapi.json` |
+| API client | one `fetch` helper + hand-declared shapes | `web/src/lib/api.ts` |
 | Chat streaming | JSON events over SSE | `crates/session-core/src/chat_json.rs` ↔ `web/src/lib/chat-protocol.ts` |
 | Styling | Tailwind v4 + daisyUI v5 | `web/src/app.css` |
 | Markdown rendering | `marked` + `dompurify`, client-side | `web/src/lib/markdown.ts` |
@@ -46,8 +46,6 @@ web/
 │   ├── app.html          the shell: manifest link, icons, pre-paint theme script
 │   ├── app.css           Tailwind entry + the two daisyUI theme blocks
 │   ├── lib/
-│   │   ├── schema.d.ts        GENERATED from docs/openapi.json — do not hand-edit
-│   │   ├── client.ts          openapi-fetch client over schema.d.ts (not wired up yet)
 │   │   ├── api.ts             the fetch helper + typed wrappers + ApiError
 │   │   ├── admin-client.ts    same transport for the admin surfaces
 │   │   ├── chat-protocol.ts   the SSE event fold — framework-free, unit-tested
@@ -84,14 +82,13 @@ Every dynamic thing the SPA does is a `/api/v0/*` call — about 140 operations 
 The SPA's types come from that spec:
 
 ```bash
-mise run gen-api-client     # docs/openapi.json → web/src/lib/schema.d.ts
 ```
 
-Run it after changing any `/api/v0` route. `schema.d.ts` is generated output — edit the spec, not the file.
+Update `docs/openapi.json` after changing any `/api/v0` route — `openapi_drift` fails otherwise.
 
 **How calls are actually made today.** Every request goes through one helper, `request<T>()` in `lib/api.ts`: a same-origin `fetch` that sends the session cookie, parses the error envelope, and throws an `ApiError` carrying the status and the server's message. `lib/api.ts` then exposes the `api.*` wrappers routes call, with their response shapes declared by hand against `shared::api`. `lib/admin-client.ts` is the same transport for the admin views, flattening the envelope into a plain `Error`.
 
-`lib/client.ts` builds an `openapi-fetch` client over the generated `schema.d.ts` types (`baseUrl: '/api/v0'`, `credentials: 'same-origin'`), which is the intended end state — the compiler would then check every call against the spec. **Nothing imports it yet**, so `schema.d.ts` is currently generated and not consumed: the spec is enforced against the *router* by `openapi_drift`, not against the client. Migrating a hand-declared shape in `api.ts` onto the generated one is a safe, incremental improvement; adding a new hand-declared shape moves in the wrong direction.
+There is deliberately no generated client. One shipped briefly (`client.ts` over an `openapi-typescript` `schema.d.ts`) and was removed: nothing ever imported it, so it was 6k generated lines and two npm dependencies standing in for a migration that never happened. `docs/openapi.json` is enforced against the *router* by `openapi_drift` — every route must be documented — but it does not type request or response bodies. If typed calls become worth it, regenerate the types and migrate `api.ts` onto them deliberately, rather than leaving a second client in the tree.
 
 A 401 means "signed out": `+layout.svelte` turns "`me` is null after load" into a redirect to `/auth/login` carrying the route the user actually wanted, and never bounces `/setup` (which runs before any account exists).
 
@@ -220,7 +217,6 @@ Open `http://localhost:5173`. Vite proxies `/api`, `/v1` and `/auth` to :8080 (`
 | `mise run build-web` | `vite build` → `target/frontend/build/` (what the Dockerfile COPYs). |
 | `mise run check-web` | `svelte-check` — TypeScript, a11y and Svelte diagnostics. |
 | `mise run test-web` | `node --test` over `web/src/lib/**/*.test.ts` (the pure, framework-free halves). |
-| `mise run gen-api-client` | Regenerate `schema.d.ts` from `docs/openapi.json`. |
 
 `lint`, `verify` and `ci` all depend on the relevant ones, so a fresh checkout needs no manual step.
 

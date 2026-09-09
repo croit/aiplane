@@ -30,11 +30,11 @@ Write the test before the code — red, green, refactor (**TDD**). Tests are **s
     - Returns 401 without a bearer / session.
     - Returns 403 when the route is RBAC-gated and the caller isn't authorized (e.g. a non-admin hitting an admin route via `require_admin_or_403`).
     - Returns the documented success shape.
-- New `/api/v0` route → also an entry in `docs/openapi.json` (`openapi_drift` fails otherwise) and a `mise run gen-api-client` run so `web/src/lib/schema.d.ts` matches.
+- New `/api/v0` route → also an entry in `docs/openapi.json` (`openapi_drift` fails otherwise).
 - New tool → test that invokes it via the registry (with a mocked upstream that fakes a `tool_calls` response).
 - Schema change → round-trip serde test (`from_json(to_json(v)) == v` for a representative fixture).
 - New chat event or a change to one → a case in `web/src/lib/chat-protocol.test.ts`. The fold is deliberately framework-free so this needs no browser; wire behaviour that can only be checked through a browser is wire behaviour nobody checks.
-- New **server-rendered** string (error envelopes, the chat-render helpers) → a Fluent key in `locales/en/<module>.ftl` **and** its translation in all 5 other locales (`de`/`fr`/`es`/`ru`/`zh`) — not a checklist item you can skip: `session-core/build.rs` won't let the crate compile otherwise. The SPA's own strings have no translation layer yet. See [`docs/ui.md`](ui.md#i18n--what-still-applies).
+- New **server-rendered** string (error envelopes, the chat-render helpers) → a Fluent key in `locales/en/<module>.ftl` **and** its translation in all 5 other locales (`de`/`fr`/`es`/`ru`/`zh`) — not a checklist item you can skip: `session-core/build.rs` won't let the crate compile otherwise. The SPA renders the same six-language Fluent corpus as the server (generated into `web/src/lib/locales/` by `mise run gen-locales`, guarded by `i18n_drift`). See [`docs/ui.md`](ui.md#i18n--what-still-applies).
 
 If a change has no tests, the PR description must explain why and which existing test covers it.
 

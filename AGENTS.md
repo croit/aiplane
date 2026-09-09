@@ -6,13 +6,13 @@ This file is the canonical entry point for any AI agent (or new human contributo
 
 A single Rust binary plus the supporting crates it lives on:
 
-- **`gateway`** — authenticated, OpenAI-compatible LLM proxy. Speaks `/v1/chat/completions`, `/v1/audio/transcriptions`, `/v1/models` so any OpenAI SDK talks to it, and `/v1/messages` in the Anthropic dialect so Claude Code can be pointed at it. OIDC browser login + gateway-minted bearer tokens. Routes across **multiple upstream LLM backends** with health checks + RAII in-flight accounting. Injects **company-specific tools** gated by **RBAC**. Server-rendered HTML UI (dashboard / tokens / persisted multi-conversation chat).
+- **`gateway`** — authenticated, OpenAI-compatible LLM proxy. Speaks `/v1/chat/completions`, `/v1/audio/transcriptions`, `/v1/models` so any OpenAI SDK talks to it, and `/v1/messages` in the Anthropic dialect so Claude Code can be pointed at it. OIDC browser login + gateway-minted bearer tokens. Routes across **multiple upstream LLM backends** with health checks + RAII in-flight accounting. Injects **company-specific tools** gated by **RBAC**. Serves a SvelteKit single-page app (dashboard / tokens / persisted multi-conversation chat) over a JSON `/api/v0` API.
 
 Shared crates:
-- **`session-core`** — chat-style UI substrate (Plait renderers + SSE primitives + DB schema + worker registry + `SessionDriver` trait). The gateway plugs in an `OpenAiDriver`; the trait keeps the renderers driver-agnostic so a future second consumer can paint the same chat surface without forking.
+- **`session-core`** — chat substrate (DB schema + worker registry + the JSON-SSE event protocol in `chat_json` + `SessionDriver` trait). The gateway plugs in an `OpenAiDriver`; the trait keeps the substrate driver-agnostic so a future second consumer can drive the same chat surface without forking.
 - **`shared`** — OpenAI wire types shared across the workspace.
 
-Built on **rama 0.3** (HTTP server + router + middleware), **plait** (inline-in-handler HTML), **datastar** (client-side reactivity over `datastar-patch-elements` SSE events), and **daisyUI v5 + Tailwind v4** (styling tokens).
+Built on **rama 0.3** (HTTP server + router + middleware) on the server, and **SvelteKit 2 + Svelte 5** with **daisyUI v5 + Tailwind v4** in `web/`. The browser talks to `/api/v0` over JSON and receives live turn updates as JSON frames on an SSE stream.
 
 ## Repo layout
 
@@ -24,7 +24,7 @@ Built on **rama 0.3** (HTTP server + router + middleware), **plait** (inline-in-
 ├── Cargo.toml                   # workspace manifest (9 members)
 ├── Dockerfile                   # gateway runtime image
 ├── docs/                        # detailed design docs (index in docs/README.md)
-├── ui/                          # Tailwind v4 + daisyUI v5 → app.css; TS bundle for gateway
+├── web/                         # SvelteKit SPA (Tailwind v4 + daisyUI v5) — see docs/ui.md
 ├── gateway.example.toml         # template config — copy to gateway.toml
 └── crates/
     ├── shared/                  # OpenAI wire types, shared with the CLI
@@ -132,14 +132,17 @@ real tools (catalog grouping, `AppState` authorization).
 Inside `crates/gateway-api/src/`:
 
 ```
-build_info.rs             # git SHA / version label (build.rs stamps it) — page chrome only
-pages/                    # plait-rendered HTML
-    mod.rs                    shared chrome — layout, nav, theme, SSE framing, Flash
-    chat/                     gateway-side chat handler (delegates to session_core::worker
-                              + OpenAiDriver). render.rs is the gateway's page-chrome
-                              wrapper around session_core::render
-    tokens.rs                 /tokens CRUD + row / minted-banner renderers
-    admin.rs + siblings       the /admin/* screens
+build_info.rs             # git SHA / version label (build.rs stamps it)
+pages/                    # the /api/v0 JSON handlers (the name predates the SPA)
+    mod.rs                    shared helpers — auth gates, error envelope, raw path segments
+    chat/json_api.rs          chat CRUD, the JSON submit, and the SSE event stream
+    json_admin.rs             the /api/v0/admin/* surfaces
+    json_workspace.rs         memory, scheduled actions, webhooks
+    json_skills.rs            skills, connectors, feedback, ComfyUI
+    rag_oauth.rs, integrations.rs
+                              the only server-RENDERED pages left: OAuth callback
+                              landings, which a provider redirects a browser to
+                              before any SPA route exists
 ```
 
 Inside `crates/gateway/src/`:
@@ -156,8 +159,10 @@ rama_server/              # routing glue only:
 tests/it/                 # integration suite — builds the router, serves requests in-process
 ```
 
-Static assets (`app.css`, `datastar.js`, `app.js`, `pcm-recorder.js`) are
-`include_bytes!`'d and served through `session_core::assets`.
+The SPA is built by `mise run build-web` into `target/frontend/build/` and
+served from disk by `rama_server::spa` when `GATEWAY_STATIC_DIR` points there;
+the Dockerfile COPYs that directory into the image. Nothing is `include_bytes!`'d
+any more.
 
 ## Hard rules — do not violate without asking
 
@@ -165,11 +170,13 @@ Static assets (`app.css`, `datastar.js`, `app.js`, `pcm-recorder.js`) are
 2. **All toolchain and build/test/lint commands go through `mise`.** No `Makefile`, no `justfile`, no ad-hoc shell scripts checked in. See [`docs/dev-workflow.md`](docs/dev-workflow.md).
 3. **Thorough testing, test-first (TDD).** Write the failing test before the implementation — red, green, refactor. Every public function has unit tests; every rama route has an integration test (`crates/gateway/tests/`); upstream LLMs are mocked with `wiremock` so tests run offline. The rama integration pattern is `router.serve(req).await` — no socket binding. **Style is Chicago / Classicist (state-based):** assert on observable results and real collaborators (in-memory SQLite via `:memory:`, `wiremock` upstreams, actual registries), not on interaction mocks. Reach for London-school behaviour-verification mocks only when a collaborator is genuinely un-fakeable (network you can't stand up, a clock, randomness) — and say so in a comment. Full strategy + required coverage in [`docs/testing.md`](docs/testing.md).
 4. **Error messages are a product surface.** Use `thiserror` at API boundaries, `anyhow` + `.context()` internally, and write messages that say *what was happening, what went wrong, and what to do about it*. Full rules in [`docs/errors.md`](docs/errors.md).
-5. **UI uses daisyUI component classes + Tailwind utilities, not hand-invented CSS.** Every visual element gets daisyUI semantic classes (`btn btn-primary`, `card card-body`, `alert alert-error`, `dropdown dropdown-end`, `badge badge-outline`, …) on plain HTML rendered through plait's `html!` macro. Token utilities for bespoke layout (`bg-base-100`, `text-base-content/60`, `border-base-300`, `text-error`, …) plus standard Tailwind layout (`flex`, `mb-4`, `grid`). One-off ".tagline" / ".brand-mark" classes are not — drop the visual treatment or push daisyUI for the missing component. Interactive surfaces (chat streaming, token CRUD) are driven by datastar SSE patches; see the [SSE pattern in `docs/ui.md`](docs/ui.md#datastar-driven-updates) before adding new actions.
+5. **UI uses daisyUI component classes + Tailwind utilities, not hand-invented CSS.** Every visual element gets daisyUI semantic classes (`btn btn-primary`, `card card-body`, `alert alert-error`, `dropdown dropdown-end`, `badge badge-outline`, …) in the Svelte components under `web/src/`. Token utilities for bespoke layout (`bg-base-100`, `text-base-content/60`, `border-base-300`, `text-error`, …) plus standard Tailwind layout (`flex`, `mb-4`, `grid`). One-off ".tagline" / ".brand-mark" classes are not — drop the visual treatment or push daisyUI for the missing component. New server endpoints return JSON under `/api/v0`, never HTML; live turn updates ride the JSON-SSE protocol in `session_core::chat_json`. See [`docs/ui.md`](docs/ui.md).
 6. **No comments explaining what code does** — names and types should already say that. Only comment *why* when it's non-obvious. Docs explain the system; code shows it.
 7. **No backwards-compat shims** while the project is pre-1.0. We're starting fresh; if something needs to change, change it.
 8. **Keep `README.md` deploy-current.** When you add or change a runtime knob, a config field, a host-package requirement, or a mise task on the deploy path, update `README.md` in the **same commit**. The README's "Quick start" + "Build + deploy" sections are the only thing a new operator reads before standing the stack up; if they don't reflect today's state, the next person wastes an hour. This is a strengthening of the broader "update docs in the same change as the code" rule from the working agreement at the bottom of this file — same spirit, just calling out the entry door explicitly so it doesn't drift.
-9. **English only — no mixed languages.** Every string the app emits — UI labels, buttons, toasts, banners, tooltips, error messages, log lines, comments, and identifiers — is written in **English**. Do not introduce text in German or any other language, and never mix languages within the product. The app is not localized; there is no i18n layer, so a non-English string is simply a bug. The only place non-English text is allowed is *domain content that is intrinsically in another language* — e.g. the German business-letter fixture under `examples/typst-templates/letter/`, or a non-ASCII character used deliberately in a test (`'ß'` for a UTF-8 boundary case). Those are data, not app strings. When in doubt, write English. If you find existing non-English app text, translate it to English (and update any tests that assert on it) rather than adding more.
+9. **User-visible strings go through the translation layer; everything else is English.** The product ships in six languages (en/de/fr/es/ru/zh). The Fluent catalogs under `crates/session-core/locales/<lang>/*.ftl` are canonical for BOTH halves — the server renders some strings itself (tool prompts, OAuth error pages, proxy errors) and the SPA renders the rest, and both must name a message identically or the two disagree in front of the user. Never hardcode a user-visible string in a Svelte component or a handler: add the key to all six `.ftl` files, run `mise run gen-locales`, and call `t('key')`. `build.rs` fails the build if a language is missing a key, and `i18n_drift` fails if the generated TS catalogs are stale.
+
+   Everything a user does *not* see — log lines, comments, identifiers, test names — is English, always. Do not mix languages within a single message. Non-English text outside the catalogs is allowed only for *domain content that is intrinsically in another language*: the German business-letter fixture under `examples/typst-templates/letter/`, or a non-ASCII character used deliberately in a test (`'ß'` for a UTF-8 boundary case). Those are data, not app strings.
 10. **Code principles — DRY, SOLID, KISS, Ubiquitous Language.** Default to the simplest thing that works (**KISS**) and don't repeat a fact or a shape in two places (**DRY** — extract a helper like `ChunkMeta::envelope` rather than copy a JSON literal twice). Follow **SOLID** where it pulls its weight: the `Tool` trait + `ToolRegistry` already give you open/closed extension (add a tool, don't touch the loop) and dependency inversion (drivers depend on the `SessionDriver` trait, not a concrete bin) — keep new code on that grain. Speak the codebase's **Ubiquitous Language** consistently in names, comments, and docs: `upstream` / `pool` / `backend`, `gateway-owned` vs `client-owned` tool calls, `turn` / `round`, `byte-dumb proxy`, `Acquired` in-flight guard. Don't coin a synonym for a term that already exists. These are guidance, not gates — if applying one would bloat or obscure, prefer the simpler code and note why.
 
 ## Daily workflow
@@ -177,8 +184,8 @@ Static assets (`app.css`, `datastar.js`, `app.js`, `pcm-recorder.js`) are
 After `mise install` (one time):
 
 ```bash
-# Two terminals during UI work — one for the CSS, one for the gateway.
-mise run watch-css         # tailwind --watch in ui/ → assets/app.css
+# Two terminals during UI work — one for the SPA, one for the gateway.
+mise run dev-web           # Vite dev server on :5173 (HMR, no Rust rebuild)
 mise run dev               # debug-mode `cargo run --package gateway`
 
 # Other day-to-day tasks
@@ -236,7 +243,7 @@ Start in [`docs/README.md`](docs/README.md) for the index. The topical docs:
 | Multi-provider routing, load balancing, health checks | [`docs/upstreams.md`](docs/upstreams.md) |
 | Tool registry, role→tool mapping, execution loop | [`docs/tools-rbac.md`](docs/tools-rbac.md) |
 | Which tools exist, their gates and toggle keys | [`docs/tools-inventory.md`](docs/tools-inventory.md) |
-| Web UI — plait + daisyUI + datastar SSE patterns | [`docs/ui.md`](docs/ui.md) |
+| Web UI — the SvelteKit SPA, the JSON API, the SSE protocol | [`docs/ui.md`](docs/ui.md) |
 | Testing strategy and required coverage | [`docs/testing.md`](docs/testing.md) |
 | Error handling — types, messages, OpenAI mapping | [`docs/errors.md`](docs/errors.md) |
 | Phased delivery plan + current phase | [`docs/roadmap.md`](docs/roadmap.md) |

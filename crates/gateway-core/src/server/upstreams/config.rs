@@ -148,6 +148,38 @@ pub enum PoolKind {
     Rerank,
 }
 
+impl PoolKind {
+    /// The wire name, matching `#[serde(rename_all = "snake_case")]`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Transcription => "transcription",
+            Self::Embedding => "embedding",
+            Self::Image => "image",
+            Self::Speech => "speech",
+            Self::Ocr => "ocr",
+            Self::Rerank => "rerank",
+        }
+    }
+
+    /// Every kind, in the order an operator should see them offered.
+    ///
+    /// The one place the vocabulary is written down. It had been copied into
+    /// the admin API's validation, the OpenAPI spec and the SPA's `<option>`
+    /// list, and the copy in the API was missing `Rerank` — so creating a
+    /// rerank pool through the UI was rejected as an "unknown pool kind"
+    /// even though the config loader accepts it.
+    pub const ALL: [Self; 7] = [
+        Self::Chat,
+        Self::Transcription,
+        Self::Embedding,
+        Self::Image,
+        Self::Speech,
+        Self::Ocr,
+        Self::Rerank,
+    ];
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PickerStrategy {

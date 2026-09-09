@@ -1,23 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! `/rag` page — operator-facing CRUD for indexed RAG collections.
+//! The RAG sync webhook (`GET|POST /hooks/rag/{token}`).
 //!
-//! Mirrors `pages/tokens.rs` in shape: a list of cards, a create form
-//! at the top, and per-row Re-index / Delete actions wired via
-//! datastar `@post` + SSE patches so the page updates surgically
-//! without a full reload. Admin-gated (`require_admin_or_403`); the
-//! sidebar entry is only rendered for admins, matching `/admin/*`.
-//!
-//! Live status: while the page is open it polls `GET /rag/status` on a
-//! datastar interval and morphs each ref's `#rag-ref-{id}` status row, so
-//! the background indexer's progress (`pending` → `cloning` → `indexing`
-//! → `ready`/`error`) — and especially *failures* like a branch that
-//! doesn't exist — show up without a manual reload. Each ref also has a
-//! "Log" button (`GET /rag/refs/{ref_id}/log`) that opens its full
-//! indexing timeline; the ref itself only carries the latest `last_error`,
-//! the log keeps the history. The poll deliberately re-patches only the
-//! status rows, leaving the add-source inputs and any open log untouched.
+//! All that is left of the old `/rag` page: the operator screen is a SPA
+//! route now, backed by the JSON handlers in `rama_server::rag_api`.
 
 use std::sync::Arc;
 

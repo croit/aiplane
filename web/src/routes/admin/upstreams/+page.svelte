@@ -40,6 +40,8 @@
 		fallbacks: Record<string, string>;
 		usage_last_hour: Record<string, number[]>;
 		dirty: number;
+		/// Served from `PoolKind::ALL` so the picker cannot fall behind the enum.
+		pool_kinds: string[];
 	}
 
 	let data = $state<Topology | null>(null);
@@ -179,8 +181,11 @@
 						<input class="input input-bordered input-sm" bind:value={pName} /></label>
 					<label class="flex flex-col gap-1"><span class="label-text">{t('pools-field-kind')}</span>
 						<select class="select select-bordered select-sm" bind:value={pKind}>
-							<option>chat</option><option>transcription</option><option>embedding</option>
-							<option>image</option><option>speech</option><option>ocr</option>
+							<!-- From the server, which reads PoolKind::ALL. A hardcoded list
+							     here is how `rerank` went missing from the picker. -->
+							{#each data.pool_kinds ?? [] as kind (kind)}
+								<option>{kind}</option>
+							{/each}
 						</select></label>
 					<label class="flex flex-col gap-1 flex-1 min-w-48"><span class="label-text">{t('pools-field-backends')}</span>
 						<input class="input input-bordered input-sm" bind:value={pBackends} placeholder={data.backends.map((b) => b.name).join(', ')} /></label>

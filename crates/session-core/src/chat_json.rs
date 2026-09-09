@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! The JSON event protocol for live chat streaming (issue #22, phase 2).
+//! The JSON event protocol for live chat streaming.
 //!
-//! The legacy wire ships server-rendered HTML diffs (`datastar-patch-elements`
-//! frames produced by [`crate::render::TurnStream`]); this module is its
-//! data-only counterpart. Same subscription model — the worker's
-//! [`TurnUpdate`] broadcast, DB as the single source of truth, coalesced
-//! flushes — but each flush computes *what changed since this subscriber last
-//! looked* and emits it as structured JSON events:
+//! One subscription model: the worker's [`TurnUpdate`] broadcast, the DB as
+//! the single source of truth, and coalesced flushes. Each flush computes
+//! *what changed since this subscriber last looked* and emits it as
+//! structured JSON events:
 //!
 //! ```text
 //! event: snapshot        → full session state (the DB replayer on attach)
@@ -22,13 +20,11 @@
 //! event: idle            → no live worker; the stream ends here
 //! ```
 //!
-//! A client that reconnects just re-attaches: the initial [`ChatEvent::Snapshot`]
-//! rebuilt from the DB subsumes anything missed, exactly like the legacy tail.
-//! There is no `Last-Event-ID` replay because the DB *is* the replayer.
-//!
-//! Why a sibling of the HTML loop rather than a rewrite: the legacy pages
-//! stay alive through migration phases 2–6 (issue #22), so both wires run
-//! off the same broadcast until the HTML one is deleted.
+//! A client that reconnects just re-attaches: the initial
+//! [`ChatEvent::Snapshot`] is rebuilt from the DB and subsumes anything
+//! missed. There is no `Last-Event-ID` replay because the DB *is* the
+//! replayer — which is also why a dropped connection costs nothing but the
+//! reconnect.
 
 use std::time::Duration;
 
@@ -39,9 +35,8 @@ use tokio::sync::broadcast;
 use crate::db::{self, TurnStatus, TurnWithTools};
 use crate::workers::{ToolPromptEvent, TurnUpdate};
 
-/// Same coalescing contract as the HTML loop ([`crate::chat`]): cap the event
-/// rate without visibly changing liveness — the trailing flush guarantees the
-/// final state always lands.
+/// Cap the event rate without visibly changing liveness — the trailing flush
+/// guarantees the final state always lands.
 const EVENT_COALESCE: Duration = Duration::from_millis(120);
 
 /// One JSON event on the wire. Serialized as `{event, data}` by
@@ -324,8 +319,14 @@ fn emit_append(
         return;
     }
     events.push(make(turn_id.to_string(), delta.to_string(), reset));
-    sent.clear();
-    sent.push_str(text);
+    if reset {
+        sent.clear();
+        sent.push_str(text);
+    } else {
+        // The common case: `delta` is exactly the tail, so appending it costs
+        // O(delta) rather than re-copying the whole turn on every tick.
+        sent.push_str(delta);
+    }
 }
 
 /// The streaming half of the JSON protocol: subscribe to a worker's
@@ -392,7 +393,6 @@ pub async fn run_json_turn_stream(
                 }
                 // The datastar-only wire; JSON subscribers get the structured
                 // `Prompt` twin instead.
-                Ok(TurnUpdate::Inject(_)) => {}
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     // Missed ticks are subsumed by the next DB re-read.
                     dirty = true;

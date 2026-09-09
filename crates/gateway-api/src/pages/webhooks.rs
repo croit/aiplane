@@ -350,6 +350,3 @@ fn trigger_error(status: StatusCode, message: &str) -> Response {
 
 // ---------------------------------------------------------------------------
 // Models (id + compliance flags), mirrored from the scheduled page
-
-// ---------------------------------------------------------------------------
-// Rendering

@@ -106,8 +106,6 @@ output (see the Dockerfile).
 | `tailwindcss` + `@tailwindcss/vite` + `daisyui` (v5) | The styling stack, compiled to one content-hashed CSS bundle. The Vite plugin scans `web/src` itself, so there are no `@source` globs to keep in sync. |
 | `marked` | Client-side Markdown rendering of chat replies: the JSON event wire carries markdown text, and rendering moved to the client by design. |
 | `dompurify` | Sanitises `marked` output before `{@html}` — model output is untrusted input like any other. |
-| `openapi-typescript` | Generates `web/src/lib/schema.d.ts` from `docs/openapi.json` (`mise run gen-api-client`). Build-time codegen; nothing of it ships. |
-| `openapi-fetch` | The intended runtime half: a tiny typed `fetch` wrapper over those generated types, so every `/api/v0` call would be checked against the spec at compile time. `web/src/lib/client.ts` builds it; nothing imports that yet (the SPA still calls through the hand-written helper in `api.ts`), so this is a dependency on a migration in progress rather than on shipped code. |
 | `typescript`, `svelte-check`, `@types/node` | `mise run check-web` / `mise run test-web` gates. |
 
 ## Explicitly not allowed (yet)
