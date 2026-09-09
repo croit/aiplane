@@ -629,6 +629,14 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             pages::chat::json_api::session_effort,
         )
         .with_get(
+            "/api/v0/chat/sessions/{id}/capabilities",
+            pages::chat::json_api::capabilities_list,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{id}/capabilities",
+            pages::chat::json_api::capabilities_set,
+        )
+        .with_get(
             "/api/v0/chat/sessions/{id}/export.md",
             pages::chat::json_api::session_export_markdown,
         )

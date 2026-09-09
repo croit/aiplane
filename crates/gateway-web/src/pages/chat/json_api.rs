@@ -886,3 +886,96 @@ pub async fn session_export_markdown(
         .body(body.into())
         .expect("static file response")
 }
+
+// ---------------------------------------------------------------------------
+// Per-conversation capabilities (tool overlay)
+
+/// GET /api/v0/chat/sessions/{id}/capabilities — the caller's granted tools
+/// with this conversation's on/off overlay applied.
+pub async fn capabilities_list(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if !user_owns(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
+    let entries = crate::pages::tool_toggles::entries_for_roles(&state, &user.roles);
+    let overlay = gateway_core::server::db::chat_session_tools::enabled_keys_for_session(
+        &state.db,
+        &session_id,
+    )
+    .await
+    .unwrap_or_default();
+    let tools: Vec<_> = entries
+        .into_iter()
+        .map(|e| {
+            serde_json::json!({
+                "key": e.key,
+                "title": e.title,
+                "enabled": overlay.contains(&e.key),
+            })
+        })
+        .collect();
+    ok_json(StatusCode::OK, serde_json::json!({ "tools": tools }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct CapabilityBody {
+    pub tool_key: String,
+    pub enabled: bool,
+}
+
+/// POST /api/v0/chat/sessions/{id}/capabilities — set one tool's overlay
+/// state for this conversation.
+pub async fn capabilities_set(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = match require_session_json(&state, &req).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    if !user_owns(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+    };
+    let parsed: CapabilityBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("parsing the capability body: {err}"),
+            );
+        }
+    };
+    match gateway_core::server::db::chat_session_tools::set(
+        &state.db,
+        &session_id,
+        &parsed.tool_key,
+        parsed.enabled,
+        "manual",
+    )
+    .await
+    {
+        Ok(()) => ok_json(
+            StatusCode::OK,
+            serde_json::json!({ "tool_key": parsed.tool_key, "enabled": parsed.enabled }),
+        ),
+        Err(err) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            &err.to_string(),
+        ),
+    }
+}

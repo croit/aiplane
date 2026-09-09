@@ -239,6 +239,9 @@
 			</ul>
 		</div>
 
+		<div class="px-4 py-1 border-t border-base-300/60">
+			<span class="text-[11px] text-base-content/45">Source · AGPL-3.0 · v0.1.0</span>
+		</div>
 		<!-- User footer -->
 		<div class="border-t border-base-300 px-3 py-2 flex items-center gap-2">
 			<span class="text-xs truncate flex-1 min-w-0" title={me.value?.email ?? ''}>

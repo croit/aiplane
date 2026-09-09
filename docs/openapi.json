@@ -4340,6 +4340,87 @@
      }
     }
    }
+  },
+  "/api/v0/chat/sessions/{id}/capabilities": {
+   "get": {
+    "tags": [
+     "chat"
+    ],
+    "summary": "The conversation's tool overlay",
+    "description": "Every tool the caller's roles grant, with this conversation's on/off state.",
+    "operationId": "listChatCapabilities",
+    "parameters": [
+     {
+      "$ref": "#/components/parameters/ChatSessionId"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The tool list.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "chat"
+    ],
+    "summary": "Set one tool's overlay state",
+    "operationId": "setChatCapability",
+    "parameters": [
+     {
+      "$ref": "#/components/parameters/ChatSessionId"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "tool_key",
+         "enabled"
+        ],
+        "properties": {
+         "tool_key": {
+          "type": "string"
+         },
+         "enabled": {
+          "type": "boolean"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Stored."
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
   }
  },
  "components": {

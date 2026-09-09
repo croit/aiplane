@@ -18,6 +18,15 @@
 	let models = $state<{ id: string; gdpr: boolean; nda: boolean }[]>([]);
 	let draft = $state('');
 	let files = $state<File[]>([]);
+	let tools = $state<{ key: string; title: string; enabled: boolean }[]>([]);
+	let toolsOpen = $state(false);
+	let effort = $state('standard');
+	const EFFORTS: [string, string][] = [
+		['fast', 'Thinking: Fast'],
+		['standard', 'Thinking: Standard'],
+		['deep', 'Thinking: Deep'],
+		['max', 'Thinking: Max']
+	];
 	let sending = $state(false);
 	let notice = $state<string | null>(null);
 
@@ -53,8 +62,33 @@
 		}
 	}
 
+	async function loadTools() {
+		try {
+			tools = (await api.listChatCapabilities(id)).tools;
+		} catch {
+			tools = [];
+		}
+	}
+
+	async function toggleCapability(key: string, current: boolean) {
+		try {
+			await api.setChatCapability(id, key, !current);
+			tools = tools.map((t) => (t.key === key ? { ...t, enabled: !current } : t));
+		} catch (err) {
+			notice = String(err);
+		}
+	}
+
+	async function saveEffort() {
+		try {
+			await api.setChatEffort(id, effort);
+		} catch {
+			/* non-fatal */
+		}
+	}
+
 	onMount(() => {
-		void loadModels();
+		void loadTools();
 		const c = createConversationController(id);
 		c.onSidebarChanged = () => { void loadMeta(); void refreshSidebar(); };
 		c.attach();
@@ -380,6 +414,7 @@
 						{:else if entry.turn.status === 'cancelled'}
 							<div class="text-xs text-base-content/50">stopped</div>
 						{/if}
+						<div class="text-xs opacity-50">{ts(entry.turn.created_at)}</div>
 						{#if entry.turn.status !== 'in_progress' && !streaming}
 							<div class="flex gap-1 mt-1">
 								<button class="btn btn-ghost btn-xs" onclick={() => retry(entry.turn.id)}>Retry</button>
@@ -394,6 +429,38 @@
 
 <div class="card border border-base-300 sticky bottom-0">
 	<div class="card-body p-3 gap-2">
+		<div class="flex flex-wrap gap-2 items-center mb-2">
+			<button class="btn btn-ghost btn-xs gap-1" onclick={() => (toolsOpen = !toolsOpen)}>
+				+ Tools
+			</button>
+			{#each tools.filter((t) => t.enabled) as t (t.key)}
+				<span class="badge badge-outline badge-sm gap-1">
+					{t.title}
+					<button class="text-error" aria-label="Disable {t.title}" onclick={() => toggleCapability(t.key, true)}>✕</button>
+				</span>
+			{/each}
+			<span class="flex-1"></span>
+			<select class="select select-bordered select-xs" aria-label="Reasoning effort" bind:value={effort} onchange={saveEffort}>
+				{#each EFFORTS as [value, label] (value)}
+					<option value={value}>{label}</option>
+				{/each}
+			</select>
+		</div>
+		{#if toolsOpen}
+			<div class="flex flex-wrap gap-2 mb-2 border border-base-300 rounded-lg p-2">
+				{#each tools as t (t.key)}
+					<label class="label cursor-pointer gap-1">
+						<input
+							type="checkbox"
+							class="checkbox checkbox-xs"
+							checked={t.enabled}
+							onchange={() => toggleCapability(t.key, t.enabled)}
+						/>
+						<span class="label-text text-xs">{t.title}</span>
+					</label>
+				{/each}
+			</div>
+		{/if}
 		<div class="flex gap-2">
 			{#if models.length > 0}
 				<select

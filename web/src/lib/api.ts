@@ -158,6 +158,31 @@ export const api = {
 	listChatModels: () =>
 		request<{ models: { id: string; gdpr: boolean; nda: boolean }[] }>('/api/v0/models'),
 
+	/** GET /api/v0/chat/sessions/{id}/capabilities — the tool overlay. */
+	listChatCapabilities: (id: string) =>
+		request<{ tools: { key: string; title: string; enabled: boolean }[] }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/capabilities`
+		),
+
+	/** POST /api/v0/chat/sessions/{id}/capabilities — set one overlay state. */
+	setChatCapability: (id: string, toolKey: string, enabled: boolean) =>
+		request<{ tool_key: string; enabled: boolean }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/capabilities`,
+			{
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ tool_key: toolKey, enabled })
+			}
+		),
+
+	/** POST /api/v0/chat/sessions/{id}/effort — reasoning effort knob. */
+	setChatEffort: (id: string, effort: string) =>
+		request<{ effort: string }>(`/api/v0/chat/sessions/${encodeURIComponent(id)}/effort`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ effort })
+		}),
+
 	/** GET /api/v0/tools — the caller's tool toggles. */
 	listTools: () =>
 		request<{
