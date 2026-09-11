@@ -14,9 +14,6 @@ chat-render-tts-voice-aria = Stimme der Sprachausgabe
 chat-render-tts-voice-default = Standardstimme
 chat-render-new-conversation-fallback = Neue Unterhaltung
 
-chat-render-model-non-gdpr = { $id } (nicht DSGVO-konform)
-chat-render-model-confidential = { $id } (vertraulichkeitsbeschränkt)
-chat-render-model-non-gdpr-confidential = { $id } (nicht DSGVO-konform, vertraulichkeitsbeschränkt)
 chat-render-gdpr-banner = Du sendest Daten an ein nicht DSGVO-konformes Modell. Gib keine personenbezogenen Daten ein (Namen, E-Mail-Adressen, Adressen, Kunden- oder Mitarbeiterdaten).
 chat-render-nda-banner = Dieses Modell ist nicht durch eine Vertraulichkeitsvereinbarung abgedeckt. Sende keine NDA-geschützten oder vertraulichen Inhalte.
 chat-render-shared-readonly-banner = Freigegebener Chat — nur lesbar. Nur der Ersteller kann antworten.

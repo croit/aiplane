@@ -25,9 +25,6 @@ webhooks-tools-warning = Anyone with the trigger URL can send content that the m
 
 webhooks-gdpr-warning = This model runs outside the EU. Don't send personal data through this webhook.
 webhooks-nda-warning = This model is not cleared for NDA-restricted content. Don't send confidential data through this webhook.
-webhooks-model-non-gdpr = { $model } (non-EU)
-webhooks-model-nda-restricted = { $model } (NDA-restricted)
-webhooks-model-non-gdpr-nda-restricted = { $model } (non-EU, NDA-restricted)
 
 webhooks-reveal-heading = Your trigger URL
 webhooks-reveal-note = Copy it now — it's shown only once. Anyone with this URL can fire the webhook. Lost it? Rotate to get a new one.

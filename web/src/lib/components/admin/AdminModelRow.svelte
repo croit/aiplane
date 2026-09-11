@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 	import { untrack } from 'svelte';
 	import { configuredFacets, pricingUnitFor } from '$lib/admin-models';
 	import type { AdminModel } from '$lib/admin-models';
@@ -162,8 +163,8 @@
 							{/each}
 						</div>
 						<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-							<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-cap-fallback-vision')}</span><select class="select select-bordered select-sm" bind:value={fallbackVision}><option value="">{t('admin-cap-no-fallback')}</option>{#each allModels as name}<option value={name}>{name}</option>{/each}</select></label>
-							<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-cap-fallback-tools')}</span><select class="select select-bordered select-sm" bind:value={fallbackTools}><option value="">{t('admin-cap-no-fallback')}</option>{#each allModels as name}<option value={name}>{name}</option>{/each}</select></label>
+							<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-cap-fallback-vision')}</span><SearchableSelect options={[{ value: '', label: t('admin-cap-no-fallback') }, ...allModels.map((name) => ({ value: name, label: name }))]} bind:value={fallbackVision} ariaLabel={t('admin-cap-fallback-vision')} size="sm" class="w-full" /></label>
+							<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-cap-fallback-tools')}</span><SearchableSelect options={[{ value: '', label: t('admin-cap-no-fallback') }, ...allModels.map((name) => ({ value: name, label: name }))]} bind:value={fallbackTools} ariaLabel={t('admin-cap-fallback-tools')} size="sm" class="w-full" /></label>
 						</div>
 					</div>
 					<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-toml-defaults-label')}</span><textarea class="textarea textarea-bordered w-full font-mono text-sm leading-relaxed" rows="6" spellcheck="false" bind:value={defaultsToml} placeholder={t('admin-toml-placeholder-header')}></textarea></label>

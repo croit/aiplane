@@ -14,9 +14,6 @@ chat-render-tts-voice-aria = Голос ответов
 chat-render-tts-voice-default = Голос по умолчанию
 chat-render-new-conversation-fallback = Новая беседа
 
-chat-render-model-non-gdpr = { $id } (не соответствует GDPR)
-chat-render-model-confidential = { $id } (ограничение конфиденциальности)
-chat-render-model-non-gdpr-confidential = { $id } (не соответствует GDPR, ограничение конфиденциальности)
 chat-render-gdpr-banner = Вы отправляете данные модели, не соответствующей GDPR. Не вводите личную информацию (имена, адреса электронной почты, адреса, данные клиентов или сотрудников).
 chat-render-nda-banner = Эта модель не покрывается соглашением о конфиденциальности. Не отправляйте материалы, защищённые NDA, или конфиденциальные данные.
 chat-render-shared-readonly-banner = Общий чат — только для чтения. Отвечать может только создатель.

@@ -19,3 +19,10 @@ push-connector-reconnect-body = { $connector } 已断开连接 — 请打开“�
 chrome-opening-conversations = 正在打开你的对话…
 
 # SPA-only: /login, which exists to bounce straight to the IdP.
+
+searchable-select-search-placeholder = 搜索选项…
+searchable-select-search-aria = 搜索{ $field }
+searchable-select-clear-search = 清除搜索
+searchable-select-no-results = 没有匹配的选项。
+searchable-select-model-gdpr = GDPR
+searchable-select-model-nda = NDA

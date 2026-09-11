@@ -2,6 +2,7 @@
 	import { adminPatch, adminPost } from '$lib/admin-client';
 	import { untrack } from 'svelte';
 	import { t } from '$lib/i18n.svelte';
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 	import { parseList, type RagCollection, type RagProfile, type RagProvider } from '$lib/rag';
 
 	let {
@@ -47,6 +48,16 @@
 	let testing = $state(false);
 	let message = $state<string | null>(null);
 	const selectedProvider = $derived(providers.find((item: RagProvider) => item.kind === form.source_kind));
+	let providerOptions = $derived(providers.map((provider: RagProvider) => ({ value: provider.kind, label: provider.label, description: provider.description })));
+	let embeddingOptions = $derived([
+		...(!form.embedding_model ? [{ value: '', label: t('rag-option-choose-embedding-model'), disabled: true }] : []),
+		...(form.embedding_model && !models.includes(form.embedding_model) ? [{ value: form.embedding_model, label: `${form.embedding_model} ${t('rag-suffix-not-advertised')}` }] : []),
+		...models.map((model: string) => ({ value: model, label: model }))
+	]);
+	let profileOptions = $derived([
+		{ value: '', label: t('rag-option-profile-none') },
+		...profiles.map((item: RagProfile) => ({ value: item.name, label: item.name, description: item.description || undefined }))
+	]);
 	$effect(() => {
 		if (!collection && !form.embedding_model && defaultModel) form.embedding_model = defaultModel;
 	});
@@ -139,7 +150,7 @@
 
 		{#if message}<div class="alert alert-info"><span>{message}</span></div>{/if}
 
-		<div class="grid min-w-0 grid-cols-1 gap-3 [&>.fieldset]:min-w-0 [&_input]:min-w-0 [&_select]:min-w-0 [&_textarea]:min-w-0 md:grid-cols-2">
+		<div class="grid min-w-0 grid-cols-1 gap-3 [&>.fieldset]:min-w-0 [&_input]:min-w-0 [&_textarea]:min-w-0 md:grid-cols-2">
 			{#if !collection}
 				<fieldset class="fieldset">
 					<legend class="fieldset-legend">{t('rag-label-name')}</legend>
@@ -153,21 +164,13 @@
 
 			<fieldset class="fieldset">
 				<legend class="fieldset-legend">{t('rag-label-source-kind')}</legend>
-				<select class="select min-w-0 max-w-full w-full" bind:value={form.source_kind} disabled={collection?.search_mode === 'aggregate'}>
-					{#each providers as provider (provider.kind)}
-						<option value={provider.kind}>{provider.label}</option>
-					{/each}
-				</select>
+				<SearchableSelect options={providerOptions} bind:value={form.source_kind} ariaLabel={t('rag-label-source-kind')} class="w-full" disabled={collection?.search_mode === 'aggregate'} />
 				{#if selectedProvider}<p class="label max-w-full whitespace-normal">{selectedProvider.kind === 'git' ? t('rag-source-git-help') : selectedProvider.description}</p>{/if}
 			</fieldset>
 			<fieldset class="fieldset">
 				<legend class="fieldset-legend">{t('rag-label-embedding-model')}</legend>
 				{#if models.length}
-					<select class="select min-w-0 max-w-full w-full" bind:value={form.embedding_model}>
-						{#if !form.embedding_model}<option value="" disabled>{t('rag-option-choose-embedding-model')}</option>{/if}
-						{#if form.embedding_model && !models.includes(form.embedding_model)}<option value={form.embedding_model}>{form.embedding_model} {t('rag-suffix-not-advertised')}</option>{/if}
-						{#each models as model}<option value={model}>{model}</option>{/each}
-					</select>
+					<SearchableSelect options={embeddingOptions} bind:value={form.embedding_model} ariaLabel={t('rag-label-embedding-model')} class="w-full" />
 				{:else}
 					<input class="input w-full" bind:value={form.embedding_model} placeholder={t('rag-placeholder-embedding-model-none')} />
 				{/if}
@@ -201,10 +204,7 @@
 
 			<fieldset class="fieldset">
 				<legend class="fieldset-legend">{t('rag-label-profile')}</legend>
-				<select class="select min-w-0 max-w-full w-full" bind:value={form.profile}>
-					<option value="">{t('rag-option-profile-none')}</option>
-					{#each profiles as item (item.name)}<option value={item.name}>{item.name}{item.description ? ` — ${item.description}` : ''}</option>{/each}
-				</select>
+				<SearchableSelect options={profileOptions} bind:value={form.profile} ariaLabel={t('rag-label-profile')} class="w-full" />
 				<p class="label max-w-full whitespace-normal">{t('rag-profile-help')}</p>
 			</fieldset>
 

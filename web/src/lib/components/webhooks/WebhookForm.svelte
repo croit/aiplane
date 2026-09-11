@@ -2,7 +2,8 @@
 	import { untrack } from 'svelte';
 	import { adminPost, adminPut } from '$lib/admin-client';
 	import { t } from '$lib/i18n.svelte';
-	import type { ChatModelOption } from '$lib/model-option';
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
+	import { modelSelectOptions, type ChatModelOption } from '$lib/model-option';
 	import type { Webhook } from '$lib/webhooks';
 
 	let { webhook = null, models, onsaved, oncancel, onsecret } = $props<{
@@ -24,12 +25,10 @@
 	let busy = $state(false);
 	let selectedModel = $derived(models.find((candidate: ChatModelOption) => candidate.id === model));
 
-	function modelLabel(candidate: ChatModelOption): string {
-		if (!candidate.gdpr && !candidate.nda) return t('webhooks-model-non-gdpr-nda-restricted', { model: candidate.id });
-		if (!candidate.gdpr) return t('webhooks-model-non-gdpr', { model: candidate.id });
-		if (!candidate.nda) return t('webhooks-model-nda-restricted', { model: candidate.id });
-		return candidate.id;
-	}
+	let modelOptions = $derived(modelSelectOptions(models, {
+		gdpr: t('searchable-select-model-gdpr'),
+		nda: t('searchable-select-model-nda')
+	}));
 
 	async function save() {
 		busy = true;
@@ -65,7 +64,7 @@
 		<label class="flex min-w-0 w-full flex-col gap-1"><div class="label"><span class="label-text">{t('webhooks-name-label')}</span></div><input class="input min-w-0 w-full" bind:value={name} required maxlength="128" aria-label={t('webhooks-name-label')} placeholder={t('webhooks-name-placeholder')} /></label>
 		<label class="flex min-w-0 w-full flex-col gap-1">
 			<div class="label"><span class="label-text">{t('webhooks-model-label')}</span></div>
-			{#if models.length}<select class="select min-w-0 w-full" bind:value={model} aria-label={t('webhooks-model-label')}>{#each models as candidate (candidate.id)}<option value={candidate.id}>{modelLabel(candidate)}</option>{/each}</select>
+			{#if models.length}<SearchableSelect options={modelOptions} bind:value={model} ariaLabel={t('webhooks-model-label')} class="w-full" />
 			{:else}<input class="input min-w-0 w-full" bind:value={model} required aria-label={t('webhooks-model-label')} placeholder={t('webhooks-model-placeholder')} />{/if}
 		</label>
 		{#if selectedModel && !selectedModel.gdpr}<div class="alert alert-error"><span>{t('webhooks-gdpr-warning')}</span></div>{/if}

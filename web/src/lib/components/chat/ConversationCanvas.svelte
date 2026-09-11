@@ -5,6 +5,7 @@
 	import { canvasBounds, clampCanvasWidth } from '$lib/canvas-layout';
 	import { n, t } from '$lib/i18n.svelte';
 	import Markdown from './Markdown.svelte';
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 
 	let { id, documents, assets, isOwner, onclose, onerror }: {
 		id: string;
@@ -25,6 +26,12 @@
 	let bounds = $state(initialBounds);
 	let canvasWidth = $state(initialBounds.preferred);
 	const canvasWidthStorageKey = 'chat-canvas-width';
+	let documentOptions = $derived(documents.map((document) => ({ value: document.id, label: document.title, description: `v${document.current_ver}` })));
+	let versionOptions = $derived((opened?.history ?? []).map((revision) => ({
+		value: String(revision.version),
+		label: `v${revision.version}`,
+		description: revision.author === 'user' ? t('render-canvas-version-by-you') : revision.summary
+	})));
 
 	onMount(() => {
 		const container = panel.parentElement;
@@ -133,16 +140,12 @@
 	{#if tab === 'document'}
 		<div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
 			{#if documents.length > 1}
-				<select class="select select-bordered select-sm w-full" value={selectedId} onchange={(event) => openDocument((event.currentTarget as HTMLSelectElement).value)}>
-					{#each documents as document (document.id)}<option value={document.id}>{document.title} · v{document.current_ver}</option>{/each}
-				</select>
+				<SearchableSelect options={documentOptions} value={selectedId} onchange={openDocument} ariaLabel={t('chat-render-canvas-document-tab')} size="sm" class="w-full" />
 			{/if}
 			{#if opened}
 				<div class="flex items-center gap-2">
 					<h2 class="text-base font-semibold">{opened.document.title}</h2>
-					<select class="select select-ghost select-xs w-auto" aria-label={t('render-canvas-version-aria')} value={opened.version.version} onchange={(event) => openDocument(opened?.document.id ?? '', Number((event.currentTarget as HTMLSelectElement).value))}>
-						{#each opened.history as revision (revision.version)}<option value={revision.version}>v{revision.version} · {revision.author === 'user' ? t('render-canvas-version-by-you') : revision.summary}</option>{/each}
-					</select>
+					<SearchableSelect options={versionOptions} value={String(opened.version.version)} onchange={(value) => openDocument(opened?.document.id ?? '', Number(value))} ariaLabel={t('render-canvas-version-aria')} size="xs" class="w-48" />
 					<span class="text-xs opacity-60">{t('chat-render-revision-count', { count: opened.history.length })}</span>
 					{#if opened.version.author === 'user'}<span class="badge badge-outline badge-sm">{t('render-canvas-hand-edited')}</span>{/if}
 					<span class="flex-1"></span>

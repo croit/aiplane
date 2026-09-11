@@ -23,9 +23,6 @@ webhooks-tools-warning = Toute personne disposant de l'URL de déclenchement peu
 
 webhooks-gdpr-warning = Ce modèle s'exécute hors de l'UE. N'envoyez pas de données personnelles via ce webhook.
 webhooks-nda-warning = Ce modèle n'est pas autorisé pour du contenu sous NDA. N'envoyez pas de données confidentielles via ce webhook.
-webhooks-model-non-gdpr = { $model } (hors UE)
-webhooks-model-nda-restricted = { $model } (restreint NDA)
-webhooks-model-non-gdpr-nda-restricted = { $model } (hors UE, restreint NDA)
 
 webhooks-reveal-heading = Votre URL de déclenchement
 webhooks-reveal-note = Copiez-la maintenant — elle n'est affichée qu'une seule fois. Quiconque possède cette URL peut déclencher le webhook. Perdue ? Effectuez une rotation pour en obtenir une nouvelle.

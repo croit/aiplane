@@ -14,9 +14,6 @@ chat-render-tts-voice-aria = Voz de las respuestas
 chat-render-tts-voice-default = Voz predeterminada
 chat-render-new-conversation-fallback = Nueva conversación
 
-chat-render-model-non-gdpr = { $id } (no conforme con el RGPD)
-chat-render-model-confidential = { $id } (confidencialidad restringida)
-chat-render-model-non-gdpr-confidential = { $id } (no conforme con el RGPD, confidencialidad restringida)
 chat-render-gdpr-banner = Estás enviando datos a un modelo que no cumple con el RGPD. No introduzcas información personal (nombres, correos electrónicos, direcciones, datos de clientes o empleados).
 chat-render-nda-banner = Este modelo no está cubierto por un acuerdo de confidencialidad. No envíes material protegido por un NDA ni información confidencial.
 chat-render-shared-readonly-banner = Chat compartido — solo lectura. Solo quien lo creó puede responder.

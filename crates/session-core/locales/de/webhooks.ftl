@@ -23,9 +23,6 @@ webhooks-tools-warning = Jeder mit der Trigger-URL kann Inhalte senden, die das 
 
 webhooks-gdpr-warning = Dieses Modell läuft außerhalb der EU. Sende keine personenbezogenen Daten über diesen Webhook.
 webhooks-nda-warning = Dieses Modell ist nicht für NDA-beschränkte Inhalte freigegeben. Sende keine vertraulichen Daten über diesen Webhook.
-webhooks-model-non-gdpr = { $model } (außerhalb der EU)
-webhooks-model-nda-restricted = { $model } (NDA-beschränkt)
-webhooks-model-non-gdpr-nda-restricted = { $model } (außerhalb der EU, NDA-beschränkt)
 
 webhooks-reveal-heading = Deine Trigger-URL
 webhooks-reveal-note = Kopiere sie jetzt — sie wird nur einmal angezeigt. Jeder mit dieser URL kann den Webhook auslösen. Verloren? Erzeuge über „Rotieren" eine neue.

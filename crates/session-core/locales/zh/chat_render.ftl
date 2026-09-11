@@ -14,9 +14,6 @@ chat-render-tts-voice-aria = 朗读语音
 chat-render-tts-voice-default = 默认语音
 chat-render-new-conversation-fallback = 新对话
 
-chat-render-model-non-gdpr = { $id }（不符合 GDPR）
-chat-render-model-confidential = { $id }（保密限制）
-chat-render-model-non-gdpr-confidential = { $id }（不符合 GDPR，保密限制）
 chat-render-gdpr-banner = 您正在向不符合 GDPR 的模型发送数据。请勿输入个人信息（姓名、电子邮件、地址、客户或员工数据）。
 chat-render-nda-banner = 此模型不受保密协议保护。请勿发送受 NDA 保护或专有的资料。
 chat-render-shared-readonly-banner = 共享对话——只读。只有创建者可以回复。

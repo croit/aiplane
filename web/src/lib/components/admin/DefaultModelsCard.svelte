@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { FeatureDefault } from '$lib/admin-models';
 	import { t } from '$lib/i18n.svelte';
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 
 	let { defaults, onsave }: {
 		defaults: FeatureDefault[];
@@ -26,10 +27,14 @@
 				{#each defaults as entry (entry.feature)}
 					<label class="flex flex-col gap-1">
 						<span class="label-text mb-1 text-xs">{t(labels[entry.feature] ?? entry.feature)}</span>
-						<select class="select select-bordered select-sm w-full" aria-label={t(labels[entry.feature] ?? entry.feature)} value={entry.model ?? ''} onchange={(event) => onsave(entry.feature, event.currentTarget.value)}>
-							<option value="">{t('admin-defaults-first-option')}</option>
-							{#each entry.available as model}<option value={model}>{model}</option>{/each}
-						</select>
+						<SearchableSelect
+							options={[{ value: '', label: t('admin-defaults-first-option') }, ...entry.available.map((model) => ({ value: model, label: model }))]}
+							value={entry.model ?? ''}
+							onchange={(value) => onsave(entry.feature, value)}
+							ariaLabel={t(labels[entry.feature] ?? entry.feature)}
+							size="sm"
+							class="w-full"
+						/>
 					</label>
 				{/each}
 			</div>

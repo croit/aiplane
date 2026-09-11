@@ -96,6 +96,15 @@ The chat route is bounded to the viewport. Its transcript and canvas scroll
 independently, while the composer stays visible as a full-width footer beneath
 both regions; the document itself must not become the chat scroll container.
 
+Long or data-driven choices use the shared `SearchableSelect` combobox instead
+of a native select. It searches labels, stored values, descriptions, keywords and
+badges; supports arrow keys, Enter and Escape; and bounds long result lists to
+their own scroll region. Model choices render the model id left-aligned and show
+compact GDPR and NDA status badges right-aligned on every row. Green check badges
+mean the model is cleared; red crossed-out badges mean it is restricted. Small
+closed enums such as hour/day/week or on/off remain native selects because a
+search field would add friction without improving discovery.
+
 The root layout owns the document title through the route registry in
 `page-titles.ts`; data-driven pages publish their resolved name through the
 shared override in `page-title.ts`. Conversation metadata is refreshed

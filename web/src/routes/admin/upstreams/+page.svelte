@@ -7,6 +7,7 @@
 	import BackendEditor from '$lib/components/upstreams/BackendEditor.svelte';
 	import PoolCard from '$lib/components/upstreams/PoolCard.svelte';
 	import PoolEditor from '$lib/components/upstreams/PoolEditor.svelte';
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 
 	interface StatusEvent extends LiveBackend {
 		name: string;
@@ -173,10 +174,7 @@
 					{#each data.fallback_kinds as kind (kind)}
 						<label class="flex flex-col gap-1">
 							<span class="font-mono text-xs text-base-content/70">{kind}</span>
-							<select class="select select-bordered select-sm w-full" value={data.fallbacks[kind] ?? ''} onchange={(event) => void saveFallback(kind, event.currentTarget.value)}>
-								<option value="">{t('admin-cap-no-fallback')}</option>
-								{#each data.all_models ?? [] as model (model)}<option value={model}>{model}</option>{/each}
-							</select>
+							<SearchableSelect options={[{ value: '', label: t('admin-cap-no-fallback') }, ...(data.all_models ?? []).map((model) => ({ value: model, label: model }))]} value={data.fallbacks[kind] ?? ''} onchange={(value) => void saveFallback(kind, value)} ariaLabel={kind} size="sm" class="w-full" />
 						</label>
 					{/each}
 				</div>

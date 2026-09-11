@@ -55,9 +55,6 @@ scheduled-next-runs-prefix = Следующие запуски:{ " " }
 scheduled-err-pick-weekday = Выберите хотя бы один день недели.
 scheduled-err-enter-cron = Введите cron-выражение.
 
-scheduled-model-non-gdpr = { $model } (не соответствует GDPR)
-scheduled-model-nda-restricted = { $model } (ограничение конфиденциальности)
-scheduled-model-non-gdpr-nda-restricted = { $model } (не соответствует GDPR, ограничение конфиденциальности)
 
 scheduled-toast-not-found = Такого запланированного действия не существует.
 

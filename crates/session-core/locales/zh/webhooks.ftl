@@ -23,9 +23,6 @@ webhooks-tools-warning = 任何拥有触发 URL 的人都可以发送内容，�
 
 webhooks-gdpr-warning = 此模型在欧盟境外运行。请勿通过此 Webhook 发送个人数据。
 webhooks-nda-warning = 此模型未获准处理受 NDA 限制的内容。请勿通过此 Webhook 发送机密数据。
-webhooks-model-non-gdpr = { $model }（非欧盟）
-webhooks-model-nda-restricted = { $model }（受 NDA 限制）
-webhooks-model-non-gdpr-nda-restricted = { $model }（非欧盟，受 NDA 限制）
 
 webhooks-reveal-heading = 你的触发 URL
 webhooks-reveal-note = 立即复制——它只显示一次。任何拥有此 URL 的人都可以触发该 Webhook。丢失了？轮换以获取新的 URL。

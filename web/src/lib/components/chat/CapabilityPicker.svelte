@@ -3,6 +3,7 @@
 	import type { ChatCapability } from '$lib/api';
 	import { capabilityCounts, filterCapabilities, type CapabilityStateFilter } from '$lib/capability-picker';
 	import { t } from '$lib/i18n.svelte';
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 
 	let { capabilities, onset }: {
 		capabilities: ChatCapability[];
@@ -29,6 +30,10 @@
 		query
 	}));
 	const stateFilters: CapabilityStateFilter[] = ['all', 'on', 'auto', 'off'];
+	let groupOptions = $derived([
+		{ value: '', label: t('chat-render-all-tools-label'), description: t('chat-render-tool-count', { count: capabilities.length }) },
+		...groups.map((group) => ({ value: group.name, label: groupLabel(group.name), description: t('chat-render-tool-count', { count: group.rows.length }) }))
+	]);
 
 	function groupLabel(group: string): string {
 		const key: Record<string, string> = {
@@ -138,10 +143,7 @@
 
 					<section class="flex min-h-0 min-w-0 flex-col" aria-labelledby="tool-selector-title">
 						<div class="border-b border-base-300 p-3 md:hidden">
-							<select class="select w-full" aria-label={t('chat-render-tools-category-label')} bind:value={selectedGroup} onchange={() => (query = '')}>
-								<option value="">{t('chat-render-all-tools-label')} · {capabilities.length}</option>
-								{#each groups as group (group.name)}<option value={group.name}>{groupLabel(group.name)} · {group.rows.length}</option>{/each}
-							</select>
+							<SearchableSelect options={groupOptions} bind:value={selectedGroup} onchange={() => (query = '')} ariaLabel={t('chat-render-tools-category-label')} class="w-full" />
 						</div>
 						<div class="flex flex-col gap-3 border-b border-base-300 px-4 py-3 sm:flex-row sm:items-center sm:px-6">
 							<div class="min-w-0 flex-1">

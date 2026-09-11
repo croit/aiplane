@@ -28,6 +28,14 @@ async function conversationUrl(cookie, title) {
     return `/chat/${session.id}`;
 }
 
+async function chooseSearchable(page, label, query, optionName = query) {
+    const picker = page.getByRole("combobox", { name: label, exact: true });
+    await picker.click();
+    const dropdown = picker.locator("..");
+    await dropdown.getByPlaceholder("Search options…", { exact: true }).fill(query);
+    await dropdown.getByRole("option", { name: optionName }).click();
+}
+
 before(async () => {
     assert.ok(
         await gatewayIsUp(),
@@ -130,11 +138,11 @@ test("a turn streams into the SPA over the JSON event protocol", async (t) => {
     // click can't race hydration under a loaded test run.
     await page.locator("textarea").waitFor({ state: "visible", timeout: 5000 });
 
-    // Compose: model + message, send. The picker is a <select> when the
-    // gateway offers models, free-text otherwise.
+    // Compose: model + message, send. Offered models use the shared searchable
+    // picker; a gateway without pools falls back to free text.
     const picker = page.getByLabel("Chat model");
-    if (await page.locator('select[aria-label="Chat model"]').count()) {
-        await picker.selectOption("demo-model");
+    if (await page.getByRole("combobox", { name: "Chat model", exact: true }).count()) {
+        await chooseSearchable(page, "Chat model", "demo-model");
     } else {
         await picker.fill("demo-model");
     }
@@ -262,9 +270,9 @@ test("the transcript keeps edit, retry, code, tool-detail, and canvas workflows"
     await transcript.evaluate((element) => { element.scrollTop = element.scrollHeight; });
     assert.equal((await composer.boundingBox()).y, composerY, "transcript scrolling must not move the composer");
 
-    await page.getByLabel("Version", { exact: true }).selectOption("1");
+    await chooseSearchable(page, "Version", "v1", "v1 Complete feature parity");
     await page.getByText("Complete feature parity", { exact: true }).waitFor();
-    await page.getByLabel("Version", { exact: true }).selectOption("2");
+    await chooseSearchable(page, "Version", "v2", "v2 Release criteria");
     await page.getByText("Release criteria", { exact: true }).waitFor();
 
     const desktopCanvas = page.getByRole("complementary", { name: "Canvas", exact: true });

@@ -19,3 +19,10 @@ push-connector-reconnect-body = { $connector } a été déconnecté — ouvrez I
 chrome-opening-conversations = Ouverture de vos conversations…
 
 # SPA-only: /login, which exists to bounce straight to the IdP.
+
+searchable-select-search-placeholder = Rechercher des options…
+searchable-select-search-aria = Rechercher dans { $field }
+searchable-select-clear-search = Effacer la recherche
+searchable-select-no-results = Aucune option correspondante.
+searchable-select-model-gdpr = GDPR
+searchable-select-model-nda = NDA

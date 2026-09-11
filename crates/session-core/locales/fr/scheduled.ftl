@@ -55,9 +55,6 @@ scheduled-next-runs-prefix = Prochaines exécutions :{ " " }
 scheduled-err-pick-weekday = Choisissez au moins un jour de la semaine.
 scheduled-err-enter-cron = Saisissez une expression cron.
 
-scheduled-model-non-gdpr = { $model } (non conforme RGPD)
-scheduled-model-nda-restricted = { $model } (restreint par confidentialité)
-scheduled-model-non-gdpr-nda-restricted = { $model } (non conforme RGPD, restreint par confidentialité)
 
 scheduled-toast-not-found = Aucune action planifiée de ce type.
 

@@ -23,9 +23,6 @@ webhooks-tools-warning = Любой, у кого есть URL-триггер, м
 
 webhooks-gdpr-warning = Эта модель работает за пределами ЕС. Не отправляйте персональные данные через этот вебхук.
 webhooks-nda-warning = Эта модель не допущена к контенту под NDA. Не отправляйте конфиденциальные данные через этот вебхук.
-webhooks-model-non-gdpr = { $model } (вне ЕС)
-webhooks-model-nda-restricted = { $model } (ограничение NDA)
-webhooks-model-non-gdpr-nda-restricted = { $model } (вне ЕС, ограничение NDA)
 
 webhooks-reveal-heading = Ваш URL-триггер
 webhooks-reveal-note = Скопируйте сейчас — он показывается только один раз. Любой, у кого есть этот URL, может запустить вебхук. Потеряли? Смените секрет, чтобы получить новый.

@@ -2,6 +2,7 @@
 	import { tick, untrack } from 'svelte';
 	import { adminDelete, adminPost, adminPut } from '$lib/admin-client';
 	import { t, n } from '$lib/i18n.svelte';
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 	import { completeAliasLine, parseAliases, splitList, type Backend, type BackendTestResult, type Pool } from '$lib/upstreams';
 
 	interface Props {
@@ -37,6 +38,7 @@
 	let aliasesInput: HTMLTextAreaElement;
 
 	let nameTaken = $derived(!backend && existingNames.includes(name.trim()));
+	let poolOptions = $derived([{ value: '', label: t('backends-field-pool-none') }, ...pools.map((pool) => ({ value: pool.name, label: pool.name, description: pool.kind }))]);
 
 	async function save() {
 		busy = true;
@@ -169,10 +171,7 @@
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="text-xs text-base-content/70">{t('backends-field-pool')}</span>
-			<select class="select select-bordered select-sm w-full" bind:value={poolName}>
-				<option value="">{t('backends-field-pool-none')}</option>
-				{#each pools as pool (pool.name)}<option value={pool.name}>{pool.name}</option>{/each}
-			</select>
+			<SearchableSelect options={poolOptions} bind:value={poolName} ariaLabel={t('backends-field-pool')} size="sm" class="w-full" />
 			<span class="text-xs text-base-content/50">{t('backends-field-pool-hint')}</span>
 		</label>
 		<label class="flex flex-col gap-1">

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { t } from '$lib/i18n.svelte';
-
-	type Model = { id: string; gdpr: boolean; nda: boolean };
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
+	import { modelSelectOptions, type ChatModelOption } from '$lib/model-option';
 
 	let {
 		id,
@@ -25,7 +25,7 @@
 		title: string | null | undefined;
 		isOwner: boolean;
 		shared: boolean;
-		models: Model[];
+		models: ChatModelOption[];
 		model: string;
 		transcriptionModels: string[];
 		transcriptionModel: string;
@@ -39,14 +39,15 @@
 		onspeechvoice: () => void;
 	} = $props();
 
-	function modelLabel(option: Model): string {
-		if (!option.gdpr && !option.nda) {
-			return t('chat-render-model-non-gdpr-confidential', { id: option.id });
-		}
-		if (!option.gdpr) return t('chat-render-model-non-gdpr', { id: option.id });
-		if (!option.nda) return t('chat-render-model-confidential', { id: option.id });
-		return option.id;
-	}
+	let modelOptions = $derived(modelSelectOptions(models, {
+		gdpr: t('searchable-select-model-gdpr'),
+		nda: t('searchable-select-model-nda')
+	}));
+	let transcriptionOptions = $derived(transcriptionModels.map((id) => ({ value: id, label: id })));
+	let speechOptions = $derived([
+		{ value: '', label: t('chat-render-tts-voice-default') },
+		...speechVoices.map((voice) => ({ value: voice, label: voice }))
+	]);
 </script>
 
 <header class="mb-4 flex min-w-0 items-center gap-2 border-b border-base-300 pb-3">
@@ -76,9 +77,7 @@
 				{#if models.length > 0}
 					<label class="flex min-w-0 items-center gap-1.5">
 						<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4M8 4v4m8 2v4m-4 2v4" /></svg>
-						<select class="select select-bordered select-sm w-56" aria-label={t('chat-render-model-aria')} bind:value={model}>
-							{#each models as option (option.id)}<option value={option.id}>{modelLabel(option)}</option>{/each}
-						</select>
+						<SearchableSelect options={modelOptions} bind:value={model} ariaLabel={t('chat-render-model-aria')} size="sm" class="w-64" />
 					</label>
 				{:else}
 					<input class="input input-bordered input-sm w-56" placeholder={t('chat-render-model-placeholder')} aria-label={t('chat-render-model-aria')} bind:value={model} />
@@ -86,16 +85,11 @@
 				{#if transcriptionModels.length > 0}
 					<label class="flex min-w-0 items-center gap-1.5">
 						<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="9" y="2" width="6" height="11" rx="3" /><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v3M8 22h8" /></svg>
-						<select class="select select-bordered select-sm w-56" aria-label={t('chat-render-voice-model-aria')} bind:value={transcriptionModel}>
-							{#each transcriptionModels as option (option)}<option value={option}>{option}</option>{/each}
-						</select>
+						<SearchableSelect options={transcriptionOptions} bind:value={transcriptionModel} ariaLabel={t('chat-render-voice-model-aria')} size="sm" class="w-64" />
 					</label>
 				{/if}
 				{#if speechAvailable && speechVoices.length >= 2}
-					<select class="select select-bordered select-sm w-44" aria-label={t('chat-render-tts-voice-aria')} bind:value={speechVoice} onchange={onspeechvoice}>
-						<option value="">{t('chat-render-tts-voice-default')}</option>
-						{#each speechVoices as option (option)}<option value={option}>{option}</option>{/each}
-					</select>
+					<SearchableSelect options={speechOptions} bind:value={speechVoice} ariaLabel={t('chat-render-tts-voice-aria')} size="sm" class="w-44" onchange={() => onspeechvoice()} />
 				{/if}
 			</div>
 			{#if hasCanvas}<button class="btn btn-ghost btn-sm" onclick={oncanvas} aria-label={t('chat-render-canvas-toggle-title')} title={t('chat-render-canvas-toggle-title')}><span aria-hidden="true">▣</span><span class="hidden sm:inline">{t('chat-render-canvas-toggle-label')}</span></button>{/if}

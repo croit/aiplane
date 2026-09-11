@@ -20,3 +20,10 @@ push-connector-reconnect-body = { $connector } was disconnected — open Integra
 chrome-opening-conversations = Opening your conversations…
 
 # SPA-only: /login, which exists to bounce straight to the IdP.
+
+searchable-select-search-placeholder = Search options…
+searchable-select-search-aria = Search { $field }
+searchable-select-clear-search = Clear search
+searchable-select-no-results = No matching options.
+searchable-select-model-gdpr = GDPR
+searchable-select-model-nda = NDA

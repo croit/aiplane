@@ -55,9 +55,6 @@ scheduled-next-runs-prefix = 接下来的运行：{ " " }
 scheduled-err-pick-weekday = 请至少选择一个星期。
 scheduled-err-enter-cron = 请输入 cron 表达式。
 
-scheduled-model-non-gdpr = { $model }（不符合 GDPR）
-scheduled-model-nda-restricted = { $model }（受保密限制）
-scheduled-model-non-gdpr-nda-restricted = { $model }（不符合 GDPR，受保密限制）
 
 scheduled-toast-not-found = 没有此定时操作。
 

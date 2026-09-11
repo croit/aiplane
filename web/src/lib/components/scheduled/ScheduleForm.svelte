@@ -2,7 +2,8 @@
 	import { onMount, untrack } from 'svelte';
 	import { adminPost, adminPut } from '$lib/admin-client';
 	import { locale, t } from '$lib/i18n.svelte';
-	import type { ChatModelOption } from '$lib/model-option';
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
+	import { modelSelectOptions, type ChatModelOption } from '$lib/model-option';
 	import { cronFromSchedule, defaultSchedule, formatScheduledRun, scheduleFromCron, type ScheduledAction } from '$lib/scheduled';
 
 	let { action = null, models, defaultTimezone, onsaved, oncancel } = $props<{
@@ -32,12 +33,10 @@
 		[4, 'scheduled-weekday-thu'], [5, 'scheduled-weekday-fri'], [6, 'scheduled-weekday-sat'], [0, 'scheduled-weekday-sun']
 	] as const;
 	let selectedModel = $derived(models.find((candidate: ChatModelOption) => candidate.id === model));
-	function modelLabel(candidate: ChatModelOption): string {
-		if (!candidate.gdpr && !candidate.nda) return t('scheduled-model-non-gdpr-nda-restricted', { model: candidate.id });
-		if (!candidate.gdpr) return t('scheduled-model-non-gdpr', { model: candidate.id });
-		if (!candidate.nda) return t('scheduled-model-nda-restricted', { model: candidate.id });
-		return candidate.id;
-	}
+	let modelOptions = $derived(modelSelectOptions(models, {
+		gdpr: t('searchable-select-model-gdpr'),
+		nda: t('searchable-select-model-nda')
+	}));
 
 	function toggleWeekday(day: number) {
 		schedule.weekdays = schedule.weekdays.includes(day)
@@ -112,11 +111,7 @@
 		<label class="flex min-w-0 w-full flex-col gap-1">
 			<div class="label"><span class="label-text">{t('scheduled-model-label')}</span></div>
 			{#if models.length}
-				<select class="select min-w-0 max-w-full w-full" bind:value={model} aria-label={t('scheduled-model-label')}>
-					{#each models as candidate (candidate.id)}
-						<option value={candidate.id}>{modelLabel(candidate)}</option>
-					{/each}
-				</select>
+				<SearchableSelect options={modelOptions} bind:value={model} ariaLabel={t('scheduled-model-label')} class="w-full" />
 			{:else}
 				<input class="input min-w-0 w-full" bind:value={model} required aria-label={t('scheduled-model-label')} placeholder={t('scheduled-model-placeholder')} />
 			{/if}
