@@ -18,6 +18,7 @@
 - [Built with](#built-with)
 - [Integrations (per-user MCP connectors)](#integrations-per-user-mcp-connectors)
 - [Claude Code against your own models](#claude-code-against-your-own-models)
+- [OpenCode against your own models](#opencode-against-your-own-models)
 - [Quick start (local development)](#quick-start-local-development)
 - [Setup wizard](#setup-wizard)
 - [Configuration](#configuration)
@@ -270,6 +271,55 @@ Then alias the model ids Claude Code asks for (`claude-sonnet-4-6`, `claude-haik
 Everything the normal workflow needs works: streaming, tool calls (including several per turn), multi-turn context, model selection, and errors surfaced with the backend's own wording so Claude Code's built-in retries still fire. Token counting is answered from the serving model's own tokenizer, not an estimate. The gateway's server-side tools are available to it too — web search, RAG, the sandbox, your MCP connectors — when the token has tool use enabled, in which case the gateway runs its own tools invisibly and hands Claude Code's back for it to execute.
 
 Setup, the full translation table, and the known limits are in [`docs/claude-code.md`](docs/claude-code.md).
+
+## OpenCode against your own models
+
+[OpenCode](https://opencode.ai/) can use the gateway's OpenAI-compatible API. The
+configuration below registers a gateway deployment as a custom provider and
+makes the gateway alias `qwen` (served as Qwen3.8) available in the model picker:
+
+```jsonc
+// ~/.config/opencode/opencode.jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "gateway/qwen",
+  "provider": {
+    "gateway": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LLM Gateway",
+      "options": {
+        "baseURL": "https://gateway.example.com/v1"
+      },
+      "models": {
+        "qwen": {
+          "name": "Qwen3.8"
+        }
+      }
+    }
+  }
+}
+```
+
+Store the gateway token with OpenCode's provider credentials (or use an
+environment substitution in `options.apiKey`); never commit a token to a
+project file. Start OpenCode and choose `gateway/qwen` with `/models`, or pass it
+directly:
+
+```bash
+opencode --model gateway/qwen
+```
+
+The gateway already exposes `GET /v1/models`, but OpenCode's custom
+`@ai-sdk/openai-compatible` provider requires model entries in its configuration
+for the picker and does not populate that map from the endpoint. Add further
+gateway model aliases under `provider.gateway.models` as needed; each key is the
+model id sent to the gateway. The gateway's model list remains available for
+inspection with:
+
+```bash
+curl https://gateway.example.com/v1/models \
+  -H "Authorization: Bearer $GATEWAY_API_KEY"
+```
 
 ## Quick start (local development)
 
