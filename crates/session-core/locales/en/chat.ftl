@@ -18,12 +18,6 @@ chat-error-attachment-not-found = not found
 # the conversation header, the assistant's ask-back card, and the
 # turn-status line the server never renders itself.
 chat-list-empty = No conversations yet. Start one above.
-chat-list-pinned-badge = pinned
-chat-list-pin = Pin
-chat-list-unpin = Unpin
-chat-list-delete = Delete
-chat-push-invite = Get notified when a reply finishes.
-chat-all-chats = All chats
 chat-turn-stopped = stopped
 chat-prompt-heading = The assistant asks
 chat-prompt-placeholder = Type an answer…

@@ -48,6 +48,11 @@ setup-testing = Probando…
 # The SPA wizard: its own page heading, the closed-for-business
 # notice, and two inline states the server-rendered form had no
 # equivalent of.
-setup-page-heading = Configuración de la pasarela
 setup-closed = La configuración está cerrada en esta pasarela. Inicia sesión con normalidad, o ejecuta restore-setup en el host para reabrir el asistente.
 setup-secret-set-hint = definido — déjalo en blanco para conservarlo
+setup-error-heading = Configuración
+setup-page-title = Setup — LLM Gateway
+setup-error-back = Volver a la configuración
+setup-manual-claim-placeholder = groups
+setup-manual-value-placeholder = gateway-admins
+setup-issuer-placeholder = https://id.example.com/realms/company

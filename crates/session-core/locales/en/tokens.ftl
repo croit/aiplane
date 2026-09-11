@@ -33,7 +33,6 @@ tokens-mcp-allow-description = Approval-required connector tools can't prompt ov
 tokens-minted-heading = Token created
 tokens-minted-copy-warning = Copy the value now — you won't be able to see it again.
 tokens-copy-aria = Copy token
-tokens-copy-title = Copy token
 tokens-minted-name = Name: { $name }
 
 tokens-account-user-id-label = User ID
@@ -63,14 +62,32 @@ tokens-limits-add = Add quota
 tokens-limits-saved-toast = Token quota saved.
 
 # SPA-only: the Svelte /tokens row panels and their confirm prompts.
-tokens-models-heading = Model allowlist
-tokens-models-input-placeholder = model ids, comma-separated
-tokens-quota-heading = Quota
-tokens-quota-per = per
 tokens-quota-max-placeholder = max
-tokens-mcp-heading = MCP connectors
-tokens-mcp-allow-button = Let them run
-tokens-mcp-block-button = Block them
 tokens-revoke-confirm = Revoke this token? Clients using it stop working immediately.
 tokens-rotate-confirm = Issue a new secret? The old one stops working immediately.
 tokens-remove-confirm = Delete this token row for good?
+
+tokens-create-description = Mint a new bearer token for the OpenAI-compatible API.
+tokens-tool-use-description = Let this token call gateway tools (web search, RAG, …).
+tokens-capabilities-summary = Capabilities
+tokens-mcp-allow-aria = Allow ask-mode MCP tools over API
+tokens-mcp-allow-label = Allow “ask” MCP tools over API
+tokens-account-heading = Account
+tokens-signed-in-as = Signed in as { $email }
+tokens-account-oidc-label = OIDC roles
+tokens-account-rbac-label = RBAC role IDs
+tokens-roles-none = none
+tokens-roles-none-granted = none granted
+tokens-push-heading = Notifications
+tokens-push-description = Get a notification on this device when an assistant turn you started finishes while you're away from the app.
+tokens-push-off = Notifications are off for this device.
+tokens-push-denied = This browser has blocked notifications. Allow them in your browser settings to enable.
+tokens-push-unsupported = This browser doesn't support notifications.
+tokens-models-none-picked = Tick at least one model, or turn the limit off.
+tokens-limits-summary-none = Quota: none
+tokens-limits-summary-some = Quota: { $count } rule(s)
+tokens-limits-help = A cap on this token alone. Your own budget still applies, so this can only narrow what the token may spend, never widen it.
+tokens-limits-remove = Remove
+tokens-limits-removed-toast = Token quota removed.
+tokens-limits-admin-badge = set by admin
+tokens-models-admin-set = An operator also restricts this token to: { $models }. Your own selection narrows that further; it cannot widen it.

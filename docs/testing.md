@@ -9,7 +9,7 @@
 | **Unit** | `#[cfg(test)] mod tests` next to the code | Pure functions, parsers, picker strategies, config validation |
 | **Integration (in-process)** | `crates/gateway/tests/` | Build a `RamaState` against an in-memory SQLite + wiremock upstreams, then call `router(state).serve(req)` directly — no socket binding, since `rama`'s service is a plain async function. Shared setup lives in `tests/common/mod.rs`. |
 | **Integration (mocked upstreams)** | `crates/gateway/tests/` | `wiremock` instances stand in for LLM backends; verify routing, the tool-call loop, streaming, the full OIDC login flow (`oidc_integration.rs`), and the JSON-SSE chat event wire (`chat_json_api.rs`). |
-| **Contract drift** | `crates/gateway/tests/it/` | Guards that fail when two hand-maintained sources disagree: `openapi_drift.rs` (`docs/openapi.json` ↔ the `/api/v0` routes in `router.rs`, both directions), `readme_routes.rs` (the README's HTTP-endpoints table ↔ `router.rs`), `spa_routes.rs` (the SPA catch-all is registered and reaches the SPA handler). |
+| **Contract generation** | `crates/gateway/tests/it/` | `openapi_drift.rs` proves the backend serves generated OpenAPI for representative routes and that no detached spec exists; `readme_routes.rs` checks the README's HTTP-endpoints table against `router.rs`; `spa_routes.rs` checks that the SPA catch-all is registered and reaches the SPA handler. |
 | **SPA unit** | `web/src/lib/*.test.ts` | `mise run test-web` — Node's own `node --test` with type stripping, no jsdom. Covers the framework-free halves of the SPA (the chat event fold in `chat-protocol.ts`, markdown rendering), which is what pins client-side wire behaviour. |
 | **E2E (browser ↔ gateway)** | `e2e/*.test.mjs` | Playwright + Node's `node:test` against a running `mise run dev`. The SPA suites are `e2e/spa*.test.mjs` (shell boot, signed-out OIDC redirect, signed-in identity, tokens, admin, a full chat turn streaming in); the rest cover the anonymous sign-in funnel and plain-`fetch` checks of the public HTTP surface. See `e2e/README.md`. |
 
@@ -30,7 +30,7 @@ Write the test before the code — red, green, refactor (**TDD**). Tests are **s
     - Returns 401 without a bearer / session.
     - Returns 403 when the route is RBAC-gated and the caller isn't authorized (e.g. a non-admin hitting an admin route via `require_admin_or_403`).
     - Returns the documented success shape.
-- New `/api/v0` route → also an entry in `docs/openapi.json` (`openapi_drift` fails otherwise).
+- New `/api/v0` route → appears in `GET /openapi.json` automatically; add an explicit backend wire type when its body introduces a new reusable shape.
 - New tool → test that invokes it via the registry (with a mocked upstream that fakes a `tool_calls` response).
 - Schema change → round-trip serde test (`from_json(to_json(v)) == v` for a representative fixture).
 - New chat event or a change to one → a case in `web/src/lib/chat-protocol.test.ts`. The fold is deliberately framework-free so this needs no browser; wire behaviour that can only be checked through a browser is wire behaviour nobody checks.

@@ -23,7 +23,7 @@ use rama::http::{Request, Response, StatusCode};
 use gateway_core::server::db;
 use gateway_core::server::db::limits;
 use gateway_core::server::settings;
-use gateway_core::server::upstreams;
+use gateway_core::server::upstreams::{self, PoolKind};
 use gateway_runtime::rama_server::state::RamaState;
 
 use super::{bad_request, internal, json_error, json_ok, raw_path_segment};
@@ -167,26 +167,52 @@ pub async fn groups_delete(State(state): State<Arc<RamaState>>, req: Request) ->
 // ---------------------------------------------------------------------------
 // Users (admin roster + impersonation)
 
-/// GET /api/v0/admin/users — every known user with their roles.
+/// GET /api/v0/admin/users — every known user and the impersonation audit trail.
 pub async fn users_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = require_admin_json!(state, req);
+    let (_session, admin) = require_admin_json!(state, req);
     let all = match db::users::list_all(&state.db).await {
         Ok(v) => v,
+        Err(err) => return internal(err),
+    };
+    let audit = match db::audit::recent(&state.db, 20).await {
+        Ok(events) => events,
         Err(err) => return internal(err),
     };
     let users: Vec<_> = all
         .into_iter()
         .map(|u| {
+            let gateway_roles = state.rbac.role_ids_for(&u.roles);
             serde_json::json!({
                 "id": u.id,
                 "email": u.email,
                 "name": u.name,
-                "roles": u.roles,
+                "oidc_groups": u.roles,
+                "gateway_roles": gateway_roles,
                 "created_at": u.created_at.to_string(),
             })
         })
         .collect();
-    json_ok(StatusCode::OK, serde_json::json!({ "users": users }))
+    let audit: Vec<_> = audit
+        .into_iter()
+        .map(|event| {
+            serde_json::json!({
+                "id": event.id,
+                "action": event.action,
+                "actor_email": event.actor_email,
+                "target_email": event.target_email,
+                "created_at": event.created_at.to_string(),
+            })
+        })
+        .collect();
+    json_ok(
+        StatusCode::OK,
+        serde_json::json!({
+            "users": users,
+            "audit": audit,
+            "current_user_id": admin.id,
+            "allow_impersonation": state.config().gateway.allow_impersonation,
+        }),
+    )
 }
 
 /// POST /api/v0/admin/users/{id}/impersonate — mint an impersonation
@@ -323,9 +349,6 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
     use gateway_core::server::feature_defaults::{self, Feature};
 
     let (_session, _admin) = require_admin_json!(state, req);
-    let offered: Vec<String> = state.upstreams.all_models();
-    // One read of the overrides table, then pure in-memory joining. Reading
-    // per model made this page cost a round-trip per offered model, twice.
     let mut configured: std::collections::HashMap<String, _> = db::model_defaults::all(&state.db)
         .await
         .unwrap_or_default()
@@ -333,23 +356,60 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
         .map(|d| (d.model_name.clone(), d))
         .collect();
     let mut models = Vec::new();
-    for name in &offered {
-        let defaults = configured.remove(name);
-        models.push(serde_json::json!({
-            "name": name,
-            "configured": defaults.is_some(),
-            "defaults": defaults.map(|d| model_defaults_json(&d)),
-        }));
+    let mut seen = std::collections::HashSet::new();
+    for (kind, kind_label) in [
+        (PoolKind::Chat, "chat"),
+        (PoolKind::Embedding, "embedding"),
+        (PoolKind::Image, "image"),
+        (PoolKind::Speech, "speech"),
+        (PoolKind::Transcription, "transcription"),
+        (PoolKind::Ocr, "ocr"),
+        (PoolKind::Rerank, "rerank"),
+    ] {
+        for (name, alias_target) in state.upstreams.models_with_alias_target(kind) {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            if alias_target.is_some() {
+                configured.remove(&name);
+            }
+            let defaults = alias_target
+                .is_none()
+                .then(|| configured.remove(&name))
+                .flatten();
+            let reasoning = gateway_core::server::reasoning::ReasoningStyle::resolve(
+                defaults
+                    .as_ref()
+                    .and_then(|value| value.reasoning_style.as_deref()),
+                &name,
+            );
+            models.push(serde_json::json!({
+                "name": name,
+                "kind": kind_label,
+                "alias_target": alias_target,
+                "configured": defaults.is_some(),
+                "resolved_reasoning_style": reasoning.as_str(),
+                "uses_token_budget": reasoning.uses_token_budget(),
+                "effort_levels": reasoning.effort_levels(),
+                "defaults": defaults.map(|d| model_defaults_json(&d)),
+            }));
+        }
     }
-    // Whatever is left is configured but no longer offered; the editor keeps
-    // those visible so an operator can find and clear them. `remove` above is
-    // what makes this the difference rather than a second scan.
     let mut leftover: Vec<_> = configured.into_values().collect();
     leftover.sort_by(|a, b| a.model_name.cmp(&b.model_name));
     for defaults in leftover {
+        let reasoning = gateway_core::server::reasoning::ReasoningStyle::resolve(
+            defaults.reasoning_style.as_deref(),
+            &defaults.model_name,
+        );
         models.push(serde_json::json!({
             "name": defaults.model_name,
+            "kind": "chat",
+            "alias_target": null,
             "configured": true,
+            "resolved_reasoning_style": reasoning.as_str(),
+            "uses_token_budget": reasoning.uses_token_budget(),
+            "effort_levels": reasoning.effort_levels(),
             "defaults": model_defaults_json(&defaults),
         }));
     }
@@ -361,9 +421,15 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
         Feature::Embedding,
     ] {
         let model = feature_defaults::get(&state.db, feature).await;
+        let mut available = state.upstreams.models_for_kind(feature.pool_kind());
+        available.sort();
+        if available.is_empty() {
+            continue;
+        }
         feature_defaults.push(serde_json::json!({
             "feature": feature.as_str(),
             "model": model,
+            "available": available,
         }));
     }
     let search = match gateway_features::server::search_settings::view(&state.db).await {
@@ -374,6 +440,7 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
         StatusCode::OK,
         serde_json::json!({
             "models": models,
+            "all_models": state.upstreams.all_models(),
             "currency": state.config().usage.currency,
             "feature_defaults": feature_defaults,
             "search": {
@@ -492,7 +559,7 @@ pub struct FeatureDefaultBody {
     pub model: String,
 }
 
-/// PUT /api/v0/admin/models/defaults — set/clear a feature's default model.
+/// PUT /api/v0/admin/model-defaults — set/clear a feature's default model.
 pub async fn models_feature_default(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     use gateway_core::server::feature_defaults::{self, Feature};
 
@@ -532,7 +599,7 @@ pub struct SearchSettingsBody {
     pub clear_brave_key: bool,
 }
 
-/// PUT /api/v0/admin/models/search — the web-search provider settings.
+/// PUT /api/v0/admin/search-settings — the web-search provider settings.
 pub async fn models_search_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     use gateway_features::server::search_settings::{self, SearchProvider};
 
@@ -740,20 +807,26 @@ pub async fn settings_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 .fields
                 .iter()
                 .map(|f| {
+                    let models = match f.kind {
+                        settings::Kind::Model(kind) => state.upstreams.models_for_kind(kind),
+                        _ => Vec::new(),
+                    };
                     serde_json::json!({
                         "key": f.key,
-                        // SPA labels: derive from the key's last segment.
                         "kind": settings_kind(f.kind),
+                        "span": settings_span(f.span),
                         "restart": f.restart,
                         "value": effective.shown(f.key),
                         "secret_set": matches!(f.kind, settings::Kind::Secret)
                             && effective.secret_is_set(f.key),
+                        "models": models,
                     })
                 })
                 .collect();
             serde_json::json!({
                 "name": section.name,
                 "category": section.category.slug(),
+                "enabled": settings::section_is_enabled(&state.config(), section),
                 "fields": fields,
             })
         })
@@ -763,8 +836,16 @@ pub async fn settings_list(State(state): State<Arc<RamaState>>, req: Request) ->
         serde_json::json!({
             "sections": sections,
             "restart_pending": restart_pending,
+            "needs_backend": state.upstreams.all_models().is_empty(),
         }),
     )
+}
+
+fn settings_span(span: settings::Span) -> &'static str {
+    match span {
+        settings::Span::Full => "full",
+        settings::Span::Half => "half",
+    }
 }
 
 fn settings_kind(kind: settings::Kind) -> &'static str {
@@ -979,6 +1060,7 @@ pub async fn tokens_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 "owner_id": t.user_id,
                 "owner_email": t.user_email,
                 "created_at": t.created_at.to_string(),
+                "last_used_at": t.last_used_at.map(|value| value.to_string()),
                 "expires_at": t.expires_at.to_string(),
                 "revoked": t.revoked_at.is_some(),
                 "tools_enabled": t.tools_enabled,
@@ -998,6 +1080,7 @@ pub async fn tokens_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             "models": state.upstreams.all_models_for(&gateway_core::server::upstreams::PoolAccess::all()),
             "usage_enabled": state.usage.is_enabled(),
             "currency": state.config().usage.currency,
+            "timezone": tz,
         }),
     )
 }
@@ -1083,6 +1166,30 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
         }
     }
 
+    let coverage: std::collections::HashMap<_, _> = snapshot
+        .pools
+        .iter()
+        .map(|pool| {
+            let models = state
+                .upstreams
+                .pool_model_coverage(&pool.name)
+                .into_iter()
+                .map(|(name, serving, total)| {
+                    serde_json::json!({
+                        "name": name,
+                        "serving": serving,
+                        "total": total,
+                    })
+                })
+                .collect::<Vec<_>>();
+            (pool.name.clone(), models)
+        })
+        .collect();
+    let pending_changes = topology_pending_changes(
+        &snapshot.pools,
+        &snapshot.backends,
+        &state.upstreams.live_topology(),
+    );
     let pools: Vec<_> = snapshot
         .pools
         .iter()
@@ -1112,6 +1219,9 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 "name": b.name,
                 "base_url": b.base_url,
                 "api_key_env": b.api_key_env,
+                "api_key_env_set": b.api_key_env.as_ref().is_some_and(|name| {
+                    std::env::var(name).is_ok_and(|value| !value.is_empty())
+                }),
                 "has_stored_key": b.api_key_ct.is_some(),
                 "weight": b.weight,
                 "max_inflight": b.max_inflight,
@@ -1131,6 +1241,9 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
             "pools": pools,
             "backends": backends,
             "fallbacks": snapshot.fallbacks,
+            "all_models": state.upstreams.all_models(),
+            "coverage": coverage,
+            "pending_changes": pending_changes,
             "usage_last_hour": usage,
             "dirty": state.topology_dirty_count(),
             // The vocabulary, so the SPA renders its picker from data rather
@@ -1140,8 +1253,121 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 .iter()
                 .map(|k| k.as_str())
                 .collect::<Vec<_>>(),
+            "pool_strategies": ["prefix_affinity", "least_inflight", "round_robin"],
+            "fallback_kinds": ["chat", "transcription", "embedding", "image"],
         }),
     )
+}
+
+fn topology_pending_changes(
+    pools: &[PoolRow],
+    backends: &std::collections::HashMap<String, BackendRow>,
+    live: &gateway_core::server::upstreams::LiveTopology,
+) -> Vec<serde_json::Value> {
+    use std::collections::BTreeMap;
+
+    let live_pools: BTreeMap<_, _> = live
+        .pools
+        .iter()
+        .map(|pool| (pool.name.as_str(), pool))
+        .collect();
+    let db_pools: BTreeMap<_, _> = pools
+        .iter()
+        .map(|pool| (pool.name.as_str(), pool))
+        .collect();
+    let mut changes = Vec::new();
+    for (name, pool) in &db_pools {
+        let Some(live_pool) = live_pools.get(name) else {
+            changes.push(serde_json::json!({"code": "pool_added", "pool": name}));
+            continue;
+        };
+        if pool.kind != live_pool.kind.as_str() {
+            changes.push(serde_json::json!({
+                "code": "pool_kind",
+                "pool": name,
+                "from": live_pool.kind.as_str(),
+                "to": pool.kind,
+            }));
+        }
+        let live_strategy = picker_strategy_key(live_pool.strategy);
+        if pool.strategy != live_strategy {
+            changes.push(serde_json::json!({
+                "code": "pool_strategy",
+                "pool": name,
+                "from": live_strategy,
+                "to": pool.strategy,
+            }));
+        }
+        let mut db_members = pool.backends.iter().map(String::as_str).collect::<Vec<_>>();
+        db_members.sort_unstable();
+        let live_members = live_pool
+            .backends
+            .iter()
+            .map(|backend| backend.name.as_str())
+            .collect::<Vec<_>>();
+        for backend in db_members
+            .iter()
+            .filter(|name| !live_members.contains(name))
+        {
+            changes.push(
+                serde_json::json!({"code": "backend_joins", "backend": backend, "pool": name}),
+            );
+        }
+        for backend in live_members
+            .iter()
+            .filter(|name| !db_members.contains(name))
+        {
+            changes.push(
+                serde_json::json!({"code": "backend_leaves", "backend": backend, "pool": name}),
+            );
+        }
+        for live_backend in &live_pool.backends {
+            let Some(backend) = backends.get(&live_backend.name) else {
+                continue;
+            };
+            if backend.base_url.trim_end_matches('/') != live_backend.base_url {
+                changes.push(serde_json::json!({
+                    "code": "backend_url",
+                    "backend": live_backend.name,
+                    "from": live_backend.base_url,
+                    "to": backend.base_url,
+                }));
+            }
+            if backend.weight.max(1) != live_backend.weight
+                || backend.max_inflight.max(1) != live_backend.max_inflight
+            {
+                changes.push(serde_json::json!({
+                    "code": "backend_limits",
+                    "backend": live_backend.name,
+                    "weight": backend.weight.max(1),
+                    "inflight": backend.max_inflight.max(1),
+                }));
+            }
+            if backend.health_path != live_backend.health_path {
+                changes.push(serde_json::json!({
+                    "code": "backend_health_path",
+                    "backend": live_backend.name,
+                    "to": backend.health_path,
+                }));
+            }
+        }
+    }
+    for name in live_pools
+        .keys()
+        .filter(|name| !db_pools.contains_key(*name))
+    {
+        changes.push(serde_json::json!({"code": "pool_removed", "pool": name}));
+    }
+    changes
+}
+
+fn picker_strategy_key(strategy: gateway_core::server::upstreams::PickerStrategy) -> &'static str {
+    use gateway_core::server::upstreams::PickerStrategy;
+    match strategy {
+        PickerStrategy::RoundRobin => "round_robin",
+        PickerStrategy::LeastInflight => "least_inflight",
+        PickerStrategy::PrefixAffinity => "prefix_affinity",
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -1168,8 +1394,9 @@ pub struct BackendSaveBody {
     pub models: Vec<String>,
     #[serde(default)]
     pub aliases: Vec<AliasBody>,
-    /// Pool membership to set (None = leave as-is; Some(None) = unassign).
-    pub pool: Option<Option<String>>,
+    /// Pool membership to set. `null` unassigns the backend.
+    #[serde(default)]
+    pub pool: Option<String>,
     /// Guard against the accidental-overwrite the form path guards: the
     /// caller confirms when the name already exists.
     #[serde(default)]
@@ -1183,8 +1410,199 @@ pub struct AliasBody {
     pub target: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+pub struct BackendTestBody {
+    #[serde(default)]
+    pub name: String,
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key_env: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub health_path: String,
+}
+
+const BACKEND_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+const BACKEND_TEST_MAX_MODELS: usize = 40;
+
+pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(bytes) => bytes,
+        Err(message) => return bad_request(message),
+    };
+    let parsed: BackendTestBody = match serde_json::from_slice(&bytes) {
+        Ok(parsed) => parsed,
+        Err(err) => return bad_request(format!("parsing the backend test body: {err}")),
+    };
+    let base_url = parsed.base_url.trim().trim_end_matches('/');
+    if base_url.is_empty() {
+        return json_ok(
+            StatusCode::OK,
+            serde_json::json!({"outcome": "error", "code": "base_url_required", "models": []}),
+        );
+    }
+    let health_path = match parsed.health_path.trim() {
+        "" => "/models",
+        path => path,
+    };
+    let url = format!("{base_url}{health_path}");
+    let (key, key_source) = backend_test_key(&state, &parsed).await;
+    let mut request = state.http.get(&url).header(
+        "user-agent",
+        concat!(
+            "llm-gateway/",
+            env!("CARGO_PKG_VERSION"),
+            " connection-test"
+        ),
+    );
+    if let Some(key) = key.as_deref() {
+        request = request.bearer_auth(key);
+    }
+    let response = match tokio::time::timeout(BACKEND_TEST_TIMEOUT, request.send()).await {
+        Ok(Ok(response)) => response,
+        Ok(Err(err)) => {
+            return json_ok(
+                StatusCode::OK,
+                serde_json::json!({
+                    "outcome": "error",
+                    "code": "unreachable",
+                    "url": url,
+                    "detail": deepest_error(&err),
+                    "key_source": key_source,
+                    "models": [],
+                }),
+            );
+        }
+        Err(_) => {
+            return json_ok(
+                StatusCode::OK,
+                serde_json::json!({
+                    "outcome": "error",
+                    "code": "timeout",
+                    "url": url,
+                    "timeout_seconds": BACKEND_TEST_TIMEOUT.as_secs(),
+                    "key_source": key_source,
+                    "models": [],
+                }),
+            );
+        }
+    };
+    let status = response.status().as_u16();
+    let body = response.bytes().await.unwrap_or_default();
+    if matches!(status, 401 | 403) {
+        return json_ok(
+            StatusCode::OK,
+            serde_json::json!({
+                "outcome": "error",
+                "code": "auth_failed",
+                "status": status,
+                "key_source": key_source,
+                "models": [],
+            }),
+        );
+    }
+    if !(200..300).contains(&status) {
+        return json_ok(
+            StatusCode::OK,
+            serde_json::json!({
+                "outcome": "error",
+                "code": "http_error",
+                "status": status,
+                "url": url,
+                "key_source": key_source,
+                "models": [],
+            }),
+        );
+    }
+    let models = backend_test_model_ids(&body);
+    let code = if models.is_empty() {
+        "ok_no_models"
+    } else {
+        "ok"
+    };
+    let outcome = if models.is_empty() {
+        "warning"
+    } else {
+        "success"
+    };
+    json_ok(
+        StatusCode::OK,
+        serde_json::json!({
+            "outcome": outcome,
+            "code": code,
+            "model_count": models.len(),
+            "models": models.into_iter().take(BACKEND_TEST_MAX_MODELS).collect::<Vec<_>>(),
+            "key_source": key_source,
+        }),
+    )
+}
+
+async fn backend_test_key(
+    state: &RamaState,
+    body: &BackendTestBody,
+) -> (Option<String>, serde_json::Value) {
+    if !body.api_key.trim().is_empty() {
+        return (
+            Some(body.api_key.trim().to_string()),
+            serde_json::json!({"kind": "typed"}),
+        );
+    }
+    if !body.name.trim().is_empty()
+        && let Ok(Some(existing)) = upstreams_config::get_backend(&state.db, body.name.trim()).await
+        && let (Some(ciphertext), Some(nonce)) = (existing.api_key_ct, existing.api_key_nonce)
+        && let Ok(key) = state.crypto.open_str(&nonce, &ciphertext)
+    {
+        return (Some(key), serde_json::json!({"kind": "stored"}));
+    }
+    let env_name = body.api_key_env.trim();
+    if !env_name.is_empty() {
+        return match std::env::var(env_name) {
+            Ok(key) if !key.is_empty() => (
+                Some(key),
+                serde_json::json!({"kind": "env", "name": env_name}),
+            ),
+            _ => (
+                None,
+                serde_json::json!({"kind": "env_unset", "name": env_name}),
+            ),
+        };
+    }
+    (None, serde_json::json!({"kind": "none"}))
+}
+
+fn backend_test_model_ids(body: &[u8]) -> Vec<String> {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(data) = value.get("data").and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    let mut models = data
+        .iter()
+        .filter_map(|model| model.get("id").and_then(serde_json::Value::as_str))
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    models.sort();
+    models.dedup();
+    models
+}
+
+fn deepest_error(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = err.to_string();
+    let mut source = err.source();
+    while let Some(err) = source {
+        message = err.to_string();
+        source = err.source();
+    }
+    message
+}
+
 /// PUT /api/v0/admin/backends — upsert a backend row (sealed key, preserved
-/// drain state) and optionally set its pool membership. Marks the topology
+/// drain state) and set its pool membership. Marks the topology
 /// dirty; the registry picks it up on the apply.
 pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
@@ -1267,9 +1685,8 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
     if let Err(err) = upstreams_config::upsert_backend(&state.db, &row).await {
         return internal(err);
     }
-    if let Some(pool) = parsed.pool
-        && let Err(err) =
-            upstreams_config::set_backend_pool(&state.db, &name, pool.as_deref()).await
+    if let Err(err) =
+        upstreams_config::set_backend_pool(&state.db, &name, parsed.pool.as_deref()).await
     {
         return internal(err);
     }
@@ -1614,6 +2031,13 @@ pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) 
                     "max_inflight": max_inflight,
                     "configured": true,
                     "dirty": dirty,
+                    "models": live.as_ref().map(|(_, backend)| {
+                        backend.models_snapshot().into_iter().collect::<Vec<_>>()
+                    }).unwrap_or_default(),
+                    "withheld": live.as_ref().map(|(_, backend)| {
+                        backend.withheld_models().into_iter().collect::<Vec<_>>()
+                    }).unwrap_or_default(),
+                    "usage": usage.get(name).cloned().unwrap_or_else(|| vec![0; 12]),
                     "requests_last_hour": usage.get(name).map(|v| v.iter().sum::<i64>()).unwrap_or(0),
                 });
                 let encoded = payload.to_string();

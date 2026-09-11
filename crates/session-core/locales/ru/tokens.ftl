@@ -30,7 +30,6 @@ tokens-mcp-allow-description = Инструменты коннектора, тр
 tokens-minted-heading = Токен создан
 tokens-minted-copy-warning = Скопируйте значение сейчас — повторно увидеть его будет нельзя.
 tokens-copy-aria = Скопировать токен
-tokens-copy-title = Скопировать токен
 tokens-minted-name = Имя: { $name }
 
 tokens-account-user-id-label = ID пользователя
@@ -60,14 +59,32 @@ tokens-limits-add = Добавить квоту
 tokens-limits-saved-toast = Квота токена сохранена.
 
 # SPA-only: the Svelte /tokens row panels and their confirm prompts.
-tokens-models-heading = Список разрешённых моделей
-tokens-models-input-placeholder = идентификаторы моделей через запятую
-tokens-quota-heading = Квота
-tokens-quota-per = за
 tokens-quota-max-placeholder = макс
-tokens-mcp-heading = MCP-коннекторы
-tokens-mcp-allow-button = Разрешить выполнение
-tokens-mcp-block-button = Блокировать
 tokens-revoke-confirm = Отозвать этот токен? Клиенты, которые его используют, сразу перестанут работать.
 tokens-rotate-confirm = Выпустить новый секрет? Старый сразу перестанет работать.
 tokens-remove-confirm = Удалить эту запись токена навсегда?
+
+tokens-create-description = Создайте новый Bearer-токен для API, совместимого с OpenAI.
+tokens-tool-use-description = Разрешить этому токену вызывать инструменты шлюза (веб-поиск, RAG, …).
+tokens-capabilities-summary = Возможности
+tokens-mcp-allow-aria = Разрешить MCP-инструменты в режиме «ask» через API
+tokens-mcp-allow-label = Разрешить MCP-инструменты «ask» через API
+tokens-account-heading = Аккаунт
+tokens-signed-in-as = Вы вошли как { $email }
+tokens-account-oidc-label = Роли OIDC
+tokens-account-rbac-label = ID ролей RBAC
+tokens-roles-none = нет
+tokens-roles-none-granted = не предоставлены
+tokens-push-heading = Уведомления
+tokens-push-description = Получайте уведомление на этом устройстве, когда начатый вами ответ завершится, пока вы не в приложении.
+tokens-push-off = Уведомления выключены для этого устройства.
+tokens-push-denied = Этот браузер заблокировал уведомления. Разрешите их в настройках браузера, чтобы включить.
+tokens-push-unsupported = Этот браузер не поддерживает уведомления.
+tokens-models-none-picked = Отметьте хотя бы одну модель или отключите ограничение.
+tokens-limits-summary-none = Квота: нет
+tokens-limits-summary-some = Квота: правил — { $count }
+tokens-limits-help = Ограничение только для этого токена. Ваш собственный бюджет продолжает действовать, поэтому это может только сузить расход токена, но не расширить его.
+tokens-limits-remove = Удалить
+tokens-limits-removed-toast = Квота токена удалена.
+tokens-limits-admin-badge = задано администратором
+tokens-models-admin-set = Оператор дополнительно ограничивает этот токен моделями: { $models }. Ваш выбор может только сузить этот список, но не расширить.

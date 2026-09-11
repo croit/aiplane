@@ -12,11 +12,9 @@ memory-save-button = Сохранить
 memory-delete-title = Удалить запись
 
 # SPA-only: the Svelte /memory page's inline add/edit form.
-memory-edit-heading = Изменить запись
-memory-kind-label = Тип
-memory-kind-preference = Предпочтение
-memory-kind-project = Проект
-memory-kind-fact = Факт
+memory-kind-preference = Предпочтения
+memory-kind-project = Контекст проекта
+memory-kind-fact = Факты
 memory-content-label = Содержимое
-memory-add-button = Добавить
+memory-add-button = Запомнить
 memory-delete-confirm = Удалить эту запись?

@@ -115,7 +115,7 @@ url = "2"
 jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "rust_crypto"] }
 
 # HTTP framework + proxying. `http-full` covers server, client, codec, and
-# the datastar SSE helpers; rustls/tls deliberately omitted so the build
+# the SSE response primitives; rustls/tls deliberately omitted so the build
 # doesn't pull aws-lc-sys (cmake-only). TLS is fronted by the reverse
 # proxy in deployments; outbound HTTPS uses reqwest's ring-backed rustls.
 rama = { git = "https://github.com/plabayo/rama", rev = "5ba0ada6b89defec9eb8cbdc645b4080c950651e", default-features = false, features = ["http-full", "tower"] }

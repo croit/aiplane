@@ -391,8 +391,6 @@ pub async fn run_json_turn_stream(
                     flush(&pool, &session_id, &assistant_turn_id, &mut feed, &mut tx).await;
                     return;
                 }
-                // The datastar-only wire; JSON subscribers get the structured
-                // `Prompt` twin instead.
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     // Missed ticks are subsumed by the next DB re-read.
                     dirty = true;

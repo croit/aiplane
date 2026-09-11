@@ -56,17 +56,65 @@ test("the SPA shell loads at the root (client bundle boots, not the 404/503 fall
     await ctx.close();
 });
 
-test("a signed-out visitor is redirected into the OIDC login flow", async (t) => {
+test("a signed-out visitor reaches the sign-in entry with return-to intact", async (t) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     await page.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
 
-    // No session → /api/v0/me 401s → the layout bounces to /auth/login.
-    // With a REAL provider configured the chain continues off-site (authentik
-    // & co), so the /auth/ assertion only holds on the OIDC-less stub.
-    await page
-        .waitForURL((u) => u.pathname.startsWith("/auth/"), { timeout: 5000 })
-        .catch(() => t.skip("a real OIDC provider is configured — the flow leaves the origin"));
+    // A first-run server owns the document request and redirects to setup;
+    // once configured, the SPA keeps the explicit production login entry.
+    const reachedLogin = await page
+        .waitForURL((u) => u.pathname === "/login", { timeout: 5000 })
+        .then(() => true)
+        .catch(() => false);
+    if (!reachedLogin) {
+        t.skip("the first-run setup gate is still active");
+        await ctx.close();
+        return;
+    }
+    await page.getByRole("heading", { name: "Sign in to LLM Gateway", exact: true }).waitFor();
+    assert.equal(await page.locator('input[name="return_to"]').getAttribute("value"), "/");
+    await ctx.close();
+});
+
+test("first-run setup uses the standalone two-step provider shell", async () => {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await ctx.newPage();
+    await page.route("**/api/v0/setup/state*", (route) => route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+            access: "first_run",
+            draft: null,
+            proof: null,
+            suggested_public_url: BASE,
+        }),
+    }));
+    await page.goto(`${BASE}/setup`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: "Connect your identity provider", exact: true }).waitFor();
+    assert.equal(await page.locator("aside").count(), 0);
+    await page.getByText("Step 1 of 2", { exact: true }).waitFor();
+    await page.getByText("Whitelist this redirect URI in your provider", { exact: true }).waitFor();
+    for (const label of ["Public URL of this gateway", "Issuer URL", "Client ID", "Client secret", "Scopes", "Group claim"]) await page.getByLabel(label, { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Sign in to test", exact: true }).isDisabled(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await ctx.close();
+});
+
+test("login preserves the production sign-in entry and safe deep link", async () => {
+    await devSessionCookie();
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/login?return_to=${encodeURIComponent('/admin/settings?tab=tools')}`, { waitUntil: "networkidle" });
+
+    await page.getByRole("heading", { name: "Sign in to LLM Gateway", exact: true }).waitFor();
+    assert.equal(await page.locator("aside").count(), 0);
+    const form = page.locator('form[action="/auth/login"]');
+    assert.equal(await form.locator('input[name="return_to"]').getAttribute("value"), "/admin/settings?tab=tools");
+    await page.getByRole("button", { name: "Continue with OIDC →", exact: true }).waitFor();
+    const source = page.getByRole("link", { name: "Source code · AGPL-3.0", exact: true });
+    assert.match(await source.getAttribute("href"), /^https:\/\//);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await ctx.close();
 });
 
@@ -123,17 +171,65 @@ test("a signed-in user sees their identity from GET /api/v0/me", async (t) => {
     await ctx.close();
 });
 
+test("the sidebar keeps navigation compact and gives scrolling to conversations", async () => {
+    const ctx = await browser.newContext();
+    await ctx.addCookies([
+        {
+            name: "id",
+            value: await devSessionCookie(),
+            url: BASE,
+        },
+    ]);
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/chat`, { waitUntil: "networkidle" });
+
+    const workspace = page.getByRole("button", { name: "Toggle Workspace section" });
+    const account = page.getByRole("button", { name: "Toggle Account section" });
+    assert.equal(await workspace.getAttribute("aria-expanded"), "true");
+    assert.equal(await account.getAttribute("aria-expanded"), "false");
+    assert.equal(await page.getByRole("link", { name: "Memory" }).count(), 1);
+    assert.equal(await page.getByRole("link", { name: "Tokens" }).count(), 0);
+
+    const scrollOwners = await page.locator("aside").evaluate((aside) => {
+        const primary = aside.querySelector("nav");
+        const conversations = aside.querySelector("[data-sidebar-conversations]");
+        return {
+            primary: primary && getComputedStyle(primary).overflowY,
+            conversations: conversations && getComputedStyle(conversations).overflowY,
+        };
+    });
+    assert.equal(scrollOwners.primary, "visible");
+    assert.equal(scrollOwners.conversations, "auto");
+
+    for (const label of ["Chat", "Memory", "Scheduled", "Webhooks", "Integrations", "My Skills", "Tools"]) {
+        assert.equal(
+            await page.getByRole("link", { name: label, exact: true }).locator("svg").count(),
+            1,
+            `${label} keeps its navigation icon`,
+        );
+    }
+
+    await account.click();
+    assert.equal(await account.getAttribute("aria-expanded"), "true");
+    assert.match((await ctx.cookies()).find((cookie) => cookie.name === "nav_sections")?.value ?? "", /account/);
+    await page.reload({ waitUntil: "networkidle" });
+    assert.equal(
+        await page.getByRole("button", { name: "Toggle Account section" }).getAttribute("aria-expanded"),
+        "true",
+    );
+    await ctx.close();
+});
+
 /// A deep link, not just `/`: the guard is in the layout, so every client
 /// route inherits it — but only if the layout actually runs before the page
 /// renders. A route that painted its own content first would leak whatever it
 /// had already fetched.
-test("a deep protected route bounces an anonymous visitor too", async (t) => {
+test("a deep protected route reaches login without losing its destination", async () => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     await page.goto(`${BASE}/tokens`, { waitUntil: "domcontentloaded" });
-    await page
-        .waitForURL((u) => u.pathname.startsWith("/auth/"), { timeout: 5000 })
-        .catch(() => t.skip("a real OIDC provider is configured — the flow leaves the origin"));
+    await page.waitForURL((u) => u.pathname === "/login", { timeout: 5000 });
+    assert.equal(await page.locator('input[name="return_to"]').getAttribute("value"), "/tokens");
     await ctx.close();
 });
 

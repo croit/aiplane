@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { base } from '$app/paths';
+	import { decodeSetupClaim, encodeSetupClaim, setupClaimChoices } from '$lib/setup';
 	import { t } from '$lib/i18n.svelte';
 
 	interface Draft {
@@ -67,7 +68,7 @@
 			}
 			error = null;
 		} catch (err) {
-			error = String(err);
+			error = err instanceof Error ? err.message : String(err);
 		}
 	}
 
@@ -113,8 +114,8 @@
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
-					claim: picked.split('\u0000')[0] || null,
-					value: picked.split('\u0000')[1] || null,
+					claim: decodeSetupClaim(picked)?.[0] ?? null,
+					value: decodeSetupClaim(picked)?.[1] ?? null,
 					manual_claim: manualClaim,
 					manual_value: manualValue
 				})
@@ -130,20 +131,7 @@
 	}
 
 	/** Every string / string[] claim in the proof, flattened as pickable pairs. */
-	const claimChoices = $derived.by(() => {
-		const out: { claim: string; value: string; label: string }[] = [];
-		const claims = wiz?.proof?.claims ?? {};
-		for (const [key, raw] of Object.entries(claims)) {
-			if (Array.isArray(raw)) {
-				for (const v of raw) {
-					if (typeof v === 'string' && v) out.push({ claim: key, value: v, label: `${key} = ${v}` });
-				}
-			} else if (typeof raw === 'string' && raw && !key.startsWith('_')) {
-				out.push({ claim: key, value: raw, label: `${key} = ${raw}` });
-			}
-		}
-		return out;
-	});
+	const claimChoices = $derived(setupClaimChoices(wiz?.proof?.claims ?? {}));
 
 	// What the provider must be told to allow. Built from the URL field as the
 	// operator types, because it is only correct if it matches that field
@@ -155,20 +143,23 @@
 	onMount(refresh);
 </script>
 
-<div class="mx-auto max-w-xl">
-	<h1 class="text-2xl font-bold mb-2">{t('setup-page-heading')}</h1>
+<svelte:head><title>{t('setup-page-title')}</title></svelte:head>
 
-	{#if error}<div class="alert alert-error mb-4 text-sm"><span>{error}</span></div>{/if}
+<div class="w-full">
 	{#if notice}<div class="alert alert-warning mb-4 text-sm"><span>{notice}</span></div>{/if}
 
-	{#if wiz?.access === 'closed'}
+	{#if error}
+		<div class="card border border-base-300"><div class="card-body gap-4"><h1 class="card-title">{t('setup-error-heading')}</h1><p class="m-0 text-base-content/80">{error}</p><a class="btn btn-outline btn-sm self-start" href="{base}/setup">{t('setup-error-back')}</a></div></div>
+	{:else if !wiz}
+		<div class="skeleton h-96 w-full"></div>
+	{:else if wiz.access === 'closed'}
 		<div class="alert alert-info mb-4"><span>{t('setup-closed')}</span></div>
 	{:else if wiz?.proof}
 		<!-- Screen 2: the test login proved the provider; pick the admin claim. -->
 		<div class="card border border-base-300 mb-4">
-			<div class="card-body">
+			<div class="card-body gap-4">
 				<span class="text-xs uppercase tracking-wide text-base-content/50">{t('setup-step-2-of-2')}</span>
-				<h2 class="card-title text-base">{t('setup-admin-heading')}</h2>
+				<h1 class="card-title text-2xl">{t('setup-admin-heading')}</h1>
 				<p class="text-sm text-base-content/70">
 					{t('setup-login-worked')}
 					<strong>{wiz?.proof?.email || wiz?.proof?.subject}</strong>
@@ -185,7 +176,7 @@
 									type="radio"
 									class="radio radio-sm"
 									name="admin-claim"
-									value="{choice.claim}&#0;{choice.value}"
+									value={encodeSetupClaim(choice.claim, choice.value)}
 									bind:group={picked}
 								/>
 								<span class="label-text font-mono text-xs">{choice.label}</span>
@@ -198,11 +189,11 @@
 				<div class="flex gap-2">
 					<label class="flex flex-col gap-1 flex-1">
 						<span class="label-text text-xs">{t('setup-manual-claim')}</span>
-						<input class="input input-bordered input-sm" placeholder="groups" bind:value={manualClaim} />
+						<input class="input input-bordered input-sm" placeholder={t('setup-manual-claim-placeholder')} bind:value={manualClaim} />
 					</label>
 					<label class="flex flex-col gap-1 flex-1">
 						<span class="label-text text-xs">{t('setup-manual-value')}</span>
-						<input class="input input-bordered input-sm" placeholder="gateway-admins" bind:value={manualValue} />
+						<input class="input input-bordered input-sm" placeholder={t('setup-manual-value-placeholder')} bind:value={manualValue} />
 					</label>
 				</div>
 				<p class="text-xs text-base-content/60">{t('setup-manual-help')}</p>
@@ -233,60 +224,56 @@
 		<div class="card border border-base-300">
 			<div class="card-body">
 				<span class="text-xs uppercase tracking-wide text-base-content/50">{t('setup-step-1-of-2')}</span>
-				<h2 class="card-title text-base">{t('setup-provider-heading')}</h2>
-				<p class="text-sm text-base-content/70">{t('setup-provider-intro')}</p>
-				<div class="flex flex-col gap-3 mt-2">
-					<label class="flex flex-col gap-1">
-						<span class="label-text">{t('setup-field-public-url')}</span>
-						<input class="input input-bordered input-sm" bind:value={fpublicUrl} placeholder="https://gw.example.com" />
+				<h1 class="card-title text-2xl">{t('setup-provider-heading')}</h1>
+				<p class="m-0 text-base-content/70">{t('setup-provider-intro')}</p>
+				<div class="flex flex-col gap-4">
+					<div class="flex flex-col gap-1">
+						<label class="label-text" for="setup-public-url">{t('setup-field-public-url')}</label>
+						<input id="setup-public-url" class="input input-bordered w-full" type="url" required bind:value={fpublicUrl} />
 						<span class="text-xs text-base-content/60">{t('setup-field-public-url-help')}</span>
-					</label>
+					</div>
 
 					{#if redirectUri}
-						<div class="rounded border border-warning/40 bg-warning/10 p-2">
-							<p class="text-xs font-semibold">{t('setup-redirect-uri-heading')}</p>
-							<code class="mt-1 block break-all text-xs">{redirectUri}</code>
-							<p class="mt-1 text-xs text-base-content/70">{t('setup-redirect-uri-help')}</p>
+						<div class="alert alert-info text-sm">
+							<div><p class="font-medium">{t('setup-redirect-uri-heading')}</p><code class="break-all">{redirectUri}</code><p class="mt-1 opacity-80">{t('setup-redirect-uri-help')}</p></div>
 						</div>
 					{/if}
 
-					<label class="flex flex-col gap-1">
-						<span class="label-text">{t('setup-field-issuer')}</span>
-						<input class="input input-bordered input-sm" bind:value={fissuer} placeholder="https://id.example.com" />
+					<div class="flex flex-col gap-1">
+						<label class="label-text" for="setup-issuer">{t('setup-field-issuer')}</label>
+						<input id="setup-issuer" class="input input-bordered w-full" type="url" required bind:value={fissuer} placeholder={t('setup-issuer-placeholder')} />
 						<span class="text-xs text-base-content/60">{t('setup-field-issuer-help')}</span>
-					</label>
-					<label class="flex flex-col gap-1">
-						<span class="label-text">{t('setup-field-client-id')}</span>
-						<input class="input input-bordered input-sm" bind:value={fclientId} />
-					</label>
-					<label class="flex flex-col gap-1">
-						<span class="label-text">
+					</div>
+					<div class="grid gap-4 sm:grid-cols-2">
+					<div class="flex flex-col gap-1"><label class="label-text" for="setup-client-id">{t('setup-field-client-id')}</label><input id="setup-client-id" class="input input-bordered w-full" required bind:value={fclientId} /></div>
+					<div class="flex flex-col gap-1"><label class="label-text" for="setup-client-secret">
 							{t('setup-field-client-secret')}{wiz?.draft?.client_secret_set
 								? ` (${t('setup-secret-set-hint')})`
 								: ''}
-						</span>
-						<input class="input input-bordered input-sm" type="password" bind:value={fsecret} />
-					</label>
-					<label class="flex flex-col gap-1">
-						<span class="label-text">{t('setup-field-scopes')}</span>
-						<input class="input input-bordered input-sm" bind:value={fscopes} />
+						</label><input id="setup-client-secret" class="input input-bordered w-full" type="password" required={!wiz?.draft?.client_secret_set} autocomplete="off" bind:value={fsecret} /></div>
+					</div>
+					<div class="grid gap-4 sm:grid-cols-2">
+					<div class="flex flex-col gap-1">
+						<label class="label-text" for="setup-scopes">{t('setup-field-scopes')}</label>
+						<input id="setup-scopes" class="input input-bordered w-full" bind:value={fscopes} />
 						<span class="text-xs text-base-content/60">{t('setup-field-scopes-help')}</span>
-					</label>
-					<label class="flex flex-col gap-1">
-						<span class="label-text">{t('setup-field-roles-claim')}</span>
-						<input class="input input-bordered input-sm" bind:value={frolesClaim} placeholder="groups" />
+					</div>
+					<div class="flex flex-col gap-1">
+						<label class="label-text" for="setup-roles-claim">{t('setup-field-roles-claim')}</label>
+						<input id="setup-roles-claim" class="input input-bordered w-full" bind:value={frolesClaim} />
 						<span class="text-xs text-base-content/60">{t('setup-field-roles-claim-help')}</span>
-					</label>
+					</div>
+					</div>
 				</div>
-				<div class="card-actions items-center justify-end mt-3 gap-2">
-					<span class="text-xs text-base-content/60">{t('setup-test-button-help')}</span>
+				<div class="flex flex-col gap-2">
 					<button
-						class="btn btn-primary btn-sm"
+						class="btn btn-primary btn-block"
 						onclick={testLogin}
 						disabled={busy || !fpublicUrl.trim() || !fissuer.trim() || !fclientId.trim()}
 					>
 						{busy ? t('setup-testing') : t('setup-test-button')}
 					</button>
+					<span class="text-center text-xs text-base-content/60">{t('setup-test-button-help')}</span>
 				</div>
 			</div>
 		</div>

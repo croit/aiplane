@@ -35,7 +35,7 @@ rand = { workspace = true }
 base64 = "0.22"
 tempfile = { workspace = true }
 regex = { workspace = true }
-# Rama wire types + the datastar SSE helpers the driver emits.
+# Rama wire types used by the driver and tool surface.
 rama = { workspace = true }
 # MCP client: stdio + streamable-HTTP transports. `reqwest` feature is required
 # because rmcp pulls its own reqwest, which Cargo does not feature-unify with

@@ -39,6 +39,27 @@ export interface CanvasDocument {
 	updated_at: string;
 }
 
+export interface ChatCapability {
+	key: string;
+	kind: 'tool' | 'skill';
+	title: string;
+	description: string;
+	group: string;
+	order: number;
+	state: 'off' | 'auto' | 'on';
+	can_disable: boolean;
+	icon: string | null;
+}
+
+export interface ChatAsset {
+	id: string;
+	turn_id: string;
+	filename: string;
+	mime: string;
+	size: number;
+	url: string;
+}
+
 /** Mirrors `shared::api::TokenSummary`. Timestamps are jiff RFC 3339 strings. */
 export interface TokenSummary {
 	id: string;
@@ -104,6 +125,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 		const detail = await res.text().catch(() => '');
 		throw new ApiError(res.status, `${res.status} ${res.statusText}${detail ? ` — ${detail}` : ''}`);
 	}
+	if (res.status === 204) return undefined as T;
 	return (await res.json()) as T;
 }
 
@@ -113,6 +135,10 @@ export const api = {
 	/** GET /api/v0/chat/sessions — the sidebar list (pinned first). */
 	listChatSessions: () =>
 		request<{ sessions: import('./chat-protocol.js').ChatSession[] }>('/api/v0/chat/sessions'),
+
+	/** GET /api/v0/chat/landing — latest conversation, or the caller's first. */
+	chatLanding: () =>
+		request<{ session: import('./chat-protocol.js').ChatSession }>('/api/v0/chat/landing'),
 
 	/** POST /api/v0/chat/sessions — mint an empty conversation. */
 	createChatSession: () =>
@@ -125,6 +151,8 @@ export const api = {
 		request<{
 			session: import('./chat-protocol.js').ChatSession;
 			turns: import('./chat-protocol.js').TurnWithTools[];
+			compacted_up_to_seq: number | null;
+			assets: ChatAsset[];
 		}>(`/api/v0/chat/sessions/${encodeURIComponent(id)}`),
 
 	/** DELETE /api/v0/chat/sessions/{id} — owner-only. */
@@ -184,13 +212,13 @@ export const api = {
 		),
 
 	/** GET /api/v0/chat/sessions/{id}/documents/{docId} — content + history. */
-	getChatDocument: (id: string, docId: string) =>
+	getChatDocument: (id: string, docId: string, version?: number) =>
 		request<{
 			document: CanvasDocument;
-			version: { version: number; content: string; author: string; created_at: string };
-			history: { version: number; created_at: string; chars: number; author: string }[];
+			version: { version: number; content: string; summary: string; author: string; created_at: string };
+			history: { version: number; summary: string; created_at: string; chars: number; author: string }[];
 		}>(
-			`/api/v0/chat/sessions/${encodeURIComponent(id)}/documents/${encodeURIComponent(docId)}`
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/documents/${encodeURIComponent(docId)}${version === undefined ? '' : `?version=${version}`}`
 		),
 
 	/** PUT /api/v0/chat/sessions/{id}/documents/{docId} — save a hand edit. */
@@ -221,9 +249,26 @@ export const api = {
 	listChatModels: () =>
 		request<{ models: { id: string; gdpr: boolean; nda: boolean }[] }>('/api/v0/models'),
 
+	/** Voice input and spoken-reply choices available to this user. */
+	chatVoiceConfig: () =>
+		request<{
+			data: string[];
+			speech_available: boolean;
+			speech_voices: string[];
+			speech_voice: string | null;
+		}>('/api/v0/transcription_models'),
+
+	/** Persist the voice used for spoken replies; empty restores the pool default. */
+	setSpeechVoice: (voice: string) =>
+		request<{ ok: boolean; voice: string | null }>('/api/v0/me/speech_voice', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ voice })
+		}),
+
 	/** GET /api/v0/chat/sessions/{id}/capabilities — the tool overlay. */
 	listChatCapabilities: (id: string) =>
-		request<{ tools: { key: string; title: string; enabled: boolean }[] }>(
+		request<{ tools: ChatCapability[] }>(
 			`/api/v0/chat/sessions/${encodeURIComponent(id)}/capabilities`
 		),
 
@@ -235,13 +280,13 @@ export const api = {
 	 * the driver both refuse a blocked key. `'auto'` (no override) is what a
 	 * composer checkbox means when it is unticked: "not pinned", not "banned".
 	 */
-	setChatCapability: (id: string, toolKey: string, state: 'on' | 'auto' | 'off') =>
-		request<{ tool_key: string; state: string }>(
+	setChatCapability: (id: string, kind: 'tool' | 'skill', key: string, state: 'on' | 'auto' | 'off') =>
+		request<{ kind: string; key: string; state: string }>(
 			`/api/v0/chat/sessions/${encodeURIComponent(id)}/capabilities`,
 			{
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ tool_key: toolKey, state })
+				body: JSON.stringify({ kind, key, state })
 			}
 		),
 
@@ -256,7 +301,8 @@ export const api = {
 	/** GET /api/v0/tools — the caller's tool toggles. */
 	listTools: () =>
 		request<{
-			tools: { key: string; title: string; description: string; category: string; enabled: boolean }[];
+			tools: { key: string; title: string; tech: string; description: string; category: string; enabled: boolean }[];
+			location: { shared: boolean; accuracy: number | null } | null;
 		}>('/api/v0/tools'),
 
 	/** POST /api/v0/tools/toggle — set one tool's state (explicit, idempotent). */
@@ -323,13 +369,3 @@ export const api = {
 			{ method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
 		)
 };
-
-/**
- * Where to bounce the browser for sign-in. `return_to` is the OIDC
- * callback's same-origin redirect target (validated server-side by
- * `is_safe_return_to`); without it the callback lands on `/`, i.e. the
- * legacy page, not the SPA.
- */
-export function loginUrl(returnTo: string): string {
-	return `/auth/login?return_to=${encodeURIComponent(returnTo)}`;
-}

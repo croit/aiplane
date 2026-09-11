@@ -19,12 +19,6 @@ chat-error-attachment-not-found = introuvable
 # the conversation header, the assistant's ask-back card, and the
 # turn-status line the server never renders itself.
 chat-list-empty = Aucune conversation pour l'instant. Lancez-en une ci-dessus.
-chat-list-pinned-badge = épinglée
-chat-list-pin = Épingler
-chat-list-unpin = Désépingler
-chat-list-delete = Supprimer
-chat-push-invite = Soyez averti dès qu'une réponse est terminée.
-chat-all-chats = Toutes les discussions
 chat-turn-stopped = arrêté
 chat-prompt-heading = L'assistant demande
 chat-prompt-placeholder = Saisissez une réponse…

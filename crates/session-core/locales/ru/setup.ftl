@@ -48,6 +48,11 @@ setup-testing = Проверка…
 # The SPA wizard: its own page heading, the closed-for-business
 # notice, and two inline states the server-rendered form had no
 # equivalent of.
-setup-page-heading = Настройка шлюза
 setup-closed = Настройка этого шлюза завершена. Войдите обычным способом или выполните restore-setup на хосте, чтобы снова открыть мастер.
 setup-secret-set-hint = задан — оставьте пустым, чтобы сохранить
+setup-error-heading = Настройка
+setup-page-title = Setup — LLM Gateway
+setup-error-back = Вернуться к настройке
+setup-manual-claim-placeholder = groups
+setup-manual-value-placeholder = gateway-admins
+setup-issuer-placeholder = https://id.example.com/realms/company

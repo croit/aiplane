@@ -77,6 +77,9 @@ cached Chromium binary, so you don't hunt for paths.
 - **Stale dev-ui** still on :8080 → the cookie you grabbed belongs to a
   different process and every request 303s to `/login`. Always `pkill` first
   and grab the cookie from the log of the instance that actually bound the port.
+- **Live SSE pages never become network-idle** → the helper waits for DOM
+  content and then the requested `--wait` selector, so use a selector that
+  proves the page's API data has rendered.
 - **`playwright install` error on launch** → the bundled Playwright wants a
   browser revision that isn't cached. The script avoids this by launching the
   newest cached `chromium-<rev>` via `executablePath`; if it still fails, set

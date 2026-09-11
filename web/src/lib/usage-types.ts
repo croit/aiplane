@@ -30,6 +30,9 @@ export interface UsageLimit {
 export interface UsageResponse {
 	period: string;
 	scope: 'all' | 'self';
+	can_view_all: boolean;
+	usage_enabled: boolean;
+	timezone: string;
 	currency: string;
 	summary: UsageSummary;
 	by_user: UsageGroup[];

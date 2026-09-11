@@ -3,15 +3,24 @@
 	import { base } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { api, ApiError } from '$lib/api';
-	import type { CanvasDocument } from '$lib/api';
+	import type { CanvasDocument, ChatAsset, ChatCapability } from '$lib/api';
 	import { createConversationController } from '$lib/chat.svelte';
 	import { createVoiceController } from '$lib/voice.svelte';
-	import { refreshSidebar } from '$lib/sidebar.svelte';
-	import { renderMarkdown } from '$lib/markdown';
-	import { parseUserContent } from '$lib/chat-protocol';
+	import { refreshSidebar, sidebar } from '$lib/sidebar.svelte';
+	import { parseUserContent, replaceUserText } from '$lib/chat-protocol';
 	import type { ChatSession } from '$lib/chat-protocol';
 	import { me } from '$lib/session.svelte';
 	import { t, time, n } from '$lib/i18n.svelte';
+	import ConversationHeader from '$lib/components/chat/ConversationHeader.svelte';
+	import DictationButton from '$lib/components/chat/DictationButton.svelte';
+	import CapabilityPicker from '$lib/components/chat/CapabilityPicker.svelte';
+	import Markdown from '$lib/components/chat/Markdown.svelte';
+	import ToolCalls from '$lib/components/chat/ToolCalls.svelte';
+	import ConversationCanvas from '$lib/components/chat/ConversationCanvas.svelte';
+	import MessageAttachments from '$lib/components/chat/MessageAttachments.svelte';
+	import { openDialog as openFeedback } from '$lib/feedback.svelte';
+	import { clearPageTitleOverride, setPageTitleOverride } from '$lib/page-title';
+	import { page } from '$app/state';
 
 	// One conversation. The route keys this component on the id, so an
 	// instance belongs to exactly one conversation for its whole life —
@@ -23,40 +32,60 @@
 	let session = $state<ChatSession | null>(null);
 	let model = $state('');
 	let models = $state<{ id: string; gdpr: boolean; nda: boolean }[]>([]);
+	let transcriptionModels = $state<string[]>([]);
+	let transcriptionModel = $state('');
+	let speechAvailable = $state(false);
+	let speechVoices = $state<string[]>([]);
+	let speechVoice = $state('');
 	let draft = $state('');
 	let files = $state<File[]>([]);
-	let tools = $state<{ key: string; title: string; enabled: boolean }[]>([]);
-	let toolsOpen = $state(false);
+	let tools = $state<ChatCapability[]>([]);
 	let effort = $state('standard');
 	// Levels, not labels: the option text is looked up in the template so a
 	// language switch re-renders the picker (same reason as the layout's nav).
 	const EFFORTS = ['fast', 'standard', 'deep', 'max'] as const;
 	let sending = $state(false);
 	let notice = $state<string | null>(null);
+	let compactedUpToSeq = $state<number | null>(null);
+	let assets = $state<ChatAsset[]>([]);
+	let clock = $state(Date.now());
+	let editingTurn = $state<{ id: string; content: string } | null>(null);
+	let editDraft = $state('');
+	let editFiles = $state<File[]>([]);
+	let promptChoices = $state<string[]>([]);
 
-	// Canvas documents (the panel the document tools write into).
 	let documents = $state<CanvasDocument[]>([]);
-	let openDoc = $state<{
-		document: CanvasDocument;
-		content: string;
-		history: { version: number; created_at: string; chars: number; author: string }[];
-	} | null>(null);
-	let docDraft = $state('');
-	let docEditing = $state(false);
-	let docSaving = $state(false);
+	let canvasOpen = $state(false);
 
 	const turns = $derived(controller ? controller.state.turns : []);
 	const streaming = $derived(controller !== null && controller.state.liveTurnId !== null);
 	const prompt = $derived(controller?.state.prompt ?? null);
+	const selectedModel = $derived(models.find((candidate) => candidate.id === model));
+	const hasCanvas = $derived(documents.length > 0 || assets.length > 0);
 	/** A conversation shared *with* you renders read-only, plus a Fork action. */
 	const isOwner = $derived(
 		session === null || me.value === null || session.user_id === me.value.id
 	);
+	let metaRequest = 0;
+
+	$effect(() => {
+		const pathname = page.url.pathname;
+		setPageTitleOverride(
+			pathname,
+			t('page-title-branded', { title: session?.title || t('chat-default-title') })
+		);
+		return () => clearPageTitleOverride(pathname);
+	});
 
 	async function loadMeta() {
+		const request = ++metaRequest;
 		try {
 			const snap = await api.getChatSession(id);
+			if (request !== metaRequest) return;
 			session = snap.session;
+			compactedUpToSeq = snap.compacted_up_to_seq;
+			assets = snap.assets;
+			if (snap.assets.length > 0 && window.innerWidth >= 768) canvasOpen = true;
 			// Prefill the model picker from the conversation's last assistant
 			// turn — the "keep talking to what you were talking to" default.
 			const lastModel = [...snap.turns]
@@ -67,7 +96,16 @@
 			// picker and refuse to send.
 			if (!model) model = lastModel ?? models[0]?.id ?? '';
 		} catch (err) {
+			if (request !== metaRequest) return;
 			notice = String(err);
+		}
+	}
+
+	async function refreshConversationMeta() {
+		await Promise.all([loadMeta(), refreshSidebar()]);
+		const sidebarSession = sidebar.sessions.find((candidate) => candidate.id === id);
+		if (session && sidebarSession?.title) {
+			session = { ...session, title: sidebarSession.title };
 		}
 	}
 
@@ -92,13 +130,35 @@
 		}
 	}
 
-	/// The composer's checkbox is "pin this tool for the conversation", so
-	/// unticking is `'auto'` (no override) — never `'off'`, which blocks the
-	/// tool for the rest of the conversation and has no UI to undo it.
-	async function toggleCapability(key: string, current: boolean) {
+	async function loadVoiceConfig() {
 		try {
-			await api.setChatCapability(id, key, current ? 'auto' : 'on');
-			tools = tools.map((tool) => (tool.key === key ? { ...tool, enabled: !current } : tool));
+			const config = await api.chatVoiceConfig();
+			transcriptionModels = config.data;
+			transcriptionModel = config.data[0] ?? '';
+			speechAvailable = config.speech_available;
+			speechVoices = config.speech_voices;
+			speechVoice = config.speech_voice ?? '';
+		} catch {
+			transcriptionModels = [];
+			speechAvailable = false;
+			speechVoices = [];
+		}
+	}
+
+	async function saveSpeechVoice() {
+		try {
+			await api.setSpeechVoice(speechVoice);
+		} catch (caught) {
+			notice = String(caught);
+		}
+	}
+
+	async function setCapability(capability: ChatCapability, state: ChatCapability['state']) {
+		try {
+			await api.setChatCapability(id, capability.kind, capability.key, state);
+			tools = tools.map((tool) =>
+				tool.kind === capability.kind && tool.key === capability.key ? { ...tool, state } : tool
+			);
 		} catch (err) {
 			notice = String(err);
 		}
@@ -117,19 +177,24 @@
 		// and the picker permanently in its free-text fallback.
 		void loadModels();
 		void loadTools();
+		void loadVoiceConfig();
 		const c = createConversationController(id);
 		c.onSidebarChanged = () => {
-			void loadMeta();
-			void refreshSidebar();
+			void refreshConversationMeta();
 			// A turn that wrote to the canvas bumps the sidebar too, so this is
 			// also the cue to re-read the document list.
 			void loadDocuments();
 		};
+		c.onTurnFinalized = () => void refreshConversationMeta();
 		c.attach();
 		controller = c;
 		void loadMeta();
 		void loadDocuments();
-		return () => c.destroy();
+		const timer = window.setInterval(() => (clock = Date.now()), 100);
+		return () => {
+			window.clearInterval(timer);
+			c.destroy();
+		};
 	});
 
 	const voiceOpen = $state({ open: false });
@@ -153,6 +218,10 @@
 	function openVoice() {
 		voice = createVoiceController(submitVoiceTurn);
 		voiceOpen.open = true;
+	}
+
+	function appendTranscript(text: string) {
+		draft = draft.trim() ? `${draft.trimEnd()} ${text}` : text;
 	}
 
 	function closeVoice() {
@@ -269,6 +338,7 @@
 
 	async function retry(turnId: string) {
 		if (!model.trim() || streaming) return;
+		if (!window.confirm(t('render-retry-confirm'))) return;
 		try {
 			await postJson(`/api/v0/chat/sessions/${id}/turns/${turnId}/retry`, {
 				model: model.trim()
@@ -279,14 +349,28 @@
 		}
 	}
 
-	async function editTurn(turnId: string, current: string) {
-		const text = window.prompt(t('render-edit-prompt'), current)?.trim();
-		if (!text || !model.trim() || streaming || text === current) return;
+	function editTurn(turnId: string, current: string) {
+		editingTurn = { id: turnId, content: current };
+		editDraft = parseUserContent(current).text;
+		editFiles = [];
+	}
+
+	async function saveTurnEdit() {
+		if (!editingTurn || !editDraft.trim() || !model.trim() || streaming) return;
+		if (!window.confirm(t('render-edit-confirm'))) return;
 		try {
-			await postJson(`/api/v0/chat/sessions/${id}/turns/${turnId}/edit`, {
-				model: model.trim(),
-				message: text
+			const form = new FormData();
+			form.append('model', model.trim());
+			form.append('message', replaceUserText(editingTurn.content, editDraft));
+			for (const file of editFiles) form.append('attachment', file);
+			const response = await fetch(`/api/v0/chat/sessions/${id}/turns/${editingTurn.id}/edit`, {
+				method: 'POST',
+				credentials: 'same-origin',
+				body: form
 			});
+			if (!response.ok) throw new Error((await response.text()).slice(0, 200) || response.statusText);
+			editingTurn = null;
+			editFiles = [];
 			controller?.attach();
 		} catch (err) {
 			notice = String(err);
@@ -324,6 +408,7 @@
 	}
 
 	async function removeAttachment(turnId: string, filename: string) {
+		if (!window.confirm(t('render-attachment-remove-confirm', { filename }))) return;
 		try {
 			await api.removeChatAttachment(id, turnId, filename);
 			// The turn's markers changed in the DB. Re-attaching replays a
@@ -338,34 +423,10 @@
 	async function loadDocuments() {
 		try {
 			documents = (await api.listChatDocuments(id)).documents;
+			if (documents.length > 0 && window.innerWidth >= 768) canvasOpen = true;
 		} catch {
 			// A conversation with no canvas is the normal case — stay quiet.
 			documents = [];
-		}
-	}
-
-	async function openDocument(docId: string) {
-		try {
-			const got = await api.getChatDocument(id, docId);
-			openDoc = { document: got.document, content: got.version.content, history: got.history };
-			docDraft = got.version.content;
-			docEditing = false;
-		} catch (err) {
-			notice = String(err);
-		}
-	}
-
-	async function saveDocument() {
-		if (!openDoc) return;
-		docSaving = true;
-		try {
-			await api.editChatDocument(id, openDoc.document.id, docDraft);
-			await openDocument(openDoc.document.id);
-			await loadDocuments();
-		} catch (err) {
-			notice = String(err);
-		} finally {
-			docSaving = false;
 		}
 	}
 
@@ -378,14 +439,48 @@
 	/// than approval. Sending every answer as `text` (which this did) made
 	/// `Confirmation::Approved` unreachable, so a user clicking "Yes, schedule
 	/// it" got a turn reporting that they had declined.
-	async function answerPrompt(choice: string | null, freeText?: string) {
+	async function answerPrompt(choice: string | null, freeText?: string, choices = choice === null ? [] : [choice]) {
 		if (!prompt || prompt.action !== 'show') return;
 		const payload =
 			choice === null && freeText === undefined
 				? { dismissed: true }
-				: { choices: choice === null ? [] : [choice], text: freeText ?? null };
+				: { choices, text: freeText ?? null };
 		try {
 			await postJson(`/api/v0/me/ask/feedback/${encodeURIComponent(prompt.turn_id)}`, payload);
+		} catch (err) {
+			notice = String(err);
+		} finally {
+			if (controller) controller.state.prompt = null;
+		}
+	}
+
+	function togglePromptChoice(option: string) {
+		promptChoices = promptChoices.includes(option)
+			? promptChoices.filter((choice) => choice !== option)
+			: [...promptChoices, option];
+	}
+
+	async function sharePromptLocation() {
+		if (!prompt || prompt.action !== 'show' || prompt.kind !== 'location') return;
+		try {
+			const position = await new Promise<GeolocationPosition>((resolve, reject) =>
+				navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10_000 })
+			);
+			await postJson(`/api/v0/me/location/feedback/${encodeURIComponent(prompt.turn_id)}`, {
+				lat: position.coords.latitude,
+				lon: position.coords.longitude,
+				accuracy: position.coords.accuracy
+			});
+			if (controller) controller.state.prompt = null;
+		} catch (err) {
+			notice = String(err);
+		}
+	}
+
+	async function declinePromptLocation() {
+		if (!prompt || prompt.action !== 'show' || prompt.kind !== 'location') return;
+		try {
+			await postJson(`/api/v0/me/location/feedback/${encodeURIComponent(prompt.turn_id)}`, { denied: true });
 		} catch (err) {
 			notice = String(err);
 		} finally {
@@ -398,15 +493,18 @@
 		const value = promptText.trim();
 		// Free text: no `choices`, so a confirmation reads it as "not approved"
 		// and the model gets the words rather than a yes.
-		if (value) void answerPrompt(null, value);
+		if (value || promptChoices.length > 0) void answerPrompt('', value || undefined, promptChoices);
 		promptText = '';
+		promptChoices = [];
 	}
 
 	function thinkingLabel(entry: (typeof turns)[number], live: boolean): string {
 		const streaming = live && entry.turn.status === 'in_progress';
-		const secs = entry.turn.reasoning_elapsed_ms ?? 0;
+		const started = entry.turn.reasoning_started_at ? Date.parse(entry.turn.reasoning_started_at) : NaN;
+		const elapsed = Number.isFinite(started) ? Math.max(0, clock - started) : 0;
+		const secs = entry.turn.reasoning_elapsed_ms ?? elapsed;
 		return streaming
-			? t('render-thinking-spinner')
+			? t('render-thinking-in-progress', { secs: n(secs / 1000, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })
 			: t('render-thinking-finalized', { secs: n(secs / 1000, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) });
 	}
 
@@ -418,99 +516,38 @@
 	}
 </script>
 
-<div class="flex items-center justify-between mb-4 gap-2">
-	<h1 class="text-lg font-semibold truncate flex-1 min-w-0">
-		{session?.title?.trim() || t('nav-untitled-chat')}
-	</h1>
-	<a href="{base}/chat" class="btn btn-ghost btn-sm">{t('chat-all-chats')}</a>
-	{#if isOwner}
-		<button class="btn btn-ghost btn-sm" onclick={toggleShare} title={t('chat-render-share-tooltip')}>
-			{session?.shared ? t('chat-render-share-label-on') : t('chat-render-share-label-off')}
-		</button>
-	{:else}
-		<!-- Shared *with* you: the copy is how you keep (and can edit) it. -->
-		<button class="btn btn-ghost btn-sm" onclick={fork} title={t('chat-render-fork-tooltip')}>
-			{t('chat-render-fork-label')}
-		</button>
+<div class="flex min-h-[calc(100dvh-6.5rem)] flex-col lg:min-h-[calc(100dvh-4.5rem)]">
+	<ConversationHeader
+		{id}
+		title={session?.title}
+		{isOwner}
+		shared={session?.shared ?? false}
+		{models}
+		bind:model
+		{transcriptionModels}
+		bind:transcriptionModel
+		{speechAvailable}
+		{speechVoices}
+		bind:speechVoice
+		{hasCanvas}
+		oncanvas={() => (canvasOpen = !canvasOpen)}
+		onshare={toggleShare}
+		onfork={fork}
+		onspeechvoice={saveSpeechVoice}
+	/>
+
+	{#if !isOwner}
+		<div class="alert alert-info mb-4"><span>{t('chat-render-shared-readonly-banner')}</span></div>
 	{/if}
-	<div class="dropdown dropdown-end">
-		<button
-			class="btn btn-ghost btn-sm"
-			popovertarget="export-menu"
-			style="anchor-name:--export"
-			aria-label={t('chat-render-export-aria')}
-			title={t('chat-render-export-tooltip')}
-		>
-			{t('chat-render-export-label')}
-		</button>
-		<ul
-			class="dropdown-content menu rounded-box bg-base-200 p-2 shadow z-10 w-40"
-			popover
-			id="export-menu"
-			style="position-anchor:--export"
-		>
-			<li><a href="/api/v0/chat/sessions/{id}/export.md" download>{t('chat-render-export-md')}</a></li>
-			<li><a href="/api/v0/chat/sessions/{id}/export.pdf" download>{t('chat-render-export-pdf')}</a></li>
-		</ul>
-	</div>
-</div>
+	{#if selectedModel && !selectedModel.gdpr}
+		<div class="alert alert-warning mb-4"><span>{t('chat-render-gdpr-banner')}</span></div>
+	{/if}
+	{#if selectedModel && !selectedModel.nda}
+		<div class="alert alert-warning mb-4"><span>{t('chat-render-nda-banner')}</span></div>
+	{/if}
 
-{#if documents.length > 0}
-	<div class="card border border-base-300 bg-base-200 mb-4">
-		<div class="card-body p-3 gap-2">
-			<div class="flex items-center gap-2 flex-wrap">
-				<span class="text-sm font-medium">{t('chat-render-documents-label')}</span>
-				{#each documents as doc (doc.id)}
-					<button
-						class="btn btn-xs {openDoc?.document.id === doc.id ? 'btn-primary' : 'btn-ghost'}"
-						onclick={() => (openDoc?.document.id === doc.id ? (openDoc = null) : openDocument(doc.id))}
-					>
-						{doc.title}
-						<span class="badge badge-ghost badge-xs">v{doc.current_ver}</span>
-					</button>
-				{/each}
-			</div>
-
-			{#if openDoc}
-				{@const shown = openDoc}
-				<div class="flex items-center gap-2">
-					<span class="text-xs opacity-60">
-						v{shown.document.current_ver} · {t('chat-render-revision-count', {
-							count: shown.history.length
-						})}
-					</span>
-					<div class="flex-1"></div>
-					{#if isOwner}
-						{#if docEditing}
-							<button class="btn btn-xs" onclick={() => { docEditing = false; docDraft = shown.content; }}>
-								{t('render-canvas-cancel')}
-							</button>
-							<button class="btn btn-xs btn-primary" onclick={saveDocument} disabled={docSaving}>
-								{docSaving ? t('chat-render-canvas-saving') : t('render-canvas-save')}
-							</button>
-						{:else}
-							<button class="btn btn-xs" onclick={() => (docEditing = true)}>
-								{t('render-canvas-edit-button')}
-							</button>
-						{/if}
-					{/if}
-				</div>
-				{#if docEditing}
-					<textarea
-						class="textarea textarea-bordered w-full font-mono text-sm"
-						rows="14"
-						bind:value={docDraft}
-					></textarea>
-				{:else}
-					<div class="prose prose-sm max-w-none overflow-x-auto">
-						<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-						{@html renderMarkdown(shown.content)}
-					</div>
-				{/if}
-			{/if}
-		</div>
-	</div>
-{/if}
+	<div class="flex min-h-0 flex-1 gap-3">
+		<main class="flex min-w-0 flex-1 flex-col">
 
 {#if notice}
 	<div class="alert alert-warning mb-4"><span>{notice}</span></div>
@@ -520,18 +557,27 @@
 	{@const shown = prompt}
 	<div class="card border border-warning mb-4">
 		<div class="card-body">
-			<h2 class="card-title text-base">{t('chat-prompt-heading')}</h2>
+			<h2 class="card-title text-base">{shown.header ?? t('chat-prompt-heading')}</h2>
 			<p>{shown.question}</p>
-			{#if shown.options.length > 0}
+			{#if shown.kind === 'location'}
+				<div class="mt-2 flex flex-wrap gap-2">
+					<button class="btn btn-primary btn-sm" onclick={sharePromptLocation}>{t('tools-location-share-button')}</button>
+					<button class="btn btn-ghost btn-sm" onclick={declinePromptLocation}>{t('chat-prompt-skip')}</button>
+				</div>
+			{:else if shown.options.length > 0}
 				<div class="flex flex-wrap gap-2 mt-1">
 					{#each shown.options as option (option)}
-						<button class="btn btn-outline btn-sm" onclick={() => answerPrompt(option)}>
+						<button
+							class="btn btn-sm {shown.multi_select && promptChoices.includes(option) ? 'btn-primary' : 'btn-outline'}"
+							onclick={() => shown.multi_select ? togglePromptChoice(option) : answerPrompt(option)}
+						>
 							{option}
 						</button>
 					{/each}
 				</div>
 			{/if}
-			<div class="join mt-2">
+			{#if shown.kind !== 'location'}
+			<div class="join mt-2 w-full">
 				<input
 					class="input input-bordered input-sm join-item w-full"
 					placeholder={t('chat-prompt-placeholder')}
@@ -545,44 +591,24 @@
 					{t('chat-prompt-skip')}
 				</button>
 			</div>
+			{/if}
 		</div>
 	</div>
 {/if}
 
-<div class="flex flex-col gap-4 mb-4">
-	{#each turns as entry (entry.turn.id)}
+<div class="mb-4 flex flex-1 flex-col gap-4">
+	{#each turns as entry, index (entry.turn.id)}
+		{#if index > 0 && compactedUpToSeq !== null && turns[index - 1].turn.seq <= compactedUpToSeq && entry.turn.seq > compactedUpToSeq}
+			<div class="divider my-2 text-xs opacity-60" role="separator" aria-label={t('render-compaction-divider')}>
+				<span aria-hidden="true">ⓘ</span> {t('render-compaction-divider')}
+			</div>
+		{/if}
 		{#if entry.turn.role === 'user'}
 			{@const parsed = parseUserContent(entry.turn.user_content)}
 			<div class="chat chat-end">
 				<div class="chat-bubble chat-bubble-primary">
 					{#if parsed.attachments.length > 0}
-						<div class="flex flex-wrap gap-2 mb-2 justify-end">
-							{#each parsed.attachments as att (att.url)}
-								<div class="relative group">
-									{#if att.mime.startsWith('image/')}
-										<a href={att.url} target="_blank" rel="noopener">
-											<img src={att.url} alt={att.filename} class="rounded-lg max-h-48" />
-										</a>
-									{:else}
-										<a href={att.url} class="btn btn-sm" download={att.filename}>
-											{att.filename} ({t('chat-render-attachment-size-kb', {
-												size: n(Math.round(att.size / 1024))
-											})})
-										</a>
-									{/if}
-									{#if isOwner && !streaming}
-										<button
-											class="btn btn-xs btn-circle btn-error absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 focus:opacity-100"
-											aria-label={t('render-attachment-remove-aria')}
-											title={t('render-attachment-remove-title', { filename: att.filename })}
-											onclick={() => removeAttachment(entry.turn.id, att.filename)}
-										>
-											✕
-										</button>
-									{/if}
-								</div>
-							{/each}
-						</div>
+						<MessageAttachments attachments={parsed.attachments} removable={isOwner && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />
 					{/if}
 					{#if parsed.text}
 						<div class="whitespace-pre-wrap">{parsed.text}</div>
@@ -597,13 +623,14 @@
 				{/if}
 			</div>
 		{:else}
+			{@const parsed = parseUserContent(entry.turn.content)}
 			<div class="chat chat-start">
 				<div class="chat-bubble chat-bubble-ghost w-full max-w-[min(90vw,48rem)] p-0">
 					<div class="p-3 flex flex-col gap-2">
 						{#if entry.turn.reasoning}
 							<details class="collapse collapse-arrow text-sm -ms-2">
 								<summary class="collapse-title cursor-pointer text-base-content/60 py-1 min-h-0 h-7">
-									{thinkingLabel(entry, false)}
+									{thinkingLabel(entry, true)}
 								</summary>
 								<div class="collapse-content whitespace-pre-wrap text-xs text-base-content/70 max-h-64 overflow-y-auto">
 									{entry.turn.reasoning}
@@ -611,34 +638,17 @@
 							</details>
 						{/if}
 
-						{#each entry.tool_calls as call (call.id)}
-							<details class="collapse collapse-arrow bg-base-200/60 rounded-lg mb-1">
-								<summary class="collapse-title text-sm py-1.5 min-h-0 h-8 flex items-center gap-2">
-									{#if call.status === 'completed'}
-										<span class="text-success">✓</span>
-									{:else if call.status === 'errored'}
-										<span class="text-error">✗</span>
-									{:else}
-										<span class="loading loading-spinner loading-xs"></span>
-									{/if}
-									<span class="text-base-content/60">{t('render-tool-status-used')}</span>
-									<span class="font-medium">{call.name}</span>
-								</summary>
-								<div class="collapse-content text-xs text-base-content/70">
-									<div class="font-mono break-all">{call.arguments_json}</div>
-									{#if call.output_json}
-										<pre class="mt-1 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">{call.output_json}</pre>
-									{/if}
-								</div>
-							</details>
-						{/each}
+						<ToolCalls calls={entry.tool_calls} />
 
-						{#if entry.turn.status === 'in_progress' && !entry.turn.content}
-							<span class="loading loading-dots loading-sm"></span>
+						{#if entry.turn.status === 'in_progress'}
+							<div class="flex items-center gap-2 text-sm text-base-content/60">
+								<span class="loading loading-dots loading-sm"></span>
+								<span>{entry.turn.content ? t('render-still-working-spinner') : t('render-thinking-spinner')}</span>
+							</div>
 						{/if}
 
-						<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in renderMarkdown -->
-						<div class="prose prose-sm max-w-none chat-prose">{@html renderMarkdown(entry.turn.content)}</div>
+						{#if parsed.attachments.length > 0}<MessageAttachments attachments={parsed.attachments} removable={isOwner && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />{/if}
+						<Markdown content={parsed.text} class="prose prose-sm max-w-none chat-prose" />
 
 						{#if entry.turn.status === 'errored'}
 							<div class="alert alert-error py-2"><span>{entry.turn.error_message}</span></div>
@@ -660,29 +670,14 @@
 	{/each}
 </div>
 
-<div class="card border border-base-300 sticky bottom-0">
-	<div class="card-body p-3 gap-2">
-		<div class="flex flex-wrap gap-2 items-center mb-2">
-			<button
-				class="btn btn-ghost btn-xs gap-1"
-				onclick={() => (toolsOpen = !toolsOpen)}
-				title={t('chat-render-tools-tooltip')}
-			>
-				+ {t('chat-render-tools-label')}
-			</button>
-			{#each tools.filter((tool) => tool.enabled) as tool (tool.key)}
-				<span class="badge badge-outline badge-sm gap-1">
-					{tool.title}
-					<button
-						class="text-error"
-						aria-label={t('chat-render-tool-disable-aria', { name: tool.title })}
-						onclick={() => toggleCapability(tool.key, true)}>✕</button
-					>
-				</span>
-			{/each}
+{#if isOwner}
+<div class="card sticky bottom-0 -mb-6 border border-base-300 bg-base-100">
+	<div class="flex flex-col gap-1 p-2">
+		<div class="flex flex-wrap items-center gap-2">
+			<CapabilityPicker capabilities={tools} onset={setCapability} />
 			<span class="flex-1"></span>
 			<select
-				class="select select-bordered select-xs"
+				class="select select-bordered select-xs w-auto max-w-48"
 				aria-label={t('chat-render-effort-title')}
 				title={t('chat-render-effort-tooltip')}
 				bind:value={effort}
@@ -694,52 +689,11 @@
 					</option>
 				{/each}
 			</select>
+			<button class="btn btn-ghost btn-xs btn-circle 2xl:hidden" onclick={openFeedback} aria-label={t('feedback-fab-aria')} title={t('feedback-fab-aria')}>?</button>
 		</div>
-		{#if toolsOpen}
-			<div class="flex flex-wrap gap-2 mb-2 border border-base-300 rounded-lg p-2">
-				{#each tools as tool (tool.key)}
-					<label class="label cursor-pointer gap-1">
-						<input
-							type="checkbox"
-							class="checkbox checkbox-xs"
-							checked={tool.enabled}
-							onchange={() => toggleCapability(tool.key, tool.enabled)}
-						/>
-						<span class="label-text text-xs">{tool.title}</span>
-					</label>
-				{/each}
-			</div>
-		{/if}
-		<div class="flex gap-2">
-			{#if models.length > 0}
-				<select
-					class="select select-bordered select-sm w-56"
-					aria-label={t('chat-render-model-aria')}
-					bind:value={model}
-					disabled={streaming || sending}
-				>
-					{#each models as m (m.id)}
-						<option
-							value={m.id}
-							title="{m.gdpr ? t('chat-render-model-gdpr-region') : ''} {m.nda
-								? t('chat-render-model-nda-covered')
-								: ''}"
-						>
-							{m.id}{m.gdpr ? ' · gdpr' : ''}{m.nda ? ' · nda' : ''}
-						</option>
-					{/each}
-				</select>
-			{:else}
-				<input
-					class="input input-bordered input-sm w-56"
-					placeholder={t('chat-render-model-placeholder')}
-					aria-label={t('chat-render-model-aria')}
-					bind:value={model}
-					disabled={streaming || sending}
-				/>
-			{/if}
+		<div class="flex items-end gap-1">
 			<textarea
-				class="textarea textarea-bordered flex-1 min-h-11 max-h-48"
+				class="textarea textarea-ghost min-h-11 max-h-48 flex-1 resize-none focus:outline-none"
 				rows="1"
 				placeholder={t('chat-render-composer-placeholder')}
 				bind:value={draft}
@@ -750,36 +704,80 @@
 				disabled={streaming}
 			></textarea>
 			<label
-				class="btn btn-ghost btn-square"
+				class="btn btn-sm btn-circle btn-ghost"
 				aria-label={t('render-composer-attach-aria')}
 				title={t('render-composer-attach-title')}
 			>
 				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
 				<input type="file" multiple class="hidden" onchange={(e) => { addFiles((e.currentTarget as HTMLInputElement).files); (e.currentTarget as HTMLInputElement).value = ''; }} />
 			</label>
-			{#if streaming}
-				<button class="btn btn-error" onclick={stop}>{t('render-composer-stop')}</button>
-			{:else}
-				<button class="btn btn-primary" onclick={send} disabled={(!draft.trim() && files.length === 0) || !model.trim() || sending}>
-					{t('render-composer-send')}
+			{#if transcriptionModels.length > 0}
+				<DictationButton model={transcriptionModel} ontranscript={appendTranscript} onerror={(message) => (notice = message)} />
+			{/if}
+			{#if speechAvailable && transcriptionModels.length > 0}
+				<button
+					class="btn btn-sm btn-circle btn-ghost"
+					onclick={openVoice}
+					aria-label={t('voice-toggle-title')}
+					title={t('voice-toggle-title')}
+				>
+					<svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M3 10h2v4H3zm4-4h2v12H7zm4-3h2v18h-2zm4 5h2v8h-2zm4 2h2v4h-2z" /></svg>
 				</button>
 			{/if}
-			<button
-				class="btn btn-ghost btn-square"
-				onclick={openVoice}
-				aria-label={t('voice-toggle-title')}
-				title={t('voice-toggle-title')}
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="inline-block align-text-bottom" aria-hidden="true">
-					<rect x="9" y="2" width="6" height="11" rx="3" />
-					<path d="M5 10v1a7 7 0 0 0 14 0v-1" />
-					<path d="M12 18v3" />
-					<path d="M8 22h8" />
-				</svg>
-			</button>
+			{#if streaming}
+				<button class="btn btn-sm btn-circle btn-error" onclick={stop} aria-label={t('render-composer-stop')} title={t('render-composer-stop')}>
+					<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
+				</button>
+			{:else}
+				<button class="btn btn-sm btn-circle btn-primary" onclick={send} disabled={(!draft.trim() && files.length === 0) || !model.trim() || sending} aria-label={t('render-composer-send')} title={t('render-composer-send')}>
+					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5m0 0-6 6m6-6 6 6" /></svg>
+				</button>
+			{/if}
 		</div>
+		{#if files.length > 0}
+			<div class="flex flex-wrap gap-1">
+				{#each files as file, index (`${file.name}-${file.size}-${file.lastModified}`)}
+					<span class="badge badge-outline gap-1">
+						{file.name}
+						<button type="button" aria-label={t('render-attachment-remove-title', { filename: file.name })} onclick={() => (files = files.filter((_, candidate) => candidate !== index))}>×</button>
+					</span>
+				{/each}
+			</div>
+		{/if}
 	</div>
 </div>
+{/if}
+		</main>
+		{#if canvasOpen && hasCanvas}
+			<ConversationCanvas {id} {documents} {assets} {isOwner} onclose={() => (canvasOpen = false)} onerror={(message) => (notice = message)} />
+		{/if}
+	</div>
+</div>
+
+{#if editingTurn}
+	<dialog class="modal modal-open" aria-label={t('render-edit-prompt')}>
+		<div class="modal-box">
+			<h2 class="text-lg font-semibold">{t('render-edit-prompt')}</h2>
+			<textarea class="textarea textarea-bordered mt-3 min-h-36 w-full" bind:value={editDraft}></textarea>
+			{#if editFiles.length > 0}
+				<div class="mt-2 flex flex-wrap gap-1">
+					{#each editFiles as file, index (`${file.name}-${file.size}-${file.lastModified}`)}
+						<span class="badge badge-outline gap-1">{file.name}<button type="button" aria-label={t('render-attachment-remove-title', { filename: file.name })} onclick={() => (editFiles = editFiles.filter((_, candidate) => candidate !== index))}>×</button></span>
+					{/each}
+				</div>
+			{/if}
+			<div class="modal-action">
+				<label class="btn btn-ghost btn-sm" aria-label={t('render-composer-attach-aria')} title={t('render-composer-attach-title')}>
+					{t('render-composer-attach-aria')}
+					<input type="file" multiple class="hidden" onchange={(event) => { editFiles = [...editFiles, ...Array.from((event.currentTarget as HTMLInputElement).files ?? [])]; (event.currentTarget as HTMLInputElement).value = ''; }} />
+				</label>
+				<button class="btn btn-ghost btn-sm" onclick={() => (editingTurn = null)}>{t('render-edit-cancel')}</button>
+				<button class="btn btn-primary btn-sm" disabled={!editDraft.trim()} onclick={saveTurnEdit}>{t('render-edit-save')}</button>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop"><button onclick={() => (editingTurn = null)}>{t('render-edit-cancel')}</button></form>
+	</dialog>
+{/if}
 
 {#if voiceOpen.open && voice}
 	<dialog class="modal modal-open" aria-label={t('voice-modal-title')}>
@@ -791,7 +789,7 @@
 						: voice.state.phase === 'speaking'
 							? 'btn-primary'
 							: 'btn-neutral'}"
-					onclick={() => voice?.tap(model)}
+					onclick={() => voice?.tap(transcriptionModel)}
 					aria-label={voice.state.phase === 'listening'
 						? t('voice-hint-tap-to-send')
 						: t('voice-hint-tap-to-talk')}

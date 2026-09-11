@@ -38,8 +38,10 @@ hay = subprocess.run(
     capture_output=True, text=True, cwd=ROOT,
 ).stdout
 # git grep with no pattern lists nothing; read the tracked files instead.
-files = subprocess.run(['git', 'ls-files'], capture_output=True, text=True,
-                       cwd=ROOT).stdout.split()
+files = subprocess.run(
+    ['git', 'ls-files', '--cached', '--others', '--exclude-standard'],
+    capture_output=True, text=True, cwd=ROOT,
+).stdout.split()
 blobs = []
 for f in files:
     if f.startswith('crates/session-core/locales/') or f.startswith('web/src/lib/locales/'):

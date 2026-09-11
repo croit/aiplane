@@ -41,6 +41,10 @@ struct CollectionView {
     /// `source_secrets_set` says whether any are stored.
     source_config: std::collections::BTreeMap<String, String>,
     source_secrets_set: bool,
+    sync_hook_set: bool,
+    connected_account: Option<String>,
+    connected_by: Option<String>,
+    connected_at: Option<String>,
     /// Extraction profile id, or null. Names are resolved on write; the id
     /// is what the row stores.
     profile_id: Option<i64>,
@@ -50,6 +54,8 @@ struct CollectionView {
     exclude_globs: Vec<String>,
     chunk_size: i64,
     chunk_overlap: i64,
+    search_mode: String,
+    allowed_groups: Vec<String>,
     status: String,
     last_indexed_at: Option<String>,
     last_indexed_commit: Option<String>,
@@ -70,6 +76,10 @@ impl From<rag_db::Collection> for CollectionView {
             source_kind: c.source.kind,
             source_config: c.source.config,
             source_secrets_set: c.source.secrets.is_some(),
+            sync_hook_set: c.sync_hook_set,
+            connected_account: c.connected_account,
+            connected_by: c.connected_by,
+            connected_at: c.connected_at,
             profile_id: c.profile_id,
             extraction_model: c.extraction_model,
             embedding_model: c.embedding_model,
@@ -77,6 +87,8 @@ impl From<rag_db::Collection> for CollectionView {
             exclude_globs: c.exclude_globs,
             chunk_size: c.chunk_size,
             chunk_overlap: c.chunk_overlap,
+            search_mode: c.search_mode.as_str().to_string(),
+            allowed_groups: c.allowed_groups,
             status: c.status.as_str().to_string(),
             last_indexed_at: c.last_indexed_at.map(|t| t.to_string()),
             last_indexed_commit: c.last_indexed_commit,
@@ -124,6 +136,8 @@ struct CreateRequest {
     chunk_size: i64,
     #[serde(default = "default_chunk_overlap")]
     chunk_overlap: i64,
+    #[serde(default = "default_search_mode")]
+    search_mode: String,
 }
 
 fn default_ref() -> String {
@@ -137,6 +151,9 @@ fn default_chunk_size() -> i64 {
 }
 fn default_chunk_overlap() -> i64 {
     100
+}
+fn default_search_mode() -> String {
+    "versioned".into()
 }
 
 #[derive(Deserialize, Default)]
@@ -166,6 +183,16 @@ struct UpdateRequest {
     chunk_size: Option<i64>,
     #[serde(default)]
     chunk_overlap: Option<i64>,
+    #[serde(default)]
+    git_url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_option")]
+    profile: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_option_option")]
+    extraction_model: Option<Option<String>>,
+    #[serde(default)]
+    search_mode: Option<String>,
+    #[serde(default)]
+    allowed_groups: Option<Vec<String>>,
 }
 
 // Distinguish "field omitted" from "field set to null" for the PAT.
@@ -270,7 +297,11 @@ pub async fn create_collection(State(state): State<Arc<RamaState>>, req: Request
         chunk_overlap: body.chunk_overlap,
         // The JSON API creates single-repo (versioned) collections; aggregate
         // multi-source collections are driven through the /rag admin UI.
-        search_mode: rag_db::SearchMode::Versioned,
+        search_mode: match body.search_mode.as_str() {
+            "versioned" => rag_db::SearchMode::Versioned,
+            "aggregate" => rag_db::SearchMode::Aggregate,
+            _ => return invalid_request("`search_mode` must be `versioned` or `aggregate`"),
+        },
     };
     match rag_db::create_collection(&state.db, &new).await {
         Ok(c) => (
@@ -436,6 +467,7 @@ pub struct AddRefsRequest {
 
 #[derive(Deserialize)]
 pub struct AddRefEntry {
+    #[serde(default)]
     pub url: String,
     #[serde(default)]
     pub git_ref: Option<String>,
@@ -471,7 +503,11 @@ pub async fn add_refs(
         .sources
         .into_iter()
         .filter_map(|e| {
-            let url = e.url.trim().to_string();
+            let url = if collection.search_mode == rag_db::SearchMode::Aggregate {
+                e.url.trim().to_string()
+            } else {
+                collection.git_url.clone()
+            };
             if url.is_empty() {
                 return None;
             }
@@ -502,7 +538,9 @@ pub async fn add_refs(
         // in aggregate mode (search ignores primacy there) but it keeps the
         // one-primary invariant the UI reads.
         let is_primary = !had_refs && i == 0;
-        match rag_db::add_ref(&state.db, id, git_ref, Some(url.as_str()), is_primary).await {
+        let stored_url =
+            (collection.search_mode == rag_db::SearchMode::Aggregate).then_some(url.as_str());
+        match rag_db::add_ref(&state.db, id, git_ref, stored_url, is_primary).await {
             Ok(r) => {
                 if let Some(indexer) = state.indexer.as_ref() {
                     let _ = indexer.request_reindex(r.id).await;
@@ -895,7 +933,21 @@ pub async fn list_providers(State(state): State<Arc<RamaState>>, req: Request) -
             "fields": fields,
         })
     }));
-    json_ok(&json!({ "data": providers }))
+    let mut embedding_models = state
+        .upstreams
+        .models_for_kind(gateway_core::server::upstreams::config::PoolKind::Embedding);
+    embedding_models.sort();
+    let default_embedding = gateway_core::server::feature_defaults::get(
+        &state.db,
+        gateway_core::server::feature_defaults::Feature::Embedding,
+    )
+    .await
+    .filter(|model| embedding_models.contains(model));
+    json_ok(&json!({
+        "data": providers,
+        "embedding_models": embedding_models,
+        "default_embedding": default_embedding,
+    }))
 }
 
 /// GET /api/v0/rag/profiles — the extraction profiles this gateway knows,
@@ -919,9 +971,12 @@ pub async fn list_profiles(State(state): State<Arc<RamaState>>, req: Request) ->
         .iter()
         .map(|p| {
             json!({
+                "id": p.id,
                 "name": p.name,
                 "description": p.description,
+                "prompt": p.prompt,
                 "version": p.version,
+                "builtin": p.builtin,
                 "fields": p.fields.iter().map(|f| json!({
                     "key": f.key,
                     "label": f.label,
@@ -971,6 +1026,7 @@ pub async fn update_collection(
             return internal_error("collection lookup failed");
         }
     };
+    let allowed_groups = body.allowed_groups.clone();
     let mut sets: Vec<&'static str> = Vec::new();
     let mut bindings: Vec<UpdateBinding> = Vec::new();
     if let Some(desc) = body.description {
@@ -983,6 +1039,13 @@ pub async fn update_collection(
         }
         sets.push("git_ref = ?");
         bindings.push(UpdateBinding::Str(git_ref));
+    }
+    if let Some(git_url) = body.git_url {
+        if before.source.is_git() && git_url.trim().is_empty() {
+            return invalid_request("`git_url` must not be empty");
+        }
+        sets.push("git_url = ?");
+        bindings.push(UpdateBinding::Str(git_url.trim().to_string()));
     }
     if let Some(pat) = body.pat {
         sets.push("pat = ?");
@@ -1023,6 +1086,40 @@ pub async fn update_collection(
         sets.push("embedding_model = ?");
         bindings.push(UpdateBinding::Str(model));
     }
+    if let Some(profile) = body.profile {
+        let profile_id = match profile.as_deref().filter(|name| !name.is_empty()) {
+            None => None,
+            Some(name) => match rag_documents::find_profile_by_name(&state.db, name).await {
+                Ok(Some(profile)) => Some(profile.id),
+                Ok(None) => {
+                    return invalid_request(&format!("no extraction profile named `{name}`"));
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "looking up extraction profile");
+                    return internal_error("profile lookup failed");
+                }
+            },
+        };
+        sets.push("profile_id = ?");
+        bindings.push(UpdateBinding::OptInt(profile_id));
+    }
+    if let Some(model) = body.extraction_model {
+        sets.push("extraction_model = ?");
+        bindings.push(UpdateBinding::OptStr(
+            model
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+        ));
+    }
+    if let Some(search_mode) = body.search_mode {
+        match search_mode.as_str() {
+            "versioned" | "aggregate" => {
+                sets.push("search_mode = ?");
+                bindings.push(UpdateBinding::Str(search_mode));
+            }
+            _ => return invalid_request("`search_mode` must be `versioned` or `aggregate`"),
+        }
+    }
     if let Some(globs) = body.include_globs {
         let s = match serde_json::to_string(&globs) {
             Ok(s) => s,
@@ -1060,7 +1157,7 @@ pub async fn update_collection(
         sets.push("chunk_overlap = ?");
         bindings.push(UpdateBinding::Int(co));
     }
-    if sets.is_empty() {
+    if sets.is_empty() && allowed_groups.is_none() {
         // Nothing to do — still surface the current row so the caller
         // can write a UI that doesn't special-case the empty diff.
         return match rag_db::find_collection_by_id(&state.db, id).await {
@@ -1072,26 +1169,35 @@ pub async fn update_collection(
             }
         };
     }
-    let now = Timestamp::now().to_string();
-    sets.push("updated_at = ?");
-    bindings.push(UpdateBinding::Str(now));
-    let sql = format!(
-        "UPDATE rag_collections SET {} WHERE id = ?",
-        sets.join(", ")
-    );
-    let mut q = sqlx::query(&sql);
-    for b in &bindings {
-        q = match b {
-            UpdateBinding::OptStr(s) => q.bind(s),
-            UpdateBinding::Str(s) => q.bind(s),
-            UpdateBinding::Int(i) => q.bind(i),
-            UpdateBinding::OptBlob(b) => q.bind(b),
-        };
+    if !sets.is_empty() {
+        let now = Timestamp::now().to_string();
+        sets.push("updated_at = ?");
+        bindings.push(UpdateBinding::Str(now));
+        let sql = format!(
+            "UPDATE rag_collections SET {} WHERE id = ?",
+            sets.join(", ")
+        );
+        let mut q = sqlx::query(&sql);
+        for b in &bindings {
+            q = match b {
+                UpdateBinding::OptStr(s) => q.bind(s),
+                UpdateBinding::Str(s) => q.bind(s),
+                UpdateBinding::Int(i) => q.bind(i),
+                UpdateBinding::OptInt(i) => q.bind(i),
+                UpdateBinding::OptBlob(b) => q.bind(b),
+            };
+        }
+        q = q.bind(id);
+        if let Err(err) = q.execute(&state.db).await {
+            tracing::warn!(error = %err, %id, "updating rag collection");
+            return internal_error("updating collection failed");
+        }
     }
-    q = q.bind(id);
-    if let Err(err) = q.execute(&state.db).await {
-        tracing::warn!(error = %err, %id, "updating rag collection");
-        return internal_error("updating collection failed");
+    if let Some(groups) = allowed_groups
+        && let Err(err) = rag_db::set_allowed_groups(&state.db, id, &groups).await
+    {
+        tracing::warn!(error = %err, %id, "updating rag collection access");
+        return internal_error("updating collection access failed");
     }
     let after = match rag_db::find_collection_by_id(&state.db, id).await {
         Ok(Some(c)) => c,
@@ -1119,6 +1225,7 @@ enum UpdateBinding {
     OptStr(Option<String>),
     Str(String),
     Int(i64),
+    OptInt(Option<i64>),
     /// Sealed ciphertext / nonce, which are BLOB columns.
     OptBlob(Option<Vec<u8>>),
 }
@@ -1303,11 +1410,12 @@ pub async fn list_refs(
             return internal_error("listing refs failed");
         }
     };
+    let files = rag_db::latest_source_files(&state.db, id)
+        .await
+        .unwrap_or_default();
     let mut views = Vec::with_capacity(refs.len());
     for r in refs {
-        // Counts live in the per-ref store; zero is fine for the list view —
-        // the status badge is the operative signal.
-        let documents = 0i64;
+        let documents = files.get(&r.id).copied().unwrap_or_default();
         let chunks = 0i64;
         views.push(RefView {
             id: r.id,
@@ -1324,6 +1432,104 @@ pub async fn list_refs(
         });
     }
     json_ok(&json!({ "data": views }))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateRefRequest {
+    #[serde(default, deserialize_with = "deserialize_option_option")]
+    pub git_url: Option<Option<String>>,
+    pub git_ref: String,
+}
+
+/// PATCH /api/v0/rag/collections/{id}/refs/{ref_id} — change a source's
+/// repository and branch/tag, then queue a full rebuild for the new target.
+pub async fn update_ref(
+    State(state): State<Arc<RamaState>>,
+    Path(RagRefPath { id, ref_id }): Path<RagRefPath>,
+    req: Request,
+) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    let body = match read_json::<UpdateRefRequest>(req).await {
+        Ok(body) => body,
+        Err(resp) => return resp,
+    };
+    let git_ref = body.git_ref.trim();
+    if git_ref.is_empty() {
+        return invalid_request("`git_ref` must not be empty");
+    }
+    let existing = match rag_db::find_ref_by_id(&state.db, ref_id).await {
+        Ok(Some(source)) if source.collection_id == id => source,
+        Ok(_) => return not_found(&format!("no ref {ref_id} in collection {id}")),
+        Err(err) => {
+            tracing::warn!(error = %err, ref_id, "updating rag ref: lookup");
+            return internal_error("ref lookup failed");
+        }
+    };
+    let git_url = body
+        .git_url
+        .unwrap_or(existing.git_url)
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty());
+    if let Err(err) = rag_db::update_ref(&state.db, ref_id, git_url.as_deref(), git_ref).await {
+        tracing::warn!(error = %err, ref_id, "updating rag ref");
+        return internal_error("updating the ref failed");
+    }
+    if let Err(err) = rag_db::request_full_rebuild(&state.db, ref_id).await {
+        tracing::warn!(error = %err, ref_id, "queueing updated rag ref");
+        return internal_error("the ref was saved but queueing its rebuild failed");
+    }
+    json_ok(&json!({
+        "id": ref_id,
+        "collection_id": id,
+        "git_url": git_url,
+        "git_ref": git_ref,
+    }))
+}
+
+/// GET /api/v0/rag/collections/{id}/refs/{ref_id}/log — newest indexing
+/// events first so an operator can diagnose a failed or stale source.
+pub async fn ref_log(
+    State(state): State<Arc<RamaState>>,
+    Path(RagRefPath { id, ref_id }): Path<RagRefPath>,
+    req: Request,
+) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    match rag_db::find_ref_by_id(&state.db, ref_id).await {
+        Ok(Some(source)) if source.collection_id == id => {}
+        Ok(_) => return not_found(&format!("no ref {ref_id} in collection {id}")),
+        Err(err) => {
+            tracing::warn!(error = %err, ref_id, "reading rag ref log: lookup");
+            return internal_error("ref lookup failed");
+        }
+    }
+    let entries = match rag_db::list_log_entries(&state.db, ref_id, 100).await {
+        Ok(entries) => entries,
+        Err(err) => {
+            tracing::warn!(error = %err, ref_id, "reading rag ref log");
+            return internal_error("reading the index log failed");
+        }
+    };
+    let data: Vec<_> = entries
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "id": entry.id,
+                "created_at": entry.created_at.to_string(),
+                "level": entry.level.as_str(),
+                "phase": entry.phase,
+                "message": entry.message,
+                "commit_sha": entry.commit_sha,
+                "files": entry.files,
+                "chunks": entry.chunks,
+                "duration_ms": entry.duration_ms,
+            })
+        })
+        .collect();
+    json_ok(&json!({ "data": data }))
 }
 
 /// DELETE /api/v0/rag/collections/{id}/refs/{ref_id} — remove one source

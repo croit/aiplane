@@ -13,6 +13,12 @@ import { BASE, devSessionCookie, gatewayIsUp, launchBrowser } from "./helpers.mj
 
 let browser;
 
+async function ensureOpen(details) {
+    if (!(await details.evaluate((element) => element.open))) {
+        await details.locator("summary").click();
+    }
+}
+
 before(async () => {
     assert.ok(
         await gatewayIsUp(),
@@ -27,8 +33,8 @@ after(async () => {
     if (browser) await browser.close();
 });
 
-test("tokens CRUD through the SPA", async () => {
-    const ctx = await browser.newContext();
+test("tokens preserve scopes, quotas, identity, and CRUD on mobile", async () => {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addCookies([{ name: "id", value: await devSessionCookie(), url: BASE }]);
     const page = await ctx.newPage();
 
@@ -53,6 +59,50 @@ test("tokens CRUD through the SPA", async () => {
     assert.match(text.trim(), /^gwk_[0-9a-f]{64}$/);
     assert.equal(await page.locator("li.py-3").count(), 4);
 
+    const row = page.locator("li.py-3").filter({ hasText: "spa-e2e-token" });
+    let saved = page.waitForResponse((response) => response.url().includes("/tools") && response.request().method() === "PUT");
+    let refreshed = page.waitForResponse((response) => response.url().endsWith("/api/v0/tokens/details") && response.request().method() === "GET");
+    await row.getByRole("checkbox", { name: "Tool use", exact: true }).check();
+    assert.equal((await saved).status(), 200);
+    assert.equal((await refreshed).status(), 200);
+    const capabilities = row.locator("details").filter({ hasText: "Capabilities" });
+    await ensureOpen(capabilities);
+    const firstTool = row.getByRole("checkbox", { name: /Toggle/ }).first();
+    await firstTool.waitFor();
+    saved = page.waitForResponse((response) => response.url().includes("/tools") && response.request().method() === "PUT");
+    refreshed = page.waitForResponse((response) => response.url().endsWith("/api/v0/tokens/details") && response.request().method() === "GET");
+    await firstTool.uncheck();
+    assert.equal((await saved).status(), 200);
+    assert.equal((await refreshed).status(), 200);
+    await ensureOpen(capabilities);
+    assert.equal(await row.getByRole("checkbox", { name: /Toggle/ }).first().isChecked(), false);
+    const mcp = row.getByRole("checkbox", { name: "Allow ask-mode MCP tools over API", exact: true });
+    await mcp.waitFor();
+    await page.waitForTimeout(100);
+    assert.equal(await mcp.isEnabled(), true);
+    const initialMcp = await mcp.isChecked();
+    saved = page.waitForResponse((response) => response.url().includes("/mcp-policy") && response.request().method() === "PUT");
+    refreshed = page.waitForResponse((response) => response.url().endsWith("/api/v0/tokens/details") && response.request().method() === "GET");
+    if (initialMcp) await mcp.uncheck();
+    else await mcp.check();
+    assert.equal((await saved).status(), 200);
+    assert.equal((await refreshed).status(), 200);
+    await ensureOpen(capabilities);
+    assert.equal(await row.getByRole("checkbox", { name: "Allow ask-mode MCP tools over API", exact: true }).isChecked(), !initialMcp);
+
+    await row.getByText("Models: all", { exact: true }).click();
+    await row.getByText("Limit this token to specific models", { exact: true }).click();
+    await row.locator('details:has-text("Models:") input.checkbox').first().check();
+    await row.getByRole("button", { name: "Save models", exact: true }).click();
+    await row.getByText("Models: 1 selected", { exact: true }).waitFor();
+
+    await row.getByText("Quota: none", { exact: true }).click();
+    await row.getByRole("spinbutton", { name: "max", exact: true }).fill("42");
+    await row.getByRole("button", { name: "Add quota", exact: true }).click();
+    await row.getByText("Quota: 1 rule(s)", { exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
+    assert.ok(await page.locator("main").evaluate((element) => element.scrollWidth <= element.clientWidth));
+
     // Revoke the new row (confirm() is native — accept it).
     page.once("dialog", (d) => d.accept());
     await page.locator('li:has-text("spa-e2e-token") button:has-text("Revoke")').click();
@@ -72,15 +122,41 @@ test("tokens CRUD through the SPA", async () => {
 });
 
 test("the usage and tools views render their data", async (t) => {
-    const ctx = await browser.newContext();
-    await ctx.addCookies([{ name: "id", value: await devSessionCookie(), url: BASE }]);
+    const ctx = await browser.newContext({
+        viewport: { width: 390, height: 844 },
+        geolocation: { latitude: 48.137, longitude: 11.575 },
+        permissions: ["geolocation"],
+    });
+    const usageCookie = process.env.GATEWAY_SESSION_COOKIE?.trim().replace(/^id=/, "") ?? await devSessionCookie();
+    await ctx.addCookies([{ name: "id", value: usageCookie, url: BASE }]);
     const page = await ctx.newPage();
 
-    // Usage: the period picker + the summary envelope render (empty data on
-    // a fresh stub, but the cards' labels are data-independent).
     await page.goto(`${BASE}/usage`, { waitUntil: "networkidle" });
-    await page.waitForSelector("text=Requests", { timeout: 5000 });
-    await page.waitForSelector("text=Errors", { timeout: 5000 });
+    await page.getByRole("heading", { name: "Your usage", exact: true }).waitFor();
+    const periodChanged = page.waitForResponse((response) => response.url().includes("/api/v0/usage?period=24h"));
+    await page.getByLabel("Period").selectOption("24h");
+    assert.equal((await periodChanged).status(), 200);
+    await page.getByRole("heading", { name: "Your limits", exact: true }).waitFor();
+    for (const label of ["Source", "Backend", "Token"]) {
+        await page.getByLabel(label, { exact: true }).waitFor();
+    }
+    for (const heading of ["By backend", "By source", "By model", "By API token"]) {
+        await page.getByRole("heading", { name: heading, exact: true }).waitFor();
+    }
+    const filtered = page.waitForResponse((response) => response.url().includes("source=chat"));
+    await page.getByLabel("Source", { exact: true }).selectOption("chat");
+    assert.equal((await filtered).status(), 200);
+    assert.match(page.url(), /source=chat/);
+    const allUsers = page.getByRole("button", { name: "All users", exact: true });
+    if (await allUsers.count()) {
+        const widened = page.waitForResponse((response) => response.url().includes("scope=all"));
+        await allUsers.click();
+        assert.equal((await widened).status(), 200);
+        await page.getByRole("heading", { name: "Usage — all users", exact: true }).waitFor();
+        await page.getByRole("heading", { name: "By user", exact: true }).waitFor();
+        await page.getByText("active in range", { exact: true }).waitFor();
+    }
+    assert.ok(await page.locator("main").evaluate((element) => element.scrollWidth <= element.clientWidth));
 
     // Tools: the dev-ui stub grants the full tool set to its admin group —
     // the grouped list renders with toggles.
@@ -91,5 +167,16 @@ test("the usage and tools views render their data", async (t) => {
         // A gateway with an empty grant renders the empty state instead.
         await page.waitForSelector("text=No tools granted", { timeout: 5000 });
     }
+    await page.getByRole("heading", { name: "Location", exact: true }).waitFor();
+    assert.equal(await page.locator("code", { hasText: "get_user_location" }).count(), 1);
+    const shared = page.waitForResponse((response) => response.url().endsWith("/api/v0/me/location") && response.request().method() === "POST");
+    await page.getByRole("button", { name: "Share precise location", exact: true }).click();
+    assert.equal((await shared).status(), 200);
+    await page.getByText(/Shared — accuracy/).waitFor();
+    const forgotten = page.waitForResponse((response) => response.url().endsWith("/api/v0/me/location") && response.request().method() === "DELETE");
+    await page.getByRole("button", { name: "Stop sharing", exact: true }).click();
+    assert.equal((await forgotten).status(), 200);
+    await page.getByText("Not shared.", { exact: true }).waitFor();
+    assert.ok(await page.locator("main").evaluate((element) => element.scrollWidth <= element.clientWidth));
     await ctx.close();
 });

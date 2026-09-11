@@ -9,7 +9,7 @@
 //! is here maps requests onto [`ChatSubmit`], results onto JSON, and the
 //! worker's broadcast onto the event protocol.
 //!
-//! Wire contract (also in `docs/openapi.json`, enforced by the drift test):
+//! Wire contract used by the chat JSON API:
 //!
 //! * `GET  /api/v0/chat/sessions` — the sidebar list
 //! * `POST /api/v0/chat/sessions` — mint a session
@@ -96,6 +96,21 @@ pub struct SessionsQuery {
     q: Option<String>,
 }
 
+/// GET /api/v0/chat/landing — resolve the latest conversation, creating the
+/// caller's first conversation when their workspace is empty.
+pub async fn session_landing(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, user) = require_session_json!(state, req);
+    let session = match chat::latest_session(&state.db, &user.id).await {
+        Ok(Some(session)) => session,
+        Ok(None) => match chat::create_session(&state.db, &user.id).await {
+            Ok(session) => session,
+            Err(err) => return internal(err),
+        },
+        Err(err) => return internal(err),
+    };
+    ok_json(StatusCode::OK, json!({ "session": session }))
+}
+
 /// POST /api/v0/chat/sessions — mint an empty conversation.
 pub async fn session_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
@@ -124,9 +139,43 @@ pub async fn session_get(
             return internal(err);
         }
     };
+    let compacted_up_to_seq =
+        match gateway_core::server::db::chat_compactions::get(&state.db, &session_id).await {
+            Ok(compaction) => compaction.map(|value| value.up_to_seq),
+            Err(err) => return internal(err),
+        };
+    let assets = match gateway_features::server::chat_attachments::list_session_attachments(
+        &state.db,
+        &session_id,
+    )
+    .await
+    {
+        Ok(assets) => assets
+            .into_iter()
+            .map(|asset| {
+                json!({
+                    "id": asset.id,
+                    "turn_id": asset.turn_id,
+                    "filename": asset.filename,
+                    "mime": asset.mime,
+                    "size": asset.size,
+                    "url": gateway_features::server::chat_attachments::proxy_url(
+                        &asset.turn_id,
+                        &asset.filename,
+                    ),
+                })
+            })
+            .collect::<Vec<_>>(),
+        Err(err) => return internal(err),
+    };
     ok_json(
         StatusCode::OK,
-        json!({ "session": session, "turns": turns }),
+        json!({
+            "session": session,
+            "turns": turns,
+            "compacted_up_to_seq": compacted_up_to_seq,
+            "assets": assets,
+        }),
     )
 }
 
@@ -554,23 +603,43 @@ pub async fn turn_edit(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    // Read off the whole request, before `into_parts` takes it apart.
     let ctx = request_ctx(&state, &req, false);
-    let (_, body) = req.into_parts();
-    let parsed: EditBody = match read_json(body, "the edit body").await {
-        Ok(p) => p,
-        Err(resp) => return resp,
-    };
-    let text = parsed.message.trim().to_string();
-    if text.is_empty() {
-        return bad_request("the message must not be empty");
-    }
+    let content_type = req
+        .headers()
+        .get(rama::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
     let turn = match load_owned_turn(&state, &user, &session_id, &turn_id).await {
         Ok(t) => t,
         Err(resp) => return resp,
     };
     if turn.role != chat::TurnRole::User {
         return bad_request("only your own messages can be edited");
+    }
+    let (_, body) = req.into_parts();
+    let (model, text) = if content_type.starts_with("multipart/form-data") {
+        let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+            Ok(bytes) => bytes,
+            Err(message) => {
+                return json_error(StatusCode::BAD_REQUEST, "invalid_request", &message);
+            }
+        };
+        match super::parse_chat_submit(&content_type, bytes, &turn_id, &state).await {
+            Ok(submit) => (submit.model, submit.user_text.trim().to_string()),
+            Err(message) => {
+                return json_error(StatusCode::BAD_REQUEST, "invalid_request", &message);
+            }
+        }
+    } else {
+        let parsed: EditBody = match read_json(body, "the edit body").await {
+            Ok(parsed) => parsed,
+            Err(resp) => return resp,
+        };
+        (parsed.model, parsed.message.trim().to_string())
+    };
+    if text.is_empty() {
+        return bad_request("the message must not be empty");
     }
     if let Err(err) = chat::update_user_turn_content(&state.db, &session_id, &turn_id, &text).await
     {
@@ -581,7 +650,7 @@ pub async fn turn_edit(
         return internal(err);
     }
     super::reclaim_attachments(&state, orphaned);
-    match start_regeneration_json(&state, &user, &session_id, parsed.model, ctx).await {
+    match start_regeneration_json(&state, &user, &session_id, model, ctx).await {
         Ok(ids) => ok_json(StatusCode::ACCEPTED, ids),
         Err(resp) => resp,
     }
@@ -816,14 +885,13 @@ pub async fn session_export_pdf(
 // ---------------------------------------------------------------------------
 // Canvas documents
 //
-// The legacy panel is a server-rendered HTML canvas patched over SSE; here the
-// same documents are plain JSON so the SPA can render (and diff) them itself.
+// Documents are plain JSON so the SPA can render (and diff) them itself.
 // Reads follow the conversation's readability (owner or shared); the hand-edit
 // is owner-only.
 
 /// GET /api/v0/chat/sessions/{id}/documents — the conversation's documents,
 /// most-recently-updated first. Soft-deleted ones stay hidden, as in the
-/// legacy listing.
+/// browser listing.
 pub async fn documents_list(
     Path(session_id): Path<String>,
     State(state): State<Arc<RamaState>>,
@@ -1149,50 +1217,121 @@ pub async fn capabilities_list(
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
-    let entries = crate::pages::tool_toggles::entries_for_roles(&state, &user.roles);
-    let overlay = gateway_core::server::db::chat_session_tools::enabled_keys_for_session(
-        &state.db,
-        &session_id,
-    )
-    .await
-    .unwrap_or_default();
-    let blocked = gateway_core::server::db::chat_session_tools::disabled_keys_for_session(
-        &state.db,
-        &session_id,
-    )
-    .await
-    .unwrap_or_default();
-    // `state` distinguishes Auto from Off; `enabled` stays for older clients.
-    // Rendering the two identically hid the fact that a tool had been blocked
-    // for the whole conversation.
-    let tools: Vec<_> = entries
-        .into_iter()
-        .map(|e| {
-            let on = overlay.contains(&e.key);
-            let off = blocked.contains(&e.key);
-            serde_json::json!({
-                "key": e.key,
-                "title": e.title,
-                "enabled": on,
-                "state": if on { "on" } else if off { "off" } else { "auto" },
-            })
-        })
-        .collect();
+    let tools = capability_views(&state, &user, &session_id).await;
     ok_json(StatusCode::OK, serde_json::json!({ "tools": tools }))
+}
+
+#[derive(serde::Serialize)]
+struct CapabilityView {
+    key: String,
+    kind: &'static str,
+    title: String,
+    description: String,
+    group: String,
+    order: u8,
+    state: &'static str,
+    can_disable: bool,
+    icon: Option<String>,
+}
+
+fn tool_state(value: Option<&bool>) -> &'static str {
+    match value {
+        Some(true) => "on",
+        Some(false) => "off",
+        None => "auto",
+    }
+}
+
+async fn capability_views(state: &RamaState, user: &User, session_id: &str) -> Vec<CapabilityView> {
+    use gateway_runtime::server::tools::catalog::Category;
+
+    let states =
+        gateway_core::server::db::chat_session_tools::states_for_session(&state.db, session_id)
+            .await
+            .unwrap_or_default();
+    let mut views = crate::pages::tool_toggles::entries_for_roles(state, &user.roles)
+        .into_iter()
+        .filter(|entry| entry.category != Category::Integrations)
+        .map(|entry| CapabilityView {
+            state: tool_state(states.get(&entry.key)),
+            key: entry.key,
+            kind: "tool",
+            title: entry.title,
+            description: entry.description,
+            group: entry.category.label().to_string(),
+            order: entry.category.order(),
+            can_disable: true,
+            icon: None,
+        })
+        .collect::<Vec<_>>();
+
+    let role_ids = state.role_ids_for(&user.roles);
+    let admin = state.rbac.is_admin(&role_ids);
+    let connected = gateway_core::server::db::user_mcp::connected_keys(&state.db, &user.id)
+        .await
+        .unwrap_or_default();
+    for connector_key in connected {
+        let Ok(Some(connector)) =
+            gateway_core::server::db::mcp_catalog::get(&state.db, &connector_key).await
+        else {
+            continue;
+        };
+        if !connector.enabled || !connector.allows(&role_ids, admin) {
+            continue;
+        }
+        let key = format!(
+            "{}{connector_key}",
+            gateway_runtime::server::tools::mcp::MCP_ID_PREFIX
+        );
+        views.push(CapabilityView {
+            state: tool_state(states.get(&key)),
+            key,
+            kind: "tool",
+            title: connector.name,
+            description: connector.description.unwrap_or_default(),
+            group: Category::Integrations.label().to_string(),
+            order: Category::Integrations.order(),
+            can_disable: true,
+            icon: connector.icon,
+        });
+    }
+
+    let loaded =
+        gateway_core::server::db::chat_session_skills::loaded_for_session(&state.db, session_id)
+            .await
+            .unwrap_or_default();
+    let registry = state.combined_skills_for(&user.id);
+    for name in state.allowed_skills_for(&user.roles, &user.id) {
+        let (title, description) = registry
+            .as_ref()
+            .and_then(|skills| skills.get(&name))
+            .map(|skill| (skill.title.clone(), skill.description.clone()))
+            .unwrap_or_else(|| (name.clone(), String::new()));
+        views.push(CapabilityView {
+            state: if loaded.contains(&name) { "on" } else { "auto" },
+            key: name,
+            kind: "skill",
+            title,
+            description,
+            group: "Skills".to_string(),
+            order: u8::MAX,
+            can_disable: false,
+            icon: None,
+        });
+    }
+    views.sort_by(|left, right| {
+        left.order
+            .cmp(&right.order)
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    views
 }
 
 #[derive(serde::Deserialize)]
 pub struct CapabilityBody {
-    pub tool_key: String,
-    /// `"on"` pins the tool for this conversation, `"auto"` removes the
-    /// override, `"off"` blocks it. Optional so the older `{tool_key,
-    /// enabled}` shape keeps working.
-    #[serde(default)]
-    pub state: Option<String>,
-    /// Legacy two-state form. `false` means `"auto"`, NOT `"off"` — see
-    /// [`capabilities_set`].
-    #[serde(default)]
-    pub enabled: bool,
+    pub kind: String,
+    pub key: String,
+    pub state: String,
 }
 
 /// POST /api/v0/chat/sessions/{id}/capabilities — set one tool's overlay
@@ -1211,23 +1350,58 @@ pub async fn capabilities_set(
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    // The overlay is three-valued — On (row, enabled=1), Auto (no row) and
-    // Off (row, enabled=0) — and the difference between the last two matters:
-    // an Off row is consulted by `enable_tools` and `openai_driver` as a hard
-    // block for the rest of the conversation. Writing `set(false)` whenever a
-    // box was unticked therefore turned "I do not want this pinned" into
-    // "this tool is banned here", with no way back through any endpoint.
-    // Unticking is Auto; blocking is an explicit `"off"`.
-    let wanted = parsed
-        .state
-        .as_deref()
-        .unwrap_or(if parsed.enabled { "on" } else { "auto" });
-    let result = match wanted {
+    let available = capability_views(&state, &user, &session_id).await;
+    let Some(capability) = available
+        .iter()
+        .find(|entry| entry.kind == parsed.kind && entry.key == parsed.key)
+    else {
+        return json_error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "that capability is not available to this user",
+        );
+    };
+    if parsed.kind == "skill" {
+        let result = match parsed.state.as_str() {
+            "on" => {
+                gateway_core::server::db::chat_session_skills::record(
+                    &state.db,
+                    &session_id,
+                    &parsed.key,
+                )
+                .await
+            }
+            "auto" => {
+                gateway_core::server::db::chat_session_skills::remove(
+                    &state.db,
+                    &session_id,
+                    &parsed.key,
+                )
+                .await
+            }
+            _ => {
+                return json_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "a skill state must be `on` or `auto`",
+                );
+            }
+        };
+        return match result {
+            Ok(()) => ok_json(
+                StatusCode::OK,
+                json!({ "kind": parsed.kind, "key": parsed.key, "state": parsed.state }),
+            ),
+            Err(err) => internal(err),
+        };
+    }
+    debug_assert!(capability.can_disable);
+    let result = match parsed.state.as_str() {
         "on" => {
             gateway_core::server::db::chat_session_tools::set(
                 &state.db,
                 &session_id,
-                &parsed.tool_key,
+                &parsed.key,
                 true,
                 "manual",
             )
@@ -1237,19 +1411,15 @@ pub async fn capabilities_set(
             gateway_core::server::db::chat_session_tools::set(
                 &state.db,
                 &session_id,
-                &parsed.tool_key,
+                &parsed.key,
                 false,
                 "manual",
             )
             .await
         }
         "auto" => {
-            gateway_core::server::db::chat_session_tools::clear(
-                &state.db,
-                &session_id,
-                &parsed.tool_key,
-            )
-            .await
+            gateway_core::server::db::chat_session_tools::clear(&state.db, &session_id, &parsed.key)
+                .await
         }
         other => {
             return json_error(
@@ -1262,7 +1432,7 @@ pub async fn capabilities_set(
     match result {
         Ok(()) => ok_json(
             StatusCode::OK,
-            serde_json::json!({ "tool_key": parsed.tool_key, "state": wanted }),
+            serde_json::json!({ "kind": parsed.kind, "key": parsed.key, "state": parsed.state }),
         ),
         Err(err) => internal(err),
     }

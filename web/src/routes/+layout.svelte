@@ -4,12 +4,18 @@
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { onMount } from 'svelte';
-	import { api, loginUrl } from '$lib/api';
+	import { api } from '$lib/api';
+	import { loginPageUrl } from '$lib/auth';
+	import { pageTitleDescriptor } from '$lib/page-titles';
+	import { pageTitleOverride } from '$lib/page-title';
 	import { loadMe, me } from '$lib/session.svelte';
 	import { sidebar, refreshSidebar, searchAsYouType, openSearch, closeSearch } from '$lib/sidebar.svelte';
 	import { feedback, loadConfig, openDialog, submit } from '$lib/feedback.svelte';
-	import { t, locale, setLocale, LOCALES, LOCALE_NAMES } from '$lib/i18n.svelte';
-	import type { Locale } from '$lib/i18n.svelte';
+	import { t, locale } from '$lib/i18n.svelte';
+	import NavIcon, { type NavIconName } from '$lib/components/NavIcon.svelte';
+	import LanguagePicker from '$lib/components/LanguagePicker.svelte';
+	import SourceLink from '$lib/components/SourceLink.svelte';
+	import ConversationSidebarRow from '$lib/components/chat/ConversationSidebarRow.svelte';
 
 	let { children } = $props<{ children: import('svelte').Snippet }>();
 
@@ -21,7 +27,7 @@
 	$effect(() => {
 		const isSetup = page.url.pathname.startsWith(`${base}/setup`);
 		if (me.loaded && me.value === null && !page.url.pathname.endsWith('/login') && !isSetup) {
-			window.location.href = loginUrl(page.url.pathname + page.url.search);
+			window.location.href = `${base}${loginPageUrl(page.url.pathname + page.url.search)}`;
 		}
 	});
 
@@ -58,51 +64,110 @@
 	async function newChat() {
 		try {
 			const { session } = await api.createChatSession();
+			await refreshSidebar();
 			await goto(`${base}/chat/${session.id}`);
 		} catch {
 			/* the layout's redirect handles 401 */
 		}
 	}
 
+	async function pinChat(id: string, pinned: boolean) {
+		try {
+			await api.pinChatSession(id, pinned);
+			await refreshSidebar();
+		} catch (caught) {
+			sidebarError = String(caught);
+		}
+	}
+
+	async function removeChat(id: string) {
+		try {
+			await api.deleteChatSession(id);
+			await refreshSidebar();
+			if (page.url.pathname === `${base}/chat/${id}` || page.url.pathname === `/chat/${id}`) {
+				await goto(`${base}/chat`);
+			}
+		} catch (caught) {
+			sidebarError = String(caught);
+		}
+	}
+
 	// ---- collapsible nav groups (same three as the legacy shell) ----------
-	let langOpen = $state(false);
 	/// Surfaced only when sign-out fails; a silent failure would leave the
 	/// session alive behind a signed-out-looking shell.
 	let signOutError = $state<string | null>(null);
-	let workspaceOpen = $state(true);
-	let accountOpen = $state(true);
-	let adminOpen = $state(true);
+	let sidebarError = $state<string | null>(null);
+	function savedNavSections(): Set<string> {
+		if (typeof document === 'undefined') return new Set(['workspace']);
+		const value = document.cookie
+			.split('; ')
+			.find((cookie) => cookie.startsWith('nav_sections='))
+			?.slice('nav_sections='.length);
+		return value === undefined ? new Set(['workspace']) : new Set(value.split(','));
+	}
+
+	const initialNavSections = savedNavSections();
+	if (page.url.pathname.startsWith(`${base}/admin/`) || page.url.pathname.startsWith(`${base}/rag`)) {
+		initialNavSections.add('admin');
+	}
+	let workspaceOpen = $state(initialNavSections.has('workspace'));
+	let accountOpen = $state(initialNavSections.has('account'));
+	let adminOpen = $state(initialNavSections.has('admin'));
+
+	function toggleNavSection(name: string) {
+		if (name === 'workspace') workspaceOpen = !workspaceOpen;
+		else if (name === 'account') accountOpen = !accountOpen;
+		else adminOpen = !adminOpen;
+		const open = [
+			workspaceOpen && 'workspace',
+			accountOpen && 'account',
+			adminOpen && 'admin'
+		].filter(Boolean);
+		document.cookie = `nav_sections=${open.length ? open.join(',') : 'none'}; path=/; max-age=31536000; samesite=lax`;
+	}
 
 	// Keys, not labels: the nav re-renders on a language switch because `t()`
 	// reads the reactive locale, which only works if the lookup happens in the
 	// template rather than once at module scope.
-	const workspaceLinks: [string, string][] = [
-		['nav-memory', '/memory'],
-		['nav-scheduled', '/scheduled'],
-		['nav-webhooks', '/webhooks'],
-		['nav-integrations', '/integrations'],
-		['nav-my-skills', '/skills'],
-		['nav-tools', '/tools']
+	type NavLink = [string, string, NavIconName];
+	const workspaceLinks: NavLink[] = [
+		['nav-memory', '/memory', 'folder'],
+		['nav-scheduled', '/scheduled', 'clock'],
+		['nav-webhooks', '/webhooks', 'send'],
+		['nav-integrations', '/integrations', 'plug'],
+		['nav-my-skills', '/skills', 'sparkles'],
+		['nav-tools', '/tools', 'sliders']
 	];
-	const accountLinks: [string, string][] = [
-		['nav-tokens', '/tokens'],
-		['nav-usage', '/usage']
+	const accountLinks: NavLink[] = [
+		['nav-tokens', '/tokens', 'key'],
+		['nav-usage', '/usage', 'chart']
 	];
-	const adminLinks: [string, string][] = [
-		['nav-users', '/admin/users'],
-		['nav-admin-tokens', '/admin/tokens'],
-		['nav-groups', '/admin/groups'],
-		['nav-upstreams', '/admin/upstreams'],
-		['nav-models', '/admin/models'],
-		['nav-rag', '/admin/rag'],
-		['nav-skills', '/admin/skills'],
-		['nav-connectors', '/admin/connectors'],
-		['nav-comfyui', '/admin/comfyui'],
-		['nav-limits', '/admin/limits'],
-		['nav-settings', '/admin/settings']
+	const adminLinks: NavLink[] = [
+		['nav-users', '/admin/users', 'users'],
+		['nav-admin-tokens', '/admin/tokens', 'key'],
+		['nav-groups', '/admin/groups', 'users'],
+		['nav-upstreams', '/admin/upstreams', 'cube'],
+		['nav-models', '/admin/models', 'cpu'],
+		['nav-rag', '/rag', 'database'],
+		['nav-skills', '/admin/skills', 'sparkles'],
+		['nav-connectors', '/admin/connectors', 'plug'],
+		['nav-comfyui', '/admin/comfyui', 'sparkles'],
+		['nav-limits', '/admin/limits', 'sliders'],
+		['nav-settings', '/admin/settings', 'sliders']
 	];
 
 	const isAdmin = $derived(me.value?.role_ids?.includes('admin') ?? false);
+	const publicRoute = $derived(page.url.pathname.startsWith(`${base}/setup`) || page.url.pathname.endsWith('/login'));
+	const pageTitle = $derived(pageTitleDescriptor(page.url.pathname));
+	const resolvedPageTitle = $derived(
+		$pageTitleOverride.pathname === page.url.pathname && $pageTitleOverride.title
+			? $pageTitleOverride.title
+			: pageTitle
+				? pageTitle.branded
+					? t('page-title-branded', { title: t(pageTitle.key) })
+					: t(pageTitle.key)
+				: null
+	);
 
 	function isActive(path: string): boolean {
 		return page.url.pathname === `${base}${path}` || page.url.pathname === path;
@@ -125,6 +190,15 @@
 
 </script>
 
+<svelte:head>
+	{#if resolvedPageTitle}
+		<title>{resolvedPageTitle}</title>
+	{/if}
+</svelte:head>
+
+{#if publicRoute}
+	<div class="relative min-h-dvh bg-base-100 text-base-content"><div class="fixed right-4 top-4 z-20"><LanguagePicker placement="down" /></div><main class="flex min-h-dvh items-center justify-center p-6"><div class="w-full max-w-2xl">{@render children()}</div></main></div>
+{:else}
 <div class="min-h-dvh bg-base-100 text-base-content flex">
 	<!-- Mobile backdrop -->
 	{#if sidebar.open}
@@ -137,57 +211,54 @@
 
 	<!-- Sidebar -->
 	<aside
-		class="fixed lg:sticky top-0 z-40 h-dvh w-72 shrink-0 flex flex-col bg-base-200 border-r border-base-300
+		class="fixed lg:sticky top-0 z-40 h-dvh w-72 shrink-0 flex flex-col bg-base-200 border-r border-base-300/60
 			transition-transform -translate-x-full lg:translate-x-0 {sidebar.open ? 'translate-x-0' : ''}"
 		aria-label={t('nav-main-aria')}
 	>
 		<!-- Brand -->
-		<div class="px-4 h-14 flex items-center border-b border-base-300">
-			<a href="{base}/chat" class="font-semibold">{me.value ? 'LLM Gateway' : 'LLM Gateway'}</a>
+		<div class="px-4 pt-4 pb-2 flex items-center">
+			<a href="{base}/chat" class="font-semibold">{t('nav-brand')}</a>
 		</div>
 
 		<!-- Primary nav -->
-		<nav class="flex-1 overflow-y-auto px-2 py-2">
+		<nav class="flex flex-col gap-0.5 px-2 pt-1 pb-2">
 			<a
 				href="{base}/chat"
-				class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm {isChatActive()
+				class="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm {isChatActive()
 					? 'bg-base-300 font-medium'
 					: 'hover:bg-base-300/50'}"
 				onclick={() => (sidebar.open = false)}
 			>
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>
-				Chat
+				<NavIcon name="message" />
+				{t('chat-default-title')}
 			</a>
 
-			{#snippet group(name: string, open: boolean, items: [string, string][])}
-				{@const toggle = () => {
-					if (name === 'workspace') workspaceOpen = !workspaceOpen;
-					else if (name === 'account') accountOpen = !accountOpen;
-					else adminOpen = !adminOpen;
-				}}
+			{#snippet group(name: string, open: boolean, items: NavLink[])}
 				{@const isOpen = name === 'workspace'
 					? workspaceOpen
 					: name === 'account'
 						? accountOpen
 						: adminOpen}
 				<button
-					class="w-full flex items-center gap-1 rounded-lg px-3 pt-4 pb-1 text-[11px] font-semibold tracking-wider text-base-content/50 uppercase hover:bg-base-300/40"
-					onclick={toggle}
+					class="w-full flex items-center gap-1 rounded-lg px-2.5 pt-2.5 pb-0.5 text-[11px] font-semibold tracking-wider text-base-content/50 uppercase hover:text-base-content/75"
+					onclick={() => toggleNavSection(name)}
 					aria-label={t('nav-group-toggle-aria', { label: t(`nav-group-${name}`) })}
+					aria-expanded={isOpen}
 				>
 					{t(`nav-group-${name}`)}
 					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="ml-auto transition-transform {isOpen ? 'rotate-180' : ''}" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
 				</button>
 				{#if isOpen}
 					<div class="flex flex-col">
-						{#each items as [label, path] (path)}
+						{#each items as [label, path, icon] (path)}
 							<a
 								href="{base}{path}"
-								class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm {isActive(path)
+								class="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm {isActive(path)
 									? 'bg-base-300 font-medium'
 									: 'hover:bg-base-300/50'}"
 								onclick={() => (sidebar.open = false)}
 							>
+								<NavIcon name={icon} />
 								{t(label)}
 							</a>
 						{/each}
@@ -203,7 +274,7 @@
 		</nav>
 
 		<!-- Conversations -->
-		<div class="border-t border-base-300 px-2 py-2">
+		<div class="flex-1 min-h-0 flex flex-col mt-2 border-t border-base-300/60 px-2 pt-2">
 			<div class="flex items-center justify-between px-2 py-1">
 				<span class="text-[11px] font-semibold tracking-wider text-base-content/50 uppercase">{t('nav-conversations-label')}</span>
 				<div class="flex gap-1">
@@ -232,72 +303,21 @@
 				</div>
 			{/if}
 
-			<ul class="flex flex-col max-h-64 overflow-y-auto">
+			<ul class="flex-1 min-h-0 flex flex-col overflow-y-auto pb-2" data-sidebar-conversations>
 				{#each sidebar.sessions as s (s.id)}
-					<li>
-						<a
-							href="{base}/chat/{s.id}"
-							class="block rounded-lg px-3 py-1.5 text-sm truncate {isActive(`/chat/${s.id}`)
-								? 'bg-base-300 font-medium'
-								: 'hover:bg-base-300/50'}"
-							onclick={() => (sidebar.open = false)}
-						>
-							{s.title?.trim() || t('nav-untitled-chat')}
-							{#if s.snippet}
-								<span class="block text-xs text-base-content/50 truncate normal-case">{@html s.snippet}</span>
-							{/if}
-						</a>
-					</li>
+					<ConversationSidebarRow session={s} active={isActive(`/chat/${s.id}`)} onopen={() => (sidebar.open = false)} onpin={() => void pinChat(s.id, !s.pinned)} onremove={() => void removeChat(s.id)} />
 				{:else}
-					<li class="px-3 py-1.5 text-xs text-base-content/50">No conversations.</li>
+					<li class="px-3 py-1.5 text-xs text-base-content/50">{t('chat-list-empty')}</li>
 				{/each}
 			</ul>
 		</div>
 
-		<div class="px-4 py-1 border-t border-base-300/60">
-			<span class="text-[11px] text-base-content/45">Source · AGPL-3.0 · v0.1.0</span>
-		</div>
 		<!-- User footer -->
-		<div class="border-t border-base-300 px-3 py-2 flex items-center gap-2">
+		<div class="border-t border-base-300/60 px-3 py-2 flex items-center gap-2">
 			<span class="text-xs truncate flex-1 min-w-0" title={me.value?.email ?? ''}>
 				{me.value?.email ?? ''}
 			</span>
-			<div class="relative">
-				<button
-					class="btn btn-ghost btn-xs"
-					onclick={() => (langOpen = !langOpen)}
-					aria-label={t('chrome-lang-switcher-aria')}
-					title={t('chrome-lang-switcher-aria')}
-				>
-					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-				</button>
-				{#if langOpen}
-					<!-- Close on an outside click, so the menu never strands. -->
-					<button
-						class="fixed inset-0 z-40 cursor-default bg-transparent"
-						aria-label={t('nav-close-menu')}
-						onclick={() => (langOpen = false)}
-					></button>
-					<ul class="absolute bottom-9 right-0 z-50 menu bg-base-200 rounded-box border border-base-300 shadow p-1 w-36">
-						{#each LOCALES as code (code)}
-							<li>
-								<button
-									class="text-sm {locale.current === code ? 'font-semibold' : ''}"
-									onclick={() => {
-										// Fire-and-forget: `setLocale` awaits the catalog chunk
-										// and only then moves the locale, so the app re-renders
-										// in one step rather than half-translated.
-										void setLocale(code);
-										langOpen = false;
-									}}
-								>
-									{LOCALE_NAMES[code]}
-								</button>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</div>
+			<LanguagePicker />
 			<button
 				class="btn btn-ghost btn-xs"
 				title={t('chrome-theme-toggle-title')}
@@ -315,6 +335,9 @@
 					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
 			</button>
 		</div>
+		<div class="px-4 py-2 border-t border-base-300/60 text-[11px] leading-tight text-base-content/45">
+			<SourceLink />
+		</div>
 	</aside>
 
 	<!-- Main column -->
@@ -324,7 +347,7 @@
 			<button class="btn btn-ghost btn-sm" onclick={() => (sidebar.open = true)} aria-label={t('nav-open-menu')}>
 				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
 			</button>
-			<span class="font-semibold">LLM Gateway</span>
+			<span class="font-semibold">{t('nav-brand')}</span>
 		</div>
 
 		<main class="flex-1 min-h-0 min-w-0 overflow-y-auto">
@@ -345,8 +368,12 @@
 		</div>
 	{/if}
 
+	{#if sidebarError}
+		<div class="toast toast-end z-50"><div class="alert alert-error text-sm"><span>{sidebarError}</span><button class="btn btn-ghost btn-xs" onclick={() => (sidebarError = null)}>{t('feedback-close-aria')}</button></div></div>
+	{/if}
+
 	{#if feedback.enabled && me.value}
-		<button class="btn btn-circle btn-neutral fixed bottom-4 right-4 z-40" onclick={openDialog} aria-label={t('feedback-fab-aria')}>
+		<button class="btn btn-circle btn-neutral fixed bottom-4 right-4 z-40 {isChatActive() ? 'hidden 2xl:flex' : ''}" onclick={openDialog} aria-label={t('feedback-fab-aria')}>
 			?
 		</button>
 	{/if}
@@ -382,3 +409,4 @@
 		</dialog>
 	{/if}
 </div>
+{/if}

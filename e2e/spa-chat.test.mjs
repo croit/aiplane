@@ -19,6 +19,15 @@ import { BASE, devSessionCookie, gatewayIsUp, launchBrowser } from "./helpers.mj
 
 let browser;
 
+async function conversationUrl(cookie, title) {
+    const response = await fetch(`${BASE}/api/v0/chat/sessions`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const { sessions } = await response.json();
+    const session = sessions.find((candidate) => candidate.title === title);
+    assert.ok(session, `missing seeded conversation: ${title}`);
+    return `/chat/${session.id}`;
+}
+
 before(async () => {
     assert.ok(
         await gatewayIsUp(),
@@ -35,6 +44,34 @@ before(async () => {
 
 after(async () => {
     if (browser) await browser.close();
+});
+
+test("chat entry resolves directly and keeps sidebar pin and delete actions", async () => {
+    const cookieValue = await devSessionCookie();
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
+    const page = await ctx.newPage();
+
+    await page.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
+    await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname), { timeout: 5000 });
+    const landing = page.url();
+    await page.getByRole("button", { name: "Start a new conversation", exact: true }).click();
+    await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname) && url.href !== landing, { timeout: 5000 });
+    const id = page.url().split("/").at(-1);
+    const row = page.locator(`a[href$="/chat/${id}"]`).last().locator("..");
+    await row.waitFor();
+
+    const pinned = page.waitForResponse((response) => response.url().endsWith(`/api/v0/chat/sessions/${id}/pin`));
+    await row.getByRole("button", { name: "Pin conversation", exact: true }).click();
+    assert.equal((await pinned).status(), 200);
+    await row.getByRole("button", { name: "Unpin conversation", exact: true }).waitFor();
+
+    const removed = page.waitForResponse((response) => response.url().endsWith(`/api/v0/chat/sessions/${id}`) && response.request().method() === "DELETE");
+    await row.getByRole("button", { name: "Delete conversation", exact: true }).click();
+    assert.equal((await removed).status(), 204);
+    await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname) && !url.pathname.endsWith(`/${id}`), { timeout: 5000 });
+    assert.equal(await page.locator(`a[href$="/chat/${id}"]`).count(), 0);
+    await ctx.close();
 });
 
 /** Whether the gateway can actually route a chat turn to an upstream. */
@@ -81,10 +118,12 @@ test("a turn streams into the SPA over the JSON event protocol", async (t) => {
     await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
     const page = await ctx.newPage();
 
-    // The SPA home funnels into the chat list; start a fresh conversation.
-    await page.goto(`${BASE}/chat`, { waitUntil: "networkidle" });
-    await page.locator('button:has-text("New conversation")').click();
+    await page.goto(`${BASE}/chat`, { waitUntil: "domcontentloaded" });
     await page.waitForURL((u) => /\/chat\/.+/.test(u.pathname), { timeout: 5000 });
+    assert.equal(await page.title(), "Chat — LLM Gateway");
+    const landing = page.url();
+    await page.getByRole("button", { name: "Start a new conversation", exact: true }).click();
+    await page.waitForURL((url) => /\/chat\/.+/.test(url.pathname) && url.href !== landing, { timeout: 5000 });
 
     // With SSR off, the composer only exists once Svelte has booted —
     // waiting for it also means its listeners are attached, so the Send
@@ -93,23 +132,23 @@ test("a turn streams into the SPA over the JSON event protocol", async (t) => {
 
     // Compose: model + message, send. The picker is a <select> when the
     // gateway offers models, free-text otherwise.
-    const picker = page.locator('[aria-label="Model"]');
-    if ((await picker.evaluate((el) => el.tagName)) === "SELECT") {
+    const picker = page.getByLabel("Chat model");
+    if (await page.locator('select[aria-label="Chat model"]').count()) {
         await picker.selectOption("demo-model");
     } else {
         await picker.fill("demo-model");
     }
     await page.locator('textarea').fill("hello from the e2e suite");
-    await page.locator('button:has-text("Send")').click();
+    await page.getByRole("button", { name: "Send", exact: true }).click();
 
     // The user bubble appears immediately…
     await page.waitForSelector("text=hello from the e2e suite", { timeout: 5000 });
     // …then the reply streams in over the event protocol and the composer
     // unlocks again once the turn finalises.
     await page.waitForSelector("text=How can I help?", { timeout: 10_000 });
-    await page
-        .locator('button:has-text("Send")')
-        .waitFor({ state: "visible", timeout: 10_000 });
+    await page.getByRole("button", { name: "Send", exact: true }).waitFor({ state: "visible", timeout: 10_000 });
+    await page.waitForFunction(() => document.title !== "Chat — LLM Gateway", undefined, { timeout: 5000 });
+    assert.equal(await page.title(), "Hi! How can I help — LLM Gateway");
     await ctx.close();
 });
 
@@ -118,10 +157,24 @@ test("the voice-mode modal opens with its tap-to-talk control", async () => {
     const ctx = await browser.newContext();
     await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
     const page = await ctx.newPage();
-    await page.goto(`${BASE}/chat`, { waitUntil: "networkidle" });
-    await page.locator('button:has-text("New conversation")').click();
+    await page.goto(`${BASE}/chat`, { waitUntil: "domcontentloaded" });
     await page.waitForURL((u) => /\/chat\/.+/.test(u.pathname), { timeout: 5000 });
+    const landing = page.url();
+    await page.getByRole("button", { name: "Start a new conversation", exact: true }).click();
+    await page.waitForURL((url) => /\/chat\/.+/.test(url.pathname) && url.href !== landing, { timeout: 5000 });
     await page.locator("textarea").waitFor();
+
+    assert.equal(await page.getByRole("link", { name: "All chats", exact: true }).count(), 0);
+    await page.getByRole("heading", { name: "New conversation", exact: true }).waitFor();
+    const chatModel = page.getByLabel("Chat model", { exact: true });
+    const voiceModel = page.getByLabel("Voice model", { exact: true });
+    await chatModel.waitFor();
+    await voiceModel.waitFor();
+    assert.ok(
+        (await chatModel.boundingBox()).y < (await page.locator("textarea").boundingBox()).y,
+        "the chat model belongs in the page header, above the composer",
+    );
+    await page.getByRole("button", { name: "Record voice message", exact: true }).waitFor();
 
     // `voice-toggle-title` in the Fluent corpus — the composer's controls are
     // translated, so the label is the catalog's wording, not a literal we get
@@ -134,5 +187,79 @@ test("the voice-mode modal opens with its tap-to-talk control", async () => {
     await page.waitForSelector("text=Tap to talk", { timeout: 5000 });
     await page.locator('dialog.modal-open .modal-action button:has-text("Close")').click();
     await page.locator("dialog.modal-open").waitFor({ state: "detached", timeout: 5000 });
+    await ctx.close();
+});
+
+test("conversation tools preserve grouped searchable Off Auto On controls", async () => {
+    const cookieValue = await devSessionCookie();
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/chat`, { waitUntil: "domcontentloaded" });
+    await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname), { timeout: 5000 });
+    await page.getByRole("button", { name: "Tools", exact: true }).click();
+    await page.getByPlaceholder("Search tools…").fill("web search");
+
+    const row = page.getByText("Web search", { exact: true }).locator("..");
+    const saved = page.waitForResponse(
+        (response) => response.url().endsWith("/capabilities") && response.request().method() === "POST",
+    );
+    await row.getByRole("button", { name: "On — always available to the assistant", exact: true }).click();
+    assert.equal((await saved).status(), 200);
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await page.getByRole("button", { name: /Web search/ }).waitFor();
+    await ctx.close();
+});
+
+test("the transcript keeps edit, retry, code, tool-detail, and canvas workflows", async () => {
+    const cookie = process.env.GATEWAY_SESSION_COOKIE;
+    assert.ok(cookie?.startsWith("id="), "set GATEWAY_SESSION_COOKIE to the dev-ui seed cookie");
+    const cookieValue = cookie.slice("id=".length);
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 950 } });
+    await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
+    const page = await ctx.newPage();
+
+    const transcriptUrl = await conversationUrl(cookie, "Enabling gzip in nginx");
+    await page.goto(`${BASE}${transcriptUrl}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("separator", { name: "Earlier messages condensed to save context", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Copy code", exact: true }).waitFor();
+    await page.locator("details").filter({ hasText: "search_web" }).locator("summary").click();
+    await page.getByText("Input", { exact: true }).first().waitFor();
+    await page.getByRole("button", { name: /Edit/ }).click();
+    await page.getByRole("dialog", { name: "Edit your message:" }).waitFor();
+    await page.getByRole("dialog", { name: "Edit your message:" }).getByRole("button", { name: "Cancel", exact: true }).first().click();
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await page.getByRole("button", { name: /Retry/ }).click();
+
+    const workspaceUrl = await conversationUrl(cookie, "Draft a project brief");
+    await page.goto(`${BASE}${workspaceUrl}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Document", exact: true }).waitFor();
+    await page.getByText("Ship a reliable, accessible gateway experience.", { exact: true }).waitFor();
+    await page.getByLabel("Version", { exact: true }).selectOption("1");
+    await page.getByText("Complete feature parity", { exact: true }).waitFor();
+    await page.getByLabel("Version", { exact: true }).selectOption("2");
+    await page.getByText("Release criteria", { exact: true }).waitFor();
+
+    const desktopCanvas = page.getByRole("complementary", { name: "Canvas", exact: true });
+    const initialCanvasBox = await desktopCanvas.boundingBox();
+    const resizeHandle = page.getByRole("slider", { name: "Resize canvas", exact: true });
+    const resizeBox = await resizeHandle.boundingBox();
+    assert.ok(initialCanvasBox && resizeBox);
+    await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(resizeBox.x - 96, resizeBox.y + 100);
+    await page.mouse.up();
+    const resizedCanvasBox = await desktopCanvas.boundingBox();
+    assert.ok(resizedCanvasBox && resizedCanvasBox.width >= initialCanvasBox.width + 80);
+
+    await page.getByRole("button", { name: /Assets/ }).click();
+    await page.getByRole("complementary", { name: "Canvas", exact: true }).getByText("project-brief.md", { exact: true }).waitFor();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Close canvas", exact: true }).click();
+    await page.getByRole("button", { name: "Show / hide the document canvas", exact: true }).click();
+    const canvas = page.getByRole("complementary", { name: "Canvas", exact: true });
+    const box = await canvas.boundingBox();
+    assert.ok(box && box.x >= 0 && box.x + box.width <= 390, `canvas overflowed mobile viewport: ${JSON.stringify(box)}`);
     await ctx.close();
 });

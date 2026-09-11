@@ -222,6 +222,68 @@ async fn session_for(state: &gateway_runtime::rama_server::state::RamaState, use
     common::seed_session(state, user, &format!("{user}@example.com")).await
 }
 
+#[tokio::test]
+async fn token_management_details_return_saved_scopes_quotas_policy_and_account() {
+    let upstream = MockServer::start().await;
+    let state = state_with_two_models(&upstream).await;
+    let (_, token_id) = common::seed_user_with_token_id(&state, "alice").await;
+    token_models::set_for_token(&state.db, &token_id, &["model-a".into()], ManagedBy::Owner)
+        .await
+        .unwrap();
+    limits::upsert_checked(
+        &state.db,
+        SubjectType::Token,
+        &token_id,
+        None,
+        Dimension::Requests,
+        Window::Day,
+        42.0,
+        ManagedBy::Owner,
+    )
+    .await
+    .unwrap();
+    gateway_core::server::db::user_mcp::set_token_policy(
+        &state.db,
+        &token_id,
+        "*",
+        gateway_core::server::db::user_mcp::AskOverApi::Allow,
+    )
+    .await
+    .unwrap();
+    let cookie = session_for(&state, "alice").await;
+    let app = common::app(state);
+
+    let unauthorized = app
+        .serve(json_req(Method::GET, "/api/v0/tokens/details", "", None))
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/tokens/details",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = common::read_body(resp).await;
+    let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(parsed["account"]["email"], "alice@example.com");
+    assert_eq!(parsed["account"]["user_id"], "alice");
+    assert_eq!(parsed["timezone"], "UTC");
+    assert_eq!(parsed["models"], json!(["model-a", "model-b"]));
+    assert_eq!(parsed["tokens"][0]["id"], token_id);
+    assert_eq!(parsed["tokens"][0]["owner_models"], json!(["model-a"]));
+    assert_eq!(parsed["tokens"][0]["admin_models"], serde_json::Value::Null);
+    assert_eq!(parsed["tokens"][0]["mcp_allow"], true);
+    assert_eq!(parsed["tokens"][0]["quotas"][0]["dimension"], "requests");
+    assert_eq!(parsed["tokens"][0]["quotas"][0]["window"], "day");
+    assert_eq!(parsed["tokens"][0]["quotas"][0]["value"], 42.0);
+}
+
 /// A session-authenticated JSON request — the shape every SPA-driven token
 /// action takes. `body` is passed verbatim so a test can send something
 /// `serde_json::Value` cannot represent (a bare `inf`, say).

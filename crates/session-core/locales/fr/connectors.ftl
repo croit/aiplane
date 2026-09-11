@@ -1,28 +1,113 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
+connectors-page-title = Connecteurs — LLM Gateway
+connectors-audit-page-title = { $name } — Journal d’audit
 connectors-heading = Connecteurs
 connectors-restore-defaults-button = Restaurer les valeurs par défaut
+connectors-catalog-intro = Gérez les serveurs MCP que les utilisateurs peuvent connecter depuis Intégrations. Activez un connecteur pour le rendre visible. Les connecteurs qui ne peuvent pas utiliser l'enregistrement dynamique de client (par ex. Google) nécessitent un identifiant/secret client OAuth de déploiement avant de pouvoir être activés.
+connectors-empty-state = Aucun connecteur pour l'instant.
 
 connectors-badge-enabled = Activé
 connectors-badge-disabled = Désactivé
+connectors-badge-default = Par défaut
+connectors-badge-dcr = DCR
+connectors-badge-needs-client-id = Identifiant client requis
 connectors-disable-button = Désactiver
+connectors-enable-disabled-title = Ajoutez d'abord l'identifiant client OAuth ci-dessous (Modifier → Identifiant client OAuth)
 connectors-enable-button = Activer
 connectors-delete-confirm = Supprimer ce connecteur ? Il sera retiré pour tous les utilisateurs, ainsi que leurs connexions et jetons enregistrés. Cette action est irréversible.
 connectors-delete-button = Supprimer
+connectors-edit-summary = Modifier
 
+connectors-add-summary = Ajouter un connecteur
+
+connectors-oauth-help-dcr-heading = Enregistrement dynamique de client — aucun client OAuth requis
+connectors-oauth-help-dcr-body = Définissez simplement l'URL du serveur MCP ci-dessus. Le serveur enregistre automatiquement cette passerelle (RFC 7591) ; chaque utilisateur clique ensuite sur Connecter et s'autorise avec son propre compte — une seule connexion couvre tous les services exposés par le serveur.
+
+connectors-oauth-help-gws-1 = Pointez ceci vers votre
+connectors-oauth-help-gws-self-hosted = serveur MCP Google Workspace auto-hébergé
+connectors-oauth-help-gws-2 = (par ex.
+connectors-oauth-help-gws-3 = ) fonctionnant en mode streamable-HTTP — l'URL se termine par
+connectors-oauth-help-gws-4 = . Ce serveur détient le client OAuth Google et utilise les
+connectors-oauth-help-gws-ga-apis = API Google GA
+connectors-oauth-help-gws-5 = (pas de developer preview). Autorisez l'URI de redirection de cette passerelle sur le serveur via
+connectors-oauth-help-gws-footer = Les points de terminaison MCP hébergés par Google (gmailmcp/calendarmcp/drivemcp.googleapis.com) ne sont volontairement pas utilisés — ils nécessitent l'inscription de l'organisation au programme Workspace Developer Preview. Voir docs/connectors.md pour la procédure de déploiement.
+
+connectors-oauth-help-generic-heading = Configuration du client OAuth
+connectors-oauth-help-generic-intro = Enregistrez cette URI de redirection exacte auprès de votre client OAuth, puis collez son identifiant client (et son secret) ci-dessous :
+connectors-oauth-help-google-1 = Google : créez un
+connectors-oauth-help-google-link = identifiant client OAuth 2.0 (application Web)
+connectors-oauth-help-google-2 = dans la Google Cloud Console, ajoutez l'URI de redirection ci-dessus, et activez les API Gmail / Google Agenda / Google Drive pour le projet.
+connectors-oauth-help-github-1 = GitHub : créez une
+connectors-oauth-help-github-link = application OAuth
+connectors-oauth-help-github-2 = (Paramètres → Paramètres développeur → Applications OAuth), définissez l'URL de rappel d'autorisation sur l'URI de redirection ci-dessus, et copiez l'identifiant client ainsi qu'un secret client généré.
+connectors-oauth-help-fallback = Créez un client OAuth chez votre fournisseur avec cette URI de redirection et les URL d'autorisation/de jeton définies ci-dessous.
+connectors-oauth-help-slack-1 = Slack : créez une application sur
+connectors-oauth-help-slack-2 = , ajoutez l'URI de redirection ci-dessus sous OAuth & Permissions, demandez les autorisations configurées ci-dessous, puis copiez l'identifiant client et le secret client depuis Basic Information. Slack exige une application enregistrée statiquement, publiée dans l'annuaire ou interne à l'espace de travail — l'enregistrement dynamique des clients n'est pas pris en charge.
+connectors-oauth-why-1 = Pourquoi une étape d'admin ponctuelle ? En OAuth, l'identifiant client identifie
+connectors-term-this-gateway = cette passerelle
+connectors-oauth-why-2 = en tant qu'application (partagée par tous les utilisateurs) — seul le jeton d'accès par utilisateur diffère. Claude Desktop s'en passe car Anthropic fournit des applications préenregistrées liées à son URL de redirection fixe ; une passerelle auto-hébergée utilise sa propre URI de redirection (ci-dessus), et Google/GitHub ne prennent pas en charge l'enregistrement automatique (DCR) comme le fait Atlassian — vous enregistrez donc une fois, puis chaque utilisateur n'a plus qu'à cliquer sur Connecter.
+connectors-oauth-why-no-app = Aucune application OAuth du tout ?
+connectors-oauth-why-3 = Passez l'authentification sur « Jeton fourni par l'utilisateur » : chaque utilisateur colle alors son propre jeton (par ex. un jeton d'accès personnel GitHub) — les identifiants proviennent alors directement de l'utilisateur, sans client admin.
+
+connectors-field-key-label = Clé (identifiant stable)
+connectors-field-key-placeholder = par ex. gmail
 connectors-field-key-readonly-label = Clé
 connectors-field-name-label = Nom
+connectors-field-name-placeholder = Nom d'affichage
+connectors-field-icon-label = Icône (emoji)
+connectors-field-category-label = Catégorie
+connectors-field-category-placeholder = Google
+connectors-field-description-label = Description
+connectors-field-description-placeholder = Ce que fait ce connecteur
 connectors-field-url-label = URL du serveur MCP
 connectors-field-auth-label = Authentification
 connectors-auth-option-oauth = OAuth 2.1 (chaque utilisateur s'autorise via le fournisseur)
 connectors-auth-option-token = Jeton fourni par l'utilisateur (chaque utilisateur colle son propre jeton API)
 connectors-auth-option-none = Aucune (serveur public, sans authentification)
+connectors-field-client-json-label = Coller le JSON du client OAuth (optionnel — par ex. « Télécharger le fichier JSON » de Google)
+connectors-field-client-json-help = Renseigne l'identifiant/le secret client (ainsi que les URL d'autorisation et de jeton) à partir du fichier. Ou utilisez les champs individuels ci-dessous.
+connectors-field-client-id-label = Identifiant client OAuth
+connectors-field-client-id-placeholder = …apps.googleusercontent.com / identifiant d'application OAuth GitHub
+connectors-field-client-secret-label = Secret client OAuth
+connectors-secret-placeholder-existing = •••••••• (laisser vide pour conserver)
+connectors-secret-placeholder-new = secret client (optionnel)
+connectors-field-client-secret-help = Délivré en même temps que l'identifiant client sur la même page. Stocké chiffré ; laissez vide pour conserver celui existant.
+connectors-field-use-dcr-label = Essayer l'enregistrement dynamique de client (RFC 7591)
+connectors-field-scopes-label = Scopes (séparés par des espaces)
+connectors-advanced-summary = Avancé : substitutions de découverte
+connectors-field-authorize-url-label = URL d'autorisation
+connectors-field-token-url-label = URL du jeton
+connectors-field-registration-url-label = URL d'enregistrement
+connectors-placeholder-optional-override = substitution optionnelle
 connectors-field-allowed-groups-label = Groupes autorisés (séparés par des virgules)
+connectors-placeholder-optional = optionnel
 connectors-save-changes-button = Enregistrer les modifications
 connectors-add-connector-button = Ajouter un connecteur
 
-# Formulaire de connecteur de la SPA : champ de scopes séparés par des virgules,
-# champ secret/jeton combiné et confirmation de restauration.
-connectors-restore-defaults-confirm = Réinstaller les entrées de catalogue intégrées ?
-connectors-field-scopes-csv-label = Scopes (séparés par des virgules)
-connectors-field-secret-or-token-label = Secret client / jeton
+connectors-restore-defaults-confirm = Réinitialiser les entrées intégrées du catalogue ?
+connectors-badge-global = Global
+connectors-badge-audited = Audité
+connectors-badge-needs-setup = Identifiant client requis
+connectors-field-scope-label = Portée
+connectors-scope-per-user = Par utilisateur (chacun connecte son propre compte)
+connectors-scope-global = Global (une identité partagée pour tous)
+connectors-field-scope-help = Les connecteurs globaux sont partagés par toutes les personnes autorisées par leurs groupes de passerelle. Ils doivent utiliser aucune authentification ou un jeton partagé, et non OAuth par utilisateur.
+connectors-token-help-global = Ce connecteur partagé envoie un jeton Bearer chiffré pour chaque utilisateur autorisé.
+connectors-token-help-user = Chaque utilisateur fournit son propre jeton API dans Intégrations. Aucun client OAuth n'est nécessaire.
+connectors-field-shared-token-label = Jeton Bearer (partagé)
+connectors-field-shared-token-help = Envoyé au serveur MCP pour chaque utilisateur et stocké chiffré.
+connectors-none-help-global = La passerelle accède à ce serveur MCP partagé sans authentification. Gardez privé tout serveur contenant des identifiants.
+connectors-none-help-user = Chaque utilisateur peut connecter ce serveur MCP public sans OAuth ni jeton.
+connectors-field-audit-label = Auditer les appels d'outils (auteur, outil et résultat)
+connectors-audit-log-button = Journal d'audit
+connectors-audit-back = ← Connecteurs
+connectors-audit-intro = Audit des appels d'outils pour { $key }. Du plus récent au plus ancien ; 200 maximum.
+connectors-audit-empty = Aucun appel d'outil n'a encore été enregistré pour ce connecteur.
+connectors-audit-when = Date
+connectors-audit-user = Utilisateur
+connectors-audit-tool = Outil
+connectors-audit-outcome = Résultat
+connectors-audit-detail = Détail
+connectors-field-url-placeholder = https://…/mcp
+connectors-field-scopes-placeholder = scope.a scope.b

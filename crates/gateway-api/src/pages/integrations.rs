@@ -48,6 +48,7 @@ pub async fn integrations_connect(
         Ok(Some(c)) if c.enabled => c,
         _ => {
             return flow_error_page(
+                lang,
                 StatusCode::FORBIDDEN,
                 &t(lang, "integrations-error-unknown-connector"),
             );
@@ -56,6 +57,7 @@ pub async fn integrations_connect(
     let role_ids = state.rbac.role_ids_for(&user.roles);
     if !connector.allows(&role_ids, state.rbac.is_admin(&role_ids)) {
         return flow_error_page(
+            lang,
             StatusCode::FORBIDDEN,
             &t(lang, "integrations-error-forbidden-role"),
         );
@@ -72,6 +74,7 @@ pub async fn integrations_connect(
             Ok(s) => s,
             Err(err) => {
                 return flow_error_page(
+                    lang,
                     StatusCode::INTERNAL_SERVER_ERROR,
                     &format!("sealing placeholder: {err}"),
                 );
@@ -93,6 +96,7 @@ pub async fn integrations_connect(
         };
         if let Err(err) = user_mcp::upsert_connection(&state.db, new).await {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("saving connection: {err}"),
             );
@@ -102,6 +106,7 @@ pub async fn integrations_connect(
     }
     if connector.auth != AuthKind::OAuth2 {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "integrations-error-not-oauth"),
         );
@@ -118,6 +123,7 @@ pub async fn integrations_connect(
         Ok(e) => e,
         Err(err) => {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t_args(
                     lang,
@@ -136,6 +142,7 @@ pub async fn integrations_connect(
     } else if connector.use_dcr {
         let Some(reg) = endpoints.registration_url.as_deref() else {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "integrations-error-needs-setup-no-client"),
             );
@@ -155,6 +162,7 @@ pub async fn integrations_connect(
                         Ok(x) => Some(x),
                         Err(err) => {
                             return flow_error_page(
+                                lang,
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 &t_args(
                                     lang,
@@ -170,6 +178,7 @@ pub async fn integrations_connect(
             }
             Err(err) => {
                 return flow_error_page(
+                    lang,
                     StatusCode::INTERNAL_SERVER_ERROR,
                     &t_args(
                         lang,
@@ -181,6 +190,7 @@ pub async fn integrations_connect(
         }
     } else {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "integrations-error-needs-setup-admin"),
         );
@@ -201,6 +211,7 @@ pub async fn integrations_connect(
         Ok(u) => u,
         Err(err) => {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t_args(
                     lang,
@@ -226,6 +237,7 @@ pub async fn integrations_connect(
     };
     if let Err(err) = user_mcp::create_pending(&state.db, &pending).await {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t_args(
                 lang,
@@ -258,6 +270,7 @@ pub async fn integrations_callback(
     if let Some(err) = params.error {
         let desc = params.error_description.unwrap_or_default();
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t_args(
                 lang,
@@ -268,6 +281,7 @@ pub async fn integrations_callback(
     }
     let (Some(code), Some(st)) = (params.code, params.state) else {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "integrations-error-callback-missing"),
         );
@@ -276,12 +290,14 @@ pub async fn integrations_callback(
         Ok(Some(p)) => p,
         Ok(None) => {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "integrations-error-auth-expired"),
             );
         }
         Err(err) => {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t_args(
                     lang,
@@ -293,6 +309,7 @@ pub async fn integrations_callback(
     };
     if pending.user_id != user.id {
         return flow_error_page(
+            lang,
             StatusCode::FORBIDDEN,
             &t(lang, "integrations-error-state-mismatch"),
         );
@@ -301,6 +318,7 @@ pub async fn integrations_callback(
         Ok(Some(c)) => c,
         _ => {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "integrations-error-connector-missing"),
             );
@@ -318,6 +336,7 @@ pub async fn integrations_callback(
                 Ok(s) => Some(s),
                 Err(err) => {
                     return flow_error_page(
+                        lang,
                         StatusCode::INTERNAL_SERVER_ERROR,
                         &t_args(
                             lang,
@@ -333,6 +352,7 @@ pub async fn integrations_callback(
     } else {
         let Some(cid) = connector.client_id.clone() else {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "integrations-error-connector-missing-client-id"),
             );
@@ -341,6 +361,7 @@ pub async fn integrations_callback(
             Ok(s) => s,
             Err(err) => {
                 return flow_error_page(
+                    lang,
                     StatusCode::INTERNAL_SERVER_ERROR,
                     &t_args(
                         lang,
@@ -371,7 +392,7 @@ pub async fn integrations_callback(
     {
         Ok(t) => t,
         Err(err) => {
-            return flow_error_page(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+            return flow_error_page(lang, StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
         }
     };
 
@@ -380,6 +401,7 @@ pub async fn integrations_callback(
         Ok(s) => s,
         Err(err) => {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t_args(
                     lang,
@@ -394,6 +416,7 @@ pub async fn integrations_callback(
             Ok(s) => Some(s),
             Err(err) => {
                 return flow_error_page(
+                    lang,
                     StatusCode::INTERNAL_SERVER_ERROR,
                     &t_args(
                         lang,
@@ -427,6 +450,7 @@ pub async fn integrations_callback(
     };
     if let Err(err) = user_mcp::upsert_connection(&state.db, new).await {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t_args(
                 lang,

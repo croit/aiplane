@@ -30,7 +30,6 @@ tokens-mcp-allow-description = Verbindungs-Werkzeuge, die eine Bestätigung erfo
 tokens-minted-heading = Token erstellt
 tokens-minted-copy-warning = Kopieren Sie den Wert jetzt — Sie können ihn danach nicht mehr einsehen.
 tokens-copy-aria = Token kopieren
-tokens-copy-title = Token kopieren
 tokens-minted-name = Name: { $name }
 
 tokens-account-user-id-label = Benutzer-ID
@@ -60,14 +59,32 @@ tokens-limits-add = Kontingent hinzufügen
 tokens-limits-saved-toast = Token-Kontingent gespeichert.
 
 # SPA-only: the Svelte /tokens row panels and their confirm prompts.
-tokens-models-heading = Modell-Zulassungsliste
-tokens-models-input-placeholder = Modell-IDs, kommagetrennt
-tokens-quota-heading = Kontingent
-tokens-quota-per = pro
 tokens-quota-max-placeholder = max.
-tokens-mcp-heading = MCP-Konnektoren
-tokens-mcp-allow-button = Ausführen zulassen
-tokens-mcp-block-button = Blockieren
 tokens-revoke-confirm = Dieses Token widerrufen? Clients, die es verwenden, funktionieren sofort nicht mehr.
 tokens-rotate-confirm = Ein neues Secret erzeugen? Das alte funktioniert sofort nicht mehr.
 tokens-remove-confirm = Diesen Token-Eintrag endgültig löschen?
+
+tokens-create-description = Erstellen Sie einen neuen Bearer-Token für die OpenAI-kompatible API.
+tokens-tool-use-description = Erlaubt diesem Token, Gateway-Werkzeuge (Websuche, RAG, …) aufzurufen.
+tokens-capabilities-summary = Fähigkeiten
+tokens-mcp-allow-aria = „Ask“-MCP-Werkzeuge über die API erlauben
+tokens-mcp-allow-label = „Ask“-MCP-Werkzeuge über die API erlauben
+tokens-account-heading = Konto
+tokens-signed-in-as = Angemeldet als { $email }
+tokens-account-oidc-label = OIDC-Rollen
+tokens-account-rbac-label = RBAC-Rollen-IDs
+tokens-roles-none = keine
+tokens-roles-none-granted = keine vergeben
+tokens-push-heading = Benachrichtigungen
+tokens-push-description = Erhalten Sie auf diesem Gerät eine Benachrichtigung, wenn eine von Ihnen gestartete Antwort fertig ist, während Sie nicht in der App sind.
+tokens-push-off = Benachrichtigungen sind für dieses Gerät deaktiviert.
+tokens-push-denied = Dieser Browser hat Benachrichtigungen blockiert. Erlauben Sie sie in den Browsereinstellungen, um sie zu aktivieren.
+tokens-push-unsupported = Dieser Browser unterstützt keine Benachrichtigungen.
+tokens-models-none-picked = Haken Sie mindestens ein Modell an oder schalten Sie die Beschränkung aus.
+tokens-limits-summary-none = Kontingent: keines
+tokens-limits-summary-some = Kontingent: { $count } Regel(n)
+tokens-limits-help = Eine Obergrenze allein für dieses Token. Ihr eigenes Budget gilt weiterhin — das hier kann den Verbrauch nur enger fassen, nie erweitern.
+tokens-limits-remove = Entfernen
+tokens-limits-removed-toast = Token-Kontingent entfernt.
+tokens-limits-admin-badge = vom Administrator gesetzt
+tokens-models-admin-set = Ein Betreiber beschränkt dieses Token zusätzlich auf: { $models }. Ihre eigene Auswahl kann das nur weiter einschränken, nicht erweitern.

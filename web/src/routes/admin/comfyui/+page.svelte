@@ -1,63 +1,58 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminJson, adminPost } from '$lib/admin-client';
+	import type { ComfyuiCatalog } from '$lib/admin-comfyui';
+	import ComfyuiJobRow from '$lib/components/admin/ComfyuiJobRow.svelte';
+	import ComfyuiWorkflowRow from '$lib/components/admin/ComfyuiWorkflowRow.svelte';
 	import { t } from '$lib/i18n.svelte';
 
-	interface Workflow {
-		id: string;
-		title: string;
-		description: string;
-	}
-	let workflows = $state<Workflow[]>([]);
-	let meta = $state<{ base_url?: string; content_dir?: string } | null>(null);
+	let data = $state<ComfyuiCatalog | null>(null);
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
+	let reloading = $state(false);
+	let pendingJobs = $derived(data?.jobs.filter((job) => job.status === 'pending').length ?? 0);
 
 	async function refresh() {
-		try {
-			const data = await adminJson<{ workflows: Workflow[]; base_url?: string; content_dir?: string }>(
-				'/api/v0/comfyui/catalog'
-			);
-			workflows = data.workflows ?? [];
-			meta = data;
-			error = null;
-		} catch (err) {
-			error = String(err);
-		}
+		try { data = await adminJson<ComfyuiCatalog>('/api/v0/comfyui/catalog'); error = null; }
+		catch (caught) { error = String(caught); }
 	}
 
 	async function reload() {
+		reloading = true;
 		try {
-			const res = await adminPost<{ report: { loaded: number; errors: string[] } }>(
-				'/api/v0/comfyui/reload'
-			);
-			notice = t('admin-comfyui-reloaded', { count: res.report?.loaded ?? 0 });
+			const response = await adminPost<{ report: { total: number; skipped: { source: string; reason: string }[] } }>('/api/v0/comfyui/reload');
+			notice = response.report.skipped.length
+				? t('admin-comfyui-reloaded-skipped', { count: response.report.total, skipped: response.report.skipped.length })
+				: t('admin-comfyui-reloaded', { count: response.report.total });
 			await refresh();
-		} catch (err) {
-			notice = String(err);
-		}
+		} catch (caught) { error = String(caught); }
+		finally { reloading = false; }
 	}
 
 	onMount(refresh);
 </script>
 
-<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-	<h1 class="text-2xl font-bold">ComfyUI</h1>
-	<button class="btn btn-primary btn-sm" onclick={reload}>{t('admin-comfyui-reload')}</button>
+<div class="mx-auto w-full max-w-5xl px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+	<div class="mb-6 flex flex-wrap items-start justify-between gap-3">
+		<div class="min-w-0 flex-1"><h1 class="m-0 text-2xl font-semibold">{t('admin-comfyui-heading')}</h1><p class="mb-0 mt-1 text-sm text-base-content/60">{t('admin-comfyui-intro')}</p></div>
+		<button type="button" class="btn btn-primary btn-sm shrink-0" disabled={!data?.configured || reloading} onclick={reload}>{t('admin-comfyui-reload')}</button>
+	</div>
+	{#if error}<div class="alert alert-error mb-6"><span>{error}</span></div>{/if}
+	{#if notice}<div class="alert alert-success mb-6"><span>{notice}</span></div>{/if}
+	{#if data}
+		{#if !data.configured}
+			<div class="card mb-6 border border-base-300"><div class="card-body"><h2 class="card-title text-base">{t('admin-comfyui-not-configured')}</h2><p class="m-0 text-sm text-base-content/70">{t('admin-comfyui-not-configured-help')}</p></div></div>
+		{:else}
+			<div class="card mb-6 border border-base-300"><div class="card-body"><h2 class="card-title text-base">{t('admin-comfyui-operator-config')}</h2><div class="grid grid-cols-1 gap-4 text-sm md:grid-cols-2">
+				<div><div class="text-base-content/60">{t('admin-comfyui-worker-url')}</div><div class="break-all font-mono">{data.base_url}</div></div>
+				<div><div class="text-base-content/60">{t('admin-comfyui-content-directory')}</div><div class="break-all font-mono">{data.content_dir}</div></div>
+				<div><div class="text-base-content/60">{t('admin-comfyui-timeout')}</div><div>{data.timeout_secs} s</div></div>
+				<div><div class="text-base-content/60">{t('admin-comfyui-poll-interval')}</div><div>{data.queue_poll_interval_ms} ms</div></div>
+			</div><p class="mb-0 mt-4 text-xs text-base-content/60">{t('admin-comfyui-config-help')}</p></div></div>
+			<div class="card border border-base-300"><div class="card-body"><h2 class="card-title text-base">{t('admin-comfyui-loaded-workflows')}<span class="badge badge-outline ml-2">{data.workflows.length}</span></h2>
+				{#if data.workflows.length}<div class="flex flex-col divide-y divide-base-300">{#each data.workflows as workflow (workflow.id)}<ComfyuiWorkflowRow {workflow} />{/each}</div>{:else}<p class="m-0 text-sm text-base-content/70">{t('admin-comfyui-empty')}</p>{/if}
+			</div></div>
+			{#if data.jobs.length}<div class="card mt-6 border border-base-300"><div class="card-body"><h2 class="card-title text-base">{t('admin-comfyui-recent-jobs')}<span class="badge badge-outline ml-2">{data.jobs.length}</span>{#if pendingJobs}<span class="badge badge-warning badge-sm ml-1">{t('admin-comfyui-pending', { count: pendingJobs })}</span>{/if}</h2><div class="flex flex-col divide-y divide-base-300">{#each data.jobs as job (job.id)}<ComfyuiJobRow {job} />{/each}</div></div></div>{/if}
+		{/if}
+	{:else if !error}<div class="flex flex-col gap-4"><div class="skeleton h-44 w-full"></div><div class="skeleton h-72 w-full"></div></div>{/if}
 </div>
-
-{#if error}<div class="alert alert-error mb-4"><span>{error}</span></div>{/if}
-{#if notice}<div class="alert alert-warning mb-4"><span>{notice}</span></div>{/if}
-
-<ul class="flex flex-col gap-2">
-	{#each workflows as w (w.id)}
-		<li class="card border border-base-300">
-			<div class="card-body py-2">
-				<span class="font-medium">{w.title}</span>
-				<p class="text-xs text-base-content/60">{w.description}</p>
-			</div>
-		</li>
-	{:else}
-		<li class="text-base-content/60 text-sm">{t('admin-comfyui-empty')}</li>
-	{/each}
-</ul>

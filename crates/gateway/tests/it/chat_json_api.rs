@@ -21,12 +21,14 @@ use gateway::rama_server::{RamaState, SessionStore, router::router};
 use gateway_core::server::config::Config;
 use gateway_core::server::db;
 use gateway_core::server::rbac::Resolver;
+use gateway_core::server::rbac::config::{RbacConfig, RoleConfig};
 use gateway_core::server::upstreams::{
     self,
     config::{BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
 };
 use gateway_runtime::server::AppState;
 use gateway_runtime::server::tools::ToolRegistry;
+use gateway_tools::location::GetUserLocation;
 use rama::http::body::util::BodyExt;
 use rama::http::{Body, Method, Request, StatusCode, header};
 use session_core::db as chat;
@@ -35,6 +37,19 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// A state wired to a (mocked) chat upstream advertising `model-a`.
 async fn state_with_chat(upstream_uri: &str) -> RamaState {
+    state_with_chat_access(
+        upstream_uri,
+        Arc::new(ToolRegistry::new()),
+        Arc::new(Resolver::empty()),
+    )
+    .await
+}
+
+async fn state_with_chat_access(
+    upstream_uri: &str,
+    tools: Arc<ToolRegistry>,
+    rbac: Arc<Resolver>,
+) -> RamaState {
     let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let mut pools = HashMap::new();
     pools.insert(
@@ -67,13 +82,7 @@ async fn state_with_chat(upstream_uri: &str) -> RamaState {
     );
     let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
     common::seed_pool_models(&registry, "pool", 0, &["model-a"]);
-    let app = AppState::new(
-        Config::default(),
-        pool.clone(),
-        registry,
-        Arc::new(ToolRegistry::new()),
-        Arc::new(Resolver::empty()),
-    );
+    let app = AppState::new(Config::default(), pool.clone(), registry, tools, rbac);
     let sessions = SessionStore::new(pool, common::TEST_SECRET);
     RamaState::new(
         app,
@@ -84,6 +93,29 @@ async fn state_with_chat(upstream_uri: &str) -> RamaState {
 
 async fn setup(upstream_uri: &str) -> (Arc<RamaState>, String) {
     let state = state_with_chat(upstream_uri).await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    (Arc::new(state), cookie)
+}
+
+async fn setup_with_location_tool(upstream_uri: &str) -> (Arc<RamaState>, String) {
+    let tools = Arc::new(ToolRegistry::new().with(GetUserLocation));
+    let rbac = Arc::new(
+        Resolver::build(
+            RbacConfig {
+                default_role: Some("member".into()),
+                mappings: vec![],
+            },
+            vec![RoleConfig {
+                id: "member".into(),
+                admin: false,
+                models: vec![],
+                tools: vec!["get_user_location".into()],
+                skills: vec![],
+            }],
+        )
+        .unwrap(),
+    );
+    let state = state_with_chat_access(upstream_uri, tools, rbac).await;
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
     (Arc::new(state), cookie)
 }
@@ -253,6 +285,147 @@ async fn session_crud_round_trips() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn session_snapshot_includes_compaction_boundary_and_conversation_assets() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let marker = session_core::attachments::marker_line(
+        "diagram.png",
+        "image/png",
+        "/chat/attachment/user-turn/diagram.png",
+        2048,
+    );
+    chat::create_user_turn(
+        &state.db,
+        &session.id,
+        "user-turn",
+        &format!("look\n\n{marker}"),
+    )
+    .await
+    .unwrap();
+    gateway_core::server::db::chat_compactions::upsert(
+        &state.db,
+        &session.id,
+        0,
+        "Earlier context",
+        Some(100),
+        Some(20),
+    )
+    .await
+    .unwrap();
+
+    let app = router(state);
+    let response = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_string(response).await).unwrap();
+    assert_eq!(body["compacted_up_to_seq"], 0);
+    assert_eq!(body["assets"][0]["id"], "user-turn/diagram.png");
+    assert_eq!(body["assets"][0]["filename"], "diagram.png");
+    assert_eq!(body["assets"][0]["mime"], "image/png");
+    assert_eq!(body["assets"][0]["size"], 2048);
+    assert_eq!(
+        body["assets"][0]["url"],
+        "/chat/attachment/user-turn/diagram.png"
+    );
+}
+
+#[tokio::test]
+async fn edit_accepts_the_composers_multipart_shape() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    chat::create_user_turn(&state.db, &session.id, "user-turn", "before")
+        .await
+        .unwrap();
+    let boundary = "edit-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nmodel-a\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"message\"\r\n\r\nafter\r\n\
+         --{boundary}--\r\n"
+    );
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!(
+            "/api/v0/chat/sessions/{}/turns/user-turn/edit",
+            session.id
+        ))
+        .header("cookie", format!("id={cookie}"))
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    let db = state.db.clone();
+    let response = router(state).serve(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let turn = chat::get_turn(&db, &session.id, "user-turn")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(turn.user_content.as_deref(), Some("after"));
+}
+
+#[tokio::test]
+async fn chat_landing_resolves_one_stable_latest_session() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let app = router(state);
+
+    let first = app
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/chat/landing".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let first: serde_json::Value = serde_json::from_str(&body_string(first).await).unwrap();
+    let id = first["session"]["id"].as_str().unwrap();
+
+    let second = app
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/chat/landing".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let second: serde_json::Value = serde_json::from_str(&body_string(second).await).unwrap();
+    assert_eq!(second["session"]["id"], id);
+
+    let list = app
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/chat/sessions".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let list: serde_json::Value = serde_json::from_str(&body_string(list).await).unwrap();
+    assert_eq!(list["sessions"].as_array().unwrap().len(), 1);
+
+    let anonymous = app
+        .serve(
+            Request::get("/api/v0/chat/landing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -577,8 +750,18 @@ async fn the_usage_endpoint_aggregates_the_callers_window() {
     let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
     assert_eq!(body["period"], "24h");
     assert_eq!(body["scope"], "self");
+    assert_eq!(body["can_view_all"], false);
+    assert!(body["usage_enabled"].is_boolean());
+    assert!(body["timezone"].is_string());
     assert!(body["summary"]["requests"].is_i64());
     assert!(body["currency"].is_string());
+    assert!(
+        body["tokens"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|token| { token["id"].as_str().is_some_and(|id| !id.is_empty()) })
+    );
 
     // Anonymous → 401.
     let resp = app
@@ -624,6 +807,85 @@ async fn tool_toggles_round_trip_and_refuse_ungranted_keys() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn tools_list_includes_browser_location_sharing_state_when_granted() {
+    let (state, cookie) = setup_with_location_tool("http://unused.invalid").await;
+    gateway_core::server::db::users::set_location(&state.db, "alice", 48.137, 11.575, Some(18.4))
+        .await
+        .unwrap();
+    let app = router(state);
+
+    let resp = app
+        .serve(json_req(Method::GET, "/api/v0/tools".into(), &cookie, None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(body["location"]["shared"], true);
+    assert_eq!(body["location"]["accuracy"], 18.4);
+    assert_eq!(body["tools"][0]["key"], "get_user_location");
+    assert_eq!(body["tools"][0]["tech"], "get_user_location");
+}
+
+#[tokio::test]
+async fn conversation_capabilities_keep_catalog_metadata_and_three_states() {
+    let (state, cookie) = setup_with_location_tool("http://unused.invalid").await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let app = router(state.clone());
+
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/capabilities", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    let location = body["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["key"] == "get_user_location")
+        .unwrap();
+    assert_eq!(location["kind"], "tool");
+    assert!(
+        location["group"]
+            .as_str()
+            .is_some_and(|group| !group.is_empty())
+    );
+    assert!(
+        location["description"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty())
+    );
+    assert_eq!(location["state"], "auto");
+
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/capabilities", session.id),
+            &cookie,
+            Some(r#"{"kind":"tool","key":"get_user_location","state":"off"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/capabilities", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(body["tools"][0]["state"], "off");
 }
 
 /// The turn actions: edit rewrites + regenerates, retry drops + regenerates,

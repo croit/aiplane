@@ -3,7 +3,6 @@ limits-heading = 速率限制与配额
 limits-add-heading = 添加或更新限制
 limits-field-subject = 适用于
 limits-field-model = 模型
-limits-field-model-ph = 所有模型
 limits-field-dimension = 限制
 limits-field-window = 每
 limits-field-value = 数值
@@ -30,6 +29,10 @@ limits-saved = 已保存 { $subject } 的限制
 limits-subject-token = API 令牌
 
 # SPA 规则表：标题、“来源”列与删除确认。
-limits-rules-heading = 规则
-limits-col-managed-by = 来源
 limits-delete-confirm = 要删除此规则吗？
+limits-intro = 限制调用方在滑动时间窗口内可使用的请求数、令牌数或花费金额。规则按最具体优先解析：用户自身的规则优先，否则取其角色中最宽松的，否则使用全局默认值。若无任何规则，则所有人都不受限制。针对 API 令牌的规则是一道额外上限，与其所有者的额度一并检查，因此只会收紧该令牌的用量。仅计入计费池（自托管且 enforce_limits = false 的池不计入），且用户的整个额度在其 API 令牌、聊天和计划任务之间共享。
+limits-field-subject-id = 角色 / 用户 / 令牌
+limits-field-subject-id-ph = 角色 id、用户邮箱或令牌 id
+limits-col-value = 数值
+limits-col-actions = 操作
+limits-deleted = 已移除限制

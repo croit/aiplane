@@ -58,17 +58,176 @@ admin-search-saved = web-search settings saved
 admin-needs-admin-role = These pages need the admin role.
 admin-overwrite-existing = overwrite existing
 admin-comfyui-reload = Reload catalog
-admin-comfyui-reloaded = Reloaded { $count } workflow(s).
+admin-comfyui-reloaded = Catalog reloaded — { $count } workflow(s) loaded.
 admin-comfyui-empty = No workflows loaded — check the content directory.
-admin-defaults-model-aria = Default model for { $feature }
-admin-defaults-set = Set
-admin-search-provider-none = None
-admin-add-overrides-heading = Add model overrides
-admin-edit-model-heading = Edit { $model }
-admin-add-model = Add…
-admin-pricing-unit-label = Pricing unit
-admin-pricing-unit-mtok = per Mtok
-admin-pricing-unit-ktok = per Ktok
-admin-pricing-unit-kimgs = per 1k images
+admin-comfyui-heading = ComfyUI workflow catalog
+admin-comfyui-page-title = ComfyUI — Workflow catalog
+admin-comfyui-intro = Headless ComfyUI worker. The gateway exposes each loaded workflow as a comfyui_<id> tool the model can call. Users never see ComfyUI itself.
+admin-comfyui-not-configured = Not configured
+admin-comfyui-not-configured-help = Enable ComfyUI under Settings — set its base URL and workflow directory — then restart the gateway to load the workflow catalog.
+admin-comfyui-operator-config = Operator configuration
+admin-comfyui-worker-url = Worker base URL
+admin-comfyui-content-directory = Content directory
+admin-comfyui-timeout = Workflow timeout
+admin-comfyui-poll-interval = Queue poll interval
+admin-comfyui-config-help = The content directory is operator-managed and not part of the public repository. Edit manifests there and click Reload above to apply changes — no restart needed.
+admin-comfyui-loaded-workflows = Loaded workflows
+admin-comfyui-node = node { $id }
+admin-comfyui-workflow-meta = Title: { $title } · prefix: { $prefix }
+admin-comfyui-parameters = Parameters
+admin-comfyui-required = required
+admin-comfyui-recent-jobs = Recent jobs
+admin-comfyui-pending = { $count } pending
+admin-comfyui-job-meta = prompt: { $prompt } · created: { $created }
+admin-comfyui-job-completed = completed: { $completed }
+admin-comfyui-reloaded-skipped = Catalog reloaded — { $count } workflow(s) loaded, { $skipped } skipped.
 admin-clear-overrides-confirm = Drop all stored overrides for { $model }?
-admin-users-col-email = Email
+admin-cap-no-fallback = (none)
+
+admin-page-title = Models — LLM Gateway
+
+admin-intro-prefix = Per-model settings — pricing, context window, reasoning, capabilities and sampling defaults — applied to
+
+admin-intro-every = every
+
+admin-intro-middle = request for this model, from any user or token, unless the caller sets the same value, which
+
+admin-intro-always-wins = always wins
+
+admin-intro-suffix = . Chat models, aliases and other kinds are all in one list.
+
+admin-no-models = No models advertised yet. Once an upstream backend is reachable, it'll appear here.
+
+admin-filter-placeholder = Filter models…
+
+admin-filter-all = All
+
+admin-filter-chat = chat
+
+admin-filter-other = other kinds
+
+admin-filter-aliases = aliases
+
+admin-filter-configured = configured only
+
+admin-col-kind = Kind
+
+admin-col-price = Price in/out
+
+admin-col-context = Context
+
+admin-col-reasoning = Reasoning
+
+admin-col-configured = Configured
+
+admin-value-default = default
+
+admin-value-na = n/a
+
+admin-alias-inherits = inherits target settings
+
+admin-reasoning-auto-resolved = Auto → { $style }
+
+admin-badge-price = PRICE
+
+admin-badge-budget = BUDGET
+
+admin-badge-caps = CAPS
+
+admin-badge-toml = TOML
+
+admin-other-price-note = Sampling, reasoning and context don't apply to this kind — only pricing, for cost accounting.
+
+admin-toml-placeholder-header = # Common keys (vLLM/OpenAI):
+
+admin-reasoning-style-label = Reasoning style
+
+admin-reasoning-style-aria = Reasoning style
+
+admin-reasoning-auto = Auto
+
+admin-reasoning-none = none
+
+admin-reasoning-qwen = Qwen (vLLM)
+
+admin-reasoning-openai = OpenAI
+
+admin-reasoning-glm = GLM / z.AI
+
+admin-reasoning-anthropic = Anthropic
+
+admin-effort-standard = Standard
+
+admin-effort-deep = Deep
+
+admin-effort-max = Max
+
+admin-budget-placeholder = default
+
+admin-budget-hint = Max thinking tokens per effort level. Blank = backend default (uncapped). Fast disables thinking.
+
+admin-effort-default-option = (default)
+
+admin-effort-hint = Reasoning effort per level. Blank = built-in default. Fast disables thinking.
+
+admin-saved-model = saved `{ $model }` — effective immediately
+
+admin-cleared-defaults = cleared overrides for `{ $model }`
+
+admin-price-label = { $cur }/{ $unit }
+
+admin-price-unit-tokens = 1M tokens
+
+admin-price-unit-images = image
+
+admin-price-unit-characters = character
+
+admin-price-unit-seconds = second
+
+admin-alias-chip = alias
+
+admin-defaults-intro = The model used when a request names none — the pre-selection in the chat/voice pickers and the API default (unlike the Unknown-model fallbacks on the Upstreams page, which apply when a request names a model no pool serves). Blank = the first available model.
+
+admin-defaults-chat-label = Chat
+
+admin-defaults-voice-label = Voice (transcription)
+
+admin-defaults-image-label = Image generation
+
+admin-defaults-embedding-label = Embedding (RAG)
+
+admin-defaults-first-option = First available
+
+admin-defaults-saved = default model set to `{ $model }`
+
+admin-defaults-cleared = default model cleared
+
+admin-capabilities-heading = Capabilities
+
+admin-cap-vision = Vision
+
+admin-cap-structured-output = Structured output
+
+admin-cap-audio-input = Audio input
+
+admin-cap-pdf-input = PDF input
+
+admin-cap-parallel-tools = Parallel tools
+
+admin-cap-unknown = Unknown
+
+admin-cap-enabled = Enabled
+
+admin-cap-disabled = Disabled
+
+admin-cap-fallback-vision = Fallback for vision
+
+admin-cap-fallback-tools = Fallback for tools
+
+admin-search-intro = Which backend answers the assistant's `search_web` tool. SearXNG needs only a base URL and costs nothing per query if you run your own instance; Brave needs an API key. The key is encrypted at rest.
+
+admin-search-brave-key-set = A key is stored (encrypted).
+
+admin-search-brave-key-unset = No key stored.
+
+admin-search-brave-key-clear = Remove the stored key

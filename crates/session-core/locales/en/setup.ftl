@@ -47,6 +47,11 @@ setup-testing = Testing…
 # The SPA wizard: its own page heading, the closed-for-business
 # notice, and two inline states the server-rendered form had no
 # equivalent of.
-setup-page-heading = Gateway setup
 setup-closed = Setup is closed on this gateway. Sign in normally, or run restore-setup on the host to reopen the wizard.
 setup-secret-set-hint = set — leave blank to keep it
+setup-error-heading = Setup
+setup-page-title = Setup — LLM Gateway
+setup-error-back = Back to setup
+setup-manual-claim-placeholder = groups
+setup-manual-value-placeholder = gateway-admins
+setup-issuer-placeholder = https://id.example.com/realms/company

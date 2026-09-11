@@ -202,3 +202,17 @@ settings-f-gateway-allow_impersonation-help = Let admins act as another user for
 
 # Confirmation before clearing one stored setting (SPA settings editor).
 settings-clear-confirm = Reset { $key } to its built-in default?
+settings-heading = Settings
+settings-intro = Operator settings for this gateway. They live in the database, so no configuration file is needed — each field also shows the TOML key it replaces.
+settings-saved-restart = Saved. Some fields in this section only take effect after a restart.
+settings-save-failed = Could not save those settings.
+settings-cleared = Cleared. The built-in default applies again.
+settings-restart-badge = restart
+settings-no-backend-heading = No model backend yet
+settings-no-backend-body = Setup configured sign-in, but this gateway serves no models until you add a backend. Chat and the /v1 API will refuse requests until then.
+settings-no-backend-cta = Add a backend at /admin/upstreams →
+settings-show-fields = Show { $count } more settings
+settings-model-automatic = Automatic — use the first available model
+settings-model-none-configured = No model of this kind is configured yet. Add a pool for it at /admin/upstreams and it will appear here.
+settings-model-unavailable = { $model } (configured, but not currently available)
+settings-restart-pending-heading = Restart pending

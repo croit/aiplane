@@ -1,5 +1,6 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
+nav-brand = LLM Gateway
 nav-memory = Память
 nav-scheduled = Запланировано
 nav-webhooks = Вебхуки
@@ -49,3 +50,16 @@ nav-search-close-aria = Закрыть поиск
 # A failed sign-out. Silence here would show a signed-out shell over a
 # live session, which on a shared machine is the worst outcome.
 nav-sign-out-failed = Не удалось выйти, вы всё ещё в системе: { $error }
+
+nav-flow-error-title = Ошибка подключения — LLM Gateway
+nav-flow-error-heading = Подключение не было завершено
+nav-flow-error-back = Вернуться в приложение
+nav-admin-required = Требуется роль администратора
+nav-source-title = Исходный код (AGPL-3.0)
+nav-source-line = Исходный код · AGPL-3.0 · { $version }
+login-heading = Вход в LLM Gateway
+login-description = Войдите через OIDC-провайдера вашей компании, чтобы создавать API-токены и направлять запросы к LLM.
+login-continue-button = Продолжить через OIDC →
+login-source-link = Исходный код · AGPL-3.0
+login-page-title = Sign in — LLM Gateway
+page-title-branded = { $title } — LLM Gateway

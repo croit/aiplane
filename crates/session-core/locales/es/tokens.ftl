@@ -30,7 +30,6 @@ tokens-mcp-allow-description = Las herramientas de conector que requieren aproba
 tokens-minted-heading = Token creado
 tokens-minted-copy-warning = Copie el valor ahora — no podrá volver a verlo después.
 tokens-copy-aria = Copiar token
-tokens-copy-title = Copiar token
 tokens-minted-name = Nombre: { $name }
 
 tokens-account-user-id-label = ID de usuario
@@ -60,14 +59,32 @@ tokens-limits-add = Añadir cuota
 tokens-limits-saved-toast = Cuota del token guardada.
 
 # SPA-only: the Svelte /tokens row panels and their confirm prompts.
-tokens-models-heading = Lista de modelos permitidos
-tokens-models-input-placeholder = ids de modelos, separados por comas
-tokens-quota-heading = Cuota
-tokens-quota-per = por
 tokens-quota-max-placeholder = máx
-tokens-mcp-heading = Conectores MCP
-tokens-mcp-allow-button = Dejar que se ejecuten
-tokens-mcp-block-button = Bloquearlos
 tokens-revoke-confirm = ¿Revocar este token? Los clientes que lo usan dejan de funcionar de inmediato.
 tokens-rotate-confirm = ¿Emitir un secreto nuevo? El anterior deja de funcionar de inmediato.
 tokens-remove-confirm = ¿Eliminar definitivamente esta fila de token?
+
+tokens-create-description = Genere un nuevo token Bearer para la API compatible con OpenAI.
+tokens-tool-use-description = Permitir que este token llame a las herramientas del gateway (búsqueda web, RAG, …).
+tokens-capabilities-summary = Capacidades
+tokens-mcp-allow-aria = Permitir herramientas MCP en modo "ask" a través de la API
+tokens-mcp-allow-label = Permitir herramientas MCP “ask” a través de la API
+tokens-account-heading = Cuenta
+tokens-signed-in-as = Conectado como { $email }
+tokens-account-oidc-label = Roles OIDC
+tokens-account-rbac-label = IDs de rol RBAC
+tokens-roles-none = ninguno
+tokens-roles-none-granted = ninguno concedido
+tokens-push-heading = Notificaciones
+tokens-push-description = Recibe una notificación en este dispositivo cuando termine una respuesta que iniciaste mientras estás fuera de la aplicación.
+tokens-push-off = Las notificaciones están desactivadas para este dispositivo.
+tokens-push-denied = Este navegador ha bloqueado las notificaciones. Permítelas en la configuración del navegador para activarlas.
+tokens-push-unsupported = Este navegador no admite notificaciones.
+tokens-models-none-picked = Marca al menos un modelo o desactiva el límite.
+tokens-limits-summary-none = Cuota: ninguna
+tokens-limits-summary-some = Cuota: { $count } regla(s)
+tokens-limits-help = Un tope solo para este token. Tu propio presupuesto sigue aplicándose, así que esto solo puede reducir lo que el token gasta, nunca ampliarlo.
+tokens-limits-remove = Quitar
+tokens-limits-removed-toast = Cuota del token eliminada.
+tokens-limits-admin-badge = fijada por el administrador
+tokens-models-admin-set = Un operador también restringe este token a: { $models }. Tu selección solo puede reducir eso, no ampliarlo.

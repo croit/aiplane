@@ -24,6 +24,8 @@ render-canvas-cancel = Abbrechen
 
 render-composer-attach-aria = Dateien anhängen
 render-composer-attach-title = Dateien anhängen (auch per Ablegen/Einfügen)
+render-composer-record-aria = Sprachnachricht aufnehmen
+render-composer-record-title = Aufnehmen
 render-composer-send = Senden
 render-composer-stop = Stopp
 
@@ -31,3 +33,37 @@ render-composer-stop = Stopp
 # an attachment's remove button.
 render-edit-prompt = Deine Nachricht bearbeiten:
 render-attachment-remove-title = { $filename } entfernen
+render-edit-confirm = Speichern und neu generieren? Dadurch werden alle Nachrichten darunter gelöscht.
+render-edit-save = Speichern & neu generieren
+render-edit-cancel = Abbrechen
+render-retry-confirm = Diese Antwort neu generieren? Dadurch werden sie und alles darunter gelöscht.
+render-attachment-remove-confirm = { $filename } entfernen? Das kann nicht rückgängig gemacht werden.
+render-attachment-unavailable-title = Dieser Anhang ist nicht mehr verfügbar
+render-attachment-unavailable-meta = nicht verfügbar
+render-attachment-open-title = { $filename } öffnen · { $mime } · { $size }
+render-attachment-title = { $filename } · { $mime } · { $size }
+render-media-label = { $kind ->
+    [image] Bild { $n }
+    [video] Video { $n }
+    [audio] Audio { $n }
+   *[other] Medium { $n }
+}
+render-code-copy = Code kopieren
+render-code-copied = Kopiert
+render-still-working-spinner = Arbeitet noch…
+render-thinking-in-progress = Denkt nach… ({ $secs } s)
+render-tools-running = Tools laufen
+render-tools-errored = Tool-Aufrufe
+render-tools-used = Verwendete Tools
+render-tools-summary = { $count } Aufrufe · { $breakdown }
+render-tool-status-calling = Wird aufgerufen
+render-tool-status-error = Tool-Fehler
+render-tool-input-label = Eingabe
+render-tool-output-label = Ausgabe
+render-tool-output-truncated = für die Anzeige gekürzt — alle { $bytes } Bytes sind weiterhin für das Modell verfügbar und in der Datenbank gespeichert; die ersten { $chars } Zeichen werden angezeigt
+render-compaction-divider = Frühere Nachrichten zur Kontexteinsparung zusammengefasst
+render-canvas-version-by-you = von dir
+render-canvas-hand-edited = von dir bearbeitet
+render-canvas-edit-hint = Wird als neue Version gespeichert; der Assistent erfährt von deiner Änderung.
+render-canvas-version-aria = Version
+render-canvas-resize-aria = Zeichenfläche skalieren

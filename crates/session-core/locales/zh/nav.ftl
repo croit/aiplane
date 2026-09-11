@@ -1,5 +1,6 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
+nav-brand = LLM Gateway
 nav-memory = 记忆
 nav-scheduled = 计划任务
 nav-webhooks = Webhook
@@ -49,3 +50,16 @@ nav-search-close-aria = 关闭搜索
 # A failed sign-out. Silence here would show a signed-out shell over a
 # live session, which on a shared machine is the worst outcome.
 nav-sign-out-failed = 退出登录失败，您仍处于登录状态：{ $error }
+
+nav-flow-error-title = 连接失败 — LLM Gateway
+nav-flow-error-heading = 连接未完成
+nav-flow-error-back = 返回应用
+nav-admin-required = 需要管理员角色
+nav-source-title = 源代码 (AGPL-3.0)
+nav-source-line = 源代码 · AGPL-3.0 · { $version }
+login-heading = 登录 LLM Gateway
+login-description = 通过贵公司的 OIDC 提供商进行身份验证，以创建 API 令牌并路由 LLM 请求。
+login-continue-button = 使用 OIDC 继续 →
+login-source-link = 源代码 · AGPL-3.0
+login-page-title = Sign in — LLM Gateway
+page-title-branded = { $title } — LLM Gateway

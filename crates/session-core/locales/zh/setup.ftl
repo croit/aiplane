@@ -48,6 +48,11 @@ setup-testing = 测试中…
 # The SPA wizard: its own page heading, the closed-for-business
 # notice, and two inline states the server-rendered form had no
 # equivalent of.
-setup-page-heading = 网关设置
 setup-closed = 此网关的设置已关闭。请正常登录，或在主机上运行 restore-setup 重新打开向导。
 setup-secret-set-hint = 已设置 —— 留空则保持不变
+setup-error-heading = 设置
+setup-page-title = Setup — LLM Gateway
+setup-error-back = 返回设置
+setup-manual-claim-placeholder = groups
+setup-manual-value-placeholder = gateway-admins
+setup-issuer-placeholder = https://id.example.com/realms/company

@@ -10,6 +10,9 @@
 
 use std::sync::LazyLock;
 
+use rama::http::service::web::response::Json;
+use serde_json::{Value, json};
+
 /// Canonical public source repository.
 const DEFAULT_SOURCE_URL: &str = "https://github.com/croit/llm-gateway";
 
@@ -36,4 +39,11 @@ pub fn source_url() -> &'static str {
 /// Human-readable build label, e.g. `v0.1.0 (a1b2c3d4e5f6)`.
 pub fn version_label() -> String {
     format!("v{VERSION} ({GIT_SHA})")
+}
+
+pub async fn metadata() -> Json<Value> {
+    Json(json!({
+        "source_url": source_url(),
+        "version": version_label(),
+    }))
 }

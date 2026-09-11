@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gateway::rama_server::{RamaState, SessionStore, router};
-use gateway_core::server::config::{FeedbackConfig, GatewayConfig, SkillsConfig};
+use gateway_core::server::config::{ComfyuiConfig, FeedbackConfig, GatewayConfig, SkillsConfig};
 use gateway_core::server::rbac::RoleConfig;
 use gateway_core::server::rbac::{Resolver, config::RbacConfig, config::RoleMapping};
 use gateway_core::server::upstreams::{
@@ -36,10 +36,12 @@ use gateway_core::server::upstreams::{
     config::{BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
 };
 use gateway_core::server::{Config, db};
+use gateway_features::server::comfyui::{ChatUpdateRegistry, Client, ComfyuiStore};
 use gateway_features::server::skills::{SkillStore, UserSkillStore};
 use gateway_runtime::server::AppState;
+use gateway_runtime::server::comfyui_tool::ComfyuiHandle;
 use gateway_runtime::server::tools::{ToolRegistry, echo, time};
-use gateway_tools::{fetch_url, read_skill, search_web};
+use gateway_tools::{fetch_url, location, read_skill, search_web};
 use jiff::{Timestamp, ToSpan};
 use rama::net::address::SocketAddress;
 use wiremock::matchers::{method, path};
@@ -354,6 +356,16 @@ async fn main() -> anyhow::Result<()> {
     // `data/skills` is gitignored local data) — keeps README screenshots clean.
     // Absolute, CARGO_MANIFEST_DIR-anchored so it resolves regardless of cwd.
     let skills_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/demo-skills");
+    let comfyui_dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/comfyui-workflows");
+    let comfyui_config = ComfyuiConfig {
+        enabled: true,
+        base_url: "http://comfyui-worker:8188".into(),
+        content_dir: comfyui_dir.clone(),
+        timeout_secs: 900,
+        queue_poll_interval_ms: 500,
+        max_concurrent_jobs: 1,
+    };
     // OIDC→role mapping (seed-only, mirrors a real deployment). Every signed-in
     // user gets `user` as a baseline; team/admin roles come from their OIDC
     // groups. `dev` carries the `platform-admins` group → resolves to admin.
@@ -386,6 +398,7 @@ async fn main() -> anyhow::Result<()> {
         skills: Some(SkillsConfig {
             dir: skills_dir.clone(),
         }),
+        comfyui: Some(comfyui_config.clone()),
         // Turn on impersonation so the /admin/users page renders its
         // Impersonate action column (audited in production; harmless here).
         // `bootstrap_admin_groups` mirrors production's break-glass admin so the
@@ -420,6 +433,9 @@ async fn main() -> anyhow::Result<()> {
         }),
         ..Config::default()
     };
+    gateway_core::server::settings::import_once(&pool, &crypto, &config)
+        .await
+        .expect("dev_ui settings seed");
     // Seed the DB group tables from the config (mirrors main.rs first-boot
     // seeding), then build the resolver from the DB snapshot — so `/admin/groups`
     // shows the seeded groups and an edit + `reload_rbac` round-trips through the
@@ -445,15 +461,31 @@ async fn main() -> anyhow::Result<()> {
             .with(time::CurrentTimestamp)
             .with(fetch_url::FetchUrl)
             .with(search_web::SearchWeb)
+            .with(location::GetUserLocation)
             .with(read_skill::ReadSkill::new(
                 skill_store.clone(),
                 user_skill_store.clone(),
                 rbac.clone(),
             )),
     );
+    let comfyui = Arc::new(ComfyuiHandle {
+        store: Arc::new(ComfyuiStore::load(comfyui_dir)),
+        client: Client::new(comfyui_config.base_url).expect("valid dev ComfyUI URL"),
+        runner_poll_interval: std::time::Duration::from_millis(
+            comfyui_config.queue_poll_interval_ms,
+        ),
+        runner_timeout: std::time::Duration::from_secs(comfyui_config.timeout_secs),
+        s3: None,
+        max_concurrent_jobs: comfyui_config.max_concurrent_jobs,
+        job_slots: Arc::new(tokio::sync::Semaphore::new(
+            comfyui_config.max_concurrent_jobs,
+        )),
+        chat_updates: ChatUpdateRegistry::default(),
+    });
     let app = AppState::new(config, pool.clone(), registry, tools, rbac)
         .with_skills(skill_store)
-        .with_user_skills(user_skill_store);
+        .with_user_skills(user_skill_store)
+        .with_comfyui(comfyui);
     // Enabled usage handle (90-day retention) so the /usage page renders real
     // aggregates instead of the "metrics disabled" banner. Spawn before the
     // pool is moved into the session store.
@@ -538,10 +570,48 @@ async fn main() -> anyhow::Result<()> {
 /// scheduled actions, and two indexed RAG collections. All owned by the
 /// `dev` user. In-memory DB, so this is rebuilt fresh on every launch.
 async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
-    use gateway_core::server::db::rag;
+    use gateway_core::server::db::{chat_compactions, documents, rag};
     use gateway_runtime::server::scheduled::{self, NewAction};
     use session_core::attachments;
     use session_core::db::{self as chatdb, ToolCallStatus, TurnStatus};
+
+    let completed_job = gateway_features::server::comfyui::jobs::create(
+        &state.db,
+        "demo-prompt-completed",
+        "demo-session",
+        "demo-turn",
+        "dev",
+        "text_to_image",
+        "image",
+        "9",
+        "llmgw-text2image",
+    )
+    .await?;
+    gateway_features::server::comfyui::jobs::complete(
+        &state.db,
+        completed_job,
+        "text_to_image-1.png",
+        "image/png",
+    )
+    .await?;
+    let timed_out_job = gateway_features::server::comfyui::jobs::create(
+        &state.db,
+        "demo-prompt-timeout",
+        "demo-session",
+        "demo-turn",
+        "dev",
+        "image_to_video",
+        "video",
+        "108",
+        "llmgw-image2video",
+    )
+    .await?;
+    gateway_features::server::comfyui::jobs::timeout(
+        &state.db,
+        timed_out_job,
+        "Timed out after 900 seconds",
+    )
+    .await?;
 
     // --- An image-generation conversation (seeded FIRST so the gzip chat
     // below stays the most-recent session and `/chat` still lands on it).
@@ -577,6 +647,56 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
     )
     .await?;
     chatdb::finalize_turn(&state.db, &ia, TurnStatus::Completed, None).await?;
+
+    // --- A document-workspace conversation for exercising the docked canvas
+    // and its session-scoped assets tab in browser tests.
+    let workspace = chatdb::create_session(&state.db, "dev").await?;
+    chatdb::set_session_title(&state.db, &workspace.id, "Draft a project brief").await?;
+    let wu = uuid::Uuid::new_v4().to_string();
+    chatdb::create_user_turn(
+        &state.db,
+        &workspace.id,
+        &wu,
+        "Draft a concise project brief and keep it in the document canvas.",
+    )
+    .await?;
+    let wa = uuid::Uuid::new_v4().to_string();
+    chatdb::create_assistant_turn_in_progress(&state.db, &workspace.id, &wa, "demo-model").await?;
+    let draft_marker = attachments::marker_line(
+        "project-brief.md",
+        "text/markdown",
+        &gateway_features::server::chat_attachments::proxy_url(&wa, "project-brief.md"),
+        860,
+    );
+    chatdb::append_content(
+        &state.db,
+        &wa,
+        &format!("I drafted the brief in the canvas and attached an export.\n\n{draft_marker}"),
+    )
+    .await?;
+    chatdb::finalize_turn(&state.db, &wa, TurnStatus::Completed, None).await?;
+    let project_brief_id = documents::new_id();
+    documents::create(
+        &state.db,
+        &project_brief_id,
+        &workspace.id,
+        "dev",
+        "Project brief",
+        documents::DocumentFormat::Markdown,
+        "# Project brief\n\n## Goal\n\nShip a reliable, accessible gateway experience.\n\n## Success criteria\n\n- Complete feature parity\n- Clear operator workflows\n- Responsive layouts",
+        Some(&wa),
+    )
+    .await?;
+    documents::append_version(
+        &state.db,
+        &workspace.id,
+        &project_brief_id,
+        "# Project brief\n\n## Goal\n\nShip a reliable, accessible gateway experience.\n\n## Release criteria\n\n- Complete feature parity\n- Clear operator workflows\n- Responsive layouts\n- Verified document history",
+        Some("Added release criteria"),
+        Some(&wa),
+        documents::VersionAuthor::Assistant,
+    )
+    .await?;
 
     // --- A finished chat conversation showcasing the tool-call loop:
     // reasoning → web search → page fetch → a markdown answer with a source.
@@ -645,6 +765,15 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
     .await?;
     chatdb::append_content(&state.db, &a, ANSWER_MD).await?;
     chatdb::finalize_turn(&state.db, &a, TurnStatus::Completed, None).await?;
+    chat_compactions::upsert(
+        &state.db,
+        &s.id,
+        0,
+        "The user asked how to enable gzip in nginx.",
+        Some(180),
+        Some(18),
+    )
+    .await?;
 
     // --- Scheduled actions ----------------------------------------------
     let schedules = [

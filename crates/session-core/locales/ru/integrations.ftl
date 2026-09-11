@@ -36,5 +36,23 @@ integrations-error-sealing-refresh-token = запечатывание токен
 integrations-error-saving-connection = сохранение подключения: { $error }
 
 # SPA-only: the Svelte /integrations connector list.
-integrations-badge-not-connected = Не подключено
 integrations-toast-connected = { $name } подключён.
+integrations-badge-global = Предоставлено вашим оператором
+integrations-badge-needs-reconnect = Требуется переподключение
+integrations-badge-needs-admin-setup = Требуется настройка администратором
+integrations-no-sign-in = Вход не требуется
+integrations-reconnect-title = Восстановить соединение (повторная авторизация / повтор)
+integrations-reconnect-button = Переподключить
+integrations-tools-error-prefix = Не удалось загрузить инструменты этого коннектора:
+integrations-tools-error-hint = Проверьте URL MCP-сервера / ваш токен, затем используйте «Переподключить» выше.
+integrations-tools-error-hint-reauth = Ваша авторизация больше не действует — нажмите «Переподключить» выше и войдите заново.
+integrations-tools-empty = Этот коннектор не предоставляет инструментов.
+integrations-tools-header = Права на инструменты ({ $count })
+integrations-set-all-label = Установить все:
+integrations-mode-always = Всегда
+integrations-mode-ask = Спрашивать
+integrations-mode-off = Выключено
+integrations-tools-toggle = Показать / скрыть отдельные инструменты
+integrations-tool-kind-read = чтение
+integrations-tool-kind-write = запись
+integrations-error-connection-unavailable = соединение недоступно

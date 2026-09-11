@@ -11,6 +11,7 @@ import {
 	newConversationState,
 	parseSseBlock,
 	parseUserContent,
+	replaceUserText,
 	sessionTitle,
 	type ChatEvent,
 	type ConversationState,
@@ -177,4 +178,9 @@ test('content without markers parses to itself', () => {
 	assert.equal(text, 'plain message');
 	assert.equal(attachments.length, 0);
 	assert.deepEqual(parseUserContent(null), { text: '', attachments: [] });
+});
+
+test('editing prose preserves existing attachment markers', () => {
+	const marker = '[gw-attachment file="shot.png" mime="image/png" url="/chat/attachment/t1/shot.png" size=123]';
+	assert.equal(replaceUserText(`before\n\n${marker}`, 'after'), `after\n\n${marker}`);
 });

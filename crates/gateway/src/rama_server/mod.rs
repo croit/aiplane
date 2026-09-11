@@ -20,6 +20,7 @@ pub mod dev_seed;
 pub mod first_run;
 pub mod messages;
 pub mod oidc_handlers;
+pub mod openapi;
 pub mod proxy;
 pub mod rag_api;
 pub mod router;

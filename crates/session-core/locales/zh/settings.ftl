@@ -194,3 +194,17 @@ settings-f-gateway-allow_impersonation-help = 允许管理员以其他用户身�
 
 # 清除某项已保存设置前的确认（SPA 设置编辑器）。
 settings-clear-confirm = 要将 { $key } 重置为内置默认值吗？
+settings-heading = 设置
+settings-intro = 本网关的运维设置。它们保存在数据库中，无需配置文件——每个字段还会显示它所替代的 TOML 键名。
+settings-saved-restart = 已保存。本节中部分字段需重启后才生效。
+settings-save-failed = 无法保存这些设置。
+settings-cleared = 已清除，重新使用内置默认值。
+settings-restart-badge = 需重启
+settings-no-backend-heading = 尚未配置模型后端
+settings-no-backend-body = 登录已配置好，但在添加后端之前，本网关不提供任何模型。在此之前，聊天和 /v1 接口都会拒绝请求。
+settings-no-backend-cta = 前往 /admin/upstreams 添加后端 →
+settings-show-fields = 显示另外 { $count } 项设置
+settings-model-automatic = 自动 — 使用第一个可用模型
+settings-model-none-configured = 尚未配置此类型的模型。请在 /admin/upstreams 添加相应的池，它就会出现在这里。
+settings-model-unavailable = { $model }（已配置，但当前不可用）
+settings-restart-pending-heading = 待重启

@@ -263,6 +263,8 @@ async fn providers_endpoint_describes_each_source_and_its_fields() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let parsed: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert!(parsed["embedding_models"].is_array());
+    assert!(parsed.get("default_embedding").is_some());
     let kinds: Vec<&str> = parsed["data"]
         .as_array()
         .unwrap()
@@ -835,4 +837,178 @@ async fn profiles_create_update_and_guarded_delete() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn collection_editor_round_trips_search_access_and_profile_settings() {
+    let state = common::state_with_admin_rbac("http://unused.invalid").await;
+    let cookie = seed_admin(&state, "boss").await;
+    let app = common::app(state);
+
+    let profile = json!({
+        "name": "contracts",
+        "description": "contract metadata",
+        "prompt": "Extract the contract fields.",
+        "fields": [{ "key": "party", "label": "Party", "type": "text" }],
+    })
+    .to_string();
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/profiles",
+            &cookie,
+            Some(&profile),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let create = json!({
+        "name": "legal",
+        "git_url": "https://example.invalid/legal.git",
+        "embedding_model": "embed-1",
+        "search_mode": "aggregate",
+    })
+    .to_string();
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/collections",
+            &cookie,
+            Some(&create),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(created["search_mode"], "aggregate");
+    assert_eq!(created["sync_hook_set"], false);
+    assert_eq!(created["allowed_groups"], json!([]));
+    let id = created["id"].as_i64().unwrap();
+
+    let patch = json!({
+        "profile": "contracts",
+        "extraction_model": "chat-1",
+        "allowed_groups": ["legal", "admins"],
+    })
+    .to_string();
+    let resp = app
+        .serve(req_with_cookie(
+            Method::PATCH,
+            &format!("/api/v0/rag/collections/{id}"),
+            &cookie,
+            Some(&patch),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert!(updated["profile_id"].is_i64());
+    assert_eq!(updated["extraction_model"], "chat-1");
+    assert_eq!(updated["allowed_groups"], json!(["legal", "admins"]));
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::GET,
+            "/api/v0/rag/profiles",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let profiles: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    let saved = profiles["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|profile| profile["name"] == "contracts")
+        .unwrap();
+    assert_eq!(saved["prompt"], "Extract the contract fields.");
+    assert_eq!(saved["builtin"], false);
+}
+
+#[tokio::test]
+async fn ref_editor_and_index_log_are_available_to_the_admin_ui() {
+    use gateway_core::server::db::rag::{self as rag_db, LogLevel, NewLogEntry};
+
+    let state = common::state_with_admin_rbac("http://unused.invalid").await;
+    let cookie = seed_admin(&state, "boss").await;
+    let db = state.db.clone();
+    let app = common::app(state);
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/collections",
+            &cookie,
+            Some(create_body()),
+        ))
+        .await
+        .unwrap();
+    let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    let id = created["id"].as_i64().unwrap();
+    let source = rag_db::add_ref(&db, id, "main", None, true).await.unwrap();
+
+    rag_db::insert_log_entry(
+        &db,
+        &NewLogEntry {
+            ref_id: source.id,
+            collection_id: id,
+            level: LogLevel::Info,
+            phase: "ready".into(),
+            message: "Indexed source".into(),
+            commit_sha: Some("0123456789abcdef".into()),
+            files: Some(12),
+            chunks: Some(48),
+            duration_ms: Some(900),
+        },
+    )
+    .await
+    .unwrap();
+
+    let patch = json!({
+        "git_url": "https://example.invalid/renamed.git",
+        "git_ref": "stable",
+    })
+    .to_string();
+    let resp = app
+        .serve(req_with_cookie(
+            Method::PATCH,
+            &format!("/api/v0/rag/collections/{id}/refs/{}", source.id),
+            &cookie,
+            Some(&patch),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(updated["git_ref"], "stable");
+    assert_eq!(updated["git_url"], "https://example.invalid/renamed.git");
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::GET,
+            &format!("/api/v0/rag/collections/{id}/refs/{}/log", source.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let log: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(log["data"][0]["message"], "Indexed source");
+    assert_eq!(log["data"][0]["files"], 12);
+    assert_eq!(log["data"][0]["chunks"], 48);
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::GET,
+            &format!("/api/v0/rag/collections/{id}/refs"),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let refs: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(refs["data"][0]["document_count"], 12);
 }

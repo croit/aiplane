@@ -57,6 +57,7 @@ pub async fn rag_connect(
         Ok(Some(c)) => c,
         Ok(None) => {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "rag-toast-vanished"),
             );
@@ -64,6 +65,7 @@ pub async fn rag_connect(
         Err(err) => {
             tracing::warn!(error = %err, %id, "rag oauth: collection lookup");
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "rag-oauth-lookup-failed"),
             );
@@ -73,6 +75,7 @@ pub async fn rag_connect(
     let registry = state.provider_registry();
     let Some(factory) = registry.get(&collection.source.kind) else {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "rag-source-unknown-kind"),
         );
@@ -86,6 +89,7 @@ pub async fn rag_connect(
     } = factory.auth()
     else {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "rag-oauth-not-oauth"),
         );
@@ -101,6 +105,7 @@ pub async fn rag_connect(
         .filter(|s| !s.is_empty())
     else {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "rag-oauth-no-client"),
         );
@@ -126,6 +131,7 @@ pub async fn rag_connect(
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: building the authorize url");
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "rag-oauth-bad-authorize-url"),
             );
@@ -144,6 +150,7 @@ pub async fn rag_connect(
     if let Err(err) = oauth_db::create_pending(&state.db, &pending).await {
         tracing::warn!(error = %err, %id, "rag oauth: saving pending consent");
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "rag-oauth-start-failed"),
         );
@@ -175,6 +182,7 @@ pub async fn rag_oauth_callback(
 
     if let Some(err) = params.error {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t_args(
                 lang,
@@ -185,6 +193,7 @@ pub async fn rag_oauth_callback(
     }
     let (Some(code), Some(st)) = (params.code, params.state) else {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "rag-oauth-callback-missing"),
         );
@@ -196,6 +205,7 @@ pub async fn rag_oauth_callback(
         Ok(Some(p)) => p,
         Ok(None) => {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "rag-oauth-expired"),
             );
@@ -203,6 +213,7 @@ pub async fn rag_oauth_callback(
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: reading pending consent");
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "rag-oauth-lookup-failed"),
             );
@@ -213,6 +224,7 @@ pub async fn rag_oauth_callback(
         Ok(Some(c)) => c,
         Ok(None) => {
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "rag-toast-vanished"),
             );
@@ -220,6 +232,7 @@ pub async fn rag_oauth_callback(
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: collection lookup");
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "rag-oauth-lookup-failed"),
             );
@@ -232,6 +245,7 @@ pub async fn rag_oauth_callback(
     // this handler's to assume.
     let Some(factory) = state.provider_registry().get(&collection.source.kind) else {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "rag-source-unknown-kind"),
         );
@@ -243,6 +257,7 @@ pub async fn rag_oauth_callback(
     } = factory.auth()
     else {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "rag-oauth-not-oauth"),
         );
@@ -256,6 +271,7 @@ pub async fn rag_oauth_callback(
         .filter(|s| !s.is_empty())
     else {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "rag-oauth-no-client"),
         );
@@ -278,6 +294,7 @@ pub async fn rag_oauth_callback(
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: exchanging the code");
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t_args(
                     lang,
@@ -294,6 +311,7 @@ pub async fn rag_oauth_callback(
     // request did not force the prompt, so say what to do about it.
     let Some(refresh_token) = tokens.refresh_token else {
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "rag-oauth-no-refresh-token"),
         );
@@ -305,6 +323,7 @@ pub async fn rag_oauth_callback(
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: serialising secrets");
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "rag-oauth-store-failed"),
             );
@@ -315,6 +334,7 @@ pub async fn rag_oauth_callback(
         Err(err) => {
             tracing::warn!(error = %err, "rag oauth: sealing secrets");
             return flow_error_page(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &t(lang, "rag-oauth-store-failed"),
             );
@@ -325,6 +345,7 @@ pub async fn rag_oauth_callback(
     {
         tracing::warn!(error = %err, "rag oauth: storing the refresh token");
         return flow_error_page(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "rag-oauth-store-failed"),
         );

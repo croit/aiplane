@@ -1,353 +1,104 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { TokenSummary } from '$lib/api';
-	import { adminPut, adminPost } from '$lib/admin-client';
-	import { t, dt } from '$lib/i18n.svelte';
+	import { adminDelete, adminJson, adminPost, adminPut } from '$lib/admin-client';
+	import ManagedTokenRow from '$lib/components/tokens/ManagedTokenRow.svelte';
+	import PushNotificationsCard from '$lib/components/tokens/PushNotificationsCard.svelte';
+	import TokenAccountCard from '$lib/components/tokens/TokenAccountCard.svelte';
+	import { t } from '$lib/i18n.svelte';
+	import type { ManagedToken, TokenManagementDetails } from '$lib/tokens';
 
-	let tokens = $state<TokenSummary[]>([]);
+	let details = $state<TokenManagementDetails | null>(null);
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
 	let busy = $state(false);
-
-	// The one-time minted secret. Kept in its own piece of state because it
-	// exists exactly once — re-fetching the list can never bring it back.
 	let minted = $state<{ name: string; plaintext: string } | null>(null);
-
 	let name = $state('');
 	let ttlDays = $state(90);
-	// Per-token panel state: which token's panel is expanded, its model
-	// allowlist draft, and its quota draft.
-	let expanded = $state<string | null>(null);
-	let modelsInput = $state('');
-	let restrict = $state(false);
-	let quotaDimension = $state('requests');
-	let quotaWindow = $state('day');
-	let quotaValue = $state('');
-	// Per-token MCP "ask" policy. Write-only on the server (there is no read
-	// endpoint), so this mirrors what this page last set rather than claiming
-	// to show stored state.
-	let mcpAllow = $state<Record<string, boolean>>({});
 
 	async function refresh() {
-		try {
-			tokens = await api.listTokens();
-			error = null;
-		} catch (err) {
-			error = String(err);
-		}
-	}
-
-	function togglePanel(token: TokenSummary) {
-		if (expanded === token.id) {
-			expanded = null;
-			return;
-		}
-		expanded = token.id;
-		quotaValue = '';
-	}
-
-	async function saveModels(token: TokenSummary) {
-		notice = null;
-		try {
-			const list = modelsInput
-				.split(',')
-				.map((m) => m.trim())
-				.filter(Boolean);
-			await adminPut(`/api/v0/tokens/${token.id}/models`, { restrict, models: list });
-			notice = restrict
-				? t('tokens-models-saved-toast', { count: list.length })
-				: t('tokens-models-cleared-toast');
-			await refresh();
-		} catch (err) {
-			notice = String(err);
-		}
-	}
-
-	async function saveQuota(token: TokenSummary) {
-		notice = null;
-		try {
-			await adminPost(`/api/v0/tokens/${token.id}/quota`, {
-				dimension: quotaDimension,
-				window: quotaWindow,
-				value: parseFloat(quotaValue)
-			});
-			notice = t('tokens-limits-saved-toast');
-		} catch (err) {
-			notice = String(err);
-		}
-	}
-
-	/** An `ask`-level MCP connector has nobody to prompt when the caller is a
-	 * token, so it blocks by default; this is the owner's explicit opt-in. */
-	async function saveMcpPolicy(token: TokenSummary, allow: boolean) {
-		notice = null;
-		try {
-			await adminPut(`/api/v0/tokens/${token.id}/mcp-policy`, { allow });
-			mcpAllow[token.id] = allow;
-			notice = allow
-				? t('tokens-mcp-ask-enabled-toast')
-				: t('tokens-mcp-ask-disabled-toast');
-		} catch (err) {
-			notice = String(err);
-		}
+		try { details = await adminJson<TokenManagementDetails>('/api/v0/tokens/details'); error = null; }
+		catch (caught) { error = String(caught); }
 	}
 
 	async function create() {
 		const trimmed = name.trim();
 		if (!trimmed || busy) return;
 		busy = true;
-		notice = null;
 		try {
-			const res = await api.createToken({
-				name: trimmed,
-				ttl_days: ttlDays,
-				tools_enabled: false,
-				disabled_tools: []
-			});
-			minted = { name: res.token.name, plaintext: res.plaintext };
+			const response = await api.createToken({ name: trimmed, ttl_days: ttlDays, tools_enabled: false, disabled_tools: [] });
+			minted = { name: response.token.name, plaintext: response.plaintext };
 			name = '';
 			await refresh();
-		} catch (err) {
-			notice = String(err);
-		} finally {
-			busy = false;
-		}
+		} catch (caught) { notice = String(caught); } finally { busy = false; }
 	}
 
-	async function revoke(id: string) {
-		if (!confirm(t('tokens-revoke-confirm'))) return;
-		try {
-			await api.revokeToken(id);
-			await refresh();
-		} catch (err) {
-			notice = String(err);
-		}
+	async function mutate(action: () => Promise<void>) {
+		notice = null;
+		try { await action(); }
+		catch (caught) { notice = String(caught); }
 	}
 
-	async function rotate(id: string) {
+	async function updateTools(token: ManagedToken, enabled: boolean, disabled: string[]) {
+		await mutate(async () => { await api.updateTokenTools(token.id, { tools_enabled: enabled, disabled_tools: disabled }); await refresh(); });
+	}
+	async function updateModels(token: ManagedToken, restrict: boolean, models: string[]) {
+		await mutate(async () => { await adminPut(`/api/v0/tokens/${token.id}/models`, { restrict, models });
+			notice = restrict ? t('tokens-models-saved-toast', { count: models.length }) : t('tokens-models-cleared-toast'); await refresh(); });
+	}
+	async function addQuota(token: ManagedToken, dimension: string, window: string, value: number) {
+		await mutate(async () => { await adminPost(`/api/v0/tokens/${token.id}/quota`, { dimension, window, value }); notice = t('tokens-limits-saved-toast'); await refresh(); });
+	}
+	async function removeQuota(token: ManagedToken, id: string) {
+		await mutate(async () => { await adminDelete(`/api/v0/tokens/${token.id}/quota/${id}`); notice = t('tokens-limits-removed-toast'); await refresh(); });
+	}
+	async function setMcpPolicy(token: ManagedToken, allow: boolean) {
+		await mutate(async () => { await adminPut(`/api/v0/tokens/${token.id}/mcp-policy`, { allow });
+			notice = allow ? t('tokens-mcp-ask-enabled-toast') : t('tokens-mcp-ask-disabled-toast'); await refresh(); });
+	}
+	async function rotate(token: ManagedToken) {
 		if (!confirm(t('tokens-rotate-confirm'))) return;
-		try {
-			const res = await api.rotateToken(id);
-			minted = { name: res.token.name, plaintext: res.plaintext };
-			await refresh();
-		} catch (err) {
-			notice = String(err);
-		}
+		await mutate(async () => { const response = await api.rotateToken(token.id); minted = { name: response.token.name, plaintext: response.plaintext }; await refresh(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
 	}
-
-	async function remove(id: string) {
-		if (!confirm(t('tokens-remove-confirm'))) return;
-		try {
-			await api.deleteToken(id);
-			await refresh();
-		} catch (err) {
-			notice = String(err);
-		}
-	}
-
-	async function toggleTools(token: TokenSummary) {
-		try {
-			await api.updateTokenTools(token.id, {
-				tools_enabled: !token.tools_enabled,
-				disabled_tools: token.disabled_tools
-			});
-			await refresh();
-		} catch (err) {
-			notice = String(err);
-		}
-	}
-
-	function copyPlaintext() {
-		if (minted) void navigator.clipboard?.writeText(minted.plaintext);
-	}
+	async function revoke(token: ManagedToken) { if (confirm(t('tokens-revoke-confirm'))) await mutate(async () => { await api.revokeToken(token.id); await refresh(); }); }
+	async function remove(token: ManagedToken) { if (confirm(t('tokens-remove-confirm'))) await mutate(async () => { await api.deleteToken(token.id); await refresh(); }); }
 
 	onMount(refresh);
 </script>
 
-<div class="flex items-center justify-between mb-4">
-	<h1 class="text-2xl font-bold">{t('tokens-page-heading')}</h1>
-</div>
+<div class="mx-auto w-full max-w-5xl px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+	<h1 class="mb-2 text-2xl font-bold">{t('tokens-page-heading')}</h1>
+	<p class="mb-6 text-sm text-base-content/60">{t('tokens-intro')}</p>
+	{#if error}<div class="alert alert-error mb-4"><span>{error}</span></div>{/if}
+	{#if notice}<div class="alert alert-info mb-4"><span>{notice}</span></div>{/if}
 
-<p class="text-base-content/60 text-sm mb-6">
-	{t('tokens-intro')}
-</p>
-
-{#if error}
-	<div class="alert alert-error mb-4"><span>{error}</span></div>
-{/if}
-{#if notice}
-	<div class="alert alert-warning mb-4"><span>{notice}</span></div>
-{/if}
-
-{#if minted}
-	<div class="card border border-success mb-6">
-		<div class="card-body">
-			<h2 class="card-title text-base">
-				<span class="text-success">✓</span>
-				{t('tokens-minted-heading')}
-			</h2>
+	{#if minted}
+		<section class="card mb-6"><div class="card-body">
+			<h2 class="card-title text-base"><span class="text-success">✓</span>{t('tokens-minted-heading')}</h2>
 			<p class="text-sm text-base-content/70">{t('tokens-minted-copy-warning')}</p>
-			<div class="relative">
-				<pre class="bg-base-100 border border-base-300 rounded-md p-3 pr-12 m-0 font-mono text-xs select-all break-all whitespace-pre-wrap">{minted.plaintext}</pre>
-				<button
-					class="btn btn-ghost btn-sm btn-square absolute top-1.5 right-1.5"
-					onclick={copyPlaintext}
-					aria-label={t('tokens-copy-aria')}
-					title={t('tokens-copy-title')}
-				>
-					{t('webhooks-copy')}
-				</button>
-			</div>
-			<p class="text-xs text-base-content/60 mt-2">
-				{t('tokens-minted-name', { name: minted.name })}
-			</p>
-		</div>
-	</div>
-{/if}
+			<div class="relative"><pre class="m-0 w-full min-w-0 select-all whitespace-pre-wrap break-all rounded-md border border-base-300 bg-base-100 p-3 pr-12 font-mono text-xs">{minted.plaintext}</pre><button class="btn btn-ghost btn-sm btn-square absolute right-1.5 top-1.5" onclick={() => navigator.clipboard?.writeText(minted?.plaintext ?? '')} aria-label={t('tokens-copy-aria')}>{t('webhooks-copy')}</button></div>
+			<p class="mb-0 mt-3 text-xs text-base-content/60">{t('tokens-minted-name', { name: minted.name })}</p>
+		</div></section>
+	{/if}
 
-<div class="card border border-base-300 mb-6">
-	<div class="card-body">
-		<h2 class="card-title">{t('tokens-create-heading')}</h2>
-		<div class="flex flex-wrap items-end gap-3">
-			<label class="flex flex-col gap-1 flex-1 min-w-48">
-				<span class="label-text">{t('tokens-name-label')}</span>
-				<input
-					class="input input-bordered w-full"
-					placeholder={t('tokens-name-placeholder')}
-					bind:value={name}
-					onkeydown={(e) => e.key === 'Enter' && create()}
-				/>
-			</label>
-			<label class="flex flex-col gap-1 w-32">
-				<span class="label-text">{t('tokens-ttl-label')}</span>
-				<input class="input input-bordered w-full" type="number" min="1" max="1825" bind:value={ttlDays} />
-			</label>
-			<button class="btn btn-primary" onclick={create} disabled={!name.trim() || busy}>
-				{t('tokens-create-submit')}
-			</button>
-		</div>
-	</div>
-</div>
+	{#if details?.push_enabled}<PushNotificationsCard />{/if}
+	<form class="card mb-6 border border-base-300" onsubmit={(event) => { event.preventDefault(); void create(); }}><div class="card-body">
+		<h2 class="card-title">{t('tokens-create-heading')}</h2><p class="text-base-content/70">{t('tokens-create-description')}</p>
+		<label class="flex w-full flex-col gap-1"><span class="label-text">{t('tokens-name-label')}</span><input class="input input-bordered w-full" required placeholder={t('tokens-name-placeholder')} bind:value={name} /></label>
+		<label class="flex w-32 flex-col gap-1"><span class="label-text">{t('tokens-ttl-label')}</span><input class="input input-bordered w-full" type="number" min="1" max="1825" bind:value={ttlDays} /></label>
+		<div class="card-actions mt-2 justify-end"><button class="btn btn-primary" type="submit" disabled={busy}>{t('tokens-create-submit')}</button></div>
+	</div></form>
 
-<div class="card border border-base-300">
-	<div class="card-body">
+	<section class="card border border-base-300"><div class="card-body">
 		<h2 class="card-title">{t('tokens-list-heading')}</h2>
-		{#if tokens.length === 0}
-			<p class="text-base-content/60 text-sm">{t('tokens-list-empty')}</p>
-		{:else}
-			<ul class="flex flex-col divide-y divide-base-300">
-				{#each tokens as token (token.id)}
-					<li class="py-3">
-						<div class="flex items-center gap-4">
-							<div class="flex-1 min-w-0">
-								<button class="text-sm font-medium link link-hover" onclick={() => togglePanel(token)}>
-									{token.name}
-								</button>
-								<div class="text-xs text-base-content/60">
-									{t('tokens-row-meta', {
-										created: dt(token.created_at, { dateStyle: 'medium' }),
-										last_used: token.last_used_at
-											? dt(token.last_used_at, { dateStyle: 'medium' })
-											: t('tokens-last-used-never'),
-										expires: dt(token.expires_at, { dateStyle: 'medium' })
-									})}
-								</div>
-							</div>
-							{#if token.revoked}
-								<span class="badge badge-error">{t('tokens-badge-revoked')}</span>
-							{:else}
-								<span class="badge badge-secondary">{t('tokens-badge-active')}</span>
-							{/if}
-							<label class="flex items-center gap-2 text-sm">
-								<input
-									type="checkbox"
-									class="toggle toggle-primary toggle-sm"
-									checked={token.tools_enabled}
-									disabled={token.revoked}
-									onchange={() => toggleTools(token)}
-									aria-label={t('tokens-tool-use-aria')}
-								/>
-								<span class="text-base-content/60">{t('tokens-tool-use-label')}</span>
-							</label>
-							{#if !token.revoked}
-								<button
-									class="btn btn-outline btn-sm"
-									onclick={() => rotate(token.id)}
-									title={t('tokens-rotate-title')}
-								>
-									{t('tokens-rotate-button')}
-								</button>
-								<button class="btn btn-error btn-sm" onclick={() => revoke(token.id)}>{t('tokens-revoke-button')}</button>
-							{:else}
-								<button class="btn btn-outline btn-sm" onclick={() => remove(token.id)}>{t('tokens-remove-button')}</button>
-							{/if}
-						</div>
-						{#if expanded === token.id}
-							<div class="mt-3 pl-1 flex flex-col gap-3">
-								<div>
-									<div class="text-xs font-medium mb-1">{t('tokens-models-heading')}</div>
-									<div class="flex flex-wrap gap-2 items-center">
-										<label class="label cursor-pointer gap-1">
-											<input type="checkbox" class="checkbox checkbox-xs" bind:checked={restrict} />
-											<span class="label-text text-xs">{t('tokens-models-restrict-label')}</span>
-										</label>
-										{#if restrict}
-											<input
-												class="input input-bordered input-xs flex-1 min-w-48"
-												placeholder={t('tokens-models-input-placeholder')}
-												bind:value={modelsInput}
-											/>
-										{/if}
-										<button class="btn btn-ghost btn-xs" onclick={() => saveModels(token)}>{t('tokens-models-save')}</button>
-									</div>
-								</div>
-								<div>
-									<div class="text-xs font-medium mb-1">{t('tokens-quota-heading')}</div>
-									<div class="flex flex-wrap gap-2 items-center">
-										<select class="select select-bordered select-xs" bind:value={quotaDimension}>
-											<option value="requests">{t('limits-dim-requests')}</option>
-											<option value="tokens">{t('limits-dim-tokens')}</option>
-											<option value="cost">{t('limits-dim-cost-short')}</option>
-										</select>
-										<span class="text-xs text-base-content/60">{t('tokens-quota-per')}</span>
-										<select class="select select-bordered select-xs" bind:value={quotaWindow}>
-											<option value="hour">{t('limits-win-hour')}</option>
-											<option value="day">{t('limits-win-day')}</option>
-											<option value="week">{t('limits-win-week')}</option>
-											<option value="month">{t('limits-win-month')}</option>
-										</select>
-										<input
-											class="input input-bordered input-xs w-24"
-											type="number"
-											min="0"
-											placeholder={t('tokens-quota-max-placeholder')}
-											bind:value={quotaValue}
-										/>
-										<button class="btn btn-ghost btn-xs" onclick={() => saveQuota(token)}>{t('tokens-limits-add')}</button>
-									</div>
-								</div>
-								<div>
-									<div class="text-xs font-medium mb-1">{t('tokens-mcp-heading')}</div>
-									<div class="flex flex-wrap gap-2 items-center">
-										<span class="text-xs text-base-content/60">
-											{t('tokens-mcp-allow-description')}
-										</span>
-										<button
-											class="btn btn-ghost btn-xs"
-											onclick={() => saveMcpPolicy(token, !(mcpAllow[token.id] ?? false))}
-										>
-											{(mcpAllow[token.id] ?? false)
-												? t('tokens-mcp-block-button')
-												: t('tokens-mcp-allow-button')}
-										</button>
-									</div>
-								</div>
-							</div>
-						{/if}
-					</li>
-				{/each}
-			</ul>
+		{#if !details}<div class="skeleton h-24 w-full"></div>{:else if details.tokens.length === 0}<p class="text-sm text-base-content/60">{t('tokens-list-empty')}</p>{:else}
+			<ul class="flex flex-col divide-y divide-base-300">{#each details.tokens as token (token.id)}
+				<ManagedTokenRow {token} tools={details.tools} models={details.models} currency={details.currency} timezone={details.timezone} usageEnabled={details.usage_enabled}
+					ontools={(enabled, disabled) => updateTools(token, enabled, disabled)} onmodels={(restrict, models) => updateModels(token, restrict, models)}
+					onquota={(dimension, window, value) => addQuota(token, dimension, window, value)} onremovequota={(id) => removeQuota(token, id)}
+					onmcp={(allow) => setMcpPolicy(token, allow)} onrotate={() => rotate(token)} onrevoke={() => revoke(token)} onremove={() => remove(token)} />
+			{/each}</ul>
 		{/if}
-	</div>
+	</div></section>
+	{#if details}<TokenAccountCard account={details.account} />{/if}
 </div>

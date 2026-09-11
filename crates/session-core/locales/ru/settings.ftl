@@ -194,3 +194,17 @@ settings-f-gateway-allow_impersonation-help = Позволяет админис�
 
 # Подтверждение перед сбросом сохранённой настройки (редактор в SPA).
 settings-clear-confirm = Сбросить { $key } к встроенному значению по умолчанию?
+settings-heading = Настройки
+settings-intro = Эксплуатационные настройки этого шлюза. Они хранятся в базе данных, файл конфигурации не нужен — рядом с каждым полем показан ключ TOML, который оно заменяет.
+settings-saved-restart = Сохранено. Некоторые поля этого раздела вступят в силу только после перезапуска.
+settings-save-failed = Не удалось сохранить эти настройки.
+settings-cleared = Сброшено. Снова действует значение по умолчанию.
+settings-restart-badge = перезапуск
+settings-no-backend-heading = Бэкенд моделей ещё не добавлен
+settings-no-backend-body = Вход настроен, но шлюз не выдаёт ни одной модели, пока не добавлен бэкенд. До этого чат и API /v1 будут отклонять запросы.
+settings-no-backend-cta = Добавить бэкенд в /admin/upstreams →
+settings-show-fields = Показать ещё { $count } настроек
+settings-model-automatic = Автоматически — использовать первую доступную модель
+settings-model-none-configured = Модель такого типа ещё не настроена. Добавьте соответствующий пул в /admin/upstreams, и она появится здесь.
+settings-model-unavailable = { $model } (настроена, но сейчас недоступна)
+settings-restart-pending-heading = Требуется перезапуск

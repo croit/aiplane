@@ -8,6 +8,17 @@
 
 chat-render-model-placeholder = model (e.g. gpt-4o-mini)
 chat-render-model-aria = Chat model
+chat-render-voice-model-aria = Voice model
+chat-render-tts-voice-aria = Spoken-reply voice
+chat-render-tts-voice-default = Default voice
+chat-render-new-conversation-fallback = New conversation
+
+chat-render-model-non-gdpr = { $id } (non-GDPR)
+chat-render-model-confidential = { $id } (confidential-restricted)
+chat-render-model-non-gdpr-confidential = { $id } (non-GDPR, confidential-restricted)
+chat-render-gdpr-banner = You are sending data to a non-GDPR-compliant model. Do not enter personal information (names, emails, addresses, customer or employee data).
+chat-render-nda-banner = This model is not covered by a confidentiality agreement. Do not send NDA-protected or proprietary material.
+chat-render-shared-readonly-banner = Shared chat — read-only. Only the creator can reply.
 
 chat-render-composer-placeholder = Message the model…
 
@@ -21,6 +32,28 @@ chat-render-effort-max = Max
 
 chat-render-tools-tooltip = Tools, integrations & skills for this conversation
 chat-render-tools-label = Tools
+chat-render-tools-search-placeholder = Search tools…
+chat-render-all-tools-label = All tools
+chat-render-no-tools-prefix = No tools are available to your account yet. Connect an integration under
+chat-render-no-tools-suffix = .
+chat-render-group-web-network = Web & Network
+chat-render-group-attachments-documents = Attachments & Documents
+chat-render-group-document-templates = Document templates
+chat-render-group-knowledge-base = Knowledge base
+chat-render-group-code-sandbox = Code & Sandbox
+chat-render-group-memory = Memory
+chat-render-group-integrations = Integrations
+chat-render-group-utility = Utility
+chat-render-group-skills = Skills
+chat-render-tool-count = { $count ->
+    [one] { $count } tool
+   *[other] { $count } tools
+}
+chat-render-active-count-title = Active tools — tap to manage
+chat-render-unpin-title = Unpin (back to automatic)
+chat-render-state-off-tip = Off — blocked; hidden from the assistant
+chat-render-state-auto-tip = Auto — the assistant turns it on when a request needs it
+chat-render-state-on-tip = On — always available to the assistant
 
 chat-render-close = Close
 
@@ -41,13 +74,20 @@ chat-render-export-md = Markdown (.md)
 # document list and its save state, the composer's per-tool remove
 # button, the model picker's compliance tooltips, and the attachment
 # size chip.
-chat-render-documents-label = Documents
 chat-render-revision-count = { $count ->
     [one] { $count } revision
    *[other] { $count } revisions
 }
 chat-render-canvas-saving = Saving…
-chat-render-tool-disable-aria = Disable { $name }
-chat-render-model-gdpr-region = GDPR region
-chat-render-model-nda-covered = NDA-covered
-chat-render-attachment-size-kb = { $size } KB
+chat-render-canvas-toggle-title = Show / hide the document canvas
+chat-render-canvas-toggle-label = Canvas
+chat-render-canvas-document-tab = Document
+chat-render-canvas-assets-tab = Assets
+chat-render-canvas-assets-heading = Conversation assets
+chat-render-canvas-assets-count = { $count ->
+    [one] { $count } file
+   *[other] { $count } files
+}
+chat-render-canvas-assets-empty = No files have been added to this conversation yet.
+chat-render-canvas-asset-download = Download file
+chat-render-canvas-close-title = Close canvas

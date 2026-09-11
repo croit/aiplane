@@ -34,6 +34,14 @@ export function adminPost<T = unknown>(path: string, body?: unknown): Promise<T>
 	});
 }
 
+export function adminPatch<T = unknown>(path: string, body: unknown): Promise<T> {
+	return adminJson<T>(path, {
+		method: 'PATCH',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+}
+
 export async function adminDelete(path: string): Promise<void> {
 	await adminJson<void>(path, { method: 'DELETE' });
 }

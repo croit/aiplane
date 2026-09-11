@@ -19,12 +19,6 @@ chat-error-attachment-not-found = не найдено
 # the conversation header, the assistant's ask-back card, and the
 # turn-status line the server never renders itself.
 chat-list-empty = Пока нет бесед. Начните новую выше.
-chat-list-pinned-badge = закреплено
-chat-list-pin = Закрепить
-chat-list-unpin = Открепить
-chat-list-delete = Удалить
-chat-push-invite = Получайте уведомление, когда ответ будет готов.
-chat-all-chats = Все чаты
 chat-turn-stopped = остановлено
 chat-prompt-heading = Ассистент спрашивает
 chat-prompt-placeholder = Введите ответ…

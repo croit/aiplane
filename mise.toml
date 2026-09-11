@@ -248,6 +248,8 @@ run = "npm --prefix web run check"
 
 [tasks.dev-ui]
 description = "Stub gateway for local UI debugging: real rama server on :8080 against a wiremock chat + transcription backend with a pre-seeded session. Prints the session cookie to stdout so playwright (or curl) can drive any authed page (/, /tokens, /chat, /api/v0/*) without OIDC. See docs/dev-workflow.md → 'Debugging the UI'."
+depends = ["build-web"]
+env = { GATEWAY_STATIC_DIR = "target/frontend/build" }
 run = "cargo run --example dev_ui -p gateway"
 
 [tasks.test]
@@ -384,4 +386,3 @@ echo "swept $swept files older than ${days}d"
 [tasks.check]
 description = "Fast type-check across the workspace (no codegen). The cheapest rung of the ladder: check → test-crate/lint-crate → verify → ci."
 run = "cargo check --workspace --all-targets"
-

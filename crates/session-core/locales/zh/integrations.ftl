@@ -36,5 +36,23 @@ integrations-error-sealing-refresh-token = 封存刷新令牌失败：{ $error }
 integrations-error-saving-connection = 保存连接失败：{ $error }
 
 # SPA-only: the Svelte /integrations connector list.
-integrations-badge-not-connected = 未连接
 integrations-toast-connected = 已连接 { $name }。
+integrations-badge-global = 由您的运营方提供
+integrations-badge-needs-reconnect = 需要重新连接
+integrations-badge-needs-admin-setup = 需要管理员设置
+integrations-no-sign-in = 无需登录
+integrations-reconnect-title = 重新建立连接（重新授权 / 重试）
+integrations-reconnect-button = 重新连接
+integrations-tools-error-prefix = 无法加载此连接器的工具：
+integrations-tools-error-hint = 请检查 MCP 服务器 URL / 您的令牌，然后使用上方的“重新连接”。
+integrations-tools-error-hint-reauth = 您的授权已失效 — 请使用上方的“重新连接”重新登录。
+integrations-tools-empty = 此连接器不提供任何工具。
+integrations-tools-header = 工具权限（{ $count }）
+integrations-set-all-label = 全部设置：
+integrations-mode-always = 始终
+integrations-mode-ask = 询问
+integrations-mode-off = 关闭
+integrations-tools-toggle = 显示 / 隐藏各个工具
+integrations-tool-kind-read = 读取
+integrations-tool-kind-write = 写入
+integrations-error-connection-unavailable = 连接不可用

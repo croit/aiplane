@@ -120,7 +120,7 @@ if (NAV_SECTIONS) {
 }
 
 const page = await ctx.newPage();
-const resp = await page.goto(URL_, { waitUntil: "networkidle" });
+const resp = await page.goto(URL_, { waitUntil: "domcontentloaded" });
 console.log(`status=${resp?.status()} url=${page.url()} title=${await page.title()}`);
 if (page.url().includes("/login") && !URL_.includes("/login")) {
   console.warn("WARN: redirected to /login — the cookie is missing/invalid for this server.");

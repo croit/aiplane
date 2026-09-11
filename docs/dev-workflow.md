@@ -268,6 +268,11 @@ This runs the `dev_ui` example (`crates/gateway/examples/dev_ui.rs`), which boot
 - an in-process **`wiremock` transcription pool** that serves `GET /models` (advertising `demo-whisper` + `demo-whisper-large`) and `POST /audio/transcriptions` (a stubbed JSON response);
 - a pre-seeded **`dev@example.com`** user with an `admin` role (every model / tool / skill granted), the `examples/demo-skills` bundle loaded, and representative demo data (a finished chat conversation, scheduled actions, RAG collections, and an MCP connector catalog) so the screens render populated.
 
+The example imports that same feature configuration into its in-memory settings
+rows before serving. Consequently, saving an unrelated `/admin/settings`
+section and rebuilding the runtime surface cannot make the demo skills or
+ComfyUI catalog disappear halfway through a browser run.
+
 It's a local-only convenience — not a test target, and not run by CI.
 
 It prints the signed session cookie on startup, e.g.:
@@ -323,7 +328,7 @@ Open `http://localhost:5173`. Vite proxies `/api`, `/v1`, and `/auth` to the gat
 
 **Served mode — what production looks like.** `mise run dev` additionally sets `GATEWAY_STATIC_DIR=target/frontend/build` (built by its `build-web` dep), so the gateway serves the compiled SPA at `http://localhost:8080`. Use this to check the built artefact, cache headers and the history fallback. No Node runs in production: the container image `COPY`s the built `target/frontend/build/` directory in (see the Dockerfile) and the Rust binary serves it (`crates/gateway/src/rama_server/spa.rs`). With `GATEWAY_STATIC_DIR` unset the UI answers 503 and the API is unaffected.
 
-The SPA's API contract is `docs/openapi.json`, enforced against `router.rs` by the `openapi_drift` test — adding a `/api/v0/*` route without a spec entry fails CI, and vice versa. After changing a route, update the spec. The spec documents the surface and the drift test keeps its route list honest; it does not type the client, which is hand-written in `web/src/lib/api.ts`.
+The gateway serves its OpenAPI 3.1 contract at `GET /openapi.json`. It is generated from the `/api/v0/*` declarations in `router.rs`, so route changes require no second contract-file edit and the production container carries no detached spec. The client in `web/src/lib/api.ts` remains hand-written against the backend wire types.
 
 Chat streams over the JSON-SSE event protocol (`session_core::chat_json` ↔ `web/src/lib/chat-protocol.ts`): the composer posts `POST /api/v0/chat/sessions/{id}/messages` and the reply arrives on `GET …/events` as `snapshot` / `turn_delta` / `tool_call_done` / `turn_finalized` … events, with the DB snapshot on every attach acting as the reconnect replay. `mise run test-web` unit-tests the client's event fold (`web/src/lib/chat-protocol.test.ts`); `e2e/spa-chat.test.mjs` drives the full round trip against `dev-ui`.
 

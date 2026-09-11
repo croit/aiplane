@@ -24,6 +24,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use gateway::rama_server::{RamaState, router::service};
 
 use crate::common::{self, Service as _};
+use rama::http::body::util::BodyExt;
 
 /// The voices the fixture's operator declares: a catch-all default plus two
 /// language-specific ones. `speech_voices_for` therefore offers three.
@@ -136,6 +137,35 @@ async fn requires_a_session() {
         .unwrap();
     let status = service(state.clone()).serve(req).await.unwrap().status();
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn voice_configuration_lists_available_and_selected_speech_voices() {
+    let mock = MockServer::start().await;
+    let state = Arc::new(common::state_with_speech_voices(&mock.uri(), MODEL, VOICES, &[]).await);
+    let cookie = common::seed_session(&state, "u1", "u1@example.com").await;
+    assert_eq!(
+        post_voice(&state, &cookie, json!({"voice": "onyx"})).await,
+        StatusCode::OK
+    );
+
+    let req = Request::builder()
+        .uri("/api/v0/transcription_models")
+        .header("cookie", format!("id={cookie}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = service(state.clone()).serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(body["data"], json!([]));
+    assert_eq!(body["speech_available"], true);
+    assert_eq!(body["speech_voice"], "onyx");
+    let offered = body["speech_voices"].as_array().unwrap();
+    assert!(offered.contains(&json!("alloy")));
+    assert!(offered.contains(&json!("onyx")));
+    assert!(offered.contains(&json!("nova")));
 }
 
 /// Drive `POST /api/v0/speech` once. What the gateway forwarded is then read

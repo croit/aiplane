@@ -1,68 +1,27 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminJson, adminPut, adminPost, adminDelete } from '$lib/admin-client';
+	import { adminJson, adminPost, adminPut } from '$lib/admin-client';
 	import { t, n } from '$lib/i18n.svelte';
+	import { backendAssignments, type LiveBackend, type PendingChange, type Topology } from '$lib/upstreams';
+	import BackendCard from '$lib/components/upstreams/BackendCard.svelte';
+	import BackendEditor from '$lib/components/upstreams/BackendEditor.svelte';
+	import PoolCard from '$lib/components/upstreams/PoolCard.svelte';
+	import PoolEditor from '$lib/components/upstreams/PoolEditor.svelte';
 
-	interface Live {
-		healthy: boolean;
-		enabled: boolean;
-		auth_failed: boolean;
-		inflight: number;
-		max_inflight: number;
-		models: string[];
-		pool: string | null;
-	}
-	interface Backend {
+	interface StatusEvent extends LiveBackend {
 		name: string;
-		base_url: string;
-		api_key_env: string | null;
-		has_stored_key: boolean;
-		weight: number;
-		max_inflight: number;
-		health_path: string;
-		probe_models: boolean;
-		enabled: boolean;
-		models: string[];
-		aliases: { alias: string; target: string | null }[];
-		live: Live | null;
-	}
-	interface Pool {
-		name: string;
-		kind: string;
-		strategy: string;
-		backends: string[];
-		models: string[];
-		allowed_groups: string[];
-	}
-	interface Topology {
-		pools: Pool[];
-		backends: Backend[];
-		fallbacks: Record<string, string>;
-		usage_last_hour: Record<string, number[]>;
 		dirty: number;
-		/// Served from `PoolKind::ALL` so the picker cannot fall behind the enum.
-		pool_kinds: string[];
+		usage: number[];
 	}
 
 	let data = $state<Topology | null>(null);
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
-
-	// Backend form.
-	let showBackendForm = $state(false);
-	let bName = $state('');
-	let bUrl = $state('');
-	let bKey = $state('');
-	let bPool = $state('');
-	let bOverwrite = $state(false);
-
-	// Pool form.
-	let showPoolForm = $state(false);
-	let pName = $state('');
-	let pKind = $state('chat');
-	let pBackends = $state('');
-	let pModels = $state('');
-	let pOverwrite = $state(false);
+	let addForm = $state<'pool' | 'backend' | null>(null);
+	let assignments = $derived(backendAssignments(data?.pools ?? [], data?.backends ?? []));
+	let sortedPools = $derived(
+		(data?.pools ?? []).slice().sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name))
+	);
 
 	async function refresh() {
 		try {
@@ -83,228 +42,145 @@
 		}
 	}
 
-	async function saveBackend() {
-		notice = null;
+	async function saveFallback(kind: string, model: string) {
 		try {
-			await adminPut('/api/v0/admin/backends', {
-				name: bName,
-				base_url: bUrl,
-				api_key: bKey,
-				pool: bPool === '' ? null : bPool,
-				overwrite: bOverwrite
-			});
-			showBackendForm = false;
-			bName = ''; bUrl = ''; bKey = ''; bPool = ''; bOverwrite = false;
-			await refresh();
+			await adminPut('/api/v0/admin/upstreams/fallback', { kind, model });
+			if (data) data = { ...data, fallbacks: { ...data.fallbacks, [kind]: model } };
 		} catch (err) {
 			notice = String(err);
 		}
 	}
 
-	async function savePool() {
-		notice = null;
-		try {
-			await adminPut('/api/v0/admin/pools', {
-				name: pName,
-				kind: pKind,
-				backends: pBackends.split(',').map((s) => s.trim()).filter(Boolean),
-				models: pModels.split(',').map((s) => s.trim()).filter(Boolean),
-				overwrite: pOverwrite
-			});
-			showPoolForm = false;
-			pName = ''; pBackends = ''; pModels = ''; pOverwrite = false;
-			await refresh();
-		} catch (err) {
-			notice = String(err);
+	function applyStatus(status: StatusEvent) {
+		if (!data) return;
+		const live = status.pool === null ? null : {
+			healthy: status.healthy,
+			enabled: status.enabled,
+			auth_failed: status.auth_failed,
+			inflight: status.inflight,
+			max_inflight: status.max_inflight,
+			models: status.models,
+			withheld: status.withheld,
+			pool: status.pool
+		};
+		data = {
+			...data,
+			dirty: status.dirty,
+			backends: data.backends.map((backend) => backend.name === status.name ? { ...backend, live } : backend),
+			usage_last_hour: { ...data.usage_last_hour, [status.name]: status.usage }
+		};
+	}
+
+	function pendingChangeMessage(change: PendingChange) {
+		switch (change.code) {
+			case 'pool_added': return t('upstreams-diff-pool-added', { pool: change.pool ?? '' });
+			case 'pool_removed': return t('upstreams-diff-pool-removed', { pool: change.pool ?? '' });
+			case 'pool_kind': return t('upstreams-diff-pool-kind', { pool: change.pool ?? '', from: change.from ?? '', to: change.to ?? '' });
+			case 'pool_strategy': return t('upstreams-diff-pool-strategy', { pool: change.pool ?? '', from: change.from ?? '', to: change.to ?? '' });
+			case 'backend_joins': return t('upstreams-diff-backend-joins', { backend: change.backend ?? '', pool: change.pool ?? '' });
+			case 'backend_leaves': return t('upstreams-diff-backend-leaves', { backend: change.backend ?? '', pool: change.pool ?? '' });
+			case 'backend_url': return t('upstreams-diff-backend-url', { backend: change.backend ?? '', from: change.from ?? '', to: change.to ?? '' });
+			case 'backend_limits': return t('upstreams-diff-backend-limits', { backend: change.backend ?? '', weight: change.weight ?? 1, inflight: change.inflight ?? 1 });
+			case 'backend_health_path': return t('upstreams-diff-backend-health-path', { backend: change.backend ?? '', to: change.to ?? '' });
 		}
 	}
 
-	async function toggleBackend(name: string, enabled: boolean) {
-		try {
-			await adminPost(`/api/v0/admin/backends/${encodeURIComponent(name)}/enabled`, { enabled });
-			await refresh();
-		} catch (err) {
-			notice = String(err);
-		}
-	}
-
-	async function deleteBackend(name: string) {
-		if (!confirm(t('backends-delete-confirm', { name }))) return;
-		try {
-			await adminDelete(`/api/v0/admin/backends/${encodeURIComponent(name)}`);
-			await refresh();
-		} catch (err) {
-			notice = String(err);
-		}
-	}
-
-	async function deletePool(name: string) {
-		if (!confirm(t('pools-delete-confirm', { name }))) return;
-		try {
-			await adminDelete(`/api/v0/admin/pools/${encodeURIComponent(name)}`);
-			await refresh();
-		} catch (err) {
-			notice = String(err);
-		}
-	}
-
-	function lastHour(name: string): number {
-		return (data?.usage_last_hour[name] ?? []).reduce((a, b) => a + b, 0);
-	}
-
-	onMount(refresh);
+	onMount(() => {
+		void refresh();
+		const events = new EventSource('/api/v0/admin/upstreams/events');
+		events.addEventListener('status', (event) => applyStatus(JSON.parse(event.data) as StatusEvent));
+		return () => events.close();
+	});
 </script>
 
-{#if error}<div class="alert alert-error mb-4"><span>{error}</span></div>{/if}
-{#if notice}<div class="alert alert-warning mb-4"><span>{notice}</span></div>{/if}
+{#if error}<div class="alert alert-error mb-4" role="alert"><span>{error}</span></div>{/if}
+{#if notice}<div class="alert alert-warning mb-4" role="status"><span>{notice}</span></div>{/if}
 
 {#if data}
 	{#if data.dirty > 0}
-		<div class="alert alert-warning mb-4 sticky top-0 z-10 shadow">
-			<span>{n(data.dirty)} {t('upstreams-apply-count')} {t('upstreams-apply-note')}</span>
-			<button class="btn btn-primary btn-sm" onclick={apply}>{t('backends-apply-changes')}</button>
+		<div class="alert alert-warning sticky top-3 z-30 mb-4 items-start shadow" role="status">
+			<div class="flex-1">
+				<strong>{n(data.dirty)} {t('upstreams-apply-count')}</strong>
+				<span> {t('upstreams-apply-note')}</span>
+				{#if data.pending_changes.length}
+					<details class="mt-1 text-sm">
+						<summary class="cursor-pointer select-none">{t('upstreams-apply-diff-summary')}</summary>
+						<ul class="mt-1 list-disc ps-5">
+							{#each data.pending_changes as change}<li class="font-mono text-xs">{pendingChangeMessage(change)}</li>{/each}
+						</ul>
+					</details>
+				{/if}
+			</div>
+			<button class="btn btn-sm" type="button" onclick={() => void apply()}>{t('backends-apply-changes')}</button>
 		</div>
 	{/if}
 
-	<div class="flex justify-between items-center mb-4 flex-wrap gap-2">
-		<h2 class="text-lg font-semibold">{t('pools-heading')}</h2>
-		<button class="btn btn-primary btn-sm" onclick={() => (showPoolForm = !showPoolForm)}>
-			{t('pools-add-pool')}
-		</button>
-	</div>
+	<header class="mb-4 flex flex-wrap items-start justify-between gap-3">
+		<div class="max-w-3xl">
+			<h1 class="text-2xl font-semibold">{t('upstreams-heading')}</h1>
+			<p class="mt-1 text-sm text-base-content/70">{t('upstreams-description')}</p>
+		</div>
+		<div class="flex gap-2">
+			<button class="btn btn-sm" type="button" onclick={() => (addForm = addForm === 'pool' ? null : 'pool')}>+ {t('upstreams-add-pool')}</button>
+			<button class="btn btn-sm" type="button" onclick={() => (addForm = addForm === 'backend' ? null : 'backend')}>+ {t('upstreams-add-backend')}</button>
+		</div>
+	</header>
 
-	{#if showPoolForm}
-		<div class="card border border-base-300 mb-4">
+	{#if addForm === 'pool'}
+		<section class="card card-border bg-base-100 mb-4">
 			<div class="card-body">
-				<div class="flex flex-wrap gap-3 items-end">
-					<label class="flex flex-col gap-1"><span class="label-text">{t('pools-field-name')}</span>
-						<input class="input input-bordered input-sm" bind:value={pName} /></label>
-					<label class="flex flex-col gap-1"><span class="label-text">{t('pools-field-kind')}</span>
-						<select class="select select-bordered select-sm" bind:value={pKind}>
-							<!-- From the server, which reads PoolKind::ALL. A hardcoded list
-							     here is how `rerank` went missing from the picker. -->
-							{#each data.pool_kinds ?? [] as kind (kind)}
-								<option>{kind}</option>
-							{/each}
-						</select></label>
-					<label class="flex flex-col gap-1 flex-1 min-w-48"><span class="label-text">{t('pools-field-backends')}</span>
-						<input class="input input-bordered input-sm" bind:value={pBackends} placeholder={data.backends.map((b) => b.name).join(', ')} /></label>
-					<label class="flex flex-col gap-1 flex-1 min-w-48"><span class="label-text">{t('pools-field-models')}</span>
-						<input class="input input-bordered input-sm" bind:value={pModels} /></label>
-					<button class="btn btn-primary btn-sm" onclick={savePool} disabled={!pName.trim()}>
-						{t('pools-save-pool')}
-					</button>
-				</div>
+				<h2 class="card-title text-base">{t('pools-add-heading')}</h2>
+				<PoolEditor backends={data.backends} poolKinds={data.pool_kinds} poolStrategies={data.pool_strategies} existingNames={data.pools.map((pool) => pool.name)} sortOrder={Math.max(-1, ...data.pools.map((pool) => pool.sort_order)) + 1} onSaved={refresh} onCancel={() => (addForm = null)} />
 			</div>
-		</div>
-	{/if}
-
-	<div class="grid md:grid-cols-2 gap-3 mb-8">
-		{#each data.pools as pool (pool.name)}
-			<div class="card border border-base-300">
-				<div class="card-body py-3">
-					<div class="flex items-center gap-2 flex-wrap">
-						<span class="font-medium">{pool.name}</span>
-						<span class="badge badge-outline badge-sm">{pool.kind}</span>
-						<span class="flex-1"></span>
-						<button class="btn btn-ghost btn-xs text-error" onclick={() => deletePool(pool.name)}>
-							{t('pools-delete-pool')}
-						</button>
-					</div>
-					<div class="text-xs text-base-content/60">
-						{t('pools-summary-backends', {
-							count: pool.backends.length,
-							list: pool.backends.join(', ') || '—'
-						})}
-					</div>
-					<div class="text-xs text-base-content/60">
-						{t('pools-summary-models', {
-							count: pool.models.length,
-							list: pool.models.join(', ') || '—'
-						})}
-					</div>
-				</div>
-			</div>
-		{/each}
-	</div>
-
-	<div class="flex justify-between items-center mb-4 flex-wrap gap-2">
-		<h2 class="text-lg font-semibold">{t('backends-heading')}</h2>
-		<button class="btn btn-primary btn-sm" onclick={() => (showBackendForm = !showBackendForm)}>
-			{t('backends-add-backend')}
-		</button>
-	</div>
-
-	{#if showBackendForm}
-		<div class="card border border-base-300 mb-4">
+		</section>
+	{:else if addForm === 'backend'}
+		<section class="card card-border bg-base-100 mb-4">
 			<div class="card-body">
-				<div class="flex flex-wrap gap-3 items-end">
-					<label class="flex flex-col gap-1"><span class="label-text">{t('backends-field-name')}</span>
-						<input class="input input-bordered input-sm" bind:value={bName} /></label>
-					<label class="flex flex-col gap-1 flex-1 min-w-56"><span class="label-text">{t('backends-field-base-url')}</span>
-						<input class="input input-bordered input-sm" bind:value={bUrl} placeholder="https://api.example.com/v1" /></label>
-					<label class="flex flex-col gap-1"><span class="label-text">{t('backends-field-api-key')}</span>
-						<input class="input input-bordered input-sm" type="password" bind:value={bKey} placeholder={t('backends-field-api-key-keep')} /></label>
-					<label class="flex flex-col gap-1"><span class="label-text">{t('backends-field-pool')}</span>
-						<select class="select select-bordered select-sm" bind:value={bPool}>
-							<option value="">{t('backends-field-pool-none')}</option>
-							{#each data.pools as pool (pool.name)}<option value={pool.name}>{pool.name}</option>{/each}
-						</select></label>
-					<label class="label cursor-pointer gap-1">
-						<input type="checkbox" class="checkbox checkbox-sm" bind:checked={bOverwrite} />
-						<span class="label-text text-xs">{t('admin-overwrite-existing')}</span>
-					</label>
-					<button class="btn btn-primary btn-sm" onclick={saveBackend} disabled={!bName.trim() || !bUrl.trim()}>
-						{t('backends-save-backend')}
-					</button>
-				</div>
+				<h2 class="card-title text-base">{t('backends-add-heading')}</h2>
+				<BackendEditor pools={data.pools} existingNames={data.backends.map((backend) => backend.name)} onSaved={refresh} onCancel={() => (addForm = null)} />
 			</div>
-		</div>
+		</section>
 	{/if}
 
-	<ul class="flex flex-col gap-3">
-		{#each data.backends as backend (backend.name)}
-			<li>
-				<div class="card border border-base-300">
-					<div class="card-body py-3">
-						<div class="flex items-center gap-3 flex-wrap">
-							{#if backend.live}
-								{#if !backend.live.enabled}
-									<span class="badge badge-warning badge-sm">{t('backends-status-drained')}</span>
-								{:else if backend.live.healthy}
-									<span class="badge badge-success badge-sm">{t('backends-status-up')}</span>
-								{:else}
-									<span class="badge badge-error badge-sm">{t('backends-status-down')}</span>
-								{/if}
-							{:else}
-								<span class="badge badge-ghost badge-sm">{t('upstreams-backend-pending')}</span>
-							{/if}
-							<span class="font-medium">{backend.name}</span>
-							<span class="text-xs text-base-content/50 truncate max-w-64">{backend.base_url}</span>
-							{#if backend.live}
-								<span class="text-xs text-base-content/50">
-									{t('backends-inflight-label', {
-										load: `${n(backend.live.inflight)}/${n(backend.live.max_inflight)}`
-									})} · {t('backends-requests-per-hour', { count: n(lastHour(backend.name)) })}
-								</span>
-							{/if}
-							<span class="flex-1"></span>
-							{#if backend.live?.enabled}
-								<button class="btn btn-ghost btn-xs" onclick={() => toggleBackend(backend.name, false)}>
-									{t('backends-drain-button')}
-								</button>
-							{:else}
-								<button class="btn btn-ghost btn-xs" onclick={() => toggleBackend(backend.name, true)}>
-									{t('backends-undrain-button')}
-								</button>
-							{/if}
-							<button class="btn btn-ghost btn-xs text-error" onclick={() => deleteBackend(backend.name)}>
-								{t('backends-delete-backend')}
-							</button>
-						</div>
-					</div>
-				</div>
-			</li>
+	<div class="flex flex-col gap-4">
+		{#each sortedPools as pool (pool.name)}
+			<PoolCard {pool} backends={assignments.byPool.get(pool.name) ?? []} allBackends={data.backends} pools={data.pools} usage={data.usage_last_hour} coverage={data.coverage?.[pool.name]} poolKinds={data.pool_kinds} poolStrategies={data.pool_strategies} onChanged={refresh} />
 		{/each}
-	</ul>
+
+		{#if assignments.unassigned.length}
+			<section class="card card-border bg-base-100">
+				<div class="card-body gap-3">
+					<header>
+						<h2 class="card-title text-base">{t('upstreams-unassigned-heading')}</h2>
+						<p class="text-sm text-base-content/70">{t('upstreams-unassigned-description')}</p>
+					</header>
+					{#each assignments.unassigned as backend (backend.name)}
+						<BackendCard {backend} pools={data.pools} usage={data.usage_last_hour[backend.name] ?? []} onChanged={refresh} />
+					{/each}
+				</div>
+			</section>
+		{/if}
+
+		{#if data.pools.length === 0 && data.backends.length === 0}
+			<div class="alert"><span>{t('upstreams-empty')}</span></div>
+		{/if}
+
+		<section class="card card-border bg-base-100">
+			<div class="card-body gap-3">
+				<h2 class="card-title text-base">{t('pools-fallbacks-heading')}</h2>
+				<p class="text-sm text-base-content/70">{t('pools-fallbacks-description')}</p>
+				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+					{#each data.fallback_kinds as kind (kind)}
+						<label class="flex flex-col gap-1">
+							<span class="font-mono text-xs text-base-content/70">{kind}</span>
+							<select class="select select-bordered select-sm w-full" value={data.fallbacks[kind] ?? ''} onchange={(event) => void saveFallback(kind, event.currentTarget.value)}>
+								<option value="">{t('admin-cap-no-fallback')}</option>
+								{#each data.all_models ?? [] as model (model)}<option value={model}>{model}</option>{/each}
+							</select>
+						</label>
+					{/each}
+				</div>
+			</div>
+		</section>
+	</div>
 {/if}

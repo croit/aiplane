@@ -195,3 +195,17 @@ settings-f-gateway-allow_impersonation-help = Deja que los administradores actú
 
 # Confirmación antes de borrar un ajuste guardado (editor de la SPA).
 settings-clear-confirm = ¿Restablecer { $key } a su valor predeterminado integrado?
+settings-heading = Ajustes
+settings-intro = Ajustes de operación de esta pasarela. Se guardan en la base de datos, así que no hace falta ningún fichero de configuración — cada campo muestra además la clave TOML a la que sustituye.
+settings-saved-restart = Guardado. Algunos campos de esta sección solo se aplican tras reiniciar.
+settings-save-failed = No se han podido guardar estos ajustes.
+settings-cleared = Restablecido. Vuelve a aplicarse el valor por defecto.
+settings-restart-badge = reinicio
+settings-no-backend-heading = Todavía no hay backend de modelos
+settings-no-backend-body = El inicio de sesión ya está configurado, pero esta pasarela no sirve ningún modelo hasta que añadas un backend. Hasta entonces, el chat y la API /v1 rechazan las peticiones.
+settings-no-backend-cta = Añadir un backend en /admin/upstreams →
+settings-show-fields = Mostrar { $count } ajustes más
+settings-model-automatic = Automático — usar el primer modelo disponible
+settings-model-none-configured = Todavía no hay ningún modelo de este tipo configurado. Añade un pool en /admin/upstreams y aparecerá aquí.
+settings-model-unavailable = { $model } (configurado, pero no disponible ahora)
+settings-restart-pending-heading = Reinicio pendiente

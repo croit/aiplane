@@ -76,8 +76,8 @@ mod title;
 // POST /chat/{id}/messages — submit + spawn worker + SSE.
 
 /// Why a submit was refused, before anything was persisted. Both submit
-/// surfaces (the legacy multipart → SSE-HTML composer and the JSON API)
-/// map these onto their own response shapes.
+/// JSON and multipart submission paths map these onto their own response
+/// shapes.
 #[derive(Debug)]
 pub(crate) enum SubmitTurnError {
     RateLimited,
@@ -132,7 +132,7 @@ pub(crate) async fn submit_turn(
     // Reserve the per-user worker slot BEFORE persisting anything.
     // The old order (create turns → register) leaked orphaned
     // `in_progress` rows whenever register returned Busy (a quick
-    // double-click, a datastar retry on a flaky connection): the rows
+    // double-click or a client retry on a flaky connection): the rows
     // sat in the DB forever showing the thinking spinner, and the
     // user would see a duplicate of their conversation after reload
     // because the *next* submit succeeded and produced a parallel
@@ -248,12 +248,6 @@ pub(crate) async fn submit_turn(
 // the tail so a shared-chat viewer can also expand the trace.
 
 // ---------------------------------------------------------------------------
-// GET /chat/{id}/document/{doc_id} — render a document (optionally an older
-// `?version=N`) into the canvas slot. This is the datastar `@get` target for
-// the panel's document- and version-switchers: it returns a single SSE patch
-// replacing `#document-canvas-slot`'s contents. Readable-gated like the tail
-// (owner or a shared viewer); a missing doc/version closes with no change.
-
 /// Path params for the two document routes, as a **named struct**.
 ///
 /// Not `Path<(String, String)>`: a tuple is deserialised from the matcher's
@@ -696,8 +690,8 @@ async fn parse_chat_submit(
                 attachments.push(UploadedAttachment { outcome });
             }
             _ => {
-                // Ignore unknown fields — datastar may emit a few
-                // bookkeeping bits that we don't care about.
+                // Multipart clients may include bookkeeping fields that are
+                // irrelevant to a chat submission.
             }
         }
     }

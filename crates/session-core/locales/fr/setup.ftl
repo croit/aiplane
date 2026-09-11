@@ -48,6 +48,11 @@ setup-testing = Test en cours…
 # The SPA wizard: its own page heading, the closed-for-business
 # notice, and two inline states the server-rendered form had no
 # equivalent of.
-setup-page-heading = Configuration de la passerelle
 setup-closed = La configuration est terminée sur cette passerelle. Connectez-vous normalement, ou lancez restore-setup sur l'hôte pour rouvrir l'assistant.
 setup-secret-set-hint = défini — laissez vide pour le conserver
+setup-error-heading = Configuration
+setup-page-title = Setup — LLM Gateway
+setup-error-back = Retour à la configuration
+setup-manual-claim-placeholder = groups
+setup-manual-value-placeholder = gateway-admins
+setup-issuer-placeholder = https://id.example.com/realms/company

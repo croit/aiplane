@@ -9,3 +9,20 @@ upstreams-backend-pending = 待应用
 
 # SPA 应用待生效拓扑后的提示。
 upstreams-applied = 拓扑已应用。
+upstreams-heading = 上游
+upstreams-description = 池按类型和选择策略对后端分组。健康状况、负载和提供的模型均实时探测。拓扑更改会保存到数据库，并在“应用更改”后生效。
+upstreams-add-pool = 池
+upstreams-add-backend = 后端
+upstreams-unassigned-heading = 未分配
+upstreams-unassigned-description = 未分配给任何池的后端。将其加入某个池以向其路由流量。
+upstreams-empty = 尚未配置任何池或后端。添加一个池或后端即可开始。
+upstreams-delete-confirm = 确定删除？
+upstreams-cancel = 取消
+upstreams-model-withheld-title = 通过 /models 发现，但被该池的模型列表保留 — 不提供也不公告。
+upstreams-models-inactive-hide = 收起
+upstreams-models-inactive-pill = +{ $count } 个未启用
+upstreams-edit-backend = 编辑后端
+upstreams-comp-gdpr = GDPR
+upstreams-comp-nda = NDA
+upstreams-comp-limits = 限额
+upstreams-edit-pool = 编辑池

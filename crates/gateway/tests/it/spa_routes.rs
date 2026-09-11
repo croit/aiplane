@@ -74,4 +74,20 @@ async fn the_catch_all_does_not_shadow_the_api() {
         StatusCode::UNAUTHORIZED,
         "the JSON API must answer for itself, not fall through to the SPA"
     );
+
+    let (status, ct, body) = get("/api/v0/build").await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "build metadata must be public for the login page"
+    );
+    assert!(ct.contains("json"));
+    let build: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        build["source_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://")
+    );
+    assert!(build["version"].as_str().unwrap().starts_with('v'));
 }

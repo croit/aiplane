@@ -51,17 +51,176 @@ admin-search-saved = ajustes de búsqueda web guardados
 admin-needs-admin-role = Estas páginas requieren el rol de administrador.
 admin-overwrite-existing = sobrescribir el existente
 admin-comfyui-reload = Recargar catálogo
-admin-comfyui-reloaded = Se recargaron { $count } flujo(s) de trabajo.
+admin-comfyui-reloaded = Catálogo recargado — { $count } flujo(s) cargado(s).
 admin-comfyui-empty = No hay flujos de trabajo cargados — revisa el directorio de contenido.
-admin-defaults-model-aria = Modelo predeterminado para { $feature }
-admin-defaults-set = Establecer
-admin-search-provider-none = Ninguno
-admin-add-overrides-heading = Añadir anulaciones de modelo
-admin-edit-model-heading = Editar { $model }
-admin-add-model = Añadir…
-admin-pricing-unit-label = Unidad de precio
-admin-pricing-unit-mtok = por Mtok
-admin-pricing-unit-ktok = por Ktok
-admin-pricing-unit-kimgs = por 1000 imágenes
+admin-comfyui-heading = Catálogo de flujos ComfyUI
+admin-comfyui-page-title = ComfyUI — Catálogo de flujos de trabajo
+admin-comfyui-intro = Worker ComfyUI sin interfaz. La puerta de enlace expone cada flujo cargado como una herramienta comfyui_<id> que puede invocar el modelo. Los usuarios nunca ven ComfyUI.
+admin-comfyui-not-configured = Sin configurar
+admin-comfyui-not-configured-help = Activa ComfyUI en Configuración, establece su URL base y el directorio de flujos, y reinicia la puerta de enlace.
+admin-comfyui-operator-config = Configuración del operador
+admin-comfyui-worker-url = URL base del worker
+admin-comfyui-content-directory = Directorio de contenido
+admin-comfyui-timeout = Tiempo límite del flujo
+admin-comfyui-poll-interval = Intervalo de consulta de la cola
+admin-comfyui-config-help = El operador administra el directorio de contenido y este no forma parte del repositorio público. Edita allí los manifiestos y pulsa Recargar — no hace falta reiniciar.
+admin-comfyui-loaded-workflows = Flujos cargados
+admin-comfyui-node = nodo { $id }
+admin-comfyui-workflow-meta = Título: { $title } · prefijo: { $prefix }
+admin-comfyui-parameters = Parámetros
+admin-comfyui-required = obligatorio
+admin-comfyui-recent-jobs = Trabajos recientes
+admin-comfyui-pending = { $count } pendientes
+admin-comfyui-job-meta = prompt: { $prompt } · creado: { $created }
+admin-comfyui-job-completed = completado: { $completed }
+admin-comfyui-reloaded-skipped = Catálogo recargado — { $count } flujo(s) cargado(s), { $skipped } omitido(s).
 admin-clear-overrides-confirm = ¿Descartar todas las anulaciones guardadas de { $model }?
-admin-users-col-email = Correo electrónico
+admin-cap-no-fallback = (ninguno)
+
+admin-page-title = Modelos — LLM Gateway
+
+admin-intro-prefix = Ajustes por modelo — precios, ventana de contexto, razonamiento, capacidades y valores de muestreo — aplicados a
+
+admin-intro-every = cada
+
+admin-intro-middle = solicitud de este modelo, de cualquier usuario o token, salvo que quien llame defina el mismo valor, el cual
+
+admin-intro-always-wins = siempre prevalece
+
+admin-intro-suffix = . Los modelos de chat, los alias y otras clases están todos en una lista.
+
+admin-no-models = Aún no se anuncian modelos. En cuanto un backend upstream esté accesible, aparecerá aquí.
+
+admin-filter-placeholder = Filtrar modelos…
+
+admin-filter-all = Todos
+
+admin-filter-chat = chat
+
+admin-filter-other = otras clases
+
+admin-filter-aliases = alias
+
+admin-filter-configured = solo configurados
+
+admin-col-kind = Clase
+
+admin-col-price = Precio ent/sal
+
+admin-col-context = Contexto
+
+admin-col-reasoning = Razonamiento
+
+admin-col-configured = Configurado
+
+admin-value-default = predeterminado
+
+admin-value-na = n/d
+
+admin-alias-inherits = hereda los ajustes del destino
+
+admin-reasoning-auto-resolved = Auto → { $style }
+
+admin-badge-price = PRECIO
+
+admin-badge-budget = PRESUP
+
+admin-badge-caps = CAPS
+
+admin-badge-toml = TOML
+
+admin-other-price-note = El muestreo, el razonamiento y el contexto no se aplican a esta clase — solo los precios, para la contabilidad de costes.
+
+admin-toml-placeholder-header = # Claves comunes (vLLM/OpenAI):
+
+admin-reasoning-style-label = Estilo de razonamiento
+
+admin-reasoning-style-aria = Estilo de razonamiento
+
+admin-reasoning-auto = Automático
+
+admin-reasoning-none = ninguno
+
+admin-reasoning-qwen = Qwen (vLLM)
+
+admin-reasoning-openai = OpenAI
+
+admin-reasoning-glm = GLM / z.AI
+
+admin-reasoning-anthropic = Anthropic
+
+admin-effort-standard = Estándar
+
+admin-effort-deep = Profundo
+
+admin-effort-max = Máx
+
+admin-budget-placeholder = predeterminado
+
+admin-budget-hint = Tokens de pensamiento máximos por nivel de esfuerzo. Vacío = valor predeterminado del backend (sin límite). «Fast» desactiva el razonamiento.
+
+admin-effort-default-option = (predeterminado)
+
+admin-effort-hint = Esfuerzo de razonamiento por nivel. Vacío = valor predeterminado integrado. «Fast» desactiva el razonamiento.
+
+admin-saved-model = `{ $model }` guardado — efectivo de inmediato
+
+admin-cleared-defaults = ajustes borrados para `{ $model }`
+
+admin-price-label = { $cur }/{ $unit }
+
+admin-price-unit-tokens = 1 M de tokens
+
+admin-price-unit-images = imagen
+
+admin-price-unit-characters = carácter
+
+admin-price-unit-seconds = segundo
+
+admin-alias-chip = alias
+
+admin-defaults-intro = Elige el modelo preseleccionado para cada función. Vacío = el primer modelo disponible (comportamiento anterior).
+
+admin-defaults-chat-label = Chat
+
+admin-defaults-voice-label = Voz (transcripción)
+
+admin-defaults-image-label = Generación de imágenes
+
+admin-defaults-embedding-label = Embedding (RAG)
+
+admin-defaults-first-option = Primero disponible
+
+admin-defaults-saved = modelo predeterminado establecido en `{ $model }`
+
+admin-defaults-cleared = modelo predeterminado restablecido
+
+admin-capabilities-heading = Capacidades
+
+admin-cap-vision = Visión
+
+admin-cap-structured-output = Salida estructurada
+
+admin-cap-audio-input = Entrada de audio
+
+admin-cap-pdf-input = Entrada de PDF
+
+admin-cap-parallel-tools = Herramientas en paralelo
+
+admin-cap-unknown = Desconocido
+
+admin-cap-enabled = Activado
+
+admin-cap-disabled = Desactivado
+
+admin-cap-fallback-vision = Reserva para visión
+
+admin-cap-fallback-tools = Reserva para herramientas
+
+admin-search-intro = Qué backend responde a la herramienta `search_web` del asistente. SearXNG solo necesita una URL base y no cuesta nada por consulta si ejecutas tu propia instancia; Brave necesita una clave de API. La clave se cifra en reposo.
+
+admin-search-brave-key-set = Hay una clave almacenada (cifrada).
+
+admin-search-brave-key-unset = No hay clave almacenada.
+
+admin-search-brave-key-clear = Eliminar la clave almacenada

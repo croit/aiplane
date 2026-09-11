@@ -97,7 +97,7 @@ fn serves_before_setup(path: &str) -> bool {
     }
     // Liveness must answer while the operator is still in the wizard;
     // readiness answers *and reports not-ready* (see the `/readyz` handler).
-    if matches!(path, "/healthz" | "/readyz") {
+    if matches!(path, "/healthz" | "/readyz" | "/openapi.json") {
         return true;
     }
     // Non-HTML surfaces answer for themselves. A 303 to an HTML wizard is the
@@ -197,6 +197,7 @@ mod tests {
             "/api/v0/setup/state",
             "/api/v0/setup/test",
             "/api/v0/setup/finish",
+            "/openapi.json",
         ] {
             assert!(serves_before_setup(path), "{path} must serve before setup");
         }

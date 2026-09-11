@@ -39,7 +39,7 @@ use crate::rama_server::dev_seed;
 use crate::rama_server::first_run::FirstRunLayer;
 use crate::rama_server::setup_api;
 use crate::rama_server::{
-    api, comfyui_api, messages, oidc_handlers, pages, proxy, rag_api, sandbox_api, spa,
+    api, comfyui_api, messages, oidc_handlers, openapi, pages, proxy, rag_api, sandbox_api, spa,
 };
 use gateway_core::rama_server::cors::V1CorsLayer;
 
@@ -48,6 +48,8 @@ use gateway_core::rama_server::cors::V1CorsLayer;
 pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
     let router = Router::new_with_state(state)
         .with_get("/healthz", async || Json(json!({"status": "ok"})))
+        .with_get("/openapi.json", openapi::document)
+        .with_get("/api/v0/build", gateway_api::build_info::metadata)
         // `/healthz` is liveness — the process is up. `/readyz` is readiness,
         // and an unconfigured gateway is not ready: it cannot serve a single
         // authenticated request, so a load balancer must not route production
@@ -179,6 +181,14 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/rag/collections/{id}/refs/{ref_id}",
             rag_api::delete_ref,
         )
+        .with_patch(
+            "/api/v0/rag/collections/{id}/refs/{ref_id}",
+            rag_api::update_ref,
+        )
+        .with_get(
+            "/api/v0/rag/collections/{id}/refs/{ref_id}/log",
+            rag_api::ref_log,
+        )
         .with_post(
             "/api/v0/rag/collections/{id}/refs/{ref_id}/rebuild",
             rag_api::rebuild_ref,
@@ -222,11 +232,11 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             pages::json_admin::models_delete,
         )
         .with_put(
-            "/api/v0/admin/models/defaults",
+            "/api/v0/admin/model-defaults",
             pages::json_admin::models_feature_default,
         )
         .with_put(
-            "/api/v0/admin/models/search",
+            "/api/v0/admin/search-settings",
             pages::json_admin::models_search_save,
         )
         .with_get("/api/v0/admin/limits", pages::json_admin::limits_list)
@@ -252,6 +262,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             pages::json_admin::topology_events,
         )
         .with_put("/api/v0/admin/backends", pages::json_admin::backends_save)
+        .with_post(
+            "/api/v0/admin/backends/test",
+            pages::json_admin::backends_test,
+        )
         .with_delete(
             "/api/v0/admin/backends/{name}",
             pages::json_admin::backends_delete,
@@ -291,6 +305,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/admin/skills",
             pages::json_skills::admin_skills_upload,
         )
+        .with_get(
+            "/api/v0/admin/skills/{name}/archive",
+            pages::json_skills::admin_skill_archive,
+        )
         .with_delete(
             "/api/v0/admin/skills/{name}",
             pages::json_skills::admin_skills_delete,
@@ -315,6 +333,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/admin/connectors/{key}/toggle",
             pages::json_skills::admin_connectors_toggle,
         )
+        .with_get(
+            "/api/v0/admin/connectors/{key}/audit",
+            pages::json_skills::admin_connector_audit,
+        )
         .with_delete(
             "/api/v0/admin/connectors/{key}",
             pages::json_skills::admin_connectors_delete,
@@ -330,6 +352,18 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         .with_post(
             "/api/v0/integrations/{key}/disconnect",
             pages::json_skills::integrations_disconnect,
+        )
+        .with_post(
+            "/api/v0/integrations/{key}/retry",
+            pages::json_skills::integrations_retry_json,
+        )
+        .with_post(
+            "/api/v0/integrations/{key}/tools/mode",
+            pages::json_skills::integrations_tool_mode,
+        )
+        .with_post(
+            "/api/v0/integrations/{key}/tools/all",
+            pages::json_skills::integrations_tools_all,
         )
         .with_get("/api/v0/setup/state", setup_api::setup_state)
         .with_post("/api/v0/setup/test", setup_api::setup_test)
@@ -395,6 +429,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         // legacy form/SSE-HTML chat routes under `/chat/*` stay alive
         // beside these until phase 6.
         .with_get(
+            "/api/v0/chat/landing",
+            pages::chat::json_api::session_landing,
+        )
+        .with_get(
             "/api/v0/chat/sessions",
             pages::chat::json_api::sessions_list,
         )
@@ -446,6 +484,7 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/tokens/{id}/models",
             pages::chat::json_api::owner_token_models,
         )
+        .with_get("/api/v0/tokens/details", pages::json_tokens::details)
         .with_post(
             "/api/v0/tokens/{id}/quota",
             pages::chat::json_api::owner_token_quota,

@@ -1,0 +1,183 @@
+export interface LiveBackend {
+	healthy: boolean;
+	enabled: boolean;
+	auth_failed: boolean;
+	inflight: number;
+	max_inflight: number;
+	models: string[];
+	withheld: string[];
+	pool: string | null;
+}
+
+export interface BackendAlias {
+	alias: string;
+	target: string | null;
+}
+
+export interface Backend {
+	name: string;
+	base_url: string;
+	api_key_env: string | null;
+	api_key_env_set: boolean;
+	has_stored_key: boolean;
+	weight: number;
+	max_inflight: number;
+	health_path: string;
+	probe_models: boolean;
+	supports_edit: boolean;
+	enabled: boolean;
+	models: string[];
+	aliases: BackendAlias[];
+	live: LiveBackend | null;
+}
+
+export interface Voice {
+	lang: string;
+	voice: string;
+}
+
+export interface Pool {
+	name: string;
+	kind: string;
+	strategy: string;
+	fallback_offline: string | null;
+	compliance_gdpr: boolean;
+	compliance_nda: boolean;
+	enforce_limits: boolean;
+	sort_order: number;
+	allowed_groups: string[];
+	backends: string[];
+	models: string[];
+	voices: Voice[];
+	offer_voices: string[];
+}
+
+export interface Coverage {
+	name: string;
+	serving: number;
+	total: number;
+}
+
+export interface BackendTestResult {
+	outcome: 'success' | 'warning' | 'error';
+	code: 'ok' | 'ok_no_models' | 'auth_failed' | 'http_error' | 'unreachable' | 'timeout' | 'base_url_required';
+	status?: number;
+	url?: string;
+	detail?: string;
+	timeout_seconds?: number;
+	model_count?: number;
+	models: string[];
+	key_source?: { kind: 'typed' | 'stored' | 'env' | 'env_unset' | 'none'; name?: string };
+}
+
+export interface PendingChange {
+	code: 'pool_added' | 'pool_removed' | 'pool_kind' | 'pool_strategy' | 'backend_joins' | 'backend_leaves' | 'backend_url' | 'backend_limits' | 'backend_health_path';
+	pool?: string;
+	backend?: string;
+	from?: string;
+	to?: string;
+	weight?: number;
+	inflight?: number;
+}
+
+export interface Topology {
+	pools: Pool[];
+	backends: Backend[];
+	fallbacks: Record<string, string>;
+	usage_last_hour: Record<string, number[]>;
+	dirty: number;
+	pool_kinds: string[];
+	pool_strategies: string[];
+	fallback_kinds: string[];
+	all_models?: string[];
+	coverage?: Record<string, Coverage[]>;
+	pending_changes: PendingChange[];
+}
+
+export function backendAssignments(pools: Pool[], backends: Backend[]) {
+	const indexed = new Map(backends.map((backend) => [backend.name, backend]));
+	const assigned = new Set(pools.flatMap((pool) => pool.backends));
+	return {
+		byPool: new Map(
+			pools.map((pool) => [
+				pool.name,
+				pool.backends.flatMap((name) => {
+					const backend = indexed.get(name);
+					return backend ? [backend] : [];
+				})
+			])
+		),
+		unassigned: backends.filter((backend) => !assigned.has(backend.name))
+	};
+}
+
+export function activityCounts(buckets: number[]) {
+	const tail = (count: number) => buckets.slice(-count).reduce((sum, value) => sum + value, 0);
+	return { m15: tail(3), m30: tail(6), m60: tail(12) };
+}
+
+function resolvedAliases(backend: Backend): string[] {
+	const served = backend.live?.models ?? [];
+	return backend.aliases.flatMap(({ alias, target }) => {
+		if (target !== null) return served.includes(target) ? [alias] : [];
+		return served.length === 1 ? [alias] : [];
+	});
+}
+
+export function poolCoverage(pool: Pool, backends: Backend[]): Coverage[] {
+	const members = pool.backends.flatMap((name) => {
+		const backend = backends.find((candidate) => candidate.name === name);
+		return backend ? [backend] : [];
+	});
+	const available = members.map((backend) => {
+		if (!backend.live?.healthy || !backend.live.enabled) return new Set<string>();
+		return new Set([...(backend.live.models ?? []), ...resolvedAliases(backend)]);
+	});
+	const names = new Set(pool.models);
+	for (const models of available) for (const model of models) names.add(model);
+	return [...names]
+		.sort((left, right) => left.localeCompare(right))
+		.map((name) => ({
+			name,
+			serving: available.filter((models) => models.has(name)).length,
+			total: members.length
+		}));
+}
+
+export function splitList(value: string): string[] {
+	return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+export function splitLines(value: string): string[] {
+	return value.split('\n').map((item) => item.trim()).filter(Boolean);
+}
+
+export function parseAliases(value: string): BackendAlias[] {
+	return splitLines(value).map((line) => {
+		const separator = line.indexOf('=');
+		return separator < 0
+			? { alias: line, target: null }
+			: { alias: line.slice(0, separator).trim(), target: line.slice(separator + 1).trim() || null };
+	});
+}
+
+export function completeAliasLine(value: string, cursor: number, model: string) {
+	const lineStart = value.lastIndexOf('\n', Math.max(0, cursor - 1)) + 1;
+	const nextNewline = value.indexOf('\n', cursor);
+	const lineEnd = nextNewline < 0 ? value.length : nextNewline;
+	const alias = value.slice(lineStart, lineEnd).split('=')[0].trim();
+	const replacement = alias ? `${alias}=${model}` : model;
+	return {
+		value: value.slice(0, lineStart) + replacement + value.slice(lineEnd),
+		cursor: lineStart + replacement.length
+	};
+}
+
+export function parseVoices(value: string): Voice[] {
+	return splitLines(value).flatMap((line) => {
+		const separator = line.indexOf('=');
+		return separator < 1
+			? []
+			: [{ lang: line.slice(0, separator).trim(), voice: line.slice(separator + 1).trim() }];
+	});
+}

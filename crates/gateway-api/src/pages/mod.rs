@@ -18,6 +18,7 @@
 use rama::http::{Method, Request, Response, StatusCode, header};
 
 use session_core::chrome::see_other;
+use session_core::i18n::{Lang, t};
 
 use gateway_core::rama_server::session::Session;
 use gateway_core::server::db::users;
@@ -92,9 +93,11 @@ pub(super) async fn require_admin_or_403(
 ) -> Result<(Session, users::User), Response> {
     let (session, user) = require_session_or_redirect(state, req).await?;
     if !is_admin(state, &user) {
+        let lang = Lang::from_headers(req.headers());
         return Err(flow_error_page(
+            lang,
             StatusCode::FORBIDDEN,
-            "admin role required",
+            &t(lang, "nav-admin-required"),
         ));
     }
     Ok((session, user))
@@ -366,6 +369,7 @@ pub use tool_toggles::{entries_for_roles, valid_keys};
 // grant. Re-export the two handler entry points for the router.
 pub mod json_admin;
 pub mod json_skills;
+pub mod json_tokens;
 pub mod json_workspace;
 pub mod tools;
 
@@ -478,23 +482,27 @@ pub use feedback::{feedback_config, feedback_extract, feedback_submit};
 /// self-contained one, with inline styling and a link back into the SPA,
 /// instead of the app layout it used to borrow. The message says what failed
 /// and where to resume; there is nothing actionable to render beyond that.
-pub(super) fn flow_error_page(status: StatusCode, message: &str) -> Response {
+pub(super) fn flow_error_page(lang: Lang, status: StatusCode, message: &str) -> Response {
     let escaped = message
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;");
     let body = format!(
         "<!doctype html>\n\
-         <html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <html lang=\"{}\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>Connection failed — LLM Gateway</title></head>\
+         <title>{}</title></head>\
          <body style=\"font-family:system-ui,sans-serif;margin:0;display:grid;\
          place-items:center;min-height:100dvh;background:#18181b;color:#fafafa\">\
          <main style=\"max-width:34rem;padding:2rem\">\
-         <h1 style=\"font-size:1.25rem;margin:0 0 .5rem\">That connection did not complete</h1>\
+         <h1 style=\"font-size:1.25rem;margin:0 0 .5rem\">{}</h1>\
          <p style=\"margin:0 0 1.5rem;color:#a1a1aa\">{escaped}</p>\
-         <a href=\"/\" style=\"color:#fafafa\">Back to the app</a>\
-         </main></body></html>"
+         <a href=\"/\" style=\"color:#fafafa\">{}</a>\
+         </main></body></html>",
+        lang.code(),
+        t(lang, "nav-flow-error-title"),
+        t(lang, "nav-flow-error-heading"),
+        t(lang, "nav-flow-error-back"),
     );
     Response::builder()
         .status(status)
@@ -545,5 +553,19 @@ mod tests {
     fn a_missing_segment_is_none() {
         assert_eq!(raw_path_segment(&get("/api/v0/admin/models/"), 0), None);
         assert_eq!(raw_path_segment(&get("/api/v0"), 5), None);
+    }
+
+    #[tokio::test]
+    async fn oauth_error_page_uses_the_selected_language_and_escapes_details() {
+        let response = flow_error_page(Lang::De, StatusCode::BAD_REQUEST, "kaputt <jetzt>");
+        let body = session_core::chrome::read_body_to_bytes(response.into_body())
+            .await
+            .unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(body.contains("<html lang=\"de\">"));
+        assert!(body.contains("Verbindung fehlgeschlagen"));
+        assert!(body.contains("Zurück zur App"));
+        assert!(body.contains("kaputt &lt;jetzt&gt;"));
     }
 }

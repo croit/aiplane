@@ -11,7 +11,7 @@ The whole stack:
 | HTTP server / router | rama 0.3 | `crates/gateway/src/rama_server/router.rs` |
 | Static SPA hosting | hand-rolled rama handler over `tokio::fs` | `crates/gateway/src/rama_server/spa.rs` |
 | UI framework | SvelteKit 2 / Svelte 5 (runes), Vite | `web/` |
-| API contract | OpenAPI 3, route list enforced by `openapi_drift` | `docs/openapi.json` |
+| API contract | OpenAPI 3.1, generated from backend route declarations | `GET /openapi.json` |
 | API client | one `fetch` helper + hand-declared shapes | `web/src/lib/api.ts` |
 | Chat streaming | JSON events over SSE | `crates/session-core/src/chat_json.rs` ↔ `web/src/lib/chat-protocol.ts` |
 | Styling | Tailwind v4 + daisyUI v5 | `web/src/app.css` |
@@ -50,6 +50,8 @@ web/
 │   │   ├── admin-client.ts    same transport for the admin surfaces
 │   │   ├── chat-protocol.ts   the SSE event fold — framework-free, unit-tested
 │   │   ├── chat.svelte.ts     reactive conversation controller (EventSource lifecycle)
+│   │   ├── page-titles.ts     production-compatible static/dynamic title routing
+│   │   ├── page-title.ts      dynamic page-title override shared with the shell
 │   │   ├── session.svelte.ts  identity from GET /api/v0/me
 │   │   ├── sidebar.svelte.ts  conversation list + search + mobile drawer
 │   │   ├── feedback.svelte.ts feedback widget state
@@ -63,10 +65,10 @@ web/
 │       ├── +layout.ts         prerender = false, ssr = false
 │       ├── +page.svelte       dashboard
 │       ├── login/ chat/ chat/[id]/ tokens/ tools/ memory/ scheduled/
-│       ├── webhooks/ skills/ integrations/ usage/ setup/
+│       ├── webhooks/ skills/ integrations/ usage/ setup/ rag/ rag/profiles/
 │       └── admin/             +layout.svelte + models, upstreams, users, groups,
 │                              tokens, limits, settings, skills, connectors,
-│                              comfyui, rag
+│                              comfyui
 └── static/               copied verbatim into the build output
     ├── manifest.webmanifest, sw.js, robots.txt
     ├── favicon.svg, icons/*.png
@@ -75,22 +77,78 @@ web/
 
 `+layout.ts` sets `prerender = false` and `ssr = false`. Prerendering would bake the anonymous shell into every route, and this is a private surface: the identity render would flash "signed out" on first paint anyway, and no per-route HTML should be emitted for an authed page.
 
-## The JSON API and the generated client
+The desktop sidebar keeps route navigation and conversation history as separate
+regions. Route groups never scroll: Workspace is open by default, Account and
+Admin are collapsed, and the user's choices persist for one year in the
+`nav_sections` cookie. The conversation list receives the remaining height and
+is the sidebar's only vertical scroll region. This preserves access to the
+identity controls and avoids nested scrollbars when several route groups are
+open.
 
-Every dynamic thing the SPA does is a `/api/v0/*` call — about 140 operations across ~115 paths. The contract is **`docs/openapi.json`**, hand-maintained (the wire types in `shared::api` use `jiff::Timestamp` and have no `schemars` derive, so code-first annotations would be re-annotated constantly) but **enforced**: `crates/gateway/tests/it/openapi_drift.rs` fails CI when the spec and the routes registered in `router.rs` drift in either direction — an undocumented new endpoint, or a spec entry no route serves.
+The root layout owns the document title through the route registry in
+`page-titles.ts`; data-driven pages publish their resolved name through the
+shared override in `page-title.ts`. Conversation metadata is refreshed
+after both sidebar changes and final turn events, so an asynchronous generated
+title cannot update the sidebar while leaving the header or browser history
+stale.
 
-The SPA's types come from that spec:
+## The JSON API and its contract
 
-```bash
-```
-
-Update `docs/openapi.json` after changing any `/api/v0` route — `openapi_drift` fails otherwise.
+Every dynamic thing the SPA does is a `/api/v0/*` call — about 140 operations
+across more than 100 paths. `GET /openapi.json` generates an OpenAPI 3.1
+document from the route declarations compiled into the gateway. There is no
+detached contract file to copy into the container or synchronize after a route
+change. Path parameters and request methods are inferred from the declarations;
+explicit backend wire types remain the authority for request and response
+fields.
 
 **How calls are actually made today.** Every request goes through one helper, `request<T>()` in `lib/api.ts`: a same-origin `fetch` that sends the session cookie, parses the error envelope, and throws an `ApiError` carrying the status and the server's message. `lib/api.ts` then exposes the `api.*` wrappers routes call, with their response shapes declared by hand against `shared::api`. `lib/admin-client.ts` is the same transport for the admin views, flattening the envelope into a plain `Error`.
 
-There is deliberately no generated client. One shipped briefly (`client.ts` over an `openapi-typescript` `schema.d.ts`) and was removed: nothing ever imported it, so it was 6k generated lines and two npm dependencies standing in for a migration that never happened. `docs/openapi.json` is enforced against the *router* by `openapi_drift` — every route must be documented — but it does not type request or response bodies. If typed calls become worth it, regenerate the types and migrate `api.ts` onto them deliberately, rather than leaving a second client in the tree.
+There is deliberately no generated client. One shipped briefly (`client.ts` over an `openapi-typescript` `schema.d.ts`) and was removed: nothing ever imported it, so it was 6k generated lines and two npm dependencies standing in for a migration that never happened. If typed calls become worth it, generate them from the live `/openapi.json` document and migrate `api.ts` deliberately, rather than leaving a second unused client in the tree.
 
-A 401 means "signed out": `+layout.svelte` turns "`me` is null after load" into a redirect to `/auth/login` carrying the route the user actually wanted, and never bounces `/setup` (which runs before any account exists).
+A 401 means "signed out": `+layout.svelte` turns "`me` is null after load" into a redirect to the standalone `/login` card carrying the route the user actually wanted. The card starts `/auth/login` only after the user chooses **Continue with OIDC**, and never bounces `/setup` (which runs before any account exists).
+
+`GET /api/v0/build` is public because both `/login` and the authenticated
+sidebar must offer the corresponding source before or after a session exists.
+It returns the runtime `GATEWAY_SOURCE_URL` and the binary's exact version/git
+label; the reusable `SourceLink` component renders that metadata in both places.
+
+The model administration read model lives at `GET /api/v0/admin/models`; model
+override writes use `PUT /api/v0/admin/models` and
+`DELETE /api/v0/admin/models/{name}`. Feature defaults and web-search settings
+are independent resources at `PUT /api/v0/admin/model-defaults` and
+`PUT /api/v0/admin/search-settings`. Keep those mutation paths at the top level
+of the admin namespace: rama treats sibling parameterized route shapes as one
+route, so placing both below `/api/v0/admin/models/*` can dispatch a literal
+settings path through the wrong handler.
+
+`GET /api/v0/admin/skills` is the global-skill master-detail read model. Each
+skill includes its stripped Markdown body, bundled file paths, direct group
+grants, and groups inheriting access through the `*` grant; the response also
+reports the configured source directory and whether it is accessible. Upload,
+delete, and grant replacement use the same resource, while
+`GET /api/v0/admin/skills/{name}/archive` packages the selected global skill
+for download. Grant writes accept only existing gateway groups and never copy
+an inherited all-skills grant into a per-skill row.
+
+`GET /api/v0/admin/connectors` is the complete connector-catalog read model:
+identity and presentation metadata, endpoint, scope, authentication and OAuth
+discovery configuration, encrypted-secret presence, access groups, audit and
+enablement state, built-in provenance, setup readiness, and the deployment's
+exact OAuth redirect URI. `PUT /api/v0/admin/connectors` creates or replaces a
+definition, while the key-specific toggle and delete routes manage its
+lifecycle. Enabling is rejected while required OAuth setup is missing, and a
+blank secret on replacement keeps the existing encrypted value. Audited
+connectors expose their newest 200 tool calls at
+`GET /api/v0/admin/connectors/{key}/audit`.
+
+`GET /api/v0/comfyui/catalog` supplies the operator page with the effective
+worker URL and catalog directory, execution timeout and poll interval, the
+complete model-facing workflow/parameter schemas, and the newest 20 persisted
+jobs. Job rows retain terminal output filenames or failure details so the page
+is useful for diagnosis rather than only catalog reloads. A successful
+`POST /api/v0/comfyui/reload` atomically swaps the workflow snapshot and the SPA
+refreshes this read model without restarting the gateway.
 
 ### Routes that are not `/api/v0`
 
@@ -101,6 +159,11 @@ Six routes outlived the server-rendered pages because they are not a UI:
 | `POST /hooks/{secret}`, `POST /hooks/rag/{token}` | Public triggers. The URL *is* the credential; a third party (a file host's webhook, a cron line) calls them. |
 | `GET /rag/{id}/connect`, `GET /rag/oauth/callback` | RAG source OAuth round trip. The redirect URI is registered with an external provider, so the path is not ours to change. |
 | `POST /integrations/{key}/connect`, `POST /integrations/{key}/retry`, `GET /integrations/callback` | Per-user MCP connector OAuth, same shape. |
+
+Provider callback failures render a small standalone, localized HTML document:
+the provider detail is escaped, the recovery action returns to the SPA, and the
+normal shell is deliberately absent because the callback can fail before the
+SPA or a usable session exists.
 
 ## Chat streaming: the JSON event protocol
 
@@ -133,7 +196,49 @@ Invariants worth knowing before you touch either side:
 - **The stream ends at `turn_finalized` / `idle`.** The server closes there, so `chat.svelte.ts` closes the `EventSource` too — letting it auto-reconnect would loop snapshot/idle forever on a quiet session. After a submit (or any suspected change) `attach()` reopens, and the fresh snapshot is the replay.
 - **Markdown is the wire format.** The server sends text; the client renders it (`marked` → `DOMPurify` → `{@html}`). Model output is untrusted input like any other, so the sanitise step is not optional.
 
-The rest of the conversation surface is ordinary JSON: `POST …/messages` submits (multipart when there are attachments), `POST …/cancel` flips the worker's cancel flag, `…/fork`, `…/share`, `…/effort`, `…/documents/*` (canvas), `…/export.md` and `…/export.pdf`, `…/turns/{turn_id}/{retry,edit}`.
+The rest of the conversation surface is ordinary JSON. `GET /api/v0/chat/landing`
+resolves the caller's latest conversation and creates one only when the caller
+has none. `GET …/sessions/{id}` returns the session and turns plus
+`compacted_up_to_seq` and the conversation's attachment-marker-derived
+`assets[]`; the SPA uses those fields for the compaction boundary and canvas
+asset browser. `POST …/messages` submits multipart data when there are
+attachments, and `POST …/turns/{turn_id}/edit` accepts that same multipart
+shape so editing does not lose the composer's attachment support. The other
+mutations include `…/cancel`, `…/fork`, `…/share`, `…/effort`,
+`…/documents/*` (canvas and version history), `…/export.md`,
+`…/export.pdf`, and `…/turns/{turn_id}/retry`.
+
+`GET …/sessions/{id}/capabilities` is the conversation's complete capability
+read model. Each built-in tool, connected integration tool, and skill carries
+its group, description, ordering metadata, and explicit `off` / `auto` / `on`
+state. The picker searches and groups this response; it does not reconstruct
+capabilities from unrelated endpoints.
+
+`GET /api/v0/usage` is the complete usage-dashboard read model. Period,
+scope, source, backend, and token filters are query parameters so a view is
+reconstructable from its URL. The response includes the effective scope and
+admin capability, metrics state, viewer timezone, totals, pricing gaps,
+in-force limits, and user/token/backend/source/model breakdowns. The backend
+clamps `scope=all` for non-admin users; the client reflects the effective
+scope rather than trusting the requested one.
+
+`GET /api/v0/admin/limits` is the operator limit-policy read model: rules plus
+the complete role, user, token-with-owner, and model option sets needed to
+assign them safely. The SPA keeps those identifiers behind labelled selects,
+shows the policy resolution and metering rules beside the editor, and preserves
+the production table's separate dimension, window, and locale-formatted value
+columns. `POST /api/v0/admin/limits` upserts the selected rule and `DELETE
+/api/v0/admin/limits/{id}` removes it.
+
+`GET /api/v0/admin/settings` carries the declarative settings specification
+into the SPA: category and section membership, effective values, field kinds
+and spans, feature enablement, valid models for model fields, secret-presence
+flags, restart-pending keys, and whether the gateway still needs its first
+backend. The category is a bookmarkable `?tab=` value. Disabled feature cards
+keep their master toggle visible and fold the remaining fields; each section
+saves independently through `POST /api/v0/admin/settings`, while write-only
+secrets use the explicit `/api/v0/admin/settings/clear` action to return to the
+built-in default.
 
 `chat-protocol.ts` is deliberately framework-free — no Svelte, no DOM — so the fold is unit-testable under `node --test` (`chat-protocol.test.ts`, run by `mise run test-web`) and `chat.svelte.ts` stays a thin reactive wrapper around it. Keep it that way: wire behaviour that can only be tested through a browser is wire behaviour nobody tests.
 
@@ -187,15 +292,20 @@ The turn pipeline is **half-duplex, push-to-talk**:
 
 Everything persists as normal chat turns, so the conversation stays readable and continuable in text. The feature only appears when a `speech` upstream pool **and** a transcription model are both available.
 
-## i18n — what still applies
+## i18n
 
-The SPA's own strings are currently plain English in the Svelte components; there is no client-side translation layer yet.
+The Fluent catalogs under `crates/session-core/locales/<lang>/*.ftl` are the
+single string source for both server responses and the SPA. `mise run
+gen-locales` compiles them into `web/src/lib/locales/*.ts`; Svelte components
+use `t()`, `dt()`, and `n()` from `i18n.svelte.ts`. Never put a user-visible
+literal in a component.
 
-The Fluent gate still applies to the **server-side strings** in `crates/session-core/locales/`, which back what the Rust side still writes in a human language: proxy and API error envelopes, MCP connector status text, the OAuth round-trip responses, and the feedback surface. `crates/session-core/build.rs` fails the build if any key present in `locales/en/*.ftl` is missing from `de`/`fr`/`es`/`ru`/`zh`, or vice versa — `cargo build`/`check`/`test` all refuse to compile the crate graph until every language has every key. That is deliberate: a partially translated UI reads as a broken product to a non-English user, so a missing translation is a build error rather than a review comment.
-
-Adding a server-side string is therefore: add the key to `locales/en/<module>.ftl` (naming convention `<module>-<slug>`), add the same key translated to the other five, then call `t(lang, "key")` / `t_args(...)`. Non-English files are LLM-generated and carry a `# STATUS: llm-generated, unreviewed` banner — a content-quality caveat, not a licence to skip a language.
-
-Note that the `.ftl` files still carry a large set of keys that belonged to the deleted pages (`tokens`, `settings`, `upstreams`, …). They are dead weight until either the SPA grows an i18n layer that reuses them or someone prunes them; the build gate only checks that the six locales agree, not that a key is reachable.
+`crates/session-core/build.rs` fails when the six catalog key sets or variables
+drift, and the web locale test verifies the generated catalogs against English.
+After changing any Fluent file, add the translation to all six languages and
+run `mise run gen-locales` before checking or building the SPA. Non-English
+files carry a `# STATUS: llm-generated, unreviewed` banner; that is a
+content-quality caveat, not permission to omit a language.
 
 ## Development loop
 

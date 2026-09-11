@@ -23,9 +23,9 @@ anyhow = { workspace = true }
 jiff = { workspace = true }
 tracing = { workspace = true }
 
-# Rama HTTP framework. Used here only for the wire types the framework-neutral
-# building blocks hand back and forth (`Body`, `Request`, header maps) plus the
-# datastar SSE helpers — the routing and middleware live in `gateway`.
+# Rama HTTP framework. Used here only for wire types the framework-neutral
+# building blocks hand back and forth (`Body`, `Request`, header maps); routing
+# and middleware live in `gateway`.
 rama = { workspace = true }
 # Fenced-code / structured-output scanning in the sandbox `read` tool's
 # `--regex` mode. See `docs/dependencies.md`.
@@ -120,4 +120,3 @@ qrcode = { workspace = true }
 # LLM backends, used by the unit tests that drive the tool runner and the
 # upstream registry without a real model server.
 wiremock = { workspace = true }
-

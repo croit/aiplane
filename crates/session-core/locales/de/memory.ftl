@@ -12,11 +12,9 @@ memory-save-button = Speichern
 memory-delete-title = Erinnerung löschen
 
 # SPA-only: the Svelte /memory page's inline add/edit form.
-memory-edit-heading = Erinnerung bearbeiten
-memory-kind-label = Art
-memory-kind-preference = Vorliebe
-memory-kind-project = Projekt
-memory-kind-fact = Fakt
+memory-kind-preference = Präferenzen
+memory-kind-project = Projektkontext
+memory-kind-fact = Fakten
 memory-content-label = Inhalt
-memory-add-button = Hinzufügen
+memory-add-button = Merken
 memory-delete-confirm = Diese Erinnerung löschen?

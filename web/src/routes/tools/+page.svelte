@@ -1,21 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminJson, adminPost } from '$lib/admin-client';
+	import LocationSharingCard from '$lib/components/tools/LocationSharingCard.svelte';
+	import ToolToggleSections from '$lib/components/tools/ToolToggleSections.svelte';
 	import { t } from '$lib/i18n.svelte';
-
-	interface ToolEntry {
-		key: string;
-		title: string;
-		description: string;
-		category: string;
-		enabled: boolean;
-	}
+	import { currentBrowserLocation, type LocationSharingState, type ToolEntry, type ToolsResponse } from '$lib/tools';
 
 	let tools = $state<ToolEntry[]>([]);
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
-	/** Key of the toggle with an in-flight write — disables it while saving. */
 	let saving = $state<string | null>(null);
+	let location = $state<LocationSharingState | null>(null);
+	let locationBusy = $state(false);
 
 	const sections = $derived.by(() => {
 		const byCategory = new Map<string, ToolEntry[]>();
@@ -29,10 +25,43 @@
 
 	async function refresh() {
 		try {
-			tools = (await adminJson<{ tools: ToolEntry[] }>('/api/v0/tools')).tools;
+			const data = await adminJson<ToolsResponse>('/api/v0/tools');
+			tools = data.tools;
+			location = data.location;
 			error = null;
 		} catch (err) {
 			error = String(err);
+		}
+	}
+
+	async function shareLocation() {
+		locationBusy = true;
+		notice = null;
+		try {
+			const position = await currentBrowserLocation();
+			await adminJson('/api/v0/me/location', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(position)
+			});
+			location = { shared: true, accuracy: position.accuracy };
+		} catch {
+			notice = t('tools-location-unavailable');
+		} finally {
+			locationBusy = false;
+		}
+	}
+
+	async function forgetLocation() {
+		locationBusy = true;
+		notice = null;
+		try {
+			await adminJson('/api/v0/me/location', { method: 'DELETE' });
+			location = { shared: false, accuracy: null };
+		} catch (err) {
+			notice = String(err);
+		} finally {
+			locationBusy = false;
 		}
 	}
 
@@ -56,13 +85,9 @@
 	onMount(refresh);
 </script>
 
-<div class="flex items-center justify-between mb-4">
-	<h1 class="text-2xl font-bold">{t('tools-heading')}</h1>
-</div>
-
-<p class="text-base-content/60 text-sm mb-6">
-	{t('tools-description')}
-</p>
+<div class="mx-auto w-full max-w-5xl px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+	<h1 class="mb-2 text-2xl font-bold">{t('tools-heading')}</h1>
+	<p class="mb-6 text-sm text-base-content/60">{t('tools-description')}</p>
 
 {#if error}
 	<div class="alert alert-error mb-4"><span>{error}</span></div>
@@ -71,36 +96,10 @@
 	<div class="alert alert-warning mb-4"><span>{notice}</span></div>
 {/if}
 
-{#each sections as [category, entries] (category)}
-	<div class="card border border-base-300 mb-4">
-		<div class="card-body">
-			<h2 class="card-title text-base capitalize">{category}</h2>
-			<ul class="flex flex-col divide-y divide-base-300">
-				{#each entries as tool (tool.key)}
-					<li class="py-3 flex items-center gap-4">
-						<div class="flex-1 min-w-0">
-							<div class="text-sm font-medium">{tool.title}</div>
-							<div class="text-xs text-base-content/60">{tool.description}</div>
-						</div>
-						<input
-							type="checkbox"
-							class="toggle toggle-primary"
-							checked={tool.enabled}
-							disabled={saving === tool.key}
-							onchange={() => toggle(tool)}
-							aria-label={t('tools-toggle-aria', { name: tool.title })}
-						/>
-					</li>
-				{/each}
-			</ul>
-		</div>
-	</div>
-{:else}
-	{#if !error}
-		<div class="card border border-base-300">
-			<div class="card-body">
-				<p class="text-base-content/60 text-sm">{t('tools-none-granted')}</p>
-			</div>
-		</div>
+	{#if location}<LocationSharingCard {location} busy={locationBusy} onshare={shareLocation} onforget={forgetLocation} />{/if}
+	{#if sections.length > 0}
+		<ToolToggleSections {sections} {saving} ontoggle={toggle} />
+	{:else if !error}
+		<div class="card border border-base-300"><div class="card-body"><p class="m-0 text-sm text-base-content/60">{t('tools-none-granted')}</p></div></div>
 	{/if}
-{/each}
+</div>

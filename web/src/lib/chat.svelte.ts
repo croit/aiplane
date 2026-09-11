@@ -23,6 +23,8 @@ export interface ConversationController {
 	readonly state: ReturnType<typeof newConversationState>;
 	/** Set by the view; fired whenever the session list may have changed. */
 	onSidebarChanged: SidebarChangedCallback | null;
+	/** Set by the view; fired after the authoritative final turn state lands. */
+	onTurnFinalized: SidebarChangedCallback | null;
 	/** (Re)open the events stream. Safe to call repeatedly. */
 	attach(): void;
 	apply(event: ChatEvent): void;
@@ -64,6 +66,7 @@ export function createConversationController(sessionId: string): ConversationCon
 		id: sessionId,
 		state,
 		onSidebarChanged: null,
+		onTurnFinalized: null,
 
 		attach() {
 			closeCurrent();
@@ -100,6 +103,7 @@ export function createConversationController(sessionId: string): ConversationCon
 		apply(event) {
 			applyEvent(state, event);
 			if (event.type === 'sidebar_changed') controller.onSidebarChanged?.();
+			if (event.type === 'turn_finalized') controller.onTurnFinalized?.();
 			if (event.type === 'turn_finalized' || event.type === 'idle') closeCurrent();
 		},
 

@@ -408,7 +408,8 @@ pub async fn usage(
     // "All users" is admin-only; a non-admin passing ?scope=all is ignored —
     // the same clamp the page applies.
     let role_ids = state.role_ids_for(&user.roles);
-    let show_all = state.rbac.is_admin(&role_ids) && q.scope.as_deref() == Some("all");
+    let can_view_all = state.rbac.is_admin(&role_ids);
+    let show_all = can_view_all && q.scope.as_deref() == Some("all");
     let period = Period::parse(q.period.as_deref());
     let tz = session
         .timezone
@@ -441,6 +442,7 @@ pub async fn usage(
             .await
             .unwrap_or_default()
             .into_iter()
+            .filter(|(id, _)| !id.is_empty())
             .map(|(id, label)| json!({ "id": id, "label": label }))
             .collect();
     let limit_status = state.enforcer.statuses(&user.id, &role_ids).await;
@@ -475,6 +477,9 @@ pub async fn usage(
     json_ok(&json!({
         "period": period.as_str(),
         "scope": if show_all { "all" } else { "self" },
+        "can_view_all": can_view_all,
+        "usage_enabled": state.usage.is_enabled(),
+        "timezone": tz,
         "currency": state.config().usage.currency,
         "summary": agg.summary,
         "by_user": agg.by_user,
@@ -527,13 +532,37 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
 }
 
 pub async fn transcription_models(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    if let Err(resp) = require_session(&state, &req).await {
-        return resp;
-    }
-    let models = state
+    let session = match require_session(&state, &req).await {
+        Ok(session) => session,
+        Err(resp) => return resp,
+    };
+    let user = match users::find_by_id(&state.db, &session.user_id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return unauthorized("no active session — sign in at /auth/login"),
+        Err(err) => {
+            tracing::warn!(error = %err, "loading voice configuration user");
+            return internal_error("could not load voice configuration");
+        }
+    };
+    let access = state.pool_access_for(&user.roles);
+    let mut models = state.upstreams.models_for_kind_for(
+        gateway_core::server::upstreams::PoolKind::Transcription,
+        &access,
+    );
+    use gateway_core::server::feature_defaults::{self, Feature};
+    let configured = feature_defaults::get(&state.db, Feature::Transcription).await;
+    feature_defaults::promote(configured.as_deref(), &mut models, |model| model.as_str());
+    let speech_available = !state
         .upstreams
-        .models_for_kind(gateway_core::server::upstreams::PoolKind::Transcription);
-    json_ok(&json!({ "data": models }))
+        .models_for_kind_for(gateway_core::server::upstreams::PoolKind::Speech, &access)
+        .is_empty();
+    let speech_voices = state.upstreams.speech_voices_for(&access);
+    json_ok(&json!({
+        "data": models,
+        "speech_available": speech_available,
+        "speech_voices": speech_voices,
+        "speech_voice": user.speech_voice,
+    }))
 }
 
 /// POST /api/v0/me/timezone — store the caller's IANA timezone on

@@ -1,18 +1,22 @@
 <script lang="ts">
-	// The landing point for a signed-out user. The layout's 401 effect
-	// deliberately leaves this route alone, so this page can start the
-	// OIDC dance itself — it bounces straight to the IdP, so under normal
-	// flow there is no visible stop here; it exists for direct visits and
-	// for the redirect to land on if sign-out keeps the user in the SPA.
-	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { loginUrl } from '$lib/api';
+	import { safeReturnTo } from '$lib/auth';
 	import { t } from '$lib/i18n.svelte';
+	import SourceLink from '$lib/components/SourceLink.svelte';
 
-	onMount(() => {
-		const back = page.url.searchParams.get('return_to') ?? '/';
-		window.location.href = loginUrl(back);
-	});
+	const returnTo = $derived(safeReturnTo(page.url.searchParams.get('return_to')));
 </script>
 
-<p class="mt-8 text-center text-base-content/60">{t('chrome-redirecting-to-sign-in')}</p>
+<svelte:head><title>{t('login-page-title')}</title></svelte:head>
+
+<div class="card w-full max-w-md border border-base-300 mx-auto">
+	<div class="card-body">
+		<h2 class="card-title text-2xl">{t('login-heading')}</h2>
+		<p class="text-base-content/70">{t('login-description')}</p>
+		<form action="/auth/login" method="get" class="mt-2">
+			{#if returnTo}<input type="hidden" name="return_to" value={returnTo} />{/if}
+			<button type="submit" class="btn btn-primary btn-block">{t('login-continue-button')}</button>
+		</form>
+		<p class="mt-4 text-center text-xs text-base-content/45"><SourceLink login /></p>
+	</div>
+</div>

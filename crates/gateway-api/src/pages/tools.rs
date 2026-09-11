@@ -20,7 +20,7 @@ use rama::http::{Request, Response};
 use super::tool_toggles;
 use super::{internal, json_ok, not_found, read_json};
 
-use gateway_core::server::db::user_tool_prefs;
+use gateway_core::server::db::{user_tool_prefs, users};
 use gateway_runtime::rama_server::state::RamaState;
 
 // ---------------------------------------------------------------------------
@@ -38,21 +38,34 @@ pub async fn tools_list_json(State(state): State<Arc<RamaState>>, req: Request) 
     let disabled = user_tool_prefs::disabled_for_user(&state.db, &user.id)
         .await
         .unwrap_or_default();
+    let location_granted = entries.iter().any(|entry| entry.key == "get_user_location");
     let tools: Vec<_> = entries
         .into_iter()
         .map(|e| {
             serde_json::json!({
                 "key": e.key,
                 "title": e.title,
+                "tech": e.tech,
                 "description": e.description,
                 "category": e.category.label(),
                 "enabled": !disabled.contains(&e.key),
             })
         })
         .collect();
+    let location = if location_granted {
+        match users::find_location(&state.db, &user.id).await {
+            Ok(stored) => serde_json::json!({
+                "shared": stored.is_some(),
+                "accuracy": stored.and_then(|location| location.accuracy),
+            }),
+            Err(err) => return internal(err),
+        }
+    } else {
+        serde_json::Value::Null
+    };
     json_ok(
         rama::http::StatusCode::OK,
-        serde_json::json!({ "tools": tools }),
+        serde_json::json!({ "tools": tools, "location": location }),
     )
 }
 

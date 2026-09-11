@@ -3,7 +3,6 @@ limits-heading = Ratenlimits & Kontingente
 limits-add-heading = Limit hinzufügen oder aktualisieren
 limits-field-subject = Gilt für
 limits-field-model = Modell
-limits-field-model-ph = alle Modelle
 limits-field-dimension = Limit
 limits-field-window = Pro
 limits-field-value = Wert
@@ -30,6 +29,10 @@ limits-saved = Limit für { $subject } gespeichert
 limits-subject-token = API-Token
 
 # Regeltabelle der SPA: Überschrift, Spalte „verwaltet von“ und Löschabfrage.
-limits-rules-heading = Regeln
-limits-col-managed-by = Von
 limits-delete-confirm = Diese Regel löschen?
+limits-intro = Begrenzen Sie, wie viele Anfragen, wie viele Token oder wie viel Ausgaben ein Aufrufer über ein gleitendes Zeitfenster nutzen darf. Regeln werden von der spezifischsten zur allgemeinsten aufgelöst: Die eigene Regel eines Benutzers gewinnt, sonst die großzügigste seiner Rollen, sonst die globale Vorgabe. Ohne Regeln ist jeder unbegrenzt. Eine Regel für ein API-Token ist eine zusätzliche Obergrenze, die neben dem Budget des Besitzers geprüft wird — sie kann den Verbrauch dieses Tokens also nur enger fassen. Nur abgerechnete Pools zählen (selbst gehostete Pools mit enforce_limits = false sind ausgenommen), und das gesamte Budget eines Benutzers wird über seine API-Tokens, den Chat und geplante Ausführungen hinweg geteilt.
+limits-field-subject-id = Rolle / Benutzer / Token
+limits-field-subject-id-ph = Rollen-ID, Benutzer-E-Mail oder Token-ID
+limits-col-value = Wert
+limits-col-actions = Aktionen
+limits-deleted = Limit entfernt

@@ -137,21 +137,42 @@ pub async fn memories_delete(
 // Scheduled actions
 
 fn action_json(a: &scheduled::ScheduledAction) -> serde_json::Value {
+    let schedule_summary = Cron::parse(&a.cron)
+        .map(|cron| cron.describe())
+        .unwrap_or_else(|_| format!("cron: {}", a.cron));
     serde_json::json!({
         "id": a.id,
         "name": a.name,
         "prompt": a.prompt,
         "model": a.model,
         "cron": a.cron,
+        "schedule_summary": schedule_summary,
         "timezone": a.timezone,
         "tools_enabled": a.tools_enabled,
         "reuse_conversation": a.reuse_conversation,
         "reuse_rounds": a.reuse_rounds,
         "enabled": a.enabled,
         "next_run_at": a.next_run_at.map(|t| t.to_string()),
+        "last_run_at": a.last_run_at.map(|t| t.to_string()),
         "last_session_id": a.last_session_id,
         "last_status": a.last_status,
+        "last_error": a.last_error,
     })
+}
+
+fn chat_model_options(state: &RamaState) -> Vec<serde_json::Value> {
+    state
+        .upstreams
+        .models_with_compliance_for_kind(gateway_core::server::upstreams::PoolKind::Chat)
+        .into_iter()
+        .map(|(id, compliance)| {
+            serde_json::json!({
+                "id": id,
+                "gdpr": compliance.gdpr,
+                "nda": compliance.nda,
+            })
+        })
+        .collect()
 }
 
 /// GET /api/v0/scheduled — the caller's actions.
@@ -162,8 +183,8 @@ pub async fn scheduled_list(State(state): State<Arc<RamaState>>, req: Request) -
             StatusCode::OK,
             serde_json::json!({
                 "actions": rows.iter().map(action_json).collect::<Vec<_>>(),
-                "models": state.upstreams.models_with_compliance_for_kind(
-                    gateway_core::server::upstreams::PoolKind::Chat).into_iter().map(|(id, _)| id).collect::<Vec<_>>(),
+                "models": chat_model_options(&state),
+                "default_timezone": user.timezone.as_deref().unwrap_or("UTC"),
             }),
         ),
         Err(err) => internal(err),
@@ -439,6 +460,9 @@ fn webhook_json(w: &webhooks::Webhook) -> serde_json::Value {
         "enabled": w.enabled,
         "last_fired_at": w.last_fired_at.map(|t| t.to_string()),
         "last_status": w.last_status,
+        "last_session_id": w.last_session_id,
+        "last_error": w.last_error,
+        "has_payload": w.last_payload.is_some(),
     })
 }
 
@@ -450,8 +474,7 @@ pub async fn webhooks_list(State(state): State<Arc<RamaState>>, req: Request) ->
             StatusCode::OK,
             serde_json::json!({
                 "webhooks": rows.iter().map(webhook_json).collect::<Vec<_>>(),
-                "models": state.upstreams.models_with_compliance_for_kind(
-                    gateway_core::server::upstreams::PoolKind::Chat).into_iter().map(|(id, _)| id).collect::<Vec<_>>(),
+                "models": chat_model_options(&state),
             }),
         ),
         Err(err) => internal(err),
@@ -664,6 +687,7 @@ fn run_json(r: &webhooks::WebhookRun) -> serde_json::Value {
         "source": r.source,
         "session_id": r.session_id,
         "prompt": r.prompt,
+        "payload": r.payload,
     })
 }
 

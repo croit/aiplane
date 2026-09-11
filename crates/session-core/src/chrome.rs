@@ -15,7 +15,7 @@ use rama::http::{Body, HeaderMap, Response, StatusCode, header};
 
 /// Escape the five HTML-significant characters (`& < > " '`) so a string
 /// can be spliced into markup as inert text. Shared by every hand-built
-/// HTML fragment that isn't going through plait's auto-escaping (e.g. the
+/// HTML fragment that is assembled without a templating engine (e.g. the
 /// gateway's OIDC form fields and the DB layer's search-snippet
 /// highlighter) so the escape set can't drift between copies.
 pub fn escape_html(s: &str) -> String {
@@ -53,7 +53,7 @@ pub fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// SSE event helpers (datastar-patch-elements / -signals).
+// SSE response helpers.
 
 /// Bundle a set of pre-built SSE event payloads into a single response.
 pub fn sse_response(events: &[rama::bytes::Bytes]) -> Response {

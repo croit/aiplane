@@ -92,12 +92,13 @@ pub async fn spa_get(req: Request) -> Response {
 ///
 /// Kept in step with `web/src/routes/` by
 /// [`tests::the_client_routes_match_the_spa_source`].
-const SPA_ROUTES: [&str; 12] = [
+const SPA_ROUTES: [&str; 13] = [
     "admin",
     "chat",
     "integrations",
     "login",
     "memory",
+    "rag",
     "scheduled",
     "setup",
     "skills",
@@ -110,14 +111,19 @@ const SPA_ROUTES: [&str; 12] = [
 /// Does the SPA's client router own this path?
 ///
 /// True for `/`, for a real file in the build directory (handled by the
-/// caller), and for anything under one of [`SPA_ROUTES`]. Everything else
-/// reaching the catch-all is a request for something nobody serves.
+/// caller), and for anything under one of [`SPA_ROUTES`]. RAG is narrower
+/// because it shares its root with server-owned OAuth and sync routes.
+/// Everything else reaching the catch-all is a request for something nobody
+/// serves.
 fn is_client_route(path: &str) -> bool {
     let rel = path.strip_prefix('/').unwrap_or(path);
     if rel.is_empty() {
         return true;
     }
     let root = rel.split('/').next().unwrap_or("");
+    if root == "rag" {
+        return matches!(rel.trim_end_matches('/'), "rag" | "rag/profiles");
+    }
     SPA_ROUTES.contains(&root)
 }
 
@@ -480,7 +486,14 @@ mod tests {
 
         // A real client route still gets the shell, including a deep one the
         // client router resolves itself.
-        for uri in ["/", "/chat", "/chat/abc-123", "/admin/settings"] {
+        for uri in [
+            "/",
+            "/chat",
+            "/chat/abc-123",
+            "/admin/settings",
+            "/rag",
+            "/rag/profiles",
+        ] {
             let resp = serve(&root, &get(uri)).await;
             assert_eq!(resp.status(), StatusCode::OK, "{uri} is a client route");
         }

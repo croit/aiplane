@@ -303,3 +303,8 @@ export function parseUserContent(
 		.trim();
 	return { text, attachments };
 }
+
+export function replaceUserText(content: string, text: string): string {
+	const markers = [...content.matchAll(MARKER_RE)].map((match) => match[0]);
+	return [text.trim(), ...markers].filter(Boolean).join('\n\n');
+}

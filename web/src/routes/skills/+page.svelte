@@ -1,132 +1,103 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { adminJson, adminDelete } from '$lib/admin-client';
+	import { adminDelete, adminJson, adminPost } from '$lib/admin-client';
+	import NavIcon from '$lib/components/NavIcon.svelte';
+	import PersonalSkillDetail from '$lib/components/skills/PersonalSkillDetail.svelte';
+	import PersonalSkillEditor from '$lib/components/skills/PersonalSkillEditor.svelte';
+	import PersonalSkillRail from '$lib/components/skills/PersonalSkillRail.svelte';
 	import { t } from '$lib/i18n.svelte';
+	import { NEW_SKILL_TEMPLATE, selectedSkill, type PersonalSkill } from '$lib/skills';
 
-	interface Skill {
-		name: string;
-		title: string;
-		description: string;
-		files: string[];
-		body?: string | null;
+	interface SkillDetail {
+		body: string;
+		manifest: string;
 	}
-	let data = $state<{ skills: Skill[]; user_skills_enabled: boolean } | null>(null);
+
+	let skills = $state<PersonalSkill[]>([]);
+	let enabled = $state(false);
+	let details = $state<Record<string, SkillDetail>>({});
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
-	let expanded = $state<string | null>(null);
-	let bodies = $state<Record<string, string>>({});
+	let requested = $derived(page.url.searchParams.get('skill'));
+	let mode = $derived<'view' | 'edit' | 'new'>(page.url.searchParams.has('new') ? 'new' : page.url.searchParams.has('edit') ? 'edit' : 'view');
+	let selected = $derived(selectedSkill(skills, requested));
 
 	async function refresh() {
 		try {
-			data = await adminJson('/api/v0/skills');
+			const data = await adminJson<{ skills: PersonalSkill[]; user_skills_enabled: boolean }>('/api/v0/skills');
+			skills = data.skills;
+			enabled = data.user_skills_enabled;
 			error = null;
-		} catch (err) {
-			error = String(err);
-		}
+		} catch (caught) { error = String(caught); }
 	}
 
-	async function toggle(name: string) {
-		if (expanded === name) {
-			expanded = null;
-			return;
-		}
-		expanded = name;
-		if (!(name in bodies)) {
-			try {
-				const res = await adminJson<{ body: string }>(`/api/v0/skills/${encodeURIComponent(name)}/body`);
-				bodies[name] = res.body;
-			} catch (err) {
-				bodies[name] = String(err);
-			}
-		}
-	}
-
-	async function upload(e: Event) {
-		const input = e.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
-		if (!file) return;
-		const fd = new FormData();
-		fd.append('file', file);
+	async function loadDetail(name: string) {
+		if (details[name]) return;
 		try {
-			const res = await fetch('/api/v0/skills', { method: 'POST', body: fd });
-			if (!res.ok) throw new Error((await res.text()).slice(0, 200));
-			notice = t('my-skills-toast-installed', { name: file.name });
-			await refresh();
-		} catch (err) {
-			notice = String(err);
-		} finally {
-			input.value = '';
-		}
+			const detail = await adminJson<SkillDetail>(`/api/v0/skills/${encodeURIComponent(name)}/body`);
+			details = { ...details, [name]: detail };
+		} catch (caught) { notice = String(caught); }
 	}
 
-	async function remove(name: string) {
-		if (!confirm(t('my-skills-delete-confirm', { name }))) return;
+	$effect(() => {
+		const name = selected?.name;
+		if (name && mode !== 'new') void loadDetail(name);
+	});
+
+	async function upload(file: File) {
+		const body = new FormData();
+		body.append('file', file);
 		try {
-			await adminDelete(`/api/v0/skills/${encodeURIComponent(name)}`);
+			const installed = await adminJson<{ name: string }>('/api/v0/skills', { method: 'POST', body });
+			notice = t('my-skills-toast-installed', { name: installed.name });
 			await refresh();
-		} catch (err) {
-			notice = String(err);
-		}
+			await goto(`/skills?skill=${encodeURIComponent(installed.name)}`);
+		} catch (caught) { notice = String(caught); }
+	}
+
+	async function save(name: string, manifest: string) {
+		try {
+			const saved = await adminPost<{ name: string }>('/api/v0/skills', { name, manifest });
+			details = {};
+			await refresh();
+			await goto(`/skills?skill=${encodeURIComponent(saved.name)}`);
+		} catch (caught) { notice = String(caught); }
+	}
+
+	async function remove() {
+		if (!selected || !confirm(t('my-skills-delete-confirm', { name: selected.name }))) return;
+		try {
+			await adminDelete(`/api/v0/skills/${encodeURIComponent(selected.name)}`);
+			details = {};
+			await refresh();
+			await goto('/skills');
+		} catch (caught) { notice = String(caught); }
 	}
 
 	onMount(refresh);
 </script>
 
-<div class="flex items-center justify-between mb-4">
-	<h1 class="text-2xl font-bold">{t('my-skills-heading')}</h1>
-	{#if data?.user_skills_enabled}
-		<label class="btn btn-primary btn-sm cursor-pointer">
-			{t('my-skills-upload-button')}
-			<input type="file" accept=".skill,.zip" class="hidden" onchange={upload} />
-		</label>
-	{/if}
+<div class="mx-auto w-full max-w-5xl px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+	<div class="flex items-center gap-2"><NavIcon name="sparkles" size={20} /><h1 class="m-0 text-2xl font-bold">{t('my-skills-heading')}</h1></div>
+	<p class="mb-4 mt-1 text-sm text-base-content/60">{t('my-skills-intro')}</p>
+	{#if error}<div class="alert alert-error mb-4 text-sm"><span>{error}</span></div>{/if}
+	{#if notice}<div class="alert alert-warning mb-4 text-sm"><span>{notice}</span></div>{/if}
+	<div class="flex flex-col items-start gap-6 sm:flex-row">
+		<PersonalSkillRail {skills} {selected} {mode} {enabled} onupload={upload} />
+		{#if !enabled}
+			<section class="min-w-0 flex-1 pt-2 text-sm text-base-content/60">{t('my-skills-empty-not-configured')}</section>
+		{:else if mode === 'new'}
+			<PersonalSkillEditor name="" initial={NEW_SKILL_TEMPLATE} isNew={true} onsave={save} />
+		{:else if selected && details[selected.name] && mode === 'edit'}
+			<PersonalSkillEditor name={selected.name} initial={details[selected.name].manifest} isNew={false} onsave={save} />
+		{:else if selected && details[selected.name]}
+			<PersonalSkillDetail skill={selected} body={details[selected.name].body} ondelete={remove} />
+		{:else if selected}
+			<section class="min-w-0 flex-1"><div class="skeleton h-6 w-48"></div><div class="skeleton mt-5 h-48 w-full"></div></section>
+		{:else}
+			<section class="min-w-0 flex-1 pt-2 text-sm text-base-content/60">{t('my-skills-empty-loaded')}</section>
+		{/if}
+	</div>
 </div>
-
-<p class="text-base-content/60 text-sm mb-6">
-	{t('my-skills-intro')}
-</p>
-
-{#if error}<div class="alert alert-error mb-4"><span>{error}</span></div>{/if}
-{#if notice}<div class="alert alert-warning mb-4"><span>{notice}</span></div>{/if}
-
-<ul class="flex flex-col gap-2">
-	{#each data?.skills ?? [] as skill (skill.name)}
-		<li class="card border border-base-300">
-			<div class="card-body py-2">
-				<div class="flex items-center gap-3 flex-wrap">
-					<button class="font-medium link link-hover" onclick={() => toggle(skill.name)}>
-						{skill.title}
-					</button>
-					<span class="font-mono text-xs text-base-content/50">{skill.name}</span>
-					<span class="flex-1"></span>
-					<button class="btn btn-ghost btn-xs" onclick={() => toggle(skill.name)}>
-						{expanded === skill.name ? t('my-skills-hide-button') : t('my-skills-view-button')}
-					</button>
-					<a
-						class="btn btn-ghost btn-xs"
-						href="/api/v0/skills/{encodeURIComponent(skill.name)}/archive"
-						download="{skill.name}.skill"
-						title={t('my-skills-download-title')}
-					>
-						{t('my-skills-download-button')}
-					</a>
-					{#if data?.user_skills_enabled}
-						<button
-							class="btn btn-ghost btn-xs text-error"
-							onclick={() => remove(skill.name)}
-							title={t('my-skills-delete-title')}
-						>
-							{t('my-skills-delete-button')}
-						</button>
-					{/if}
-				</div>
-				<p class="text-xs text-base-content/60">{skill.description}</p>
-				{#if expanded === skill.name}
-					<pre class="mt-2 bg-base-200 rounded-md p-3 text-xs whitespace-pre-wrap max-h-96 overflow-y-auto">{bodies[skill.name] ?? '…'}</pre>
-				{/if}
-			</div>
-		</li>
-	{:else}
-		<li class="text-sm text-base-content/50">{t('my-skills-empty-loaded')}</li>
-	{/each}
-</ul>

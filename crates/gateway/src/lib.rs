@@ -11,8 +11,8 @@
 //! - [`gateway_core`] — the application body: config, DB, crypto, RBAC, the
 //!   upstream registry, the tool registry + tools, the feature subsystems, and
 //!   the shared [`gateway_runtime::RamaState`] handle.
-//! - [`gateway_api`] — the server-rendered HTML pages and their datastar SSE
-//!   patch handlers.
+//! - [`gateway_api`] — the session-authenticated JSON handlers, JSON-SSE chat
+//!   stream, and the two standalone OAuth callback documents.
 //!
 //! Keeping this crate thin is the point of the split: a page edit rebuilds
 //! `gateway-api` and this crate, never `gateway-core`. See

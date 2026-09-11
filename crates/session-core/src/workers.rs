@@ -84,8 +84,7 @@ pub enum ToolPromptKind {
     Location,
 }
 
-/// Show or tear down a [`ToolPrompt`]. Mirrors the Inject pair (card +
-/// cleanup frame) the datastar wire sends.
+/// Show or tear down a [`ToolPrompt`] on the structured chat event stream.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum ToolPromptEvent {
@@ -152,8 +151,8 @@ impl SessionWorkers {
     ///
     /// Differs from the old `CancelRegistry::register` which *always*
     /// cancelled the prior worker and inserted the new one. That
-    /// behaviour caused the duplication-on-retry bug: a datastar
-    /// `@post` retry after a network blip would race a brand-new
+    /// behaviour caused the duplication-on-retry bug: a client
+    /// retry after a network blip would race a brand-new
     /// worker against the still-finishing previous one. We want the
     /// strict "one worker per user" invariant now.
     pub fn register(&self, user_id: &str, turn_id: &str, session_id: &str) -> RegisterOutcome {

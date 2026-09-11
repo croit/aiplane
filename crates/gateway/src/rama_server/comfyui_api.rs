@@ -17,7 +17,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use gateway_core::server::db::users;
-use gateway_features::server::comfyui::ReloadReport;
+use gateway_features::server::comfyui::{ComfyuiJob, ReloadReport, jobs};
 use gateway_runtime::rama_server::state::RamaState;
 
 /// `POST /api/v0/comfyui/reload` — re-scan `[comfyui] content_dir` and
@@ -71,7 +71,11 @@ pub async fn catalog(State(state): State<Arc<RamaState>>, req: Request) -> Respo
             configured: false,
             base_url: None,
             content_dir: None,
+            timeout_secs: None,
+            queue_poll_interval_ms: None,
+            max_concurrent_jobs: None,
             workflows: Vec::new(),
+            jobs: Vec::new(),
         });
     };
     let snapshot = handle.store.current();
@@ -84,6 +88,8 @@ pub async fn catalog(State(state): State<Arc<RamaState>>, req: Request) -> Respo
             title: m.title.clone(),
             description: m.description.clone(),
             output_kind: m.output_kind.to_string(),
+            output_node_id: m.output_node_id.clone(),
+            filename_prefix: m.output_filename_prefix.clone(),
             params: m
                 .params
                 .iter()
@@ -95,11 +101,22 @@ pub async fn catalog(State(state): State<Arc<RamaState>>, req: Request) -> Respo
                 .collect(),
         })
         .collect();
+    let jobs = match jobs::recent(&state.db, 20).await {
+        Ok(jobs) => jobs,
+        Err(err) => {
+            tracing::warn!(error = %err, "reading recent ComfyUI jobs");
+            return internal_error("reading recent ComfyUI jobs failed");
+        }
+    };
     json_ok(&CatalogResponse {
         configured: true,
         base_url: Some(handle.client.base_url().to_string()),
         content_dir: Some(handle.store.dir().display().to_string()),
+        timeout_secs: Some(handle.runner_timeout.as_secs()),
+        queue_poll_interval_ms: Some(handle.runner_poll_interval.as_millis() as u64),
+        max_concurrent_jobs: Some(handle.max_concurrent_jobs),
         workflows,
+        jobs,
     })
 }
 
@@ -115,7 +132,11 @@ struct CatalogResponse {
     configured: bool,
     base_url: Option<String>,
     content_dir: Option<String>,
+    timeout_secs: Option<u64>,
+    queue_poll_interval_ms: Option<u64>,
+    max_concurrent_jobs: Option<usize>,
     workflows: Vec<CatalogEntry>,
+    jobs: Vec<ComfyuiJob>,
 }
 
 #[derive(Serialize)]
@@ -125,6 +146,8 @@ struct CatalogEntry {
     title: String,
     description: String,
     output_kind: String,
+    output_node_id: String,
+    filename_prefix: String,
     params: Vec<CatalogParam>,
 }
 
