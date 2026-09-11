@@ -98,7 +98,7 @@
 	<button
 		bind:this={trigger}
 		type="button"
-		class="btn btn-outline {buttonSize} w-full min-w-0 justify-between gap-2 font-normal"
+		class="btn {buttonSize} w-full min-w-0 justify-between gap-2 border-base-300 bg-base-200 font-normal focus-visible:outline-1 focus-visible:outline-info focus-visible:outline-offset-1"
 		role="combobox"
 		aria-label={ariaLabel}
 		aria-haspopup="listbox"
@@ -114,7 +114,7 @@
 
 	{#if open}
 		<div class="dropdown-content absolute right-0 top-full z-50 mt-1 w-[min(24rem,calc(100vw-2rem))] min-w-full rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
-			<label class="input input-sm flex w-full items-center gap-2">
+			<label class="input input-sm flex w-full items-center gap-2 focus-within:outline-1 focus-within:outline-info focus-within:outline-offset-1">
 				<svg class="size-4 shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
 				<input bind:this={searchInput} class="min-w-0 flex-1" value={query} oninput={search} onkeydown={onSearchKeydown} placeholder={t('searchable-select-search-placeholder')} aria-label={t('searchable-select-search-aria', { field: ariaLabel })} />
 				{#if query}<button type="button" class="btn btn-ghost btn-xs btn-circle" onclick={() => { query = ''; activeIndex = nextEnabledOptionIndex(options, -1, 1); void tick().then(() => searchInput?.focus()); }} aria-label={t('searchable-select-clear-search')}>✕</button>{/if}
@@ -126,7 +126,7 @@
 						<li class="list-none">
 							<button
 								type="button"
-								class="card card-xs w-full border text-left transition-colors {index === activeIndex ? 'border-primary bg-base-200' : 'border-base-300/60 bg-base-100'} {option.value === value ? 'font-semibold' : ''}"
+								class="card card-xs w-full border text-left transition-colors {index === activeIndex ? 'border-base-300 bg-base-200' : 'border-transparent bg-base-100'} {option.value === value ? 'font-semibold' : ''}"
 								role="option"
 								aria-selected={option.value === value}
 								data-option-index={index}

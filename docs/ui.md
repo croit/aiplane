@@ -101,7 +101,9 @@ of a native select. It searches labels, stored values, descriptions, keywords an
 badges; supports arrow keys, Enter and Escape; and bounds long result lists to
 their own scroll region. Model choices render the model id left-aligned and show
 compact GDPR and NDA status badges right-aligned on every row. Green check badges
-mean the model is cleared; red crossed-out badges mean it is restricted. Small
+mean the model is cleared; red crossed-out badges mean it is restricted. The
+search field alone carries the accent focus ring; triggers use neutral borders,
+and keyboard-active options use a subtle surface change. Small
 closed enums such as hour/day/week or on/off remain native selects because a
 search field would add friction without improving discovery.
 
