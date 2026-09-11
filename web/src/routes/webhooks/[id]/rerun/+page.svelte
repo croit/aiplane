@@ -33,7 +33,7 @@
 	}
 </script>
 
-<div class="mx-auto w-full max-w-5xl">
+<div class="w-full">
 	<WebhookSubpageHeader title={t('webhooks-rerun-heading')} intro={t('webhooks-rerun-intro')} />
 	{#if error}<div class="alert alert-error mb-4"><span>{error}</span></div>{/if}
 	{#if webhook && run}<form class="card mb-6 border border-base-300" onsubmit={(event) => { event.preventDefault(); void rerun(); }}><div class="card-body gap-4"><label class="flex flex-col gap-1"><div class="label"><span class="label-text">{t('webhooks-rerun-payload-label')}</span></div><textarea class="textarea min-h-36 w-full font-mono text-xs" readonly value={run.payload} aria-label={t('webhooks-rerun-payload-label')}></textarea></label><label class="flex flex-col gap-1"><div class="label"><span class="label-text">{t('webhooks-prompt-label')}</span></div><textarea class="textarea min-h-28 w-full" bind:value={prompt} maxlength="8000" required aria-label={t('webhooks-prompt-label')}></textarea></label><div class="card-actions justify-end"><button class="btn btn-primary" type="submit" disabled={busy || !prompt.trim()}>{t('webhooks-rerun-submit')}</button></div></div></form>{:else if webhook}<div class="alert alert-info"><span>{t('webhooks-rerun-no-payload-notice')}</span></div>{/if}

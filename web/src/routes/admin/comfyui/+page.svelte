@@ -32,7 +32,7 @@
 	onMount(refresh);
 </script>
 
-<div class="mx-auto w-full max-w-5xl px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+<div class="w-full">
 	<div class="mb-6 flex flex-wrap items-start justify-between gap-3">
 		<div class="min-w-0 flex-1"><h1 class="m-0 text-2xl font-semibold">{t('admin-comfyui-heading')}</h1><p class="mb-0 mt-1 text-sm text-base-content/60">{t('admin-comfyui-intro')}</p></div>
 		<button type="button" class="btn btn-primary btn-sm shrink-0" disabled={!data?.configured || reloading} onclick={reload}>{t('admin-comfyui-reload')}</button>

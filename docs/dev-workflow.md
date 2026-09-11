@@ -14,14 +14,15 @@ We **do not** check in a `rust-toolchain.toml`; mise is the single source of tru
 
 ## Daily commands
 
-The Rust binary and the UI build separately: `cargo build` needs no Node, and the SPA build needs no `cargo`. The tasks that run the gateway (`dev`) depend on **`build-web`**, so a fresh checkout still needs no manual asset step — pick a goal and run it. UI work does not rebuild Rust at all; see [the SPA loop](#the-sveltekit-spa-web) below.
+The Rust binary and the UI build separately: `cargo build` needs no Node, and the SPA build needs no `cargo`. `mise run dev` starts both development processes behind one public origin: Vite/HMR on `:8080`, with the Rust gateway private on `:8081`. UI work does not rebuild Rust at all; see [the SPA loop](#the-sveltekit-spa-web) below.
 
 | Goal | Command |
 |---|---|
-| Run gateway against local config (also serves the built SPA) | `mise run dev` |
+| Run the complete HMR development stack on :8080 | `mise run dev` |
+| Run the production-shaped compiled SPA on :8080 | `mise run dev-served` |
+| Run only the Rust gateway | `mise run dev-gateway` |
 | Run a stub gateway for UI debugging (seeded session, mock LLM) | `mise run dev-ui` |
 | Build the gateway debug binary (no run) | `mise run dev-build` |
-| **SvelteKit SPA** dev server (Vite HMR on :5173, proxies API to :8080) | `mise run dev-web` |
 | Install `web/node_modules` (only when the lockfile changed) | `mise run web-install` |
 | Build the SvelteKit SPA into `target/frontend/build/` | `mise run build-web` |
 | svelte-check (TS + a11y diagnostics) on the SPA | `mise run check-web` |
@@ -190,9 +191,9 @@ and `target/` there instead.
 
 ## Layout while developing
 
-`mise run dev` runs `cargo run --package gateway`. On startup the binary:
+`mise run dev` starts Vite on public `127.0.0.1:8080` and `cargo run --package gateway` on private `127.0.0.1:8081`. Vite owns the browser origin and proxies every gateway-owned route, including `/chat/attachment/*`, OAuth callbacks, liveness endpoints, `/api`, `/v1`, and `/auth`. On startup the binary:
 
-- binds the address from the `IP` / `PORT` env vars (defaults `127.0.0.1` / `8080`);
+- binds the private address supplied by the task (`127.0.0.1:8081`);
 - resolves its config file in this order: `$GATEWAY_CONFIG` → `./gateway.toml` → `/etc/gateway/config.toml` (see `Config::resolve_path` in `crates/gateway-core/src/server/config.rs`). If none is found it boots with built-in defaults (no upstreams, no OIDC);
 - opens the SQLite database at `[db].path` (default `gateway.sqlite`) and runs migrations;
 - builds the upstream registry and spawns the health probes;
@@ -206,7 +207,7 @@ $EDITOR gateway.toml   # set at least one [upstream_pools.*] backend (and [oidc]
 mise run dev
 ```
 
-`mise run dev` also sets `GATEWAY_STATIC_DIR=target/frontend/build` (built by its `build-web` dependency), so `http://localhost:8080` serves the compiled SPA as production does. For UI work run the Vite dev server alongside it instead of rebuilding — see [the SPA loop](#the-sveltekit-spa-web).
+`mise run dev-served` is the production-shaped alternative: it builds `target/frontend/build` and serves that directory directly from the debug gateway on `http://localhost:8080`, without HMR. `mise run dev-gateway` exposes the Rust process alone and honors the normal `IP` / `PORT` environment variables.
 
 ## Environment
 
@@ -317,16 +318,15 @@ Every code path under test (cookie parsing, session lookup, RBAC, the session ga
 
 The UI has **two** development modes.
 
-**Hot-reload mode — the everyday loop.** Two terminals:
+**Hot-reload mode — the everyday loop.** One terminal:
 
 ```bash
-mise run dev       # gateway (Rust) on :8080
-mise run dev-web   # Vite dev server on :5173, HMR on every Svelte save
+mise run dev       # public Vite/HMR on :8080, private Rust gateway on :8081
 ```
 
-Open `http://localhost:5173`. Vite proxies `/api`, `/v1`, and `/auth` to the gateway on :8080 (`web/vite.config.ts`), so the session cookie and every backend call behave exactly as in production — while a Svelte-file save re-renders in well under a second with **no Rust rebuild**. That is the point of the SPA: UI iteration no longer pays the Rust compile.
+Open `http://localhost:8080`. Vite proxies the complete dynamic surface to the gateway on :8081 (`web/vite.config.ts`), so sessions, OIDC callbacks, attachments, downloads, SSE, and API calls share the production-shaped browser origin. A Svelte-file save re-renders in well under a second with **no Rust rebuild**.
 
-**Served mode — what production looks like.** `mise run dev` additionally sets `GATEWAY_STATIC_DIR=target/frontend/build` (built by its `build-web` dep), so the gateway serves the compiled SPA at `http://localhost:8080`. Use this to check the built artefact, cache headers and the history fallback. No Node runs in production: the container image `COPY`s the built `target/frontend/build/` directory in (see the Dockerfile) and the Rust binary serves it (`crates/gateway/src/rama_server/spa.rs`). With `GATEWAY_STATIC_DIR` unset the UI answers 503 and the API is unaffected.
+**Served mode — what production looks like.** `mise run dev-served` builds the SPA and lets the gateway serve it directly at `http://localhost:8080`. Use this to check the built artefact, cache headers and history fallback. No Node runs in production: the container image `COPY`s the built `target/frontend/build/` directory in and the Rust binary serves it (`crates/gateway/src/rama_server/spa.rs`).
 
 The gateway serves its OpenAPI 3.1 contract at `GET /openapi.json`. It is generated from the `/api/v0/*` declarations in `router.rs`, so route changes require no second contract-file edit and the production container carries no detached spec. The client in `web/src/lib/api.ts` remains hand-written against the backend wire types.
 

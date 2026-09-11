@@ -23,7 +23,7 @@
 	});
 </script>
 
-<div class="mx-auto w-full max-w-5xl px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+<div class="w-full">
 	<a href="/admin/connectors" class="text-sm text-base-content/60 hover:underline">{t('connectors-audit-back')}</a>
 	{#if error}<div class="alert alert-error mt-4"><span>{error}</span></div>{/if}
 	{#if data}

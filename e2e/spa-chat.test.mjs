@@ -190,22 +190,36 @@ test("the voice-mode modal opens with its tap-to-talk control", async () => {
     await ctx.close();
 });
 
-test("conversation tools preserve grouped searchable Off Auto On controls", async () => {
+test("conversation tools use a responsive full-screen selector", async () => {
     const cookieValue = await devSessionCookie();
-    const ctx = await browser.newContext();
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
     await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
     const page = await ctx.newPage();
     await page.goto(`${BASE}/chat`, { waitUntil: "domcontentloaded" });
     await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname), { timeout: 5000 });
     await page.getByRole("button", { name: "Tools", exact: true }).click();
+
+    const dialog = page.getByRole("dialog");
+    const desktopBox = await dialog.boundingBox();
+    assert.deepEqual(desktopBox, { x: 0, y: 0, width: 1400, height: 900 });
+    await dialog.getByRole("button", { name: /^All tools/ }).waitFor();
+    assert.equal(await dialog.getByRole("combobox", { name: "Tool category" }).isVisible(), false);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileBox = await dialog.boundingBox();
+    assert.deepEqual(mobileBox, { x: 0, y: 0, width: 390, height: 844 });
+    await dialog.getByRole("combobox", { name: "Tool category" }).waitFor();
+    assert.equal(await dialog.getByRole("button", { name: /^All tools/ }).isVisible(), false);
+
     await page.getByPlaceholder("Search tools…").fill("web search");
 
-    const row = page.getByText("Web search", { exact: true }).locator("..");
+    const row = dialog.locator("li").filter({ has: page.getByText("Web search", { exact: true }) });
     const saved = page.waitForResponse(
         (response) => response.url().endsWith("/capabilities") && response.request().method() === "POST",
     );
     await row.getByRole("button", { name: "On — always available to the assistant", exact: true }).click();
     assert.equal((await saved).status(), 200);
+    await page.setViewportSize({ width: 1400, height: 900 });
     await page.getByRole("button", { name: "Close", exact: true }).click();
     await page.getByRole("button", { name: /Web search/ }).waitFor();
     await ctx.close();
@@ -235,6 +249,19 @@ test("the transcript keeps edit, retry, code, tool-detail, and canvas workflows"
     await page.goto(`${BASE}${workspaceUrl}`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Document", exact: true }).waitFor();
     await page.getByText("Ship a reliable, accessible gateway experience.", { exact: true }).waitFor();
+
+    const workspace = page.locator("[data-chat-workspace]");
+    const transcript = page.locator("[data-chat-transcript]");
+    const composer = page.locator("[data-chat-composer]");
+    const workspaceBox = await workspace.boundingBox();
+    const composerBox = await composer.boundingBox();
+    assert.ok(workspaceBox && composerBox);
+    assert.ok(composerBox.y + composerBox.height <= 950, "the composer must be visible without scrolling the page");
+    assert.ok(Math.abs(composerBox.width - workspaceBox.width) <= 1, "the composer must span chat and canvas");
+    const composerY = composerBox.y;
+    await transcript.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    assert.equal((await composer.boundingBox()).y, composerY, "transcript scrolling must not move the composer");
+
     await page.getByLabel("Version", { exact: true }).selectOption("1");
     await page.getByText("Complete feature parity", { exact: true }).waitFor();
     await page.getByLabel("Version", { exact: true }).selectOption("2");

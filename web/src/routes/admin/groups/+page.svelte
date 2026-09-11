@@ -38,7 +38,7 @@
 	onMount(refresh);
 </script>
 
-<section class="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+<section class="flex w-full flex-col gap-4">
 	<header class="flex flex-col gap-1">
 		<h1 class="text-2xl font-bold">{t('groups-heading')}</h1>
 		<p class="text-sm text-base-content/70">{t('groups-intro')}</p>

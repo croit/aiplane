@@ -62,7 +62,7 @@
 	onMount(refresh);
 </script>
 
-<div class="mx-auto w-full max-w-5xl px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+<div class="w-full">
 	<h1 class="mb-2 text-2xl font-bold">{t('integrations-heading')}</h1>
 	<p class="mb-6 text-sm text-base-content/60">{t('integrations-intro')}</p>
 	{#if error}<div class="alert alert-error mb-4"><span>{error}</span></div>{/if}

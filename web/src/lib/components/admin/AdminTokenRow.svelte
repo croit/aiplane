@@ -72,25 +72,25 @@
 </script>
 
 <tr>
-	<td><div class="font-medium">{token.name}</div><div class="break-all font-mono text-xs text-base-content/50">{token.id}</div></td>
-	<td class="break-all">{token.owner_email}</td>
-	<td>
+	<td class="w-64"><div class="font-medium">{token.name}</div><div class="max-w-56 truncate font-mono text-xs text-base-content/50" title={token.id}>{token.id}</div></td>
+	<td class="w-56"><div class="max-w-52 truncate" title={token.owner_email}>{token.owner_email}</div></td>
+	<td class="w-28">
 		{#if credentialState === 'revoked'}<span class="badge badge-error">{t('tokens-badge-revoked')}</span>
 		{:else if credentialState === 'expired'}<span class="badge badge-warning">{t('admin-tokens-badge-expired')}</span>
 		{:else}<span class="badge badge-secondary">{t('tokens-badge-active')}</span>{/if}
 	</td>
-	<td class="text-xs text-base-content/70">
+	<td class="w-64 text-xs leading-relaxed text-base-content/70">
 		{t('tokens-row-meta', {
 			created: tokenDate(token.created_at, timezone),
 			last_used: token.last_used_at ? tokenDate(token.last_used_at, timezone) : t('tokens-last-used-never'),
 			expires: tokenDate(token.expires_at, timezone)
 		})}
 	</td>
-	<td class="text-right tabular-nums">{usageEnabled ? usageInteger(token.usage_this_month.requests) : '—'}</td>
-	<td class="text-right tabular-nums">{usageEnabled ? usageInteger(token.usage_this_month.total_tokens) : '—'}</td>
-	<td class="text-right tabular-nums">{usageEnabled ? usageCost(token.usage_this_month.cost, currency) : '—'}</td>
+	<td class="w-24 whitespace-nowrap text-right tabular-nums">{usageEnabled ? usageInteger(token.usage_this_month.requests) : '—'}</td>
+	<td class="w-24 whitespace-nowrap text-right tabular-nums">{usageEnabled ? usageInteger(token.usage_this_month.total_tokens) : '—'}</td>
+	<td class="w-28 whitespace-nowrap text-right tabular-nums">{usageEnabled ? usageCost(token.usage_this_month.cost, currency) : '—'}</td>
 	<td>
-		<div class="flex min-w-64 flex-col gap-1">
+		<div class="flex min-w-72 flex-col gap-1">
 			<div class="break-all text-xs {ownerModels === null ? 'text-base-content/50' : 'font-mono'}">{ownerModels?.join(', ') || t('limits-all-models')}</div>
 			{#if token.limits.length > 0}<div class="text-xs text-base-content/70">{token.limits.map(limitLabel).join(' · ')}</div>{/if}
 			<details bind:this={details} class="collapse collapse-arrow border border-base-300 bg-base-100">

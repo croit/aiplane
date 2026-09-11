@@ -42,7 +42,7 @@
 	onMount(refresh);
 </script>
 
-<section class="mx-auto flex max-w-6xl flex-col gap-4 p-4 pt-14 sm:p-6">
+<section class="flex w-full flex-col gap-4">
 	<header class="flex flex-col gap-2">
 		<h1 class="text-2xl font-bold">{t('admin-tokens-heading')}</h1>
 		<p class="text-sm text-base-content/70">{t('admin-tokens-blurb')}</p>
@@ -57,10 +57,10 @@
 				{#if data.tokens.length === 0}
 					<p class="text-sm text-base-content/60">{t('admin-tokens-none')}</p>
 				{:else}
-					<div class="overflow-x-auto"><table class="table table-sm">
+					<div class="overflow-x-auto"><table class="table table-sm min-w-[84rem]">
 						<thead><tr>
-							<th>{t('admin-tokens-col-name')}</th><th>{t('admin-tokens-col-owner')}</th><th>{t('admin-tokens-col-state')}</th><th>{t('admin-tokens-col-dates')}</th>
-							<th class="text-right">{t('usage-col-requests')}</th><th class="text-right">{t('usage-col-tokens')}</th><th class="text-right">{t('usage-col-cost')}</th><th>{t('admin-tokens-col-scope')}</th>
+							<th class="w-64">{t('admin-tokens-col-name')}</th><th class="w-56">{t('admin-tokens-col-owner')}</th><th class="w-28">{t('admin-tokens-col-state')}</th><th class="w-64">{t('admin-tokens-col-dates')}</th>
+							<th class="w-24 text-right">{t('usage-col-requests')}</th><th class="w-24 text-right">{t('usage-col-tokens')}</th><th class="w-28 text-right">{t('usage-col-cost')}</th><th>{t('admin-tokens-col-scope')}</th>
 						</tr></thead>
 						<tbody>{#each data.tokens as token (token.id)}<AdminTokenRow {token} models={data.models} usageEnabled={data.usage_enabled} currency={data.currency} timezone={data.timezone} onsave={saveModels} />{/each}</tbody>
 					</table></div>

@@ -43,7 +43,7 @@
 	onMount(load);
 </script>
 
-<div class="mx-auto w-full max-w-5xl space-y-6">
+<div class="w-full space-y-6">
 	<header>
 		<h1 class="text-2xl font-bold">{t('rag-heading')}</h1>
 		<p class="mt-2 text-sm text-base-content/60">{t('rag-description-prefix')} <code>rag_search</code> {t('rag-description-suffix')}</p>

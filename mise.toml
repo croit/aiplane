@@ -129,27 +129,45 @@ NEXTCLOUD_PASS="$PASSWORD" \
 dir = "{{ config_root }}"
 
 [tasks.dev]
-description = "Run the gateway (debug build) against the local config: the API, the proxy, and the built SPA. Pair with `mise run dev-web` in another terminal for the Vite dev server on :5173 (HMR, no Rust rebuild on UI changes)."
-depends = ["build-web"]
+description = "Run the complete local stack: Vite HMR on public :8080 and the Rust gateway on private :8081. One browser origin, one command."
+depends = ["web-install"]
 run = """
-# GATEWAY_SESSION_KEY is mandatory (the gateway refuses to boot without it —
-# see load_session_secret in crates/gateway/src/main.rs). Generate one on first
-# run and reuse it forever after, so a dev restart no longer logs you out AND
-# secrets sealed into the local gateway.sqlite (backend API keys, connector
-# secrets, OAuth tokens) stay readable across restarts. Previously dev ran on an
-# ephemeral key, so every one of those was silently lost on every restart.
+PUBLIC_PORT="${GATEWAY_DEV_PUBLIC_PORT:-8080}"
+BACKEND_PORT="${GATEWAY_DEV_BACKEND_PORT:-8081}"
+
+env IP=127.0.0.1 PORT="$BACKEND_PORT" mise run dev-gateway &
+GATEWAY_PID=$!
+cleanup() {
+  kill "$GATEWAY_PID" >/dev/null 2>&1 || true
+  wait "$GATEWAY_PID" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+echo "public HMR UI: http://localhost:$PUBLIC_PORT (gateway backend: 127.0.0.1:$BACKEND_PORT)"
+env \
+  GATEWAY_DEV_PUBLIC_PORT="$PUBLIC_PORT" \
+  GATEWAY_DEV_BACKEND_ORIGIN="http://127.0.0.1:$BACKEND_PORT" \
+  npm --prefix web run dev
+"""
+dir = "{{ config_root }}"
+
+[tasks.dev-gateway]
+description = "Run only the Rust gateway for another local frontend or debugger. Defaults to the normal IP/PORT; `mise run dev` overrides it to private :8081."
+run = """
 KEY_FILE=".gateway-dev-session-key"
 if [ ! -f "$KEY_FILE" ]; then
   openssl rand -hex 32 > "$KEY_FILE"
   chmod 600 "$KEY_FILE"
   echo "generated a persistent dev session key at $KEY_FILE (gitignored)"
 fi
-# GATEWAY_STATIC_DIR serves the SvelteKit SPA from the `mise run build-web`
-# output. A missing directory is harmless — only the UI
-# then 503s, the rest of the gateway is unaffected. Override with your own
-# path (e.g. a prebuilt copy) to point at a different build.
-exec env GATEWAY_STATIC_DIR="${GATEWAY_STATIC_DIR:-target/frontend/build}" GATEWAY_SESSION_KEY="$(cat "$KEY_FILE")" cargo run --package gateway
+exec env GATEWAY_SESSION_KEY="$(cat "$KEY_FILE")" cargo run --package gateway
 """
+dir = "{{ config_root }}"
+
+[tasks.dev-served]
+description = "Production-shaped local check: build the SPA and serve it directly from the debug gateway on :8080, without HMR."
+depends = ["build-web"]
+run = "GATEWAY_STATIC_DIR=target/frontend/build mise run dev-gateway"
 dir = "{{ config_root }}"
 
 [tasks.dev-build]
@@ -204,11 +222,6 @@ description = "Install web/ node_modules (SvelteKit SPA). Re-runs only when pack
 sources = ["web/package.json", "web/package-lock.json"]
 outputs = ["web/node_modules/.package-lock.json"]
 run = "npm --prefix web ci --no-audit --no-fund"
-
-[tasks.dev-web]
-description = "SvelteKit dev server (Vite, :5173) with /api, /v1, /auth proxied to the gateway on :8080 — run alongside `mise run dev`. HMR on save; no Rust rebuild on UI changes."
-depends = ["web-install"]
-run = "npm --prefix web run dev"
 
 [tasks.build-web]
 description = "Build the SvelteKit SPA (adapter-static) into target/frontend/build/. The Dockerfile COPYs that directory into the image; the gateway serves it from the root when GATEWAY_STATIC_DIR points there."

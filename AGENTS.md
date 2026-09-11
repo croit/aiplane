@@ -184,9 +184,10 @@ any more.
 After `mise install` (one time):
 
 ```bash
-# Two terminals during UI work — one for the SPA, one for the gateway.
-mise run dev-web           # Vite dev server on :5173 (HMR, no Rust rebuild)
-mise run dev               # debug-mode `cargo run --package gateway`
+# One terminal during UI work: public Vite/HMR on :8080 proxies every
+# dynamic route to the private debug gateway on :8081.
+mise run dev
+mise run dev-served        # production-shaped compiled SPA, no HMR
 
 # Other day-to-day tasks
 mise run dev-build         # debug build only (target/debug/gateway), ~2 s incremental

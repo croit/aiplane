@@ -54,7 +54,7 @@
 
 <svelte:head><title>{t('admin-page-title')}</title></svelte:head>
 
-<section class="mx-auto flex max-w-5xl flex-col gap-4 p-4 pt-14 sm:p-6">
+<section class="flex w-full flex-col gap-4">
 	<header class="flex flex-col gap-1">
 		<h1 class="text-2xl font-bold">{t('admin-heading')}</h1>
 		<p class="max-w-2xl text-sm text-base-content/70">{t('admin-intro-prefix')} <strong>{t('admin-intro-every')}</strong> {t('admin-intro-middle')} <strong>{t('admin-intro-always-wins')}</strong>{t('admin-intro-suffix')}</p>

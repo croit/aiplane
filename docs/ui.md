@@ -85,6 +85,17 @@ is the sidebar's only vertical scroll region. This preserves access to the
 identity controls and avoids nested scrollbars when several route groups are
 open.
 
+The authenticated page shell owns horizontal padding and gives every route the
+full remaining width beside the sidebar. Route roots must not add page-sized
+`max-w-5xl` / `max-w-6xl` containers or repeat the shell padding; narrower
+measures still belong on prose, forms, dialogs, and other content whose own
+readability requires them. The chat canvas measures its conversation container,
+not the browser window: on desktop it stays below 46% and 768 px while reserving
+at least 560 px for chat, and on smaller screens it remains a full-screen panel.
+The chat route is bounded to the viewport. Its transcript and canvas scroll
+independently, while the composer stays visible as a full-width footer beneath
+both regions; the document itself must not become the chat scroll container.
+
 The root layout owns the document title through the route registry in
 `page-titles.ts`; data-driven pages publish their resolved name through the
 shared override in `page-title.ts`. Conversation metadata is refreshed
@@ -201,8 +212,12 @@ resolves the caller's latest conversation and creates one only when the caller
 has none. `GET …/sessions/{id}` returns the session and turns plus
 `compacted_up_to_seq` and the conversation's attachment-marker-derived
 `assets[]`; the SPA uses those fields for the compaction boundary and canvas
-asset browser. `POST …/messages` submits multipart data when there are
-attachments, and `POST …/turns/{turn_id}/edit` accepts that same multipart
+asset browser. Attachment markers are reconciled with those canonical assets by
+turn and filename before rendering, so stale marker URLs do not produce duplicate
+or unavailable cards. Relative Markdown image sources resolve through the same
+asset set and are suppressed when the attachment gallery already renders that
+image. `POST …/messages` submits multipart data when there are attachments, and
+`POST …/turns/{turn_id}/edit` accepts that same multipart
 shape so editing does not lose the composer's attachment support. The other
 mutations include `…/cancel`, `…/fork`, `…/share`, `…/effort`,
 `…/documents/*` (canvas and version history), `…/export.md`,
@@ -213,6 +228,12 @@ read model. Each built-in tool, connected integration tool, and skill carries
 its group, description, ordering metadata, and explicit `off` / `auto` / `on`
 state. The picker searches and groups this response; it does not reconstruct
 capabilities from unrelated endpoints.
+
+The capability picker is a full-screen dialog at every viewport size. Search
+is global, state filters expose `off` / `auto` / `on` in words, and the desktop
+category rail becomes a labelled category select on narrow screens. Changes
+save immediately; category-level controls use the same mutation path as an
+individual tool and preserve `can_disable` by falling back to `auto`.
 
 `GET /api/v0/usage` is the complete usage-dashboard read model. Period,
 scope, source, backend, and token filters are query parameters so a view is
@@ -309,21 +330,21 @@ content-quality caveat, not permission to omit a language.
 
 ## Development loop
 
-Two terminals:
+One terminal:
 
 ```bash
-mise run dev       # the Rust gateway (API + proxy) on :8080
-mise run dev-web   # Vite dev server on :5173, HMR on every save
+mise run dev       # public Vite/HMR on :8080, private Rust gateway on :8081
 ```
 
-Open `http://localhost:5173`. Vite proxies `/api`, `/v1` and `/auth` to :8080 (`web/vite.config.ts`), so the session cookie and every backend call behave exactly as in production — while a Svelte save re-renders in well under a second with **no Rust rebuild**. That is the point of the SPA: UI iteration no longer pays the Rust compile.
+Open `http://localhost:8080`. Vite proxies the complete dynamic surface to :8081 (`web/vite.config.ts`), including attachments and OAuth callback routes, so there is only one browser origin. A Svelte save re-renders in well under a second with **no Rust rebuild**.
 
-`mise run dev` also sets `GATEWAY_STATIC_DIR=target/frontend/build` (built by its `build-web` dependency), so `http://localhost:8080` serves the *compiled* SPA. Use that to check the built artefact, cache headers and the history fallback.
+`mise run dev-served` builds `target/frontend/build` and serves the compiled SPA directly from the gateway. Use that to check the production-shaped artifact, cache headers and history fallback.
 
 | Task | What it does |
 |---|---|
 | `mise run web-install` | `npm ci` in `web/`. Re-runs only when `package.json`/lock change. |
-| `mise run dev-web` | Vite dev server on :5173 with the API proxy. |
+| `mise run dev` | Complete HMR stack on :8080; Vite proxies to the private gateway. |
+| `mise run dev-served` | Compiled SPA served directly by the gateway, without HMR. |
 | `mise run build-web` | `vite build` → `target/frontend/build/` (what the Dockerfile COPYs). |
 | `mise run check-web` | `svelte-check` — TypeScript, a11y and Svelte diagnostics. |
 | `mise run test-web` | `node --test` over `web/src/lib/**/*.test.ts` (the pure, framework-free halves). |

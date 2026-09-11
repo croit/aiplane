@@ -1,9 +1,15 @@
 <script lang="ts">
 	import { renderMarkdown } from '$lib/markdown';
+	import type { MarkdownImage } from '$lib/markdown';
 	import { t } from '$lib/i18n.svelte';
 
-	let { content, class: className = '' } = $props<{ content: string | null | undefined; class?: string }>();
-	const html = $derived(renderMarkdown(content, { copy: t('render-code-copy'), copied: t('render-code-copied') }));
+	let { content, class: className = '', images = [], hiddenImageUrls }: {
+		content: string | null | undefined;
+		class?: string;
+		images?: MarkdownImage[];
+		hiddenImageUrls?: ReadonlySet<string>;
+	} = $props();
+	const html = $derived(renderMarkdown(content, { copy: t('render-code-copy'), copied: t('render-code-copied') }, { images, hiddenImageUrls }));
 
 	async function copyCode(event: MouseEvent) {
 		const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-code-copy]');

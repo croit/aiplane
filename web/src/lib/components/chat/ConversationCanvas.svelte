@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { CanvasDocument, ChatAsset } from '$lib/api';
+	import { canvasBounds, clampCanvasWidth } from '$lib/canvas-layout';
 	import { n, t } from '$lib/i18n.svelte';
 	import Markdown from './Markdown.svelte';
 
@@ -19,15 +20,31 @@
 	let draft = $state('');
 	let editing = $state(false);
 	let saving = $state(false);
-	let canvasWidth = $state(672);
-	let canvasMaxWidth = $state(1024);
-	const minimumCanvasWidth = 320;
+	const initialBounds = canvasBounds(1200);
+	let panel: HTMLElement;
+	let bounds = $state(initialBounds);
+	let canvasWidth = $state(initialBounds.preferred);
 	const canvasWidthStorageKey = 'chat-canvas-width';
 
 	onMount(() => {
-		canvasMaxWidth = Math.max(minimumCanvasWidth, Math.floor(window.innerWidth * 0.7));
-		const stored = Number(localStorage.getItem(canvasWidthStorageKey));
-		canvasWidth = clampCanvasWidth(Number.isFinite(stored) && stored > 0 ? stored : Math.min(672, Math.round(window.innerWidth * 0.42)));
+		const container = panel.parentElement;
+		if (!container) return;
+		let initialized = false;
+		const resize = () => {
+			bounds = canvasBounds(container.clientWidth);
+			if (!initialized) {
+				const stored = Number(localStorage.getItem(canvasWidthStorageKey));
+				canvasWidth = clampCanvasWidth(Number.isFinite(stored) && stored > 0 ? stored : bounds.preferred, bounds);
+				localStorage.setItem(canvasWidthStorageKey, String(canvasWidth));
+				initialized = true;
+			} else {
+				canvasWidth = clampCanvasWidth(canvasWidth, bounds);
+			}
+		};
+		const observer = new ResizeObserver(resize);
+		observer.observe(container);
+		resize();
+		return () => observer.disconnect();
 	});
 
 	$effect(() => {
@@ -68,12 +85,8 @@
 		}
 	}
 
-	function clampCanvasWidth(width: number) {
-		return Math.min(canvasMaxWidth, Math.max(minimumCanvasWidth, Math.round(width)));
-	}
-
 	function setCanvasWidth(width: number) {
-		canvasWidth = clampCanvasWidth(width);
+		canvasWidth = clampCanvasWidth(width, bounds);
 		localStorage.setItem(canvasWidthStorageKey, String(canvasWidth));
 	}
 
@@ -97,16 +110,16 @@
 	}
 </script>
 
-<aside aria-label={t('chat-render-canvas-toggle-label')} class="fixed inset-0 z-40 flex min-w-0 flex-col border-l border-base-300 bg-base-100 md:relative md:z-auto md:w-[var(--canvas-width)] md:shrink-0" style:--canvas-width={`${canvasWidth}px`}>
+<aside bind:this={panel} aria-label={t('chat-render-canvas-toggle-label')} class="fixed inset-0 z-40 flex min-w-0 flex-col border-l border-base-300 bg-base-100 xl:relative xl:z-auto xl:w-[var(--canvas-width)] xl:shrink-0" style:--canvas-width={`${canvasWidth}px`}>
 	<button
 		type="button"
 		role="slider"
 		aria-orientation="vertical"
 		aria-label={t('render-canvas-resize-aria')}
-		aria-valuemin={minimumCanvasWidth}
-		aria-valuemax={canvasMaxWidth}
+		aria-valuemin={bounds.minimum}
+		aria-valuemax={bounds.maximum}
 		aria-valuenow={canvasWidth}
-		class="absolute inset-y-0 left-0 z-10 hidden w-2 -translate-x-1/2 cursor-col-resize focus:outline-2 focus:outline-primary md:block"
+		class="absolute inset-y-0 left-0 z-10 hidden w-2 -translate-x-1/2 cursor-col-resize focus:outline-2 focus:outline-primary xl:block"
 		onpointerdown={beginResize}
 		onkeydown={resizeFromKeyboard}
 	></button>
@@ -156,7 +169,7 @@
 			{#if assets.length === 0}
 				<div class="alert"><span>{t('chat-render-canvas-assets-empty')}</span></div>
 			{:else}
-				<div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+				<div class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] gap-3">
 					{#each assets as asset (asset.id)}
 						<div class="card border border-base-300 bg-base-100">
 							{#if asset.mime.startsWith('image/')}<img src={asset.url} alt={asset.filename} class="max-h-56 w-full rounded-t-box object-contain" />{:else if asset.mime.startsWith('video/')}<!-- svelte-ignore a11y_media_has_caption --><video src={asset.url} controls class="max-h-56 w-full rounded-t-box"></video>{:else if asset.mime.startsWith('audio/')}<audio src={asset.url} controls class="mt-4 w-full px-3"></audio>{/if}

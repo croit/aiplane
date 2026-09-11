@@ -57,7 +57,7 @@
 	onMount(refresh);
 </script>
 
-<div class="mx-auto w-full max-w-5xl">
+<div class="w-full">
 	<h1 class="mb-2 text-2xl font-bold">{t('memory-heading')}</h1>
 	<p class="mb-6 text-sm text-base-content/60">{t('memory-description')}</p>
 

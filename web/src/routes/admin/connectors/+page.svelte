@@ -47,7 +47,7 @@
 
 <svelte:head><title>{t('connectors-page-title')}</title></svelte:head>
 
-<div class="mx-auto w-full max-w-5xl px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+<div class="w-full">
 	<div class="mb-2 flex flex-wrap items-center justify-between gap-3"><h1 class="m-0 text-2xl font-bold">{t('connectors-heading')}</h1><button type="button" class="btn btn-ghost btn-sm" onclick={restore}>{t('connectors-restore-defaults-button')}</button></div>
 	<p class="mb-6 text-sm text-base-content/60">{t('connectors-catalog-intro')}</p>
 	{#if error}<div class="alert alert-error mb-4 text-sm"><span>{error}</span></div>{/if}

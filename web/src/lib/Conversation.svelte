@@ -9,6 +9,7 @@
 	import { refreshSidebar, sidebar } from '$lib/sidebar.svelte';
 	import { parseUserContent, replaceUserText } from '$lib/chat-protocol';
 	import type { ChatSession } from '$lib/chat-protocol';
+	import { canonicalAttachments } from '$lib/conversation-assets';
 	import { me } from '$lib/session.svelte';
 	import { t, time, n } from '$lib/i18n.svelte';
 	import ConversationHeader from '$lib/components/chat/ConversationHeader.svelte';
@@ -516,7 +517,7 @@
 	}
 </script>
 
-<div class="flex min-h-[calc(100dvh-6.5rem)] flex-col lg:min-h-[calc(100dvh-4.5rem)]">
+<div class="flex h-full min-h-0 flex-col">
 	<ConversationHeader
 		{id}
 		title={session?.title}
@@ -546,8 +547,8 @@
 		<div class="alert alert-warning mb-4"><span>{t('chat-render-nda-banner')}</span></div>
 	{/if}
 
-	<div class="flex min-h-0 flex-1 gap-3">
-		<main class="flex min-w-0 flex-1 flex-col">
+	<div class="flex min-h-0 flex-1 gap-3" data-chat-workspace>
+		<main data-chat-transcript class="min-h-0 min-w-0 flex-1 overflow-y-auto pe-1 xl:min-w-[35rem]">
 
 {#if notice}
 	<div class="alert alert-warning mb-4"><span>{notice}</span></div>
@@ -605,10 +606,11 @@
 		{/if}
 		{#if entry.turn.role === 'user'}
 			{@const parsed = parseUserContent(entry.turn.user_content)}
+			{@const shownAttachments = canonicalAttachments(parsed.attachments, assets, entry.turn.id)}
 			<div class="chat chat-end">
-				<div class="chat-bubble chat-bubble-primary">
-					{#if parsed.attachments.length > 0}
-						<MessageAttachments attachments={parsed.attachments} removable={isOwner && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />
+				<div class="chat-bubble border border-primary/20 bg-primary/10 text-base-content backdrop-blur-sm">
+					{#if shownAttachments.length > 0}
+						<MessageAttachments attachments={shownAttachments} removable={isOwner && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />
 					{/if}
 					{#if parsed.text}
 						<div class="whitespace-pre-wrap">{parsed.text}</div>
@@ -624,8 +626,9 @@
 			</div>
 		{:else}
 			{@const parsed = parseUserContent(entry.turn.content)}
+			{@const shownAttachments = canonicalAttachments(parsed.attachments, assets, entry.turn.id)}
 			<div class="chat chat-start">
-				<div class="chat-bubble chat-bubble-ghost w-full max-w-[min(90vw,48rem)] p-0">
+				<div class="chat-bubble w-full max-w-[min(90vw,48rem)] border border-base-300/60 bg-base-200/35 p-0 backdrop-blur-sm">
 					<div class="p-3 flex flex-col gap-2">
 						{#if entry.turn.reasoning}
 							<details class="collapse collapse-arrow text-sm -ms-2">
@@ -647,8 +650,13 @@
 							</div>
 						{/if}
 
-						{#if parsed.attachments.length > 0}<MessageAttachments attachments={parsed.attachments} removable={isOwner && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />{/if}
-						<Markdown content={parsed.text} class="prose prose-sm max-w-none chat-prose" />
+						{#if shownAttachments.length > 0}<MessageAttachments attachments={shownAttachments} removable={isOwner && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />{/if}
+						<Markdown
+							content={parsed.text}
+							class="prose prose-sm max-w-none chat-prose"
+							images={[...shownAttachments, ...assets]}
+							hiddenImageUrls={new Set(shownAttachments.map((attachment) => attachment.url))}
+						/>
 
 						{#if entry.turn.status === 'errored'}
 							<div class="alert alert-error py-2"><span>{entry.turn.error_message}</span></div>
@@ -670,8 +678,14 @@
 	{/each}
 </div>
 
+		</main>
+		{#if canvasOpen && hasCanvas}
+			<ConversationCanvas {id} {documents} {assets} {isOwner} onclose={() => (canvasOpen = false)} onerror={(message) => (notice = message)} />
+		{/if}
+	</div>
+
 {#if isOwner}
-<div class="card sticky bottom-0 -mb-6 border border-base-300 bg-base-100">
+<div data-chat-composer class="card mt-3 w-full shrink-0 border border-base-300 bg-base-100/85 backdrop-blur-sm">
 	<div class="flex flex-col gap-1 p-2">
 		<div class="flex flex-wrap items-center gap-2">
 			<CapabilityPicker capabilities={tools} onset={setCapability} />
@@ -747,11 +761,6 @@
 	</div>
 </div>
 {/if}
-		</main>
-		{#if canvasOpen && hasCanvas}
-			<ConversationCanvas {id} {documents} {assets} {isOwner} onclose={() => (canvasOpen = false)} onerror={(message) => (notice = message)} />
-		{/if}
-	</div>
 </div>
 
 {#if editingTurn}

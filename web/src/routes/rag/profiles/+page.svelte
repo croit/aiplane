@@ -28,7 +28,7 @@
 	onMount(refresh);
 </script>
 
-<div class="mx-auto w-full max-w-5xl space-y-6">
+<div class="w-full space-y-6">
 	<header>
 		<a class="link text-sm" href="/rag">← {t('rag-heading')}</a>
 		<h1 class="mt-2 text-2xl font-bold">{t('rag-profile-heading')}</h1>

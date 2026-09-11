@@ -16,4 +16,4 @@
 	});
 </script>
 
-<div class="mx-auto w-full max-w-5xl"><WebhookSubpageHeader title={t('webhooks-edit-heading')} />{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}{#if data && webhook}<WebhookForm {webhook} models={data.models} onsaved={() => goto('/webhooks')} oncancel={() => goto('/webhooks')} />{/if}</div>
+<div class="w-full"><WebhookSubpageHeader title={t('webhooks-edit-heading')} />{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}{#if data && webhook}<WebhookForm {webhook} models={data.models} onsaved={() => goto('/webhooks')} oncancel={() => goto('/webhooks')} />{/if}</div>

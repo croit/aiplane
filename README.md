@@ -327,11 +327,13 @@ You need [mise](https://mise.jdx.dev/), which manages the Rust + Node toolchains
 
 ```bash
 mise install                      # Rust 1.95 + Node 24
-mise run dev                      # runs the gateway (debug build) on http://localhost:8080
+mise run dev                      # Vite HMR + gateway, together on http://localhost:8080
 ```
 
 No config file needed: `mise run dev` generates a persistent dev session key on
-first run, and the gateway serves a **setup wizard** at
+first run. Vite serves the hot-reloading UI on `:8080` and proxies every dynamic
+route to the private Rust gateway on `:8081`, including authentication and chat
+attachments. The app serves a **setup wizard** at
 <http://localhost:8080/setup> that asks for your OIDC provider, proves it with a
 real sign-in, and lets you pick which claim value grants admin. Everything else
 an operator configures — OCR, compaction, attachment storage, the code sandbox,
@@ -340,10 +342,12 @@ ComfyUI, RAG, skills, Typst, GeoIP, usage, limits, feedback and Web Push — is 
 
 Open <http://localhost:8080>. An unconfigured gateway sends you to `/setup`; once you finish the wizard, sign in and add backends at `/admin/upstreams`.
 
-If you're editing the UI, run the Vite dev server in a second terminal and work against that instead — it hot-reloads on save and never rebuilds Rust:
+UI changes hot-reload through the same `http://localhost:8080` origin; no second
+terminal or alternate browser URL is needed. To verify the compiled static
+artifact instead, run:
 
 ```bash
-mise run dev-web                  # http://localhost:5173, /api + /v1 + /auth proxied to :8080
+mise run dev-served               # production-shaped static SPA, no HMR
 ```
 
 **UI-only shortcut (no OIDC):** `mise run dev-ui` boots a real server with mock backends and a pre-seeded session, and prints a session cookie you can paste into a browser or Playwright. Pass `GATEWAY_STATIC_DIR=target/frontend/build` if you want it to serve the UI too.

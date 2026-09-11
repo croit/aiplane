@@ -55,6 +55,17 @@ chat-render-unpin-title = Desanclar (volver a Automático)
 chat-render-state-off-tip = Desactivado — bloqueado; oculto para el asistente
 chat-render-state-auto-tip = Automático — el asistente lo activa cuando una solicitud lo necesita
 chat-render-state-on-tip = Activado — siempre disponible para el asistente
+chat-render-state-all-label = Todas
+chat-render-state-off-label = Desactivada
+chat-render-state-auto-label = Automática
+chat-render-state-on-label = Siempre activa
+chat-render-tools-state-label = Disponibilidad de la herramienta
+chat-render-tools-category-label = Categoría de herramientas
+chat-render-tools-search-results = Resultados de búsqueda
+chat-render-tools-empty = Ninguna herramienta coincide con los filtros actuales.
+chat-render-tools-set-group = Establecer todas
+chat-render-tools-summary = { $on } siempre activas · { $auto } automáticas · { $off } desactivadas
+chat-render-tools-done = Listo
 
 chat-render-close = Cerrar
 

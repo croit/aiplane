@@ -54,6 +54,17 @@ chat-render-unpin-title = Unpin (back to automatic)
 chat-render-state-off-tip = Off — blocked; hidden from the assistant
 chat-render-state-auto-tip = Auto — the assistant turns it on when a request needs it
 chat-render-state-on-tip = On — always available to the assistant
+chat-render-state-all-label = All
+chat-render-state-off-label = Off
+chat-render-state-auto-label = Automatic
+chat-render-state-on-label = Always on
+chat-render-tools-state-label = Tool availability
+chat-render-tools-category-label = Tool category
+chat-render-tools-search-results = Search results
+chat-render-tools-empty = No tools match the current filters.
+chat-render-tools-set-group = Set all
+chat-render-tools-summary = { $on } always on · { $auto } automatic · { $off } off
+chat-render-tools-done = Done
 
 chat-render-close = Close
 

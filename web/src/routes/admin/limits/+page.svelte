@@ -31,7 +31,7 @@
 	onMount(refresh);
 </script>
 
-<div class="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+<div class="flex w-full flex-col gap-4">
 	<header class="flex flex-col gap-1"><h1 class="m-0 text-2xl font-semibold">{t('limits-heading')}</h1><p class="m-0 text-sm text-base-content/70">{t('limits-intro')}</p></header>
 	{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}
 	{#if notice}<div class="alert alert-success"><span>{notice}</span></div>{/if}

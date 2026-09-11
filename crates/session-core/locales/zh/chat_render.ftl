@@ -52,6 +52,17 @@ chat-render-unpin-title = 取消固定（恢复为自动）
 chat-render-state-off-tip = 关闭——已阻止；对助手隐藏
 chat-render-state-auto-tip = 自动——助手会在需要时自行开启
 chat-render-state-on-tip = 开启——始终对助手可用
+chat-render-state-all-label = 全部
+chat-render-state-off-label = 关闭
+chat-render-state-auto-label = 自动
+chat-render-state-on-label = 始终开启
+chat-render-tools-state-label = 工具可用性
+chat-render-tools-category-label = 工具类别
+chat-render-tools-search-results = 搜索结果
+chat-render-tools-empty = 没有符合当前筛选条件的工具。
+chat-render-tools-set-group = 全部设置
+chat-render-tools-summary = { $on } 个始终开启 · { $auto } 个自动 · { $off } 个关闭
+chat-render-tools-done = 完成
 
 chat-render-close = 关闭
 

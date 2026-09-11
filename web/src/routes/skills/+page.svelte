@@ -79,7 +79,7 @@
 	onMount(refresh);
 </script>
 
-<div class="mx-auto w-full max-w-5xl px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+<div class="w-full">
 	<div class="flex items-center gap-2"><NavIcon name="sparkles" size={20} /><h1 class="m-0 text-2xl font-bold">{t('my-skills-heading')}</h1></div>
 	<p class="mb-4 mt-1 text-sm text-base-content/60">{t('my-skills-intro')}</p>
 	{#if error}<div class="alert alert-error mb-4 text-sm"><span>{error}</span></div>{/if}

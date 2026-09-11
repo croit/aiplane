@@ -55,7 +55,7 @@
 	onMount(refresh);
 </script>
 
-<section class="mx-auto flex max-w-5xl flex-col gap-4 p-4 sm:p-6">
+<section class="flex w-full flex-col gap-4">
 	<header class="flex flex-col gap-1">
 		<h1 class="text-2xl font-bold">{t('admin-users-heading')}</h1>
 		{#if data?.allow_impersonation}

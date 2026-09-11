@@ -58,7 +58,7 @@
 
 <svelte:head><title>{t(data?.scope === 'all' ? 'usage-title-all' : 'usage-title-mine')}</title></svelte:head>
 
-<section class="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 pb-6 pt-14 sm:p-6">
+<section class="flex w-full flex-col gap-4">
 	<header class="flex flex-col gap-2">
 		<div class="flex flex-wrap items-start justify-between gap-3">
 			<h1 class="text-2xl font-bold">{t(data?.scope === 'all' ? 'usage-heading-all' : 'usage-heading-mine')}</h1>

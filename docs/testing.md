@@ -61,7 +61,7 @@ The version-controlled pre-push git hook (`.githooks/pre-push`, enabled with `mi
 ## E2E browser tests (`e2e/`)
 
 - Driver: Node's built-in `node:test` + Playwright. No project-level `node_modules` — the tests import `playwright` directly out of the mise-installed `npm:@playwright/cli` tool, with the path overridable via `$PLAYWRIGHT_DIR`.
-- Run with `mise run e2e` against a live `mise run dev` in another terminal — which is also what deploys the SPA (`GATEWAY_STATIC_DIR`), so the `spa*` suites have a shell to boot. An undeployed SPA answers 503 and those tests say so rather than failing obscurely. The task points `PLAYWRIGHT_DIR` at the mise-installed `npm:@playwright/cli` automatically. See `e2e/README.md` for first-time setup (shared libs + a one-time Chromium download).
+- Run with `mise run e2e` against a live `mise run dev` in another terminal. The public `:8080` origin is Vite/HMR and proxies the complete gateway surface to private `:8081`, so the browser suites exercise the everyday development topology. Use `mise run dev-served` when the compiled SPA itself is under test. The task points `PLAYWRIGHT_DIR` at the mise-installed `npm:@playwright/cli` automatically. See `e2e/README.md` for first-time setup (shared libs + a one-time Chromium download).
 - `e2e/spa-chat.test.mjs` needs a gateway with a chat upstream, so it targets `dev-ui` (`GATEWAY_STATIC_DIR=target/frontend/build mise run dev-ui`) and skips with a pointer at that command when no pool is configured.
 - `GATEWAY_URL` (default `http://localhost:8080`) targets a specific gateway; `CHROMIUM_HEADED=1` shows the browser instead of running headless.
 - **Not part of the CI default** — the browser suite needs a running gateway and Chromium, so it stays a local/opt-in loop.

@@ -61,7 +61,7 @@
 	onMount(refresh);
 </script>
 
-<div class="mx-auto w-full max-w-5xl px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+<div class="w-full">
 	<div class="flex items-center gap-2"><NavIcon name="sliders" size={20} /><h1 class="m-0 text-2xl font-bold">{t('skills-heading')}</h1></div>
 	<p class="mb-4 mt-1 text-sm text-base-content/60">{t('skills-intro-part1')} <code class="font-mono text-xs">read_skill</code> {t('skills-intro-part2')} <code class="font-mono text-xs">.skill</code> {t('skills-intro-part3')}</p>
 	{#if data && !data.directory_accessible}<div class="alert alert-warning mb-4 text-sm"><span>{t('skills-error-no-dir-access')} {data.source ?? ''}</span></div>{/if}

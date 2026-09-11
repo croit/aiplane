@@ -17,6 +17,16 @@ export interface CodeCopyLabels {
 	copied: string;
 }
 
+export interface MarkdownImage {
+	filename: string;
+	url: string;
+}
+
+export interface MarkdownOptions {
+	images?: MarkdownImage[];
+	hiddenImageUrls?: ReadonlySet<string>;
+}
+
 function escapeHtml(value: string): string {
 	return value
 		.replaceAll('&', '&amp;')
@@ -26,9 +36,30 @@ function escapeHtml(value: string): string {
 		.replaceAll("'", '&#39;');
 }
 
-export function markdownMarkup(md: string | null | undefined, labels?: CodeCopyLabels): string {
+function relativeFilename(href: string): string | null {
+	if (!href || href.startsWith('/') || /^[a-z][a-z\d+.-]*:/i.test(href)) return null;
+	const pathname = href.split(/[?#]/, 1)[0];
+	const filename = pathname.split('/').at(-1);
+	if (!filename) return null;
+	try {
+		return decodeURIComponent(filename);
+	} catch {
+		return filename;
+	}
+}
+
+export function markdownMarkup(md: string | null | undefined, labels?: CodeCopyLabels, options: MarkdownOptions = {}): string {
 	if (!md) return '';
 	const renderer = new Renderer();
+	const defaultRenderer = new Renderer();
+	renderer.image = (token) => {
+		const filename = relativeFilename(token.href);
+		const image = filename ? options.images?.find((candidate) => candidate.filename === filename) : undefined;
+		if (!image) return defaultRenderer.image(token);
+		if (options.hiddenImageUrls?.has(image.url)) return '';
+		const title = token.title ? ` title="${escapeHtml(token.title)}"` : '';
+		return `<img src="${escapeHtml(image.url)}" alt="${escapeHtml(token.text)}"${title}>`;
+	};
 	if (labels) {
 		renderer.code = ({ text, lang }) => {
 			const language = lang ? ` class="language-${escapeHtml(lang)}"` : '';
@@ -38,6 +69,6 @@ export function markdownMarkup(md: string | null | undefined, labels?: CodeCopyL
 	return marked.parse(md, { async: false, renderer }) as string;
 }
 
-export function renderMarkdown(md: string | null | undefined, labels?: CodeCopyLabels): string {
-	return DOMPurify.sanitize(markdownMarkup(md, labels));
+export function renderMarkdown(md: string | null | undefined, labels?: CodeCopyLabels, options?: MarkdownOptions): string {
+	return DOMPurify.sanitize(markdownMarkup(md, labels, options));
 }

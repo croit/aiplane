@@ -22,7 +22,7 @@
 	});
 </script>
 
-<div class="mx-auto w-full max-w-5xl">
+<div class="w-full">
 	<div class="mb-4 flex items-center gap-3">
 		<a class="btn btn-ghost btn-sm" href="/scheduled">← {t('scheduled-back')}</a>
 		<h1 class="text-2xl font-bold">{t('scheduled-edit-heading')}</h1>

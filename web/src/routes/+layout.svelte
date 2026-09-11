@@ -197,9 +197,9 @@
 </svelte:head>
 
 {#if publicRoute}
-	<div class="relative min-h-dvh bg-base-100 text-base-content"><div class="fixed right-4 top-4 z-20"><LanguagePicker placement="down" /></div><main class="flex min-h-dvh items-center justify-center p-6"><div class="w-full max-w-2xl">{@render children()}</div></main></div>
+	<div class="relative min-h-dvh bg-base-100 text-base-content"><div class="fixed right-4 top-4 z-20"><LanguagePicker placement="down" /></div><main class="flex min-h-dvh items-center justify-center p-6"><div class="w-full">{@render children()}</div></main></div>
 {:else}
-<div class="min-h-dvh bg-base-100 text-base-content flex">
+<div class="flex h-dvh overflow-hidden bg-base-100 text-base-content">
 	<!-- Mobile backdrop -->
 	{#if sidebar.open}
 		<button
@@ -341,7 +341,7 @@
 	</aside>
 
 	<!-- Main column -->
-	<div class="flex-1 min-w-0 flex flex-col min-h-dvh">
+	<div class="flex h-dvh min-w-0 flex-1 flex-col">
 		<!-- Mobile top bar with the menu toggle -->
 		<div class="lg:hidden sticky top-0 z-20 h-14 flex items-center gap-2 px-3 bg-base-200 border-b border-base-300">
 			<button class="btn btn-ghost btn-sm" onclick={() => (sidebar.open = true)} aria-label={t('nav-open-menu')}>
@@ -350,8 +350,8 @@
 			<span class="font-semibold">{t('nav-brand')}</span>
 		</div>
 
-		<main class="flex-1 min-h-0 min-w-0 overflow-y-auto">
-			<div class="w-full max-w-5xl mx-auto px-4 sm:px-6 pt-6 pb-8">
+		<main class="min-h-0 min-w-0 flex-1 {isChatActive() ? 'overflow-hidden' : 'overflow-y-auto'}">
+			<div class="w-full {isChatActive() ? 'h-full px-4 py-3 sm:px-6' : 'px-4 pb-8 pt-6 sm:px-6'}">
 				{@render children()}
 			</div>
 		</main>

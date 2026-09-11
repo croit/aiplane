@@ -56,6 +56,17 @@ chat-render-unpin-title = Открепить (вернуть в автомати
 chat-render-state-off-tip = Выключено — заблокировано; скрыто от ассистента
 chat-render-state-auto-tip = Автоматически — ассистент включает его сам, когда это нужно
 chat-render-state-on-tip = Включено — всегда доступно ассистенту
+chat-render-state-all-label = Все
+chat-render-state-off-label = Выключено
+chat-render-state-auto-label = Автоматически
+chat-render-state-on-label = Всегда включено
+chat-render-tools-state-label = Доступность инструмента
+chat-render-tools-category-label = Категория инструментов
+chat-render-tools-search-results = Результаты поиска
+chat-render-tools-empty = Нет инструментов, соответствующих текущим фильтрам.
+chat-render-tools-set-group = Настроить все
+chat-render-tools-summary = { $on } всегда включено · { $auto } автоматически · { $off } выключено
+chat-render-tools-done = Готово
 
 chat-render-close = Закрыть
 

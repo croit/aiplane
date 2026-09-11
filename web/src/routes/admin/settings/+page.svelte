@@ -48,7 +48,7 @@
 	onMount(refresh);
 </script>
 
-<div class="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 pb-6 pt-14 sm:px-6 sm:pt-6">
+<div class="flex w-full flex-col gap-4">
 	<div><h1 class="mb-2 text-2xl font-semibold">{t('settings-heading')}</h1><p class="m-0 text-sm text-base-content/60">{t('settings-intro')}</p></div>
 	{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}
 	{#if notice}<div class="alert alert-success"><span>{notice}</span></div>{/if}

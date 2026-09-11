@@ -2,6 +2,7 @@ import adapter from '@sveltejs/adapter-static';
 import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import { gatewayDevProxy } from './src/lib/dev-proxy.ts';
 
 /**
  * The gateway's SPA (issue #22).
@@ -15,8 +16,8 @@ import { defineConfig } from 'vite';
  * (`crates/gateway/src/rama_server/spa.rs`) serves it for any path that is not
  * a real file, which is what the client router needs.
  *
- * Dev loop: `vite dev` on :5173 with the API surface proxied to the running
- * gateway on :8080 (see `build.proxy`). Session cookies are SameSite=Lax and
+ * Dev loop: `mise run dev` exposes Vite on :8080 with the complete dynamic
+ * surface proxied to the private gateway on :8081. Session cookies are SameSite=Lax and
  * the proxy preserves the Origin/Host, so the browser-side session cookie set
  * by `/auth/callback` rides along on proxied `/api/v0/*` calls.
  */
@@ -40,13 +41,9 @@ export default defineConfig({
 		})
 	})],
 	server: {
-		proxy: {
-			// Everything dynamic belongs to the gateway; the dev server only
-			// serves the HMR'd SPA shell. `/v1` is proxied for the (future)
-			// in-app streaming client; `/auth` carries the OIDC browser flow.
-			'/api': 'http://localhost:8080',
-			'/v1': 'http://localhost:8080',
-			'/auth': 'http://localhost:8080'
-		}
+		host: '127.0.0.1',
+		port: Number(process.env.GATEWAY_DEV_PUBLIC_PORT ?? 8080),
+		strictPort: true,
+		proxy: gatewayDevProxy(process.env.GATEWAY_DEV_BACKEND_ORIGIN ?? 'http://127.0.0.1:8081')
 	}
 });
