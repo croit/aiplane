@@ -91,7 +91,7 @@ tempfile = { workspace = true }
 # *inspecting* the presented cert, including expired/self-signed ones) +
 # x509 parsing for subject/issuer/SAN/validity.
 tokio-rustls = { workspace = true }
-x509-parser = "0.16"
+x509-parser = "0.18"
 
 # GeoIP: client-IP → location lookup for the `get_user_location` tool.
 # `ip2location` reads the IP2Location LITE DB11 BIN; `notify` hot-reloads it
