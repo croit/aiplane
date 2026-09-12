@@ -17,5 +17,5 @@
 	</div>
 	<div class="mt-1 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-base-content/50"><span class="font-mono">{skill.name}</span><span>{t('my-skills-files-count', { count: skill.files.length })}</span></div>
 	<div class="mt-4"><div class="mb-1 text-xs uppercase tracking-wide text-base-content/50">{t('my-skills-description-heading')}</div><p class="m-0 text-sm text-base-content/80">{skill.description}</p></div>
-	<div class="card mt-5 border border-base-300"><div class="card-body prose max-w-none"><!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in renderMarkdown -->{@html renderMarkdown(body)}</div></div>
+	<div class="card mt-5 border border-base-300"><div class="card-body prose prose-sm max-w-none"><!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in renderMarkdown -->{@html renderMarkdown(body)}</div></div>
 </section>

@@ -629,7 +629,7 @@
 			{@const shownAttachments = canonicalAttachments(parsed.attachments, assets, entry.turn.id)}
 			<div class="chat chat-start">
 				<div class="chat-bubble w-full max-w-[min(90vw,48rem)] border border-base-300/60 bg-base-200/35 p-0 backdrop-blur-sm">
-					<div class="p-3 flex flex-col gap-2">
+					<div class="p-3 flex min-w-0 flex-col gap-2">
 						{#if entry.turn.reasoning}
 							<details class="collapse collapse-arrow text-sm -ms-2">
 								<summary class="collapse-title cursor-pointer text-base-content/60 py-1 min-h-0 h-7">
@@ -653,7 +653,7 @@
 						{#if shownAttachments.length > 0}<MessageAttachments attachments={shownAttachments} removable={isOwner && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />{/if}
 						<Markdown
 							content={parsed.text}
-							class="prose prose-sm max-w-none chat-prose"
+							class="prose prose-sm chat-prose min-w-0 max-w-none"
 							images={[...shownAttachments, ...assets]}
 							hiddenImageUrls={new Set(shownAttachments.map((attachment) => attachment.url))}
 						/>

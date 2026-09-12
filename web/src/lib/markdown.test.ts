@@ -34,3 +34,10 @@ test('markdown does not repeat an attachment already shown by the message galler
 	assert.match(html, /Before/);
 	assert.match(html, /After/);
 });
+
+test('a table scrolls inside its own container instead of widening the message', () => {
+	const html = markdownMarkup('| Probe | File paths hit |\n| --- | --- |\n| `rag_grep` | a/very/long/path.pm |');
+	assert.match(html, /<div class="overflow-x-auto"><table>/);
+	assert.match(html, /<\/table>\s*<\/div>/);
+	assert.match(html, /<th>Probe<\/th>/);
+});

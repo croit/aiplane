@@ -59,7 +59,7 @@
 		<div><div class="mb-1 text-xs uppercase tracking-wide text-base-content/50">{t('skills-files-heading')}</div><div class="text-sm text-base-content/80">{t('skills-files-count', { count: skill.files.length })}</div></div>
 	</div>
 	<div class="mt-4"><div class="mb-1 text-xs uppercase tracking-wide text-base-content/50">{t('skills-description-heading')}</div><p class="m-0 text-sm text-base-content/80">{skill.description}</p></div>
-	<div class="card mt-5 border border-base-300"><div class="card-body prose max-w-none overflow-x-auto"><!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in renderMarkdown -->{@html renderMarkdown(skill.body)}</div></div>
+	<div class="card mt-5 border border-base-300"><div class="card-body prose prose-sm max-w-none overflow-x-auto"><!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in renderMarkdown -->{@html renderMarkdown(skill.body)}</div></div>
 
 	<dialog bind:this={dialog} class="modal">
 		<div class="modal-box max-w-lg">

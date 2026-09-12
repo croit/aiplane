@@ -60,6 +60,12 @@ export function markdownMarkup(md: string | null | undefined, labels?: CodeCopyL
 		const title = token.title ? ` title="${escapeHtml(token.title)}"` : '';
 		return `<img src="${escapeHtml(image.url)}" alt="${escapeHtml(token.text)}"${title}>`;
 	};
+	// A wide table (file paths, log lines) must scroll inside its container
+	// instead of pushing the chat bubble off-screen.
+	const renderTable = Renderer.prototype.table;
+	renderer.table = function (token) {
+		return `<div class="overflow-x-auto">${renderTable.call(this, token)}</div>`;
+	};
 	if (labels) {
 		renderer.code = ({ text, lang }) => {
 			const language = lang ? ` class="language-${escapeHtml(lang)}"` : '';
