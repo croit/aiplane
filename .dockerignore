@@ -18,6 +18,14 @@ target/
 # Sandbox-runner binary (built by CI's `ci` job / `cargo build --release -p
 # sandbox-runner`), COPYed by deploy/sandbox-runner/Containerfile.
 !target/release/sandbox-runner
+# The built SvelteKit SPA (adapter-static output, produced by `mise run
+# build-web` and shipped between CI jobs as the `gateway-spa` artifact). The
+# runtime Dockerfile COPYs the whole tree to /usr/share/gateway/ui. Every
+# re-include above names a single FILE; this one is a directory, so it needs
+# both the directory itself and its contents — `!target/frontend/build` alone
+# re-includes the entry without the files under it.
+!target/frontend/build
+!target/frontend/build/**
 .git/
 .gitignore
 .github/

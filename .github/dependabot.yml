@@ -34,13 +34,24 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(web)"
+    ignore:
+      # `typescript` must stay on 6.x. svelte-check runs TypeScript 7 through a
+      # DUAL install — `typescript@~6` alongside `@typescript/native` (an alias
+      # for typescript@7), selected with `--tsgo` — and refuses to start if
+      # only one of the pair is present. So we ARE on TS 7; bumping the
+      # `typescript` entry to 7 on its own breaks that pairing and fails
+      # check-web, which is exactly what Dependabot's first attempt did.
+      # Drop this ignore once svelte-check can take TS 7 as a single install.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       svelte:
         patterns: ["@sveltejs/*", "svelte", "svelte-check"]
       tailwind:
         patterns: ["tailwindcss", "@tailwindcss/*", "daisyui"]
+      # `@typescript/native` carries the real TS 7 version and SHOULD move.
       dev-tooling:
-        patterns: ["vite", "typescript", "@types/*"]
+        patterns: ["vite", "@typescript/native", "@types/*"]
 
   # Rust workspace. Cargo.lock is committed and checksum-verified; the crate
   # count is large, so group by cadence rather than opening dozens of PRs.
