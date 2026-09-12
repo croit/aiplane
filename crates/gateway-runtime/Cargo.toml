@@ -32,7 +32,7 @@ toml = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"
 tempfile = { workspace = true }
 regex = { workspace = true }
 # Rama wire types used by the driver and tool surface.
