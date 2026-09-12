@@ -13,9 +13,25 @@ import { BASE, devSessionCookie, gatewayIsUp, launchBrowser } from "./helpers.mj
 
 let browser;
 
-async function ensureOpen(details) {
-    if (!(await details.evaluate((element) => element.open))) {
-        await details.locator("summary").click();
+/**
+ * Open one of a token row's editors. Each used to be a `<details>` that
+ * expanded in place; they are dialogs now, so "open" means clicking the row's
+ * Edit button and waiting for the dialog to be on screen.
+ */
+async function openEditor(page, row, label) {
+    await row.getByText(label, { exact: true }).locator("xpath=..").getByRole("button", { name: "Edit", exact: true }).click();
+    const modal = page.locator("dialog[open]");
+    await modal.waitFor();
+    return modal;
+}
+
+async function closeEditor(page) {
+    const modal = page.locator("dialog[open]");
+    if (await modal.count()) {
+        // Scoped to the footer: the backdrop carries its own close control,
+        // the same shape every dialog in the app uses.
+        await modal.locator(".modal-action").getByRole("button", { name: "Close", exact: true }).click();
+        await modal.waitFor({ state: "hidden" });
     }
 }
 
@@ -65,17 +81,16 @@ test("tokens preserve scopes, quotas, identity, and CRUD on mobile", async () =>
     await row.getByRole("checkbox", { name: "Tool use", exact: true }).check();
     assert.equal((await saved).status(), 200);
     assert.equal((await refreshed).status(), 200);
-    const capabilities = row.locator("details").filter({ hasText: "Capabilities" });
-    await ensureOpen(capabilities);
-    const firstTool = row.getByRole("checkbox", { name: /Toggle/ }).first();
+    let capabilities = await openEditor(page, row, "Capabilities");
+    const firstTool = capabilities.getByRole("checkbox", { name: /Toggle/ }).first();
     await firstTool.waitFor();
     saved = page.waitForResponse((response) => response.url().includes("/tools") && response.request().method() === "PUT");
     refreshed = page.waitForResponse((response) => response.url().endsWith("/api/v0/tokens/details") && response.request().method() === "GET");
     await firstTool.uncheck();
     assert.equal((await saved).status(), 200);
     assert.equal((await refreshed).status(), 200);
-    await ensureOpen(capabilities);
-    assert.equal(await row.getByRole("checkbox", { name: /Toggle/ }).first().isChecked(), false);
+    assert.equal(await capabilities.getByRole("checkbox", { name: /Toggle/ }).first().isChecked(), false);
+    await closeEditor(page);
     const mcp = row.getByRole("checkbox", { name: "Allow ask-mode MCP tools over API", exact: true });
     await mcp.waitFor();
     await page.waitForTimeout(100);
@@ -87,18 +102,21 @@ test("tokens preserve scopes, quotas, identity, and CRUD on mobile", async () =>
     else await mcp.check();
     assert.equal((await saved).status(), 200);
     assert.equal((await refreshed).status(), 200);
-    await ensureOpen(capabilities);
     assert.equal(await row.getByRole("checkbox", { name: "Allow ask-mode MCP tools over API", exact: true }).isChecked(), !initialMcp);
 
-    await row.getByText("Models: all", { exact: true }).click();
-    await row.getByText("Limit this token to specific models", { exact: true }).click();
-    await row.locator('details:has-text("Models:") input.checkbox').first().check();
-    await row.getByRole("button", { name: "Save models", exact: true }).click();
+    const models = await openEditor(page, row, "Models: all");
+    await models.getByText("Limit this token to specific models", { exact: true }).click();
+    await models.locator("input.checkbox").first().check();
+    await models.getByRole("button", { name: "Save models", exact: true }).click();
     await row.getByText("Models: 1 selected", { exact: true }).waitFor();
 
-    await row.getByText("Quota: none", { exact: true }).click();
-    await row.getByRole("spinbutton", { name: "max", exact: true }).fill("42");
-    await row.getByRole("button", { name: "Add quota", exact: true }).click();
+    const quota = await openEditor(page, row, "Quota: none");
+    await quota.getByRole("spinbutton", { name: "max", exact: true }).fill("42");
+    await quota.getByRole("button", { name: "Add quota", exact: true }).click();
+    // Close first: the dialog's own title carries the same summary text, so
+    // asserting on the row while it is open is ambiguous.
+    await quota.getByText("42 requests / day", { exact: false }).waitFor();
+    await closeEditor(page);
     await row.getByText("Quota: 1 rule(s)", { exact: true }).waitFor();
     await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
     assert.ok(await page.locator("main").evaluate((element) => element.scrollWidth <= element.clientWidth));

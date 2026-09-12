@@ -17,5 +17,7 @@ admin-tokens-models-restrict-label = Limiter ce jeton à des modèles précis
 admin-tokens-models-saved-toast = Restriction de l'opérateur définie : { $count } modèles.
 admin-tokens-models-cleared-toast = Restriction de l'opérateur supprimée.
 admin-tokens-models-save = Enregistrer les modèles
+admin-tokens-models-edit = Modifier les modèles
+admin-tokens-models-cancel = Annuler
 
 # Registre des jetons de la SPA : titre de l'éditeur de liste blanche et cellules compactes.

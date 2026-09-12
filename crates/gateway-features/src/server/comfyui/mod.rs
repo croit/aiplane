@@ -27,7 +27,10 @@ pub mod runner;
 pub mod scheduler;
 pub mod store;
 
-pub use client::{Client, ComfyuiClientError, DownloadedAsset, ProducedAsset, StatusCheck};
+pub use client::{
+    Client, ComfyuiClientError, DownloadedAsset, ProducedAsset, StatusCheck, WorkerDevice,
+    WorkerHealth,
+};
 pub use jobs::ComfyuiJob;
 pub use manifest::{
     ArgError, ManifestError, OutputKind, Param, ParamSchema, ParamType, WorkflowManifest,

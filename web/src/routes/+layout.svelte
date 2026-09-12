@@ -6,6 +6,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { loginPageUrl } from '$lib/auth';
+	import { navItemActive } from '$lib/nav';
 	import { pageTitleDescriptor } from '$lib/page-titles';
 	import { pageTitleOverride } from '$lib/page-title';
 	import { loadMe, me } from '$lib/session.svelte';
@@ -170,7 +171,7 @@
 	);
 
 	function isActive(path: string): boolean {
-		return page.url.pathname === `${base}${path}` || page.url.pathname === path;
+		return navItemActive(page.url.pathname, base, path);
 	}
 
 	function isChatActive(): boolean {

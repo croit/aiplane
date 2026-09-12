@@ -20,6 +20,10 @@ connectors-delete-button = Supprimer
 connectors-edit-summary = Modifier
 
 connectors-add-summary = Ajouter un connecteur
+connectors-edit-heading = Modifier { $name }
+connectors-edit-page-title = Modifier le connecteur
+connectors-add-page-title = Ajouter un connecteur
+connectors-not-found = Aucun connecteur avec cette clé. Il a peut-être été supprimé.
 
 connectors-oauth-help-dcr-heading = Enregistrement dynamique de client — aucun client OAuth requis
 connectors-oauth-help-dcr-body = Définissez simplement l'URL du serveur MCP ci-dessus. Le serveur enregistre automatiquement cette passerelle (RFC 7591) ; chaque utilisateur clique ensuite sur Connecter et s'autorise avec son propre compte — une seule connexion couvre tous les services exposés par le serveur.
@@ -69,6 +73,7 @@ connectors-field-client-json-label = Coller le JSON du client OAuth (optionnel �
 connectors-field-client-json-help = Renseigne l'identifiant/le secret client (ainsi que les URL d'autorisation et de jeton) à partir du fichier. Ou utilisez les champs individuels ci-dessous.
 connectors-field-client-id-label = Identifiant client OAuth
 connectors-field-client-id-placeholder = …apps.googleusercontent.com / identifiant d'application OAuth GitHub
+connectors-field-client-id-help = Issu du client OAuth enregistré auprès du fournisseur. Nécessaire uniquement si le serveur ne peut pas enregistrer cette passerelle lui-même.
 connectors-field-client-secret-label = Secret client OAuth
 connectors-secret-placeholder-existing = •••••••• (laisser vide pour conserver)
 connectors-secret-placeholder-new = secret client (optionnel)

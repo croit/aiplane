@@ -207,6 +207,7 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         )
         .with_post("/api/v0/comfyui/reload", comfyui_api::reload)
         .with_get("/api/v0/comfyui/catalog", comfyui_api::catalog)
+        .with_get("/api/v0/comfyui/health", comfyui_api::health)
         .with_get("/api/v0/models", api::chat_models)
         .with_get("/api/v0/usage", api::usage)
         // Admin JSON API for the SPA (issue #22 P4).

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import EditModal from '$lib/components/EditModal.svelte';
 	import { n, t } from '$lib/i18n.svelte';
 	import { tokenDate, type ManagedToken } from '$lib/tokens';
 	import type { ToolEntry } from '$lib/tools';
@@ -26,6 +27,9 @@
 	let windowKind = $state('day');
 	let quotaValue = $state<number | null>(null);
 	let busy = $state(false);
+	let editingTools = $state(false);
+	let editingModels = $state(false);
+	let editingQuotas = $state(false);
 
 	$effect(() => {
 		restrict = token.owner_models !== null;
@@ -93,48 +97,63 @@
 		</label>
 
 		{#if token.tools_enabled}
-			<details class="collapse collapse-arrow mt-2 border-t border-base-300">
-				<summary class="collapse-title min-h-0 px-0 py-3 text-sm font-medium">{t('tokens-capabilities-summary')}</summary>
-				<div class="collapse-content px-0">
-					<div class="divide-y divide-base-300">
-						{#each tools as tool (tool.key)}
-							<label class="flex items-center gap-4 py-2">
-								<span class="min-w-0 flex-1"><span class="text-sm">{tool.title}</span> <code class="text-xs text-base-content/50">{tool.tech}</code><span class="block text-xs text-base-content/60">{tool.description}</span></span>
-								<input type="checkbox" class="toggle toggle-primary toggle-sm" checked={!token.disabled_tools.includes(tool.key)} onchange={(event) => toolChanged(tool.key, event.currentTarget.checked)} disabled={busy} aria-label={t('tools-toggle-aria', { name: tool.title })} />
-							</label>
-						{/each}
-					</div>
+			<div class="mt-2 flex items-center gap-2 border-t border-base-300 pt-3">
+				<span class="text-sm font-medium">{t('tokens-capabilities-summary')}</span>
+				<button type="button" class="btn btn-ghost btn-xs" onclick={() => (editingTools = true)}>{t('tokens-edit-button')}</button>
+			</div>
+			<EditModal bind:open={editingTools} wide footer="close" title={t('tokens-capabilities-summary')} description={token.name} cancellabel={t('tokens-panel-close')}>
+				<div class="max-h-[60vh] divide-y divide-base-300 overflow-y-auto">
+					{#each tools as tool (tool.key)}
+						<label class="flex items-center gap-4 py-2">
+							<span class="min-w-0 flex-1"><span class="text-sm">{tool.title}</span> <code class="text-xs text-base-content/50">{tool.tech}</code><span class="block text-xs text-base-content/60">{tool.description}</span></span>
+							<input type="checkbox" class="toggle toggle-primary toggle-sm" checked={!token.disabled_tools.includes(tool.key)} onchange={(event) => toolChanged(tool.key, event.currentTarget.checked)} disabled={busy} aria-label={t('tools-toggle-aria', { name: tool.title })} />
+						</label>
+					{/each}
 				</div>
-			</details>
+			</EditModal>
 			<label class="mt-3 flex items-start gap-3">
 				<input type="checkbox" class="checkbox checkbox-sm" checked={token.mcp_allow} onchange={(event) => run(() => onmcp(event.currentTarget.checked))} disabled={busy} aria-label={t('tokens-mcp-allow-aria')} />
 				<span><span class="text-sm font-medium">{t('tokens-mcp-allow-label')}</span><span class="block text-xs text-base-content/60">{t('tokens-mcp-allow-description')}</span></span>
 			</label>
 		{/if}
 
-		<details class="collapse collapse-arrow border-t border-base-300">
-			<summary class="collapse-title min-h-0 px-0 py-3 text-sm font-medium">{modelsSummary}</summary>
-			<div class="collapse-content px-0">
-				<p class="text-xs text-base-content/60">{t('tokens-models-help')}</p>
-				<label class="my-3 flex items-center gap-3 text-sm"><input type="checkbox" class="toggle toggle-primary toggle-sm" bind:checked={restrict} />{t('tokens-models-restrict-label')}</label>
-				{#if token.admin_models}<div class="alert mb-3 text-xs"><span>{t('tokens-models-admin-set', { models: token.admin_models.join(', ') })}</span></div>{/if}
-				{#if restrict}<div class="grid gap-2 sm:grid-cols-2">{#each models as model}<label class="flex items-center gap-2 text-sm"><input type="checkbox" class="checkbox checkbox-sm" checked={selectedModels.includes(model)} onchange={(event) => modelChanged(model, event.currentTarget.checked)} /> <code class="break-all text-xs">{model}</code></label>{/each}</div>{/if}
-				<div class="mt-3 flex items-center justify-end gap-3">{#if restrict && selectedModels.length === 0}<span class="text-xs text-error">{t('tokens-models-none-picked')}</span>{/if}<button class="btn btn-primary btn-sm" disabled={busy || (restrict && selectedModels.length === 0)} onclick={() => run(() => onmodels(restrict, selectedModels))}>{t('tokens-models-save')}</button></div>
-			</div>
-		</details>
+		<div class="flex items-center gap-2 border-t border-base-300 pt-3">
+			<span class="text-sm font-medium">{modelsSummary}</span>
+			<button type="button" class="btn btn-ghost btn-xs" onclick={() => (editingModels = true)}>{t('tokens-edit-button')}</button>
+		</div>
+		<EditModal
+			bind:open={editingModels}
+			wide
+			title={modelsSummary}
+			description={token.name}
+			cancellabel={t('tokens-panel-close')}
+			savelabel={t('tokens-models-save')}
+			saving={busy || (restrict && selectedModels.length === 0)}
+			onsave={async () => { await run(() => onmodels(restrict, selectedModels)); editingModels = false; }}
+		>
+			<p class="m-0 text-xs text-base-content/60">{t('tokens-models-help')}</p>
+			<label class="my-3 flex items-center gap-3 text-sm"><input type="checkbox" class="toggle toggle-primary toggle-sm" bind:checked={restrict} />{t('tokens-models-restrict-label')}</label>
+			{#if token.admin_models}<div class="alert mb-3 text-xs"><span>{t('tokens-models-admin-set', { models: token.admin_models.join(', ') })}</span></div>{/if}
+			{#if restrict}<div class="grid max-h-[50vh] gap-2 overflow-y-auto sm:grid-cols-2">{#each models as model}<label class="flex items-center gap-2 text-sm"><input type="checkbox" class="checkbox checkbox-sm" checked={selectedModels.includes(model)} onchange={(event) => modelChanged(model, event.currentTarget.checked)} /> <code class="break-all text-xs">{model}</code></label>{/each}</div>{/if}
+			{#if restrict && selectedModels.length === 0}<p class="mb-0 mt-3 text-xs text-error">{t('tokens-models-none-picked')}</p>{/if}
+		</EditModal>
 
-		<details class="collapse collapse-arrow border-t border-base-300">
-			<summary class="collapse-title min-h-0 px-0 py-3 text-sm font-medium">{quotaSummary}</summary>
-			<div class="collapse-content px-0">
-				<p class="text-xs text-base-content/60">{t('tokens-limits-help')}</p>
+		<div class="flex items-center gap-2 border-t border-base-300 pt-3">
+			<span class="text-sm font-medium">{quotaSummary}</span>
+			<button type="button" class="btn btn-ghost btn-xs" onclick={() => (editingQuotas = true)}>{t('tokens-edit-button')}</button>
+		</div>
+		<!-- Close, not Save: adding and removing a quota each commit on click. -->
+		<EditModal bind:open={editingQuotas} wide footer="close" title={quotaSummary} description={token.name} cancellabel={t('tokens-panel-close')}>
+			<div>
+				<p class="m-0 text-xs text-base-content/60">{t('tokens-limits-help')}</p>
 				{#each token.quotas as quota (quota.id)}<div class="flex flex-wrap items-center gap-2 border-b border-base-300 py-2 text-sm"><code>{quota.value} {quota.dimension} / {quota.window}</code>{#if quota.model}<span class="badge badge-outline">{quota.model}</span>{/if}{#if quota.managed_by === 'admin'}<span class="badge badge-secondary">{t('tokens-limits-admin-badge')}</span>{:else}<button class="btn btn-ghost btn-xs ml-auto" onclick={() => run(() => onremovequota(quota.id))}>{t('tokens-limits-remove')}</button>{/if}</div>{/each}
 				<div class="mt-3 flex flex-wrap items-end gap-2">
-					<select class="select select-bordered select-sm" bind:value={dimension}><option value="requests">{t('limits-dim-requests')}</option><option value="tokens">{t('limits-dim-tokens')}</option><option value="cost">{t('limits-dim-cost')}</option></select>
+					<select class="select select-bordered select-sm" bind:value={dimension}><option value="requests">{t('limits-dim-requests')}</option><option value="tokens">{t('limits-dim-tokens')}</option><option value="cost">{t('limits-dim-cost', { cur: currency })}</option></select>
 					<select class="select select-bordered select-sm" bind:value={windowKind}><option value="hour">{t('limits-win-hour')}</option><option value="day">{t('limits-win-day')}</option><option value="week">{t('limits-win-week')}</option><option value="month">{t('limits-win-month')}</option></select>
 					<input class="input input-bordered input-sm w-32" type="number" min="0" step="any" bind:value={quotaValue} placeholder={t('tokens-quota-max-placeholder')} aria-label={t('tokens-quota-max-placeholder')} />
 					<button class="btn btn-primary btn-sm" disabled={busy || quotaValue === null || quotaValue < 0} onclick={() => run(() => onquota(dimension, windowKind, quotaValue ?? 0))}>{t('tokens-limits-add')}</button>
 				</div>
 			</div>
-		</details>
+		</EditModal>
 	{/if}
 </li>

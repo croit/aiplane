@@ -9,6 +9,7 @@ rag-empty-list = 尚无集合。请在上方创建一个。
 # Toasts — collection CRUD
 rag-toast-indexing-queued = `{ $name }` @ `{ $ref }` 的索引任务已排队。
 rag-toast-created-aggregate = 已创建 `{ $name }`（聚合）。请在下方添加源仓库以进行索引。
+rag-toast-collection-saved = 已保存 `{ $name }`。
 rag-toast-vanished = 保存后集合消失了。
 # Toasts — refs / sources
 rag-toast-bulk-queued-skipped = 已排队 { $added } 个源；已跳过 { $skipped } 个重复项。
@@ -67,6 +68,12 @@ rag-button-cancel = 取消
 # Create-collection form
 rag-create-heading = 索引新集合
 rag-create-description = 索引器会克隆仓库，将每个文件分块，并通过配置的 Embedding 模型生成嵌入向量。PAT 以明文存储（网关运行在受信任的基础设施上）。
+rag-new-page-title = 索引新集合
+rag-edit-page-title = 编辑集合
+rag-not-found = 找不到该 id 对应的集合，它可能已被删除。
+rag-back-to-collections = RAG 集合
+rag-edit-source-heading = 编辑来源
+rag-add-source-heading = 添加来源
 rag-label-name = 名称
 rag-placeholder-name = 例如 gateway-repo
 rag-label-description-optional = 描述（可选）

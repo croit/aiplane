@@ -30,6 +30,10 @@ connectors-delete-button = Delete
 connectors-edit-summary = Edit
 
 connectors-add-summary = Add a connector
+connectors-edit-heading = Edit { $name }
+connectors-edit-page-title = Edit connector
+connectors-add-page-title = Add a connector
+connectors-not-found = No connector with that key. It may have been deleted.
 
 connectors-oauth-help-dcr-heading = Dynamic Client Registration — no OAuth client needed
 connectors-oauth-help-dcr-body = Just set the MCP server URL above. The server registers this gateway automatically (RFC 7591); each user then clicks Connect and authorizes with their own account — one sign-in covers every service the server exposes.
@@ -79,6 +83,7 @@ connectors-field-client-json-label = Paste OAuth client JSON (optional — e.g. 
 connectors-field-client-json-help = Fills client id / secret (and authorize + token URLs) from the file. Or use the individual fields below.
 connectors-field-client-id-label = OAuth client id
 connectors-field-client-id-placeholder = …apps.googleusercontent.com / GitHub OAuth App id
+connectors-field-client-id-help = From the OAuth client you registered with the provider. Only needed when the server cannot register this gateway itself.
 connectors-field-client-secret-label = OAuth client secret
 connectors-secret-placeholder-existing = •••••••• (leave blank to keep)
 connectors-secret-placeholder-new = client secret (optional)

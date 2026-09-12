@@ -452,7 +452,10 @@ set -eu
 # put it (the hardcoded fallback in e2e/helpers.mjs is the CI host's path).
 # Honour a pre-set PLAYWRIGHT_DIR so a caller can override it.
 export PLAYWRIGHT_DIR="${PLAYWRIGHT_DIR:-$(mise where 'npm:@playwright/cli')/lib/node_modules/@playwright/cli/node_modules/playwright}"
-node --test e2e/*.test.mjs
+# Serial: the suites share one gateway, and several mutate operator state
+# (limits, tokens, connectors). Run in parallel they interfere — the limits
+# suite in particular fails only when another file has run first.
+node --test --test-concurrency=1 e2e/*.test.mjs
 """
 
 [tasks.fmt]

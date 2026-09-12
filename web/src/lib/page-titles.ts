@@ -21,9 +21,13 @@ const exactTitles: Record<string, PageTitleDescriptor> = {
 	'/admin/models': { key: 'admin-page-title', branded: false },
 	'/rag': { key: 'rag-heading', branded: true },
 	'/rag/profiles': { key: 'rag-profile-heading', branded: true },
+	'/rag/new': { key: 'rag-new-page-title', branded: false },
 	'/admin/skills': { key: 'skills-heading', branded: true },
 	'/admin/connectors': { key: 'connectors-page-title', branded: false },
+	'/admin/connectors/new': { key: 'connectors-add-page-title', branded: false },
+	'/admin/models/edit': { key: 'admin-edit-model-page-title', branded: false },
 	'/admin/comfyui': { key: 'admin-comfyui-page-title', branded: false },
+	'/admin/comfyui/jobs': { key: 'admin-comfyui-jobs-page-title', branded: false },
 	'/admin/limits': { key: 'limits-heading', branded: false },
 	'/admin/settings': { key: 'settings-heading', branded: false }
 };
@@ -37,5 +41,7 @@ export function pageTitleDescriptor(pathname: string): PageTitleDescriptor | nul
 	if (/^\/webhooks\/[^/]+\/edit$/.test(path)) return { key: 'webhooks-edit-heading', branded: true };
 	if (/^\/webhooks\/[^/]+\/rerun$/.test(path)) return { key: 'webhooks-rerun-page-name', branded: true };
 	if (/^\/webhooks\/[^/]+\/runs$/.test(path)) return { key: 'webhooks-runs-page-name', branded: true };
+	if (/^\/admin\/connectors\/[^/]+\/edit$/.test(path)) return { key: 'connectors-edit-page-title', branded: false };
+	if (/^\/rag\/[^/]+\/edit$/.test(path)) return { key: 'rag-edit-page-title', branded: false };
 	return null;
 }

@@ -3,11 +3,13 @@
 
 //! HTTP client for the ComfyUI prompt-API.
 //!
-//! Three endpoints in scope:
+//! Endpoints in scope:
 //!
 //! - `POST /prompt` — queue a workflow; returns `{"prompt_id": "…"}`.
 //! - `GET  /history/{id}` — poll the workflow's status + outputs.
 //! - `GET  /view?filename=…&subfolder=…&type=output` — fetch produced bytes.
+//! - `GET  /system_stats` + `GET /queue` — the operator health probe behind
+//!   `/admin/comfyui` (is the worker up, what GPU, how deep is the queue).
 //!
 //! ComfyUI's `/prompt` expects `{"prompt": <api-format workflow>,
 //! "client_id": "…"}`. The client inserts its own `client_id` (a fresh
@@ -23,7 +25,7 @@
 use std::time::Duration;
 
 use reqwest::Client as HttpClient;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use uuid::Uuid;
@@ -108,6 +110,64 @@ impl Client {
 
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Probe the worker: `/system_stats` for identity + VRAM, `/queue` for
+    /// depth. Used by the admin page, never on a chat path — an operator
+    /// asking "is it up?" must get an answer even when it is not, so the
+    /// caller renders the error rather than the gateway logging it and
+    /// showing nothing.
+    ///
+    /// Two round trips instead of one: ComfyUI has no combined endpoint,
+    /// and the queue is the half that changes second to second.
+    pub async fn health(&self) -> Result<WorkerHealth, ComfyuiClientError> {
+        let stats: SystemStats = self.get_json("/system_stats").await?;
+        let queue: QueueSnapshot = self.get_json("/queue").await?;
+        Ok(WorkerHealth {
+            version: stats.system.comfyui_version,
+            python_version: stats.system.python_version,
+            pytorch_version: stats.system.pytorch_version,
+            ram_total: stats.system.ram_total,
+            ram_free: stats.system.ram_free,
+            devices: stats.devices,
+            queue_running: queue.queue_running.len(),
+            queue_pending: queue.queue_pending.len(),
+        })
+    }
+
+    /// `GET {base_url}{path}` decoded as `T`. Shared by the health probe's
+    /// two calls; the error variants match the rest of the client so a
+    /// caller can tell "unreachable" from "answered, but not with JSON".
+    async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &'static str,
+    ) -> Result<T, ComfyuiClientError> {
+        let resp = self
+            .http
+            .get(format!("{}{path}", self.base_url))
+            .send()
+            .await
+            .map_err(|e| ComfyuiClientError::Unreachable {
+                base_url: self.base_url.clone(),
+                source: e,
+            })?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ComfyuiClientError::HttpStatus {
+                method: "GET",
+                path: path.into(),
+                status: status.as_u16(),
+                body: truncate(body, 500),
+            });
+        }
+        resp.json()
+            .await
+            .map_err(|e| ComfyuiClientError::BadResponse {
+                method: "GET",
+                path: path.into(),
+                source: e,
+            })
     }
 
     /// Queue a workflow and return its `prompt_id`. The caller passes the
@@ -370,6 +430,67 @@ impl Client {
     }
 }
 
+/// What `/admin/comfyui` shows about the worker itself. Every number comes
+/// straight from ComfyUI; the gateway adds no interpretation beyond counting
+/// the two queue arrays.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkerHealth {
+    pub version: Option<String>,
+    pub python_version: Option<String>,
+    pub pytorch_version: Option<String>,
+    pub ram_total: Option<u64>,
+    pub ram_free: Option<u64>,
+    pub devices: Vec<WorkerDevice>,
+    pub queue_running: usize,
+    pub queue_pending: usize,
+}
+
+/// One compute device as ComfyUI reports it. `vram_total`/`vram_free` are
+/// bytes; `torch_*` are omitted — they read 0 on the deployments we serve
+/// and would only invite a misreading.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorkerDevice {
+    pub name: String,
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub vram_total: Option<u64>,
+    #[serde(default)]
+    pub vram_free: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemStats {
+    #[serde(default)]
+    system: SystemStatsSystem,
+    #[serde(default)]
+    devices: Vec<WorkerDevice>,
+}
+
+/// Every field optional: ComfyUI adds and renames keys between releases, and
+/// a health probe that 500s because one moved would defeat its own purpose.
+#[derive(Debug, Default, Deserialize)]
+struct SystemStatsSystem {
+    #[serde(default)]
+    comfyui_version: Option<String>,
+    #[serde(default)]
+    python_version: Option<String>,
+    #[serde(default)]
+    pytorch_version: Option<String>,
+    #[serde(default)]
+    ram_total: Option<u64>,
+    #[serde(default)]
+    ram_free: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QueueSnapshot {
+    #[serde(default)]
+    queue_running: Vec<Value>,
+    #[serde(default)]
+    queue_pending: Vec<Value>,
+}
+
 /// One file ComfyUI recorded as an output of the workflow.
 /// `r#type` is typically `"output"` (or `"temp"`); `subfolder` is often empty.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -595,6 +716,92 @@ mod tests {
         let client = Client::new(base_url(&server)).unwrap();
         let id = client.submit_workflow(&json!({})).await.expect("ok");
         assert_eq!(id, "abc-123");
+    }
+
+    /// Field-for-field the shape a live worker returned (ComfyUI 0.28.0,
+    /// Blackwell RTX PRO 6000) — trimmed to the keys the probe reads, so a
+    /// future ComfyUI rename shows up here rather than as an empty panel.
+    #[tokio::test]
+    async fn health_reports_version_device_and_queue_depth() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/system_stats"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "system": {
+                    "os": "linux",
+                    "ram_total": 202_543_988_736u64,
+                    "ram_free": 174_990_282_752u64,
+                    "comfyui_version": "0.28.0",
+                    "python_version": "3.12.3 (main, Jun 19 2026) [GCC 13.3.0]",
+                    "pytorch_version": "2.13.0+cu130",
+                },
+                "devices": [{
+                    "name": "cuda:0 NVIDIA RTX PRO 6000 Blackwell Max-Q : cudaMallocAsync",
+                    "type": "cuda",
+                    "index": 0,
+                    "vram_total": 102_014_189_568u64,
+                    "vram_free": 8_305_770_496u64,
+                    "torch_vram_total": 0,
+                    "torch_vram_free": 0,
+                }],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/queue"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "queue_running": [["run", "a"]],
+                "queue_pending": [["wait", "b"], ["wait", "c"]],
+            })))
+            .mount(&server)
+            .await;
+
+        let client = Client::new(base_url(&server)).unwrap();
+        let health = client.health().await.expect("ok");
+        assert_eq!(health.version.as_deref(), Some("0.28.0"));
+        assert_eq!(health.pytorch_version.as_deref(), Some("2.13.0+cu130"));
+        assert_eq!(health.ram_free, Some(174_990_282_752));
+        assert_eq!(health.queue_running, 1);
+        assert_eq!(health.queue_pending, 2);
+        assert_eq!(health.devices.len(), 1);
+        assert_eq!(health.devices[0].vram_total, Some(102_014_189_568));
+        assert!(health.devices[0].name.contains("RTX PRO 6000"));
+    }
+
+    /// ComfyUI renames keys between releases. The probe must still answer
+    /// with what it *can* read: a missing version is a blank field, not a
+    /// failed health check that makes a running worker look dead.
+    #[tokio::test]
+    async fn health_survives_a_system_stats_payload_it_does_not_recognise() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/system_stats"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "system": {"renamed_in_a_future_release": true},
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/queue"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+
+        let client = Client::new(base_url(&server)).unwrap();
+        let health = client.health().await.expect("ok");
+        assert_eq!(health.version, None);
+        assert!(health.devices.is_empty());
+        assert_eq!(health.queue_running, 0);
+        assert_eq!(health.queue_pending, 0);
+    }
+
+    #[tokio::test]
+    async fn health_surfaces_an_unreachable_worker() {
+        // Port 1 on loopback: nothing listens, so this is a connect error —
+        // the shape the admin page renders as "unreachable".
+        let client = Client::new("http://127.0.0.1:1".into()).unwrap();
+        let err = client.health().await.unwrap_err();
+        assert!(matches!(err, ComfyuiClientError::Unreachable { .. }));
     }
 
     #[tokio::test]

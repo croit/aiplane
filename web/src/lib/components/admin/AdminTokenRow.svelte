@@ -1,4 +1,5 @@
 <script lang="ts">
+	import EditModal from '$lib/components/EditModal.svelte';
 	import { tokenState, visibleTokenModels } from '$lib/admin-tokens';
 	import type { AdminToken, AdminTokenLimit } from '$lib/admin-tokens';
 	import { t } from '$lib/i18n.svelte';
@@ -13,15 +14,19 @@
 		timezone: string;
 		onsave: (id: string, restrict: boolean, models: string[]) => Promise<void>;
 	} = $props();
-	let details: HTMLDetailsElement;
+	let editing = $state(false);
 	let restrict = $state(false);
 	let selected = $state<string[]>([]);
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 
-	function prepareEditor() {
+	/** Fresh draft every time the dialog opens, so a cancelled edit never
+	 *  leaks into the next one. */
+	function openEditor() {
 		restrict = token.admin_models !== null;
 		selected = token.admin_models ? [...token.admin_models] : [...models];
+		error = null;
+		editing = true;
 	}
 
 	function setRestrict(enabled: boolean) {
@@ -40,7 +45,7 @@
 		error = null;
 		try {
 			await onsave(token.id, restrict, selected);
-			details.open = false;
+			editing = false;
 		} catch (caught) {
 			error = String(caught);
 		} finally {
@@ -93,18 +98,28 @@
 		<div class="flex min-w-72 flex-col gap-1">
 			<div class="break-all text-xs {ownerModels === null ? 'text-base-content/50' : 'font-mono'}">{ownerModels?.join(', ') || t('limits-all-models')}</div>
 			{#if token.limits.length > 0}<div class="text-xs text-base-content/70">{token.limits.map(limitLabel).join(' · ')}</div>{/if}
-			<details bind:this={details} class="collapse collapse-arrow border border-base-300 bg-base-100">
-				<summary class="collapse-title min-h-0 px-3 py-2 text-xs font-medium" onclick={prepareEditor}>{token.admin_models === null ? t('admin-tokens-models-summary-all') : t('admin-tokens-models-summary-restricted', { count: token.admin_models.length })}</summary>
-				<div class="collapse-content flex flex-col gap-3 px-3 pb-3">
+			<div class="flex items-center gap-2">
+				<span class="text-xs text-base-content/70">{token.admin_models === null ? t('admin-tokens-models-summary-all') : t('admin-tokens-models-summary-restricted', { count: token.admin_models.length })}</span>
+				<button type="button" class="btn btn-ghost btn-xs" onclick={openEditor}>{t('admin-tokens-models-edit')}</button>
+			</div>
+			<EditModal
+				bind:open={editing}
+				title={t('admin-tokens-models-edit')}
+				description={token.name}
+				cancellabel={t('admin-tokens-models-cancel')}
+				savelabel={t('admin-tokens-models-save')}
+				saving={saving || (restrict && selected.length === 0)}
+				onsave={save}
+			>
+				<div class="flex flex-col gap-3">
 					{#if error}<div class="alert alert-error py-2 text-xs"><span>{error}</span></div>{/if}
-					<p class="text-xs text-base-content/70">{t('admin-tokens-models-help')}</p>
+					<p class="m-0 text-xs text-base-content/70">{t('admin-tokens-models-help')}</p>
 					<label class="label cursor-pointer justify-start gap-2"><input type="checkbox" class="toggle toggle-primary toggle-sm" checked={restrict} onchange={(event) => setRestrict(event.currentTarget.checked)} /><span>{t('admin-tokens-models-restrict-label')}</span></label>
-					<div class="flex flex-wrap gap-2">
+					<div class="flex max-h-64 flex-wrap gap-2 overflow-y-auto">
 						{#each models as model (model)}<label class="label cursor-pointer gap-1"><input type="checkbox" class="checkbox checkbox-sm" disabled={!restrict} checked={selected.includes(model)} onchange={() => toggleModel(model)} /><span class="font-mono text-xs">{model}</span></label>{/each}
 					</div>
-					<button class="btn btn-primary btn-sm self-end" disabled={saving || (restrict && selected.length === 0)} onclick={save}>{t('admin-tokens-models-save')}</button>
 				</div>
-			</details>
+			</EditModal>
 		</div>
 	</td>
 </tr>

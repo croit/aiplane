@@ -4,6 +4,7 @@
 	import { poolCoverage, type Backend, type Coverage, type Pool } from '$lib/upstreams';
 	import BackendCard from './BackendCard.svelte';
 	import PoolEditor from './PoolEditor.svelte';
+	import EditModal from '$lib/components/EditModal.svelte';
 
 	interface Props {
 		pool: Pool;
@@ -19,7 +20,7 @@
 
 	let { pool, backends, allBackends, pools, usage, coverage: suppliedCoverage, poolKinds, poolStrategies, onChanged }: Props = $props();
 	let deleting = $state(false);
-	let editor: HTMLDetailsElement;
+	let editing = $state(false);
 	let coverage = $derived(suppliedCoverage ?? poolCoverage(pool, allBackends));
 	let missing = $derived(pool.backends.filter((name) => !allBackends.some((backend) => backend.name === name)));
 	let problems = $derived.by(() => {
@@ -66,6 +67,7 @@
 			<span class={`text-xs ${pool.compliance_nda ? 'text-success' : 'text-error'}`}>{pool.compliance_nda ? '✓' : '✗'} {t('upstreams-comp-nda')}</span>
 			<span class={`text-xs ${pool.enforce_limits ? 'text-success' : 'text-error'}`}>{pool.enforce_limits ? '✓' : '✗'} {t('upstreams-comp-limits')}</span>
 			<span class="flex-1"></span>
+			<button class="btn btn-ghost btn-xs" type="button" onclick={() => (editing = true)}>{t('upstreams-edit-pool')}</button>
 			<button class="btn btn-ghost btn-xs text-error" type="button" onclick={() => void remove()}>{deleting ? t('upstreams-delete-confirm') : t('pools-delete-pool')}</button>
 		</header>
 
@@ -104,11 +106,15 @@
 			</div>
 		</details>
 
-		<details bind:this={editor} class="collapse collapse-arrow rounded-box border border-base-300 bg-base-200/30">
-			<summary class="collapse-title min-h-0 py-2 text-sm font-medium">{t('upstreams-edit-pool')}</summary>
-			<div class="collapse-content border-t border-base-300 pt-3">
-				<PoolEditor {pool} backends={allBackends} {poolKinds} {poolStrategies} existingNames={[]} sortOrder={pool.sort_order} onSaved={onChanged} onCancel={() => (editor.open = false)} />
-			</div>
-		</details>
+		<EditModal
+			bind:open={editing}
+			wide
+			footer="none"
+			title={t('upstreams-edit-pool')}
+			description={pool.name}
+			cancellabel={t('upstreams-cancel')}
+		>
+			<PoolEditor {pool} backends={allBackends} {poolKinds} {poolStrategies} existingNames={[]} sortOrder={pool.sort_order} onSaved={onChanged} onCancel={() => (editing = false)} />
+		</EditModal>
 	</div>
 </article>

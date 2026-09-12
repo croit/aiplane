@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminDelete, adminJson, adminPut } from '$lib/admin-client';
+	import { page } from '$app/state';
+	import { adminJson, adminPut } from '$lib/admin-client';
 	import { matchesModelFilter } from '$lib/admin-models';
 	import type { AdminModelsData, ModelFilter } from '$lib/admin-models';
 	import AdminModelRow from '$lib/components/admin/AdminModelRow.svelte';
@@ -11,6 +12,15 @@
 	let data = $state<AdminModelsData | null>(null);
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
+
+	// The per-model editor lives on its own route and reports back through the
+	// URL, so its confirmation shows up on the list the operator returns to.
+	$effect(() => {
+		const kind = page.url.searchParams.get('notice');
+		const model = page.url.searchParams.get('model') ?? '';
+		if (kind === 'saved') notice = t('admin-saved-model', { model });
+		else if (kind === 'cleared') notice = t('admin-cleared-defaults', { model });
+	});
 	let query = $state('');
 	let filter = $state<ModelFilter>('all');
 
@@ -21,19 +31,6 @@
 		} catch (caught) {
 			error = String(caught);
 		}
-	}
-
-	async function saveModel(body: Record<string, string>) {
-		await adminPut('/api/v0/admin/models', body);
-		notice = t('admin-saved-model', { model: body.model_name });
-		await refresh();
-	}
-
-	async function clearModel(name: string) {
-		if (!confirm(t('admin-clear-overrides-confirm', { model: name }))) return;
-		await adminDelete(`/api/v0/admin/models/${encodeURIComponent(name)}`);
-		notice = t('admin-cleared-defaults', { model: name });
-		await refresh();
 	}
 
 	async function saveDefault(feature: string, model: string) {
@@ -81,12 +78,12 @@
 					</div>
 				</div>
 				<div class="card-body gap-0 overflow-x-auto pt-3">
-					<div class="grid min-w-[710px] grid-cols-[minmax(170px,1.6fr)_82px_108px_84px_128px_minmax(110px,1.1fr)_18px] items-center gap-2.5 border-b border-base-300 pb-2 text-[11px] uppercase tracking-wide text-base-content/50">
+					<div class="grid min-w-[710px] grid-cols-[minmax(170px,1.6fr)_82px_108px_84px_128px_minmax(110px,1.1fr)_64px] items-center gap-2.5 border-b border-base-300 pb-2 text-[11px] uppercase tracking-wide text-base-content/50">
 						<span>{t('admin-col-model')}</span><span>{t('admin-col-kind')}</span><span>{t('admin-col-price')}</span><span>{t('admin-col-context')}</span><span>{t('admin-col-reasoning')}</span><span>{t('admin-col-configured')}</span><span></span>
 					</div>
 					{#each visibleModels as model (model.name)}
 						{#key JSON.stringify(model)}
-							<AdminModelRow {model} currency={data.currency} allModels={data.all_models} onsave={saveModel} onclear={clearModel} />
+							<AdminModelRow {model} currency={data.currency} />
 						{/key}
 					{/each}
 				</div>

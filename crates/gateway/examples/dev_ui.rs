@@ -358,9 +358,14 @@ async fn main() -> anyhow::Result<()> {
     let skills_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/demo-skills");
     let comfyui_dir =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/comfyui-workflows");
+    // Unresolvable by default, so `/admin/comfyui` shows its "worker
+    // unreachable" state out of the box. Point DEV_UI_COMFYUI_URL at a real
+    // worker to exercise the healthy path (version, GPU, queue depth).
+    let comfyui_url = std::env::var("DEV_UI_COMFYUI_URL")
+        .unwrap_or_else(|_| "http://comfyui-worker:8188".to_string());
     let comfyui_config = ComfyuiConfig {
         enabled: true,
-        base_url: "http://comfyui-worker:8188".into(),
+        base_url: comfyui_url,
         content_dir: comfyui_dir.clone(),
         timeout_secs: 900,
         queue_poll_interval_ms: 500,
@@ -575,41 +580,118 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
     use session_core::attachments;
     use session_core::db::{self as chatdb, ToolCallStatus, TurnStatus};
 
-    let completed_job = gateway_features::server::comfyui::jobs::create(
+    // --- ComfyUI job history -------------------------------------------
+    // Spread over the last few hours with realistic durations: the run list
+    // renders relative times and wall-clock durations, and a pile of jobs
+    // all created "now" with a zero-second duration exercises neither.
+    // `jobs::create`/`complete` stamp `Timestamp::now()`, so backdate the
+    // pair afterwards — dev-harness data only, never a production path.
+    struct SeedJob {
+        workflow: &'static str,
+        kind: &'static str,
+        node: &'static str,
+        minutes_ago: i64,
+        duration_secs: i64,
+        error: Option<&'static str>,
+    }
+    const fn seed(
+        workflow: &'static str,
+        kind: &'static str,
+        node: &'static str,
+        minutes_ago: i64,
+        duration_secs: i64,
+        error: Option<&'static str>,
+    ) -> SeedJob {
+        SeedJob {
+            workflow,
+            kind,
+            node,
+            minutes_ago,
+            duration_secs,
+            error,
+        }
+    }
+    let recent_jobs = [
+        seed("text_to_image", "image", "9", 8, 9, None),
+        seed("merge_video_audio", "video", "9", 21, 3, None),
+        seed("image_to_video", "video", "108", 34, 834, None),
+        seed(
+            "image_to_video",
+            "video",
+            "108",
+            62,
+            900,
+            Some("Timed out after 900 seconds"),
+        ),
+        seed("text_to_music", "audio", "3", 95, 6, None),
+        seed("clone_voice", "audio", "3", 140, 12, None),
+        seed("text_to_image", "image", "9", 190, 8, None),
+        seed("upscale_image", "image", "9", 260, 24, None),
+    ];
+    for (index, job) in recent_jobs.iter().enumerate() {
+        let SeedJob {
+            workflow,
+            kind,
+            node,
+            minutes_ago,
+            duration_secs,
+            error,
+        } = job;
+        let id = gateway_features::server::comfyui::jobs::create(
+            &state.db,
+            &format!("demo-prompt-{index}"),
+            "demo-session",
+            "demo-turn",
+            "dev",
+            workflow,
+            kind,
+            node,
+            &format!("llmgw-{workflow}"),
+        )
+        .await?;
+        match error {
+            None => {
+                let extension = match *kind {
+                    "video" => "mp4",
+                    "audio" => "mp3",
+                    _ => "png",
+                };
+                gateway_features::server::comfyui::jobs::complete(
+                    &state.db,
+                    id,
+                    &format!("{workflow}-{id}.{extension}"),
+                    match *kind {
+                        "video" => "video/mp4",
+                        "audio" => "audio/mpeg",
+                        _ => "image/png",
+                    },
+                )
+                .await?;
+            }
+            Some(message) => {
+                gateway_features::server::comfyui::jobs::timeout(&state.db, id, message).await?;
+            }
+        }
+        let started = jiff::Timestamp::now() - jiff::SignedDuration::from_mins(*minutes_ago);
+        let finished = started + jiff::SignedDuration::from_secs(*duration_secs);
+        sqlx::query("UPDATE comfyui_jobs SET created_at = ?, completed_at = ? WHERE id = ?")
+            .bind(started.to_string())
+            .bind(finished.to_string())
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+    }
+    // One still in flight, so the page shows its pending state too.
+    gateway_features::server::comfyui::jobs::create(
         &state.db,
-        "demo-prompt-completed",
+        "demo-prompt-running",
         "demo-session",
         "demo-turn",
         "dev",
-        "text_to_image",
-        "image",
-        "9",
-        "llmgw-text2image",
-    )
-    .await?;
-    gateway_features::server::comfyui::jobs::complete(
-        &state.db,
-        completed_job,
-        "text_to_image-1.png",
-        "image/png",
-    )
-    .await?;
-    let timed_out_job = gateway_features::server::comfyui::jobs::create(
-        &state.db,
-        "demo-prompt-timeout",
-        "demo-session",
-        "demo-turn",
-        "dev",
-        "image_to_video",
+        "talking_video",
         "video",
         "108",
-        "llmgw-image2video",
-    )
-    .await?;
-    gateway_features::server::comfyui::jobs::timeout(
-        &state.db,
-        timed_out_job,
-        "Timed out after 900 seconds",
+        "llmgw-talking-video",
     )
     .await?;
 
@@ -714,6 +796,13 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
         - `gzip on;` turns compression on.\n\
         - `gzip_types` lists the MIME types to compress (HTML is always included).\n\
         - `gzip_min_length` skips tiny responses where compression isn't worth the CPU.\n\n\
+        A table, because wide markdown tables are the layout case that breaks \
+        first — every column here is long enough to push past the bubble:\n\n\
+        | Directive | Default | Context | Notes |\n\
+        | --- | --- | --- | --- |\n\
+        | `gzip` | `off` | http, server, location, if in location | Enables or disables gzipping of responses. |\n\
+        | `gzip_types` | `text/html` | http, server, location | `text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript` |\n\
+        | `gzip_min_length` | `20` | http, server, location | Sets the minimum length of a response that will be gzipped, determined only from the `Content-Length` response header field. |\n\n\
         **Source:** [nginx — ngx_http_gzip_module](https://nginx.org/en/docs/http/ngx_http_gzip_module.html)";
     let s = chatdb::create_session(&state.db, "dev").await?;
     chatdb::set_session_title(&state.db, &s.id, "Enabling gzip in nginx").await?;

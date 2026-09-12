@@ -15,5 +15,7 @@ admin-tokens-models-restrict-label = Restrict this token to specific models
 admin-tokens-models-saved-toast = Operator restriction set: { $count } models.
 admin-tokens-models-cleared-toast = Operator restriction removed.
 admin-tokens-models-save = Save models
+admin-tokens-models-edit = Edit models
+admin-tokens-models-cancel = Cancel
 
 # SPA token register: the allowlist editor's heading and the compact table cells.

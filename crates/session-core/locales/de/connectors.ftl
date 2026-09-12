@@ -20,6 +20,10 @@ connectors-delete-button = Löschen
 connectors-edit-summary = Bearbeiten
 
 connectors-add-summary = Konnektor hinzufügen
+connectors-edit-heading = { $name } bearbeiten
+connectors-edit-page-title = Connector bearbeiten
+connectors-add-page-title = Connector hinzufügen
+connectors-not-found = Kein Connector mit diesem Schlüssel. Er wurde möglicherweise gelöscht.
 
 connectors-oauth-help-dcr-heading = Dynamische Client-Registrierung — kein OAuth-Client erforderlich
 connectors-oauth-help-dcr-body = Lege einfach oben die MCP-Server-URL fest. Der Server registriert dieses Gateway automatisch (RFC 7591); jeder Nutzer klickt dann auf „Verbinden“ und autorisiert mit seinem eigenen Konto — eine einzige Anmeldung deckt jeden Dienst ab, den der Server bereitstellt.
@@ -69,6 +73,7 @@ connectors-field-client-json-label = OAuth-Client-JSON einfügen (optional — z
 connectors-field-client-json-help = Füllt Client-ID/-Secret (sowie Authorize- und Token-URLs) aus der Datei. Oder nutze die einzelnen Felder unten.
 connectors-field-client-id-label = OAuth-Client-ID
 connectors-field-client-id-placeholder = …apps.googleusercontent.com / GitHub-OAuth-App-ID
+connectors-field-client-id-help = Aus dem beim Anbieter registrierten OAuth-Client. Nur nötig, wenn der Server dieses Gateway nicht selbst registrieren kann.
 connectors-field-client-secret-label = OAuth-Client-Secret
 connectors-secret-placeholder-existing = •••••••• (leer lassen, um es beizubehalten)
 connectors-secret-placeholder-new = Client-Secret (optional)

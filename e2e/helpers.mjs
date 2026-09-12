@@ -68,3 +68,21 @@ export async function devSessionCookie() {
     const value = setCookie.split(";")[0].slice("id=".length);
     return value;
 }
+
+/**
+ * Pick a value from a `SearchableSelect`.
+ *
+ * It renders a combobox button plus a listbox of option buttons, not a
+ * `<select>`, so Playwright's `selectOption` cannot drive it. Matching on the
+ * option's exact label text rather than its accessible name is deliberate:
+ * an option also carries a description and badges, and a prefix match would
+ * make "demo-model" ambiguous with "demo-model-pro".
+ */
+export async function chooseSearchable(page, combobox, label) {
+    await combobox.click();
+    const options = page.locator('[role="option"]');
+    const byLabel = options.filter({ has: page.getByText(label, { exact: true }) });
+    const target = (await byLabel.count()) ? byLabel.first() : options.getByText(label).first();
+    await target.click();
+    await combobox.getByText(label, { exact: true }).waitFor();
+}

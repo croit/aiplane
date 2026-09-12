@@ -17,5 +17,7 @@ admin-tokens-models-restrict-label = 将此令牌限制为特定模型
 admin-tokens-models-saved-toast = 已设置运营方限制：{ $count } 个模型。
 admin-tokens-models-cleared-toast = 已移除运营方限制。
 admin-tokens-models-save = 保存模型
+admin-tokens-models-edit = 编辑模型
+admin-tokens-models-cancel = 取消
 
 # SPA 令牌总览：白名单编辑器标题与紧凑表格单元格。

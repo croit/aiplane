@@ -20,6 +20,10 @@ connectors-delete-button = 删除
 connectors-edit-summary = 编辑
 
 connectors-add-summary = 添加连接器
+connectors-edit-heading = 编辑 { $name }
+connectors-edit-page-title = 编辑连接器
+connectors-add-page-title = 添加连接器
+connectors-not-found = 找不到该键对应的连接器，它可能已被删除。
 
 connectors-oauth-help-dcr-heading = 动态客户端注册 — 无需 OAuth 客户端
 connectors-oauth-help-dcr-body = 只需在上方设置 MCP 服务器 URL。服务器会自动注册此网关(RFC 7591);随后每位用户点击"连接"并用自己的账户完成授权 — 一次登录即可覆盖服务器提供的所有服务。
@@ -69,6 +73,7 @@ connectors-field-client-json-label = 粘贴 OAuth 客户端 JSON(可选 — 例�
 connectors-field-client-json-help = 从文件中填充客户端 ID/密钥(以及授权和令牌 URL)。或使用下方的各个字段。
 connectors-field-client-id-label = OAuth 客户端 ID
 connectors-field-client-id-placeholder = …apps.googleusercontent.com / GitHub OAuth 应用 ID
+connectors-field-client-id-help = 来自你在服务商处注册的 OAuth 客户端。仅当服务器无法自行注册本网关时才需要。
 connectors-field-client-secret-label = OAuth 客户端密钥
 connectors-secret-placeholder-existing = ••••••••(留空以保留)
 connectors-secret-placeholder-new = 客户端密钥(可选)

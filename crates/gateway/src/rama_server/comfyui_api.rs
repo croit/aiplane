@@ -17,7 +17,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use gateway_core::server::db::users;
-use gateway_features::server::comfyui::{ComfyuiJob, ReloadReport, jobs};
+use gateway_features::server::comfyui::{ComfyuiJob, ReloadReport, WorkerHealth, jobs};
 use gateway_runtime::rama_server::state::RamaState;
 
 /// `POST /api/v0/comfyui/reload` — re-scan `[comfyui] content_dir` and
@@ -118,6 +118,53 @@ pub async fn catalog(State(state): State<Arc<RamaState>>, req: Request) -> Respo
         workflows,
         jobs,
     })
+}
+
+/// `GET /api/v0/comfyui/health` — live probe of the configured worker.
+///
+/// Always `200` when ComfyUI is configured: an unreachable worker is the
+/// answer the operator came for, not a server error, so the reachability
+/// verdict rides in the body (`reachable` + `error`) instead of the status
+/// code. Only a missing `[comfyui]` block is a `409`, matching `reload`.
+pub async fn health(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    if let Err(resp) = require_admin(&state, &req).await {
+        return resp;
+    }
+    let Some(handle) = state.comfyui() else {
+        return error_envelope(
+            StatusCode::CONFLICT,
+            "not_configured",
+            "[comfyui] is not configured on this gateway",
+        );
+    };
+    let base_url = handle.client.base_url().to_string();
+    match handle.client.health().await {
+        Ok(worker) => json_ok(&HealthResponse {
+            reachable: true,
+            base_url,
+            error: None,
+            worker: Some(worker),
+        }),
+        Err(err) => {
+            // Debug-level: a down worker is an operator fact the page now
+            // renders, not a gateway fault worth a warning on every poll.
+            tracing::debug!(error = %err, %base_url, "comfyui health probe failed");
+            json_ok(&HealthResponse {
+                reachable: false,
+                base_url,
+                error: Some(err.to_string()),
+                worker: None,
+            })
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct HealthResponse {
+    reachable: bool,
+    base_url: String,
+    error: Option<String>,
+    worker: Option<WorkerHealth>,
 }
 
 #[derive(Serialize)]

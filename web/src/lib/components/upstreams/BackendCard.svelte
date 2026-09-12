@@ -3,6 +3,7 @@
 	import { t, n } from '$lib/i18n.svelte';
 	import { activityCounts, type Backend, type Pool } from '$lib/upstreams';
 	import BackendEditor from './BackendEditor.svelte';
+	import EditModal from '$lib/components/EditModal.svelte';
 
 	interface Props {
 		backend: Backend;
@@ -14,7 +15,7 @@
 
 	let { backend, currentPool = null, pools, usage, onChanged }: Props = $props();
 	let showInactive = $state(false);
-	let editor: HTMLDetailsElement;
+	let editing = $state(false);
 	let toggling = $state(false);
 	let toggleError = $state<string | null>(null);
 	let activity = $derived(activityCounts(usage));
@@ -69,12 +70,15 @@
 				</div>
 			</div>
 			<div class="flex shrink-0 flex-col items-end gap-1">
-				{#if backend.live}
-					<label class="label cursor-pointer gap-2" title={t('backends-enabled-hint')}>
-						<input class="toggle toggle-sm" type="checkbox" checked={backend.live.enabled} disabled={toggling} aria-label={t('backends-enabled-label')} onchange={(event) => void toggleServing(event.currentTarget.checked)} />
-						<span class="text-sm">{t('backends-enabled-label')}</span>
-					</label>
-				{/if}
+				<div class="flex items-center gap-2">
+					{#if backend.live}
+						<label class="label cursor-pointer gap-2" title={t('backends-enabled-hint')}>
+							<input class="toggle toggle-sm" type="checkbox" checked={backend.live.enabled} disabled={toggling} aria-label={t('backends-enabled-label')} onchange={(event) => void toggleServing(event.currentTarget.checked)} />
+							<span class="text-sm">{t('backends-enabled-label')}</span>
+						</label>
+					{/if}
+					<button type="button" class="btn btn-ghost btn-xs" onclick={() => (editing = true)}>{t('upstreams-edit-backend')}</button>
+				</div>
 				<div class="flex items-center gap-2">
 					<span class="whitespace-nowrap text-xs tabular-nums text-base-content/60">{t('backends-inflight-label', { load: `${n(backend.live?.inflight ?? 0)} / ${n(backend.live?.max_inflight ?? backend.max_inflight)}` })}</span>
 					<progress class={`progress w-24 ${saturated ? 'progress-warning' : 'progress-primary'}`} value={backend.live?.inflight ?? 0} max={backend.live?.max_inflight ?? backend.max_inflight}></progress>
@@ -105,10 +109,14 @@
 			</div>
 		{/if}
 	</div>
-	<details bind:this={editor} class="collapse collapse-arrow border-t border-base-300 rounded-none">
-		<summary class="collapse-title min-h-0 py-2 text-sm font-medium">{t('upstreams-edit-backend')}</summary>
-		<div class="collapse-content border-t border-base-300 pt-3">
-			<BackendEditor {backend} {currentPool} {pools} existingNames={[]} onSaved={onChanged} onCancel={() => (editor.open = false)} />
-		</div>
-	</details>
+	<EditModal
+		bind:open={editing}
+		wide
+		footer="none"
+		title={t('upstreams-edit-backend')}
+		description={backend.name}
+		cancellabel={t('upstreams-cancel')}
+	>
+		<BackendEditor {backend} {currentPool} {pools} existingNames={[]} onSaved={onChanged} onCancel={() => (editing = false)} />
+	</EditModal>
 </section>

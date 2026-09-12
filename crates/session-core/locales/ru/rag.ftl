@@ -9,6 +9,7 @@ rag-empty-list = Пока нет коллекций. Создайте одну �
 # Toasts — collection CRUD
 rag-toast-indexing-queued = Индексация `{ $name }` @ `{ $ref }` поставлена в очередь.
 rag-toast-created-aggregate = `{ $name }` создана (агрегат). Добавьте исходные репозитории ниже, чтобы их проиндексировать.
+rag-toast-collection-saved = `{ $name }` сохранена.
 rag-toast-vanished = Коллекция исчезла после сохранения.
 # Toasts — refs / sources
 rag-toast-bulk-queued-skipped = Поставлено в очередь { $added } источник(ов); пропущено { $skipped } дубликат(ов).
@@ -67,6 +68,12 @@ rag-button-cancel = Отмена
 # Create-collection form
 rag-create-heading = Индексировать новую коллекцию
 rag-create-description = Индексатор клонирует репозиторий, разбивает каждый файл на чанки и создаёт для них embedding с помощью настроенной модели. PAT хранятся в открытом виде (шлюз работает на доверенной инфраструктуре).
+rag-new-page-title = Индексировать новую коллекцию
+rag-edit-page-title = Изменить коллекцию
+rag-not-found = Коллекция с таким id не найдена. Возможно, она была удалена.
+rag-back-to-collections = Коллекции RAG
+rag-edit-source-heading = Изменить источник
+rag-add-source-heading = Добавить источник
 rag-label-name = Имя
 rag-placeholder-name = напр. gateway-repo
 rag-label-description-optional = Описание (необязательно)

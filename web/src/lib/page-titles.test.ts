@@ -36,6 +36,12 @@ const plain = [
 	['/admin/models', 'admin-page-title'],
 	['/admin/connectors', 'connectors-page-title'],
 	['/admin/comfyui', 'admin-comfyui-page-title'],
+	['/admin/comfyui/jobs', 'admin-comfyui-jobs-page-title'],
+	['/admin/connectors/new', 'connectors-add-page-title'],
+	['/admin/connectors/atlassian/edit', 'connectors-edit-page-title'],
+	['/admin/models/edit', 'admin-edit-model-page-title'],
+	['/rag/new', 'rag-new-page-title'],
+	['/rag/42/edit', 'rag-edit-page-title'],
 	['/admin/limits', 'limits-heading'],
 	['/admin/settings', 'settings-heading'],
 	['/usage', 'usage-title-mine']

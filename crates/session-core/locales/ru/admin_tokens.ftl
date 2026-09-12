@@ -17,5 +17,7 @@ admin-tokens-models-restrict-label = Ограничить этот токен о
 admin-tokens-models-saved-toast = Ограничение оператора задано: { $count } моделей.
 admin-tokens-models-cleared-toast = Ограничение оператора снято.
 admin-tokens-models-save = Сохранить модели
+admin-tokens-models-edit = Изменить модели
+admin-tokens-models-cancel = Отмена
 
 # Реестр токенов в SPA: заголовок редактора списка разрешённых моделей и ячейки таблицы.

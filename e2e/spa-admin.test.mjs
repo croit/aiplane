@@ -5,7 +5,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert";
 
-import { BASE, gatewayIsUp, launchBrowser } from "./helpers.mjs";
+import { BASE, chooseSearchable, gatewayIsUp, launchBrowser } from "./helpers.mjs";
 
 let browser;
 let cookie;
@@ -95,13 +95,15 @@ test("API tokens preserve dates, accounting, quotas, and the operator model rest
     await row.getByText("created", { exact: false }).waitFor();
     await row.getByText("demo-model, demo-model-pro", { exact: true }).waitFor();
     await row.getByText(/Cost \/ Month/).waitFor();
-    await row.locator("summary").click();
-    const restrictModels = row.getByLabel("Restrict this token to specific models", { exact: true });
+    await row.getByRole("button", { name: "Edit models", exact: true }).click();
+    const modal = page.locator("dialog[open]");
+    await modal.waitFor();
+    const restrictModels = modal.getByLabel("Restrict this token to specific models", { exact: true });
     if (!(await restrictModels.isChecked())) await restrictModels.check();
-    for (const checkbox of await row.locator('input.checkbox').all()) await checkbox.uncheck();
-    await row.getByLabel("demo-model", { exact: true }).check();
+    for (const checkbox of await modal.locator('input.checkbox').all()) await checkbox.uncheck();
+    await modal.getByLabel("demo-model", { exact: true }).check();
     const saved = page.waitForResponse((response) => response.url().includes('/api/v0/admin/tokens/') && response.request().method() === "PUT");
-    await row.getByRole("button", { name: "Save models", exact: true }).click();
+    await modal.getByRole("button", { name: "Save models", exact: true }).click();
     const savedResponse = await saved;
     assert.equal(savedResponse.status(), 200);
     assert.deepEqual((await savedResponse.json()).models, ["demo-model"]);
@@ -162,7 +164,7 @@ test("models preserve defaults, search settings, filters, and the complete overr
     }
 
     const defaultSaved = page.waitForResponse((response) => response.url().endsWith("/api/v0/admin/model-defaults") && response.request().method() === "PUT");
-    await page.getByLabel("Chat", { exact: true }).selectOption("demo-model-pro");
+    await chooseSearchable(page, page.getByLabel("Chat", { exact: true }), "demo-model-pro");
     assert.equal((await defaultSaved).status(), 200);
 
     const search = page.locator("article").filter({ has: page.getByRole("heading", { name: "Web search", exact: true }) });
@@ -172,15 +174,21 @@ test("models preserve defaults, search settings, filters, and the complete overr
     await search.getByRole("button", { name: "Save web search", exact: true }).click();
     assert.equal((await searchSaved).status(), 200);
 
+    // The per-model editor is its own route now (it used to expand inside the
+    // table row); Edit navigates there and a save returns to the list.
     const row = page.getByTestId("model-row-demo-model");
-    await row.locator("summary").click();
-    await row.getByLabel("Reasoning style", { exact: true }).selectOption("qwen");
-    await row.getByLabel("Context window (tokens)", { exact: true }).fill("65536");
-    await row.getByLabel("Vision", { exact: true }).selectOption("true");
-    await row.getByLabel("Sampling defaults (TOML)", { exact: true }).fill("temperature = 0.4");
+    await row.getByRole("link", { name: "Edit", exact: true }).click();
+    await page.waitForURL(/\/admin\/models\/edit\?model=demo-model$/);
+    await page.getByLabel("Reasoning style", { exact: true }).selectOption("qwen");
+    await page.getByLabel("Context window (tokens)", { exact: true }).fill("65536");
+    await page.getByLabel("Vision", { exact: true }).selectOption("true");
+    await page.getByLabel("Sampling defaults (TOML)", { exact: true }).fill("temperature = 0.4");
     const saved = page.waitForResponse((response) => response.url().endsWith("/api/v0/admin/models") && response.request().method() === "PUT");
-    await row.getByRole("button", { name: "Save model", exact: true }).click();
+    await page.getByRole("button", { name: "Save model", exact: true }).click();
     assert.equal((await saved).status(), 200);
+    // The editor reports its outcome back through the query string.
+    await page.waitForURL((url) => url.pathname === "/admin/models" && url.searchParams.get("notice") === "saved");
+    await page.getByText("effective immediately", { exact: false }).waitFor();
 
     const filter = page.getByPlaceholder("Filter models…", { exact: true });
     await filter.fill("demo-model-pro");
@@ -256,8 +264,11 @@ test("connectors preserve the complete catalog, lifecycle, and audit workflow", 
     await page.getByRole("heading", { name: "Connectors", exact: true }).waitFor();
     assert.equal(await page.title(), "Connectors — LLM Gateway");
     await page.getByText("Curate the MCP servers", { exact: false }).waitFor();
-    await page.locator("summary").filter({ hasText: "Add a connector" }).click();
-    const create = page.locator("details").filter({ has: page.getByText("Add a connector", { exact: true }) });
+    // Add and Edit are routes now, not disclosures inside the list.
+    await page.getByRole("link", { name: "Add a connector", exact: true }).click();
+    await page.waitForURL((url) => url.pathname === "/admin/connectors/new");
+    const create = page.locator("form").filter({ has: page.getByLabel("Key (stable id)", { exact: true }) });
+    await create.waitFor();
     for (const label of ["Key (stable id)", "Name", "Icon (emoji)", "Category", "Description", "MCP server URL", "Scope", "Authentication", "Allowed groups (comma-separated)"]) {
         assert.equal(await create.getByLabel(label, { exact: true }).count(), 1, `${label} must be present`);
     }
@@ -280,15 +291,21 @@ test("connectors preserve the complete catalog, lifecycle, and audit workflow", 
     await create.getByRole("button", { name: "Add connector", exact: true }).click();
     assert.equal((await created).status(), 200);
 
-    const card = page.getByTestId(`connector-${key}`);
+    await page.waitForURL((url) => url.pathname === "/admin/connectors");
+    let card = page.getByTestId(`connector-${key}`);
     await card.getByRole("heading", { name: "Parity connector", exact: true }).waitFor();
     await card.getByText("Disabled", { exact: true }).waitFor();
     await card.getByText("Audited", { exact: true }).waitFor();
     assert.equal(await card.getByText("DCR", { exact: true }).count(), 0);
-    await card.locator("summary").filter({ hasText: "Edit" }).click();
-    assert.equal(await card.getByLabel("Description", { exact: true }).inputValue(), "Temporary connector used by browser parity tests.");
-    assert.equal(await card.getByLabel("Category", { exact: true }).inputValue(), "Testing");
-    assert.equal(await card.getByLabel("Authentication", { exact: true }).inputValue(), "none");
+
+    await card.getByRole("link", { name: "Edit", exact: true }).click();
+    await page.waitForURL((url) => url.pathname === `/admin/connectors/${key}/edit`);
+    assert.equal(await page.getByLabel("Description", { exact: true }).inputValue(), "Temporary connector used by browser parity tests.");
+    assert.equal(await page.getByLabel("Category", { exact: true }).inputValue(), "Testing");
+    assert.equal(await page.getByLabel("Authentication", { exact: true }).inputValue(), "none");
+    await page.getByRole("link", { name: "← Connectors", exact: true }).click();
+    await page.waitForURL((url) => url.pathname === "/admin/connectors");
+    card = page.getByTestId(`connector-${key}`);
 
     const enabled = page.waitForResponse((response) => response.url().includes(`/api/v0/admin/connectors/${key}/toggle`) && response.request().method() === "POST");
     await card.getByRole("button", { name: "Enable", exact: true }).click();
@@ -322,24 +339,41 @@ test("ComfyUI preserves operator configuration, workflow schemas, jobs, and relo
 
     await page.getByRole("heading", { name: "ComfyUI workflow catalog", exact: true }).waitFor();
     await page.getByText("Users never see ComfyUI itself", { exact: false }).waitFor();
+    // The worker strip answers "is it up?" before the catalog answers
+    // "what can it do?" — the dev worker is unreachable, which is a verdict
+    // the page must render rather than an error it swallows.
+    await page.getByText("Unreachable", { exact: true }).waitFor();
     await page.getByRole("heading", { name: "Operator configuration", exact: true }).waitFor();
-    for (const label of ["Worker base URL", "Content directory", "Workflow timeout", "Queue poll interval"]) {
+    for (const label of ["Workflow timeout", "Queue poll interval", "Concurrent jobs", "Content directory"]) {
         await page.getByText(label, { exact: true }).waitFor();
     }
+
+    // Catalog: a searchable rail selects into a detail pane, and the
+    // selection lives in the URL so one workflow's contract is linkable.
     await page.getByRole("heading", { name: /Loaded workflows/ }).waitFor();
+    await page.getByPlaceholder("Search workflows and parameters", { exact: true }).fill("text_to_image");
+    await page.getByRole("link", { name: "text_to_image", exact: true }).click();
+    await page.waitForURL((url) => url.searchParams.get("workflow") === "text_to_image");
     const workflow = page.getByTestId("comfyui-workflow-text_to_image");
     await workflow.getByText("comfyui_text_to_image", { exact: true }).waitFor();
     await workflow.getByText("node 9", { exact: true }).waitFor();
-    await workflow.getByText("Title: Text to Image", { exact: false }).waitFor();
-    await workflow.getByText("prompt", { exact: true }).waitFor();
-    await workflow.getByText("required", { exact: true }).waitFor();
-    await page.getByRole("heading", { name: /Recent jobs/ }).waitFor();
-    await page.getByTestId("comfyui-job-1").getByText("completed", { exact: true }).waitFor();
+    await workflow.getByRole("cell", { name: "prompt required" }).waitFor();
 
     const reloaded = page.waitForResponse((response) => response.url().endsWith("/api/v0/comfyui/reload") && response.request().method() === "POST");
     await page.getByRole("button", { name: "Reload catalog", exact: true }).click();
     assert.equal((await reloaded).status(), 200);
     await page.getByText("workflow(s) loaded", { exact: false }).waitFor();
+
+    // Job runs are their own page, reached from the tab pair.
+    await page.getByRole("tab", { name: /Job runs/ }).click();
+    await page.waitForURL((url) => url.pathname === "/admin/comfyui/jobs");
+    await page.getByRole("heading", { name: "Recent jobs", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Reliability by workflow", exact: true }).waitFor();
+    await page.getByTestId("comfyui-job-1").getByText("completed", { exact: true }).waitFor();
+    // The failed filter must cover gateway timeouts, not just ComfyUI errors.
+    await page.getByRole("button", { name: /^Failed/ }).click();
+    await page.getByTestId("comfyui-job-4").getByText("timeout", { exact: true }).waitFor();
+    assert.equal(await page.getByTestId("comfyui-job-1").count(), 0);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await ctx.close();
 });
@@ -356,8 +390,8 @@ test("limits preserve policy context, typed assignments, model scope, and CRUD",
     assert.equal(await form.locator("#limit-subject-type").inputValue(), "global");
     assert.equal(await form.locator("#limit-subject-id").isDisabled(), true);
     await form.locator("#limit-subject-type").selectOption("token");
-    await form.locator("#limit-subject-id").selectOption({ label: "Production API (dev@example.com)" });
-    await form.locator("#limit-model").selectOption("demo-model");
+    await chooseSearchable(page, form.locator("#limit-subject-id"), "Production API");
+    await chooseSearchable(page, form.locator("#limit-model"), "demo-model");
     await form.locator("#limit-dimension").selectOption("tokens");
     await form.locator("#limit-window").selectOption("day");
     await form.locator("#limit-value").fill("10000000");
@@ -441,8 +475,9 @@ test("upstreams keeps pool topology, backend controls, and fallbacks together", 
     if (firstBackend) {
         const row = page.getByTestId(`upstream-backend-${firstBackend.name}`);
         assert.equal(await row.getByLabel("Serving traffic").count(), 1);
-        const editor = row.locator("details").first();
-        await editor.locator("summary").click();
+        await row.getByRole("button", { name: "Edit backend", exact: true }).click();
+        const editor = page.locator("dialog[open]");
+        await editor.waitFor();
         assert.equal(await editor.locator('button:has-text("Test connection")').count(), 1);
         assert.equal(await editor.getByText("Calls this URL with the credentials above. Nothing is saved.", { exact: true }).count(), 1);
     }

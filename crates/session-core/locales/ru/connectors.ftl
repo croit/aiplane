@@ -20,6 +20,10 @@ connectors-delete-button = Удалить
 connectors-edit-summary = Изменить
 
 connectors-add-summary = Добавить коннектор
+connectors-edit-heading = Изменить { $name }
+connectors-edit-page-title = Изменить коннектор
+connectors-add-page-title = Добавить коннектор
+connectors-not-found = Коннектор с таким ключом не найден. Возможно, он был удалён.
 
 connectors-oauth-help-dcr-heading = Динамическая регистрация клиента — OAuth-клиент не требуется
 connectors-oauth-help-dcr-body = Просто укажите выше URL MCP-сервера. Сервер автоматически регистрирует этот шлюз (RFC 7591); каждый пользователь затем нажимает «Подключить» и авторизуется под своей учётной записью — один вход в систему покрывает все сервисы, которые предоставляет сервер.
@@ -69,6 +73,7 @@ connectors-field-client-json-label = Вставить JSON OAuth-клиента 
 connectors-field-client-json-help = Заполняет client id/secret (а также authorize- и token-URL) из файла. Либо используйте отдельные поля ниже.
 connectors-field-client-id-label = OAuth client id
 connectors-field-client-id-placeholder = …apps.googleusercontent.com / id OAuth-приложения GitHub
+connectors-field-client-id-help = Из OAuth-клиента, зарегистрированного у провайдера. Нужен только если сервер не может зарегистрировать шлюз сам.
 connectors-field-client-secret-label = OAuth client secret
 connectors-secret-placeholder-existing = •••••••• (оставьте пустым, чтобы сохранить текущий)
 connectors-secret-placeholder-new = client secret (необязательно)

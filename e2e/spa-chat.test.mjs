@@ -33,7 +33,14 @@ async function chooseSearchable(page, label, query, optionName = query) {
     await picker.click();
     const dropdown = picker.locator("..");
     await dropdown.getByPlaceholder("Search options…", { exact: true }).fill(query);
-    await dropdown.getByRole("option", { name: optionName }).click();
+    // Prefer the option whose visible label is exactly this text — the
+    // accessible name concatenates description and badges, so "demo-model"
+    // would otherwise also match "demo-model-pro". Fall back to the
+    // accessible name for labels that span several text nodes ("v1 Complete
+    // feature parity"), which no single text node carries.
+    const byLabel = dropdown.getByRole("option").filter({ has: page.getByText(optionName, { exact: true }) });
+    const target = (await byLabel.count()) ? byLabel.first() : dropdown.getByRole("option", { name: optionName }).first();
+    await target.click();
 }
 
 before(async () => {
@@ -234,14 +241,17 @@ test("conversation tools use a responsive full-screen selector", async () => {
 });
 
 test("the transcript keeps edit, retry, code, tool-detail, and canvas workflows", async () => {
+    // Every other suite reads this variable as the bare cookie value; accept
+    // either spelling so one export drives the whole run.
     const cookie = process.env.GATEWAY_SESSION_COOKIE;
-    assert.ok(cookie?.startsWith("id="), "set GATEWAY_SESSION_COOKIE to the dev-ui seed cookie");
-    const cookieValue = cookie.slice("id=".length);
+    assert.ok(cookie, "set GATEWAY_SESSION_COOKIE to the dev-ui seed cookie");
+    const cookieValue = cookie.startsWith("id=") ? cookie.slice("id=".length) : cookie;
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 950 } });
     await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
     const page = await ctx.newPage();
 
-    const transcriptUrl = await conversationUrl(cookie, "Enabling gzip in nginx");
+    // `conversationUrl` sends this as a Cookie header, so it needs the name.
+    const transcriptUrl = await conversationUrl(`id=${cookieValue}`, "Enabling gzip in nginx");
     await page.goto(`${BASE}${transcriptUrl}`, { waitUntil: "domcontentloaded" });
     await page.getByRole("separator", { name: "Earlier messages condensed to save context", exact: true }).waitFor();
     await page.getByRole("button", { name: "Copy code", exact: true }).waitFor();
@@ -253,7 +263,7 @@ test("the transcript keeps edit, retry, code, tool-detail, and canvas workflows"
     page.once("dialog", (dialog) => dialog.dismiss());
     await page.getByRole("button", { name: /Retry/ }).click();
 
-    const workspaceUrl = await conversationUrl(cookie, "Draft a project brief");
+    const workspaceUrl = await conversationUrl(`id=${cookieValue}`, "Draft a project brief");
     await page.goto(`${BASE}${workspaceUrl}`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Document", exact: true }).waitFor();
     await page.getByText("Ship a reliable, accessible gateway experience.", { exact: true }).waitFor();
@@ -270,9 +280,9 @@ test("the transcript keeps edit, retry, code, tool-detail, and canvas workflows"
     await transcript.evaluate((element) => { element.scrollTop = element.scrollHeight; });
     assert.equal((await composer.boundingBox()).y, composerY, "transcript scrolling must not move the composer");
 
-    await chooseSearchable(page, "Version", "v1", "v1 Complete feature parity");
+    await chooseSearchable(page, "Version", "v1", "v1");
     await page.getByText("Complete feature parity", { exact: true }).waitFor();
-    await chooseSearchable(page, "Version", "v2", "v2 Release criteria");
+    await chooseSearchable(page, "Version", "v2", "v2");
     await page.getByText("Release criteria", { exact: true }).waitFor();
 
     const desktopCanvas = page.getByRole("complementary", { name: "Canvas", exact: true });

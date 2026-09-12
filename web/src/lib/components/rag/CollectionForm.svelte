@@ -143,10 +143,9 @@
 
 <div class="card card-border min-w-0 bg-base-100">
 	<div class="card-body min-w-0 gap-4">
-		<div>
-			<h2 class="card-title">{collection ? t('rag-edit-heading', { name: collection.name }) : t('rag-create-heading')}</h2>
-			{#if !collection}<p class="mt-1 text-sm text-base-content/60">{t('rag-create-description')}</p>{/if}
-		</div>
+		<!-- The route above owns the heading; repeating it here just stacked two
+		     identical titles once the form moved off the list. -->
+		{#if !collection}<p class="m-0 text-sm text-base-content/60">{t('rag-create-description')}</p>{/if}
 
 		{#if message}<div class="alert alert-info"><span>{message}</span></div>{/if}
 

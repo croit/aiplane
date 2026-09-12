@@ -2,24 +2,23 @@
 	import { onMount, untrack } from 'svelte';
 	import { adminDelete, adminJson, adminPatch, adminPost } from '$lib/admin-client';
 	import { dt, t } from '$lib/i18n.svelte';
-	import { parseSources, sourceLabel, type RagCollection, type RagLogEntry, type RagProfile, type RagProvider, type RagRef } from '$lib/rag';
-	import CollectionForm from './CollectionForm.svelte';
+	import { parseSources, sourceLabel, type RagCollection, type RagLogEntry, type RagRef } from '$lib/rag';
+	import { base } from '$app/paths';
+	import EditModal from '$lib/components/EditModal.svelte';
 
-	let { collection, providers, profiles, models, onchanged, onnotice } = $props<{
+	let { collection, onchanged, onnotice } = $props<{
 		collection: RagCollection;
-		providers: RagProvider[];
-		profiles: RagProfile[];
-		models: string[];
 		onchanged: () => void | Promise<void>;
 		onnotice: (message: string) => void;
 	}>();
 
 	let refs = $state<RagRef[]>([]);
-	let editing = $state(false);
+	let addingSource = $state(false);
 	let sourceDraft = $state('');
 	let sourceUrl = $state('');
 	let sourceRef = $state(untrack(() => collection.git_ref));
 	let editingRef = $state<number | null>(null);
+	let sourceEditorOpen = $state(false);
 	let refUrl = $state('');
 	let refName = $state('');
 	let openLog = $state<number | null>(null);
@@ -85,12 +84,21 @@
 		editingRef = source.id;
 		refUrl = source.git_url ?? '';
 		refName = source.git_ref;
+		sourceEditorOpen = true;
+	}
+
+	/** The source dialog lives outside the row loop; `editingRef` is the row
+	 *  it was opened on. */
+	async function saveEditedSource() {
+		const source = refs.find((candidate) => candidate.id === editingRef);
+		if (source) await saveSource(source);
 	}
 
 	async function saveSource(source: RagRef) {
 		try {
 			await adminPatch(`/api/v0/rag/collections/${collection.id}/refs/${source.id}`, { git_url: refUrl.trim() || null, git_ref: refName.trim() });
 			editingRef = null;
+			sourceEditorOpen = false;
 			onnotice(t('rag-toast-source-updated'));
 			await loadRefs();
 		} catch (error) {
@@ -175,7 +183,7 @@
 				</div>
 			</div>
 			<div class="flex flex-wrap gap-2">
-				<button class="btn btn-sm" onclick={() => (editing = !editing)}>{editing ? t('rag-button-cancel') : t('rag-button-edit')}</button>
+				<a class="btn btn-sm" href="{base}/rag/{collection.id}/edit">{t('rag-button-edit')}</a>
 				<button class="btn btn-sm" onclick={rotateSync}>{collection.sync_hook_set ? t('rag-button-sync-token-rotate') : t('rag-button-sync-token')}</button>
 				{#if collection.sync_hook_set}<button class="btn btn-ghost btn-sm" onclick={clearSync}>{t('rag-button-sync-token-clear')}</button>{/if}
 				<button class="btn btn-outline btn-error btn-sm" onclick={removeCollection}>{t('rag-button-delete-collection')}</button>
@@ -186,10 +194,6 @@
 			<div class="alert alert-success"><span class="min-w-0"><strong>{t('rag-sync-url-heading')}</strong><code class="mt-1 block break-all">curl -X POST "{syncUrl}"</code></span></div>
 		{/if}
 		{#if collection.connected_account}<div class="alert alert-info"><span>{t('rag-source-consent-connected')}: {collection.connected_account}</span></div>{/if}
-		{#if editing}
-			<CollectionForm {collection} {providers} {profiles} {models} onsaved={async () => { editing = false; await onchanged(); }} oncancel={() => (editing = false)} />
-		{/if}
-
 		<ul class="list rounded-box border border-base-300">
 			{#each refs as source (source.id)}
 				{@const statusSource = collection.search_mode === 'aggregate' ? (refs.find((item) => item.is_primary) ?? source) : source}
@@ -212,13 +216,6 @@
 						{#if !source.is_primary && collection.search_mode !== 'aggregate'}<button class="btn btn-ghost btn-xs" onclick={() => post(`/api/v0/rag/collections/${collection.id}/refs/${source.id}/primary`)}>{t('rag-button-set-primary')}</button>{/if}
 						<button class="btn btn-ghost btn-error btn-xs" onclick={() => removeSource(source)}>{t('rag-button-remove')}</button>
 					</div>
-					{#if editingRef === source.id}
-						<div class="list-col-wrap grid grid-cols-1 gap-2 border-t border-base-300 pt-3 sm:grid-cols-2">
-							<fieldset class="fieldset"><legend class="fieldset-legend">{collection.search_mode === 'aggregate' ? t('rag-label-git-url-source') : t('rag-label-git-url-inherit')}</legend><input class="input w-full font-mono" bind:value={refUrl} /></fieldset>
-							<fieldset class="fieldset"><legend class="fieldset-legend">{t('rag-label-branch-tag')}</legend><input class="input w-full font-mono" bind:value={refName} /></fieldset>
-							<div class="flex justify-end gap-2 sm:col-span-2"><button class="btn btn-sm" onclick={() => (editingRef = null)}>{t('rag-button-cancel')}</button><button class="btn btn-primary btn-sm" onclick={() => saveSource(source)}>{t('rag-button-save-source')}</button></div>
-						</div>
-					{/if}
 					{#if openLog === source.id}
 						<div class="list-col-wrap border-t border-base-300 pt-3">
 							<h4 class="font-medium">{t('rag-log-heading')}</h4>
@@ -231,13 +228,47 @@
 			{/each}
 		</ul>
 
-		<div class="flex flex-wrap items-end gap-2">
-			{#if collection.search_mode === 'aggregate'}<fieldset class="fieldset min-w-64 flex-1"><legend class="fieldset-legend">{t('rag-label-git-url-source')}</legend><input class="input input-sm w-full font-mono" bind:value={sourceUrl} placeholder={t('rag-placeholder-source-git-url')} /></fieldset>{/if}
-			<fieldset class="fieldset min-w-48"><legend class="fieldset-legend">{t('rag-label-branch-tag')}</legend><input class="input input-sm w-full font-mono" bind:value={sourceRef} placeholder={t('rag-placeholder-branch-tag-commit')} /></fieldset>
-			<button class="btn btn-sm" onclick={addSource} disabled={!sourceRef.trim() || (collection.search_mode === 'aggregate' && !sourceUrl.trim())}>{collection.search_mode === 'aggregate' ? t('rag-button-add-source') : t('rag-button-add-ref')}</button>
+		<div class="flex justify-end">
+			<button class="btn btn-sm" type="button" onclick={() => (addingSource = true)}>
+				{collection.search_mode === 'aggregate' ? t('rag-button-add-source') : t('rag-button-add-ref')}
+			</button>
 		</div>
-		{#if collection.search_mode === 'aggregate'}
-			<div class="flex flex-col gap-2 sm:flex-row sm:items-end"><fieldset class="fieldset flex-1"><legend class="fieldset-legend">{t('rag-button-add-bulk')}</legend><textarea class="textarea min-h-28 w-full font-mono text-xs" bind:value={sourceDraft} placeholder={t('rag-placeholder-bulk-sources')}></textarea><p class="label">{t('rag-add-sources-hint', { at: '@ref', ref: collection.git_ref })}</p></fieldset><button class="btn btn-sm" onclick={addSources} disabled={!sourceDraft.trim()}>{t('rag-button-add-bulk')}</button></div>
-		{/if}
 	</div>
+
+	<!-- Editing one source is two fields; adding one is two more. Both were
+	     inline forms that grew the card — they are dialogs now, like every
+	     other short editor in the app. -->
+	<EditModal
+		bind:open={sourceEditorOpen}
+		title={t('rag-edit-source-heading')}
+		description={collection.name}
+		cancellabel={t('rag-button-cancel')}
+		savelabel={t('rag-button-save-source')}
+		onsave={saveEditedSource}
+	>
+		<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+			<fieldset class="fieldset"><legend class="fieldset-legend">{collection.search_mode === 'aggregate' ? t('rag-label-git-url-source') : t('rag-label-git-url-inherit')}</legend><input class="input w-full font-mono" bind:value={refUrl} /></fieldset>
+			<fieldset class="fieldset"><legend class="fieldset-legend">{t('rag-label-branch-tag')}</legend><input class="input w-full font-mono" bind:value={refName} /></fieldset>
+		</div>
+	</EditModal>
+
+	<EditModal
+		bind:open={addingSource}
+		wide={collection.search_mode === 'aggregate'}
+		title={t('rag-add-source-heading')}
+		description={collection.name}
+		cancellabel={t('rag-button-cancel')}
+		footer="close"
+	>
+		<div class="flex flex-col gap-4">
+			<div class="flex flex-wrap items-end gap-2">
+				{#if collection.search_mode === 'aggregate'}<fieldset class="fieldset min-w-64 flex-1"><legend class="fieldset-legend">{t('rag-label-git-url-source')}</legend><input class="input input-sm w-full font-mono" bind:value={sourceUrl} placeholder={t('rag-placeholder-source-git-url')} /></fieldset>{/if}
+				<fieldset class="fieldset min-w-48 flex-1"><legend class="fieldset-legend">{t('rag-label-branch-tag')}</legend><input class="input input-sm w-full font-mono" bind:value={sourceRef} placeholder={t('rag-placeholder-branch-tag-commit')} /></fieldset>
+				<button class="btn btn-primary btn-sm" onclick={addSource} disabled={!sourceRef.trim() || (collection.search_mode === 'aggregate' && !sourceUrl.trim())}>{collection.search_mode === 'aggregate' ? t('rag-button-add-source') : t('rag-button-add-ref')}</button>
+			</div>
+			{#if collection.search_mode === 'aggregate'}
+				<div class="flex flex-col gap-2 border-t border-base-300 pt-3 sm:flex-row sm:items-end"><fieldset class="fieldset flex-1"><legend class="fieldset-legend">{t('rag-button-add-bulk')}</legend><textarea class="textarea min-h-28 w-full font-mono text-xs" bind:value={sourceDraft} placeholder={t('rag-placeholder-bulk-sources')}></textarea><p class="label">{t('rag-add-sources-hint', { at: '@ref', ref: collection.git_ref })}</p></fieldset><button class="btn btn-sm" onclick={addSources} disabled={!sourceDraft.trim()}>{t('rag-button-add-bulk')}</button></div>
+			{/if}
+		</div>
+	</EditModal>
 </article>

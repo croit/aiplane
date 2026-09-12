@@ -9,6 +9,7 @@ rag-empty-list = Noch keine Sammlungen. Erstellen Sie oben eine.
 # Toasts — collection CRUD
 rag-toast-indexing-queued = Indexierung von `{ $name }` @ `{ $ref }` wurde eingeplant.
 rag-toast-created-aggregate = `{ $name }` (Aggregat) erstellt. Fügen Sie unten Quell-Repos hinzu, um sie zu indexieren.
+rag-toast-collection-saved = `{ $name }` gespeichert.
 rag-toast-vanished = Sammlung ist nach dem Speichern verschwunden.
 # Toasts — refs / sources
 rag-toast-bulk-queued-skipped = { $added } Quelle(n) eingeplant; { $skipped } Duplikat(e) übersprungen.
@@ -67,6 +68,12 @@ rag-button-cancel = Abbrechen
 # Create-collection form
 rag-create-heading = Neue Sammlung indexieren
 rag-create-description = Der Indexer klont das Repo, zerlegt jede Datei in Chunks und embeddet sie mit dem konfigurierten Embedding-Modell. PATs werden im Klartext gespeichert (das Gateway läuft auf vertrauenswürdiger Infrastruktur).
+rag-new-page-title = Neue Sammlung indexieren
+rag-edit-page-title = Sammlung bearbeiten
+rag-not-found = Keine Sammlung mit dieser ID. Sie wurde möglicherweise gelöscht.
+rag-back-to-collections = RAG-Sammlungen
+rag-edit-source-heading = Quelle bearbeiten
+rag-add-source-heading = Quelle hinzufügen
 rag-label-name = Name
 rag-placeholder-name = z. B. gateway-repo
 rag-label-description-optional = Beschreibung (optional)

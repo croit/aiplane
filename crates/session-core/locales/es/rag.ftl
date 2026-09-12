@@ -9,6 +9,7 @@ rag-empty-list = Aún no hay colecciones. Cree una arriba.
 # Toasts — collection CRUD
 rag-toast-indexing-queued = Se puso en cola la indexación de `{ $name }` @ `{ $ref }`.
 rag-toast-created-aggregate = `{ $name }` creada (agregado). Añada los repositorios de origen abajo para indexarlos.
+rag-toast-collection-saved = `{ $name }` guardada.
 rag-toast-vanished = La colección desapareció tras guardarse.
 # Toasts — refs / sources
 rag-toast-bulk-queued-skipped = { $added } fuente(s) en cola; { $skipped } duplicado(s) omitido(s).
@@ -67,6 +68,12 @@ rag-button-cancel = Cancelar
 # Create-collection form
 rag-create-heading = Indexar una nueva colección
 rag-create-description = El indexador clona el repositorio, divide cada archivo en fragmentos y los convierte en embeddings con el modelo configurado. Los PAT se almacenan tal cual (la pasarela se ejecuta en infraestructura de confianza).
+rag-new-page-title = Indexar una colección nueva
+rag-edit-page-title = Editar colección
+rag-not-found = No hay ninguna colección con ese id. Es posible que se haya eliminado.
+rag-back-to-collections = Colecciones RAG
+rag-edit-source-heading = Editar fuente
+rag-add-source-heading = Añadir una fuente
 rag-label-name = Nombre
 rag-placeholder-name = p. ej. gateway-repo
 rag-label-description-optional = Descripción (opcional)

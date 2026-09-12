@@ -17,5 +17,7 @@ admin-tokens-models-restrict-label = Limitar este token a modelos concretos
 admin-tokens-models-saved-toast = Restricción del operador fijada: { $count } modelos.
 admin-tokens-models-cleared-toast = Restricción del operador eliminada.
 admin-tokens-models-save = Guardar modelos
+admin-tokens-models-edit = Editar modelos
+admin-tokens-models-cancel = Cancelar
 
 # Registro de tokens de la SPA: título del editor de lista permitida y celdas compactas.

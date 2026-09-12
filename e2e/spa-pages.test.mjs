@@ -50,6 +50,7 @@ const PAGES = [
     ["/admin/connectors", "Connectors", "Connectors — LLM Gateway"],
     ["/admin/comfyui", "Reload catalog", "ComfyUI — Workflow catalog"],
     ["/rag", "Index a new collection", "RAG collections — LLM Gateway", true],
+    ["/rag/new", "Queue indexing", "Index a new collection", true],
     ["/rag/profiles", "New profile", "Extraction profiles — LLM Gateway", true],
 ];
 
@@ -88,7 +89,9 @@ test("RAG controls fit a mobile viewport", async (t) => {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
     await ctx.addCookies([{ name: "id", value: adminCookie, url: BASE }]);
     const page = await ctx.newPage();
-    for (const [path, heading] of [["/rag", "Index a new collection"], ["/rag/profiles", "New profile"]]) {
+    // The collection form moved to its own route, so the mobile-width guard
+    // follows it there; /rag itself is now just the list.
+    for (const [path, heading] of [["/rag", "Configured collections"], ["/rag/new", "Index a new collection"], ["/rag/profiles", "New profile"]]) {
         await page.goto(`${BASE}${path}`, { waitUntil: "networkidle" });
         await page.getByRole("heading", { name: heading }).waitFor();
         const main = page.locator("main");
@@ -241,7 +244,10 @@ test("webhooks preserve security, reuse, reveal, and edit workflows on mobile", 
 
     const revealedUrl = page.getByRole("textbox", { name: "Your trigger URL" });
     await revealedUrl.waitFor();
-    assert.match(await revealedUrl.inputValue(), /^http:\/\/(?:localhost|127\.0\.0\.1):8080\/hooks\/gwh_/);
+    // Derived from BASE, not hardcoded to :8080 — the suite has to run
+    // against a gateway on any port (a second dev-ui alongside the first).
+    const { port } = new URL(BASE);
+    assert.match(await revealedUrl.inputValue(), new RegExp(`^https?://(?:localhost|127\\.0\\.0\\.1):${port}/hooks/gwh_`));
     const row = page.getByText(hookName, { exact: true }).locator("xpath=ancestor::li");
     await row.getByText(/Waits for response/).waitFor();
     await row.getByRole("link", { name: "Edit", exact: true }).click();

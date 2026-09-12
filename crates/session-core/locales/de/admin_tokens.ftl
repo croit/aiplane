@@ -17,5 +17,7 @@ admin-tokens-models-restrict-label = Dieses Token auf bestimmte Modelle beschrä
 admin-tokens-models-saved-toast = Betreiber-Beschränkung gesetzt: { $count } Modelle.
 admin-tokens-models-cleared-toast = Betreiber-Beschränkung entfernt.
 admin-tokens-models-save = Modelle speichern
+admin-tokens-models-edit = Modelle bearbeiten
+admin-tokens-models-cancel = Abbrechen
 
 # Token-Register der SPA: Überschrift des Allowlist-Editors und die kompakten Tabellenzellen.

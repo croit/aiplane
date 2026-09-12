@@ -93,6 +93,7 @@ async fn admin_routes_gate_with_json_envelopes() {
         (Method::GET, "/api/v0/admin/connectors/example/audit"),
         (Method::GET, "/api/v0/comfyui/catalog"),
         (Method::POST, "/api/v0/comfyui/reload"),
+        (Method::GET, "/api/v0/comfyui/health"),
         (Method::GET, "/api/v0/admin/limits"),
         (Method::POST, "/api/v0/admin/limits"),
         (Method::GET, "/api/v0/admin/settings"),
@@ -199,6 +200,29 @@ type = "string"
         response["jobs"][0]["output_filename"],
         "browser-fixture-1.png"
     );
+}
+
+#[tokio::test]
+async fn comfyui_health_reports_an_unreachable_worker_as_a_200_verdict() {
+    // The operator page asks this endpoint "is the worker up?". A down
+    // worker must answer that question, not fail the request — otherwise the
+    // page can only show a generic error and the admin is back to grepping
+    // logs, which is the thing the probe exists to replace.
+    // The helper points the ComfyUI client at `http://unused.invalid` —
+    // a reserved TLD that can never resolve (RFC 6761), so the probe fails
+    // to connect without the test depending on the network.
+    let state = common::state_with_admin_rbac_and_comfyui("http://unused.invalid").await;
+    let (state, cookie) = setup_state(state).await;
+    let response = router(state)
+        .serve(req(Method::GET, "/api/v0/comfyui/health", &cookie, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response: serde_json::Value = serde_json::from_str(&body(response).await).unwrap();
+    assert_eq!(response["reachable"], false);
+    assert_eq!(response["base_url"], "http://unused.invalid");
+    assert!(response["error"].is_string());
+    assert!(response["worker"].is_null());
 }
 
 #[tokio::test]
