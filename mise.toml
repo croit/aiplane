@@ -319,7 +319,15 @@ cp -r web/build target/frontend/build
 
 [tasks.check-web]
 description = "svelte-check (typescript + a11y + Svelte diagnostics) across web/src."
-depends = ["web-install"]
+# Depends on build-web to SERIALISE it, not because it needs the output. Both
+# tasks write web/.svelte-kit — `npm run check` runs `svelte-kit sync`, and
+# `vite build` syncs internally — and with only `web-install` between them
+# mise's DAG ran the two concurrently. When the sync landed mid-build, vite
+# emitted an index.html and JS chunks carrying different `__sveltekit_<id>`
+# globals: the "torn SPA build" that build-web's own guard catches, and that
+# would otherwise ship an app that loads to a blank page. Intermittent by
+# nature — it went unnoticed until a CI run lost the race.
+depends = ["build-web"]
 sources = ["web/src/**/*", "web/vite.config.ts"]
 run = "npm --prefix web run check"
 
