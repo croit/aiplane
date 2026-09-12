@@ -6,16 +6,22 @@
 # `components` rides on mise's Rust plugin (which uses rustup under
 # the hood) — no separate `rustup component add` step needed at any
 # install site, CI or local. See https://mise.jdx.dev/lang/rust.html.
-rust = { version = "1.95", components = "rustfmt,clippy,cargo" }
+rust = { version = "1.98", components = "rustfmt,clippy,cargo" }
 # cargo-binstall is what mise uses behind the `cargo:` backend to install Rust
 # binaries quickly (pre-built when available, source-build as fallback).
-cargo-binstall = "latest"
+#
+# Pinned, like every other tool here. "latest" means the version that installs
+# is whatever upstream published most recently — nobody reviews it, CI and a
+# developer's machine can silently disagree, and for binstall specifically it
+# is the component that FETCHES OTHER PREBUILT BINARIES, so it is the last
+# thing that should float. Bump these deliberately.
+cargo-binstall = "1.23.0"
 # sccache wraps rustc to cache compilation artifacts. Optional and OFF by
 # default — no `RUSTC_WRAPPER` is set here. Local devs can opt in by setting
 # `RUSTC_WRAPPER=sccache` (and configuring a backend, e.g. local disk or S3).
 # CI does not use sccache; GitHub Actions caches the cargo registry + target/
 # via Swatinem/rust-cache instead.
-"cargo:sccache" = "latest"
+"cargo:sccache" = "0.17.0"
 # cargo-nextest is the workspace test runner (`mise run test`). It runs the
 # ~37 integration-test binaries with far more parallelism than `cargo test`
 # and gives a compact per-test report. Kept in the committed toolset (not
@@ -23,20 +29,30 @@ cargo-binstall = "latest"
 # `mise run ci` → `test`. Note: nextest does not run doctests; the codebase
 # has none that execute (the only ` ``` ` fences are `text` blocks), so no
 # separate `cargo test --doc` step is needed. Add one here if that changes.
-"cargo:cargo-nextest" = "latest"
+"cargo:cargo-nextest" = "0.9.144"
 # Node builds the SvelteKit SPA in `web/` and runs the `node:test`-driven
 # suites in `web/src/lib` (unit) and `e2e/` (browser).
 node = "24"
 # Playwright, used only by the `e2e` task (browser-driven end-to-end tests).
 # Installed as a mise tool so there's no project-local node_modules; the e2e
 # task points `PLAYWRIGHT_DIR` at this install via `mise where`. Pinned to
-# match the fallback path baked into `e2e/helpers.mjs`.
-"npm:@playwright/cli" = "0.1.13"
+# match the fallback path baked into `e2e/helpers.mjs` — bump both together.
+#
+# Deliberately NOT 0.1.19 (the current `latest`). Every release from 0.1.0
+# through 0.1.18 was published by the trusted GitHub Actions publisher with a
+# SLSA provenance attestation; 0.1.19 (2026-09-01) has NO attestation and was
+# pushed by a different npm identity (`microsoft1es`). mise's trust policy
+# refuses it as a provenance downgrade, and that refusal is correct — most
+# likely an upstream release-pipeline change, but "probably fine" is not the
+# bar for a package that installs into CI. 0.1.18 is the newest release that
+# still carries provenance. Re-check on the next release; if 0.1.20+ restores
+# the attestation, move straight to it.
+"npm:@playwright/cli" = "0.1.18"
 # `typst` CLI for the `typst_<template>` tools. Resolved through
 # mise's registry (aqua → GitHub releases), so platform detection
 # is mise's problem. `mise run fetch-typst-cli` then copies the
 # installed binary into target/release/typst for the runtime image.
-typst = "0.15.0"
+typst = "0.15.1"
 # gitleaks backs the `secrets` / `secrets-staged` tasks: the pre-commit hook
 # and CI's `secrets` job. In the committed toolset (not mise.local.toml) so
 # `mise install` provisions it for every clone and for CI — a scanner only
@@ -188,17 +204,47 @@ install -m 0755 "$(mise which typst)" target/release/typst
 target/release/typst --version
 """
 
+[tasks.lock-sandbox-python]
+description = "Recompile sandbox-image/requirements.txt (the hash-pinned Python lock for the sandbox gold image) from requirements.in. Run after editing requirements.in, or to pull in upstream security fixes. Needs docker — the resolve happens inside the image's own pinned Debian base so the lock matches the build platform, not your Mac."
+dir = "{{ config_root }}"
+run = '''
+set -eu
+# Keep this base in sync with sandbox-image/Containerfile's FROM. Resolving on
+# the target platform matters: a lock compiled against a different Python minor
+# or libc can pin versions that have no wheel in the image.
+base=$(sed -n 's|^FROM \(debian:[^ ]*\).*|\1|p' sandbox-image/Containerfile | head -1)
+echo "resolving against ${base}"
+docker run --rm --platform linux/amd64 \
+    -v "$PWD/sandbox-image:/w" -w /w "$base" \
+    sh -c '
+        set -eu
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq >/dev/null
+        apt-get install -y -qq --no-install-recommends python3 python3-venv >/dev/null 2>&1
+        python3 -m venv /tmp/v
+        /tmp/v/bin/pip install -q --upgrade pip uv >/dev/null 2>&1
+        /tmp/v/bin/uv pip compile --generate-hashes --universal \
+            --python-version 3.13 -o requirements.txt requirements.in
+    '
+echo "wrote sandbox-image/requirements.txt ($(grep -c -- --hash=sha256: sandbox-image/requirements.txt) hashes)"
+'''
+
 [tasks.fetch-pdfium]
 description = "Download the prebuilt pdfium shared library (Chromium's PDF engine, BSD-3) into target/release/ so the runtime Dockerfile COPYs it (PDFIUM_LIB_PATH) and the fetch_attachment PDF reader's image tier (scanned PDFs → page images) works out of the box. Mirrors fetch-typst-cli: rides the same artifact pipeline as the gateway binary. Pinned to PDFIUM_TAG — bump = edit one line. Cached via a tag-stamp sidecar so repeat release builds don't re-download."
 run = """
 set -eu
 # Bump this to upgrade pdfium. Tags: https://github.com/bblanchon/pdfium-binaries/releases
-PDFIUM_TAG="chromium/7891"
+PDFIUM_TAG="chromium/8044"
+# Each asset is sha256-verified below. This library is dlopen'd by the gateway
+# process itself (PDFIUM_LIB_PATH) — a tampered download is code execution in
+# the server, not a broken build — so "curl it and trust the TLS" is not enough.
+# Bump the tag and ALL FOUR hashes together; they are the digests GitHub
+# publishes on the release assets.
 case "$(uname -s)-$(uname -m)" in
-  Linux-x86_64)  asset=pdfium-linux-x64.tgz;   lib=libpdfium.so ;;
-  Linux-aarch64) asset=pdfium-linux-arm64.tgz; lib=libpdfium.so ;;
-  Darwin-arm64)  asset=pdfium-mac-arm64.tgz;   lib=libpdfium.dylib ;;
-  Darwin-x86_64) asset=pdfium-mac-x64.tgz;     lib=libpdfium.dylib ;;
+  Linux-x86_64)  asset=pdfium-linux-x64.tgz;   lib=libpdfium.so;    sha=eb142f416aed3a72fc5a02dbd5884868a16cb99dc0cf53e6bdd64afbf67b05f4 ;;
+  Linux-aarch64) asset=pdfium-linux-arm64.tgz; lib=libpdfium.so;    sha=e98400ef5f005f27cfba5c14f72d464e25187298f04950de46646033cf24cef0 ;;
+  Darwin-arm64)  asset=pdfium-mac-arm64.tgz;   lib=libpdfium.dylib; sha=61424884d4a7f153b808deba6437848e4400834ce30aaf95d3050da44df8f420 ;;
+  Darwin-x86_64) asset=pdfium-mac-x64.tgz;     lib=libpdfium.dylib; sha=a93d44238e05de20028446561b951d50988b849efbbe56fe40c0d376c05b45e8 ;;
   *) echo "fetch-pdfium: unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
 esac
 mkdir -p target/release
@@ -211,6 +257,14 @@ url="https://github.com/bblanchon/pdfium-binaries/releases/download/$PDFIUM_TAG/
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 curl -fsSL "$url" -o "$tmp/pdfium.tgz"
+if command -v sha256sum >/dev/null 2>&1; then
+  echo "$sha  $tmp/pdfium.tgz" | sha256sum -c - >/dev/null \
+    || { echo "fetch-pdfium: checksum mismatch for $asset @ $PDFIUM_TAG" >&2; exit 1; }
+else
+  # macOS ships shasum, not sha256sum.
+  echo "$sha  $tmp/pdfium.tgz" | shasum -a 256 -c - >/dev/null \
+    || { echo "fetch-pdfium: checksum mismatch for $asset @ $PDFIUM_TAG" >&2; exit 1; }
+fi
 tar -xzf "$tmp/pdfium.tgz" -C "$tmp" "lib/$lib"
 install -m 0644 "$tmp/lib/$lib" "target/release/$lib"
 printf '%s' "$PDFIUM_TAG" > "$stamp"
@@ -219,9 +273,19 @@ ls -lh "target/release/$lib"
 
 [tasks.web-install]
 description = "Install web/ node_modules (SvelteKit SPA). Re-runs only when package.json/lock change."
-sources = ["web/package.json", "web/package-lock.json"]
+sources = ["web/package.json", "web/package-lock.json", "web/.npmrc"]
 outputs = ["web/node_modules/.package-lock.json"]
-run = "npm --prefix web ci --no-audit --no-fund"
+run = """
+set -eu
+# `npm ci` (not `install`): installs strictly from the lockfile — exact
+# versions, sha512-verified — and fails outright if package.json and the lock
+# disagree, so a dependency can never drift in silently.
+npm --prefix web ci --no-audit --no-fund
+# web/.npmrc sets ignore-scripts, which suppresses OUR `prepare` hook along
+# with every dependency's. svelte-kit sync generates .svelte-kit/tsconfig.json
+# and the $types the SPA imports, so run it here where it is visible.
+npm --prefix web run prepare
+"""
 
 [tasks.build-web]
 description = "Build the SvelteKit SPA (adapter-static) into target/frontend/build/. The Dockerfile COPYs that directory into the image; the gateway serves it from the root when GATEWAY_STATIC_DIR points there."
@@ -308,6 +372,35 @@ run = [
 [tasks.lint-panics]
 description = "Advisory: flag panic-prone `.unwrap()`/`.expect()` in library/binary code (warnings only — NOT part of `ci`). The main `lint` gate runs clippy with `-D warnings`, so promoting these workspace-wide would turn every one of the ~2000 existing (mostly test/mutex/infallible) sites into a hard error. This task instead surfaces them as warnings so new panic sites in request-handling paths are visible in review without a mass rewrite. Excludes test targets (`--all-targets` is intentionally omitted)."
 run = "cargo clippy --workspace -- -W clippy::unwrap_used -W clippy::expect_used"
+
+[tasks.audit]
+description = "Vulnerability audit across every dependency ecosystem: Rust (cargo-audit vs RustSec), npm (npm audit), and the sandbox image's Python lock (pip-audit, in a container). Residual, justified Rust advisories live in .cargo/audit.toml — each with the reason it cannot be fixed by upgrading. Not wired into `ci` on purpose: an advisory published overnight would turn an unrelated PR red, and a supply-chain finding deserves a human reading it rather than a reflexive re-run."
+dir = "{{ config_root }}"
+run = '''
+set -eu
+fail=0
+
+echo "=== Rust (cargo-audit vs RustSec) ==="
+cargo audit || fail=1
+
+echo
+echo "=== npm (web/) ==="
+npm --prefix web audit --audit-level=low || fail=1
+
+echo
+echo "=== Python (sandbox-image/requirements.txt) ==="
+if command -v docker >/dev/null 2>&1; then
+    base=$(sed -n 's|^FROM \(debian:[^ ]*\).*|\1|p' sandbox-image/Containerfile | head -1)
+    docker run --rm --platform linux/amd64 -v "$PWD/sandbox-image:/w:ro" -w /w "$base" \
+        sh -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null; apt-get install -y -qq --no-install-recommends python3 python3-venv >/dev/null 2>&1; python3 -m venv /tmp/v; /tmp/v/bin/pip install -q pip-audit >/dev/null 2>&1; /tmp/v/bin/pip-audit -r requirements.txt' || fail=1
+else
+    echo "docker unavailable — skipping the Python lock audit" >&2
+fi
+
+echo
+if [ "$fail" -eq 0 ]; then echo "all ecosystems clean"; else echo "FINDINGS ABOVE — read them, do not just re-run" >&2; fi
+exit "$fail"
+'''
 
 [tasks.secrets]
 description = "Scan the whole git history for committed secrets (gitleaks). Run by CI's `secrets` job and by the pre-push hook."

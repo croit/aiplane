@@ -36,3 +36,6 @@ multer = { workspace = true }
 tokio = { workspace = true }
 sqlx = { workspace = true }
 uuid = { workspace = true }
+
+[lints]
+workspace = true

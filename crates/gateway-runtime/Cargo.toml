@@ -55,3 +55,6 @@ zip = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }
+
+[lints]
+workspace = true

@@ -69,7 +69,9 @@ pub(crate) fn normalize_excalidraw_points(scene: &mut Value) {
             continue;
         }
         let paired: Vec<Value> = points
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| Value::Array(pair.to_vec()))
             .collect();
         *points = paired;

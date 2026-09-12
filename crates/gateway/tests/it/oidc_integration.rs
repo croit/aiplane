@@ -59,15 +59,14 @@ pub(crate) fn base64url_nopad(bytes: &[u8]) -> String {
     // as `rama_server::session::base64url_nopad`.
     const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    let mut chunks = bytes.chunks_exact(3);
-    for c in chunks.by_ref() {
+    let (chunks, rem) = bytes.as_chunks::<3>();
+    for c in chunks {
         let n = (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32;
         out.push(ALPHA[((n >> 18) & 0x3f) as usize] as char);
         out.push(ALPHA[((n >> 12) & 0x3f) as usize] as char);
         out.push(ALPHA[((n >> 6) & 0x3f) as usize] as char);
         out.push(ALPHA[(n & 0x3f) as usize] as char);
     }
-    let rem = chunks.remainder();
     match rem.len() {
         0 => {}
         1 => {

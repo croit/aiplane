@@ -15,6 +15,15 @@
 # S3-backed sccache on croit-internal runners; that's dropped here in favour of
 # Swatinem/rust-cache (GitHub's cache backend) so the workflow needs no secrets
 # beyond the built-in GITHUB_TOKEN.
+#
+# Every `uses:` is pinned to a full 40-character commit SHA, with the release
+# it corresponds to in a trailing comment. A tag like `@v6` is mutable — the
+# publisher (or anyone who compromises their account) can re-point it at any
+# commit, which then runs inside jobs holding `packages: write` and the GHCR
+# push token. That is how tj-actions/changed-files was backdoored in March
+# 2025; a SHA cannot be re-pointed. Dependabot (.github/dependabot.yml) opens
+# the bump PRs so the pins stay current — update them THERE, and never replace
+# a SHA with a tag to "simplify" this file.
 
 name: CI
 
@@ -68,13 +77,13 @@ jobs:
       # fetch-depth: 0 is load-bearing — `mise run secrets` scans commit
       # history, and the default shallow checkout would hand it a single
       # commit and pass vacuously.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       # install_args limits this to gitleaks; pulling the full toolset (Rust,
       # Node, typst) would cost minutes for a 1.3 s scan.
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           install_args: gitleaks
 
@@ -85,8 +94,7 @@ jobs:
     name: lint + test + build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # ubuntu-latest ships ~25 GB of preinstalled SDKs we don't use; the big
       # multi-profile Rust compile otherwise runs the runner out of disk
       # ("No space left on device"). Reclaim it up front.
@@ -98,8 +106,7 @@ jobs:
 
       # Installs the toolchain pinned in mise.toml (Rust + components, Node,
       # typst, cargo-binstall) and caches it across runs.
-      - uses: jdx/mise-action@v4
-
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
       # Belt-and-suspenders: mise.toml requests the rustfmt/clippy components,
       # but on the GitHub runner (which ships its own rustup) that doesn't
       # always take, so `cargo fmt`/`clippy` via the pinned toolchain fail.
@@ -108,8 +115,7 @@ jobs:
         run: mise exec -- rustup component add rustfmt clippy
 
       # Caches the cargo registry/git deps + target/ keyed on Cargo.lock.
-      - uses: Swatinem/rust-cache@v2
-
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # `mise run ci` fans out lint (fmt + clippy -D warnings + tsc) + tests +
       # release build through mise's DAG (each transitively builds the CSS/JS
       # bundles). Produces target/release/gateway.
@@ -128,7 +134,7 @@ jobs:
 
       - run: ls -lh target/release/gateway target/release/sandbox-runner
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gateway-binaries
           path: |
@@ -143,7 +149,7 @@ jobs:
       # target/frontend/build/ by the `build-web` mise task). A separate
       # artifact because it is a whole directory the container job COPYs;
       # `gateway-binaries` is executables-only.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gateway-spa
           path: target/frontend/build/
@@ -161,18 +167,17 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v6
-
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The Dockerfile COPYs the binaries built by the `ci` job — it does not
       # compile anything. Pull them back into target/release/.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: gateway-binaries
           path: target/release
 
       # Same for the SPA build — the Dockerfile COPYs target/frontend/build
       # (staged there by the `build-web` mise task in the `ci` job).
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: gateway-spa
           path: target/frontend/build
@@ -182,11 +187,10 @@ jobs:
       - name: Restore executable bits
         run: chmod +x target/release/gateway target/release/typst
 
-      - uses: docker/setup-buildx-action@v4
-
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Image tags + labels
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE }}
           tags: |
@@ -208,7 +212,7 @@ jobs:
       # Only authenticate when we're actually going to push (not on PRs).
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -216,7 +220,7 @@ jobs:
 
       # PR: build only (validate the Dockerfile). Branch/tag: build + push.
       - name: Build and push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: ./Dockerfile
@@ -242,8 +246,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v6
-
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The gold image is multi-GB (LibreOffice, Chromium, scipy/sklearn/…);
       # reclaim the runner's preinstalled SDKs so the build doesn't run out of
       # disk.
@@ -253,11 +256,10 @@ jobs:
                       /usr/local/lib/android /opt/hostedtoolcache/CodeQL
           df -h /
 
-      - uses: docker/setup-buildx-action@v4
-
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Image tags + labels
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE_SANDBOX }}
           tags: |
@@ -271,14 +273,14 @@ jobs:
             org.opencontainers.image.licenses=AGPL-3.0-only
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: sandbox-image
           file: sandbox-image/Containerfile
@@ -298,22 +300,20 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v6
-
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # COPY-prebuilt, like the gateway image: pull the binary the `ci` job
       # built and restore its executable bit (upload-artifact drops it).
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: gateway-binaries
           path: target/release
       - name: Restore executable bit
         run: chmod +x target/release/sandbox-runner
 
-      - uses: docker/setup-buildx-action@v4
-
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Image tags + labels
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE_RUNNER }}
           tags: |
@@ -327,7 +327,7 @@ jobs:
             org.opencontainers.image.licenses=AGPL-3.0-only
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -336,7 +336,7 @@ jobs:
       # Multi-stage Containerfile compiles the runner from the workspace, so the
       # context is the repo root (target/ is excluded via .dockerignore).
       - name: Build and push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: deploy/sandbox-runner/Containerfile

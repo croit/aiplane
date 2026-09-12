@@ -53,3 +53,6 @@ serde_urlencoded = { workspace = true }
 jiff = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }
+
+[lints]
+workspace = true

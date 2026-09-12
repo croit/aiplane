@@ -380,8 +380,8 @@ fn parse_pcm16_mono_16k(bytes: &[u8]) -> Option<Vec<i16>> {
         return None;
     }
     let mut samples = Vec::with_capacity(data.len() / 2);
-    for chunk in data.chunks_exact(2) {
-        samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+    for chunk in data.as_chunks::<2>().0 {
+        samples.push(i16::from_le_bytes(*chunk));
     }
     Some(samples)
 }

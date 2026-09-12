@@ -30,10 +30,17 @@
 #   cargo build --release -p sandbox-runner
 #   docker build -f deploy/sandbox-runner/Containerfile -t llm-gateway-sandbox-runner .
 
-# Official client-only Docker CLI (static, multi-arch) for the compose path.
-FROM docker:cli AS dockercli
+# Both base images are pinned by digest as well as tag — a tag is a moving
+# reference, so without the digest two builds of the same commit are not the
+# same image and an upstream push lands here unreviewed. Each digest is the
+# multi-arch index, so buildx still picks the right platform. Dependabot bumps
+# them (.github/dependabot.yml); keep the tag alongside so the pin stays
+# readable in review.
 
-FROM debian:trixie-slim
+# Official client-only Docker CLI (static, multi-arch) for the compose path.
+FROM docker:cli@sha256:eccaacfeed644c7de222ff047483568cb988dde95476fbaaf10ea2d04921bb66 AS dockercli
+
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 # `podman` is the REMOTE client for the host-podman path; the `docker` CLI
 # (copied below) drives the host Docker socket for the compose path. Both are

@@ -1,4 +1,7 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+# ^ The syntax frontend is an image BuildKit pulls and runs to parse this
+# file, so it deserves the same digest pin as any other base image — an
+# unpinned `:1.7` is a mutable tag that executes during every build.
 #
 # Runtime-only container for the gateway. The binary is built outside
 # the Dockerfile (CI builds it in the `build` job, local devs run
@@ -41,9 +44,15 @@
 # file with docker/build-push-action, with `target/release/gateway`
 # arriving from the `ci` job's artifact.
 
-ARG DEBIAN_CODENAME=trixie
-
-FROM debian:${DEBIAN_CODENAME}-slim AS runtime
+# Base image is pinned by digest, not just by tag. `debian:trixie-slim` is a
+# moving target — the same tag points at a new build every few days — so a tag
+# alone means two builds of the same commit are not the same image, and a
+# compromised or simply broken upstream push lands silently. The digest below
+# is the multi-arch OCI index (not a per-platform manifest), so buildx still
+# resolves the right architecture. Dependabot's docker ecosystem bumps the
+# digest while keeping the tag readable; do not drop the tag, it is what makes
+# the pin reviewable.
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
 
 # Fonts are for the `typst_<template>` tools, which compile typst IN THIS
 # container (server/typst.rs) — unlike `render_typst`, which runs in the

@@ -1,0 +1,50 @@
+# cargo-audit configuration — `mise run audit`.
+#
+# Every entry below is a DECISION, not a mute button: each one records what the
+# advisory is, why it cannot be fixed by upgrading today, and what removes it.
+# Re-check them whenever the lockfile moves; an entry that no longer applies
+# should be deleted, not left to rot.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 — `rsa` 0.9.x, Marvin attack (key recovery via timing
+    # sidechannel). No patched release exists; the advisory has been open
+    # upstream since 2023.
+    #
+    # Not in the shipped binary. The gateway's JWT path moved to jsonwebtoken's
+    # `aws_lc_rs` backend (see the root Cargo.toml), so `rsa` survives ONLY as a
+    # dev-dependency of the `gateway` crate, where the OIDC integration test
+    # mints mock ID tokens with a throwaway key. A timing sidechannel against a
+    # key generated and discarded inside a test process has no attacker.
+    # Verify with: cargo tree -i rsa -e normal  (must print nothing)
+    "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2026-0194 / -0195 — `quick-xml` < 0.41, two denial-of-service
+    # bugs (quadratic duplicate-attribute scan, unbounded namespace allocation).
+    #
+    # Our own direct use is already on 0.42. Two transitive copies remain and
+    # neither can be moved from here:
+    #   * 0.38.4 via aws-creds -> rust-s3 0.37.2 (the latest release; upstream
+    #     has not bumped). Parses the S3/STS responses of the endpoint the
+    #     OPERATOR configured — not attacker-controlled XML.
+    #   * 0.40.1 via rama-http at our pinned git rev. rama 0.4.0 (crates.io)
+    #     uses quick-xml 0.41 and fixes this, but moving there is a framework
+    #     migration: `Uri::path()`/`query()` now return `Option<PathRef>` /
+    #     `Option<QueryRef>` and `path_and_query()` is gone, across 11 call
+    #     sites in URL routing. That is its own change with its own review, not
+    #     a line in a dependency bump. Tracked as the follow-up in the audit
+    #     notes; this ignore comes out the day rama moves.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+
+    # RUSTSEC-2026-0192 — `ttf-parser` unmaintained. Informational, no
+    # vulnerability. Reached only through lopdf -> pdf-extract (PDF text
+    # extraction), both already at their latest releases. Nothing to upgrade to.
+    "RUSTSEC-2026-0192",
+
+    # RUSTSEC-2026-0253 — `lru` 0.16.4, unsoundness (use-after-free if a
+    # user-supplied Drop panics during LruCache::pop). Build/dev-graph only —
+    # `cargo tree -i lru -e normal` prints nothing, so it is not in the shipped
+    # binary — and no dependent has released against a fixed `lru`.
+    "RUSTSEC-2026-0253",
+]

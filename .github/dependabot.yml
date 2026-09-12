@@ -1,0 +1,91 @@
+# Dependabot — automated dependency-update PRs.
+#
+# This exists mainly to keep the SHA pins in .github/workflows/ci.yml alive.
+# Pinning an action to a commit is the right call for supply-chain safety, but
+# a pin nobody bumps is a pin that silently rots into an unpatched version, so
+# the two have to ship together: Dependabot rewrites the SHA *and* the trailing
+# `# vX.Y.Z` comment in the same PR.
+#
+# Security *alerts* are a separate switch (repo Settings → Code security) and
+# are already on; this file adds the version-update PRs they don't cover.
+version: 2
+updates:
+  # GitHub Actions — the highest-value ecosystem here. A workflow action runs
+  # with `packages: write` and the GHCR push token, so a stale one is worth
+  # more to an attacker than a stale build-time npm package.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    groups:
+      # One PR for the routine bumps instead of nine. Anything Dependabot
+      # flags as a security fix is excluded from grouping automatically and
+      # still arrives as its own PR.
+      actions:
+        patterns: ["*"]
+
+  # The SvelteKit SPA. `npm ci` in CI installs strictly from the lockfile, so
+  # these PRs are the only way the lockfile moves.
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(web)"
+    groups:
+      svelte:
+        patterns: ["@sveltejs/*", "svelte", "svelte-check"]
+      tailwind:
+        patterns: ["tailwindcss", "@tailwindcss/*", "daisyui"]
+      dev-tooling:
+        patterns: ["vite", "typescript", "@types/*"]
+
+  # Rust workspace. Cargo.lock is committed and checksum-verified; the crate
+  # count is large, so group by cadence rather than opening dozens of PRs.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # Base images in the runtime Dockerfile and the sandbox gold image. Both are
+  # digest-pinned (see the comments there), which is exactly the case that
+  # needs an automated bump: a digest never picks up a Debian security update
+  # on its own.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(docker)"
+  - package-ecosystem: docker
+    directory: /sandbox-image
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(docker)"
+  - package-ecosystem: docker
+    directory: /deploy/sandbox-runner
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(docker)"
+
+  # The sandbox gold image's Python lock. Dependabot updates requirements.txt
+  # directly; the hashes come along, because the lock carries them. Note it
+  # will not re-run `mise run lock-sandbox-python` — for anything more than a
+  # single-package security bump, regenerate from requirements.in instead.
+  - package-ecosystem: pip
+    directory: /sandbox-image
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(sandbox)"

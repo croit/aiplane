@@ -12,9 +12,23 @@ members = [
     "crates/sandbox-runner",
 ]
 
+# Workspace-wide lint configuration. Each member opts in with `[lints]
+# workspace = true`.
+[workspace.lints.clippy]
+# Rust 1.98's clippy added `result_large_err` (warns when an Err variant
+# exceeds 128 bytes). It fires 17 times here, always on the same shape: the
+# page/API helpers return `Result<T, Response>` so a handler can `?` its way
+# out with a ready-made HTTP response — rama's `Response` is 136 bytes, eight
+# over the threshold. The lint's own remedy is boxing the error, which would
+# mean `Result<T, Box<Response>>` across every helper and every call site: a
+# worse-reading codebase, on the error path, to avoid moving 136 bytes. The
+# Err type is rama's, so we cannot shrink it either. Allowed deliberately,
+# not by accident.
+result_large_err = "allow"
+
 [workspace.package]
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.98"
 license = "AGPL-3.0-only"
 publish = false
 
@@ -41,7 +55,7 @@ multer = "3"
 # WebDAV PROPFIND multistatus parsing for the RAG remote-source providers.
 # Pull-parser only (no serde-xml layer); already in the tree transitively via
 # rust-s3, so making it direct does not grow the dependency graph.
-quick-xml = "0.40"
+quick-xml = "0.42"
 # S3 (or S3-compatible) client for chat attachments. The gateway
 # uploads each attached file to a bucket and includes the public
 # object URL in OpenAI's `image_url` content parts (or in a
@@ -49,7 +63,7 @@ quick-xml = "0.40"
 # bring in tokio + native HTTPS via the `tokio` + `with-tokio`
 # features. `no-verify-ssl` is intentionally NOT enabled — operators
 # must point at a proper TLS endpoint.
-rust-s3 = { version = "0.36", default-features = false, features = ["tokio-rustls-tls"] }
+rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls"] }
 
 # GeoIP. `ip2location` reads an IP2Location LITE DB11 `.BIN` (memory-mapped,
 # sync, Send+Sync) — shared behind an `Arc` and hot-swapped when the file
@@ -78,7 +92,7 @@ symphonia = { version = "0.5", default-features = false, features = ["flac", "is
 #     encodes the rendered bitmaps to PNG for the vision `image_url` content
 #     parts; jpeg/webp are enabled so `generate_qr_code` can decode uploaded
 #     logo images — the codec set stays deliberately small.
-pdf-extract = "0.10"
+pdf-extract = "0.12"
 pdfium-render = "0.9"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 # QR code generation for the native `generate_qr_code` tool. Encoder only
@@ -107,12 +121,17 @@ sha2 = "0.10"
 hmac = "0.12"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
-# Pinned to the `rust_crypto` (pure-Rust) backend: v10 dropped the bundled
-# crypto provider, so a backend must be selected explicitly. `rust_crypto`
-# avoids the aws-lc-sys C/cmake build the alternative would add. v10.3+ also
-# fixes CVE-2026-25537 (string-typed `nbf`/`exp` claims silently skipping
-# validation).
-jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "rust_crypto"] }
+# Pinned to the `aws_lc_rs` backend: v10 dropped the bundled crypto provider,
+# so a backend must be selected explicitly. The pure-Rust `rust_crypto`
+# alternative pulls the `rsa` crate, which carries RUSTSEC-2023-0071 (Marvin
+# attack — key recovery via timing sidechannel) with NO patched release; the
+# advisory has been open since 2023 and the maintainers have no fix. aws-lc-rs
+# is constant-time and already in the dependency graph via rustls, so its
+# aws-lc-sys C/cmake build is a cost we were paying regardless — an earlier
+# comment here claimed otherwise, which stopped being true once rustls landed.
+# v10.3+ also fixes CVE-2026-25537 (string-typed `nbf`/`exp` claims silently
+# skipping validation).
+jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "aws_lc_rs"] }
 
 # HTTP framework + proxying. `http-full` covers server, client, codec, and
 # the SSE response primitives; rustls/tls deliberately omitted so the build

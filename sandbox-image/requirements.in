@@ -1,0 +1,94 @@
+# Direct Python dependencies of the sandbox gold image. This file is the one
+# humans edit; sandbox-image/requirements.txt is the compiled, hash-pinned lock
+# the Containerfile actually installs. Regenerate after ANY change here:
+#
+#   mise run lock-sandbox-python
+#
+# (Keep the grouping comments — they are the only record of why each library is
+# in an image that exists to run model-authored code.)
+
+# data analysis / fast columnar (great for large CSV/JSON/Parquet logs)
+pandas
+numpy
+matplotlib
+polars
+pyarrow
+duckdb
+
+# scientific / stats / symbolic / plotting
+scipy
+scikit-learn
+statsmodels
+sympy
+seaborn
+
+# CSV/JSON/YAML/XML/TOML wrangling + schema + file-type sniffing
+csvkit
+tabulate
+pyyaml
+xmltodict
+jsonschema
+tomli-w
+python-magic
+jc
+
+# office formats (incl. legacy .xls read)
+openpyxl
+xlsxwriter
+xlrd
+python-docx
+python-pptx
+odfpy
+
+# Typst -> editable PowerPoint (real text/shapes/gradients, not images);
+# pulls its own `typst` python pkg + a typst-ts-cli helper (warmed in the image)
+typ2pptx
+
+# PDF read/write/manipulate/render (PyMuPDF = fitz)
+pypdf
+pdfplumber
+pymupdf
+reportlab
+img2pdf
+weasyprint
+markdown
+
+# PDF -> editable Word (.docx), layout-preserving
+pdf2docx
+
+# images / computer vision / OCR
+pillow
+opencv-python-headless
+imageio
+pytesseract
+
+# QR codes — segno (pure python, SVG/PNG built in) + qrcode (the classic API)
+segno
+qrcode
+
+# parsing + http (in-sandbox fetching when egress is on)
+lxml
+beautifulsoup4
+requests
+python-dateutil
+regex
+
+# databases + network/ops clients (runtime use still egress-gated)
+sqlalchemy
+psycopg[binary]
+pymysql
+dnspython
+paramiko
+
+# packet-capture parsing
+scapy
+dpkt
+
+# diagrams + readable output + system info
+graphviz
+rich
+humanize
+psutil
+
+# headless browser driver
+playwright

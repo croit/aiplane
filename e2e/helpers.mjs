@@ -4,7 +4,7 @@
 import assert from "node:assert";
 
 const PLAYWRIGHT_DIR = process.env.PLAYWRIGHT_DIR
-  ?? "/var/host-cache/mise/installs/npm-playwright-cli/0.1.13/lib/node_modules/@playwright/cli/node_modules/playwright";
+  ?? "/var/host-cache/mise/installs/npm-playwright-cli/0.1.18/lib/node_modules/@playwright/cli/node_modules/playwright";
 
 const { chromium } = await import(`${PLAYWRIGHT_DIR}/index.mjs`);
 

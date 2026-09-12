@@ -20,7 +20,15 @@
 # Build:
 #   podman build -t ghcr.io/croit/llm-gateway-sandbox:latest sandbox-image/
 
-FROM debian:trixie-slim
+# Base image is pinned by digest, not just by tag. `debian:trixie-slim` is a
+# moving target — the same tag points at a new build every few days — so a tag
+# alone means two builds of the same commit are not the same image, and a
+# compromised or simply broken upstream push lands silently. The digest below
+# is the multi-arch OCI index (not a per-platform manifest), so buildx still
+# resolves the right architecture. Dependabot's docker ecosystem bumps the
+# digest while keeping the tag readable; do not drop the tag, it is what makes
+# the pin reviewable.
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -97,12 +105,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Files come straight off raw.githubusercontent.com: the github.com/<repo>/raw/
 # redirect endpoint started answering 404 for every path in this repo, and it
 # is a UI convenience route anyway — the raw host is the stable one.
+#
+# GOOGLE_FONTS_REF is a commit SHA, not `main`. A branch name makes the build
+# unreproducible and, more to the point, means whatever is at the tip of a
+# 4000-contributor repo at build time gets baked into the image unreviewed. A
+# git commit SHA is a content address: the bytes behind it cannot change, which
+# is a stronger guarantee than a per-file checksum list and far less to
+# maintain. Bump it deliberately when a font needs updating.
+ARG GOOGLE_FONTS_REF=809e4d8b8d7e9364a914909bb777679606c178b8
 RUN set -eux; \
     gf() { mkdir -p "/usr/share/fonts/truetype/$1"; \
            curl -fsSL --retry 6 --retry-all-errors --retry-delay 3 \
                 --connect-timeout 15 --max-time 180 \
                 -o "/usr/share/fonts/truetype/$1/$3" \
-                "https://raw.githubusercontent.com/google/fonts/main/ofl/$1/$2"; }; \
+                "https://raw.githubusercontent.com/google/fonts/${GOOGLE_FONTS_REF}/ofl/$1/$2"; }; \
     gf notoemoji "NotoEmoji%5Bwght%5D.ttf" "NotoEmoji.ttf"; \
     gf oswald "Oswald%5Bwght%5D.ttf" "Oswald.ttf"; \
     gf raleway "Raleway%5Bwght%5D.ttf" "Raleway.ttf"; \
@@ -141,12 +157,16 @@ RUN set -eux; \
 # `--typst-input` for sys.inputs). Used by `generate_document` and the
 # typst -> HTML -> pandoc letter/one-pager docx/odt export. Static binary, no
 # extra deps. Bump PANDOC_VERSION to upgrade.
-ARG PANDOC_VERSION=3.10
-RUN curl -fsSL -o /tmp/pandoc.deb \
-        "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb" \
-    && dpkg -i /tmp/pandoc.deb \
-    && rm -f /tmp/pandoc.deb \
-    && pandoc --version | head -1
+ARG PANDOC_VERSION=3.11
+ARG PANDOC_SHA256=89d4c9d97818c62a97157f0072844e4602c6cee795bf84abd1aee7273abcda99
+RUN set -eux; \
+    curl -fsSL -o /tmp/pandoc.deb \
+        "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb"; \
+    echo "${PANDOC_SHA256}  /tmp/pandoc.deb" | sha256sum -c - >/dev/null \
+        || { echo "checksum mismatch for pandoc ${PANDOC_VERSION}" >&2; exit 1; }; \
+    dpkg -i /tmp/pandoc.deb; \
+    rm -f /tmp/pandoc.deb; \
+    pandoc --version | head -1
 
 # ImageMagick ships a hardened policy that blocks PDF/PS (a web-server
 # concern); inside a single-use sandbox that just gets in the way of format
@@ -163,40 +183,18 @@ RUN for p in /etc/ImageMagick-*/policy.xml; do \
 # `python3`/`pip` resolve to it (so the agent's `python3 script` sees the libs).
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
-RUN pip install --no-cache-dir \
-        # data analysis / fast columnar (great for large CSV/JSON/Parquet logs)
-        pandas numpy matplotlib polars pyarrow duckdb \
-        # scientific / stats / symbolic / plotting
-        scipy scikit-learn statsmodels sympy seaborn \
-        # CSV/JSON/YAML/XML/TOML wrangling + schema + file-type sniffing
-        csvkit tabulate pyyaml xmltodict jsonschema tomli-w python-magic jc \
-        # office formats (incl. legacy .xls read)
-        openpyxl xlsxwriter xlrd python-docx python-pptx odfpy \
-        # Typst -> editable PowerPoint (real text/shapes/gradients, not images);
-        # pulls its own `typst` python pkg + a typst-ts-cli helper (warmed below)
-        typ2pptx \
-        # PDF read/write/manipulate/render (PyMuPDF = fitz)
-        pypdf pdfplumber pymupdf reportlab img2pdf weasyprint markdown \
-        # PDF -> editable Word (.docx), layout-preserving (general utility for
-        # run_in_sandbox; the typst docx export now goes via HTML + pandoc)
-        pdf2docx \
-        # images / computer vision / OCR
-        pillow opencv-python-headless imageio pytesseract \
-        # QR codes — segno (pure python, SVG/PNG built in, WiFi/vCard/EPC
-        # helpers in segno.helpers) + qrcode (the classic API; PNG via the
-        # pillow above). Both tiny; two libs so whichever API the model
-        # reaches for just works offline.
-        segno qrcode \
-        # parsing + http (in-sandbox fetching when egress is on)
-        lxml beautifulsoup4 requests python-dateutil regex \
-        # databases + network/ops clients (runtime use still egress-gated)
-        sqlalchemy "psycopg[binary]" pymysql dnspython paramiko \
-        # packet-capture parsing
-        scapy dpkt \
-        # diagrams + readable output + system info
-        graphviz rich humanize psutil \
-        # headless browser driver
-        playwright \
+# requirements.txt is a COMPILED lock: every package — direct and transitive —
+# pinned to an exact version with every acceptable sha256, and installed under
+# `--require-hashes` so pip refuses anything whose bytes do not match. The
+# previous form (`pip install pandas numpy …`, unpinned) resolved live against
+# PyPI at build time, which meant the image was not reproducible and a
+# compromised release of ANY of the ~130 packages in the transitive closure
+# would have been installed silently — into the one image whose entire purpose
+# is executing model-authored code. Edit requirements.in and run
+# `mise run lock-sandbox-python` to regenerate; never hand-edit this lock.
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt \
+    && rm -f /tmp/requirements.txt \
     # playwright --with-deps installs browser OS libs via apt, so refresh the
     # package lists (wiped above) for the duration of this step.
     && apt-get update \
@@ -216,27 +214,53 @@ RUN printf '= Warm up\n\nPre-fetching the typst-ts-cli helper.\n' > /tmp/warm.ty
     chmod -R a+rX /opt/venv
 
 # --- Standalone CLI binaries (arch-aware) ----------------------------------
-# typst (pinned), DuckDB CLI (SQL over CSV/JSON/Parquet — a workhorse for
-# log/data debugging), and yq (YAML processor). TARGETARCH is provided by
-# BuildKit (amd64 / arm64), so the image builds natively on both. duckdb/yq
-# track latest; pin the URLs if you need fully reproducible builds.
+# typst, DuckDB CLI (SQL over CSV/JSON/Parquet — a workhorse for log/data
+# debugging), and yq (YAML processor). TARGETARCH is provided by BuildKit
+# (amd64 / arm64), so the image builds natively on both.
+#
+# All three are version-pinned AND sha256-verified. duckdb and yq used to use
+# `releases/latest/download/...`, which means the image silently changes under
+# you and a tampered or simply broken upstream artifact installs without
+# complaint — in an image whose entire job is executing model-authored code.
+# The checksums are per-arch because the artifacts are; `sha256sum -c` fails
+# the BUILD rather than shipping an unverified binary. To upgrade: bump the
+# VERSION arg and replace the matching hashes (the digests GitHub publishes on
+# the release assets are the same values).
 ARG TARGETARCH
-ARG TYPST_VERSION=v0.15.0
+ARG TYPST_VERSION=v0.15.1
+ARG DUCKDB_VERSION=v1.5.5
+ARG YQ_VERSION=v4.53.6
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
-        amd64) typst_arch=x86_64;  dl_arch=amd64 ;; \
-        arm64) typst_arch=aarch64; dl_arch=arm64 ;; \
+        amd64) typst_arch=x86_64;  dl_arch=amd64; \
+               typst_sha=a6d077d0a95eed5a2eba715b2dae06be954f624ccbf85758a03f389ded33118c; \
+               duckdb_sha=08c0ca117111fcede14239d0093792352befdc174218c344d232c13279643d05; \
+               yq_sha=c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385 ;; \
+        arm64) typst_arch=aarch64; dl_arch=arm64; \
+               typst_sha=5aa8d74a3d906e60ea12a66ac2f37f8eef1b14cbad7182a745e393a10c23dcee; \
+               duckdb_sha=02163197027a42149147364d31fa67cac82108517a4be43304a1cc226eaef07a; \
+               yq_sha=88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09 ;; \
         *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL "https://github.com/typst/typst/releases/download/${TYPST_VERSION}/typst-${typst_arch}-unknown-linux-musl.tar.xz" \
-        | tar -xJ -C /tmp; \
+    verify() { echo "$2  $1" | sha256sum -c - >/dev/null \
+               || { echo "checksum mismatch for $1" >&2; exit 1; }; }; \
+    curl -fsSL -o /tmp/typst.tar.xz \
+        "https://github.com/typst/typst/releases/download/${TYPST_VERSION}/typst-${typst_arch}-unknown-linux-musl.tar.xz"; \
+    verify /tmp/typst.tar.xz "$typst_sha"; \
+    tar -xJ -C /tmp -f /tmp/typst.tar.xz; \
     install -m 0755 "/tmp/typst-${typst_arch}-unknown-linux-musl/typst" /usr/local/bin/typst; \
-    rm -rf /tmp/typst-*; \
-    curl -fsSL -o /tmp/duckdb.zip "https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-${dl_arch}.zip"; \
+    rm -rf /tmp/typst.tar.xz /tmp/typst-*; \
+    curl -fsSL -o /tmp/duckdb.zip \
+        "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-${dl_arch}.zip"; \
+    verify /tmp/duckdb.zip "$duckdb_sha"; \
     unzip -o /tmp/duckdb.zip -d /usr/local/bin; \
     rm /tmp/duckdb.zip; \
-    curl -fsSL -o /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${dl_arch}"; \
-    chmod 0755 /usr/local/bin/yq
+    curl -fsSL -o /tmp/yq \
+        "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${dl_arch}"; \
+    verify /tmp/yq "$yq_sha"; \
+    install -m 0755 /tmp/yq /usr/local/bin/yq; \
+    rm -f /tmp/yq; \
+    typst --version; duckdb --version; yq --version
 
 # --- Diagram + chart rendering (offline-capable) ---------------------------
 # Two additions for "generate a diagram/chart and hand it back, or embed it
@@ -270,15 +294,33 @@ RUN set -eux; \
 #     broken warm-up must fail the BUILD loudly rather than leave gribouille
 #     unresolvable at runtime.
 COPY noiou.c /tmp/noiou.c
-# Pin the excalirender release. Without VERSION the installer resolves the
-# "latest" tag via an unauthenticated api.github.com call, which is rate-limited
-# on shared CI runner IPs and intermittently fails the build with "no releases
-# found"; a pinned VERSION skips that lookup (the asset download needs no API)
-# and makes the image reproducible. Bump deliberately.
+# The release tarball is fetched and unpacked directly, with its sha256
+# verified, rather than by piping upstream's install.sh into a shell. Two
+# reasons: that script was read from the `main` branch, so a push to a personal
+# repo — by its owner or by anyone who takes the account — would have executed
+# as root inside this build with no review and no version to point at; and even
+# pinned, an installer script can only ever be as trustworthy as the branch it
+# is read from, while a checksummed artifact is verifiable. The steps below are
+# exactly what install.sh did (unpack to $PREFIX/lib/excalirender, symlink into
+# $PREFIX/bin) minus the api.github.com "latest" lookup, which was rate-limited
+# on shared CI runner IPs and intermittently failed the build.
+#
+# Upstream ships a linux-x64 asset only, so this step (like install.sh's own
+# arch check) is amd64-only. Bump VERSION and SHA256 together — the hash is the
+# digest GitHub publishes on the release asset.
 ARG EXCALIRENDER_VERSION=v1.10.5
+ARG EXCALIRENDER_SHA256=4cc291bfb2cb6fb826e78693a73b3411e19b81616c8441825cc6745cd0f0d0e7
 RUN set -eux; \
-    curl -fsSL https://raw.githubusercontent.com/JonRC/excalirender/main/install.sh \
-        | VERSION="${EXCALIRENDER_VERSION}" PREFIX=/usr/local sh; \
+    curl -fsSL -o /tmp/excalirender.tar.gz \
+        "https://github.com/JonRC/excalirender/releases/download/${EXCALIRENDER_VERSION}/excalirender-linux-x64.tar.gz"; \
+    echo "${EXCALIRENDER_SHA256}  /tmp/excalirender.tar.gz" | sha256sum -c - >/dev/null \
+        || { echo "checksum mismatch for excalirender ${EXCALIRENDER_VERSION}" >&2; exit 1; }; \
+    tar xzf /tmp/excalirender.tar.gz -C /tmp; \
+    rm -rf /usr/local/lib/excalirender; \
+    mkdir -p /usr/local/lib/excalirender; \
+    cp -r /tmp/excalirender/. /usr/local/lib/excalirender/; \
+    ln -sf /usr/local/lib/excalirender/bin/excalirender /usr/local/bin/excalirender; \
+    rm -rf /tmp/excalirender /tmp/excalirender.tar.gz; \
     excalirender --version; \
     # Build the seccomp launcher (build-essential is installed in the base
     # layer) and route the on-PATH `excalirender` through it. install.sh drops
@@ -301,7 +343,7 @@ RUN set -eux; \
     excalirender /tmp/smoke.excalidraw -o /tmp/smoke.svg; \
     test -s /tmp/smoke.svg; \
     rm -f /tmp/smoke.excalidraw /tmp/smoke.svg; \
-    printf '#import "@preview/gribouille:0.3.0": *\n#plot(\n  data: penguins,\n  mapping: aes(x: "flipper-len", y: "body-mass"),\n  layers: (geom-point(),),\n)\n' \
+    printf '#import "@preview/gribouille:0.7.0": *\n#plot(\n  data: penguins,\n  mapping: aes(x: "flipper-len", y: "body-mass"),\n  layers: (geom-point(),),\n)\n' \
         > /tmp/warm-chart.typ; \
     typst compile /tmp/warm-chart.typ /tmp/warm-chart.pdf; \
     rm -f /tmp/warm-chart.typ /tmp/warm-chart.pdf; \

@@ -137,6 +137,26 @@ handle office files, and convert formats without runtime network:
 
 Edit `sandbox-image/Containerfile` to add or trim tools, then rebuild/push.
 
+**Everything in the image is pinned.** This is the one image whose whole job is
+running model-authored code, so nothing in it is allowed to float: the Debian
+base is pinned by digest, the standalone binaries (typst, duckdb, yq, pandoc,
+excalirender) are version-pinned *and* sha256-verified at build time, the Google
+Fonts are read from a fixed commit rather than `main`, and the Python stack is a
+compiled lock — every package, direct and transitive, pinned with hashes and
+installed under `pip --require-hashes`. Consequences for editing:
+
+- **Python packages:** edit `sandbox-image/requirements.in` (the readable list),
+  then run `mise run lock-sandbox-python` to regenerate
+  `sandbox-image/requirements.txt`. Never hand-edit the lock. The regeneration
+  resolves inside the image's own Debian base via docker, so the pins match the
+  build platform rather than your laptop.
+- **Binaries:** bump the `ARG <TOOL>_VERSION` *and* its checksum together. A
+  mismatch fails the build loudly, which is the point — that check is what
+  stands between a tampered upstream artifact and the sandbox.
+- Dependabot (`.github/dependabot.yml`) opens the routine bump PRs for the base
+  image and the Python lock so the pins don't quietly rot into unpatched
+  versions.
+
 - **Isolation = a separate-kernel runtime.** On a podman host the practical
   choice is **gVisor (`runsc`)** — a real OCI runtime (its own userspace
   kernel) that podman can drive directly and a battle-tested untrusted-code

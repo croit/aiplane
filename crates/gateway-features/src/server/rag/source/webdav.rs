@@ -599,13 +599,13 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<DavResponse>, ProviderError> {
                 }
             }
             Ok(Event::Text(t)) => {
-                text.push_str(&t.xml10_content().unwrap_or_default());
+                text.push_str(&t.xml10_content());
             }
             Ok(Event::GeneralRef(r)) => {
                 text.push_str(&resolve_entity(&r));
             }
             Ok(Event::CData(c)) => {
-                text.push_str(&c.decode().unwrap_or_default());
+                text.push_str(&c.xml10_content());
             }
             _ => {}
         }
@@ -621,7 +621,7 @@ fn resolve_entity(r: &quick_xml::events::BytesRef<'_>) -> String {
     if let Ok(Some(c)) = r.resolve_char_ref() {
         return c.to_string();
     }
-    let name = r.decode().unwrap_or_default();
+    let name = r.xml10_content();
     match name.as_ref() {
         "amp" => "&".into(),
         "lt" => "<".into(),
@@ -663,11 +663,10 @@ fn is_success_status(status_line: &str) -> bool {
         .is_some_and(|code| (200..300).contains(&code))
 }
 
-fn local_name(raw: &[u8]) -> String {
-    let s = String::from_utf8_lossy(raw);
-    match s.rsplit_once(':') {
+fn local_name(raw: &str) -> String {
+    match raw.rsplit_once(':') {
         Some((_, local)) => local.to_ascii_lowercase(),
-        None => s.to_ascii_lowercase(),
+        None => raw.to_ascii_lowercase(),
     }
 }
 

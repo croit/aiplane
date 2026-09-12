@@ -120,3 +120,6 @@ qrcode = { workspace = true }
 # LLM backends, used by the unit tests that drive the tool runner and the
 # upstream registry without a real model server.
 wiremock = { workspace = true }
+
+[lints]
+workspace = true

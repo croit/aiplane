@@ -54,3 +54,6 @@ qrcode = { workspace = true }
 rqrr = "0.10"
 # In-process HTTP mock standing in for the upstreams the tools call out to.
 wiremock = { workspace = true }
+
+[lints]
+workspace = true

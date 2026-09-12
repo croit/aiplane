@@ -74,3 +74,6 @@ tempfile = { workspace = true }
 # The RAG + embedding integration tests talk to their wiremock upstreams
 # directly (not through the router) to seed and assert index state.
 reqwest = { workspace = true }
+
+[lints]
+workspace = true

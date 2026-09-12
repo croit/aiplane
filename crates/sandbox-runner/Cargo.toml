@@ -33,3 +33,6 @@ tokio = { workspace = true, features = ["io-util", "time"] }
 # Same HTTP framework as the gateway, so the two services share one
 # stack. We only need the server side here.
 rama = { workspace = true }
+
+[lints]
+workspace = true
