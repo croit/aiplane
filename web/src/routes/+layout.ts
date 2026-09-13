@@ -6,6 +6,7 @@
 export const prerender = false;
 export const ssr = false;
 
+import { initFeedbackCapture } from '$lib/feedback-capture';
 import { detect, loadCatalog } from '$lib/i18n.svelte';
 
 /**
@@ -21,3 +22,9 @@ import { detect, loadCatalog } from '$lib/i18n.svelte';
 export async function load() {
 	await loadCatalog(detect());
 }
+
+// Start the console + network ring buffers here, in the earliest client code
+// the app runs, so a feedback report carries the requests and errors that led
+// up to it. A request made before this point is one the widget cannot show.
+// Idempotent, and a no-op outside the browser.
+initFeedbackCapture();

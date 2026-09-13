@@ -2,27 +2,30 @@
 // Copyright (C) 2026 croit GmbH
 
 //! Feedback widget — a floating button on every signed-in page that opens a
-//! dialog to file a GitHub issue.
+//! dialog and files the report as an issue.
 //!
 //! Ported from the `yachtlistings2` / `croit.erp` React widgets, rebuilt
 //! natively for this stack:
-//!   - The FAB + `<dialog>` are static chrome rendered once in
-//!     `layout_authed` (siblings of `<main>`, so they survive Datastar SPA
-//!     navigation). All behaviour lives in `ui/ts/feedback.ts`, wired via
-//!     `window.feedback`.
+//!   - The FAB + dialog live in the SvelteKit SPA
+//!     (`web/src/lib/components/feedback/`), mounted once in the root layout
+//!     so they survive client-side navigation.
 //!   - Voice input reuses the existing in-browser recorder + the
 //!     `/api/v0/transcriptions` endpoint (VAD + Whisper). The transcript is
 //!     then turned into structured form fields by `POST /feedback/extract`
 //!     (a chat-model pass, the `chat/title.rs` idiom).
-//!   - A viewport screenshot is captured client-side (`modern-screenshot`)
-//!     and sent as base64; `POST /feedback` commits it to GitHub and opens
-//!     the issue.
+//!   - A viewport screenshot is captured client-side (snapdom, or the
+//!     pixel-exact `getDisplayMedia` path), annotated on a canvas and sent as
+//!     base64 together with any images the reporter pasted in; the browser's
+//!     console + network ring buffers ride along in `system_info`.
+//!   - `POST /feedback` hands all of it to
+//!     [`gateway_features::server::issue_tracker`], which files it in
+//!     whichever tracker the operator selected — GitHub or GitLab.
 //!
-//! Three JSON endpoints (deliberately not Datastar/SSE — the client uses
-//! plain `fetch` so it can carry the screenshot bytes and a transcript):
-//!   - GET  /feedback/config   → `{ enabled, voice_enabled, transcription_model, … }`
-//!   - POST /feedback/extract  → transcript → structured fields
-//!   - POST /feedback          → file the issue
+//! Three JSON endpoints (plain `fetch`, not SSE — the client has to carry
+//! image bytes and a transcript):
+//!   - GET  /api/v0/feedback/config   → `{ enabled, voice_enabled, voice_model, provider, … }`
+//!   - POST /api/v0/feedback/extract  → transcript → structured fields
+//!   - POST /api/v0/feedback          → file the issue
 
 use std::sync::Arc;
 
@@ -37,7 +40,7 @@ use session_core::i18n::{self, Lang, t, t_args};
 use gateway_core::rama_server::session::Session;
 use gateway_core::server::db::users;
 use gateway_core::server::upstreams::PoolKind;
-use gateway_features::server::github::{self, IssueInput};
+use gateway_features::server::issue_tracker::{self, IssueInput, TrackerError};
 use gateway_runtime::rama_server::state::RamaState;
 
 // ---------------------------------------------------------------------------
@@ -116,10 +119,22 @@ pub async fn feedback_config(State(state): State<Arc<RamaState>>, req: Request) 
         &transcription_models,
     );
 
+    // The provider is surfaced so the confirmation step can name the tracker
+    // the report is about to land in ("a GitLab issue"), which is the one
+    // thing a reporter deciding whether to attach a screenshot needs to know.
+    let provider = state
+        .config()
+        .feedback
+        .as_ref()
+        .map(|f| f.provider().as_str())
+        .unwrap_or("github");
+
     json_ok(json!({
         "enabled": enabled,
         "voice_enabled": voice_enabled,
         "voice_model": voice_model,
+        "provider": provider,
+        "max_attachments": MAX_ATTACHMENTS,
     }))
 }
 
@@ -394,9 +409,19 @@ struct SubmitRequest {
     /// Raw standard-base64 PNG (no `data:` prefix). Optional.
     #[serde(default)]
     screenshot_base64: Option<String>,
+    /// Extra images the reporter pasted or dropped into the dialog, same
+    /// encoding. Bounded server-side by [`MAX_ATTACHMENTS`] so a scripted
+    /// client can't turn one submission into an unbounded upload loop.
+    #[serde(default)]
+    attachments_base64: Vec<String>,
     #[serde(default)]
     system_info: serde_json::Value,
 }
+
+/// How many pasted images one submission may carry. Mirrors the dialog's own
+/// limit; the server enforces it because the dialog is not the only thing
+/// that can POST here.
+const MAX_ATTACHMENTS: usize = 5;
 
 pub async fn feedback_submit(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let lang = Lang::from_request(req.headers());
@@ -475,16 +500,22 @@ pub async fn feedback_submit(State(state): State<Arc<RamaState>>, req: Request) 
         priority: parsed.priority,
         reporter_email,
         screenshot_png_base64: parsed.screenshot_base64.filter(|s| !s.is_empty()),
+        attachments_png_base64: parsed
+            .attachments_base64
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .take(MAX_ATTACHMENTS)
+            .collect(),
         system_info: parsed.system_info,
     };
 
-    match github::create_feedback_issue(&state.http, &cfg, input).await {
+    match issue_tracker::create_feedback_issue(&state.http, &cfg, input).await {
         Ok(result) => json_ok(json!({
             "ok": true,
             "number": result.number,
             "url": result.url,
         })),
-        Err(github::GithubError::NotConfigured) => json_err(
+        Err(TrackerError::NotConfigured) => json_err(
             StatusCode::SERVICE_UNAVAILABLE,
             &t(lang, "feedback-err-not-configured"),
         ),

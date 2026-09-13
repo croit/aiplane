@@ -11,12 +11,14 @@
 	import { pageTitleOverride } from '$lib/page-title';
 	import { loadMe, me } from '$lib/session.svelte';
 	import { sidebar, refreshSidebar, searchAsYouType, openSearch, closeSearch } from '$lib/sidebar.svelte';
-	import { feedback, loadConfig, openDialog, submit } from '$lib/feedback.svelte';
+	import { feedback, loadConfig } from '$lib/feedback.svelte';
 	import { t, locale } from '$lib/i18n.svelte';
 	import NavIcon, { type NavIconName } from '$lib/components/NavIcon.svelte';
 	import LanguagePicker from '$lib/components/LanguagePicker.svelte';
 	import SourceLink from '$lib/components/SourceLink.svelte';
 	import ConversationSidebarRow from '$lib/components/chat/ConversationSidebarRow.svelte';
+	import FeedbackFab from '$lib/components/feedback/FeedbackFab.svelte';
+	import FeedbackDialog from '$lib/components/feedback/FeedbackDialog.svelte';
 
 	let { children } = $props<{ children: import('svelte').Snippet }>();
 
@@ -359,7 +361,7 @@
 	</div>
 
 	{#if signOutError}
-		<div class="toast toast-end z-50">
+		<div data-feedback-toast class="toast toast-end z-50">
 			<div class="alert alert-error text-sm">
 				<span>{t('nav-sign-out-failed', { error: signOutError })}</span>
 				<button class="btn btn-ghost btn-xs" onclick={() => (signOutError = null)}>
@@ -370,44 +372,19 @@
 	{/if}
 
 	{#if sidebarError}
-		<div class="toast toast-end z-50"><div class="alert alert-error text-sm"><span>{sidebarError}</span><button class="btn btn-ghost btn-xs" onclick={() => (sidebarError = null)}>{t('feedback-close-aria')}</button></div></div>
+		<div data-feedback-toast class="toast toast-end z-50"><div class="alert alert-error text-sm"><span>{sidebarError}</span><button class="btn btn-ghost btn-xs" onclick={() => (sidebarError = null)}>{t('feedback-close-aria')}</button></div></div>
 	{/if}
 
 	{#if feedback.enabled && me.value}
-		<button class="btn btn-circle btn-neutral fixed bottom-4 right-4 z-40 {isChatActive() ? 'hidden 2xl:flex' : ''}" onclick={openDialog} aria-label={t('feedback-fab-aria')}>
-			?
-		</button>
-	{/if}
-
-	{#if feedback.open}
-		<dialog class="modal modal-open" aria-label={t('feedback-dialog-heading')}>
-			<div class="modal-box max-w-lg">
-				{#if feedback.submitted}
-					<h2 class="text-lg font-semibold mb-2">{t('feedback-thanks-heading')}</h2>
-					<p class="text-sm text-base-content/70">{t('feedback-thanks-body')}</p>
-					<div class="modal-action"><button class="btn btn-primary btn-sm" onclick={() => (feedback.open = false)}>{t('feedback-done-button')}</button></div>
-				{:else}
-					<h2 class="text-lg font-semibold mb-3">{t('feedback-dialog-heading')}</h2>
-					<div class="flex flex-col gap-3">
-						<input class="input input-bordered input-sm" placeholder={t('feedback-title-placeholder')} bind:value={feedback.title} />
-						<textarea class="textarea textarea-bordered text-sm" rows="3" placeholder={t('feedback-description-placeholder')} bind:value={feedback.description}></textarea>
-						<textarea class="textarea textarea-bordered text-sm" rows="2" placeholder={t('feedback-business-placeholder')} bind:value={feedback.business}></textarea>
-						<textarea class="textarea textarea-bordered text-sm" rows="2" placeholder={t('feedback-acceptance-placeholder')} bind:value={feedback.acceptance}></textarea>
-						<select class="select select-bordered select-sm" bind:value={feedback.priority}>
-							<option value="low">{t('feedback-priority-low')}</option><option value="medium">{t('feedback-priority-medium')}</option><option value="high">{t('feedback-priority-high')}</option>
-						</select>
-						{#if feedback.error}<div class="alert alert-error py-2 text-sm"><span>{feedback.error}</span></div>{/if}
-					</div>
-					<div class="modal-action">
-						<button class="btn btn-ghost btn-sm" onclick={() => (feedback.open = false)}>{t('feedback-cancel-button')}</button>
-						<button class="btn btn-primary btn-sm" onclick={submit} disabled={feedback.busy || !feedback.title.trim() || !feedback.description.trim()}>
-							{feedback.busy ? t('feedback-sending') : t('feedback-submit-button')}
-						</button>
-					</div>
-				{/if}
-			</div>
-			<form method="dialog" class="modal-backdrop"><button onclick={() => (feedback.open = false)}>{t('feedback-close-aria')}</button></form>
-		</dialog>
+		<!-- Siblings of <main>, so the dialog survives client-side navigation and
+		     the screenshot is taken of whatever route is on screen.
+		     On a conversation page the FAB would land on top of the composer's
+		     send/stop button, so the composer carries the entry point instead
+		     and only the dialog is mounted here. -->
+		{#if !isChatActive()}
+			<FeedbackFab />
+		{/if}
+		<FeedbackDialog />
 	{/if}
 </div>
 {/if}

@@ -423,6 +423,7 @@ async fn main() -> anyhow::Result<()> {
         // (which is fine for UI work). `extraction_model` left empty so the
         // picker defaults to the first chat model.
         feedback: Some(FeedbackConfig {
+            provider: "github".into(),
             github_owner: "demo-owner".into(),
             github_repo: "demo-repo".into(),
             github_token: Some("dev-ui-dummy-token".into()),
@@ -435,6 +436,12 @@ async fn main() -> anyhow::Result<()> {
             extraction_model: Some("demo-model".into()),
             voice_model: Some("demo-whisper".into()),
             github_api_base: "https://api.github.com".into(),
+            // The other tracker, left at its defaults: `provider` above is
+            // what decides, so these are inert until it says `gitlab`.
+            gitlab_url: "https://gitlab.com".into(),
+            gitlab_project_id: String::new(),
+            gitlab_token: None,
+            gitlab_token_env: None,
         }),
         ..Config::default()
     };

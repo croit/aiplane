@@ -161,7 +161,8 @@ pub struct Config {
     /// it unconfigured, so the client never reveals the FAB). When set,
     /// every signed-in user gets a floating button that opens a form — with
     /// optional voice-to-fields dictation — and files the submission as a
-    /// GitHub issue. See `server::github` + `rama_server::pages::feedback`.
+    /// GitHub *or* GitLab issue, whichever [`FeedbackConfig::provider`]
+    /// names. See `server::issue_tracker` + `rama_server::pages::feedback`.
     #[serde(default)]
     pub feedback: Option<FeedbackConfig>,
     /// Unknown-model fallback, per request kind. When a request names a model
@@ -207,15 +208,55 @@ impl Default for PushConfig {
     }
 }
 
+/// Which issue tracker a submission is filed in. One deployment files
+/// everywhere at once would be a surprise, so this is a single choice rather
+/// than "whatever happens to be configured": an operator who fills in GitLab
+/// while a stale GitHub token is still in the database gets the tracker they
+/// selected, not a coin flip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FeedbackProvider {
+    #[default]
+    Github,
+    Gitlab,
+}
+
+impl FeedbackProvider {
+    /// Parse the stored setting. Anything unrecognised (including an empty
+    /// row on a database that predates the setting) is GitHub, which is what
+    /// every deployment configured before GitLab existed was using.
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "gitlab" => Self::Gitlab,
+            _ => Self::Github,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Github => "github",
+            Self::Gitlab => "gitlab",
+        }
+    }
+}
+
 /// Feedback-widget settings: where issues are filed and how the voice
 /// transcript is turned into structured fields.
+///
+/// Both trackers are described here in one struct rather than in a tagged
+/// enum: an operator evaluating a move from one to the other keeps both sets
+/// of credentials around, and `provider` decides which half is live.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackConfig {
+    /// `github` (default) or `gitlab` — which tracker receives the issues.
+    #[serde(default)]
+    pub provider: String,
     /// GitHub repository owner (user or org) that receives the issues,
     /// e.g. `croit`.
+    #[serde(default)]
     pub github_owner: String,
     /// GitHub repository name, e.g. `llm-gateway`.
+    #[serde(default)]
     pub github_repo: String,
     /// GitHub API token (classic PAT or fine-grained) able to open issues
     /// (`issues:write`) and — when screenshots are attached — commit asset
@@ -255,6 +296,25 @@ pub struct FeedbackConfig {
     /// for GitHub Enterprise (`https://github.example.com/api/v3`).
     #[serde(default = "default_github_api_base")]
     pub github_api_base: String,
+    /// GitLab instance base URL — the web origin, NOT the `/api/v4` path
+    /// (which the client appends). Default `https://gitlab.com`; a
+    /// self-managed instance is `https://gitlab.example.com`.
+    #[serde(default = "default_gitlab_url")]
+    pub gitlab_url: String,
+    /// GitLab project the issues land in: either the numeric project id
+    /// (`1234`) or the full path (`group/subgroup/project`), which the client
+    /// URL-encodes. Both are what the GitLab REST API calls `:id`.
+    #[serde(default)]
+    pub gitlab_project_id: String,
+    /// GitLab personal/project/group access token with the `api` scope (it
+    /// needs to both create issues and POST to the project's `uploads`
+    /// endpoint for the screenshot). Same inline-or-env rule as
+    /// `github_token`.
+    #[serde(default)]
+    pub gitlab_token: Option<String>,
+    /// Alternative to `gitlab_token`: the NAME of an env var holding it.
+    #[serde(default)]
+    pub gitlab_token_env: Option<String>,
 }
 
 fn default_feedback_labels() -> Vec<String> {
@@ -269,7 +329,16 @@ fn default_github_api_base() -> String {
     "https://api.github.com".to_string()
 }
 
+fn default_gitlab_url() -> String {
+    "https://gitlab.com".to_string()
+}
+
 impl FeedbackConfig {
+    /// The selected tracker.
+    pub fn provider(&self) -> FeedbackProvider {
+        FeedbackProvider::parse(&self.provider)
+    }
+
     /// Resolve the GitHub token: the inline `github_token` first, then the
     /// env var named by `github_token_env`. Empty strings count as unset.
     pub fn github_token(&self) -> Option<String> {
@@ -279,12 +348,31 @@ impl FeedbackConfig {
         )
     }
 
-    /// True when enough is configured to actually open an issue: owner,
-    /// repo, and a resolvable token.
+    /// Resolve the GitLab token, same inline-then-env rule.
+    pub fn gitlab_token(&self) -> Option<String> {
+        resolve_secret(
+            self.gitlab_token.as_deref(),
+            self.gitlab_token_env.as_deref(),
+        )
+    }
+
+    /// True when enough is configured for the *selected* provider to actually
+    /// open an issue. Deliberately not "either provider is complete": a half
+    /// -filled GitLab block must keep the widget hidden rather than silently
+    /// filing to the GitHub repo the operator is migrating away from.
     pub fn is_configured(&self) -> bool {
-        !self.github_owner.is_empty()
-            && !self.github_repo.is_empty()
-            && self.github_token().is_some()
+        match self.provider() {
+            FeedbackProvider::Github => {
+                !self.github_owner.is_empty()
+                    && !self.github_repo.is_empty()
+                    && self.github_token().is_some()
+            }
+            FeedbackProvider::Gitlab => {
+                !self.gitlab_url.trim().is_empty()
+                    && !self.gitlab_project_id.trim().is_empty()
+                    && self.gitlab_token().is_some()
+            }
+        }
     }
 }
 
@@ -1552,5 +1640,78 @@ mod tests {
     fn no_feedback_block_means_disabled() {
         let c: Config = toml::from_str("").unwrap();
         assert!(c.feedback.is_none());
+    }
+
+    // A block written before the GitLab option existed has no `provider` row
+    // at all, and it must keep filing to the GitHub repo it always did.
+    #[test]
+    fn an_absent_provider_means_github() {
+        let toml = r#"
+            [feedback]
+            github_owner = "croit"
+            github_repo  = "llm-gateway"
+            github_token = "ghp_inline"
+        "#;
+        let c: Config = toml::from_str(toml).unwrap();
+        let f = c.feedback.expect("feedback block");
+        assert_eq!(f.provider(), FeedbackProvider::Github);
+        assert!(f.is_configured());
+        // The GitLab half defaults to something usable but incomplete.
+        assert_eq!(f.gitlab_url, "https://gitlab.com");
+        assert!(f.gitlab_token().is_none());
+    }
+
+    #[test]
+    fn gitlab_needs_a_url_a_project_and_a_token() {
+        let toml = r#"
+            [feedback]
+            provider            = "gitlab"
+            gitlab_url          = "https://gitlab.example.com"
+            gitlab_project_id   = "group/sub/proj"
+            gitlab_token        = "glpat-inline"
+        "#;
+        let c: Config = toml::from_str(toml).unwrap();
+        let f = c.feedback.expect("feedback block");
+        assert_eq!(f.provider(), FeedbackProvider::Gitlab);
+        assert!(f.is_configured());
+        assert_eq!(f.gitlab_token().as_deref(), Some("glpat-inline"));
+    }
+
+    // The whole point of an explicit selector: a deployment mid-migration has
+    // BOTH credential sets in the database, and only the selected one counts.
+    // Falling back to the other would file a customer's report into the repo
+    // they are moving away from, which nobody would notice for weeks.
+    #[test]
+    fn a_complete_github_block_does_not_satisfy_a_gitlab_selection() {
+        let toml = r#"
+            [feedback]
+            provider     = "gitlab"
+            github_owner = "croit"
+            github_repo  = "llm-gateway"
+            github_token = "ghp_inline"
+        "#;
+        let c: Config = toml::from_str(toml).unwrap();
+        let f = c.feedback.expect("feedback block");
+        assert!(!f.is_configured(), "gitlab is selected but not configured");
+    }
+
+    #[test]
+    fn provider_parsing_is_case_insensitive_and_defaults_to_github() {
+        assert_eq!(FeedbackProvider::parse("GitLab"), FeedbackProvider::Gitlab);
+        assert_eq!(
+            FeedbackProvider::parse(" gitlab "),
+            FeedbackProvider::Gitlab
+        );
+        assert_eq!(FeedbackProvider::parse("github"), FeedbackProvider::Github);
+        assert_eq!(FeedbackProvider::parse(""), FeedbackProvider::Github);
+        assert_eq!(
+            FeedbackProvider::parse("bitbucket"),
+            FeedbackProvider::Github
+        );
+        // The identifier is what the settings row stores, so it must survive
+        // a parse/render round trip unchanged.
+        for raw in ["github", "gitlab"] {
+            assert_eq!(FeedbackProvider::parse(raw).as_str(), raw);
+        }
     }
 }

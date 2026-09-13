@@ -1,6 +1,15 @@
 export const SETTINGS_CATEGORIES = ['chat', 'tools', 'data', 'access', 'notifications'] as const;
 export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number];
-export type SettingsFieldKind = 'bool' | 'int' | 'float' | 'text' | 'path' | 'model' | 'secret' | 'list';
+export type SettingsFieldKind =
+	| 'bool'
+	| 'int'
+	| 'float'
+	| 'text'
+	| 'path'
+	| 'model'
+	| 'secret'
+	| 'list'
+	| 'choice';
 
 export interface AdminSettingsField {
 	key: string;
@@ -10,6 +19,13 @@ export interface AdminSettingsField {
 	value: string | null;
 	secret_set: boolean;
 	models: string[];
+	/**
+	 * The closed option set of a `choice` field; empty for every other kind.
+	 * Only the identifiers travel — each option's label is a catalog key the
+	 * SPA derives (`settings-f-<key>-opt-<value>`), so a stored value stays
+	 * stable while its wording is translated.
+	 */
+	choices: string[];
 }
 
 export interface AdminSettingsSection {

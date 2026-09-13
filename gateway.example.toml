@@ -447,25 +447,43 @@ enabled = true
 # --- Feedback widget ---------------------------------------------------
 # A floating "feedback" button on every signed-in page. It opens a form
 # (Title / Description / Business value / Acceptance criteria / Priority),
-# auto-captures a viewport screenshot, and optionally fills the fields from
-# a voice recording (recorded in-browser, transcribed via the gateway's own
-# transcription pool, then structured by a chat model). On submit the
-# gateway files a GitHub issue in the repo below, embedding the screenshot.
+# auto-captures an annotatable viewport screenshot, accepts pasted or dropped
+# images, attaches the browser's recent console + network activity (and, on a
+# chat page, the conversation tail), and optionally fills the fields from a
+# voice recording (recorded in-browser, transcribed via the gateway's own
+# transcription pool, then structured by a chat model).
+#
+# On submit the gateway files an issue in ONE tracker: whichever `provider`
+# names. Both credential sets may be filled in — during a migration that is
+# the point — but only the selected provider is used, so a half-configured
+# selection keeps the button hidden rather than quietly filing to the other.
 #
 # Omit this whole block to disable the feature (the button stays hidden).
-# The token may live inline here (as below) or in an env var via
-# `github_token_env`; the inline value wins when both are set.
+# A token may live inline here (as below) or in an env var via the matching
+# `*_token_env`; the inline value wins when both are set.
 # [feedback]
+# provider          = "github"           # "github" (default) or "gitlab"
+#
+# # -- provider = "github" --
 # github_owner      = "croit"            # GitHub repo owner (user or org)
 # github_repo       = "llm-gateway"      # GitHub repo name
 # github_token      = "ghp_xxx"          # PAT with issues:write (+ contents:write for screenshots)
 # # github_token_env = "GATEWAY_FEEDBACK_GITHUB_TOKEN"  # alternative: name of an env var
-# labels            = ["feedback"]                      # added to every issue (+ priority:<p>)
+# github_api_base   = "https://api.github.com"          # override for GitHub Enterprise
 # assets_branch     = "feedback-assets"  # orphan branch holding embedded screenshots
+#                                        # (GitHub has no attachment API, so images are committed)
+#
+# # -- provider = "gitlab" --
+# gitlab_url        = "https://gitlab.com"        # instance base URL, NOT the /api/v4 path
+# gitlab_project_id = "croit/llm-gateway"         # numeric id, or the full group/project path
+# gitlab_token      = "glpat-xxx"                 # access token with the `api` scope
+# # gitlab_token_env = "GATEWAY_FEEDBACK_GITLAB_TOKEN"  # alternative: name of an env var
+#
+# # -- both --
+# labels            = ["feedback"]       # added to every issue (+ priority:<p>)
 # # Model choice is an OPERATOR setting — the feedback form never shows a picker.
 # extraction_model  = ""                 # "text model": chat model for voice→fields; empty = first available chat model
 # voice_model       = ""                 # "voice model": transcription model for the recording; empty = first available transcription model
-# github_api_base   = "https://api.github.com"          # override for GitHub Enterprise
 
 # --- Web Push notifications --------------------------------------------
 # "Your turn finished" push notifications for the installed PWA: when an

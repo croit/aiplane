@@ -23,6 +23,12 @@
 		<input id={field.key} class="toggle toggle-sm" type="checkbox" checked={draft === 'true'} onchange={(event) => onchange(field.key, (event.currentTarget as HTMLInputElement).checked ? 'true' : 'false')} />
 	{:else if field.kind === 'secret'}
 		<div class="flex items-center gap-2"><input id={field.key} class="input input-bordered input-sm w-full" type="password" value={draft} placeholder={field.secret_set ? t('settings-secret-set') : t('settings-secret-unset')} autocomplete="new-password" oninput={(event) => onchange(field.key, (event.currentTarget as HTMLInputElement).value)} />{#if field.secret_set}<button type="button" class="btn btn-ghost btn-sm" onclick={() => onclear(field.key)}>{t('settings-secret-clear')}</button>{/if}</div>
+	{:else if field.kind === 'choice'}
+		<select id={field.key} class="select select-bordered select-sm w-full" value={draft} onchange={(event) => onchange(field.key, (event.currentTarget as HTMLSelectElement).value)}>
+			{#each field.choices as choice (choice)}
+				<option value={choice}>{t(`${labelKey}-opt-${choice}`) === `${labelKey}-opt-${choice}` ? choice : t(`${labelKey}-opt-${choice}`)}</option>
+			{/each}
+		</select>
 	{:else if field.kind === 'model'}
 		{#if field.models.length === 0 && draft === ''}<p class="m-0 text-sm italic text-base-content/60">{t('settings-model-none-configured')}</p>
 		{:else}<SearchableSelect id={field.key} options={modelOptions} value={draft} onchange={(value) => onchange(field.key, value)} ariaLabel={label} size="sm" class="w-full" />{/if}

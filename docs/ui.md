@@ -54,7 +54,10 @@ web/
 │   │   ├── page-title.ts      dynamic page-title override shared with the shell
 │   │   ├── session.svelte.ts  identity from GET /api/v0/me
 │   │   ├── sidebar.svelte.ts  conversation list + search + mobile drawer
-│   │   ├── feedback.svelte.ts feedback widget state
+│   │   ├── feedback.svelte.ts feedback widget state (dialog, voice, submit)
+│   │   ├── feedback-capture.ts     console + network ring buffers, redacted
+│   │   ├── feedback-screenshot.ts  snapdom / getDisplayMedia page capture
+│   │   ├── feedback-annotator.ts   canvas annotator (rect/arrow/pen/text/redact)
 │   │   ├── push.svelte.ts     Web Push opt-in (device-local state)
 │   │   ├── voice.svelte.ts    voice-conversation orchestration
 │   │   ├── voice-recorder.ts  PCM capture + analyser
@@ -62,6 +65,8 @@ web/
 │   │   └── usage-types.ts
 │   └── routes/
 │       ├── +layout.svelte     app shell: nav, sidebar, theme, sign-out, feedback
+│       │                      (the feedback FAB + dialog mount HERE so they
+│       │                       survive client-side navigation)
 │       ├── +layout.ts         prerender = false, ssr = false
 │       ├── +page.svelte       dashboard
 │       ├── login/ chat/ chat/[id]/ tokens/ tools/ memory/ scheduled/

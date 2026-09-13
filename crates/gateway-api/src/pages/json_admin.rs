@@ -820,6 +820,10 @@ pub async fn settings_list(State(state): State<Arc<RamaState>>, req: Request) ->
                         "secret_set": matches!(f.kind, settings::Kind::Secret)
                             && effective.secret_is_set(f.key),
                         "models": models,
+                        // Closed option set for a `choice` field; empty for
+                        // every other kind. The SPA labels each option from
+                        // its own catalog, so only the identifiers travel.
+                        "choices": f.choices(),
                     })
                 })
                 .collect();
@@ -856,6 +860,7 @@ fn settings_kind(kind: settings::Kind) -> &'static str {
         settings::Kind::Text => "text",
         settings::Kind::Path => "path",
         settings::Kind::Model(_) => "model",
+        settings::Kind::Choice(_) => "choice",
         settings::Kind::Secret => "secret",
         settings::Kind::List => "list",
     }

@@ -19,7 +19,7 @@
 	import ToolCalls from '$lib/components/chat/ToolCalls.svelte';
 	import ConversationCanvas from '$lib/components/chat/ConversationCanvas.svelte';
 	import MessageAttachments from '$lib/components/chat/MessageAttachments.svelte';
-	import { openDialog as openFeedback } from '$lib/feedback.svelte';
+	import { feedback, openDialog as openFeedback } from '$lib/feedback.svelte';
 	import { clearPageTitleOverride, setPageTitleOverride } from '$lib/page-title';
 	import { page } from '$app/state';
 
@@ -63,6 +63,9 @@
 	const prompt = $derived(controller?.state.prompt ?? null);
 	const selectedModel = $derived(models.find((candidate) => candidate.id === model));
 	const hasCanvas = $derived(documents.length > 0 || assets.length > 0);
+	// The composer's feedback button captures the page before the dialog opens,
+	// so it needs the same busy state the floating button has elsewhere.
+	const feedbackCapturing = $derived(feedback.shotStatus === 'capturing' && !feedback.open);
 	/** A conversation shared *with* you renders read-only, plus a Fork action. */
 	const isOwner = $derived(
 		session === null || me.value === null || session.user_id === me.value.id
@@ -703,7 +706,23 @@
 					</option>
 				{/each}
 			</select>
-			<button class="btn btn-ghost btn-xs btn-circle 2xl:hidden" onclick={openFeedback} aria-label={t('feedback-fab-aria')} title={t('feedback-fab-aria')}>?</button>
+			<!-- The feedback entry point for conversation pages. The floating
+			     button is suppressed here (it would sit on top of send/stop),
+			     so this is the only one — never width-gated. -->
+			<button
+				class="btn btn-circle btn-ghost btn-xs"
+				data-feedback-fab
+				onclick={() => void openFeedback()}
+				disabled={feedbackCapturing}
+				aria-label={t('feedback-fab-aria')}
+				title={t('feedback-fab-aria')}
+			>
+				{#if feedbackCapturing}
+					<span class="loading loading-spinner loading-xs"></span>
+				{:else}
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 2 1.88 1.88M14.12 3.88 16 2"/><path d="M9 7.13V6a3 3 0 1 1 6 0v1.13"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6Z"/><path d="M6 13H2M6 17H3M6 9H3M18 13h4M18 17h3M18 9h3"/></svg>
+				{/if}
+			</button>
 		</div>
 		<div class="flex items-end gap-1">
 			<textarea

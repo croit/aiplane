@@ -115,6 +115,32 @@
     --noise: 0;
 }
 
+/* Modals have to read as *above* the page, and in the dark theme daisyUI's
+ * defaults do not manage it: the box is `base-100` (oklch 14%), the page
+ * behind it is the same `base-100`, and the scrim that separates them is only
+ * `black / 0.4` — which over an already-near-black page moves it about six
+ * lightness points. The drop shadow that would normally carry the elevation
+ * is `black / 0.25`, i.e. invisible on black. The result is a dialog whose
+ * edges you cannot find.
+ *
+ * So: a real border, a shadow with enough opacity to show against a dark
+ * ground, and a deeper scrim. These rules sit outside `@layer daisyui`, so
+ * they win without `!important` or specificity games. Written once here
+ * rather than per dialog — every modal in the app has the same problem. */
+.modal-box {
+    border: 1px solid var(--color-base-300);
+    box-shadow:
+        0 0 0 1px oklch(0% 0 0 / 0.4),
+        0 24px 64px -12px oklch(0% 0 0 / 0.75);
+}
+
+.modal.modal-open,
+.modal[open],
+.modal:popover-open,
+.modal:target {
+    background-color: oklch(0% 0 0 / 0.7);
+}
+
 /* daisyUI paints a prose code block with `neutral`, but in these
  * shadcn-flavoured themes `neutral` is the INVERSE of the surface (near-white
  * in dark mode) — a fenced block came out as a white slab in a dark chat.

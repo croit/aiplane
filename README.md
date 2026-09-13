@@ -461,7 +461,7 @@ The blocks a legacy file may still carry — **none of these is where you config
 | `[rag]` | Index sources and search them from chat ([RAG](#rag-codebase-search)) | `/admin/settings` → Content & data |
 | `[usage]` | Request/token accounting behind `/usage` | `/admin/settings` → Access & usage |
 | `[limits]` | Rate limits and quotas | `/admin/limits` (master switch under Access & usage) |
-| `[feedback]` | The in-UI feedback widget that files GitHub issues | `/admin/settings` → Notifications |
+| `[feedback]` | The in-UI feedback widget that files GitHub **or** GitLab issues | `/admin/settings` → Notifications |
 | `[push]` | Web Push turn-complete notifications | `/admin/settings` → Notifications |
 | `[gateway]` | Session + API-token lifetimes, and whether admins may impersonate | `/admin/settings` → Access & usage |
 | `[gateway].public_url` | The gateway's own base URL | `/setup` |

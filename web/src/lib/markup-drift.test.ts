@@ -63,3 +63,34 @@ test('no component uses a class daisyUI 5 dropped', () => {
 			offenders.join('\n')
 	);
 });
+
+// A modal has to read as a layer ABOVE the page, and in the dark theme
+// daisyUI's defaults do not achieve it: the box and the page are both
+// `base-100` (oklch 14%), the scrim between them is `black / 0.4` — which over
+// a near-black page is a handful of lightness points — and the elevation
+// shadow is `black / 0.25`, invisible on black. The result was a dialog whose
+// edges you could not find.
+//
+// `app.css` overrides all three. They are one rule each, outside
+// `@layer daisyui` so they win without `!important`, and losing any of them
+// silently restores the unreadable dialog — nothing errors, it just stops
+// looking like a modal. Hence this grep.
+test('app.css gives every modal a visible edge over a dark page', () => {
+	const css = readFileSync(new URL('../app.css', import.meta.url).pathname, 'utf8');
+
+	const box = /\.modal-box\s*\{([^}]*)\}/.exec(css);
+	assert.ok(box, '.modal-box has no override in app.css');
+	assert.match(box[1], /border:\s*1px solid var\(--color-base-300\)/, 'modal box has no border');
+	assert.match(box[1], /box-shadow:/, 'modal box has no elevation shadow');
+
+	// The scrim: daisyUI ships 0.4, which is not enough separation on a
+	// near-black surface.
+	const scrim = /\.modal\.modal-open,[\s\S]*?\{([^}]*)\}/.exec(css);
+	assert.ok(scrim, 'the open-modal scrim has no override in app.css');
+	const opacity = /background-color:\s*oklch\(0% 0 0 \/ ([\d.]+)\)/.exec(scrim[1]);
+	assert.ok(opacity, 'the scrim override does not set a background colour');
+	assert.ok(
+		Number(opacity[1]) > 0.4,
+		`scrim opacity ${opacity[1]} is no darker than daisyUI's own 0.4`
+	);
+});

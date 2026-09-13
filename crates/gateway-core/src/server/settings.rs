@@ -99,6 +99,15 @@ pub enum Kind {
     /// list — `chat.ocr.model` has to be a model served by an `ocr`-kind pool,
     /// which is not a fact anybody should have to infer.
     Model(PoolKind),
+    /// One of a fixed, closed set of values, offered as a dropdown.
+    ///
+    /// Free text would be wrong for the same reason [`Kind::Model`] is: the
+    /// set is known, short and exhaustive, so asking an operator to type
+    /// `gitlab` exactly is asking them to guess at a spelling the code
+    /// already owns. Each option's label is a Fluent key derived from the
+    /// field and the value (see [`FieldSpec::choice_label_key`]), so the
+    /// stored value stays a stable identifier while the label translates.
+    Choice(&'static [&'static str]),
 }
 
 /// How much of a section's two-column row a field's control occupies.
@@ -118,7 +127,7 @@ pub enum Span {
 /// toggles are short, everything else holds a URL, a path or a list.
 const fn span_for(kind: Kind) -> Span {
     match kind {
-        Kind::Int | Kind::Float | Kind::Bool => Span::Half,
+        Kind::Int | Kind::Float | Kind::Bool | Kind::Choice(_) => Span::Half,
         Kind::Text | Kind::Path | Kind::Secret | Kind::List | Kind::Model(_) => Span::Full,
     }
 }
@@ -177,6 +186,22 @@ impl FieldSpec {
     /// Fluent key of this field's one-line explanation.
     pub fn help_key(&self) -> String {
         format!("{}-help", self.label_key())
+    }
+
+    /// Fluent key of one [`Kind::Choice`] option's label, e.g.
+    /// `settings-f-feedback-provider-opt-gitlab`. Derived like the rest, so
+    /// the drift test that walks [`SECTIONS`] catches a missing translation
+    /// rather than the page rendering a raw identifier.
+    pub fn choice_label_key(&self, value: &str) -> String {
+        format!("{}-opt-{}", self.label_key(), value)
+    }
+
+    /// The options of a [`Kind::Choice`] field; empty for every other kind.
+    pub fn choices(&self) -> &'static [&'static str] {
+        match self.kind {
+            Kind::Choice(values) => values,
+            _ => &[],
+        }
     }
 }
 
@@ -445,12 +470,19 @@ pub static SECTIONS: &[SectionSpec] = &[
         category: Category::Notifications,
         fields: &[
             f("feedback.enabled", Kind::Bool),
+            // Which of the two credential sets below is live. Both stay
+            // filled in across a migration; only this decides where a
+            // report lands.
+            f("feedback.provider", Kind::Choice(&["github", "gitlab"])),
             f_half("feedback.github_owner", Kind::Text),
             f_half("feedback.github_repo", Kind::Text),
             f("feedback.github_token", Kind::Secret),
             f("feedback.github_api_base", Kind::Text),
-            f("feedback.labels", Kind::List),
             f_half("feedback.assets_branch", Kind::Text),
+            f_half("feedback.gitlab_url", Kind::Text),
+            f_half("feedback.gitlab_project_id", Kind::Text),
+            f("feedback.gitlab_token", Kind::Secret),
+            f("feedback.labels", Kind::List),
             f("feedback.extraction_model", Kind::Model(PoolKind::Chat)),
             f("feedback.voice_model", Kind::Model(PoolKind::Transcription)),
         ],
@@ -907,6 +939,7 @@ fn usage(s: &Settings) -> UsageConfig {
 
 fn feedback(s: &Settings) -> FeedbackConfig {
     FeedbackConfig {
+        provider: s.text_or("feedback.provider", "github"),
         github_owner: s.text_or("feedback.github_owner", ""),
         github_repo: s.text_or("feedback.github_repo", ""),
         github_token: s.text("feedback.github_token"),
@@ -920,6 +953,11 @@ fn feedback(s: &Settings) -> FeedbackConfig {
         assets_branch: s.text_or("feedback.assets_branch", "feedback-assets"),
         extraction_model: s.text("feedback.extraction_model"),
         voice_model: s.text("feedback.voice_model"),
+        gitlab_url: s.text_or("feedback.gitlab_url", "https://gitlab.com"),
+        gitlab_project_id: s.text_or("feedback.gitlab_project_id", ""),
+        gitlab_token: s.text("feedback.gitlab_token"),
+        // Same legacy-only indirection as `github_token_env` above.
+        gitlab_token_env: None,
     }
 }
 
@@ -1219,6 +1257,12 @@ fn snapshot(c: &Config) -> Vec<(String, String)> {
 
     put("feedback.enabled", fb.is_some().to_string());
     put(
+        "feedback.provider",
+        fb.map(|v| v.provider().as_str())
+            .unwrap_or("github")
+            .to_string(),
+    );
+    put(
         "feedback.github_owner",
         opt(fb.map(|v| v.github_owner.clone())),
     );
@@ -1253,6 +1297,20 @@ fn snapshot(c: &Config) -> Vec<(String, String)> {
     put(
         "feedback.voice_model",
         opt(fb.and_then(|v| v.voice_model.clone())),
+    );
+    put(
+        "feedback.gitlab_url",
+        fb.map(|v| v.gitlab_url.clone())
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| "https://gitlab.com".to_string()),
+    );
+    put(
+        "feedback.gitlab_project_id",
+        opt(fb.map(|v| v.gitlab_project_id.clone())),
+    );
+    put(
+        "feedback.gitlab_token",
+        opt(fb.and_then(|v| v.gitlab_token())),
     );
 
     put("push.enabled", c.push.enabled.to_string());
@@ -1528,6 +1586,81 @@ mod tests {
             config.feedback.expect("enabled").labels,
             vec!["bug".to_string(), "ui".to_string()]
         );
+    }
+
+    // The GitLab half of `[feedback]` travels the same path as the GitHub
+    // half — rows in, `FeedbackConfig` out — and the selector has to arrive
+    // with it, or the editor offers a dropdown the gateway ignores.
+    #[test]
+    fn the_feedback_provider_and_its_gitlab_rows_reach_the_config() {
+        let settings = settings_of(&[
+            ("feedback.enabled", "true"),
+            ("feedback.provider", "gitlab"),
+            ("feedback.gitlab_url", "https://gitlab.example.com"),
+            ("feedback.gitlab_project_id", "group/sub/proj"),
+            ("feedback.gitlab_token", "glpat-x"),
+        ]);
+        let mut config = Config::default();
+        apply(&settings, &mut config);
+
+        let fb = config.feedback.expect("enabled");
+        assert_eq!(
+            fb.provider(),
+            crate::server::config::FeedbackProvider::Gitlab
+        );
+        assert_eq!(fb.gitlab_url, "https://gitlab.example.com");
+        assert_eq!(fb.gitlab_project_id, "group/sub/proj");
+        assert_eq!(fb.gitlab_token().as_deref(), Some("glpat-x"));
+        assert!(fb.is_configured());
+    }
+
+    // A database written before the selector existed has no `feedback.provider`
+    // row. The missing row must mean GitHub, not "nothing is configured".
+    #[test]
+    fn a_missing_provider_row_keeps_an_existing_github_deployment_working() {
+        let settings = settings_of(&[
+            ("feedback.enabled", "true"),
+            ("feedback.github_owner", "croit"),
+            ("feedback.github_repo", "llm-gateway"),
+            ("feedback.github_token", "ghp_x"),
+        ]);
+        let mut config = Config::default();
+        apply(&settings, &mut config);
+
+        let fb = config.feedback.expect("enabled");
+        assert_eq!(
+            fb.provider(),
+            crate::server::config::FeedbackProvider::Github
+        );
+        assert!(fb.is_configured());
+    }
+
+    // Every `Kind::Choice` option needs a label key, and the key is derived
+    // rather than declared — so a new option ships with no way to name it
+    // unless this catches the omission.
+    #[test]
+    fn every_choice_option_derives_a_distinct_label_key() {
+        for field in all_fields().filter(|f| matches!(f.kind, Kind::Choice(_))) {
+            let options = field.choices();
+            assert!(
+                !options.is_empty(),
+                "{} is a choice field with no options",
+                field.key
+            );
+            let keys: HashSet<String> = options.iter().map(|v| field.choice_label_key(v)).collect();
+            assert_eq!(
+                keys.len(),
+                options.len(),
+                "{} has options that collapse to the same label key",
+                field.key
+            );
+            for value in options {
+                assert_eq!(
+                    field.choice_label_key(value),
+                    format!("{}-opt-{value}", field.label_key())
+                );
+            }
+        }
     }
 
     #[test]
