@@ -87,36 +87,6 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
-    // The operator settings — `[chat]`, `[sandbox]`, `[comfyui]`, `[rag]`,
-    // `[skills]`, `[typst]`, `[geoip]`, `[usage]`, `[limits]`, `[feedback]`,
-    // `[push]`, and the session/token half of `[gateway]`. Same one-way move as
-    // the topology and the OIDC provider above: the file's values are copied
-    // into the database once, and from then on `/admin/settings` owns them.
-    // `[gateway].bootstrap_admin_groups` and `public_url` are the two keys that
-    // stay behind — see `settings::GATEWAY_KEYS_STAYING_IN_THE_FILE`.
-    //
-    // This runs BEFORE anything is built out of `config` — the sandbox and
-    // ComfyUI clients, the skills store, the Typst templates, the GeoIP
-    // database, the RAG indexer are all constructed further down from these
-    // very blocks, and each of them must see what the database says, not what
-    // the file did.
-    match srv::settings::import_once(&db, &crypto, &config).await {
-        // Distinguished because the two mean different things to whoever is
-        // reading the log: one is an upgrade that moved their settings, the
-        // other is a fresh install with nothing to move.
-        Ok(true) if config.loaded_from.is_some() => tracing::info!(
-            "imported the config file's operator settings into the database; they are \
-             managed at /admin/settings from now on and those config blocks are ignored"
-        ),
-        Ok(true) => tracing::info!(
-            "no config file, so the operator settings start at their defaults; they are \
-             managed at /admin/settings"
-        ),
-        Ok(false) => {}
-        Err(err) => {
-            tracing::warn!(error = %err, "importing operator settings from the config file")
-        }
-    }
     // The process coming back *is* the restart every `restart`-flagged save was
     // waiting for, so the banner clears itself here rather than needing anyone
     // to dismiss it.
@@ -125,12 +95,12 @@ async fn main() -> anyhow::Result<()> {
     }
     match srv::settings::load(&db, &crypto).await {
         Ok(stored) => srv::settings::apply(&stored, &mut config),
-        // Booting on the file's values would quietly undo every change an
-        // operator has made since, so say it loudly rather than looking fine.
+        // Booting on built-in defaults would quietly undo every change an
+        // operator has made, so say it loudly rather than looking fine.
         Err(err) => tracing::error!(
             error = %err,
-            "could not read operator settings from the database; falling back to the config \
-             file's values for this boot"
+            "could not read operator settings from the database; this boot runs on the \
+             built-in defaults"
         ),
     }
     // The one handle everything shares. `reload_runtime` further down fills it

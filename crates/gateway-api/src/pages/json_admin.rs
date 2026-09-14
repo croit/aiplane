@@ -941,9 +941,6 @@ pub async fn settings_save(State(state): State<Arc<RamaState>>, req: Request) ->
     if let Err(err) = settings::store(&state.db, &state.crypto, &pairs).await {
         return internal(err);
     }
-    if let Err(err) = settings::mark_imported(&state.db).await {
-        tracing::warn!(error = %err, "recording that settings are operator-owned");
-    }
     state.reload_settings().await;
     // The session policy lives on the store, outside the config snapshot —
     // pushing it here is what makes gateway.session_* live without restart.

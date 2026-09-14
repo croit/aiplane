@@ -16,29 +16,8 @@ The provider lives in the **database**, entered through the setup wizard at
 `app_settings` rows; the client secret is sealed with the at-rest key
 (`gateway_core::server::setup`).
 
-The legacy `[oidc]` block in `gateway.toml` is import-only. On the first boot
-after the setup-wizard release, `setup::import_config_once` copies it into the
-database (resolving `client_secret_env` to its value), marks setup complete —
-the deployment demonstrably already worked — and ignores the block from then
-on. Nothing to do when upgrading; a fresh install has no file and lands in the
-wizard.
-
-The import is only *finalised* once it has actually happened. A boot that finds
-no config file, or one whose `client_secret_env` is not set yet, imports nothing
-and leaves the marker unset so the next boot can still import. Burning it early
-was a real bug: an existing deployment that booted once without its file — a
-volume mounted late — ended up with no provider, `setup.completed` set from
-`has_been_used`, and therefore no way in except `restore-setup`.
-
-```toml
-# gateway.toml — legacy, import-only. New installs need none of this.
-[oidc]
-issuer = "https://id.example.com/realms/company"
-client_id = "llm-gateway"
-client_secret_env = "GATEWAY_OIDC_CLIENT_SECRET"
-scopes = ["profile", "email", "groups"]
-roles_claim = "groups"
-```
+There is no config-file path into this. A fresh install lands in the wizard;
+an established one already has its provider in the database.
 
 ### Setup wizard (`/setup`)
 

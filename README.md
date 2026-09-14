@@ -338,7 +338,7 @@ attachments. The app serves a **setup wizard** at
 real sign-in, and lets you pick which claim value grants admin. Everything else
 an operator configures — OCR, compaction, attachment storage, the code sandbox,
 ComfyUI, RAG, skills, Typst, GeoIP, usage, limits, feedback and Web Push — is at
-`/admin/settings`, so no `gateway.toml` is needed at all.
+`/admin/settings`. There is no config file.
 
 Open <http://localhost:8080>. An unconfigured gateway sends you to `/setup`; once you finish the wizard, sign in and add backends at `/admin/upstreams`.
 
@@ -365,8 +365,6 @@ Until setup finishes, every page redirects to `/setup`, which asks two questions
 
 Finishing writes the provider (client secret sealed with the at-rest key), creates an `admins` group mapped to the value you chose plus a default `users` group, and swaps the live OIDC client in — `/login` works on the very next request, with no restart.
 
-Existing deployments upgrade in place: on the first boot that finds the config file, an `[oidc]` block in it is imported into the database once, the gateway marks itself configured, and the block is ignored from then on. A boot that cannot see the file (or whose client-secret env var is not set yet) imports nothing and changes nothing, so the next one still can — the import is only finalised once it has actually happened.
-
 ### Recovering access
 
 Locked out — the IdP moved, or no group maps to admin? Reopen the wizard from the host:
@@ -386,16 +384,11 @@ The one case it cannot fix is a provider that is gone entirely — the wizard pr
 
 There is **no required configuration file**. Everything an operator configures lives in the database and is edited in the browser: pools, backends and models at `/admin/*`, groups at `/admin/groups`, the OIDC provider at `/setup`, and the remaining operator settings — OCR, conversation compaction, attachment storage, the code sandbox, ComfyUI, RAG, skills, Typst, GeoIP, usage, limits, the feedback widget, Web Push, and session/token lifetimes — at **`/admin/settings`**, grouped into five tabs.
 
-**Changes apply immediately.** A save re-derives the affected clients, stores and tool registrations and swaps them in, so the new value is in force on the next request — no restart, and no config file. Five fields are the exception, badged `restart` in the editor: `rag.enabled`, `rag.data_dir`, `rag.clone_concurrency`, `comfyui.base_url` and `comfyui.content_dir`. Each of those owns a long-running background worker (the indexer, the ComfyUI job scheduler), and replacing one means stopping work that is in flight — an aborted ComfyUI poll can leave a job row pending whose asset is never fetched. A restart is the clean way to quiesce that. Saving one leaves a banner until the process comes back, so the person who restarts the container sees what is waiting on them. Each field prints the TOML key it replaces underneath, so the mapping from an old config file stays one-to-one and greppable; secrets entered there are sealed at rest.
+**Changes apply immediately.** A save re-derives the affected clients, stores and tool registrations and swaps them in, so the new value is in force on the next request — no restart, and no config file. Five fields are the exception, badged `restart` in the editor: `rag.enabled`, `rag.data_dir`, `rag.clone_concurrency`, `comfyui.base_url` and `comfyui.content_dir`. Each of those owns a long-running background worker (the indexer, the ComfyUI job scheduler), and replacing one means stopping work that is in flight — an aborted ComfyUI poll can leave a job row pending whose asset is never fetched. A restart is the clean way to quiesce that. Saving one leaves a banner until the process comes back, so the person who restarts the container sees what is waiting on them. Secrets entered there are sealed at rest.
 
-**Is there still a config file?** Only for upgrades. A `gateway.toml` is read
-if one is present — `$GATEWAY_CONFIG`, then `./gateway.toml`, then
-`/etc/gateway/config.toml` — and on the first boot that actually sees it, every
-block that has moved is copied into the database and ignored from then on. That
-is its entire remaining job: an existing file-driven deployment upgrades in
-place without anyone touching it. A new install should not write one.
-[`gateway.example.toml`](gateway.example.toml) stays as the annotated reference
-for whoever is migrating, and the table below says where each block lives now.
+**Is there a config file?** No. The gateway reads none, from anywhere. Every
+block that used to live in one is a database row now, edited in the admin UI,
+and the table below says where each one went.
 
 Two things never moved into the database, because both have to be resolved
 *before* it can be read: where the database is (`$GATEWAY_DB_PATH`) and the
@@ -403,15 +396,15 @@ break-glass admin list (`$GATEWAY_BOOTSTRAP_ADMIN_GROUPS`). Both are
 environment variables, so a deployment still needs no file. The listen socket
 was never in the file either — that is `$IP` / `$PORT`.
 
-**Secrets never live in a file.** Where the legacy file needs one it holds the
-*name* of an environment variable (e.g. `api_key_env = "GPU01_KEY"`) and the
-gateway reads the value from its own environment. Secrets entered at `/setup`
-or `/admin/settings` go into the database **sealed** under the at-rest key,
-which is why those fields take the credential directly.
+**Secrets never live in a file.** They are entered at `/setup`,
+`/admin/upstreams` or `/admin/settings` and go into the database **sealed**
+under the at-rest key. A backend may instead name an environment variable to
+read its key from, so a deployment that keeps credentials in its unit file can
+go on doing that.
 
 **How you configure upstreams and models: in the browser.** Pools, backends, and per-model settings live in the database and are managed entirely at `/admin/*` — there has never been TOML for them. A fresh install boots with no upstreams; the setup path for a new operator is:
 
-1. Start the gateway and open it. With nothing configured it sends you to `/setup`, where you enter your OIDC provider, prove it with a real sign-in, and pick the claim value that grants admin — no file involved. (An older deployment instead has its existing `[oidc]` and `[rbac]` blocks imported on that first boot, and skips the wizard.)
+1. Start the gateway and open it. With nothing configured it sends you to `/setup`, where you enter your OIDC provider, prove it with a real sign-in, and pick the claim value that grants admin — no file involved.
 2. Sign in. Your account now reaches the admin UI.
 3. At [`/admin/upstreams`](#the-built-in-web-ui), add a pool (chat / transcription / embedding / image / speech) and its backends — base URL, API key (stored encrypted), weight, max in-flight, aliases, per-pool compliance and rate-limit flags, and unknown-model / all-offline fallbacks. Click **Apply changes** and it goes live — no restart.
 4. At `/admin/models`, set per-model prices, reasoning budgets, context windows, capabilities, sampling defaults, the per-feature default model, and the web-search backend (SearXNG URL or Brave API key) that powers `search_web`.
@@ -445,9 +438,11 @@ Earlier releases fell back to an ephemeral per-process key and only logged an er
 
 `GATEWAY_ENCRYPTION_KEY` is optional: it's the AES-256-GCM key under which the gateway's database-stored secrets are encrypted — each user's MCP-connector OAuth tokens, admin-stored connector client secrets, and **upstream backend API keys entered through the admin UI**. If unset, the gateway derives a stable key from `GATEWAY_SESSION_KEY` — which is itself mandatory, so the derived key is always stable. Set it explicitly if you want at-rest encryption decoupled from session-cookie signing (that way the session key can be rotated without destroying stored secrets). **Rotating this key invalidates already-stored ciphertext** — re-enter backend keys at `/admin/upstreams` after a change. *(Formerly `GATEWAY_MCP_KEY`. If you set it explicitly, rename the env var to the same value and nothing else changes. If you rely on the key derived from `GATEWAY_SESSION_KEY` (env unset), the derivation label was renamed once, when at-rest sealing grew beyond MCP tokens — and that shipped without a migration, so an earlier release did lose access to secrets sealed before it. That is fixed: the gateway now reads values sealed under the old key and rewrites them under the current one on the first boot, logging how many it moved. Nothing to re-enter.)*
 
-The blocks a legacy file may still carry — **none of these is where you configure the feature any more.** Each is imported once, on the first boot that sees the file, and ignored from then on; the right-hand column is where it lives now. They stay documented inline in `gateway.example.toml` for anyone migrating.
+Where each block of the old config file went. Kept as a lookup table for
+anyone who remembers a TOML key and wants to know which screen owns it now —
+the gateway itself no longer reads any of them.
 
-| Legacy block | Feature | Now configured at |
+| Former block | Feature | Now configured at |
 |---|---|---|
 | `[rbac]` + `[[roles]]` | OIDC claim → group mapping, and what each group grants | `/admin/groups` |
 | `[chat.s3]` | Chat attachments in S3 / MinIO / R2 / Backblaze B2 | `/admin/settings` → Content & data |
@@ -606,7 +601,7 @@ openai api chat_completions.create -m <model-id> -g user "Hello"
 | `POST /integrations/{key}/connect`, `POST /integrations/{key}/retry`, `GET /integrations/callback` | session cookie | Same shape for a per-user MCP connector — see [`docs/connectors.md`](docs/connectors.md). |
 | `GET /api/v0/setup/state`, `POST /api/v0/setup/test`, `POST /api/v0/setup/restart`, `POST /api/v0/setup/finish` | none on a first run; one-time token afterwards | Deployment setup wizard behind the `/setup` screen: enter your OIDC provider, prove it with a real sign-in, and pick the claim value that grants admin. Open (and everything else redirects to it) until setup completes; gone afterwards, unless `restore-setup` on the host reopens it for 30 minutes — see [Recovering access](#recovering-access). |
 | `/api/v0/push/config`, `/api/v0/push/subscribe`, `/api/v0/push/unsubscribe` | session cookie | Web Push (turn-complete notifications): fetch the VAPID public key + enabled flag, register a browser subscription, and forget one. Governed by the Web Push settings at `/admin/settings` → Notifications. |
-| `/api/v0/admin/*` | admin role | Everything behind the admin screens: users (list + start impersonation, and `POST /api/v0/admin/impersonate/stop` to end it), the deployment-wide API-token register (every token with its owner, month-to-date spend, model allowlist and quota; the secret itself is unrecoverable — only a SHA-256 is stored — and the one thing editable is an operator model restriction, which intersects with the owner's own so neither side can widen the other), groups (maps OIDC claims onto gateway groups and sets per-group tool/skill grants; pools, RAG collections and MCP connectors then restrict access by group), upstreams (edits the pool/backend topology in the DB and hot-reloads it), connectors ([`docs/connectors.md`](docs/connectors.md)), ComfyUI's workflow catalog ([`docs/comfyui.md`](docs/comfyui.md)), skills, limits, and the operator settings that used to live in `gateway.toml` — OCR, compaction, attachment storage, sandbox, ComfyUI, RAG, skills, Typst, GeoIP, usage, limits, feedback, push and session/token lifetimes, with secrets sealed at rest. Almost everything takes effect on the next request; fields that own a background worker are badged `restart`. |
+| `/api/v0/admin/*` | admin role | Everything behind the admin screens: users (list + start impersonation, and `POST /api/v0/admin/impersonate/stop` to end it), the deployment-wide API-token register (every token with its owner, month-to-date spend, model allowlist and quota; the secret itself is unrecoverable — only a SHA-256 is stored — and the one thing editable is an operator model restriction, which intersects with the owner's own so neither side can widen the other), groups (maps OIDC claims onto gateway groups and sets per-group tool/skill grants; pools, RAG collections and MCP connectors then restrict access by group), upstreams (edits the pool/backend topology in the DB and hot-reloads it), connectors ([`docs/connectors.md`](docs/connectors.md)), ComfyUI's workflow catalog ([`docs/comfyui.md`](docs/comfyui.md)), skills, limits, and the operator settings — OCR, compaction, attachment storage, sandbox, ComfyUI, RAG, skills, Typst, GeoIP, usage, limits, feedback, push and session/token lifetimes, with secrets sealed at rest. Almost everything takes effect on the next request; fields that own a background worker are badged `restart`. |
 | `GET /openapi.json` | none | OpenAPI 3.1 for the session API, generated by the gateway from its compiled `/api/v0/*` route declarations. No separate spec file is shipped or maintained. |
 | `GET /api/v0/build` | none | Runtime source URL and exact version/git label used by the public login card and persistent AGPL source offer. |
 | `/api/v0/*` | session cookie unless documented above | The JSON API backing the UI — identity, tokens, chat (including `GET /api/v0/chat/sessions/{id}/events`), memories, scheduled actions, webhooks, skills, integrations, usage, RAG, transcription and speech. |

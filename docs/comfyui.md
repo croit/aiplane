@@ -42,10 +42,8 @@ gateway boots fine.
 | `comfyui.queue_poll_interval_ms` | `/history` poll cadence |
 | `comfyui.max_concurrent_jobs` | 24 GB VRAM realistically allows 1 |
 
-The field names are the TOML paths these settings had before they moved into the
-database; `/admin/settings` prints each one under its label. A legacy
-`[comfyui]` block in `gateway.toml` is imported once on the first boot that sees
-the file and ignored afterwards.
+The field names are the TOML paths these settings had before they moved into
+the database; `/admin/settings` prints each one under its label.
 
 The `content_dir` is **not** part of the public repo. It is a private, operator-managed directory holding workflows, manifests, and — at the operator's discretion — model files (or symlinks to a shared model volume). The gateway reads from it at startup; nothing in `content_dir` is ever written by the gateway or shipped to the browser.
 
@@ -248,7 +246,7 @@ TTS service.
 
 | Concern | Lives in |
 |---|---|
-| Operator config (`base_url`, `content_dir`, timeouts) | `gateway.toml` `[comfyui]` |
+| Operator config (`base_url`, `content_dir`, timeouts) | `/admin/settings` → Tools |
 | Workflow JSON (model paths, samplers, nodes) | `content_dir/<workflow>/workflow.json` |
 | Tool surface (id, params, descriptions) | `content_dir/<workflow>/manifest.toml` |
 | Example catalog + the custom node (the operator's copy source) | `examples/comfyui-workflows/`, `examples/comfyui-nodes/` |

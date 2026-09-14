@@ -34,35 +34,23 @@ sudo install -d -m 0750 -o root -g root /etc/gateway
 sudo install -m 0644 deploy/quadlet/gateway.container /etc/containers/systemd/
 sudo install -m 0644 deploy/quadlet/gateway.volume    /etc/containers/systemd/
 sudo install -m 0600 deploy/quadlet/gateway.example.env /etc/gateway/gateway.env
-sudo install -m 0640 gateway.example.toml             /etc/gateway/config.toml
 
 # Fill in secrets + upstreams:
 sudo $EDITOR /etc/gateway/gateway.env
-sudo $EDITOR /etc/gateway/config.toml
 ```
 
-Two edits in `config.toml` are mandatory when deploying via this Quadlet, plus one more if you use the RAG feature:
+Two environment variables are mandatory when deploying via this Quadlet, plus
+one more if you use the RAG feature. There is no config file — everything else
+is configured in the admin UI and stored in the database.
 
-```toml
-[db]
-# Default is the relative path `gateway.sqlite`, which would land in /app
-# (the container's WORKDIR) — ephemeral. Point it at the named volume
-# instead so the DB survives image swaps.
-path = "/var/lib/gateway/gateway.sqlite"
-
-[gateway]
-# Used to build the OIDC callback URL the IdP redirects to. Set this to
-# whatever your reverse proxy exposes externally.
-public_url = "https://gateway.example.com"
-
-[rag]
-# Required ONLY if you create RAG collections via /rag — the indexer
-# writes per-collection usearch index files + a git clone cache here, so
-# it MUST land on a writable filesystem. The container's rootfs is
-# read-only; point this at a subdirectory of the same named volume that
-# backs [db].path. The gateway will mkdir the leaf at startup.
-data_dir = "/var/lib/gateway/rag"
-```
+- `GATEWAY_DB_PATH=/var/lib/gateway/gateway.sqlite` — the default is the
+  relative path `gateway.sqlite`, which would land in `/app` (the container's
+  WORKDIR) and be lost on the next image swap. Point it at the named volume.
+- `GATEWAY_PUBLIC_URL=https://gateway.example.com` — used to build the OIDC
+  callback URL the IdP redirects to. Set it to whatever your reverse proxy
+  exposes externally.
+- `GATEWAY_DATA_DIR` — if you use RAG, put its index directory on the volume
+  too.
 
 Generate the service unit, then start it:
 
@@ -90,7 +78,7 @@ The SQLite DB + session store live in the named volume, so they survive image sw
 
 The default `PublishPort=127.0.0.1:8080:8080` only binds loopback — put a TLS-terminating reverse proxy in front (Caddy/Traefik/nginx). To expose 8080 publicly anyway, change to `PublishPort=8080:8080`, but you'll lose HTTPS + structured access logs.
 
-The OIDC callback URL the gateway advertises is `<public_url>/auth/callback` from `[gateway].public_url` in `config.toml`. That URL must be reachable from your IdP and registered as an allowed redirect URI on the OIDC client.
+The OIDC callback URL the gateway advertises is `<public_url>/auth/callback` from `$GATEWAY_PUBLIC_URL`. That URL must be reachable from your IdP and registered as an allowed redirect URI on the OIDC client.
 
 ## Google Workspace MCP server (optional sidecar)
 
@@ -190,7 +178,7 @@ sudo systemctl enable --now discord-mcp.service
 
 Then, as a gateway admin, open **`/admin/connectors`**, **Enable** Discord and
 set its **URL** to `http://discord-mcp:8085/mcp` (resolved over the `llm`
-network) — no `gateway.toml` edit, no restart. No credential is configured on
+network) — no file to edit, no restart. No credential is configured on
 the connector (the bot token lives in the container), and the endpoint stays
 internal-only — it grants full bot access with no per-caller scoping. Bot
 creation steps (intents, permissions, invite URL) and the compose equivalent:
@@ -203,6 +191,5 @@ The unit already runs read-only, drops every capability, and sets `NoNewPrivileg
 ## Troubleshooting
 
 - **`systemctl daemon-reload` then nothing happens**: Quadlet only regenerates units on `daemon-reload`. Check `systemctl list-unit-files | grep gateway` to confirm the service appeared. If not, look for syntax errors with `/usr/libexec/podman/quadlet -dryrun`.
-- **Container immediately exits**: `journalctl -u gateway.service` — most common cause is a missing `GATEWAY_SESSION_KEY` (sessions can't initialise) or an unparseable `/etc/gateway/config.toml`.
-- **SELinux denials on the bind-mounted config**: the `:z` relabel on the Volume line handles this. If you removed it, run `sudo restorecon -v /etc/gateway/config.toml` or add `:Z` (per-container private label).
+- **Container immediately exits**: `journalctl -u gateway.service` — most common cause is a missing `GATEWAY_SESSION_KEY` (sessions can't initialise).
 - **No in-container `HealthCmd`**: the runtime image is curl-free, so the unit relies on `Restart=on-failure` for crashes. Configure HTTP-level health probes on your reverse proxy (it can hit `/healthz` from outside).

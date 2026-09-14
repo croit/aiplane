@@ -69,7 +69,7 @@ RUST_LOG = "info,gateway=debug,gateway_core=debug,gateway_features=debug,gateway
 # SEARCH_PROVIDER / SEARXNG_URL / BRAVE_SEARCH_API_KEY vars are imported once
 # at first boot, then ignored). For the optional GeoIP
 # auto-updater (the `get_user_location` tool), set the IP2Location LITE
-# download token in `mise.local.toml`; `gateway.toml`'s `[geoip]
+# download token in `mise.local.toml`; the `geoip`
 # update_token_env` names which var to read (default below):
 # IP2LOCATION_TOKEN = "<your-ip2location-lite-token>"   # ← in mise.local.toml
 

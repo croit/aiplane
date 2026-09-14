@@ -54,7 +54,7 @@ The Rust binary and the UI build separately: `cargo build` needs no Node, and th
 
 CI runs the same scan in a dedicated `secret scan` job with `fetch-depth: 0`, which is the backstop for pushes made with `--no-verify` or from a clone where `setup-hooks` was never run.
 
-Credentials belong in `mise.local.toml`, `gateway.toml` or the DB (sealed under `GATEWAY_ENCRYPTION_KEY`) — all gitignored or outside the tree. Tool configs that carry tokens (`.codex/`, editor/agent configs) should live in `$HOME`, not in the repo.
+Credentials belong in `mise.local.toml` or the DB (sealed under `GATEWAY_ENCRYPTION_KEY`) — all gitignored or outside the tree. Tool configs that carry tokens (`.codex/`, editor/agent configs) should live in `$HOME`, not in the repo.
 
 Anything not covered: add a task to `mise.toml` rather than typing the raw command into a script. Discoverability matters.
 
@@ -194,18 +194,20 @@ and `target/` there instead.
 `mise run dev` starts Vite on public `127.0.0.1:8080` and `cargo run --package gateway` on private `127.0.0.1:8081`. Vite owns the browser origin and proxies every gateway-owned route, including `/chat/attachment/*`, OAuth callbacks, liveness endpoints, `/api`, `/v1`, and `/auth`. On startup the binary:
 
 - binds the private address supplied by the task (`127.0.0.1:8081`);
-- resolves its config file in this order: `$GATEWAY_CONFIG` → `./gateway.toml` → `/etc/gateway/config.toml` (see `Config::resolve_path` in `crates/gateway-core/src/server/config.rs`). If none is found it boots with built-in defaults (no upstreams, no OIDC);
-- opens the SQLite database at `[db].path` (default `gateway.sqlite`) and runs migrations;
-- builds the upstream registry and spawns the health probes;
-- builds the OIDC client if an `[oidc]` block is configured, otherwise starts without login.
+- opens the SQLite database at `$GATEWAY_DB_PATH` (default `gateway.sqlite`) and runs migrations;
+- applies the stored operator settings over the built-in defaults;
+- builds the upstream registry from the database and spawns the health probes;
+- builds the OIDC client if a provider is configured, otherwise starts without login.
 
-For local dev, copy the committed reference config and edit it:
+There is no config file to copy. A fresh database boots into the setup wizard:
 
 ```bash
-cp gateway.example.toml gateway.toml
-$EDITOR gateway.toml   # set at least one [upstream_pools.*] backend (and [oidc] to sign in)
 mise run dev
+# then open http://localhost:8080 — it redirects to /setup
 ```
+
+If you want a working UI without an identity provider, `mise run dev-ui` boots
+a stub gateway with mock backends and a pre-seeded session instead.
 
 `mise run dev-served` is the production-shaped alternative: it builds `target/frontend/build` and serves that directory directly from the debug gateway on `http://localhost:8080`, without HMR. `mise run dev-gateway` exposes the Rust process alone and honors the normal `IP` / `PORT` environment variables.
 
@@ -218,7 +220,7 @@ Env config is layered through mise, not a `.env` file:
 
 Web-search settings are **not** environment variables any more. Provider, SearXNG URL, and Brave API key live in the database and are set under **Web search** on `/admin/models` (the key sealed at rest like every other gateway secret). `SEARCH_PROVIDER`, `SEARXNG_URL`, and `BRAVE_SEARCH_API_KEY` are still read **once**, at first boot, to fill settings that are still empty — after that they're ignored and the gateway logs that it ignored them.
 
-Secrets never live in `gateway.toml`. Where the file needs one it holds only the *name* of an environment variable (e.g. `api_key_env = "GPU01_KEY"`) and the gateway reads the value from its environment at startup. `$GATEWAY_SESSION_KEY` is read directly and is mandatory — the old `session_key_env` key that named it is ignored.
+Secrets live in the database, sealed at rest, and are entered in the admin UI. A backend may instead name an environment variable to read its key from (`api_key_env = "GPU01_KEY"`), which is why provider keys still belong in `mise.local.toml`. `$GATEWAY_SESSION_KEY` is read directly and is mandatory.
 
 Which env vars each subsystem needs is documented in `docs/auth.md` (OIDC) and `docs/upstreams.md` (provider keys).
 

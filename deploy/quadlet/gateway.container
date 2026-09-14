@@ -58,8 +58,8 @@ PublishPort=127.0.0.1:8080:8080
 # Code-execution sandbox (optional): no network change needed here. The
 # sandbox-runner is a host service bound to this host's podman bridge gateway IP
 # (usually 10.88.0.1), which the gateway already reaches over the default
-# network. Just set `[sandbox] runner_url = "http://10.88.0.1:9000"` in an
-# optional config.toml (see below) and deploy the runner
+# network. Just set the sandbox runner URL to `http://10.88.0.1:9000` at
+# /admin/settings and deploy the runner
 # (deploy/sandbox/setup-sandbox.sh). See docs/sandbox.md.
 
 # GATEWAY_SESSION_KEY lives here — the one required variable.
@@ -75,24 +75,12 @@ Volume=gateway.volume:/var/lib/gateway:z,U
 
 Environment=RUST_LOG=info,gateway=info,gateway_core=info,gateway_features=info,gateway_runtime=info,gateway_tools=info,gateway_web=info
 
-# OPTIONAL config file. You almost certainly do not need one. Pools, backends,
-# models, groups, OIDC and search are configured in the admin UI, and every
-# remaining operator setting — OCR, compaction, attachment storage, sandbox,
-# ComfyUI, RAG, skills, Typst, GeoIP, usage, limits, feedback, push — is at
-# /admin/settings. Only [db] and [gateway] still come from a file at all, and
-# this image already covers the paths through GATEWAY_DATA_DIR. The listen socket
-# is IP/PORT, set in the image.
-#
-# A file is still worth mounting for one thing: migrating an older deployment.
-# Whatever it contains is imported into the database on the first boot and
-# ignored from then on. Drop it in and uncomment the mount below —
-# /etc/gateway/config.toml is one of the paths the gateway probes on its own, so
-# no GATEWAY_CONFIG is needed. `:z` relabels for SELinux; drop it on distros
-# that don't ship SELinux (Debian/Ubuntu).
-#
-#   sudo cp gateway.example.toml /etc/gateway/config.toml
-#
-#Volume=/etc/gateway/config.toml:/etc/gateway/config.toml:ro,z
+# There is no config file. Pools, backends, models, groups, OIDC, search and
+# every operator setting — OCR, compaction, attachment storage, sandbox,
+# ComfyUI, RAG, skills, Typst, GeoIP, usage, limits, feedback, push — live in
+# the database and are configured in the admin UI. What is left is a property
+# of where this process runs and is set above: the session key, the data dir,
+# the public URL, and IP/PORT (set in the image).
 
 # Drop all caps, no-new-privs, read-only root FS. The volume above + a small
 # tmpfs cover everything that needs to be writable.

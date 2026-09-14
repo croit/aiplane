@@ -504,9 +504,6 @@ worker, and `rag.data_dir` additionally does not carry existing indexes with it
 | `rag.data_dir` | Index store, e.g. `/mnt/data/gateway-rag`. Must be on the persistent volume, or every restart reindexes |
 | `rag.clone_concurrency` | How many clones and indexing jobs run at once |
 
-A legacy `[rag]` block in `gateway.toml` is imported once on the first boot that
-sees the file and ignored afterwards.
-
 Optional capability pools, each of which simply switches a stage on:
 
 | Pool `kind` | Enables |

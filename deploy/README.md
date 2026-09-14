@@ -25,8 +25,7 @@ Per-host secrets live in env files; everything an operator would once have put
 in a config TOML now lives in the database and is edited in the browser. The
 SQLite DB (also the session store) lives in a named volume. Real secret files
 (`gateway.env`, `google-workspace-mcp.env`) are git-ignored — only the
-`*.example.*` templates are committed. A `gateway.toml` is optional and only
-used to migrate an older install (see below); it is git-ignored too.
+`*.example.*` templates are committed. There is no config file at all.
 
 ---
 
@@ -58,13 +57,12 @@ OCR_VLLM_BASE_URL=http://host.docker.internal:8000/v1 \
   docker compose -f deploy/compose.example.yml --profile ocr up -d  # + PDF OCR sidecar
 ```
 
-A `gateway.toml` is not needed. OCR, ComfyUI, the sandbox, Typst, skills, GeoIP
-and RAG tuning are all configured at `/admin/settings`, and the two remaining
-file keys have environment equivalents (`$GATEWAY_DB_PATH`,
-`$GATEWAY_BOOTSTRAP_ADMIN_GROUPS`). Mount one only to migrate an older install:
-whatever it contains is imported into the database on the first boot and ignored
-afterwards. Copy `gateway.example.toml` to `deploy/gateway.toml` and uncomment
-the mount in the compose file for that.
+There is no config file. OCR, ComfyUI, the sandbox, Typst, skills, GeoIP and
+RAG tuning are all configured at `/admin/settings`; upstream pools and backends
+at `/admin/upstreams`; groups at `/admin/groups`; and the OIDC provider in the
+setup wizard on first run. What is left is a property of where the process runs
+and comes from the environment: `$GATEWAY_SESSION_KEY`, `$GATEWAY_DB_PATH`,
+`$GATEWAY_PUBLIC_URL`, `$GATEWAY_BOOTSTRAP_ADMIN_GROUPS`, `$IP` / `$PORT`.
 
 ### Locked out?
 
@@ -285,7 +283,7 @@ always/ask/off on `/tools`, same as any other tool).
 
 It ships as a seeded, disabled connector in the catalog. There are two moving
 parts: run the sidecar **bridge** (below), then **enable + point it** at the
-bridge in `/admin/connectors` — no `gateway.toml` edit, no restart.
+bridge in `/admin/connectors` — no file to edit, no restart.
 
 **Create the bot** (once, in the [Discord Developer Portal](https://discord.com/developers/applications)):
 

@@ -102,8 +102,8 @@ in the tree. No routing, no `AppState`, no tool registry:
 - `rama_server/session.rs` — signed-cookie + sqlite session store, plus the `is_safe_return_to` redirect guard the OIDC callback needs to bounce a signed-in user back to the SPA route they asked for; `rama_server/cors.rs` — the CORS layer. Neither needs `AppState`, so both stay here.
 
 ### `crates/gateway-features`
-The optional subsystems — what a deployment switches on in `gateway.toml` and can
-run entirely without: `rag/`, `skills.rs`, `comfyui/` (client, store, manifest,
+The optional subsystems — what a deployment switches on at `/admin/settings`
+and can run entirely without: `rag/`, `skills.rs`, `comfyui/` (client, store, manifest,
 runner, scheduler), `push/`, `github/`, `geoip/`, `typst.rs`, `image_gen.rs`,
 `chat_attachments.rs`, `embeddings.rs`, `speech.rs`, `pdf.rs`, `ocr.rs`,
 `search_settings.rs`, and `document_canvas.rs` (the chat canvas store, shared
@@ -209,6 +209,17 @@ The event shapes and the client-side contract (notably `full: true` meaning "rep
 
 ## Configuration
 
-Single TOML file. Location resolved in this order: `$GATEWAY_CONFIG` env var → `./gateway.toml` → `/etc/gateway/config.toml`. Secret material (OIDC client secret, session HMAC key) is **only** read from env vars referenced *by name* in the TOML (`api_key_env = "GPU01_KEY"`), never inline in the config file.
+No config file. Everything an operator sets is a database row, edited in the
+admin UI: topology at `/admin/upstreams`, groups at `/admin/groups`, the OIDC
+provider in the setup wizard, and the rest at `/admin/settings`. Secrets are
+sealed at rest under the at-rest key; a backend may instead name an environment
+variable to read its key from.
 
-See the per-subsystem docs for the exact config shape.
+`Config` survives as the in-memory runtime shape — `settings::apply` writes the
+stored rows over its defaults on boot, so the hundred call sites that say
+`state.config().chat.ocr.dpi` never had to change. What is left outside the
+database is what has to be resolved *before* it can be opened:
+`$GATEWAY_SESSION_KEY`, `$GATEWAY_DB_PATH`, `$GATEWAY_DATA_DIR`,
+`$GATEWAY_PUBLIC_URL`, `$GATEWAY_BOOTSTRAP_ADMIN_GROUPS`, and `$IP` / `$PORT`.
+
+See the per-subsystem docs for what each screen controls.

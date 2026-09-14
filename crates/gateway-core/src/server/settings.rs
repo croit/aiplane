@@ -61,12 +61,6 @@ use crate::server::upstreams::config::PoolKind;
 /// collide with `oidc.*`, `setup.*`, `gateway.public_url` or the seed markers.
 const PREFIX: &str = "settings.";
 
-/// Marks that the one-time import from a config file has run. Gated on the
-/// marker rather than on the rows being empty, so an operator who deliberately
-/// clears a setting does not get the file's value resurrected on next boot —
-/// the same rule as `topology.seeded`, `rbac.seeded` and `setup.config_imported`.
-const IMPORT_MARKER_KEY: &str = "settings.imported";
-
 /// What kind of control edits a field, and how its text form is parsed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -554,7 +548,7 @@ pub fn all_fields() -> impl Iterator<Item = &'static FieldSpec> {
 /// default to on and were in fact running. A control that disagrees with the
 /// running gateway is worse than no control.
 ///
-/// This also means the editor and [`import_once`] agree by construction: both
+/// This also means the editor and [`apply`] agree by construction: both
 /// read the same function, so there is no second place for a default to drift.
 pub fn effective(config: &Config) -> Settings {
     Settings::from_map(snapshot(config).into_iter().collect())
@@ -1061,84 +1055,17 @@ pub async fn clear(pool: &Pool, key: &str) -> Result<(), DbError> {
     app_settings::delete(pool, &format!("{PREFIX}{key}")).await
 }
 
-/// Copy the settings blocks out of a config file into empty settings, once.
-///
-/// This is what upgrades an existing file-driven deployment in place: on the
-/// first boot after this release its `[sandbox]`, `[comfyui]`, `[chat]` and the
-/// rest move into the database, and from then on `/admin/settings` owns them
-/// and the file's copies are ignored. A fresh install imports the defaults, so
-/// the editor opens on real rows rather than on emptiness.
-///
-/// # The missing-file case
-///
-/// "There is no config file" and "the config file was not mounted on this boot"
-/// arrive here as the same [`Config`] full of defaults, and importing defaults
-/// is right for the first and destructive for the second: it would burn the
-/// marker and leave a running deployment's real `[sandbox]`, `[chat.s3]` and
-/// `[comfyui]` settings sitting in a file that is never read again.
-///
-/// So a missing file is only trusted on a database nobody has used yet. On a
-/// database with users or groups in it, this imports nothing and leaves the
-/// marker unset, so the next boot that *does* see the file imports properly.
-/// Nothing is lost in the meantime — with no rows, every field falls back to
-/// the same built-in default the code shipped with.
-///
-/// The window that leaves open — an operator editing `/admin/settings` while
-/// the marker is unset, then the file reappearing and overwriting them — is
-/// closed by [`mark_imported`], which the editor calls on every save.
-///
-/// Returns whether anything was written, for logging.
-pub async fn import_once(pool: &Pool, crypto: &Crypto, config: &Config) -> Result<bool, DbError> {
-    if app_settings::get(pool, IMPORT_MARKER_KEY).await?.is_some() {
-        return Ok(false);
-    }
-    if config.loaded_from.is_none() && has_been_used(pool).await? {
-        tracing::warn!(
-            "no config file was found, but this database already has users — so this looks \
-             like an existing deployment whose config file is missing rather than a fresh \
-             install. Not importing anything: every setting keeps its built-in default for \
-             now, and the next start that finds the file will import it. Configure them at \
-             /admin/settings to settle it either way."
-        );
-        return Ok(false);
-    }
-    let pairs = snapshot(config);
-    store(pool, crypto, &pairs).await?;
-    mark_imported(pool).await?;
-    Ok(true)
-}
-
-/// Record that the config file is no longer authoritative for these settings.
-///
-/// Called by [`import_once`] and by every save in the editor. The second is
-/// what makes a human editing a value final: after that, a config file
-/// appearing (or reappearing) on a later boot cannot overwrite what they chose.
-pub async fn mark_imported(pool: &Pool) -> Result<(), DbError> {
-    app_settings::set(pool, IMPORT_MARKER_KEY, "1").await
-}
-
-/// Has this database ever been used? True as soon as one person has signed in
-/// or one gateway group exists.
-///
-/// Same question, and the same phrasing of it, as the guard in
-/// [`crate::server::setup`]: "is anybody here?" rather than anything about what
-/// the config file happens to contain.
-async fn has_been_used(pool: &Pool) -> Result<bool, DbError> {
-    let used: i64 = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM users) OR EXISTS(SELECT 1 FROM gateway_groups)",
-    )
-    .fetch_one(pool)
-    .await?;
-    Ok(used != 0)
-}
-
 /// Every field's current value, as text, taken from `config`.
 ///
-/// The inverse of [`apply`], and only used by [`import_once`]. Written as a
-/// flat match on the key rather than as twelve serializers so that the
-/// declaration in [`SECTIONS`] stays the only list of fields — an entry with no
-/// arm here fails `every_declared_field_can_be_imported`.
-fn snapshot(c: &Config) -> Vec<(String, String)> {
+/// The inverse of [`apply`], and what [`effective`] renders the editor from.
+/// Public so a fixture can write a `Config` it built in memory into the rows
+/// the editor then saves over — without it, the first save in the editor
+/// re-applies onto built-in defaults and silently drops everything the fixture
+/// had configured.
+/// Written as a flat match on the key rather than as twelve serializers so
+/// that the declaration in [`SECTIONS`] stays the only list of fields — an
+/// entry with no arm here fails `every_declared_field_can_be_imported`.
+pub fn snapshot(c: &Config) -> Vec<(String, String)> {
     let ocr = &c.chat.ocr;
     let comp = &c.chat.compaction;
     let s3 = c.chat.s3.as_ref();
@@ -1839,136 +1766,5 @@ mod tests {
         assert_eq!(config.gateway.session_ttl_days, 3);
         assert_eq!(config.gateway.session_absolute_max_days, 14);
         assert!(config.gateway.allow_impersonation);
-    }
-
-    // ---- import_once ----------------------------------------------------
-
-    async fn fresh_db() -> Pool {
-        crate::server::db::open(std::path::Path::new(":memory:"))
-            .await
-            .unwrap()
-    }
-
-    fn crypto() -> Crypto {
-        Crypto::from_key([9u8; 32])
-    }
-
-    /// A config as it would arrive from an actual file, with one setting that
-    /// differs from the built-in default so an import is observable.
-    fn config_from_a_file() -> Config {
-        let mut c = Config {
-            loaded_from: Some(PathBuf::from("/etc/gateway/config.toml")),
-            ..Default::default()
-        };
-        c.chat.ocr.dpi = 111;
-        c
-    }
-
-    async fn seed_a_user(pool: &Pool) {
-        let now = jiff::Timestamp::now();
-        crate::server::db::users::upsert(
-            pool,
-            &crate::server::db::users::User {
-                id: "someone".into(),
-                email: "someone@example.com".into(),
-                name: None,
-                roles: vec![],
-                created_at: now,
-                updated_at: now,
-                timezone: None,
-                speech_voice: None,
-            },
-        )
-        .await
-        .unwrap();
-    }
-
-    async fn stored_dpi(pool: &Pool, crypto: &Crypto) -> Option<String> {
-        load(pool, crypto)
-            .await
-            .unwrap()
-            .shown("chat.ocr.dpi")
-            .map(str::to_owned)
-    }
-
-    #[tokio::test]
-    async fn an_existing_config_file_is_imported_once_and_then_ignored() {
-        // The upgrade path: the file's values move into the database on the
-        // first boot after this release, and later edits to the file do not
-        // resurrect themselves over what the operator has since chosen.
-        let pool = fresh_db().await;
-        let c = crypto();
-        let config = config_from_a_file();
-
-        assert!(import_once(&pool, &c, &config).await.unwrap());
-        assert_eq!(stored_dpi(&pool, &c).await.as_deref(), Some("111"));
-
-        // Operator changes it in the UI...
-        store(&pool, &c, &[("chat.ocr.dpi".into(), "222".into())])
-            .await
-            .unwrap();
-        // ...and a second boot, file unchanged, must not undo that.
-        assert!(!import_once(&pool, &c, &config).await.unwrap());
-        assert_eq!(stored_dpi(&pool, &c).await.as_deref(), Some("222"));
-    }
-
-    #[tokio::test]
-    async fn a_genuinely_fresh_install_imports_the_defaults() {
-        // No file and an empty database: the editor should open on real rows,
-        // not on emptiness, so the defaults are written and the marker burned.
-        let pool = fresh_db().await;
-        let c = crypto();
-        assert!(import_once(&pool, &c, &Config::default()).await.unwrap());
-        assert_eq!(
-            stored_dpi(&pool, &c).await.as_deref(),
-            Some(OcrConfig::default().dpi.to_string().as_str())
-        );
-    }
-
-    #[tokio::test]
-    async fn a_missing_config_file_on_a_used_database_imports_nothing() {
-        // The regression this pins: an existing deployment booting with its
-        // config bind-mount absent looks exactly like a fresh install. Writing
-        // defaults and burning the marker there would strand its real
-        // `[sandbox]` / `[chat.s3]` / `[comfyui]` settings in a file that is
-        // never read again.
-        let pool = fresh_db().await;
-        let c = crypto();
-        seed_a_user(&pool).await;
-
-        assert!(
-            !import_once(&pool, &c, &Config::default()).await.unwrap(),
-            "nothing may be imported from a file that is not there"
-        );
-        assert!(
-            stored_dpi(&pool, &c).await.is_none(),
-            "and no rows written, so every field keeps its built-in default"
-        );
-
-        // The file comes back on a later boot; now it imports properly.
-        assert!(import_once(&pool, &c, &config_from_a_file()).await.unwrap());
-        assert_eq!(stored_dpi(&pool, &c).await.as_deref(), Some("111"));
-    }
-
-    #[tokio::test]
-    async fn an_operator_edit_makes_the_config_file_non_authoritative() {
-        // Closes the window the previous test leaves open: while the marker is
-        // unset, someone configures the gateway at /admin/settings. A file
-        // appearing afterwards must not overwrite them.
-        let pool = fresh_db().await;
-        let c = crypto();
-        seed_a_user(&pool).await;
-        assert!(!import_once(&pool, &c, &Config::default()).await.unwrap());
-
-        store(&pool, &c, &[("chat.ocr.dpi".into(), "333".into())])
-            .await
-            .unwrap();
-        mark_imported(&pool).await.unwrap();
-
-        assert!(
-            !import_once(&pool, &c, &config_from_a_file()).await.unwrap(),
-            "the operator has spoken; the file no longer gets a say"
-        );
-        assert_eq!(stored_dpi(&pool, &c).await.as_deref(), Some("333"));
     }
 }

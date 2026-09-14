@@ -627,11 +627,8 @@ One-time host setup:
    ```sh
    docker compose -f deploy/compose.example.yml --profile sandbox up -d
    ```
-   ```toml
-   # gateway.toml
-   [sandbox]
-   runner_url = "http://sandbox-runner:9000"
-   ```
+   Then at `/admin/settings` → Tools, switch **Code sandbox** on and set the
+   runner URL to `http://sandbox-runner:9000`.
 
 The boot self-check still guards this: the runner logs `isolation confirmed` or
 a loud `SANDBOX IS NOT ISOLATED` — the latter means `runsc` isn't actually
@@ -725,13 +722,14 @@ on a Linux host (`llm01`), not on the Mac.
 
 ## Configuration reference
 
-Everything is file-tunable; nothing is hardcoded.
+Everything is tunable; nothing is hardcoded.
 
-**Gateway** — `[sandbox]` in the gateway config TOML (`gateway.example.toml`):
+**Gateway** — `/admin/settings` → Tools → **Code sandbox**. The key names below
+are the `sandbox.*` paths the editor prints under each field:
 
 | Key | Default | Meaning |
 |---|---|---|
-| (block present) | — | Registers the sandbox tools. Omit the block to leave the feature out entirely. |
+| `sandbox.enabled` | off | Registers the sandbox tools. Off leaves the feature out entirely. |
 | `enabled` | `true` | Master switch — `false` disables the tools while keeping the block (e.g. retain `runner_url`). |
 | `runner_url` | — (required) | Where to reach the sandbox-runner, e.g. `http://10.88.0.1:9000`. |
 | `timeout_secs` | `120` | HTTP timeout for one `/run` call (the tool also extends the runner loop ceiling to match). |

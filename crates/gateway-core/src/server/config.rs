@@ -15,7 +15,7 @@
 //! See `gateway.example.toml` at the repo root for the schema.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -46,18 +46,7 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    /// The file this was read from, or `None` when no config file was found.
-    ///
-    /// Not a config key — filled in by [`Config::load`]. It exists because
-    /// "the operator has no config file" and "the operator's config file was
-    /// not mounted on this boot" produce identical [`Config`] values and must
-    /// not be treated identically: the second is an existing deployment whose
-    /// settings would be silently replaced by defaults. See
-    /// [`crate::server::settings::import_once`].
-    #[serde(skip)]
-    pub loaded_from: Option<PathBuf>,
     pub bind: BindConfig,
-    pub db: DbConfig,
     pub gateway: GatewayConfig,
     /// Chat-page knobs that aren't routing-related — attachment
     /// storage + which model names are allowed to receive image
@@ -816,12 +805,12 @@ pub struct GatewayConfig {
     /// [`Config::public_url_fallback`] if you want the fallback, or
     /// `AppState::public_url()` if you want the live value.
     ///
-    /// Named for what it is rather than for the TOML key it parses, because
-    /// `public_url` is exactly the name of the accessor that returns the
-    /// *correct* value: with both spelled the same, neither grep nor the
-    /// compiler could tell a right read from a wrong one, and a wrong one
-    /// silently yields `http://localhost:8080` on every wizard-configured
-    /// deployment. `#[serde(rename)]` keeps the config-file key unchanged.
+    /// Set from `$GATEWAY_PUBLIC_URL`. Named for what it is rather than for the
+    /// value it holds, because `public_url` is exactly the name of the accessor
+    /// that returns the *correct* value: with both spelled the same, neither
+    /// grep nor the compiler could tell a right read from a wrong one, and a
+    /// wrong one silently yields `http://localhost:8080` on every
+    /// wizard-configured deployment.
     #[serde(default = "default_public_url", rename = "public_url")]
     pub public_url_import_only: String,
     /// How long a freshly minted gateway token is valid for. Default 90 days.
@@ -961,26 +950,6 @@ impl OidcConfig {
             .filter(|v| !v.is_empty())
     }
 }
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct DbConfig {
-    /// SQLite file path. `:memory:` (used in tests) gives an in-memory DB.
-    ///
-    /// `None` means nobody named one, in which case `$GATEWAY_DB_PATH` decides,
-    /// and failing that `gateway.sqlite` under [`data_dir`] — which is what lets
-    /// a container land on its persistent volume with no config file at all.
-    /// Resolve it with [`Config::db_path`], never by reading this directly.
-    ///
-    /// Optional rather than eagerly defaulted so that "the operator named this
-    /// path" stays distinguishable from "nobody said anything". Pointing a
-    /// gateway at the wrong database does not fail loudly — it comes up empty
-    /// and looks like a fresh install — so the two sources are never silently
-    /// reconciled; see [`Config::db_path`].
-    #[serde(default)]
-    pub path: Option<PathBuf>,
-}
-
 /// The database filename, under whichever directory [`data_dir`] resolves to.
 pub const DB_FILENAME: &str = "gateway.sqlite";
 
@@ -1080,14 +1049,16 @@ where
 }
 
 impl Config {
-    /// The config file's public URL — a *fallback*, used only until the setup
-    /// wizard records the real one, and as the value
-    /// the setup wizard writes into the database
-    /// when upgrading a config-file deployment.
+    /// `$GATEWAY_PUBLIC_URL` — a *fallback*, used only until the setup wizard
+    /// records the real one in the database.
     ///
-    /// The single reader of [`GatewayConfig::public_url_import_only`], so
-    /// "where does the fallback come from" has exactly one answer. For the
-    /// value a request should actually use, call `AppState::public_url()`.
+    /// The wizard suggests a URL derived from the request that reached it,
+    /// which is right on a directly-exposed gateway and wrong behind a reverse
+    /// proxy that rewrites Host. This is how a deployment states the answer up
+    /// front instead of correcting it afterwards.
+    ///
+    /// For the value a request should actually use, call
+    /// `AppState::public_url()`.
     pub fn public_url_fallback(&self) -> &str {
         &self.gateway.public_url_import_only
     }
@@ -1129,10 +1100,9 @@ impl Config {
     /// with both paths printed costs an operator a minute; the alternative costs
     /// them a morning.
     pub fn db_path(&self) -> Result<PathBuf, ConfigError> {
-        db_path_from(
-            self.db.path.as_deref(),
+        Ok(db_path_from(
             std::env::var("GATEWAY_DB_PATH").ok().as_deref(),
-        )
+        ))
     }
 
     /// Raw OIDC claim values that always resolve to admin: the file's
@@ -1194,49 +1164,26 @@ impl Config {
     /// Resolves the config file path and loads it. Missing files are not an
     /// error — we fall back to defaults so `mise run dev` can start without
     /// any setup.
+    /// The in-memory runtime configuration.
+    ///
+    /// There is no config file any more. Everything an operator sets lives in
+    /// the database — topology at `/admin/upstreams`, groups at
+    /// `/admin/groups`, the OIDC provider in the setup wizard, and the rest at
+    /// `/admin/settings`, which [`crate::server::settings::apply`] writes over
+    /// these defaults on boot. What is left here is decided by the environment
+    /// (see [`Self::db_path`], [`Self::bind_address`], [`data_dir`]), because
+    /// it is a property of *where the process runs* rather than something the
+    /// gateway can read out of a database it has not opened yet.
     pub fn load() -> Result<Self, ConfigError> {
-        match Self::resolve_path() {
-            Some(path) => Self::from_path(&path).map(|mut c| {
-                c.loaded_from = Some(path);
-                c
-            }),
-            None => {
-                // Not a warning any more: booting without a config file is the
-                // supported path for a fresh deployment. Pools, models, groups
-                // and (soon) the OIDC provider are configured through the web
-                // UI and live in the database; the file only carries the
-                // handful of blocks that haven't moved yet.
-                tracing::info!(
-                    data_dir = %data_dir().display(),
-                    "no config file found; using defaults (this is normal for a fresh install)"
-                );
-                Ok(Self::default())
-            }
+        let mut config = Self::default();
+        if let Some(url) = std::env::var("GATEWAY_PUBLIC_URL")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+        {
+            config.gateway.public_url_import_only = url;
         }
-    }
-
-    pub fn from_path(path: &Path) -> Result<Self, ConfigError> {
-        let raw = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        toml::from_str(&raw).map_err(|source| ConfigError::Parse {
-            path: path.to_path_buf(),
-            source,
-        })
-    }
-
-    fn resolve_path() -> Option<PathBuf> {
-        if let Ok(p) = std::env::var("GATEWAY_CONFIG") {
-            return Some(PathBuf::from(p));
-        }
-        for candidate in ["gateway.toml", "/etc/gateway/config.toml"] {
-            let p = PathBuf::from(candidate);
-            if p.exists() {
-                return Some(p);
-            }
-        }
-        None
+        Ok(config)
     }
 }
 
@@ -1246,22 +1193,13 @@ impl Config {
 ///
 /// The two halves resolve independently: a PaaS that injects only `$PORT` must
 /// not also drag the host back from whatever the image set.
-/// The pure half of [`Config::db_path`]. See there for why a conflict is fatal.
-fn db_path_from(file: Option<&Path>, env: Option<&str>) -> Result<PathBuf, ConfigError> {
-    let env = env.map(str::trim).filter(|v| !v.is_empty()).map(Path::new);
-    match (env, file) {
-        (Some(env), Some(file)) if env != file => Err(ConfigError::Conflict(format!(
-            "the database path is set twice and the two disagree: $GATEWAY_DB_PATH says {} and \
-             the config file's `[db].path` says {}. Refusing to guess — opening the wrong one \
-             would look like a fresh install and serve an open setup wizard while your real \
-             data sits untouched. Remove whichever is wrong.",
-            env.display(),
-            file.display(),
-        ))),
-        (Some(p), _) => Ok(p.to_path_buf()),
-        (None, Some(p)) => Ok(p.to_path_buf()),
-        (None, None) => Ok(default_db_path()),
-    }
+/// The pure half of [`Config::db_path`], split out so it can be tested without
+/// mutating process-global environment state.
+fn db_path_from(env: Option<&str>) -> PathBuf {
+    env.map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(default_db_path)
 }
 
 /// The pure half of [`Config::bootstrap_admin_groups`]: a union, de-duplicated,
@@ -1329,59 +1267,34 @@ mod tests {
     }
 
     #[test]
-    fn db_block_may_omit_path() {
-        // A `[db]` block that only sets future keys must still parse — before
-        // `path` became optional, an empty `[db]` was a hard parse error.
-        let c: Config = toml::from_str("[db]\n").unwrap();
-        assert!(c.db.path.is_none(), "nobody named a path");
+    fn the_public_url_falls_back_to_localhost_until_the_wizard_records_one() {
+        // Not read from a file any more, and the wizard's request-derived
+        // suggestion is wrong behind a proxy that rewrites Host — so a
+        // deployment has to be able to state it up front.
         assert_eq!(
-            db_path_from(c.db.path.as_deref(), None).unwrap(),
-            default_db_path()
+            Config::default().public_url_fallback(),
+            "http://localhost:8080"
         );
     }
 
     #[test]
-    fn the_database_path_comes_from_the_environment_or_the_file_or_the_default() {
+    fn the_database_path_comes_from_the_environment_or_the_default() {
+        // The only two sources left. `[db].path` is gone with the config file,
+        // so the disagreement that used to be fatal cannot arise.
         assert_eq!(
-            db_path_from(None, None).unwrap(),
+            db_path_from(None),
             default_db_path(),
             "nobody said anything"
         );
         assert_eq!(
-            db_path_from(Some(Path::new("/from/file.sqlite")), None).unwrap(),
-            PathBuf::from("/from/file.sqlite")
-        );
-        assert_eq!(
-            db_path_from(None, Some("/from/env.sqlite")).unwrap(),
+            db_path_from(Some("/from/env.sqlite")),
             PathBuf::from("/from/env.sqlite"),
             "the env var alone is enough — no config file needed for this"
         );
         assert_eq!(
-            db_path_from(None, Some("  ")).unwrap(),
+            db_path_from(Some("  ")),
             default_db_path(),
             "an empty env var (a common compose/systemd accident) is not a path"
-        );
-    }
-
-    #[test]
-    fn two_disagreeing_database_paths_refuse_to_boot() {
-        // Deliberately fatal rather than resolved. Opening the wrong database
-        // finds no users, looks like a fresh install, and serves an open setup
-        // wizard on a production URL while the real data sits elsewhere — so
-        // there is no safe default to fall back on, only a wrong one.
-        let err = db_path_from(Some(Path::new("/a.sqlite")), Some("/b.sqlite"))
-            .expect_err("a disagreement must stop the boot");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("/a.sqlite") && msg.contains("/b.sqlite"),
-            "{msg}"
-        );
-        assert!(msg.contains("GATEWAY_DB_PATH"), "{msg}");
-
-        // Agreeing is not a conflict.
-        assert_eq!(
-            db_path_from(Some(Path::new("/same.sqlite")), Some("/same.sqlite")).unwrap(),
-            PathBuf::from("/same.sqlite")
         );
     }
 
@@ -1454,23 +1367,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_shipped_example_config_actually_parses() {
-        // `gateway.example.toml` is the annotated reference an operator copies,
-        // and `Config` denies unknown fields — so a key renamed in code and not
-        // in the example turns the documented starting point into a file that
-        // refuses to boot. Nothing else checked it until this test.
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("gateway.example.toml");
-        let raw = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-        let parsed: Result<Config, _> = toml::from_str(&raw);
-        if let Err(e) = parsed {
-            panic!("gateway.example.toml does not parse as a Config: {e}");
-        }
-    }
-
     /// The *previous* release's reference config must still parse.
     ///
     /// `the_shipped_example_config_actually_parses` only covers the file as it
@@ -1485,31 +1381,6 @@ mod tests {
     /// it to make this pass: if it stops parsing, the fix is a parse-only field
     /// plus a deprecation warning (see `[bind]` and
     /// `[gateway].session_key_env`), not a change to the fixture.
-    #[test]
-    fn the_previous_releases_config_still_parses() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/previous-release-gateway.toml");
-        let raw = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-        let parsed: Config = toml::from_str(&raw).unwrap_or_else(|e| {
-            panic!(
-                "a config file from the previous release no longer parses, so upgrading to \
-                 this build would stop the gateway from booting: {e}"
-            )
-        });
-
-        // And the two keys that release documented but this one no longer acts
-        // on must be accepted rather than rejected.
-        assert!(
-            parsed.bind.host.is_some() && parsed.bind.port.is_some(),
-            "[bind]'s host and port must still be accepted (and then ignored)"
-        );
-        assert!(
-            parsed.gateway.session_key_env.is_some(),
-            "[gateway].session_key_env must still be accepted (and then ignored)"
-        );
-    }
-
     #[test]
     fn a_deprecated_bind_block_still_parses_and_is_ignored() {
         // `[bind]` is dead but must not become a boot failure: `Config` denies

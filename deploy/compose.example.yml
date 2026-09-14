@@ -87,10 +87,10 @@ services:
       # skills, GeoIP and RAG tuning all live at /admin/settings now. Mount one
       # only to migrate an older install — its contents are imported into the
       # database on the first boot and ignored afterwards.
-      # /etc/gateway/config.toml is probed automatically, so uncommenting the
-      # mount is enough. On Docker Desktop, point model upstreams at
+      # The gateway has no config file: topology, groups, the OIDC provider
+      # and every operator setting live in the database and are edited in the
+      # web UI. Everything below is a property of where the process runs.
       # host.docker.internal.
-      #- ./gateway.toml:/etc/gateway/config.toml:ro
       - gateway-data:/var/lib/gateway
     read_only: true
     tmpfs:

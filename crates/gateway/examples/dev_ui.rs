@@ -495,9 +495,17 @@ async fn main() -> anyhow::Result<()> {
         }),
         ..Config::default()
     };
-    gateway_core::server::settings::import_once(&pool, &crypto, &config)
-        .await
-        .expect("dev_ui settings seed");
+    // Write the fixture's settings as rows. Not cosmetic: saving one section
+    // in `/admin/settings` re-applies the whole stored set onto the config, so
+    // without these the first save would drop the fixture's ComfyUI, feedback
+    // and skills blocks.
+    gateway_core::server::settings::store(
+        &pool,
+        &crypto,
+        &gateway_core::server::settings::snapshot(&config),
+    )
+    .await
+    .expect("dev_ui settings seed");
     // Seed the DB group tables from the config (mirrors main.rs first-boot
     // seeding), then build the resolver from the DB snapshot — so `/admin/groups`
     // shows the seeded groups and an edit + `reload_rbac` round-trips through the

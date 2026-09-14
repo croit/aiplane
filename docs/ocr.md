@@ -78,7 +78,8 @@ A failure never fails the turn.
 
 ## Limits
 
-All under `[chat.ocr]`; see `gateway.example.toml` for the defaults.
+All under `chat.ocr` at `/admin/settings` → Chat, which shows each field's
+current value and its default.
 
 | key | bounds |
 | --- | --- |
