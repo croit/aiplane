@@ -275,10 +275,18 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/admin/backends/{name}/enabled",
             pages::json_admin::backends_enabled,
         )
+        .with_post(
+            "/api/v0/admin/backends/{name}/rename",
+            pages::json_admin::backends_rename,
+        )
         .with_put("/api/v0/admin/pools", pages::json_admin::pools_save)
         .with_delete(
             "/api/v0/admin/pools/{name}",
             pages::json_admin::pools_delete,
+        )
+        .with_post(
+            "/api/v0/admin/pools/{name}/rename",
+            pages::json_admin::pools_rename,
         )
         .with_put(
             "/api/v0/admin/upstreams/fallback",

@@ -470,6 +470,127 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
 }
 
 /// Delete a backend and all its dependent rows (models, aliases, pool links).
+/// Every table that stores a backend name, and the column it stores it in.
+///
+/// `backends.name` is the primary key and eight foreign keys point at it with
+/// `ON UPDATE NO ACTION`, so a rename is not an `UPDATE` — it is a move across
+/// all of these at once. The list is asserted complete by
+/// `rename_covers_every_backend_reference`, which reads the real foreign keys
+/// out of the schema: add a child table and that test names it.
+///
+/// `usage_daily` / `usage_events` carry the name without a foreign key. They
+/// move too: a backend is the *connection*, and an operator renaming one
+/// because the same host now serves a different model would otherwise see
+/// their own traffic split across two names on /usage.
+const BACKEND_NAME_REFERENCES: &[(&str, &str)] = &[
+    ("backend_models", "backend_name"),
+    ("backend_aliases", "backend_name"),
+    ("backend_probed_models", "backend_name"),
+    ("pool_backends", "backend_name"),
+    ("usage_daily", "backend"),
+    ("usage_events", "backend"),
+];
+
+/// Every table that stores a pool name. Same rules as
+/// [`BACKEND_NAME_REFERENCES`]; guarded by
+/// `rename_covers_every_pool_reference`.
+const POOL_NAME_REFERENCES: &[(&str, &str)] = &[
+    ("pool_backends", "pool_name"),
+    ("pool_models", "pool_name"),
+    ("pool_voices", "pool_name"),
+    ("pool_offer_voices", "pool_name"),
+];
+
+/// Outcome of a rename attempt, so callers can answer precisely rather than
+/// turning every refusal into a 500.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenameOutcome {
+    Renamed,
+    /// No row by the old name.
+    NotFound,
+    /// The new name is already taken.
+    Taken,
+}
+
+/// Rename a backend, moving every row that names it.
+///
+/// One transaction with foreign keys deferred to COMMIT: the parent row has to
+/// change before the children can follow it, and with immediate enforcement
+/// that first `UPDATE` is a constraint violation. Deferring means the database
+/// still checks every reference — just at the end, when they all line up.
+pub async fn rename_backend(db: &Pool, old: &str, new: &str) -> Result<RenameOutcome, DbError> {
+    rename_named_row(db, "backends", BACKEND_NAME_REFERENCES, old, new).await
+}
+
+/// Rename a pool, moving every row that names it. See [`rename_backend`].
+pub async fn rename_pool(db: &Pool, old: &str, new: &str) -> Result<RenameOutcome, DbError> {
+    rename_named_row(db, "pools", POOL_NAME_REFERENCES, old, new).await
+}
+
+async fn rename_named_row(
+    db: &Pool,
+    table: &str,
+    references: &[(&str, &str)],
+    old: &str,
+    new: &str,
+) -> Result<RenameOutcome, DbError> {
+    if old == new {
+        // Nothing to move, but the caller still wants to know the row exists.
+        let exists: i64 = sqlx::query(&format!("SELECT COUNT(*) AS n FROM {table} WHERE name = ?"))
+            .bind(old)
+            .fetch_one(db)
+            .await?
+            .try_get("n")?;
+        return Ok(if exists > 0 {
+            RenameOutcome::Renamed
+        } else {
+            RenameOutcome::NotFound
+        });
+    }
+
+    let mut tx = db.begin().await?;
+    // Per-connection and cleared when the transaction ends; the pool hands the
+    // whole transaction one connection, so this cannot leak to other queries.
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut *tx)
+        .await?;
+
+    let taken: i64 = sqlx::query(&format!("SELECT COUNT(*) AS n FROM {table} WHERE name = ?"))
+        .bind(new)
+        .fetch_one(&mut *tx)
+        .await?
+        .try_get("n")?;
+    if taken > 0 {
+        return Ok(RenameOutcome::Taken);
+    }
+
+    let moved = sqlx::query(&format!(
+        "UPDATE {table} SET name = ?, updated_at = ? WHERE name = ?"
+    ))
+    .bind(new)
+    .bind(now_rfc3339())
+    .bind(old)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if moved == 0 {
+        return Ok(RenameOutcome::NotFound);
+    }
+
+    for (child, column) in references {
+        sqlx::query(&format!(
+            "UPDATE {child} SET {column} = ? WHERE {column} = ?"
+        ))
+        .bind(new)
+        .bind(old)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(RenameOutcome::Renamed)
+}
+
 pub async fn delete_backend(db: &Pool, name: &str) -> Result<(), DbError> {
     sqlx::query("DELETE FROM backends WHERE name = ?")
         .bind(name)
@@ -959,6 +1080,192 @@ mod tests {
         let reloaded = get_backend(&pool, "gpu-01").await.unwrap().unwrap();
         assert_eq!(reloaded.weight, 5);
         assert_eq!(reloaded.models, vec!["qwen-32b"]);
+    }
+
+    /// Every foreign key that points at `backends(name)` is in
+    /// `BACKEND_NAME_REFERENCES`.
+    ///
+    /// Read out of the live schema rather than listed here twice: a new child
+    /// table would otherwise be silently left behind by a rename, pointing at
+    /// a name nothing answers to. The `usage_*` tables carry the name with no
+    /// foreign key, so they can never show up here — they are in the const on
+    /// purpose and excluded from this comparison.
+    #[tokio::test]
+    async fn rename_covers_every_backend_reference() {
+        assert_declared_references_match(&test_pool().await, "backends", BACKEND_NAME_REFERENCES)
+            .await;
+    }
+
+    /// Same guard for `pools(name)`.
+    #[tokio::test]
+    async fn rename_covers_every_pool_reference() {
+        assert_declared_references_match(&test_pool().await, "pools", POOL_NAME_REFERENCES).await;
+    }
+
+    async fn assert_declared_references_match(
+        pool: &Pool,
+        parent: &str,
+        declared: &[(&str, &str)],
+    ) {
+        let rows = sqlx::query(
+            r#"SELECT m.name AS child, f."from" AS col
+               FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f
+               WHERE m.type = 'table' AND f."table" = ?"#,
+        )
+        .bind(parent)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        let mut actual: Vec<(String, String)> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get::<String, _>("child").unwrap(),
+                    r.try_get::<String, _>("col").unwrap(),
+                )
+            })
+            .collect();
+        actual.sort();
+        assert!(!actual.is_empty(), "no foreign keys point at {parent}");
+
+        let known: HashSet<(String, String)> = declared
+            .iter()
+            .map(|(t, c)| ((*t).to_string(), (*c).to_string()))
+            .collect();
+        let missing: Vec<_> = actual.iter().filter(|r| !known.contains(r)).collect();
+        assert!(
+            missing.is_empty(),
+            "these tables reference {parent}(name) but a rename would not move them: {missing:?} \
+             — add them to the reference list next to `rename_{parent}`"
+        );
+    }
+
+    #[tokio::test]
+    async fn renaming_a_backend_moves_every_row_that_names_it() {
+        let pool = test_pool().await;
+        let backend = BackendRow {
+            name: "voxtral".into(),
+            base_url: "http://llm01:8002/v1".into(),
+            api_key_env: None,
+            api_key_ct: None,
+            api_key_nonce: None,
+            weight: 1,
+            max_inflight: 16,
+            health_path: "/models".into(),
+            probe_models: true,
+            supports_edit: false,
+            enabled: true,
+            models: vec!["voxtral-small".into()],
+            aliases: vec![AliasRow {
+                alias: "asr".into(),
+                target: Some("voxtral-small".into()),
+            }],
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+        };
+        upsert_backend(&pool, &backend).await.unwrap();
+        upsert_pool(
+            &pool,
+            &PoolRow {
+                name: "transcribe".into(),
+                kind: "transcription".into(),
+                strategy: "least_inflight".into(),
+                fallback_offline: None,
+                compliance_gdpr: true,
+                compliance_nda: true,
+                enforce_limits: true,
+                sort_order: 0,
+                backends: vec!["voxtral".into()],
+                models: vec![],
+                voices: vec![],
+                offer_voices: vec![],
+                allowed_groups: vec![],
+                created_at: Timestamp::now(),
+                updated_at: Timestamp::now(),
+            },
+        )
+        .await
+        .unwrap();
+        save_probed_models(
+            &pool,
+            "voxtral",
+            &HashSet::from(["voxtral-small".to_string()]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rename_backend(&pool, "voxtral", "qwen-asr").await.unwrap(),
+            RenameOutcome::Renamed
+        );
+
+        // The row itself, and every child that named it.
+        assert!(get_backend(&pool, "voxtral").await.unwrap().is_none());
+        let moved = get_backend(&pool, "qwen-asr").await.unwrap().unwrap();
+        assert_eq!(moved.base_url, "http://llm01:8002/v1");
+        assert_eq!(moved.models, vec!["voxtral-small"]);
+        assert_eq!(moved.aliases.len(), 1);
+        let snap = load_snapshot(&pool).await.unwrap();
+        let renamed_pool = snap.pools.iter().find(|p| p.name == "transcribe").unwrap();
+        assert_eq!(renamed_pool.backends, vec!["qwen-asr".to_string()]);
+        assert!(
+            load_probed_models(&pool)
+                .await
+                .unwrap()
+                .contains_key("qwen-asr")
+        );
+
+        // No orphans anywhere: the deferred check would have refused the
+        // commit, but assert it directly so a future `PRAGMA` slip is loud.
+        let violations = sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(violations.is_empty(), "rename left dangling references");
+    }
+
+    #[tokio::test]
+    async fn a_rename_refuses_a_name_already_in_use_and_an_unknown_row() {
+        let pool = test_pool().await;
+        for name in ["a", "b"] {
+            upsert_backend(
+                &pool,
+                &BackendRow {
+                    name: name.into(),
+                    base_url: "http://x/v1".into(),
+                    api_key_env: None,
+                    api_key_ct: None,
+                    api_key_nonce: None,
+                    weight: 1,
+                    max_inflight: 16,
+                    health_path: "/models".into(),
+                    probe_models: true,
+                    supports_edit: false,
+                    enabled: true,
+                    models: vec![],
+                    aliases: vec![],
+                    created_at: Timestamp::now(),
+                    updated_at: Timestamp::now(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        // Taking an existing name would silently merge two backends.
+        assert_eq!(
+            rename_backend(&pool, "a", "b").await.unwrap(),
+            RenameOutcome::Taken
+        );
+        assert!(get_backend(&pool, "a").await.unwrap().is_some());
+        assert_eq!(
+            rename_backend(&pool, "ghost", "c").await.unwrap(),
+            RenameOutcome::NotFound
+        );
+        // Renaming to itself is a no-op that still reports the row exists.
+        assert_eq!(
+            rename_backend(&pool, "a", "a").await.unwrap(),
+            RenameOutcome::Renamed
+        );
     }
 
     #[tokio::test]

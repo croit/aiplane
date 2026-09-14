@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { adminPut } from '$lib/admin-client';
+	import { adminPost, adminPut } from '$lib/admin-client';
 	import { t } from '$lib/i18n.svelte';
 	import { parseVoices, splitLines, splitList, type Backend, type Pool } from '$lib/upstreams';
 
@@ -31,7 +31,8 @@
 	let overwrite = $state(untrack(() => pool !== null));
 	let busy = $state(false);
 	let error = $state<string | null>(null);
-	let nameTaken = $derived(!pool && existingNames.includes(name.trim()));
+	// A new pool, or an existing one being renamed onto a name in use.
+	let nameTaken = $derived(name.trim() !== pool?.name && existingNames.includes(name.trim()));
 
 	function setAssigned(backendName: string, checked: boolean) {
 		assigned = checked
@@ -43,6 +44,13 @@
 		busy = true;
 		error = null;
 		try {
+			// A changed name is a *rename*, not a save under a new name: the
+			// name is the primary key, so an ordinary save would leave the
+			// original row behind and start a second, empty pool. Move the
+			// identity first, then write the fields under it.
+			if (pool && name.trim() !== pool.name) {
+				await adminPost(`/api/v0/admin/pools/${encodeURIComponent(pool.name)}/rename`, { name: name.trim() });
+			}
 			await adminPut('/api/v0/admin/pools', {
 				name,
 				kind,
@@ -83,7 +91,7 @@
 	<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
 		<label class="flex flex-col gap-1">
 			<span class="text-xs text-base-content/70">{t('pools-field-name')}</span>
-			<input class="input input-bordered input-sm font-mono w-full" bind:value={name} readonly={pool !== null} required />
+			<input class="input input-bordered input-sm font-mono w-full" bind:value={name} required />
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="text-xs text-base-content/70">{t('pools-field-kind')}</span>

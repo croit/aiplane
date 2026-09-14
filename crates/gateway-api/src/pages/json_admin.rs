@@ -1758,6 +1758,86 @@ pub async fn backends_delete(State(state): State<Arc<RamaState>>, req: Request) 
 }
 
 #[derive(serde::Deserialize)]
+pub struct RenameBody {
+    /// The new name.
+    pub name: String,
+}
+
+/// POST /api/v0/admin/backends/{name}/rename
+///
+/// A rename, not a save-under-a-new-name: `backends.name` is the primary key
+/// and every child table names it, so saving the form with the name field
+/// changed would leave the original behind and start a second, empty backend.
+/// This moves the row and everything that points at it — including the usage
+/// history, so an operator who renames because the same host now serves a
+/// different model does not find their traffic split across two names.
+pub async fn backends_rename(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    rename_topology_row(state, req, TopologyRow::Backend).await
+}
+
+/// POST /api/v0/admin/pools/{name}/rename — see [`backends_rename`].
+pub async fn pools_rename(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    rename_topology_row(state, req, TopologyRow::Pool).await
+}
+
+#[derive(Clone, Copy)]
+enum TopologyRow {
+    Backend,
+    Pool,
+}
+
+async fn rename_topology_row(state: Arc<RamaState>, req: Request, kind: TopologyRow) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    // Segment 1, not 0: the path ends `/{name}/rename`. Read from the raw URI
+    // for the reason `backends_delete` gives — rama lowercases and never
+    // percent-decodes the matched segments.
+    let Some(old) = raw_path_segment(&req, 1) else {
+        return bad_request("the URL is missing its name");
+    };
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return bad_request(msg),
+    };
+    let parsed: RenameBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => return bad_request(format!("parsing the rename body: {err}")),
+    };
+    let new = parsed.name.trim().to_string();
+    if new.is_empty() {
+        return bad_request("a name must not be empty");
+    }
+    let renamed = match kind {
+        TopologyRow::Backend => upstreams_config::rename_backend(&state.db, &old, &new).await,
+        TopologyRow::Pool => upstreams_config::rename_pool(&state.db, &old, &new).await,
+    };
+    let noun = match kind {
+        TopologyRow::Backend => "backend",
+        TopologyRow::Pool => "pool",
+    };
+    match renamed {
+        Ok(upstreams_config::RenameOutcome::Renamed) => {
+            let dirty = state.topology_dirty_bump();
+            json_ok(
+                StatusCode::OK,
+                serde_json::json!({ "name": new, "dirty": dirty }),
+            )
+        }
+        Ok(upstreams_config::RenameOutcome::NotFound) => json_error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            &format!("no {noun} named {old}"),
+        ),
+        Ok(upstreams_config::RenameOutcome::Taken) => json_error(
+            StatusCode::CONFLICT,
+            "name_exists",
+            &format!("a {noun} named {new} already exists"),
+        ),
+        Err(err) => internal(err),
+    }
+}
+
+#[derive(serde::Deserialize)]
 pub struct PoolSaveBody {
     pub name: String,
     pub kind: String,

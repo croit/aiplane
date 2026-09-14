@@ -37,13 +37,21 @@
 	let testResult = $state<BackendTestResult | null>(null);
 	let aliasesInput: HTMLTextAreaElement;
 
-	let nameTaken = $derived(!backend && existingNames.includes(name.trim()));
+	// A new backend, or an existing one being renamed onto a name in use.
+	let nameTaken = $derived(name.trim() !== backend?.name && existingNames.includes(name.trim()));
 	let poolOptions = $derived([{ value: '', label: t('backends-field-pool-none') }, ...pools.map((pool) => ({ value: pool.name, label: pool.name, description: pool.kind }))]);
 
 	async function save() {
 		busy = true;
 		error = null;
 		try {
+			// A changed name is a *rename*, not a save under a new name: the
+			// name is the primary key, so an ordinary save would leave the
+			// original row behind and start a second, empty backend. Move the
+			// identity first, then write the fields under it.
+			if (backend && name.trim() !== backend.name) {
+				await adminPost(`/api/v0/admin/backends/${encodeURIComponent(backend.name)}/rename`, { name: name.trim() });
+			}
 			await adminPut('/api/v0/admin/backends', {
 				name,
 				base_url: baseUrl,
@@ -151,7 +159,7 @@
 	<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 		<label class="flex flex-col gap-1">
 			<span class="text-xs text-base-content/70">{t('backends-field-name')}</span>
-			<input class="input input-bordered input-sm font-mono w-full" bind:value={name} readonly={backend !== null} required />
+			<input class="input input-bordered input-sm font-mono w-full" bind:value={name} required />
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="text-xs text-base-content/70">{t('backends-field-base-url')}</span>

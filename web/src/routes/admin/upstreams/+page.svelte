@@ -156,7 +156,7 @@
 						<p class="text-sm text-base-content/70">{t('upstreams-unassigned-description')}</p>
 					</header>
 					{#each assignments.unassigned as backend (backend.name)}
-						<BackendCard {backend} pools={data.pools} usage={data.usage_last_hour[backend.name] ?? []} onChanged={refresh} />
+						<BackendCard {backend} pools={data.pools} backendNames={data.backends.map((candidate) => candidate.name)} usage={data.usage_last_hour[backend.name] ?? []} onChanged={refresh} />
 					{/each}
 				</div>
 			</section>

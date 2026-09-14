@@ -85,7 +85,7 @@
 		{#if backends.length}
 			<div class="flex flex-col gap-2">
 				{#each backends as backend (backend.name)}
-					<BackendCard {backend} currentPool={pool.name} {pools} usage={usage[backend.name] ?? []} onChanged={onChanged} />
+					<BackendCard {backend} currentPool={pool.name} {pools} backendNames={allBackends.map((candidate) => candidate.name)} usage={usage[backend.name] ?? []} onChanged={onChanged} />
 				{/each}
 			</div>
 		{:else}
@@ -114,7 +114,7 @@
 			description={pool.name}
 			cancellabel={t('upstreams-cancel')}
 		>
-			<PoolEditor {pool} backends={allBackends} {poolKinds} {poolStrategies} existingNames={[]} sortOrder={pool.sort_order} onSaved={onChanged} onCancel={() => (editing = false)} />
+			<PoolEditor {pool} backends={allBackends} {poolKinds} {poolStrategies} existingNames={pools.map((candidate) => candidate.name)} sortOrder={pool.sort_order} onSaved={onChanged} onCancel={() => (editing = false)} />
 		</EditModal>
 	</div>
 </article>
