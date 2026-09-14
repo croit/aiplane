@@ -93,7 +93,7 @@ pub async fn delete_skill(pool: &Pool, skill_name: &str) -> Result<(), DbError> 
 }
 
 /// Add `(skill, role_id)` grants for a single role (group), keeping any
-/// existing rows. Used by [`crate::server::db::gateway_groups::seed_from_config`]
+/// existing rows. Used by [`crate::server::db::gateway_groups::seed_roles`]
 /// to import `[[roles]].skills` into the overlay, and by the `/admin/groups`
 /// editor when granting a group a set of skills. `*` is stored verbatim — the
 /// resolver expands it to every loaded skill at read time.

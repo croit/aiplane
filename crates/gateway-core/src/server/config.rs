@@ -12,7 +12,6 @@
 //! 3. `/etc/gateway/config.toml`
 //! 4. Built-in defaults (no upstream configured — proxy routes return 503).
 //!
-//! See `gateway.example.toml` at the repo root for the schema.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -46,7 +45,6 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    pub bind: BindConfig,
     pub gateway: GatewayConfig,
     /// Chat-page knobs that aren't routing-related — attachment
     /// storage + which model names are allowed to receive image
@@ -821,16 +819,6 @@ pub struct GatewayConfig {
     /// keys in this block that did *not* move.
     #[serde(default = "default_token_ttl_days")]
     pub token_ttl_days: i64,
-    /// **Deprecated and ignored.** It named the environment variable holding
-    /// the session key, back when that was configurable and optional.
-    /// `$GATEWAY_SESSION_KEY` is now read directly and is mandatory, so naming
-    /// a different variable has no effect.
-    ///
-    /// Parsed only so an older config file still loads — same reason as
-    /// [`BindConfig`]. [`Config::warn_about_ignored_blocks`] reports a stale
-    /// value that differs from the variable actually read.
-    #[serde(default)]
-    pub session_key_env: Option<String>,
     /// Browser-session idle timeout in days. Default 30. This is a *sliding*
     /// window: every request renews it (see `rama_server::session`), so it's
     /// how long you can stay away before having to sign in again, not how
@@ -889,7 +877,6 @@ impl Default for GatewayConfig {
         Self {
             public_url_import_only: default_public_url(),
             token_ttl_days: default_token_ttl_days(),
-            session_key_env: None,
             session_ttl_days: default_session_ttl_days(),
             session_absolute_max_days: default_session_absolute_max_days(),
             allow_impersonation: false,
@@ -990,32 +977,6 @@ fn data_dir_from(raw: Option<std::ffi::OsString>) -> PathBuf {
     raw.filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .unwrap_or_default()
-}
-
-/// **Deprecated and ignored.** The listen socket comes from `$IP` / `$PORT`.
-///
-/// Parsed only so that a config file written before this was deprecated still
-/// loads: [`Config`] denies unknown fields, so simply deleting the field would
-/// turn a stale `[bind]` block into a refusal to boot. Both `gateway.example.toml`
-/// and the README used to show one, so real files carry it.
-///
-/// It is a process-level knob, and every other process-level knob this gateway
-/// has — `$GATEWAY_SESSION_KEY`, `$GATEWAY_DATA_DIR`, `$GATEWAY_ENCRYPTION_KEY`,
-/// `$GATEWAY_CONFIG` — is an environment variable, set by the same unit file or
-/// compose stanza that decides where the process runs at all. A container
-/// makes the case plainly: the image binds `0.0.0.0` because anything else is
-/// unreachable through a published port, and the decision of *which host
-/// interface* to expose belongs to `PublishPort=127.0.0.1:8080:8080` on the
-/// outside. There is no deployment where editing a TOML block is the right way
-/// to move the socket.
-///
-/// [`Config::warn_about_ignored_blocks`] tells an operator who has one that it
-/// does nothing.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct BindConfig {
-    pub host: Option<String>,
-    pub port: Option<u16>,
 }
 
 /// Loopback, so a gateway that was told nothing does not expose itself to the
@@ -1124,41 +1085,6 @@ impl Config {
                 .ok()
                 .as_deref(),
         )
-    }
-
-    /// Warn about config blocks that are parsed but no longer do anything, so
-    /// an operator who edits one is not left wondering why nothing changed.
-    ///
-    /// Only for blocks whose *replacement is an environment variable*. The many
-    /// blocks that became database settings are deliberately silent: those are
-    /// imported on the first boot, so they did do something, exactly once, and a
-    /// warning on every subsequent start would be noise.
-    pub fn warn_about_ignored_blocks(&self) {
-        if self.bind.host.is_some() || self.bind.port.is_some() {
-            tracing::warn!(
-                "the config file's `[bind]` block is ignored — set the listen socket with the \
-                 $IP and $PORT environment variables instead (currently {}). You can delete \
-                 the block.",
-                self.bind_address(),
-            );
-        }
-        // Only worth saying when it names something *other* than the variable
-        // actually read: a file that says `session_key_env = "GATEWAY_SESSION_KEY"`
-        // is redundant but not misleading, and warning about it would fire on
-        // every deployment that ever copied the example file.
-        if let Some(named) = self
-            .gateway
-            .session_key_env
-            .as_deref()
-            .filter(|v| !v.is_empty() && *v != SESSION_KEY_VAR)
-        {
-            tracing::warn!(
-                "the config file sets `[gateway].session_key_env = {named:?}`, which is ignored \
-                 — the session key is read from ${SESSION_KEY_VAR} and nothing else. If the key \
-                 lives in {named}, copy it to ${SESSION_KEY_VAR} or the gateway will refuse to \
-                 boot."
-            );
-        }
     }
 
     /// Resolves the config file path and loads it. Missing files are not an
@@ -1364,43 +1290,6 @@ mod tests {
             bind_address_from(Some("localhost"), None),
             "127.0.0.1:8080".parse::<SocketAddr>().unwrap(),
             "a hostname is not a listen address",
-        );
-    }
-
-    /// The *previous* release's reference config must still parse.
-    ///
-    /// `the_shipped_example_config_actually_parses` only covers the file as it
-    /// looks now, which says nothing about the file an operator is actually
-    /// running when they pull this release. `Config` denies unknown fields in
-    /// nineteen places, so one key dropped from a struct turns a live
-    /// deployment's `gateway.toml` into a refusal to boot — the worst kind of
-    /// upgrade failure, because it happens before anything can log why.
-    ///
-    /// The fixture is `gateway.example.toml` as committed on the previous
-    /// release, vendored verbatim. Refresh it when a release ships, do not edit
-    /// it to make this pass: if it stops parsing, the fix is a parse-only field
-    /// plus a deprecation warning (see `[bind]` and
-    /// `[gateway].session_key_env`), not a change to the fixture.
-    #[test]
-    fn a_deprecated_bind_block_still_parses_and_is_ignored() {
-        // `[bind]` is dead but must not become a boot failure: `Config` denies
-        // unknown fields, and both `gateway.example.toml` and the README used
-        // to show the block, so plenty of real files carry one. It parses, it
-        // changes nothing, and `warn_about_ignored_blocks` says so.
-        let c: Config = toml::from_str("[bind]\nhost = \"0.0.0.0\"\nport = 9000\n")
-            .expect("an old config file must still load");
-        assert_eq!(
-            bind_address_from(None, None),
-            "127.0.0.1:8080".parse::<SocketAddr>().unwrap(),
-            "the block must not influence the socket"
-        );
-        // What the warning keys off: something was actually written.
-        assert!(c.bind.host.is_some() || c.bind.port.is_some());
-
-        let empty = Config::default();
-        assert!(
-            empty.bind.host.is_none() && empty.bind.port.is_none(),
-            "no block, so nothing to warn about"
         );
     }
 

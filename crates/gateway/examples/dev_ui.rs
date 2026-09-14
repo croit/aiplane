@@ -506,11 +506,10 @@ async fn main() -> anyhow::Result<()> {
     )
     .await
     .expect("dev_ui settings seed");
-    // Seed the DB group tables from the config (mirrors main.rs first-boot
-    // seeding), then build the resolver from the DB snapshot — so `/admin/groups`
+    // Seed the DB group tables, then build the resolver from the DB snapshot — so `/admin/groups`
     // shows the seeded groups and an edit + `reload_rbac` round-trips through the
     // same DB path production uses. `bootstrap_admin_groups` keeps `dev` admin.
-    gateway_core::server::db::gateway_groups::seed_from_config(&pool, &dev_rbac, &roles)
+    gateway_core::server::db::gateway_groups::seed_roles(&pool, &dev_rbac, &roles)
         .await
         .expect("dev_ui RBAC seed");
     let group_snapshot = gateway_core::server::db::gateway_groups::load_snapshot(&pool)

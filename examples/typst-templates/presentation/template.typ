@@ -2,7 +2,7 @@
 // This is a generic, data-free SAMPLE template shipped with the gateway to
 // demonstrate a slide-deck document. Replace the palette, logo and fonts below
 // with your own, or point `[typst].templates_dir` at your own templates
-// directory (see docs / gateway.example.toml).
+// directory (see docs).
 //
 // CONTENT IS FULLY SEPARATE: this template is never edited. The model only
 // writes a JSON deck (default `deck.json`) describing the slides; this renderer

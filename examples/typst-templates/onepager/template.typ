@@ -2,7 +2,7 @@
 // This is a generic, data-free SAMPLE template shipped with the gateway to
 // demonstrate a non-letter branded document. Replace the colours and logo
 // below with your own, or point `[typst].templates_dir` at your own templates
-// directory (see docs / gateway.example.toml).
+// directory (see docs).
 //
 // A NON-letter branded document: title + optional subtitle + body content, with
 // a logo header and a generic page footer. The model supplies content + one

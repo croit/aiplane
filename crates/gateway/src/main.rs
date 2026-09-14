@@ -52,7 +52,6 @@ async fn main() -> anyhow::Result<()> {
         _ => anyhow::bail!("unrecognised arguments: {}\n\n{USAGE}", args.join(" ")),
     }
 
-    config.warn_about_ignored_blocks();
     let db_path = config.db_path()?;
     refuse_to_orphan_an_existing_database(&db_path)?;
     tracing::info!(path = %db_path.display(), "database");

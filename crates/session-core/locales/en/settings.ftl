@@ -10,7 +10,7 @@
 # The Rust table holds no prose at all, so these files are the only copy.
 # The editor prints the TOML path itself next to the help text, untranslated —
 # a localised label says what a field does, the identifier says what to grep
-# for in gateway.example.toml, the docs and the logs.
+# for in the docs and the logs.
 
 settings-save = Save section
 settings-saved = Saved. In effect from the next request.

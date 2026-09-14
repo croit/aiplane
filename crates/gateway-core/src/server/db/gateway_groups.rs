@@ -9,7 +9,7 @@
 //! `allowed_groups`, and [`crate::server::rbac::Resolver::role_ids_for`] maps a
 //! user's raw OIDC claim values onto the groups they hold.
 //!
-//! The DB is the runtime source of truth. On first boot [`seed_from_config`]
+//! The DB is the runtime source of truth. [`seed_roles`]
 //! imports the legacy `[rbac]` + `[[roles]]` config once; after that the
 //! `/admin/groups` UI owns it. The resolver holds a snapshot ([`load_snapshot`])
 //! that is rebuilt from these tables at startup and after every admin edit.
@@ -258,7 +258,7 @@ pub async fn observed_oidc_values(pool: &Pool) -> Result<Vec<String>, DbError> {
 }
 
 /// True when no group has been created yet — the trigger for a one-time
-/// [`seed_from_config`].
+/// [`seed_roles`].
 pub async fn is_empty(pool: &Pool) -> Result<bool, DbError> {
     let n: i64 = sqlx::query("SELECT COUNT(*) AS n FROM gateway_groups")
         .fetch_one(pool)
@@ -267,14 +267,15 @@ pub async fn is_empty(pool: &Pool) -> Result<bool, DbError> {
     Ok(n == 0)
 }
 
-/// Import the legacy `[rbac]` + `[[roles]]` config into the group tables, once,
-/// when the tables are empty. Mirrors `upstreams_config::seed_from_config`: it
-/// lets an existing config-driven deployment upgrade in place — its roles
-/// become gateway groups, its `[[rbac.mapping]]` rows become OIDC mappings, its
-/// `default_role` becomes the default group, and each role's `tools` / `skills`
-/// become grant rows. `models` is intentionally dropped: model access is now
-/// governed per-pool (see `allowed_groups` on pools), not per-role.
-pub async fn seed_from_config(
+/// Write a role set into the group tables, once, when they are empty.
+///
+/// The config file this was named for is gone; what remains is a way to
+/// populate an empty deployment from an in-memory role set, which is what the
+/// `dev_ui` fixture needs. Roles become gateway groups, mappings become OIDC
+/// mappings, `default_role` becomes the default group, and each role's `tools`
+/// / `skills` become grant rows. `models` is intentionally dropped: model
+/// access is governed per-pool (see `allowed_groups` on pools), not per-role.
+pub async fn seed_roles(
     pool: &Pool,
     rbac: &crate::server::rbac::config::RbacConfig,
     roles: &[crate::server::rbac::config::RoleConfig],
@@ -403,7 +404,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn seed_from_config_imports_roles_mappings_and_default() {
+    async fn seed_roles_imports_roles_mappings_and_default() {
         use crate::server::rbac::config::{RbacConfig, RoleConfig, RoleMapping};
         let pool = fresh().await;
         let rbac = RbacConfig {
@@ -430,7 +431,7 @@ mod tests {
                 skills: vec![],
             },
         ];
-        seed_from_config(&pool, &rbac, &roles).await.unwrap();
+        seed_roles(&pool, &rbac, &roles).await.unwrap();
 
         let groups = list_groups(&pool).await.unwrap();
         assert_eq!(groups.len(), 2);
@@ -451,7 +452,7 @@ mod tests {
 
         // Idempotent: a second seed with different config is a no-op (tables
         // are no longer empty).
-        seed_from_config(&pool, &RbacConfig::default(), &[])
+        seed_roles(&pool, &RbacConfig::default(), &[])
             .await
             .unwrap();
         assert_eq!(list_groups(&pool).await.unwrap().len(), 2);

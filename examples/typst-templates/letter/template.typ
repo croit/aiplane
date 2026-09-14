@@ -2,7 +2,7 @@
 // This is a generic, data-free SAMPLE template shipped with the gateway to
 // demonstrate the `[typst]` feature. Replace the company data, colours, and
 // logo below with your own, or point `[typst].templates_dir` at your own
-// templates directory (see docs / gateway.example.toml).
+// templates directory (see docs).
 //
 // The model supplies CONTENT + two switches only; all company / legal / bank
 // data is baked in here per entity, so the model never needs to know IBANs,

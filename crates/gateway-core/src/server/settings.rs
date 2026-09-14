@@ -136,7 +136,7 @@ pub struct FieldSpec {
     /// The identifier itself is never translated or prettified into "Runner
     /// URL": the editor renders a localised label *and* shows this string
     /// underneath, because an operator is also matching it against
-    /// `gateway.example.toml`, the docs, a log line or a support thread, all
+    /// the docs, a log line or a support thread, all
     /// of which call it `runner_url`.
     pub key: &'static str,
     pub kind: Kind,
