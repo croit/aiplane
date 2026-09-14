@@ -5,6 +5,7 @@
 	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 	import { modelSelectOptions, type ChatModelOption } from '$lib/model-option';
 	import { cronFromSchedule, defaultSchedule, formatScheduledRun, scheduleFromCron, type ScheduledAction } from '$lib/scheduled';
+	import { timezoneOptions } from '$lib/timezones';
 
 	let { action = null, models, defaultTimezone, onsaved, oncancel } = $props<{
 		action?: ScheduledAction | null;
@@ -33,6 +34,10 @@
 		[4, 'scheduled-weekday-thu'], [5, 'scheduled-weekday-fri'], [6, 'scheduled-weekday-sat'], [0, 'scheduled-weekday-sun']
 	] as const;
 	let selectedModel = $derived(models.find((candidate: ChatModelOption) => candidate.id === model));
+	// Rebuilt when the zone changes so a newly picked one is present even if
+	// the platform never listed it; the offsets are for "now", which is what
+	// someone choosing a fire time is reasoning about.
+	let timezoneChoices = $derived(timezoneOptions(timezone));
 	let modelOptions = $derived(modelSelectOptions(models, {
 		gdpr: t('searchable-select-model-gdpr'),
 		nda: t('searchable-select-model-nda')
@@ -81,16 +86,10 @@
 		try {
 			if (action) await adminPut(`/api/v0/scheduled/${action.id}`, body);
 			else await adminPost('/api/v0/scheduled', body);
+			// Both paths leave for /scheduled, so there is no form left to
+			// clear — the create form used to live above the list and had to
+			// reset itself in place.
 			await onsaved();
-			if (!action) {
-				name = '';
-				prompt = '';
-				schedule = defaultSchedule();
-				toolsEnabled = true;
-				reuseConversation = false;
-				reuseRounds = 5;
-				await loadPreview();
-			}
 		} catch (caught) {
 			error = String(caught);
 		} finally {
@@ -162,7 +161,7 @@
 						</div>
 					</fieldset>
 				{/if}
-				<fieldset class="fieldset w-full max-w-xs min-w-0"><legend class="fieldset-legend">{t('scheduled-timezone-label')}</legend><input class="input min-w-0 w-full" bind:value={timezone} onchange={loadPreview} aria-label={t('scheduled-timezone-label')} placeholder={t('scheduled-timezone-placeholder')} /></fieldset>
+				<fieldset class="fieldset w-full max-w-xs min-w-0"><legend class="fieldset-legend">{t('scheduled-timezone-label')}</legend><SearchableSelect options={timezoneChoices} bind:value={timezone} ariaLabel={t('scheduled-timezone-label')} class="w-full" onchange={loadPreview} /></fieldset>
 			</div>
 
 			{#if schedule.mode === 'advanced'}

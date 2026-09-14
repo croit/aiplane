@@ -31,8 +31,9 @@ after(async () => {
 });
 
 const PAGES = [
-    ["/memory", "Add a memory", "Memory — LLM Gateway"],
-    ["/scheduled", "Create scheduled action", "Scheduled actions — LLM Gateway"],
+    ["/memory", "Preferences", "Memory — LLM Gateway"],
+    ["/scheduled", "Your scheduled actions", "Scheduled actions — LLM Gateway"],
+    ["/scheduled/new", "Create scheduled action", "New scheduled action"],
     ["/webhooks", "Create webhook", "Webhooks — LLM Gateway"],
     ["/skills", "Skills", "My Skills — LLM Gateway"],
     ["/integrations", "Integrations", "Integrations — LLM Gateway"],
@@ -111,9 +112,17 @@ test("memory keeps its three semantic sections and direct editing", async () => 
     for (const heading of ["Preferences", "Project context", "Facts"]) {
         assert.equal(await page.getByRole("heading", { name: heading, exact: true }).count(), 1);
     }
-    assert.equal(await page.getByRole("button", { name: "Remember", exact: true }).count(), 1);
     assert.equal(await page.getByRole("button", { name: "Edit", exact: true }).count(), 0);
     assert.ok(await page.locator("main").evaluate((element) => element.scrollWidth <= element.clientWidth));
+
+    // One Add button per section, and it opens the dialog on that section's
+    // kind — the whole point of moving the form out of the page header.
+    assert.equal(await page.getByRole("button", { name: "Add", exact: true }).count(), 3);
+    await page.getByRole("button", { name: "Add", exact: true }).nth(1).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.waitFor();
+    assert.equal(await dialog.getByRole("combobox", { name: "Memory kind" }).inputValue(), "project");
+    assert.equal(await page.getByRole("button", { name: "Remember", exact: true }).count(), 1);
     await ctx.close();
 });
 
@@ -207,12 +216,19 @@ test("scheduled actions keep the complete schedule workflow on mobile", async ()
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
     await ctx.addCookies([{ name: "id", value: await devSessionCookie(), url: BASE }]);
     const page = await ctx.newPage();
+    // The builder lives on its own route now; the list page is a list.
     await page.goto(`${BASE}/scheduled`, { waitUntil: "networkidle" });
+    await page.getByRole("link", { name: "New scheduled action", exact: true }).click();
+    await page.waitForURL(`${BASE}/scheduled/new`);
+    // The editor fetches its model list before it renders the form; without
+    // this the assertions below race the skeleton.
+    await page.getByRole("radio", { name: "Daily", exact: true }).waitFor();
 
     for (const mode of ["Hourly", "Daily", "Weekly", "Monthly", "Advanced"]) {
         assert.equal(await page.getByRole("radio", { name: mode, exact: true }).count(), 1);
     }
-    assert.equal(await page.getByRole("textbox", { name: "Timezone", exact: true }).count(), 1);
+    // The zone is picked from the platform's IANA list, not typed.
+    assert.equal(await page.getByRole("combobox", { name: "Timezone", exact: true }).count(), 1);
     assert.equal(await page.getByRole("checkbox", { name: /Allow tools/ }).isChecked(), true);
     assert.equal(await page.getByRole("checkbox", { name: /Reuse the previous run/ }).isChecked(), false);
 

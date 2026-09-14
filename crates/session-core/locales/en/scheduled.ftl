@@ -7,7 +7,7 @@ scheduled-heading = Scheduled actions
 scheduled-intro = Run a prompt automatically on a schedule. Each run opens as a new chat you can read here — pick a model, write the prompt, and choose when it should run.
 scheduled-create-submit = Create scheduled action
 scheduled-list-heading = Your scheduled actions
-scheduled-list-empty = No scheduled actions yet. Create one above.
+scheduled-list-empty = No scheduled actions yet. Create one with the button above.
 
 scheduled-back = Back
 scheduled-edit-heading = Edit scheduled action
@@ -47,7 +47,6 @@ scheduled-hour-aria = Hour
 scheduled-minute-aria = Minute
 scheduled-of-every-hour = of every hour
 scheduled-timezone-label = Timezone
-scheduled-timezone-placeholder = Europe/Berlin
 scheduled-cron-label = Cron expression
 scheduled-cron-help = Five fields: minute hour day-of-month month day-of-week.
 
@@ -66,9 +65,7 @@ scheduled-status-paused = Paused
 scheduled-next-run = Next run: { $when }
 scheduled-no-upcoming-run = No upcoming run
 scheduled-last-success = Last: ✓ { $when }
-scheduled-last-success-open = Last: ✓ { $when } — open
 scheduled-last-failure = Last: ✗ { $when }
-scheduled-last-failure-open = Last: ✗ { $when } — open
 scheduled-pause-title = Pause
 scheduled-resume-title = Resume
 scheduled-edit-title = Edit
@@ -77,3 +74,30 @@ scheduled-delete-confirm = Delete this scheduled action?
 scheduled-preview-summary = { $summary } ({ $timezone })
 scheduled-preview-next-runs = Next runs: { $runs }
 scheduled-last-error = Last error: { $error }
+
+# The list page's per-schedule links into what it produced, and the run
+# history behind them (`/scheduled/{id}/runs`).
+scheduled-create-heading = New scheduled action
+scheduled-new-page-title = New scheduled action
+scheduled-edit-named-heading = Edit { $name }
+scheduled-toast-created = Scheduled action created.
+scheduled-toast-saved = Scheduled action saved.
+scheduled-badge-reuses-chat = one conversation
+scheduled-open-chat = Open chat
+scheduled-open-chats = { $count ->
+    [one] { $count } chat
+   *[other] { $count } chats
+}
+scheduled-open-runs = { $count ->
+    [one] { $count } run
+   *[other] { $count } runs
+}
+scheduled-never-run = Has not run yet
+scheduled-runs-page-title = Run history
+scheduled-runs-heading = Runs · { $name }
+scheduled-runs-intro = Every recorded fire, newest first, with the chat it opened.
+scheduled-runs-empty = No runs yet. This action has not fired since it was created.
+scheduled-run-open = open chat
+scheduled-run-status-ok = ok
+scheduled-run-status-error = error
+scheduled-run-status-pending = running

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminDelete, adminJson, adminPost, adminPut } from '$lib/admin-client';
+	import EditModal from '$lib/components/EditModal.svelte';
 	import { t } from '$lib/i18n.svelte';
 	import { groupMemories, MEMORY_KINDS, type Memory, type MemoryKind } from '$lib/memory';
 
@@ -8,9 +9,23 @@
 	let drafts = $state<Record<string, string>>({});
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
+	let grouped = $derived(groupMemories(memories));
+
+	// The add form used to sit above the three category cards with its own
+	// kind picker, so writing a preference meant scrolling past the section
+	// already labelled Preferences and then telling the form which section it
+	// was. Each card carries its own Add button now, and it opens the dialog
+	// with that card's kind already chosen.
+	let adding = $state(false);
 	let kind = $state<MemoryKind>('preference');
 	let content = $state('');
-	let grouped = $derived(groupMemories(memories));
+	let saving = $state(false);
+
+	function openAdd(memoryKind: MemoryKind) {
+		kind = memoryKind;
+		content = '';
+		adding = true;
+	}
 
 	async function refresh() {
 		try {
@@ -24,13 +39,18 @@
 	}
 
 	async function add() {
+		if (!content.trim()) return;
 		notice = null;
+		saving = true;
 		try {
 			await adminPost('/api/v0/memories', { kind, content });
 			content = '';
+			adding = false;
 			await refresh();
 		} catch (caught) {
 			notice = String(caught);
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -64,23 +84,13 @@
 	{#if error}<div class="alert alert-error mb-4"><span>{error}</span></div>{/if}
 	{#if notice}<div class="alert alert-warning mb-4"><span>{notice}</span></div>{/if}
 
-	<form class="card card-border mb-6 bg-base-100" onsubmit={(event) => { event.preventDefault(); void add(); }}>
-		<div class="card-body gap-3">
-			<h2 class="card-title text-base">{t('memory-add-heading')}</h2>
-			<div class="flex flex-col gap-2 sm:flex-row">
-				<select class="select select-bordered sm:w-48" bind:value={kind} aria-label={t('memory-kind-aria')}>
-					{#each MEMORY_KINDS as memoryKind}<option value={memoryKind}>{t(`memory-kind-${memoryKind}`)}</option>{/each}
-				</select>
-				<input class="input input-bordered min-w-0 flex-1" bind:value={content} maxlength="2000" required placeholder={t('memory-content-placeholder')} />
-				<button class="btn btn-primary" type="submit" disabled={!content.trim()}>{t('memory-add-button')}</button>
-			</div>
-		</div>
-	</form>
-
 	{#each MEMORY_KINDS as memoryKind}
 		<section class="card card-border mb-6 bg-base-100">
 			<div class="card-body">
-				<h2 class="card-title text-base">{t(`memory-kind-${memoryKind}`)}</h2>
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<h2 class="card-title text-base">{t(`memory-kind-${memoryKind}`)}</h2>
+					<button class="btn btn-sm" type="button" onclick={() => openAdd(memoryKind)}>{t('memory-add-short')}</button>
+				</div>
 				<ul class="flex flex-col divide-y divide-base-300">
 					{#each grouped[memoryKind] as memory (memory.id)}
 						<li class="flex items-center gap-2 py-2">
@@ -100,3 +110,30 @@
 		</section>
 	{/each}
 </div>
+
+<!-- One dialog for all three cards: the button that opened it has already
+     chosen the kind, and the picker stays so a mis-click is a correction
+     rather than a delete-and-retype. -->
+<EditModal
+	bind:open={adding}
+	title={t('memory-add-heading')}
+	description={t(`memory-kind-${kind}`)}
+	cancellabel={t('admin-cancel')}
+	savelabel={t('memory-add-button')}
+	{saving}
+	onsave={add}
+>
+	<div class="flex flex-col gap-3">
+		<fieldset class="fieldset">
+			<legend class="fieldset-legend">{t('memory-kind-aria')}</legend>
+			<select class="select w-full" bind:value={kind} aria-label={t('memory-kind-aria')}>
+				{#each MEMORY_KINDS as option}<option value={option}>{t(`memory-kind-${option}`)}</option>{/each}
+			</select>
+		</fieldset>
+		<fieldset class="fieldset">
+			<legend class="fieldset-legend">{t('memory-content-label')}</legend>
+			<!-- svelte-ignore a11y_autofocus -->
+			<textarea class="textarea min-h-24 w-full" bind:value={content} maxlength="2000" autofocus aria-label={t('memory-content-label')} placeholder={t('memory-content-placeholder')}></textarea>
+		</fieldset>
+	</div>
+</EditModal>

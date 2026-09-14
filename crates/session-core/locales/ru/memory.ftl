@@ -18,3 +18,7 @@ memory-kind-fact = Факты
 memory-content-label = Содержимое
 memory-add-button = Запомнить
 memory-delete-confirm = Удалить эту запись?
+
+# The per-category Add button in each card header; it opens the add dialog
+# with that card's kind already selected.
+memory-add-short = Добавить

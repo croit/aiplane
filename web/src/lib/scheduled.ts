@@ -26,6 +26,48 @@ export interface ScheduledAction {
 	last_session_id: string | null;
 	last_status: string | null;
 	last_error: string | null;
+	/** Recorded fires. */
+	run_count: number;
+	/** Distinct chats those fires opened — one, for a reusing schedule. */
+	chat_count: number;
+}
+
+/** One recorded fire, as `/api/v0/scheduled/{id}/runs` returns it. */
+export interface ScheduledRun {
+	id: string;
+	fired_at: string;
+	/** `null` only while a run is still in flight. */
+	status: string | null;
+	session_id: string | null;
+	error: string | null;
+}
+
+/** Where a schedule's row sends someone who wants to read what it produced. */
+export interface ScheduleLinks {
+	/** The single conversation, when the schedule has exactly one. */
+	chat: string | null;
+	/** The run history, when there is more there than the `chat` link shows. */
+	runs: string | null;
+}
+
+/**
+ * The links a schedule's row offers.
+ *
+ * A schedule that reuses one conversation has exactly one chat however often
+ * it has fired, so the row goes straight into it — a history of identical
+ * links would be a detour. A schedule that opens a fresh chat each time has a
+ * list, and that list is the history page. Runs that produced no chat at all
+ * (the owner was over quota, the model never answered) are still runs worth
+ * seeing, so the history stays reachable whenever it holds anything the chat
+ * link does not already show.
+ */
+export function scheduleLinks(action: ScheduledAction): ScheduleLinks {
+	const chat = action.chat_count <= 1 && action.last_session_id ? `/chat/${action.last_session_id}` : null;
+	const everythingIsInTheChatLink = chat !== null && action.run_count <= 1;
+	return {
+		chat,
+		runs: action.run_count > 0 && !everythingIsInTheChatLink ? `/scheduled/${action.id}/runs` : null
+	};
 }
 
 export interface ScheduledData {

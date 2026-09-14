@@ -18,3 +18,7 @@ memory-kind-fact = 事实
 memory-content-label = 内容
 memory-add-button = 记住
 memory-delete-confirm = 删除这条记忆？
+
+# The per-category Add button in each card header; it opens the add dialog
+# with that card's kind already selected.
+memory-add-short = 添加

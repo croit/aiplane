@@ -5,7 +5,7 @@ scheduled-heading = Geplante Aktionen
 scheduled-intro = Lass einen Prompt automatisch nach einem Zeitplan ausführen. Jeder Lauf öffnet einen neuen Chat, den du hier lesen kannst — wähle ein Modell, schreibe den Prompt und lege fest, wann er ausgeführt werden soll.
 scheduled-create-submit = Geplante Aktion erstellen
 scheduled-list-heading = Deine geplanten Aktionen
-scheduled-list-empty = Noch keine geplanten Aktionen. Erstelle oben eine.
+scheduled-list-empty = Noch keine geplanten Aktionen. Erstelle eine über die Schaltfläche oben.
 
 scheduled-back = Zurück
 scheduled-edit-heading = Geplante Aktion bearbeiten
@@ -45,7 +45,6 @@ scheduled-hour-aria = Stunde
 scheduled-minute-aria = Minute
 scheduled-of-every-hour = jeder Stunde
 scheduled-timezone-label = Zeitzone
-scheduled-timezone-placeholder = Europe/Berlin
 scheduled-cron-label = Cron-Ausdruck
 scheduled-cron-help = Fünf Felder: Minute Stunde Tag-des-Monats Monat Wochentag.
 
@@ -64,9 +63,7 @@ scheduled-status-paused = Pausiert
 scheduled-next-run = Nächster Lauf: { $when }
 scheduled-no-upcoming-run = Kein bevorstehender Lauf
 scheduled-last-success = Letzter: ✓ { $when }
-scheduled-last-success-open = Letzter: ✓ { $when } — öffnen
 scheduled-last-failure = Letzter: ✗ { $when }
-scheduled-last-failure-open = Letzter: ✗ { $when } — öffnen
 scheduled-pause-title = Pausieren
 scheduled-resume-title = Fortsetzen
 scheduled-edit-title = Bearbeiten
@@ -75,3 +72,30 @@ scheduled-delete-confirm = Diese geplante Aktion löschen?
 scheduled-preview-summary = { $summary } ({ $timezone })
 scheduled-preview-next-runs = Nächste Ausführungen: { $runs }
 scheduled-last-error = Letzter Fehler: { $error }
+
+# Die Links der Listenseite auf das, was ein Zeitplan erzeugt hat, und die
+# Ausführungshistorie dahinter (`/scheduled/{id}/runs`).
+scheduled-create-heading = Neue geplante Aktion
+scheduled-new-page-title = Neue geplante Aktion
+scheduled-edit-named-heading = { $name } bearbeiten
+scheduled-toast-created = Geplante Aktion erstellt.
+scheduled-toast-saved = Geplante Aktion gespeichert.
+scheduled-badge-reuses-chat = eine Unterhaltung
+scheduled-open-chat = Chat öffnen
+scheduled-open-chats = { $count ->
+    [one] { $count } Chat
+   *[other] { $count } Chats
+}
+scheduled-open-runs = { $count ->
+    [one] { $count } Ausführung
+   *[other] { $count } Ausführungen
+}
+scheduled-never-run = Noch nicht ausgeführt
+scheduled-runs-page-title = Ausführungshistorie
+scheduled-runs-heading = Ausführungen · { $name }
+scheduled-runs-intro = Jede aufgezeichnete Ausführung, neueste zuerst, mit dem Chat, den sie geöffnet hat.
+scheduled-runs-empty = Noch keine Ausführungen. Diese Aktion wurde seit ihrer Erstellung nicht ausgelöst.
+scheduled-run-open = Chat öffnen
+scheduled-run-status-ok = ok
+scheduled-run-status-error = Fehler
+scheduled-run-status-pending = läuft

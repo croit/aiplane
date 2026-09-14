@@ -22,6 +22,7 @@ const exactTitles: Record<string, PageTitleDescriptor> = {
 	'/rag': { key: 'rag-heading', branded: true },
 	'/rag/profiles': { key: 'rag-profile-heading', branded: true },
 	'/rag/new': { key: 'rag-new-page-title', branded: false },
+	'/scheduled/new': { key: 'scheduled-new-page-title', branded: false },
 	'/admin/skills': { key: 'skills-heading', branded: true },
 	'/admin/connectors': { key: 'connectors-page-title', branded: false },
 	'/admin/connectors/new': { key: 'connectors-add-page-title', branded: false },
@@ -38,6 +39,7 @@ export function pageTitleDescriptor(pathname: string): PageTitleDescriptor | nul
 	if (exact) return exact;
 	if (/^\/chat\/[^/]+$/.test(path)) return { key: 'chat-default-title', branded: true };
 	if (/^\/scheduled\/[^/]+\/edit$/.test(path)) return { key: 'scheduled-edit-heading', branded: true };
+	if (/^\/scheduled\/[^/]+\/runs$/.test(path)) return { key: 'scheduled-runs-page-title', branded: true };
 	if (/^\/webhooks\/[^/]+\/edit$/.test(path)) return { key: 'webhooks-edit-heading', branded: true };
 	if (/^\/webhooks\/[^/]+\/rerun$/.test(path)) return { key: 'webhooks-rerun-page-name', branded: true };
 	if (/^\/webhooks\/[^/]+\/runs$/.test(path)) return { key: 'webhooks-runs-page-name', branded: true };

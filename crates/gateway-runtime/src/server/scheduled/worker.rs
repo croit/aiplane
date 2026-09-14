@@ -80,15 +80,27 @@ fn next_occurrence(action: &ScheduledAction, now: Timestamp) -> Option<Timestamp
 /// prompt + an in-progress assistant turn, drive it to completion
 /// headlessly, then record the outcome.
 async fn run_action(state: Arc<RamaState>, action: ScheduledAction, next: Option<Timestamp>) {
+    // Open the history row first, so a run that is slow, or that dies with
+    // the process, is still visible as *something that happened* rather than
+    // as a gap. Every exit below closes it through `record`.
+    let run_id = match super::record_run_start(&state.db, &action.id).await {
+        Ok(id) => Some(id),
+        Err(err) => {
+            // A failed insert must not cost the user the run itself.
+            tracing::warn!(action = %action.id, error = %err, "opening scheduled run history row");
+            None
+        }
+    };
     // The owner's RBAC roles gate the run's tools. A `None` here means the
     // user row vanished between selection and run (FK cascade should have
     // deleted the action too — defensive); record it and stop.
     let user = match gateway_core::server::db::users::find_by_id(&state.db, &action.user_id).await {
         Ok(Some(u)) => u,
         Ok(None) => {
-            let _ = super::mark_ran(
-                &state.db,
-                &action.id,
+            record(
+                &state,
+                &action,
+                run_id.as_deref(),
                 "error",
                 None,
                 next,
@@ -113,9 +125,10 @@ async fn run_action(state: Arc<RamaState>, action: ScheduledAction, next: Option
             .await
             .is_err()
         {
-            let _ = super::mark_ran(
-                &state.db,
-                &action.id,
+            record(
+                &state,
+                &action,
+                run_id.as_deref(),
                 "error",
                 None,
                 next,
@@ -129,28 +142,54 @@ async fn run_action(state: Arc<RamaState>, action: ScheduledAction, next: Option
         Ok((session_id, assistant_turn_id)) => {
             // Read the run's assistant turn to classify the outcome.
             let (status, error) = outcome_for(&state, &session_id, &assistant_turn_id).await;
-            if let Err(err) = super::mark_ran(
-                &state.db,
-                &action.id,
+            record(
+                &state,
+                &action,
+                run_id.as_deref(),
                 status,
                 Some(&session_id),
                 next,
                 error.as_deref(),
             )
-            .await
-            {
-                tracing::warn!(action = %action.id, error = %err, "recording scheduled run");
-            }
+            .await;
         }
         Err(err) => {
             let msg = err.to_string();
             tracing::warn!(action = %action.id, error = %msg, "scheduled run failed to start");
-            if let Err(e) =
-                super::mark_ran(&state.db, &action.id, "error", None, next, Some(&msg)).await
-            {
-                tracing::warn!(action = %action.id, error = %e, "recording scheduled run");
-            }
+            record(
+                &state,
+                &action,
+                run_id.as_deref(),
+                "error",
+                None,
+                next,
+                Some(&msg),
+            )
+            .await;
         }
+    }
+}
+
+/// Close out one fire: the action's denormalized `last_*` summary (what the
+/// list row reads) and the run's history row (what the runs page reads) say
+/// the same thing, so they are written together and never drift.
+async fn record(
+    state: &Arc<RamaState>,
+    action: &ScheduledAction,
+    run_id: Option<&str>,
+    status: &str,
+    session_id: Option<&str>,
+    next: Option<Timestamp>,
+    error: Option<&str>,
+) {
+    if let Err(err) = super::mark_ran(&state.db, &action.id, status, session_id, next, error).await
+    {
+        tracing::warn!(action = %action.id, error = %err, "recording scheduled run");
+    }
+    if let Some(run_id) = run_id
+        && let Err(err) = super::finish_run(&state.db, run_id, status, session_id, error).await
+    {
+        tracing::warn!(action = %action.id, error = %err, "closing scheduled run history row");
     }
 }
 

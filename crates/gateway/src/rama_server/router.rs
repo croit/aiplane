@@ -398,6 +398,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/scheduled/{id}",
             pages::json_workspace::scheduled_delete,
         )
+        .with_get(
+            "/api/v0/scheduled/{id}/runs",
+            pages::json_workspace::scheduled_runs,
+        )
         .with_get("/api/v0/webhooks", pages::json_workspace::webhooks_list)
         .with_post("/api/v0/webhooks", pages::json_workspace::webhooks_create)
         .with_put(

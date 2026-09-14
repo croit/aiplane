@@ -327,6 +327,132 @@ pub async fn mark_ran(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Run history (scheduled_runs, migration 0064)
+
+/// One recorded fire of a scheduled action.
+///
+/// `session_id` is the chat the run opened — the link the user comes to
+/// `/scheduled` for. An action with `reuse_conversation` points every run at
+/// the same session by design; the runs still list separately, because when
+/// each fired and whether it worked differ even when the conversation does not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledRun {
+    pub id: String,
+    pub action_id: String,
+    pub fired_at: Timestamp,
+    /// `None` only while the run is in flight; `"ok"` or `"error"` once done.
+    pub status: Option<String>,
+    pub session_id: Option<String>,
+    pub error: Option<String>,
+    pub created_at: Timestamp,
+}
+
+const RUN_COLS: &str = "id, action_id, fired_at, status, session_id, error, created_at";
+
+fn map_run(row: &SqliteRow) -> Result<ScheduledRun, DbError> {
+    Ok(ScheduledRun {
+        id: row.try_get("id")?,
+        action_id: row.try_get("action_id")?,
+        fired_at: parse_ts(row.try_get("fired_at")?, "fired_at")?,
+        status: row.try_get("status")?,
+        session_id: row.try_get("session_id")?,
+        error: row.try_get("error")?,
+        created_at: parse_ts(row.try_get("created_at")?, "created_at")?,
+    })
+}
+
+/// Record the start of a run (status left NULL until [`finish_run`]). Returns
+/// the new run id. Not owner-scoped: the worker has already loaded the action.
+pub async fn record_run_start(pool: &Pool, action_id: &str) -> Result<String, DbError> {
+    let id = Uuid::new_v4().to_string();
+    let now = Timestamp::now().to_string();
+    sqlx::query(
+        r#"INSERT INTO scheduled_runs (id, action_id, fired_at, created_at)
+           VALUES (?, ?, ?, ?)"#,
+    )
+    .bind(&id)
+    .bind(action_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+    Ok(id)
+}
+
+/// Record the outcome of a run started by [`record_run_start`]. `session_id`
+/// is kept even on error so the user can inspect the partial conversation.
+pub async fn finish_run(
+    pool: &Pool,
+    run_id: &str,
+    status: &str,
+    session_id: Option<&str>,
+    error: Option<&str>,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE scheduled_runs SET status = ?, session_id = ?, error = ? WHERE id = ?")
+        .bind(status)
+        .bind(session_id)
+        .bind(error)
+        .bind(run_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// An action's most recent runs, newest first, capped at `limit`.
+///
+/// The tiebreaker is `rowid DESC` (SQLite's monotonic insertion order), NOT
+/// `id` — `id` is a random UUID, so two runs sharing a `fired_at` tick would
+/// otherwise come back in nondeterministic order.
+pub async fn list_runs(
+    pool: &Pool,
+    action_id: &str,
+    limit: i64,
+) -> Result<Vec<ScheduledRun>, DbError> {
+    let sql = format!(
+        "SELECT {RUN_COLS} FROM scheduled_runs WHERE action_id = ? \
+         ORDER BY fired_at DESC, rowid DESC LIMIT ?"
+    );
+    let rows = sqlx::query(&sql)
+        .bind(action_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+    rows.iter().map(map_run).collect()
+}
+
+/// How many runs, and how many distinct chats, each of a user's actions has.
+///
+/// Both numbers in one grouped query rather than one per row: the list page
+/// renders every action, and the two differ for a `reuse_conversation`
+/// schedule (many runs, one chat) — which is exactly the distinction the
+/// row's link has to make.
+pub async fn run_counts_for_user(
+    pool: &Pool,
+    user_id: &str,
+) -> Result<std::collections::HashMap<String, (i64, i64)>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT r.action_id AS action_id,
+                  COUNT(*) AS runs,
+                  COUNT(DISTINCT r.session_id) AS chats
+           FROM scheduled_runs r
+           JOIN scheduled_actions a ON a.id = r.action_id
+           WHERE a.user_id = ?
+           GROUP BY r.action_id"#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|row| {
+            Ok((
+                row.try_get::<String, _>("action_id")?,
+                (row.try_get("runs")?, row.try_get("chats")?),
+            ))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,5 +563,88 @@ mod tests {
         assert_eq!(got.last_status.as_deref(), Some("ok"));
         assert_eq!(got.last_session_id.as_deref(), Some("sess-1"));
         assert!(got.last_run_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn runs_record_start_then_outcome_newest_first() {
+        let pool = fresh_db().await;
+        seed_user(&pool, "u1").await;
+        let a = create(&pool, sample("u1", None)).await.unwrap();
+
+        let first = record_run_start(&pool, &a.id).await.unwrap();
+        // A run is visible the moment it starts, pending, so a long run
+        // doesn't look like it never happened.
+        let pending = list_runs(&pool, &a.id, 50).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].status, None);
+        assert_eq!(pending[0].session_id, None);
+
+        finish_run(&pool, &first, "ok", Some("sess-1"), None)
+            .await
+            .unwrap();
+        let second = record_run_start(&pool, &a.id).await.unwrap();
+        finish_run(&pool, &second, "error", Some("sess-2"), Some("boom"))
+            .await
+            .unwrap();
+
+        let runs = list_runs(&pool, &a.id, 50).await.unwrap();
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].id, second);
+        assert_eq!(runs[0].status.as_deref(), Some("error"));
+        assert_eq!(runs[0].error.as_deref(), Some("boom"));
+        // The session is kept on a failed run: the partial conversation is
+        // usually where the reason is.
+        assert_eq!(runs[0].session_id.as_deref(), Some("sess-2"));
+        assert_eq!(runs[1].id, first);
+        assert_eq!(runs[1].status.as_deref(), Some("ok"));
+        assert_eq!(list_runs(&pool, &a.id, 1).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn run_counts_separate_runs_from_chats() {
+        let pool = fresh_db().await;
+        seed_user(&pool, "u1").await;
+        seed_user(&pool, "u2").await;
+        let fresh_each_time = create(&pool, sample("u1", None)).await.unwrap();
+        let reuses = create(&pool, sample("u1", None)).await.unwrap();
+        let other_owner = create(&pool, sample("u2", None)).await.unwrap();
+
+        for session in ["sess-a", "sess-b"] {
+            let run = record_run_start(&pool, &fresh_each_time.id).await.unwrap();
+            finish_run(&pool, &run, "ok", Some(session), None)
+                .await
+                .unwrap();
+        }
+        // A reusing schedule fires repeatedly into one conversation: three
+        // runs, one chat. That is the distinction the list row's link makes.
+        for _ in 0..3 {
+            let run = record_run_start(&pool, &reuses.id).await.unwrap();
+            finish_run(&pool, &run, "ok", Some("sess-shared"), None)
+                .await
+                .unwrap();
+        }
+        let run = record_run_start(&pool, &other_owner.id).await.unwrap();
+        finish_run(&pool, &run, "ok", Some("sess-other"), None)
+            .await
+            .unwrap();
+
+        let counts = run_counts_for_user(&pool, "u1").await.unwrap();
+        assert_eq!(counts.get(&fresh_each_time.id), Some(&(2, 2)));
+        assert_eq!(counts.get(&reuses.id), Some(&(3, 1)));
+        // Another user's action never appears in this user's counts.
+        assert_eq!(counts.get(&other_owner.id), None);
+    }
+
+    #[tokio::test]
+    async fn deleting_an_action_deletes_its_runs() {
+        let pool = fresh_db().await;
+        seed_user(&pool, "u1").await;
+        let a = create(&pool, sample("u1", None)).await.unwrap();
+        let run = record_run_start(&pool, &a.id).await.unwrap();
+        finish_run(&pool, &run, "ok", Some("sess-1"), None)
+            .await
+            .unwrap();
+        assert!(delete(&pool, "u1", &a.id).await.unwrap());
+        assert!(list_runs(&pool, &a.id, 50).await.unwrap().is_empty());
     }
 }

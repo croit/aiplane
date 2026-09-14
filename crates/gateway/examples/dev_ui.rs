@@ -871,29 +871,40 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
     )
     .await?;
 
-    // --- Scheduled actions ----------------------------------------------
+    // --- Scheduled actions, with the run history behind them -------------
+    //
+    // The three shapes /scheduled has to render, one each: a schedule that
+    // opens a fresh chat every time (a list to link to), one that reuses a
+    // single conversation (one chat to link straight into, however often it
+    // fired), and one that has never run (nothing to link at all).
     let schedules = [
         (
             "Daily standup digest",
             "Summarize yesterday's merged PRs and open blockers into a short standup digest.",
             "0 8 * * 1-5",
             "2026-06-22T08:00:00Z",
+            false,
+            3,
         ),
         (
             "Weekly dependency report",
             "List dependencies with new releases this week and flag any security advisories.",
             "0 9 * * 1",
             "2026-06-22T09:00:00Z",
+            true,
+            4,
         ),
         (
             "Monthly cost summary",
             "Summarize this month's API usage and token spend, with the three biggest line items.",
             "0 7 1 * *",
             "2026-07-01T07:00:00Z",
+            false,
+            0,
         ),
     ];
-    for (name, prompt, cron, next) in schedules {
-        scheduled::create(
+    for (name, prompt, cron, next, reuse, runs) in schedules {
+        let action = scheduled::create(
             &state.db,
             NewAction {
                 user_id: "dev".into(),
@@ -903,12 +914,66 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
                 cron: cron.into(),
                 timezone: "Europe/Berlin".into(),
                 tools_enabled: true,
-                reuse_conversation: false,
+                reuse_conversation: reuse,
                 reuse_rounds: 5,
                 next_run_at: Some(next.parse()?),
             },
         )
         .await?;
+        let mut reused: Option<String> = None;
+        for run in 0..runs {
+            // A reusing schedule appends into the session the first run
+            // opened; the others mint one per fire, exactly as the worker does.
+            let session = match &reused {
+                Some(id) => id.clone(),
+                None => {
+                    let s = chatdb::create_session(&state.db, "dev").await?;
+                    chatdb::set_session_title(&state.db, &s.id, name).await?;
+                    if reuse {
+                        reused = Some(s.id.clone());
+                    }
+                    s.id
+                }
+            };
+            let user_turn = uuid::Uuid::new_v4().to_string();
+            chatdb::create_user_turn(&state.db, &session, &user_turn, prompt).await?;
+            let turn = uuid::Uuid::new_v4().to_string();
+            chatdb::create_assistant_turn_in_progress(&state.db, &session, &turn, "demo-model")
+                .await?;
+            chatdb::append_content(&state.db, &turn, "Here is the digest for this run.").await?;
+            chatdb::finalize_turn(&state.db, &turn, TurnStatus::Completed, None).await?;
+
+            // The last run of the dependency report failed, so the page has a
+            // failure to render as well as successes.
+            let failed = reuse && run + 1 == runs;
+            let run_id = scheduled::record_run_start(&state.db, &action.id).await?;
+            let (status, error) = if failed {
+                ("error", Some("upstream timed out after 60s"))
+            } else {
+                ("ok", None)
+            };
+            scheduled::finish_run(&state.db, &run_id, status, Some(&session), error).await?;
+            // Seeded in a tight loop, so every run would carry the same
+            // timestamp and the history page would look broken. Space them a
+            // day apart, oldest first, the way real fires arrive.
+            let fired_at = (jiff::Timestamp::now()
+                - jiff::SignedDuration::from_hours(24 * (runs - run - 1)))
+            .to_string();
+            sqlx::query("UPDATE scheduled_runs SET fired_at = ? WHERE id = ?")
+                .bind(&fired_at)
+                .bind(&run_id)
+                .execute(&state.db)
+                .await?;
+            scheduled::mark_ran(
+                &state.db,
+                &action.id,
+                status,
+                Some(&session),
+                Some(next.parse()?),
+                error,
+            )
+            .await?;
+        }
     }
 
     // --- RAG collections (indexed → "ready", with a resolved commit) -----

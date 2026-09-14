@@ -137,10 +137,24 @@ pub async fn memories_delete(
 // Scheduled actions
 
 fn action_json(a: &scheduled::ScheduledAction) -> serde_json::Value {
+    action_json_with_counts(a, (0, 0))
+}
+
+/// `action_json` plus the action's `(runs, chats)` totals.
+///
+/// The two differ for a `reuse_conversation` schedule — many runs, one
+/// conversation — and the list row uses exactly that difference to decide
+/// whether to link to *the* chat or to the run history.
+fn action_json_with_counts(
+    a: &scheduled::ScheduledAction,
+    (run_count, chat_count): (i64, i64),
+) -> serde_json::Value {
     let schedule_summary = Cron::parse(&a.cron)
         .map(|cron| cron.describe())
         .unwrap_or_else(|_| format!("cron: {}", a.cron));
     serde_json::json!({
+        "run_count": run_count,
+        "chat_count": chat_count,
         "id": a.id,
         "name": a.name,
         "prompt": a.prompt,
@@ -178,17 +192,65 @@ fn chat_model_options(state: &RamaState) -> Vec<serde_json::Value> {
 /// GET /api/v0/scheduled — the caller's actions.
 pub async fn scheduled_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    match scheduled::list_for_user(&state.db, &user.id).await {
-        Ok(rows) => json_ok(
+    let rows = match scheduled::list_for_user(&state.db, &user.id).await {
+        Ok(rows) => rows,
+        Err(err) => return internal(err),
+    };
+    // One grouped query for the whole list, not one per row.
+    let counts = match scheduled::run_counts_for_user(&state.db, &user.id).await {
+        Ok(counts) => counts,
+        Err(err) => return internal(err),
+    };
+    json_ok(
+        StatusCode::OK,
+        serde_json::json!({
+            "actions": rows
+                .iter()
+                .map(|a| action_json_with_counts(a, counts.get(&a.id).copied().unwrap_or((0, 0))))
+                .collect::<Vec<_>>(),
+            "models": chat_model_options(&state),
+            "default_timezone": user.timezone.as_deref().unwrap_or("UTC"),
+        }),
+    )
+}
+
+/// GET /api/v0/scheduled/{id}/runs — one schedule's run history.
+///
+/// Owner-scoped through `scheduled::get` first: `list_runs` is keyed only by
+/// action id, so reading it straight from the path would hand any signed-in
+/// user another account's runs — and the chat session ids they opened — for
+/// any id they can name. An id that is not the caller's reads as missing.
+pub async fn scheduled_runs(
+    Path(id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = require_session_json!(state, req);
+    let action = match scheduled::get(&state.db, &user.id, &id).await {
+        Ok(Some(a)) => a,
+        Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such action"),
+        Err(err) => return internal(err),
+    };
+    match scheduled::list_runs(&state.db, &action.id, 50).await {
+        Ok(runs) => json_ok(
             StatusCode::OK,
             serde_json::json!({
-                "actions": rows.iter().map(action_json).collect::<Vec<_>>(),
-                "models": chat_model_options(&state),
-                "default_timezone": user.timezone.as_deref().unwrap_or("UTC"),
+                "action": action_json(&action),
+                "runs": runs.iter().map(scheduled_run_json).collect::<Vec<_>>(),
             }),
         ),
         Err(err) => internal(err),
     }
+}
+
+fn scheduled_run_json(r: &scheduled::ScheduledRun) -> serde_json::Value {
+    serde_json::json!({
+        "id": r.id,
+        "fired_at": r.fired_at.to_string(),
+        "status": r.status,
+        "session_id": r.session_id,
+        "error": r.error,
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -325,7 +387,16 @@ pub async fn scheduled_update(
                 .ok()
                 .flatten();
             match a {
-                Some(a) => json_ok(StatusCode::OK, action_json(&a)),
+                Some(a) => {
+                    // An edited action keeps the runs it already has, so the
+                    // response must not report them as zero.
+                    let counts = scheduled::run_counts_for_user(&state.db, &user.id)
+                        .await
+                        .ok()
+                        .and_then(|counts| counts.get(&a.id).copied())
+                        .unwrap_or((0, 0));
+                    json_ok(StatusCode::OK, action_json_with_counts(&a, counts))
+                }
                 None => json_ok(StatusCode::OK, serde_json::json!({ "ok": true })),
             }
         }

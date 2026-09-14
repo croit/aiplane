@@ -5,7 +5,7 @@ scheduled-heading = Запланированные действия
 scheduled-intro = Запускайте промпт автоматически по расписанию. Каждый запуск открывает новый чат, который можно прочитать здесь — выберите модель, напишите промпт и укажите, когда он должен запускаться.
 scheduled-create-submit = Создать запланированное действие
 scheduled-list-heading = Ваши запланированные действия
-scheduled-list-empty = Пока нет запланированных действий. Создайте одно выше.
+scheduled-list-empty = Пока нет запланированных действий. Создайте одно кнопкой выше.
 
 scheduled-back = Назад
 scheduled-edit-heading = Изменить запланированное действие
@@ -45,7 +45,6 @@ scheduled-hour-aria = Час
 scheduled-minute-aria = Минута
 scheduled-of-every-hour = каждого часа
 scheduled-timezone-label = Часовой пояс
-scheduled-timezone-placeholder = Europe/Berlin
 scheduled-cron-label = Cron-выражение
 scheduled-cron-help = Пять полей: минута час день-месяца месяц день-недели.
 
@@ -64,9 +63,7 @@ scheduled-status-paused = Приостановлено
 scheduled-next-run = Следующий запуск: { $when }
 scheduled-no-upcoming-run = Нет предстоящих запусков
 scheduled-last-success = Последний: ✓ { $when }
-scheduled-last-success-open = Последний: ✓ { $when } — открыть
 scheduled-last-failure = Последний: ✗ { $when }
-scheduled-last-failure-open = Последний: ✗ { $when } — открыть
 scheduled-pause-title = Приостановить
 scheduled-resume-title = Возобновить
 scheduled-edit-title = Изменить
@@ -75,3 +72,34 @@ scheduled-delete-confirm = Удалить это запланированное 
 scheduled-preview-summary = { $summary } ({ $timezone })
 scheduled-preview-next-runs = Следующие запуски: { $runs }
 scheduled-last-error = Последняя ошибка: { $error }
+
+# Ссылки на странице списка на то, что создало расписание, и история
+# запусков за ними (`/scheduled/{id}/runs`).
+scheduled-create-heading = Новое запланированное действие
+scheduled-new-page-title = Новое запланированное действие
+scheduled-edit-named-heading = Изменить { $name }
+scheduled-toast-created = Запланированное действие создано.
+scheduled-toast-saved = Запланированное действие сохранено.
+scheduled-badge-reuses-chat = одна беседа
+scheduled-open-chat = Открыть чат
+scheduled-open-chats = { $count ->
+    [one] { $count } чат
+    [few] { $count } чата
+    [many] { $count } чатов
+   *[other] { $count } чата
+}
+scheduled-open-runs = { $count ->
+    [one] { $count } запуск
+    [few] { $count } запуска
+    [many] { $count } запусков
+   *[other] { $count } запуска
+}
+scheduled-never-run = Ещё не запускалось
+scheduled-runs-page-title = История запусков
+scheduled-runs-heading = Запуски · { $name }
+scheduled-runs-intro = Каждый записанный запуск, новые сверху, вместе с чатом, который он открыл.
+scheduled-runs-empty = Пока нет запусков. Это действие ни разу не срабатывало с момента создания.
+scheduled-run-open = открыть чат
+scheduled-run-status-ok = ок
+scheduled-run-status-error = ошибка
+scheduled-run-status-pending = выполняется
