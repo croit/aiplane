@@ -24,3 +24,12 @@ memory-delete-confirm = Delete this memory?
 # The per-category Add button in each card header; it opens the add dialog
 # with that card's kind already selected.
 memory-add-short = Add
+
+# One line under each card heading saying how that kind reaches the
+# assistant: preferences ride in the system context of every conversation,
+# while project notes and facts wait to be looked up with `recall`. The
+# difference changes which bucket a user files something in, and nothing
+# else on the page reveals it.
+memory-kind-preference-hint = Always in context — sent with every conversation from the first message, so the assistant applies them without being asked.
+memory-kind-project-hint = Fetched on demand — the assistant looks these up when the conversation touches your work.
+memory-kind-fact-hint = Fetched on demand — the assistant looks these up when they become relevant.

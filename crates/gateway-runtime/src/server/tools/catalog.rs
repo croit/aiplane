@@ -20,7 +20,8 @@ use std::collections::HashSet;
 use super::ToolRegistry;
 
 pub use gateway_core::server::tool_naming::{
-    BOOTSTRAP_TOOL_ID, COMFYUI_KEY, COMFYUI_PREFIX, READ_SKILL_ID, TYPST_PREFIX, prettify,
+    BOOTSTRAP_TOOL_ID, COMFYUI_KEY, COMFYUI_PREFIX, READ_SKILL_ID, RECALL_TOOL_ID, TYPST_PREFIX,
+    prettify,
 };
 
 /// Tool-id suffixes of the per-template variant tools. `entry_key_for` strips
@@ -34,7 +35,7 @@ const TYPST_VARIANT_SUFFIXES: &[&str] = &["_edit", "_read", "_pptx"];
 /// `remember`: a user who turns memory off must not be left with tools that
 /// can still mutate the store, and one who turns it on needs the store to be
 /// correctable, not append-only.
-const MEMORY_IDS: &[&str] = &["remember", "recall", "update_memory", "forget"];
+const MEMORY_IDS: &[&str] = &["remember", RECALL_TOOL_ID, "update_memory", "forget"];
 const MEMORY_KEY: &str = "memory";
 
 /// The document-canvas tools are one capability — building up and editing

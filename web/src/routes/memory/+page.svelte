@@ -91,6 +91,11 @@
 					<h2 class="card-title text-base">{t(`memory-kind-${memoryKind}`)}</h2>
 					<button class="btn btn-sm" type="button" onclick={() => openAdd(memoryKind)}>{t('memory-add-short')}</button>
 				</div>
+				<!-- The kinds are not just labels: a preference is sent with every
+				     conversation, while project notes and facts wait to be looked
+				     up. That decides which card something belongs in, so it is
+				     said here rather than left to be discovered. -->
+				<p class="text-sm text-base-content/60">{t(`memory-kind-${memoryKind}-hint`)}</p>
 				<ul class="flex flex-col divide-y divide-base-300">
 					{#each grouped[memoryKind] as memory (memory.id)}
 						<li class="flex items-center gap-2 py-2">

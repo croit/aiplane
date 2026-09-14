@@ -41,6 +41,13 @@ pub const COMFYUI_KEY: &str = "comfyui";
 /// callable — and that logic lives below the tool implementations.
 pub const READ_SKILL_ID: &str = "read_skill";
 
+/// Tool id of the memory reader. Named here because the driver probes for it
+/// to decide whether to put the user's standing preferences in the system
+/// message: the id is in `allowed_tools_for_user` exactly when RBAC grants
+/// memory *and* the user has left the Memory switch on, which is the same
+/// condition under which their memories may be read at all.
+pub const RECALL_TOOL_ID: &str = "recall";
+
 /// Tool id of the lone always-on bootstrap. It can't itself be enabled
 /// via the per-conversation overlay (chicken-and-egg), so it's the one
 /// exception baked into `AppState::allowed_tools_for_session`. Every other tool —

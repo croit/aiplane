@@ -207,6 +207,63 @@ pub async fn recall_recent(
     rows.iter().map(map_row).collect()
 }
 
+/// How many memories a user has, broken down by kind.
+///
+/// The driver reads this once per turn: the standing preferences ride in the
+/// system message, and the counts of the *other* kinds are what it tells the
+/// model is available behind `recall` without shipping any of it. Cheap
+/// enough to be unconditional — a single grouped count, and the common case
+/// (a user with no memories at all) stops right there.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KindCounts {
+    pub preference: i64,
+    pub project: i64,
+    pub fact: i64,
+}
+
+impl KindCounts {
+    /// Memories that are not preferences — i.e. what a `recall` call would
+    /// add on top of what the system message already carries.
+    pub fn non_preference(self) -> i64 {
+        self.project + self.fact
+    }
+
+    pub fn total(self) -> i64 {
+        self.preference + self.non_preference()
+    }
+
+    /// No memories of any kind — nothing to say in the system message.
+    pub fn is_empty(self) -> bool {
+        self.total() == 0
+    }
+}
+
+/// Count the user's memories per kind in one grouped query.
+pub async fn counts_by_kind(pool: &Pool, user_id: &str) -> Result<KindCounts, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT kind, COUNT(*) AS n FROM user_memories
+           WHERE user_id = ?
+           GROUP BY kind"#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut counts = KindCounts::default();
+    for row in &rows {
+        let kind: String = row.try_get("kind")?;
+        let n: i64 = row.try_get("n")?;
+        // `from_db` folds anything unrecognised into `Fact`, so accumulate
+        // rather than assign: two stray kinds can both land in that bucket.
+        match MemoryKind::from_db(&kind) {
+            MemoryKind::Preference => counts.preference += n,
+            MemoryKind::Project => counts.project += n,
+            MemoryKind::Fact => counts.fact += n,
+        }
+    }
+    Ok(counts)
+}
+
 /// Fetch one memory, scoped to its owner. `None` if it doesn't exist or
 /// belongs to someone else.
 pub async fn get(pool: &Pool, user_id: &str, id: &str) -> Result<Option<Memory>, DbError> {
@@ -323,6 +380,65 @@ mod tests {
             .unwrap();
         assert_eq!(prefs.len(), 1);
         assert_eq!(prefs[0].content, "dark mode");
+    }
+
+    #[tokio::test]
+    async fn counts_by_kind_groups_and_defaults_to_zero() {
+        let pool = fresh().await;
+        assert!(counts_by_kind(&pool, "alice").await.unwrap().is_empty());
+
+        insert(&pool, "alice", MemoryKind::Preference, "metric units")
+            .await
+            .unwrap();
+        insert(&pool, "alice", MemoryKind::Preference, "answers in German")
+            .await
+            .unwrap();
+        insert(&pool, "alice", MemoryKind::Project, "ceph cluster aurora")
+            .await
+            .unwrap();
+        insert(&pool, "alice", MemoryKind::Fact, "runs Debian")
+            .await
+            .unwrap();
+        // Another user's rows must not leak into the counts.
+        insert(&pool, "bob", MemoryKind::Preference, "imperial units")
+            .await
+            .unwrap();
+
+        let counts = counts_by_kind(&pool, "alice").await.unwrap();
+        assert_eq!(counts.preference, 2);
+        assert_eq!(counts.project, 1);
+        assert_eq!(counts.fact, 1);
+        assert_eq!(counts.non_preference(), 2);
+        assert_eq!(counts.total(), 4);
+        assert!(!counts.is_empty());
+    }
+
+    /// A row written by an older/other build with an unknown `kind` is read
+    /// back as a `Fact` by `from_db`; the counts must agree rather than drop
+    /// it, so the totals still add up.
+    #[tokio::test]
+    async fn counts_fold_unknown_kinds_into_facts() {
+        let pool = fresh().await;
+        insert(&pool, "alice", MemoryKind::Fact, "real fact")
+            .await
+            .unwrap();
+        sqlx::query(
+            r#"INSERT INTO user_memories (id, user_id, kind, content, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind("stray")
+        .bind("alice")
+        .bind("something-else")
+        .bind("odd row")
+        .bind(Timestamp::now().to_string())
+        .bind(Timestamp::now().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let counts = counts_by_kind(&pool, "alice").await.unwrap();
+        assert_eq!(counts.fact, 2);
+        assert_eq!(counts.total(), 2);
     }
 
     #[tokio::test]

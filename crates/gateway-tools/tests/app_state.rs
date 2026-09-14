@@ -247,3 +247,99 @@ mod token_gate_tests {
         assert!(other.contains(&"search_web".to_string()));
     }
 }
+
+/// The gate the standing-preferences section is built on.
+///
+/// `build_preferences_section` in the driver injects a user's preferences into
+/// the leading system message only when `RECALL_TOOL_ID` is in
+/// `allowed_tools_for_user`. That is the whole enforcement of the Memory
+/// switch for injection: a user who turned memory off means "don't use this",
+/// not "hide the tools but keep reading my memories in every prompt". Pinned
+/// here against the *real* memory tools, so a regrouping that stopped folding
+/// `recall` under the `memory` key would fail rather than silently reopen the
+/// injection path.
+mod memory_gate_tests {
+    use gateway_core::server::config::Config;
+    use gateway_core::server::db::{self, user_tool_prefs};
+    use gateway_core::server::rbac::Resolver;
+    use gateway_core::server::rbac::config::{RbacConfig, RoleConfig};
+    use gateway_core::server::tool_naming::RECALL_TOOL_ID;
+    use gateway_core::server::upstreams::UpstreamRegistry;
+    use gateway_runtime::server::AppState;
+    use gateway_runtime::server::tools::ToolRegistry;
+    use gateway_tools::memory::{Forget, Recall, Remember, UpdateMemory};
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    async fn memory_state() -> AppState {
+        let db = db::open(Path::new(":memory:")).await.unwrap();
+        let upstreams = UpstreamRegistry::new(&HashMap::new()).unwrap();
+        let tools = Arc::new(
+            ToolRegistry::new()
+                .with(Remember)
+                .with(Recall)
+                .with(UpdateMemory)
+                .with(Forget),
+        );
+        let rbac = Arc::new(
+            Resolver::build(
+                RbacConfig {
+                    default_role: Some("all".into()),
+                    mappings: vec![],
+                },
+                vec![RoleConfig {
+                    id: "all".into(),
+                    admin: false,
+                    models: vec!["*".into()],
+                    tools: vec!["*".into()],
+                    skills: vec![],
+                }],
+            )
+            .unwrap(),
+        );
+        AppState::new(Config::default(), db, upstreams, tools, rbac)
+    }
+
+    #[tokio::test]
+    async fn memory_on_exposes_recall_so_preferences_may_be_injected() {
+        let state = memory_state().await;
+        let allowed = state.allowed_tools_for_user(&["all".into()], "alice").await;
+        assert!(
+            allowed.iter().any(|id| id == RECALL_TOOL_ID),
+            "memory left on → the section's gate opens: {allowed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_off_closes_the_gate_for_the_whole_family() {
+        let state = memory_state().await;
+        user_tool_prefs::set(&state.db, "alice", "memory", false)
+            .await
+            .unwrap();
+        let allowed = state.allowed_tools_for_user(&["all".into()], "alice").await;
+        assert!(
+            !allowed.iter().any(|id| id == RECALL_TOOL_ID),
+            "memory switched off must close the injection gate: {allowed:?}"
+        );
+        // The switch governs the writers too — a user who turned memory off
+        // must not keep a model that can still add to the store.
+        assert!(
+            allowed.is_empty(),
+            "the whole memory family shares the switch: {allowed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_gate_is_per_user() {
+        let state = memory_state().await;
+        user_tool_prefs::set(&state.db, "alice", "memory", false)
+            .await
+            .unwrap();
+        let bob = state.allowed_tools_for_user(&["all".into()], "bob").await;
+        assert!(
+            bob.iter().any(|id| id == RECALL_TOOL_ID),
+            "alice's choice must not close bob's gate: {bob:?}"
+        );
+    }
+}

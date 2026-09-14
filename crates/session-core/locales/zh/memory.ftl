@@ -22,3 +22,12 @@ memory-delete-confirm = 删除这条记忆？
 # The per-category Add button in each card header; it opens the add dialog
 # with that card's kind already selected.
 memory-add-short = 添加
+
+# One line under each card heading saying how that kind reaches the
+# assistant: preferences ride in the system context of every conversation,
+# while project notes and facts wait to be looked up with `recall`. The
+# difference changes which bucket a user files something in, and nothing
+# else on the page reveals it.
+memory-kind-preference-hint = 始终在上下文中——从每次对话的第一条消息起就一并发送，助手无需提醒即会遵循。
+memory-kind-project-hint = 按需读取——当对话涉及你的工作时，助手才会查阅这些条目。
+memory-kind-fact-hint = 按需读取——当这些条目变得相关时，助手才会查阅。
