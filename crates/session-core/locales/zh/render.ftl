@@ -28,6 +28,12 @@ render-composer-record-title = 录音
 render-composer-send = 发送
 render-composer-stop = 停止
 
+# Shown over the whole conversation while a file is dragged across it, and
+# the refusal when the drop turned out to be a folder.
+render-drop-overlay = 拖放文件以添加附件
+render-drop-overlay-hint = 它们将随下一条消息一起发送
+render-drop-folders-unsupported = 无法添加文件夹——请改为拖放其中的文件。
+
 # The browser prompt behind the ✎ Edit button, and the per-file title on
 # an attachment's remove button.
 render-edit-prompt = 编辑你的消息：

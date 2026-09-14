@@ -10,6 +10,7 @@
 	import { parseUserContent, replaceUserText } from '$lib/chat-protocol';
 	import type { ChatSession } from '$lib/chat-protocol';
 	import { canonicalAttachments } from '$lib/conversation-assets';
+	import { DragDepth, carriesFiles, droppedOnlyDirectories, filesFrom } from '$lib/drop-files';
 	import { me } from '$lib/session.svelte';
 	import { t, time, n } from '$lib/i18n.svelte';
 	import ConversationHeader from '$lib/components/chat/ConversationHeader.svelte';
@@ -315,13 +316,53 @@
 		}
 	}
 
-	function onDrop(e: DragEvent) {
+	// Whole-conversation drop target. The composer input used to be
+	// the only one, which made attaching by drag a game of darts — and an
+	// unwinnable one while a turn streamed, because a `disabled` textarea
+	// fires no drop events at all. Dropping anywhere else navigated the tab
+	// away from the chat to render the file. Now the page takes the drop,
+	// the overlay says so, and the files land in whichever composer is open.
+	const dragDepth = new DragDepth();
+	let dragging = $state(false);
+
+	/// Files dropped while the edit dialog is open belong to *that* message,
+	/// not to a new one.
+	function stageFiles(dropped: File[]) {
+		if (dropped.length === 0) return;
+		if (editingTurn) editFiles = [...editFiles, ...dropped];
+		else addFiles(dropped);
+	}
+
+	function onDragEnter(e: DragEvent) {
+		if (!isOwner || !carriesFiles(e.dataTransfer)) return;
 		e.preventDefault();
-		addFiles(e.dataTransfer?.files ?? null);
+		dragging = dragDepth.enter();
+	}
+
+	function onDragLeave() {
+		if (!dragging) return;
+		dragging = dragDepth.leave();
+	}
+
+	function onDrop(e: DragEvent) {
+		if (!isOwner || !carriesFiles(e.dataTransfer)) return;
+		// Without this the browser opens the file in the tab, taking the
+		// conversation with it.
+		e.preventDefault();
+		dragging = dragDepth.reset();
+		if (droppedOnlyDirectories(e.dataTransfer)) {
+			notice = t('render-drop-folders-unsupported');
+			return;
+		}
+		stageFiles(filesFrom(e.dataTransfer));
 	}
 
 	function onDragOver(e: DragEvent) {
+		if (!isOwner || !carriesFiles(e.dataTransfer)) return;
+		// A drop only happens where dragover was prevented — on every frame,
+		// not once on enter.
 		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
 	}
 
 	/// POST a JSON body and fail loudly.
@@ -520,7 +561,20 @@
 	}
 </script>
 
-<div class="flex h-full min-h-0 flex-col">
+<!-- The drop target is the whole conversation, not just the composer box:
+     a file dragged onto the transcript is meant for the next message, and
+     landing it anywhere else would navigate the tab away from the chat. The
+     handlers no-op for a read-only shared conversation and for drags that
+     carry no files (selecting text inside a bubble fires the same events). -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="relative flex h-full min-h-0 flex-col"
+	data-chat-dropzone
+	ondragenter={onDragEnter}
+	ondragover={onDragOver}
+	ondragleave={onDragLeave}
+	ondrop={onDrop}
+>
 	<ConversationHeader
 		{id}
 		title={session?.title}
@@ -732,8 +786,6 @@
 				bind:value={draft}
 				onkeydown={onKeydown}
 				onpaste={onPaste}
-				ondragover={onDragOver}
-				ondrop={onDrop}
 				disabled={streaming}
 			></textarea>
 			<label
@@ -780,11 +832,34 @@
 	</div>
 </div>
 {/if}
+
+	{#if dragging}
+		<!-- `pointer-events-none` is load-bearing: an overlay that swallowed
+		     pointer events would fire dragleave the instant it appeared, so the
+		     highlight would strobe and the drop would land on nothing. -->
+		<div
+			data-chat-drop-overlay
+			class="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-1 rounded-box border-2 border-dashed border-primary bg-base-100/80 backdrop-blur-sm"
+		>
+			<span class="text-lg font-semibold">{t('render-drop-overlay')}</span>
+			<span class="text-sm opacity-70">{t('render-drop-overlay-hint')}</span>
+		</div>
+	{/if}
 </div>
 
 {#if editingTurn}
 	<dialog class="modal modal-open" aria-label={t('render-edit-prompt')}>
-		<div class="modal-box">
+		<!-- The dialog is a sibling of the conversation, not a child, so the
+		     page-wide dropzone above never sees a drop landing on it. Same
+		     handlers, and `stageFiles` routes them to this message's files. -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="modal-box {dragging ? 'outline outline-2 outline-dashed outline-primary' : ''}"
+			ondragenter={onDragEnter}
+			ondragover={onDragOver}
+			ondragleave={onDragLeave}
+			ondrop={onDrop}
+		>
 			<h2 class="text-lg font-semibold">{t('render-edit-prompt')}</h2>
 			<textarea class="textarea textarea-bordered mt-3 min-h-36 w-full" bind:value={editDraft}></textarea>
 			{#if editFiles.length > 0}

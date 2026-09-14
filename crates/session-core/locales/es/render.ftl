@@ -29,6 +29,12 @@ render-composer-record-title = Grabar
 render-composer-send = Enviar
 render-composer-stop = Detener
 
+# Shown over the whole conversation while a file is dragged across it, and
+# the refusal when the drop turned out to be a folder.
+render-drop-overlay = Suelta archivos para adjuntarlos
+render-drop-overlay-hint = Se adjuntarán a tu próximo mensaje
+render-drop-folders-unsupported = No se pueden adjuntar carpetas — suelta los archivos que contienen.
+
 # The browser prompt behind the ✎ Edit button, and the per-file title on
 # an attachment's remove button.
 render-edit-prompt = Edita tu mensaje:

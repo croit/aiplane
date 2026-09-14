@@ -29,6 +29,12 @@ render-composer-record-title = Запись
 render-composer-send = Отправить
 render-composer-stop = Стоп
 
+# Shown over the whole conversation while a file is dragged across it, and
+# the refusal when the drop turned out to be a folder.
+render-drop-overlay = Перетащите файлы сюда, чтобы прикрепить их
+render-drop-overlay-hint = Они будут прикреплены к следующему сообщению
+render-drop-folders-unsupported = Папки прикрепить нельзя — перетащите файлы из них.
+
 # The browser prompt behind the ✎ Edit button, and the per-file title on
 # an attachment's remove button.
 render-edit-prompt = Измените своё сообщение:
