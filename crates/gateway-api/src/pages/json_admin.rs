@@ -1167,8 +1167,10 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 "auth_failed": backend.auth_failed(),
                 "inflight": backend.inflight(),
                 "max_inflight": backend.max_inflight,
-                "models": backend.models_snapshot().into_iter().collect::<Vec<_>>(),
-                "withheld": backend.withheld_models().into_iter().collect::<Vec<_>>(),
+                // Sorted for the same reason the live stream sorts them: a
+                // `HashSet` would render the first paint in a random order.
+                "models": sorted(backend.models_snapshot()),
+                "withheld": sorted(backend.withheld_models()),
                 "pool": pool.name,
             });
             live.insert(backend.name.clone(), entry);
@@ -2039,6 +2041,13 @@ pub async fn topology_reload(State(state): State<Arc<RamaState>>, req: Request) 
 /// since it was last sent (plus the dirty counter inside each event), a
 /// comment keepalive every 20 s. The JSON twin of the legacy
 /// `/admin/upstreams/live` HTML-patch stream.
+/// A `HashSet` of model ids as a stable, sorted `Vec`.
+fn sorted(set: std::collections::HashSet<String>) -> Vec<String> {
+    let mut out: Vec<String> = set.into_iter().collect();
+    out.sort();
+    out
+}
+
 pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let (tx, rx) =
@@ -2052,7 +2061,11 @@ pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) 
         let mut tx = tx;
         let mut last: HashMap<String, String> = HashMap::new();
         let mut since_send = Duration::ZERO;
-        const TICK: Duration = Duration::from_secs(2);
+        /// How often the in-memory registry is re-read for health flips. With
+        /// the payload stable (see the sort below) a tick that changes nothing
+        /// sends nothing, so this only bounds how stale a health flip can look
+        /// — it is not what drives traffic.
+        const TICK: Duration = Duration::from_secs(15);
         const KEEPALIVE: Duration = Duration::from_secs(20);
         /// How often the rolling hour counts are re-aggregated. The tick is
         /// fast so a health flip lands promptly; this figure is not.
@@ -2120,12 +2133,18 @@ pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) 
                     "max_inflight": max_inflight,
                     "configured": true,
                     "dirty": dirty,
-                    "models": live.as_ref().map(|(_, backend)| {
-                        backend.models_snapshot().into_iter().collect::<Vec<_>>()
-                    }).unwrap_or_default(),
-                    "withheld": live.as_ref().map(|(_, backend)| {
-                        backend.withheld_models().into_iter().collect::<Vec<_>>()
-                    }).unwrap_or_default(),
+                    // Sorted, because these come out of a `HashSet` whose
+                    // iteration order is randomized per process and reshuffles
+                    // as probes rebuild it. Unsorted, the same models
+                    // re-serialize differently on every tick: the list visibly
+                    // reorders under the operator's cursor, and — worse — the
+                    // `last` comparison below never matches, so the stream
+                    // pushes an event per backend per tick forever. Sorting is
+                    // what makes the change detection actually detect change.
+                    "models": live.as_ref().map(|(_, backend)| sorted(backend.models_snapshot()))
+                        .unwrap_or_default(),
+                    "withheld": live.as_ref().map(|(_, backend)| sorted(backend.withheld_models()))
+                        .unwrap_or_default(),
                     "usage": usage.get(name).cloned().unwrap_or_else(|| vec![0; 12]),
                     "requests_last_hour": usage.get(name).map(|v| v.iter().sum::<i64>()).unwrap_or(0),
                 });

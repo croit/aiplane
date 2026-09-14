@@ -7,8 +7,7 @@ import {
 	completeAliasLine,
 	poolCoverage,
 	type Backend,
-	type Pool
-} from './upstreams.ts';
+	type Pool, naturalSort } from './upstreams.ts';
 
 const backends: Backend[] = [
 	{
@@ -126,4 +125,23 @@ test('a discovered model completes only the alias line at the cursor', () => {
 		value: 'repo/model-a',
 		cursor: 12
 	});
+});
+
+test('model ids sort the way a person reads a version, not by byte', () => {
+	// Byte order puts `5.10` before `5.2` and `-11b` before `-7b`; both are
+	// wrong to anyone scanning the list for a model.
+	assert.deepEqual(
+		naturalSort(['gpt-5.10', 'gpt-5.2', 'gpt-5.1']),
+		['gpt-5.1', 'gpt-5.2', 'gpt-5.10']
+	);
+	assert.deepEqual(
+		naturalSort(['llama-3.2-11b', 'llama-3.2-7b', 'llama-3.2-1b']),
+		['llama-3.2-1b', 'llama-3.2-7b', 'llama-3.2-11b']
+	);
+	// Case must not split one family into two blocks.
+	assert.deepEqual(naturalSort(['qwen-b', 'Qwen-a']), ['Qwen-a', 'qwen-b']);
+	// The input is never mutated — it comes straight off the live status.
+	const input = ['b', 'a'];
+	naturalSort(input);
+	assert.deepEqual(input, ['b', 'a']);
 });

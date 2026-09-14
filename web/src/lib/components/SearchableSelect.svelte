@@ -113,7 +113,7 @@
 	</button>
 
 	{#if open}
-		<div class="dropdown-content absolute right-0 top-full z-50 mt-1 w-[min(24rem,calc(100vw-2rem))] min-w-full rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+		<div class="dropdown-content absolute right-0 top-full z-50 mt-1 w-[min(42rem,calc(100vw-2rem))] min-w-full rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
 			<label class="input input-sm flex w-full items-center gap-2 focus-within:outline-1 focus-within:outline-info focus-within:outline-offset-1">
 				<svg class="size-4 shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
 				<input bind:this={searchInput} class="min-w-0 flex-1" value={query} oninput={search} onkeydown={onSearchKeydown} placeholder={t('searchable-select-search-placeholder')} aria-label={t('searchable-select-search-aria', { field: ariaLabel })} />
@@ -137,10 +137,10 @@
 								<span class="grid w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 px-3 py-2">
 									<span class="flex h-5 w-4 items-center justify-center">{option.value === value ? '✓' : ''}</span>
 									<span class="min-w-0 flex-1">
-										<span class="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
-											<span class="break-words text-sm leading-5">{option.label}</span>
+										<span class="flex min-w-0 items-center justify-between gap-x-3">
+											<span class="truncate text-sm leading-5" title={option.label}>{option.label}</span>
 											{#if option.badges?.length}
-												<span class="ml-auto flex shrink-0 flex-wrap justify-end gap-1">
+												<span class="ml-auto flex shrink-0 justify-end gap-1">
 													{#each option.badges as badge}
 														{#if badge.tone === 'success'}
 															<span class="badge badge-success badge-xs gap-0.5 font-normal"><span aria-hidden="true">✓</span>{badge.label}</span>

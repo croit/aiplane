@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { adminPost } from '$lib/admin-client';
 	import { t, n } from '$lib/i18n.svelte';
-	import { activityCounts, type Backend, type Pool } from '$lib/upstreams';
+	import { activityCounts, naturalSort, type Backend, type Pool } from '$lib/upstreams';
 	import BackendEditor from './BackendEditor.svelte';
 	import EditModal from '$lib/components/EditModal.svelte';
 
@@ -16,6 +16,10 @@
 	}
 
 	let { backend, currentPool = null, pools, backendNames = [], usage, onChanged }: Props = $props();
+	// The server sorts these by byte so the status payload is stable; display
+	// order is a separate, human question.
+	let models = $derived(naturalSort(backend.live?.models ?? []));
+	let withheld = $derived(naturalSort(backend.live?.withheld ?? []));
 	let showInactive = $state(false);
 	let editing = $state(false);
 	let toggling = $state(false);
@@ -94,9 +98,9 @@
 		{#if toggleError}<div class="alert alert-error py-2 text-sm" role="alert"><span>{toggleError}</span></div>{/if}
 		{#if backend.live?.models.length || backend.live?.withheld.length || backend.aliases.length}
 			<div class="flex flex-wrap items-center gap-1">
-				{#each backend.live?.models ?? [] as model (model)}<span class="badge badge-ghost badge-sm font-mono">{model}</span>{/each}
+				{#each models as model (model)}<span class="badge badge-ghost badge-sm font-mono">{model}</span>{/each}
 				{#if showInactive}
-					{#each backend.live?.withheld ?? [] as model (model)}<span class="badge badge-ghost badge-sm font-mono line-through opacity-50" title={t('upstreams-model-withheld-title')}>{model}</span>{/each}
+					{#each withheld as model (model)}<span class="badge badge-ghost badge-sm font-mono line-through opacity-50" title={t('upstreams-model-withheld-title')}>{model}</span>{/each}
 					<button class="btn btn-ghost btn-xs" type="button" onclick={() => (showInactive = false)}>{t('upstreams-models-inactive-hide')}</button>
 			{:else if backend.live?.withheld.length}
 					<button class="badge badge-ghost badge-sm" type="button" title={t('upstreams-model-withheld-title')} onclick={() => (showInactive = true)}>{t('upstreams-models-inactive-pill', { count: n(backend.live.withheld.length) })}</button>

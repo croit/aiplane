@@ -181,3 +181,22 @@ export function parseVoices(value: string): Voice[] {
 			: [{ lang: line.slice(0, separator).trim(), voice: line.slice(separator + 1).trim() }];
 	});
 }
+
+/**
+ * Natural ("human") order for model ids.
+ *
+ * Plain lexicographic sorting puts `gpt-5.10` before `gpt-5.2` and
+ * `llama-3.2-1b` before `llama-3.2-3b`'s siblings in ways nobody scanning a
+ * list expects. A numeric collator compares digit runs as numbers, which is
+ * how a person reads a version. Case-insensitive too, so `Qwen` and `qwen`
+ * sort together rather than in two blocks.
+ *
+ * The server already sorts these — that is what stops the list reshuffling on
+ * every status tick — but it sorts by byte order, which is the stable choice
+ * for a payload and the wrong one for a human. Display order is decided here.
+ */
+const naturalCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+export function naturalSort(values: readonly string[]): string[] {
+	return [...values].sort((a, b) => naturalCollator.compare(a, b));
+}
