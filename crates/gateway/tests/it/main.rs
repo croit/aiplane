@@ -26,6 +26,7 @@ mod rag_api;
 mod rag_eval;
 mod rag_extract;
 mod rag_gdrive;
+mod rag_hyperkitty;
 mod rag_incremental;
 mod rag_profile;
 mod rag_webdav;

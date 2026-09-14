@@ -328,6 +328,7 @@ async fn indexed_store() -> (db::Pool, gateway_core::server::db::Pool) {
             chunk_size: 400,
             chunk_overlap: 40,
             search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
         },
     )
     .await

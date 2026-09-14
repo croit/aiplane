@@ -130,6 +130,7 @@ mod tests {
                 chunk_size: 800,
                 chunk_overlap: 100,
                 search_mode: rag_db::SearchMode::Versioned,
+                refresh_interval_mins: 0,
             },
         )
         .await

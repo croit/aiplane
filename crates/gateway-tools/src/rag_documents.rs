@@ -721,6 +721,7 @@ mod tests {
                 chunk_size: 100,
                 chunk_overlap: 0,
                 search_mode: rag_db::SearchMode::Versioned,
+                refresh_interval_mins: 0,
             },
         )
         .await

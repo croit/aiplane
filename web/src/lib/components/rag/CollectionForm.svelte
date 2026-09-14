@@ -40,6 +40,10 @@
 		exclude_globs: initialCollection?.exclude_globs.join(', ') ?? '',
 		chunk_size: initialCollection?.chunk_size ?? 800,
 		chunk_overlap: initialCollection?.chunk_overlap ?? 100,
+		// A new collection proposes daily. Nothing rings a doorbell for most
+		// sources, and a corpus nobody remembers to re-index is worse than no
+		// corpus — it answers confidently out of last year's documents.
+		refresh_interval_mins: String(initialCollection?.refresh_interval_mins ?? 1440),
 		aggregate: initialCollection?.search_mode === 'aggregate',
 		allowed_groups: initialCollection?.allowed_groups.join(', ') ?? ''
 	});
@@ -53,6 +57,19 @@
 		...(!form.embedding_model ? [{ value: '', label: t('rag-option-choose-embedding-model'), disabled: true }] : []),
 		...(form.embedding_model && !models.includes(form.embedding_model) ? [{ value: form.embedding_model, label: `${form.embedding_model} ${t('rag-suffix-not-advertised')}` }] : []),
 		...models.map((model: string) => ({ value: model, label: model }))
+	]);
+	// Minutes on the wire, human intervals in the menu. A value stored by
+	// someone scripting the API (say 720) is kept and shown rather than
+	// silently rounded to the nearest preset.
+	const REFRESH_PRESETS = ['0', '60', '1440', '10080'];
+	let refreshOptions = $derived([
+		{ value: '0', label: t('rag-refresh-never') },
+		{ value: '60', label: t('rag-refresh-hourly') },
+		{ value: '1440', label: t('rag-refresh-daily') },
+		{ value: '10080', label: t('rag-refresh-weekly') },
+		...(REFRESH_PRESETS.includes(form.refresh_interval_mins)
+			? []
+			: [{ value: form.refresh_interval_mins, label: t('rag-refresh-custom', { mins: form.refresh_interval_mins }) }])
 	]);
 	let profileOptions = $derived([
 		{ value: '', label: t('rag-option-profile-none') },
@@ -79,6 +96,7 @@
 				exclude_globs: parseList(form.exclude_globs),
 				chunk_size: Number(form.chunk_size),
 				chunk_overlap: Number(form.chunk_overlap),
+				refresh_interval_mins: Number(form.refresh_interval_mins),
 				search_mode: form.aggregate ? 'aggregate' : 'versioned',
 				allowed_groups: parseList(form.allowed_groups)
 			};
@@ -222,6 +240,11 @@
 			<fieldset class="fieldset">
 				<legend class="fieldset-legend">{t('rag-label-chunk-overlap')}</legend>
 				<input class="input w-full" type="number" min="0" bind:value={form.chunk_overlap} />
+			</fieldset>
+			<fieldset class="fieldset md:col-span-2">
+				<legend class="fieldset-legend">{t('rag-label-refresh-interval')}</legend>
+				<SearchableSelect options={refreshOptions} bind:value={form.refresh_interval_mins} ariaLabel={t('rag-label-refresh-interval')} class="w-full" />
+				<p class="label max-w-full whitespace-normal">{t('rag-hint-refresh-interval')}</p>
 			</fieldset>
 			{#if collection}
 				<fieldset class="fieldset md:col-span-2">

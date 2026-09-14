@@ -89,6 +89,13 @@ rag-label-exclude-globs = Exclude globs
 rag-placeholder-exclude-globs = target/, node_modules/
 rag-label-chunk-size = Chunk size
 rag-label-chunk-overlap = Chunk overlap
+rag-label-refresh-interval = Auto re-sync
+rag-hint-refresh-interval = How often to re-index without anyone asking. A source nothing can notify the gateway about — a mailing-list archive, a plain WebDAV share — is only ever as fresh as this.
+rag-refresh-never = Never (manual or sync hook)
+rag-refresh-hourly = Every hour
+rag-refresh-daily = Every day
+rag-refresh-weekly = Every week
+rag-refresh-custom = Every { $mins } minutes
 rag-label-allowed-groups = Allowed groups
 rag-hint-allowed-groups = Comma-separated gateway groups allowed to list + search this collection. Blank = everyone with the RAG tools. Admins always have access.
 rag-create-aggregate-help = Aggregate (multi-source): search across many repos as one corpus. Leave the Git URL empty and add each source repo after creating. Branch / tag becomes the default ref for added sources.

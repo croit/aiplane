@@ -87,6 +87,13 @@ rag-label-exclude-globs = Exclude-шаблоны
 rag-placeholder-exclude-globs = target/, node_modules/
 rag-label-chunk-size = Размер чанка
 rag-label-chunk-overlap = Перекрытие чанков
+rag-label-refresh-interval = Автоматическая пересинхронизация
+rag-hint-refresh-interval = Как часто переиндексировать без запроса. Источник, который не может уведомить шлюз, — архив рассылки, обычная WebDAV-шара — свеж ровно настолько.
+rag-refresh-never = Никогда (вручную или через sync-хук)
+rag-refresh-hourly = Каждый час
+rag-refresh-daily = Каждый день
+rag-refresh-weekly = Каждую неделю
+rag-refresh-custom = Каждые { $mins } мин.
 rag-create-aggregate-help = Агрегат (несколько источников): поиск по многим репозиториям как по единому корпусу. Оставьте URL Git пустым и добавьте каждый исходный репозиторий после создания. Ветка/тег станет ref по умолчанию для добавленных источников.
 rag-button-queue-indexing = Поставить индексацию в очередь
 

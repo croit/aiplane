@@ -39,6 +39,10 @@ aes-gcm = "0.10"
 p256 = { version = "0.13", features = ["ecdh"] }
 hkdf = "0.12"
 sha2 = { workspace = true }
+sha1 = "0.10"
+data-encoding = "2.11"
+mail-parser = "0.11"
+flate2 = "1.1"
 # GeoIP: the LITE DB11 BIN reader, its hot-reload watcher, and the unpacker for
 # the optional weekly updater.
 ip2location = { workspace = true }
@@ -62,6 +66,9 @@ quick-xml = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }
+# The mailing-list cache writes real files; its tests write them somewhere
+# that cleans itself up.
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

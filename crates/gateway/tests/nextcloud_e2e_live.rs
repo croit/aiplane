@@ -33,7 +33,7 @@
 use std::collections::BTreeMap;
 
 use gateway_features::server::rag::source::{
-    DirListing, DirRef, EntryKind, FileProvider, ProviderConfig, ProviderRegistry,
+    DirListing, DirRef, EntryKind, FileProvider, ProviderConfig, ProviderContext, ProviderRegistry,
 };
 
 fn enabled() -> bool {
@@ -67,7 +67,7 @@ fn provider(root: &str) -> std::sync::Arc<dyn FileProvider> {
         .build(
             "webdav",
             &ProviderConfig::new(values, secrets),
-            reqwest::Client::new(),
+            &ProviderContext::new(reqwest::Client::new()),
         )
         .expect("the webdav provider builds from a valid config")
 }
@@ -453,7 +453,7 @@ async fn a_wrong_password_is_reported_as_a_credential_problem() {
         .build(
             "webdav",
             &ProviderConfig::new(values, secrets),
-            reqwest::Client::new(),
+            &ProviderContext::new(reqwest::Client::new()),
         )
         .expect("builds");
 

@@ -531,6 +531,21 @@ impl Indexer {
         self.collection_dir(uuid).join("clone")
     }
 
+    /// Where a provider may keep bytes between syncs:
+    /// `<data_dir>/source-cache/<collection id>/`.
+    ///
+    /// Outside the per-build folders on purpose — those are named by a build
+    /// uuid and deleted on every swap — and keyed by collection id rather
+    /// than by anything the operator can edit, so [`Self::reap_source_caches`]
+    /// can decide what is still live.
+    fn source_cache_dir(&self, collection_id: i64) -> PathBuf {
+        self.inner
+            .config
+            .data_dir
+            .join(SOURCE_CACHE_DIR)
+            .join(collection_id.to_string())
+    }
+
     /// Lookup-or-open the per-collection SQLite store pool (its
     /// `rag.sqlite`), cached by collection id.
     pub async fn collection_store(
@@ -688,9 +703,45 @@ impl Indexer {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().into_owned();
+            // Not a store folder: it belongs to the providers, is keyed by
+            // collection id rather than by build uuid, and outlives every
+            // build on purpose.
+            if name == SOURCE_CACHE_DIR {
+                self.reap_source_caches().await;
+                continue;
+            }
             if !live.contains(&name) {
                 tracing::info!(dir = %name, "rag: reaping orphaned store folder");
                 self.discard_dir(&name);
+            }
+        }
+    }
+
+    /// Drop cached source bytes belonging to collections that no longer
+    /// exist. A cache is regenerable, so this is housekeeping rather than
+    /// correctness — but a 57 MB mailing-list archive per deleted collection
+    /// adds up, and nothing else would ever remove it.
+    async fn reap_source_caches(&self) {
+        let live: std::collections::HashSet<String> =
+            match rag_db::all_collection_ids(&self.inner.db).await {
+                Ok(ids) => ids.into_iter().map(|id| id.to_string()).collect(),
+                Err(err) => {
+                    tracing::warn!(error = %err, "rag: could not list live collections");
+                    return;
+                }
+            };
+        let root = self.inner.config.data_dir.join(SOURCE_CACHE_DIR);
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if live.contains(&name) {
+                continue;
+            }
+            tracing::info!(dir = %name, "rag: reaping source cache of a deleted collection");
+            if let Err(err) = std::fs::remove_dir_all(entry.path()) {
+                tracing::warn!(dir = %name, error = %err, "rag: could not remove source cache");
             }
         }
     }
@@ -1732,10 +1783,17 @@ impl Indexer {
             }
         };
         let cfg = source::ProviderConfig::new(collection.source.config.clone(), secrets);
+        // Every collection gets its own corner of the source cache, named by
+        // its id so the reaper can tell a live one from the leftovers of a
+        // deleted collection. Deliberately *not* under the build folder: that
+        // is swapped and deleted on every successful index, which would throw
+        // the cache away exactly when it starts paying off.
+        let ctx = source::ProviderContext::new(self.inner.http.clone())
+            .with_cache_dir(self.source_cache_dir(collection.id));
         Ok(self
             .inner
             .providers
-            .build(&collection.source.kind, &cfg, self.inner.http.clone())?)
+            .build(&collection.source.kind, &cfg, &ctx)?)
     }
 
     /// Chunk, embed and index `items` into a fresh store, then swap the ref
@@ -2130,7 +2188,18 @@ pub fn spawn(indexer: Indexer) {
     });
 }
 
+/// Name of the shared source-cache folder under `data_dir`. Not a store
+/// folder, so the orphan reaper must skip it by name.
+const SOURCE_CACHE_DIR: &str = "source-cache";
+
 async fn drain_once(indexer: &Indexer) -> Result<(), WorkerError> {
+    // Collections with a refresh interval join the queue first, so a due one
+    // is indexed in this pass rather than the next.
+    match rag_db::queue_due_refs(&indexer.inner.db).await {
+        Ok(n) if n > 0 => tracing::info!(refs = n, "rag: queued refs due for a scheduled re-sync"),
+        Ok(_) => {}
+        Err(err) => tracing::warn!(error = %err, "rag: scheduled re-sync check failed"),
+    }
     let pending = rag_db::list_pending_refs(&indexer.inner.db).await?;
     // Group refs by collection. Refs of the *same* collection must run serially
     // (the per-collection invariant — and an aggregate collection has a single
@@ -2416,6 +2485,38 @@ mod tests {
         assert_eq!(c.dimensions(), 4);
     }
 
+    /// The source cache outlives every build on purpose, so nothing else would
+    /// ever remove the copy belonging to a deleted collection — a 57 MB
+    /// mailing-list archive per corpse.
+    #[tokio::test]
+    async fn startup_reaps_the_source_cache_of_a_deleted_collection() {
+        let (indexer, db, collection, _r, dir) =
+            indexer_with_ref("https://example.invalid/repo.git", "main", Vec::new()).await;
+
+        let live = dir
+            .path()
+            .join("source-cache")
+            .join(collection.id.to_string());
+        let dead = dir.path().join("source-cache").join("424242");
+        for d in [&live, &dead] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("000000-full.mbox.gz"), b"gz").unwrap();
+        }
+
+        indexer.recover_on_startup().await;
+
+        assert!(
+            live.join("000000-full.mbox.gz").exists(),
+            "a live collection keeps what it downloaded"
+        );
+        assert!(!dead.exists(), "and a deleted one does not");
+        // Guard the guard: the reaper walks `data_dir`, and the cache folder
+        // is not a store folder. Deleting it wholesale would quietly turn
+        // every incremental sync back into a full download.
+        assert!(dir.path().join("source-cache").exists());
+        drop(db);
+    }
+
     // --- friendly_error mapping + end-to-end failure surfacing ---------------
 
     /// Build a `Collection` + primary `CollectionRef` in a fresh in-memory DB
@@ -2453,6 +2554,7 @@ mod tests {
             chunk_size: 800,
             chunk_overlap: 100,
             search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
         };
         new.search_mode = rag_db::SearchMode::Versioned;
         let collection = rag_db::create_collection(&db, &new).await.unwrap();
@@ -2571,6 +2673,7 @@ mod tests {
             chunk_size: 800,
             chunk_overlap: 100,
             search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
             status: rag_db::CollectionStatus::Pending,
             allowed_groups: Vec::new(),
             last_indexed_at: None,
@@ -2712,6 +2815,7 @@ mod tests {
                 chunk_size: 800,
                 chunk_overlap: 100,
                 search_mode: rag_db::SearchMode::Versioned,
+                refresh_interval_mins: 0,
             };
             let c = rag_db::create_collection(&db, &new).await.unwrap();
             let r = rag_db::add_ref(&db, c.id, "main", None, true)

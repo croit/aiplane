@@ -619,6 +619,7 @@ async fn rag_collection_gating_matches_resolver() {
         chunk_size: 100,
         chunk_overlap: 10,
         search_mode: db::rag::SearchMode::Versioned,
+        refresh_interval_mins: 0,
     };
     let open = db::rag::create_collection(&pool, &mk("open"))
         .await

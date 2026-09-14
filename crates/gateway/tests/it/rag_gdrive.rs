@@ -91,6 +91,7 @@ async fn drive_collection(state: &gateway::rama_server::RamaState) -> i64 {
             chunk_size: 800,
             chunk_overlap: 100,
             search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
         },
     )
     .await
@@ -343,7 +344,9 @@ async fn a_drive_collection_saves_before_it_is_connected() {
                         .into_iter()
                         .collect(),
                 ),
-                reqwest::Client::new(),
+                &gateway_features::server::rag::source::ProviderContext::new(
+                    reqwest::Client::new(),
+                ),
             )
             .is_err(),
         "...and it is still not usable until consent has happened"
@@ -434,6 +437,7 @@ async fn patching_an_unrelated_field_keeps_the_stored_refresh_token() {
             chunk_size: 800,
             chunk_overlap: 100,
             search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
         },
     )
     .await

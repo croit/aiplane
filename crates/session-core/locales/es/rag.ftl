@@ -87,6 +87,13 @@ rag-label-exclude-globs = Patrones de exclusión
 rag-placeholder-exclude-globs = target/, node_modules/
 rag-label-chunk-size = Tamaño del fragmento
 rag-label-chunk-overlap = Solapamiento del fragmento
+rag-label-refresh-interval = Resincronización automática
+rag-hint-refresh-interval = Con qué frecuencia se reindexa sin que nadie lo pida. Una fuente que no puede avisar al gateway —un archivo de lista de correo, un recurso WebDAV sencillo— solo está tan actualizada como esto.
+rag-refresh-never = Nunca (manual o webhook de sincronización)
+rag-refresh-hourly = Cada hora
+rag-refresh-daily = Cada día
+rag-refresh-weekly = Cada semana
+rag-refresh-custom = Cada { $mins } minutos
 rag-create-aggregate-help = Agregado (multi-fuente): busca en muchos repositorios como un único corpus. Deje la URL de Git vacía y añada cada repositorio de origen después de crear la colección. La rama / etiqueta se convierte en la referencia predeterminada de las fuentes añadidas.
 rag-button-queue-indexing = Programar indexación
 

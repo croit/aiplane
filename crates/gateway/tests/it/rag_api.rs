@@ -541,6 +541,84 @@ async fn create_validates_inputs() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// The scheduled re-sync is the only way a pull-only source (a mailing-list
+/// archive; a plain WebDAV share) ever gets newer, so its contract is pinned:
+/// off unless asked for, a real schedule when asked, and a refusal — not a
+/// clamp — for an interval that would re-index continuously.
+#[tokio::test]
+async fn a_refresh_interval_round_trips_and_refuses_a_runaway_schedule() {
+    let state = common::state_with_admin_rbac("http://unused.invalid").await;
+    let cookie = seed_admin(&state, "alice").await;
+    let app = common::app(state);
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/collections",
+            &cookie,
+            Some(create_body()),
+        ))
+        .await
+        .unwrap();
+    let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    let id = created["id"].as_i64().unwrap();
+    assert_eq!(
+        created["refresh_interval_mins"], 0,
+        "a caller that says nothing keeps the behaviour it had before the field existed"
+    );
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::PATCH,
+            &format!("/api/v0/rag/collections/{id}"),
+            &cookie,
+            Some(r#"{"refresh_interval_mins": 1440}"#),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let patched: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(patched["refresh_interval_mins"], 1440);
+
+    for bad in ["1", "-5", "600000"] {
+        let resp = app
+            .serve(req_with_cookie(
+                Method::PATCH,
+                &format!("/api/v0/rag/collections/{id}"),
+                &cookie,
+                Some(&format!(r#"{{"refresh_interval_mins": {bad}}}"#)),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "`{bad}` minutes should be refused, not stored or clamped"
+        );
+    }
+
+    // And it survives the round trip on create, too.
+    let body = r#"{
+        "name": "mail", "embedding_model": "m",
+        "source_kind": "hyperkitty",
+        "source_config": { "list_url": "https://lists.example.com/hyperkitty/list/users@example.com/" },
+        "refresh_interval_mins": 1440
+    }"#;
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/collections",
+            &cookie,
+            Some(body),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(created["refresh_interval_mins"], 1440);
+    assert_eq!(created["source_kind"], "hyperkitty");
+}
+
 #[tokio::test]
 async fn update_with_empty_body_returns_current_state() {
     let state = common::state_with_admin_rbac("http://unused.invalid").await;

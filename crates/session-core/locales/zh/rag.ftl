@@ -87,6 +87,13 @@ rag-label-exclude-globs = 排除通配符
 rag-placeholder-exclude-globs = target/, node_modules/
 rag-label-chunk-size = 分块大小
 rag-label-chunk-overlap = 分块重叠
+rag-label-refresh-interval = 自动重新同步
+rag-hint-refresh-interval = 在无人操作时重新建立索引的频率。无法主动通知网关的来源（邮件列表归档、普通 WebDAV 共享）的新鲜程度完全取决于此设置。
+rag-refresh-never = 从不（手动或同步钩子）
+rag-refresh-hourly = 每小时
+rag-refresh-daily = 每天
+rag-refresh-weekly = 每周
+rag-refresh-custom = 每 { $mins } 分钟
 rag-create-aggregate-help = 聚合（多源）：将多个仓库作为一个整体语料库进行搜索。将 Git URL 留空，创建后再添加各个源仓库。分支 / 标签将成为新增源的默认 ref。
 rag-button-queue-indexing = 排队索引
 

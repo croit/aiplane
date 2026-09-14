@@ -259,6 +259,7 @@ async fn seed(
             chunk_size: 200,
             chunk_overlap: 20,
             search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
         },
     )
     .await

@@ -111,6 +111,13 @@ pub trait FileProvider: Send + Sync + 'static {
 }
 ```
 
+`build` takes a `ProviderContext` — the HTTP client, and optionally a
+directory the provider may keep bytes in between syncs. A struct rather than a
+growing argument list, because every provider implements `build` and four
+call sites use it; `cache_dir` is `None` wherever there is no host storage to
+offer (the admin form's dry-run build, "Test connection"), so a provider must
+work without one.
+
 **Adding a provider is one module plus one line** in
 `ProviderRegistry::with_builtins`. Nothing else changes — not the worker, the
 chunker, the store, the tools, or the admin page. Four decisions make that
@@ -248,6 +255,91 @@ seam exists, but the worker has no delta consumer, so a re-sync re-walks. The
 walk is metadata-only and `sync::plan` still skips fetch, extract and embed
 for every file whose `version` is unchanged — a re-sync costs listings, not
 documents.
+
+### The HyperKitty provider
+
+Mailing lists are the third provider, and they break the one assumption the
+first two share: that the remote has files. HyperKitty (Mailman 3's web
+archiver) publishes a list as a single gzipped mbox. There is no tree, no
+per-file id, and nothing to walk — so the provider manufactures the documents
+itself, and that is the interesting part.
+
+**A thread is the document.** The answer to a debugging question is almost
+never in the question; it is three replies down, in someone saying "that is the
+`bluestore_allocator` bug, set X". Indexing messages individually retrieves the
+question and leaves the fix behind. Measured on one month of `ceph-users`: the
+median *message* is 568 characters — too thin to embed usefully — while the
+median *thread* is 1,912, and 78% of threads fit in a single 4,000-character
+chunk. So `source/mail.rs` reconstructs conversations and renders each as one
+markdown document, messages delimited inside it.
+
+**Quoting is stripped, attribution is not.** 71% of all body lines in the
+sample were quoted reply-chain text, and removing quotes, signatures and the
+list footer removed 76% of the bytes. Left in, that text does not merely waste
+embedding compute — it breaks retrieval outright: the original question is
+repeated verbatim in every reply, so BM25 ranks whatever was quoted most rather
+than whatever is most relevant, and dense search returns a page of
+near-identical neighbours. Names, dates and permalinks stay: the archive is
+public, and knowing who answered in which year is part of judging the answer.
+
+**Threading is not `References`.** The textbook reconstruction walks the
+`References` header. HyperKitty's export does not emit it — 0 of 182 messages
+in the sample carried one, while 78% carried `In-Reply-To`. So threading walks
+`In-Reply-To` and falls back to the normalised subject, which recovers the
+remaining fifth.
+
+**The corpus is always whole; the download is not.** HyperKitty exports both
+the complete archive and date windows of it (`?start=…&end=…`, start inclusive
+and end exclusive — verified against a live server). Indexing only the window
+is wrong twice over: enumeration must return the *complete* document set every
+time or the indexer reads the absences as deletions, and threads cross window
+boundaries, which would split a question from its answer.
+
+Both objections are about the corpus, so the fix is to keep the corpus whole
+and shrink the *download*. That is what `ProviderContext::cache_dir` is for —
+it was added for this provider, and it is the one piece of host state a
+provider gets. The archive lives in `<data_dir>/source-cache/<collection id>/`
+as a series of `.mbox.gz` segments: the full export, then one per sync. Gzip
+members concatenate, so the segments decode as a single stream with no merge
+step, and the deliberate few-days overlap between windows is harmless because
+`mail.rs` de-duplicates on `Message-ID`.
+
+Why it matters: the full export is 57 MB the server generates on demand, with
+no `ETag` and no `Last-Modified` — there is no conditional GET to fall back
+on. Pulling that daily, per list, forever is load someone else pays for and a
+good way to get blocked. A day's window is a few kilobytes.
+
+The cache is refilled from the full export every 30 days (or after 64
+segments). That is not tidiness: windows only ever *add* mail, so a message an
+administrator deleted from the archive would otherwise survive in our copy
+indefinitely. It also bounds the segment count, which is why there is no
+compaction step. Anything unreadable, stale, belonging to another list, or
+written by a future cache version is thrown away and re-downloaded — a cache
+failure must never be a sync failure. The cache of a deleted collection is
+reaped at startup; it lives outside the per-build folders precisely because
+those are swapped and deleted on every index, which would discard it exactly
+when it starts paying off.
+
+An operator who would rather not keep the archive on disk unticks **Keep a
+local copy** (`cache_archive`) and every sync downloads the whole export, as it
+did before this existed. The indexed corpus is identical either way.
+
+What makes even a full re-read cheap is `Thread::version()` — a hash over the
+message ids and cleaned bodies — so `sync::plan` re-embeds only the threads a
+new reply actually touched. Twelve years of `ceph-users` becomes 7,469
+documents in 4.6 s of a debug build.
+
+Capabilities: `stable_ids` yes (a `Message-ID` is assigned once and never
+changes), `subtree_pruning` and `delta` no — there are no directories to prune
+and no change feed, and neither would buy anything that per-thread versioning
+does not already.
+
+Identity is the thread's root `Message-ID`; the path is cosmetic
+(`2026/09/osd-flapping-after-upgrade-<hash>.md`), dated so a glob can scope an
+index to recent years and hashed so two threads with the same subject in the
+same month cannot collide. `web_url` derives HyperKitty's permalink rather than
+looking it up: the site keys a message by `base32(sha1(message-id))`, so a
+citation costs no network call.
 
 ## The extraction ladder
 
@@ -426,9 +518,25 @@ Three ways a collection gets re-synced, cheapest first:
 
 | Trigger | When |
 | --- | --- |
-| the indexer's poll | every `[rag]` poll interval |
+| the indexer's poll | every `[rag]` poll interval, for refs already queued |
+| **the refresh interval** | when the collection's last index is older than `refresh_interval_mins` |
 | **the sync hook** | whenever the file host says something changed |
 | **Re-index** on `/rag` | an operator decides |
+
+The refresh interval exists because the doorbell does not ring for every kind
+of source. A file host with a webhook app tells the gateway when to look; a
+mailing-list archive tells nobody anything, and before this a "daily" index
+meant an external cron line hitting the sync hook. `0` is never — every
+collection that predates the column has it, so nothing started re-indexing on
+its own — and anything positive is checked by the poll loop
+(`rag_db::queue_due_refs`) against `COALESCE(last_indexed_at, updated_at)`.
+Falling back to `updated_at` is what stops a ref that has *never* finished an
+index from retrying every thirty seconds forever. Refs mid-flight are skipped:
+a schedule must never restart a build that is already running.
+
+Intervals under five minutes are refused rather than clamped, on both write
+surfaces, from one predicate: a typo there would keep every collection on the
+box re-walking (and for git, re-cloning) continuously.
 
 `POST /hooks/rag/{token}` re-queues one collection's refs. Point Nextcloud's
 `webhook_listeners` app (or ownCloud's, or a cron line, or any script) at it.

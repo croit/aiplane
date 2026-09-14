@@ -223,6 +223,7 @@ async fn seed(pool_db: &db::Pool, source: rag_db::SourceSpec) -> rag_db::Collect
             chunk_size: 400,
             chunk_overlap: 40,
             search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
         },
     )
     .await

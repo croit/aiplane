@@ -169,6 +169,12 @@ pub struct Collection {
     pub chunk_overlap: i64,
     /// How `rag_search` resolves a ref-less query. See [`SearchMode`].
     pub search_mode: SearchMode,
+    /// Re-sync this collection when its last index is older than this many
+    /// minutes. `0` = never, which is what every row created before
+    /// `migrations/0066_rag_refresh_interval.sql` has: the operator or the
+    /// sync hook decides. Set it for a source nothing can ring a doorbell
+    /// for — a mailing-list archive is polled or it is stale.
+    pub refresh_interval_mins: i64,
     pub status: CollectionStatus,
     /// Gateway-group names allowed to list + search this collection. Empty =
     /// unrestricted (every user with the RAG tools). Managed on the `/rag` edit
@@ -201,6 +207,9 @@ pub struct NewCollection {
     pub chunk_size: i64,
     pub chunk_overlap: i64,
     pub search_mode: SearchMode,
+    /// Minutes between automatic re-syncs; `0` = never. See
+    /// [`Collection::refresh_interval_mins`].
+    pub refresh_interval_mins: i64,
 }
 
 fn parse_ts(s: &str, column: &'static str) -> Result<Timestamp, DbError> {
@@ -280,6 +289,7 @@ fn map_collection_row(row: &SqliteRow) -> Result<Collection, DbError> {
         chunk_size: row.try_get("chunk_size")?,
         chunk_overlap: row.try_get("chunk_overlap")?,
         search_mode: SearchMode::from_db(&search_mode_s),
+        refresh_interval_mins: row.try_get("refresh_interval_mins")?,
         status: CollectionStatus::from_db(&status_s),
         allowed_groups: {
             let json: String = row.try_get("allowed_groups")?;
@@ -299,7 +309,7 @@ fn map_collection_row(row: &SqliteRow) -> Result<Collection, DbError> {
 const COLLECTION_COLUMNS: &str = "id, data_uuid, name, description, git_url, git_ref, pat, \
      source_kind, source_config_json, source_secrets_ct, source_secrets_nonce, \
      profile_id, extraction_model, sync_token_hash, embedding_model, include_globs_json, exclude_globs_json, chunk_size, chunk_overlap, \
-     search_mode, status, allowed_groups, last_indexed_at, last_indexed_commit, last_error, \
+     search_mode, refresh_interval_mins, status, allowed_groups, last_indexed_at, last_indexed_commit, last_error, \
      connected_account, connected_by, connected_at, \
      created_at, updated_at";
 
@@ -328,8 +338,8 @@ pub async fn create_collection(pool: &Pool, new: &NewCollection) -> Result<Colle
             source_kind, source_config_json, source_secrets_ct, source_secrets_nonce,
             profile_id, extraction_model, embedding_model,
             include_globs_json, exclude_globs_json, chunk_size, chunk_overlap,
-            search_mode, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            search_mode, refresh_interval_mins, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
            RETURNING id"#,
     )
     .bind(&data_uuid)
@@ -350,6 +360,7 @@ pub async fn create_collection(pool: &Pool, new: &NewCollection) -> Result<Colle
     .bind(new.chunk_size)
     .bind(new.chunk_overlap)
     .bind(new.search_mode.as_str())
+    .bind(new.refresh_interval_mins.max(0))
     .bind(&now_s)
     .bind(&now_s)
     .fetch_one(pool)
@@ -363,6 +374,14 @@ pub async fn list_collections(pool: &Pool) -> Result<Vec<Collection>, DbError> {
     let q = format!("SELECT {COLLECTION_COLUMNS} FROM rag_collections ORDER BY created_at DESC");
     let rows = sqlx::query(&q).fetch_all(pool).await?;
     rows.iter().map(map_collection_row).collect()
+}
+
+/// Every live collection id. Used by the indexer to tell a source cache it
+/// should keep from one belonging to a collection that is gone.
+pub async fn all_collection_ids(pool: &Pool) -> Result<Vec<i64>, DbError> {
+    Ok(sqlx::query_scalar("SELECT id FROM rag_collections")
+        .fetch_all(pool)
+        .await?)
 }
 
 pub async fn find_collection_by_id(pool: &Pool, id: i64) -> Result<Option<Collection>, DbError> {
@@ -1144,6 +1163,71 @@ pub async fn request_ref_reindex(pool: &Pool, ref_id: i64) -> Result<(), DbError
     Ok(())
 }
 
+/// Queue every ref whose collection is due for a scheduled re-sync.
+///
+/// Returns how many were queued. Run by the indexer's poll loop just before
+/// it drains the queue, so a due ref is picked up in the same pass.
+///
+/// The clock is `COALESCE(last_indexed_at, updated_at)`, not `last_indexed_at`
+/// alone: a ref that has never finished an index has no `last_indexed_at`, and
+/// keying on that would re-queue it on every poll — a 30-second retry loop
+/// against a source that is, by the evidence, broken. Falling back to
+/// `updated_at` makes a failing collection retry on its own interval, which is
+/// what the operator asked for when they set one.
+///
+/// Refs mid-flight (`pending`, `cloning`, `indexing`) are left alone: a
+/// scheduled sync must never restart a build that is already running.
+pub async fn queue_due_refs(pool: &Pool) -> Result<u64, DbError> {
+    let now = Timestamp::now();
+    // The comparison is in Rust, not SQL: these timestamps are RFC 3339
+    // strings written by jiff, and handing SQLite's own date functions a
+    // format they parse *almost* right is how a scheduler silently stops
+    // firing.
+    let rows = sqlx::query(
+        "SELECT r.id AS id, c.refresh_interval_mins AS mins, \
+                COALESCE(r.last_indexed_at, r.updated_at) AS since \
+         FROM rag_collection_refs r \
+         JOIN rag_collections c ON c.id = r.collection_id \
+         WHERE c.refresh_interval_mins > 0 AND r.status IN ('ready', 'error')",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut due: Vec<i64> = Vec::new();
+    for row in &rows {
+        let id: i64 = row.try_get("id")?;
+        let mins: i64 = row.try_get("mins")?;
+        let since: String = row.try_get("since")?;
+        let since = parse_ts(&since, "last_indexed_at")?;
+        let elapsed = now.as_second().saturating_sub(since.as_second());
+        if elapsed >= mins.saturating_mul(60) {
+            due.push(id);
+        }
+    }
+    if due.is_empty() {
+        return Ok(0);
+    }
+
+    let now_s = now.to_string();
+    let mut queued = 0u64;
+    for id in due {
+        // One statement per ref, each re-checking the status it was selected
+        // on: between the SELECT and here a webhook or an operator may have
+        // queued the same ref, and re-queueing a running build would discard
+        // its work.
+        queued += sqlx::query(
+            "UPDATE rag_collection_refs SET status = 'pending', updated_at = ? \
+             WHERE id = ? AND status IN ('ready', 'error')",
+        )
+        .bind(&now_s)
+        .bind(id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    }
+    Ok(queued)
+}
+
 /// Refs the indexer should pick up, oldest-queued first.
 pub async fn list_pending_refs(pool: &Pool) -> Result<Vec<CollectionRef>, DbError> {
     let q = format!(
@@ -1903,6 +1987,7 @@ mod tests {
             chunk_size: 800,
             chunk_overlap: 100,
             search_mode: SearchMode::Versioned,
+            refresh_interval_mins: 0,
         }
     }
 
@@ -1959,6 +2044,104 @@ mod tests {
         assert_eq!(after_ok.last_indexed_commit.as_deref(), Some("abc123"));
         assert!(after_ok.last_indexed_at.is_some());
         assert!(after_ok.last_error.is_none());
+    }
+
+    /// Put a ref's clock back, as if its last index were `mins` ago.
+    async fn age_ref(pool: &Pool, ref_id: i64, mins: i64) {
+        let then = (Timestamp::now() - jiff::Span::new().minutes(mins)).to_string();
+        sqlx::query(
+            "UPDATE rag_collection_refs SET last_indexed_at = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(&then)
+        .bind(&then)
+        .bind(ref_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_scheduled_resync_fires_only_once_its_interval_has_passed() {
+        let pool = fresh().await;
+        let mut new = sample_new();
+        new.refresh_interval_mins = 60;
+        let c = create_collection(&pool, &new).await.unwrap();
+        let r = add_ref(&pool, c.id, "main", None, true).await.unwrap();
+        set_ref_status(&pool, r.id, CollectionStatus::Ready)
+            .await
+            .unwrap();
+
+        age_ref(&pool, r.id, 59).await;
+        assert_eq!(
+            queue_due_refs(&pool).await.unwrap(),
+            0,
+            "a minute short of the interval is not due"
+        );
+
+        age_ref(&pool, r.id, 61).await;
+        assert_eq!(queue_due_refs(&pool).await.unwrap(), 1);
+        let after = find_ref_by_id(&pool, r.id).await.unwrap().unwrap();
+        assert_eq!(after.status, CollectionStatus::Pending);
+
+        // And a second pass before the build runs must not re-queue it: the
+        // ref is no longer `ready`, and re-queueing a running build discards
+        // its work.
+        assert_eq!(queue_due_refs(&pool).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_collection_with_no_interval_is_never_queued() {
+        let pool = fresh().await;
+        // sample_new() leaves the interval at 0, which is what every row
+        // created before the column existed has.
+        let c = create_collection(&pool, &sample_new()).await.unwrap();
+        assert_eq!(c.refresh_interval_mins, 0);
+        let r = add_ref(&pool, c.id, "main", None, true).await.unwrap();
+        set_ref_status(&pool, r.id, CollectionStatus::Ready)
+            .await
+            .unwrap();
+        age_ref(&pool, r.id, 60 * 24 * 365).await;
+        assert_eq!(queue_due_refs(&pool).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_ref_that_has_never_indexed_retries_on_its_interval_not_every_poll() {
+        let pool = fresh().await;
+        let mut new = sample_new();
+        new.refresh_interval_mins = 60;
+        let c = create_collection(&pool, &new).await.unwrap();
+        let r = add_ref(&pool, c.id, "main", None, true).await.unwrap();
+        set_ref_status(&pool, r.id, CollectionStatus::Indexing)
+            .await
+            .unwrap();
+        assert_eq!(
+            mark_ref_failed(&pool, r.id, "the source was unreachable")
+                .await
+                .unwrap(),
+            1
+        );
+        let failed = find_ref_by_id(&pool, r.id).await.unwrap().unwrap();
+        assert!(
+            failed.last_indexed_at.is_none(),
+            "the premise: nothing ever finished"
+        );
+
+        assert_eq!(
+            queue_due_refs(&pool).await.unwrap(),
+            0,
+            "a failure a moment ago is not retried on the next 30-second poll"
+        );
+        age_ref(&pool, r.id, 61).await;
+        sqlx::query("UPDATE rag_collection_refs SET last_indexed_at = NULL WHERE id = ?")
+            .bind(r.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            queue_due_refs(&pool).await.unwrap(),
+            1,
+            "an interval later it tries again, from updated_at"
+        );
     }
 
     /// A standalone per-collection content store (files/chunks/FTS live

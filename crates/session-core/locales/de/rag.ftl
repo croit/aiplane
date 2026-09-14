@@ -87,6 +87,13 @@ rag-label-exclude-globs = Exclude-Globs
 rag-placeholder-exclude-globs = target/, node_modules/
 rag-label-chunk-size = Chunk-Größe
 rag-label-chunk-overlap = Chunk-Überlappung
+rag-label-refresh-interval = Automatische Aktualisierung
+rag-hint-refresh-interval = Wie oft neu indexiert wird, ohne dass jemand danach fragt. Eine Quelle, die das Gateway nicht benachrichtigen kann – ein Mailinglisten-Archiv, eine einfache WebDAV-Freigabe – ist nur so aktuell wie diese Einstellung.
+rag-refresh-never = Nie (manuell oder per Sync-Hook)
+rag-refresh-hourly = Stündlich
+rag-refresh-daily = Täglich
+rag-refresh-weekly = Wöchentlich
+rag-refresh-custom = Alle { $mins } Minuten
 rag-label-allowed-groups = Erlaubte Gruppen
 rag-hint-allowed-groups = Kommagetrennte Gateway-Gruppen, die diese Collection auflisten + durchsuchen dürfen. Leer = alle mit den RAG-Tools. Admins haben immer Zugriff.
 rag-create-aggregate-help = Aggregat (Multi-Quelle): durchsucht viele Repos als einen Korpus. Lassen Sie die Git-URL leer und fügen Sie nach dem Erstellen jedes Quell-Repo hinzu. Branch / Tag wird zum Standard-Ref für hinzugefügte Quellen.

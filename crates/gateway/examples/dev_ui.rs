@@ -1184,6 +1184,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
                 chunk_size: 800,
                 chunk_overlap: 100,
                 search_mode: rag::SearchMode::Versioned,
+                refresh_interval_mins: 0,
             },
         )
         .await?;

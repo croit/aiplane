@@ -55,6 +55,8 @@ struct CollectionView {
     chunk_size: i64,
     chunk_overlap: i64,
     search_mode: String,
+    /// Minutes between automatic re-syncs; `0` = only on demand.
+    refresh_interval_mins: i64,
     allowed_groups: Vec<String>,
     status: String,
     last_indexed_at: Option<String>,
@@ -88,6 +90,7 @@ impl From<rag_db::Collection> for CollectionView {
             chunk_size: c.chunk_size,
             chunk_overlap: c.chunk_overlap,
             search_mode: c.search_mode.as_str().to_string(),
+            refresh_interval_mins: c.refresh_interval_mins,
             allowed_groups: c.allowed_groups,
             status: c.status.as_str().to_string(),
             last_indexed_at: c.last_indexed_at.map(|t| t.to_string()),
@@ -138,6 +141,11 @@ struct CreateRequest {
     chunk_overlap: i64,
     #[serde(default = "default_search_mode")]
     search_mode: String,
+    /// Minutes between automatic re-syncs; `0` (the default) leaves the
+    /// collection on manual re-index and the sync hook, which is what every
+    /// caller written before this field expects.
+    #[serde(default)]
+    refresh_interval_mins: i64,
 }
 
 fn default_ref() -> String {
@@ -191,6 +199,8 @@ struct UpdateRequest {
     extraction_model: Option<Option<String>>,
     #[serde(default)]
     search_mode: Option<String>,
+    #[serde(default)]
+    refresh_interval_mins: Option<i64>,
     #[serde(default)]
     allowed_groups: Option<Vec<String>>,
 }
@@ -281,6 +291,9 @@ pub async fn create_collection(State(state): State<Arc<RamaState>>, req: Request
     if let Some(msg) = chunk_pair_error(body.chunk_size, body.chunk_overlap) {
         return invalid_request(msg);
     }
+    if let Some(msg) = refresh_interval_error(body.refresh_interval_mins) {
+        return invalid_request(msg);
+    }
     let new = rag_db::NewCollection {
         name: body.name.trim().to_string(),
         description: body.description.map(|s| s.trim().to_string()),
@@ -302,6 +315,7 @@ pub async fn create_collection(State(state): State<Arc<RamaState>>, req: Request
             "aggregate" => rag_db::SearchMode::Aggregate,
             _ => return invalid_request("`search_mode` must be `versioned` or `aggregate`"),
         },
+        refresh_interval_mins: body.refresh_interval_mins,
     };
     match rag_db::create_collection(&state.db, &new).await {
         Ok(c) => (
@@ -356,6 +370,20 @@ fn chunk_pair_error(size: i64, overlap: i64) -> Option<&'static str> {
     None
 }
 
+/// One rule for both write surfaces.
+///
+/// `0` is "never"; anything positive is a schedule, and a schedule shorter
+/// than five minutes is a typo with consequences — the poll loop would then
+/// re-walk (and for a git source, re-clone) every collection continuously.
+/// Refused rather than clamped, so the stored value is the one that was asked
+/// for.
+fn refresh_interval_error(mins: i64) -> Option<&'static str> {
+    if mins == 0 || (5..=525_600).contains(&mins) {
+        return None;
+    }
+    Some("`refresh_interval_mins` must be 0 (never) or between 5 and 525600")
+}
+
 fn build_source(
     state: &RamaState,
     kind: &str,
@@ -404,7 +432,10 @@ fn build_source(
     // without it, creating a Drive collection over the API is impossible.
     if !gateway_features::server::rag::source::awaiting_consent(factory.as_ref(), &secrets) {
         factory
-            .build(&cfg, state.http.clone())
+            .build(
+                &cfg,
+                &gateway_features::server::rag::source::ProviderContext::new(state.http.clone()),
+            )
             .map_err(|e| e.to_string())?;
     }
 
@@ -855,10 +886,12 @@ pub async fn test_source(State(state): State<Arc<RamaState>>, req: Request) -> R
     };
     let registry = source_registry(&state);
     let secrets = spec.open_secrets(&state.crypto);
+    // No cache directory: "Test connection" must not leave bytes behind for a
+    // collection that may never be saved.
     let provider = match registry.build(
         &spec.kind,
         &ProviderConfig::new(spec.config, secrets),
-        state.http.clone(),
+        &gateway_features::server::rag::source::ProviderContext::new(state.http.clone()),
     ) {
         Ok(p) => p,
         Err(err) => return invalid_request(&err.to_string()),
@@ -1156,6 +1189,13 @@ pub async fn update_collection(
     if let Some(co) = body.chunk_overlap {
         sets.push("chunk_overlap = ?");
         bindings.push(UpdateBinding::Int(co));
+    }
+    if let Some(mins) = body.refresh_interval_mins {
+        if let Some(msg) = refresh_interval_error(mins) {
+            return invalid_request(msg);
+        }
+        sets.push("refresh_interval_mins = ?");
+        bindings.push(UpdateBinding::Int(mins));
     }
     if sets.is_empty() && allowed_groups.is_none() {
         // Nothing to do — still surface the current row so the caller

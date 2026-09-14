@@ -217,6 +217,7 @@ async fn indexer_clones_chunks_embeds_then_search_returns_right_chunk() {
             chunk_size: 80,
             chunk_overlap: 10,
             search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
         },
     )
     .await
@@ -322,6 +323,7 @@ async fn reindex_after_edit_drops_old_chunks_and_picks_up_new_content() {
             chunk_size: 80,
             chunk_overlap: 10,
             search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
         },
     )
     .await
@@ -472,6 +474,7 @@ async fn aggregate_folds_every_source_when_clones_run_in_parallel() {
             chunk_size: 80,
             chunk_overlap: 10,
             search_mode: rag_db::SearchMode::Aggregate,
+            refresh_interval_mins: 0,
         },
     )
     .await

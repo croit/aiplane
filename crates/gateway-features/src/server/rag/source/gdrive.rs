@@ -41,8 +41,8 @@ use serde::Deserialize;
 
 use super::{
     AuthKind, ConfigField, DirListing, DirRef, EntryKind, FieldKind, FileProvider, ProbeReport,
-    ProviderCapabilities, ProviderConfig, ProviderError, ProviderFactory, REFRESH_TOKEN_KEY,
-    RemoteEntry,
+    ProviderCapabilities, ProviderConfig, ProviderContext, ProviderError, ProviderFactory,
+    REFRESH_TOKEN_KEY, RemoteEntry,
 };
 
 pub const KIND: &str = "gdrive";
@@ -128,7 +128,7 @@ impl ProviderFactory for GoogleDriveFactory {
     fn build(
         &self,
         cfg: &ProviderConfig,
-        http: reqwest::Client,
+        ctx: &ProviderContext,
     ) -> Result<Arc<dyn FileProvider>, ProviderError> {
         let cfg = cfg.with_defaults(FIELDS);
         Ok(Arc::new(GoogleDriveProvider {
@@ -150,7 +150,7 @@ impl ProviderFactory for GoogleDriveFactory {
                 })?
                 .to_string(),
             root_folder_id: cfg.get("root_folder_id").unwrap_or("root").to_string(),
-            http,
+            http: ctx.http.clone(),
             access: tokio::sync::Mutex::new(None),
         }) as Arc<dyn FileProvider>)
     }
@@ -891,7 +891,9 @@ mod tests {
             .validate(&cfg)
             .expect("the operator can save a client before connecting it");
 
-        let Err(err) = GoogleDriveFactory.build(&cfg, reqwest::Client::new()) else {
+        let Err(err) =
+            GoogleDriveFactory.build(&cfg, &ProviderContext::new(reqwest::Client::new()))
+        else {
             panic!("a provider with no refresh token cannot reach Drive");
         };
         assert!(

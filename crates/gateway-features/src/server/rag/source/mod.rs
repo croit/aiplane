@@ -37,10 +37,13 @@
 //! extensible design and one that merely has a trait in it.
 
 pub mod gdrive;
+pub mod hyperkitty;
+pub mod mail;
 pub mod tree;
 pub mod webdav;
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use jiff::Timestamp;
@@ -468,6 +471,52 @@ pub fn awaiting_consent(factory: &dyn ProviderFactory, secrets: &BTreeMap<String
     matches!(factory.auth(), AuthKind::OAuth2 { .. }) && !secrets.contains_key(REFRESH_TOKEN_KEY)
 }
 
+/// What a provider gets from its host, as opposed to from the operator.
+///
+/// A struct rather than a longer argument list: `build` is implemented by
+/// every provider and called from four places, so each new host-side
+/// capability would otherwise be a breaking change to all of them — which is
+/// exactly what adding `cache_dir` would have been.
+#[derive(Clone, Debug)]
+pub struct ProviderContext {
+    pub http: reqwest::Client,
+    /// A directory this provider may keep bytes in *between* syncs, already
+    /// created by the caller.
+    ///
+    /// `None` where the host has no storage to offer — the admin form's
+    /// dry-run build, the "Test connection" probe, most tests — so a provider
+    /// must work without it and treat everything in it as a cache it can lose
+    /// at any moment. The indexer hands out one directory per collection, and
+    /// reaps the ones whose collection is gone.
+    pub cache_dir: Option<PathBuf>,
+}
+
+impl ProviderContext {
+    pub fn new(http: reqwest::Client) -> Self {
+        Self {
+            http,
+            cache_dir: None,
+        }
+    }
+
+    /// Offer a place to keep bytes between syncs. Creates the directory: a
+    /// provider that has one should not have to wonder whether it exists.
+    /// A directory that cannot be created is simply not offered, because a
+    /// cache is never worth failing a sync over.
+    pub fn with_cache_dir(mut self, dir: impl AsRef<Path>) -> Self {
+        let dir = dir.as_ref();
+        match std::fs::create_dir_all(dir) {
+            Ok(()) => self.cache_dir = Some(dir.to_path_buf()),
+            Err(err) => tracing::warn!(
+                dir = %dir.display(),
+                error = %err,
+                "rag: source cache directory unavailable, sources will work without one"
+            ),
+        }
+        self
+    }
+}
+
 /// Builds providers of one kind and describes their settings.
 pub trait ProviderFactory: Send + Sync + 'static {
     fn kind(&self) -> &'static str;
@@ -499,7 +548,7 @@ pub trait ProviderFactory: Send + Sync + 'static {
     fn build(
         &self,
         cfg: &ProviderConfig,
-        http: reqwest::Client,
+        ctx: &ProviderContext,
     ) -> Result<Arc<dyn FileProvider>, ProviderError>;
 
     /// Validate a config without building. Default: every `required` field
@@ -543,6 +592,7 @@ impl ProviderRegistry {
         let mut reg = Self::new();
         reg.register(Arc::new(webdav::WebdavFactory));
         reg.register(Arc::new(gdrive::GoogleDriveFactory));
+        reg.register(Arc::new(hyperkitty::HyperkittyFactory));
         reg
     }
 
@@ -571,7 +621,7 @@ impl ProviderRegistry {
         &self,
         kind: &str,
         cfg: &ProviderConfig,
-        http: reqwest::Client,
+        ctx: &ProviderContext,
     ) -> Result<Arc<dyn FileProvider>, ProviderError> {
         let factory = self.get(kind).ok_or_else(|| {
             let known: Vec<&str> = self.factories.iter().map(|f| f.kind()).collect();
@@ -581,7 +631,7 @@ impl ProviderRegistry {
             ))
         })?;
         factory.validate(cfg)?;
-        factory.build(cfg, http)
+        factory.build(cfg, ctx)
     }
 }
 
@@ -621,7 +671,11 @@ mod tests {
     fn unknown_kind_names_the_known_ones() {
         let reg = ProviderRegistry::with_builtins();
         let msg = reg
-            .build("dropbox", &cfg(&[], &[]), reqwest::Client::new())
+            .build(
+                "dropbox",
+                &cfg(&[], &[]),
+                &ProviderContext::new(reqwest::Client::new()),
+            )
             .map(|_| ())
             .expect_err("an unregistered kind cannot be built")
             .to_string();

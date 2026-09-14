@@ -20,6 +20,8 @@ export interface RagCollection {
 	chunk_size: number;
 	chunk_overlap: number;
 	search_mode: 'versioned' | 'aggregate';
+	/** Minutes between automatic re-syncs; 0 = only on demand. */
+	refresh_interval_mins: number;
 	allowed_groups: string[];
 	status: string;
 	last_indexed_at: string | null;

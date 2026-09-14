@@ -87,6 +87,13 @@ rag-label-exclude-globs = Exclusions (globs)
 rag-placeholder-exclude-globs = target/, node_modules/
 rag-label-chunk-size = Taille du chunk
 rag-label-chunk-overlap = Chevauchement du chunk
+rag-label-refresh-interval = Resynchronisation automatique
+rag-hint-refresh-interval = À quelle fréquence réindexer sans que personne le demande. Une source qui ne peut pas prévenir la passerelle — une archive de liste de diffusion, un partage WebDAV simple — n'est à jour que dans cette mesure.
+rag-refresh-never = Jamais (manuel ou hook de synchronisation)
+rag-refresh-hourly = Toutes les heures
+rag-refresh-daily = Tous les jours
+rag-refresh-weekly = Toutes les semaines
+rag-refresh-custom = Toutes les { $mins } minutes
 rag-create-aggregate-help = Agrégat (multi-source) : recherche dans de nombreux dépôts comme un seul corpus. Laissez l'URL Git vide et ajoutez chaque dépôt source après la création. La branche / le tag devient la référence par défaut des sources ajoutées.
 rag-button-queue-indexing = Planifier l'indexation
 

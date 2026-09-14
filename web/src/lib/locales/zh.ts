@@ -827,6 +827,7 @@ export const zh: Catalog = {
  "rag-empty-list": "尚无集合。请在上方创建一个。",
  "rag-heading": "RAG 集合",
  "rag-hint-allowed-groups": "åè®¸ååºåæç´¢æ­¤éåçç½å³ç»ï¼ç¨éå·åéï¼ãçç©º = æææ¥æ RAG å·¥å·çäººãç®¡çåå§ç»ææéã",
+ "rag-hint-refresh-interval": "在无人操作时重新建立索引的频率。无法主动通知网关的来源（邮件列表归档、普通 WebDAV 共享）的新鲜程度完全取决于此设置。",
  "rag-label-allowed-groups": "åè®¸çç»",
  "rag-label-branch-tag": "分支 / 标签",
  "rag-label-chunk-overlap": "分块重叠",
@@ -846,6 +847,7 @@ export const zh: Catalog = {
  "rag-label-pat": "个人访问令牌",
  "rag-label-pat-optional": "个人访问令牌（可选）",
  "rag-label-profile": "文档字段",
+ "rag-label-refresh-interval": "自动重新同步",
  "rag-label-source-kind": "来源",
  "rag-log-empty": "尚未记录任何索引事件。索引器处理此 ref 后，首次运行的记录会显示在这里。",
  "rag-log-error": "错误",
@@ -917,6 +919,11 @@ export const zh: Catalog = {
  "rag-profile-version": "v{version}",
  "rag-ref-files": "{files} 个文件",
  "rag-ref-indexed-line": "索引于 {date} · {commit}",
+ "rag-refresh-custom": "每 {mins} 分钟",
+ "rag-refresh-daily": "每天",
+ "rag-refresh-hourly": "每小时",
+ "rag-refresh-never": "从不（手动或同步钩子）",
+ "rag-refresh-weekly": "每周",
  "rag-remove-source-confirm": "要移除源 {source} 吗？",
  "rag-source-consent-connect": "连接",
  "rag-source-consent-connected": "已连接",

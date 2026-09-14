@@ -982,6 +982,7 @@ mod tests {
                 chunk_size: 100,
                 chunk_overlap: 10,
                 search_mode: rag_db::SearchMode::Versioned,
+                refresh_interval_mins: 0,
             },
         )
         .await
@@ -1059,6 +1060,7 @@ mod tests {
                 chunk_size: 100,
                 chunk_overlap: 10,
                 search_mode: rag_db::SearchMode::Aggregate,
+                refresh_interval_mins: 0,
             },
         )
         .await
@@ -1154,6 +1156,7 @@ mod tests {
                 chunk_size: 100,
                 chunk_overlap: 10,
                 search_mode: rag_db::SearchMode::Versioned,
+                refresh_interval_mins: 0,
             },
         )
         .await
@@ -1276,6 +1279,7 @@ mod tests {
                 chunk_size: 100,
                 chunk_overlap: 10,
                 search_mode: rag_db::SearchMode::Aggregate,
+                refresh_interval_mins: 0,
             },
         )
         .await
@@ -1390,6 +1394,7 @@ mod tests {
                 chunk_size: 100,
                 chunk_overlap: 10,
                 search_mode: rag_db::SearchMode::Versioned,
+                refresh_interval_mins: 0,
             },
         )
         .await
@@ -1489,6 +1494,7 @@ mod tests {
                 chunk_size: 100,
                 chunk_overlap: 10,
                 search_mode: rag_db::SearchMode::Versioned,
+                refresh_interval_mins: 0,
             },
         )
         .await

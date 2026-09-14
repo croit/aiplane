@@ -362,7 +362,9 @@ pub async fn rag_oauth_callback(
             collection.source.config.clone(),
             secrets.clone(),
         ),
-        state.http.clone(),
+        // No cache directory: this build exists only to ask the provider who
+        // it is connected as, and the indexer owns the cache.
+        &gateway_features::server::rag::source::ProviderContext::new(state.http.clone()),
     ) {
         Ok(provider) => provider.probe().await.ok().and_then(|r| r.account),
         Err(err) => {

@@ -154,6 +154,7 @@ async fn seed_collection(
             chunk_size: 800,
             chunk_overlap: 100,
             search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
         },
     )
     .await
@@ -316,6 +317,7 @@ async fn lexical_alone_answers_when_vector_index_is_absent() {
             chunk_size: 800,
             chunk_overlap: 100,
             search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
         },
     )
     .await

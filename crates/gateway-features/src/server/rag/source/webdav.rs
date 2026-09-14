@@ -37,7 +37,8 @@ use quick_xml::events::Event;
 
 use super::{
     ConfigField, DirListing, DirRef, EntryKind, FieldKind, FileProvider, ProbeReport,
-    ProviderCapabilities, ProviderConfig, ProviderError, ProviderFactory, RemoteEntry,
+    ProviderCapabilities, ProviderConfig, ProviderContext, ProviderError, ProviderFactory,
+    RemoteEntry,
 };
 
 const KIND: &str = "webdav";
@@ -142,9 +143,9 @@ impl ProviderFactory for WebdavFactory {
     fn build(
         &self,
         cfg: &ProviderConfig,
-        http: reqwest::Client,
+        ctx: &ProviderContext,
     ) -> Result<Arc<dyn FileProvider>, ProviderError> {
-        Ok(Arc::new(WebdavProvider::from_config(cfg, http)?) as Arc<dyn FileProvider>)
+        Ok(Arc::new(WebdavProvider::from_config(cfg, ctx.http.clone())?) as Arc<dyn FileProvider>)
     }
 }
 
