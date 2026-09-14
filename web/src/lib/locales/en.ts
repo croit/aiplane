@@ -482,6 +482,8 @@ export const en: Catalog = {
  "connectors-term-this-gateway": "this gateway",
  "connectors-token-help-global": "This shared connector sends one encrypted bearer token for every allowed user.",
  "connectors-token-help-user": "Each user supplies their own API token under Integrations. No OAuth client is needed.",
+ "feature-disabled-body": "{feature} is turned off for this gateway, so this page has nothing to show. An administrator can switch it on under Settings.",
+ "feature-disabled-settings-link": "Open settings",
  "feedback-acceptance-label": "Acceptance criteria",
  "feedback-acceptance-placeholder": "When is this done?",
  "feedback-annotate-done": "Back to the form",

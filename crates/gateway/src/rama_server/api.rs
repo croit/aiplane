@@ -115,6 +115,7 @@ pub(crate) async fn me_response(state: &RamaState, user_id: &str) -> Response {
         roles: user.roles,
         role_ids,
         allowed_tools,
+        features: gateway_core::server::settings::enabled_sections(&state.config()),
     })
 }
 

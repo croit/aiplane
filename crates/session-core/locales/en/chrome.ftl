@@ -27,3 +27,9 @@ searchable-select-clear-search = Clear search
 searchable-select-no-results = No matching options.
 searchable-select-model-gdpr = GDPR
 searchable-select-model-nda = NDA
+
+# Shown in place of a page whose optional feature the operator has switched
+# off at /admin/settings. The nav entry is gone in that case; this answers
+# someone who followed an old link or typed the URL.
+feature-disabled-body = { $feature } is turned off for this gateway, so this page has nothing to show. An administrator can switch it on under Settings.
+feature-disabled-settings-link = Open settings

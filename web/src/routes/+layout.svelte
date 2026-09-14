@@ -7,6 +7,7 @@
 	import { api } from '$lib/api';
 	import { loginPageUrl } from '$lib/auth';
 	import { navItemActive } from '$lib/nav';
+	import { featureEnabled, featureForRoute, visibleNavLinks } from '$lib/features';
 	import { pageTitleDescriptor } from '$lib/page-titles';
 	import { pageTitleOverride } from '$lib/page-title';
 	import { loadMe, me } from '$lib/session.svelte';
@@ -159,6 +160,18 @@
 		['nav-settings', '/admin/settings', 'sliders']
 	];
 
+	// Optional features the operator has switched off at /admin/settings take
+	// their nav entries with them: an entry that leads to "this is not enabled"
+	// is worse than no entry. The same map answers a URL typed by hand.
+	const features = $derived(me.value?.features);
+	const visibleWorkspaceLinks = $derived(visibleNavLinks(workspaceLinks, features));
+	const visibleAccountLinks = $derived(visibleNavLinks(accountLinks, features));
+	const visibleAdminLinks = $derived(visibleNavLinks(adminLinks, features));
+	const routeFeature = $derived(featureForRoute(page.url.pathname, base));
+	const featureOff = $derived(
+		me.loaded && me.value !== null && routeFeature !== null && !featureEnabled(features, routeFeature)
+	);
+
 	const isAdmin = $derived(me.value?.role_ids?.includes('admin') ?? false);
 	const publicRoute = $derived(page.url.pathname.startsWith(`${base}/setup`) || page.url.pathname.endsWith('/login'));
 	const pageTitle = $derived(pageTitleDescriptor(page.url.pathname));
@@ -269,10 +282,10 @@
 				{/if}
 			{/snippet}
 
-			{@render group('workspace', workspaceOpen, workspaceLinks)}
-			{@render group('account', accountOpen, accountLinks)}
+			{@render group('workspace', workspaceOpen, visibleWorkspaceLinks)}
+			{@render group('account', accountOpen, visibleAccountLinks)}
 			{#if isAdmin}
-				{@render group('admin', adminOpen, adminLinks)}
+				{@render group('admin', adminOpen, visibleAdminLinks)}
 			{/if}
 		</nav>
 
@@ -355,7 +368,21 @@
 
 		<main class="min-h-0 min-w-0 flex-1 {isChatActive() ? 'overflow-hidden' : 'overflow-y-auto'}">
 			<div class="w-full {isChatActive() ? 'h-full px-4 py-3 sm:px-6' : 'px-4 pb-8 pt-6 sm:px-6'}">
-				{@render children()}
+				{#if featureOff && routeFeature}
+					<!-- The URL still resolves — the feature behind it does not.
+					     Say which one, so an operator knows which switch to flip. -->
+					<div class="w-full max-w-2xl">
+						<h1 class="text-2xl font-bold">{t(`settings-s-${routeFeature.replaceAll('.', '-')}`)}</h1>
+						<div class="alert alert-warning mt-4">
+							<span>{t('feature-disabled-body', { feature: t(`settings-s-${routeFeature.replaceAll('.', '-')}`) })}</span>
+						</div>
+						{#if isAdmin}
+							<a class="btn btn-sm mt-4" href="{base}/admin/settings">{t('feature-disabled-settings-link')}</a>
+						{/if}
+					</div>
+				{:else}
+					{@render children()}
+				{/if}
 			</div>
 		</main>
 	</div>

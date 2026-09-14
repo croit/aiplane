@@ -26,3 +26,8 @@ searchable-select-clear-search = 清除搜索
 searchable-select-no-results = 没有匹配的选项。
 searchable-select-model-gdpr = GDPR
 searchable-select-model-nda = NDA
+
+# 当某项可选功能在 /admin/settings 中被关闭时，用它代替该页面显示。此时
+# 导航项会消失；这是对旧链接或手动输入网址的回应。
+feature-disabled-body = 本网关已关闭 { $feature }，因此此页面没有内容可显示。管理员可以在设置中启用它。
+feature-disabled-settings-link = 打开设置

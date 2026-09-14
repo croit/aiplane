@@ -616,6 +616,22 @@ pub fn section_is_enabled(config: &Config, section: &SectionSpec) -> Option<bool
     })
 }
 
+/// The names of every switchable section that is currently on.
+///
+/// This is what the web UI navigates by: a page for a feature the operator
+/// turned off should not be in the sidebar, and should say so rather than
+/// error when someone opens its URL directly. Names are the section names
+/// (`comfyui`, `rag`, `skills`, …) so the UI and `/admin/settings` speak one
+/// vocabulary; a section with no master switch is always in force and simply
+/// never appears here or in the gating.
+pub fn enabled_sections(config: &Config) -> Vec<String> {
+    SECTIONS
+        .iter()
+        .filter(|section| section_is_enabled(config, section) == Some(true))
+        .map(|section| section.name.to_string())
+        .collect()
+}
+
 pub fn field(key: &str) -> Option<&'static FieldSpec> {
     all_fields().find(|f| f.key == key)
 }
@@ -1359,6 +1375,49 @@ mod tests {
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
                 .collect(),
         )
+    }
+
+    #[test]
+    fn enabled_sections_follow_the_master_switches() {
+        // What the web UI navigates by: turn a switch off and the feature's
+        // name has to leave this list, or its nav entry stays and its page
+        // still claims to work.
+        let mut config = Config::default();
+        let all_on = Settings::from_map(
+            all_fields()
+                .filter(|f| f.key.ends_with(".enabled"))
+                .map(|f| (f.key.to_owned(), "true".to_owned()))
+                .collect(),
+        );
+        apply(&all_on, &mut config);
+        let on = enabled_sections(&config);
+        for name in ["comfyui", "rag", "skills", "usage", "limits"] {
+            assert!(on.iter().any(|s| s == name), "{name} missing from {on:?}");
+        }
+        // `[gateway]` has no master switch: always in force, never gated.
+        assert!(!on.iter().any(|s| s == "gateway"));
+
+        let mut off_config = Config::default();
+        let comfyui_off = Settings::from_map(
+            all_fields()
+                .filter(|f| f.key.ends_with(".enabled"))
+                .map(|f| {
+                    let value = if f.key == "comfyui.enabled" {
+                        "false"
+                    } else {
+                        "true"
+                    };
+                    (f.key.to_owned(), value.to_owned())
+                })
+                .collect(),
+        );
+        apply(&comfyui_off, &mut off_config);
+        let off = enabled_sections(&off_config);
+        assert!(!off.iter().any(|s| s == "comfyui"), "{off:?}");
+        assert!(
+            off.iter().any(|s| s == "rag"),
+            "one switch must not move another"
+        );
     }
 
     #[test]

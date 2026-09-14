@@ -482,6 +482,8 @@ export const de: Catalog = {
  "connectors-term-this-gateway": "dieses Gateway",
  "connectors-token-help-global": "Dieser gemeinsame Connector sendet ein verschlüsseltes Bearer-Token für alle berechtigten Benutzer.",
  "connectors-token-help-user": "Jeder Benutzer hinterlegt unter Integrationen sein eigenes API-Token. Ein OAuth-Client ist nicht nötig.",
+ "feature-disabled-body": "{feature} ist auf diesem Gateway abgeschaltet, daher hat diese Seite nichts zu zeigen. Eine Administratorin oder ein Administrator kann die Funktion unter Einstellungen aktivieren.",
+ "feature-disabled-settings-link": "Einstellungen öffnen",
  "feedback-acceptance-label": "Abnahmekriterien",
  "feedback-acceptance-placeholder": "Wann ist es fertig?",
  "feedback-annotate-done": "Zurück zum Formular",

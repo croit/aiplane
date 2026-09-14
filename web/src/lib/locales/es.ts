@@ -482,6 +482,8 @@ export const es: Catalog = {
  "connectors-term-this-gateway": "esta pasarela",
  "connectors-token-help-global": "Este conector compartido envía un token Bearer cifrado para cada usuario autorizado.",
  "connectors-token-help-user": "Cada usuario proporciona su propio token de API en Integraciones. No se necesita un cliente OAuth.",
+ "feature-disabled-body": "{feature} está desactivado en esta pasarela, así que esta página no tiene nada que mostrar. Un administrador puede activarlo en Ajustes.",
+ "feature-disabled-settings-link": "Abrir ajustes",
  "feedback-acceptance-label": "Criterios de aceptación",
  "feedback-acceptance-placeholder": "¿Cuándo está terminado?",
  "feedback-annotate-done": "Volver al formulario",

@@ -26,3 +26,9 @@ searchable-select-clear-search = Очистить поиск
 searchable-select-no-results = Подходящих вариантов нет.
 searchable-select-model-gdpr = GDPR
 searchable-select-model-nda = NDA
+
+# Показывается вместо страницы, чья необязательная функция отключена в
+# /admin/settings. Пункт навигации при этом исчезает; это ответ тому, кто
+# перешёл по старой ссылке или ввёл URL вручную.
+feature-disabled-body = { $feature } отключено на этом шлюзе, поэтому странице нечего показать. Администратор может включить это в настройках.
+feature-disabled-settings-link = Открыть настройки

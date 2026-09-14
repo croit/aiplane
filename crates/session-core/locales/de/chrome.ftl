@@ -26,3 +26,9 @@ searchable-select-clear-search = Suche leeren
 searchable-select-no-results = Keine passenden Optionen.
 searchable-select-model-gdpr = GDPR
 searchable-select-model-nda = NDA
+
+# Wird anstelle einer Seite angezeigt, deren optionale Funktion unter
+# /admin/settings abgeschaltet wurde. Der Navigationseintrag fehlt dann;
+# dies ist die Antwort auf einen alten Link oder eine getippte URL.
+feature-disabled-body = { $feature } ist auf diesem Gateway abgeschaltet, daher hat diese Seite nichts zu zeigen. Eine Administratorin oder ein Administrator kann die Funktion unter Einstellungen aktivieren.
+feature-disabled-settings-link = Einstellungen öffnen

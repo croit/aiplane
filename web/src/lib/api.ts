@@ -27,6 +27,12 @@ export interface Me {
 	/** RBAC role IDs after `[rbac.mapping]`. */
 	role_ids: string[];
 	allowed_tools: ToolSummary[];
+	/**
+	 * Optional features the operator has switched on at `/admin/settings`,
+	 * named after their sections (`comfyui`, `rag`, `skills`, …). Absent from
+	 * an older gateway, which `featureEnabled` reads as "not gating".
+	 */
+	features?: string[];
 }
 
 /** A canvas document belonging to a conversation. */

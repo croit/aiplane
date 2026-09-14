@@ -24,6 +24,12 @@ pub struct Me {
     /// to render the "what can I do" surface.
     #[serde(default)]
     pub allowed_tools: Vec<ToolSummary>,
+    /// Optional features the operator has switched on, named after their
+    /// `/admin/settings` sections (`comfyui`, `rag`, `skills`, `usage`,
+    /// `limits`, …). The web UI hides the nav entry for anything absent here
+    /// and answers its URL with "not enabled" rather than an error page.
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

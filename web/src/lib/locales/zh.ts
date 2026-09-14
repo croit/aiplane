@@ -473,6 +473,8 @@ export const zh: Catalog = {
  "connectors-term-this-gateway": "此网关",
  "connectors-token-help-global": "此共享连接器为每位授权用户发送同一个加密的 Bearer 令牌。",
  "connectors-token-help-user": "每位用户在“集成”中提供自己的 API 令牌，无需 OAuth 客户端。",
+ "feature-disabled-body": "本网关已关闭 {feature}，因此此页面没有内容可显示。管理员可以在设置中启用它。",
+ "feature-disabled-settings-link": "打开设置",
  "feedback-acceptance-label": "验收标准",
  "feedback-acceptance-placeholder": "什么情况算完成？",
  "feedback-annotate-done": "返回表单",

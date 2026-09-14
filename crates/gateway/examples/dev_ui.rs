@@ -28,7 +28,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gateway::rama_server::{RamaState, SessionStore, router};
-use gateway_core::server::config::{ComfyuiConfig, FeedbackConfig, GatewayConfig, SkillsConfig};
+use gateway_core::server::config::{
+    ComfyuiConfig, FeedbackConfig, GatewayConfig, RagConfig, SkillsConfig,
+};
 use gateway_core::server::rbac::RoleConfig;
 use gateway_core::server::rbac::{Resolver, config::RbacConfig, config::RoleMapping};
 use gateway_core::server::upstreams::{
@@ -404,6 +406,11 @@ async fn main() -> anyhow::Result<()> {
             dir: skills_dir.clone(),
         }),
         comfyui: Some(comfyui_config.clone()),
+        // The fixture seeds two indexed collections and the comment above
+        // promises /rag is reachable, so the block has to be present: the SPA
+        // hides a feature's nav entry (and answers its URL with "not enabled")
+        // when the settings section behind it is off.
+        rag: Some(RagConfig::default()),
         // Turn on impersonation so the /admin/users page renders its
         // Impersonate action column (audited in production; harmless here).
         // `bootstrap_admin_groups` mirrors production's break-glass admin so the

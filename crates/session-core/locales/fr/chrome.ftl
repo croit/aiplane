@@ -26,3 +26,9 @@ searchable-select-clear-search = Effacer la recherche
 searchable-select-no-results = Aucune option correspondante.
 searchable-select-model-gdpr = GDPR
 searchable-select-model-nda = NDA
+
+# Affiché à la place d'une page dont la fonctionnalité optionnelle a été
+# désactivée dans /admin/settings. L'entrée de navigation disparaît alors ;
+# ceci répond à un ancien lien ou à une URL saisie à la main.
+feature-disabled-body = { $feature } est désactivé sur cette passerelle, cette page n'a donc rien à afficher. Un administrateur peut l'activer dans les paramètres.
+feature-disabled-settings-link = Ouvrir les paramètres

@@ -486,6 +486,8 @@ export const ru: Catalog = {
  "connectors-term-this-gateway": "этот шлюз",
  "connectors-token-help-global": "Этот общий коннектор отправляет зашифрованный Bearer-токен для каждого разрешённого пользователя.",
  "connectors-token-help-user": "Каждый пользователь вводит собственный API-токен в разделе интеграций. OAuth-клиент не нужен.",
+ "feature-disabled-body": "{feature} отключено на этом шлюзе, поэтому странице нечего показать. Администратор может включить это в настройках.",
+ "feature-disabled-settings-link": "Открыть настройки",
  "feedback-acceptance-label": "Критерии приёмки",
  "feedback-acceptance-placeholder": "Когда задача считается выполненной?",
  "feedback-annotate-done": "Назад к форме",

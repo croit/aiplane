@@ -482,6 +482,8 @@ export const fr: Catalog = {
  "connectors-term-this-gateway": "cette passerelle",
  "connectors-token-help-global": "Ce connecteur partagé envoie un jeton Bearer chiffré pour chaque utilisateur autorisé.",
  "connectors-token-help-user": "Chaque utilisateur fournit son propre jeton API dans Intégrations. Aucun client OAuth n'est nécessaire.",
+ "feature-disabled-body": "{feature} est désactivé sur cette passerelle, cette page n'a donc rien à afficher. Un administrateur peut l'activer dans les paramètres.",
+ "feature-disabled-settings-link": "Ouvrir les paramètres",
  "feedback-acceptance-label": "Critères d'acceptation",
  "feedback-acceptance-placeholder": "Quand est-ce terminé ?",
  "feedback-annotate-done": "Retour au formulaire",
