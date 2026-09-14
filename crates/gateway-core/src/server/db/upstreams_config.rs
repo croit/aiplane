@@ -178,7 +178,9 @@ async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbE
 
     // Load models for all backends in one query.
     let model_rows = sqlx::query(
-        r#"SELECT backend_name, model_id FROM backend_models ORDER BY backend_name, sort_order"#,
+        r#"SELECT b.name AS backend_name, m.model_id
+              FROM backend_models m JOIN backends b ON b.id = m.backend_id
+             ORDER BY b.name, m.sort_order"#,
     )
     .fetch_all(db)
     .await?;
@@ -192,7 +194,9 @@ async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbE
 
     // Load aliases for all backends in one query.
     let alias_rows = sqlx::query(
-        r#"SELECT backend_name, alias, target FROM backend_aliases ORDER BY backend_name, alias"#,
+        r#"SELECT b.name AS backend_name, a.alias, a.target
+              FROM backend_aliases a JOIN backends b ON b.id = a.backend_id
+             ORDER BY b.name, a.alias"#,
     )
     .fetch_all(db)
     .await?;
@@ -251,7 +255,11 @@ async fn load_all_pools(db: &Pool) -> Result<Vec<PoolRow>, DbError> {
 
     // Load pool-backend assignments.
     let pb_rows = sqlx::query(
-        r#"SELECT pool_name, backend_name FROM pool_backends ORDER BY pool_name, sort_order"#,
+        r#"SELECT p.name AS pool_name, b.name AS backend_name
+              FROM pool_backends pb
+              JOIN pools p ON p.id = pb.pool_id
+              JOIN backends b ON b.id = pb.backend_id
+             ORDER BY p.name, pb.sort_order"#,
     )
     .fetch_all(db)
     .await?;
@@ -265,7 +273,9 @@ async fn load_all_pools(db: &Pool) -> Result<Vec<PoolRow>, DbError> {
 
     // Load pool models.
     let pm_rows = sqlx::query(
-        r#"SELECT pool_name, model_id FROM pool_models ORDER BY pool_name, sort_order"#,
+        r#"SELECT p.name AS pool_name, m.model_id
+              FROM pool_models m JOIN pools p ON p.id = m.pool_id
+             ORDER BY p.name, m.sort_order"#,
     )
     .fetch_all(db)
     .await?;
@@ -279,7 +289,9 @@ async fn load_all_pools(db: &Pool) -> Result<Vec<PoolRow>, DbError> {
 
     // Load pool voices.
     let pv_rows = sqlx::query(
-        r#"SELECT pool_name, lang_code, voice_id FROM pool_voices ORDER BY pool_name, lang_code"#,
+        r#"SELECT p.name AS pool_name, v.lang_code, v.voice_id
+              FROM pool_voices v JOIN pools p ON p.id = v.pool_id
+             ORDER BY p.name, v.lang_code"#,
     )
     .fetch_all(db)
     .await?;
@@ -296,8 +308,9 @@ async fn load_all_pools(db: &Pool) -> Result<Vec<PoolRow>, DbError> {
 
     // Load the offerable-voice menus.
     let ov_rows = sqlx::query(
-        r#"SELECT pool_name, voice_id FROM pool_offer_voices
-           ORDER BY pool_name, sort_order, voice_id"#,
+        r#"SELECT p.name AS pool_name, o.voice_id
+              FROM pool_offer_voices o JOIN pools p ON p.id = o.pool_id
+             ORDER BY p.name, o.sort_order, o.voice_id"#,
     )
     .fetch_all(db)
     .await?;
@@ -349,18 +362,18 @@ pub async fn save_probed_models(
 ) -> Result<(), DbError> {
     let now = now_rfc3339();
     let mut tx = db.begin().await?;
-    sqlx::query("DELETE FROM backend_probed_models WHERE backend_name = ?")
+    sqlx::query("DELETE FROM backend_probed_models WHERE backend_id = (SELECT id FROM backends WHERE name = ?)")
         .bind(backend_name)
         .execute(&mut *tx)
         .await?;
     for model_id in models {
         sqlx::query(
-            r#"INSERT INTO backend_probed_models (backend_name, model_id, seen_at)
-               VALUES (?, ?, ?)"#,
+            r#"INSERT INTO backend_probed_models (backend_id, model_id, seen_at)
+               SELECT id, ?, ? FROM backends WHERE name = ?"#,
         )
-        .bind(backend_name)
         .bind(model_id)
         .bind(&now)
+        .bind(backend_name)
         .execute(&mut *tx)
         .await?;
     }
@@ -371,9 +384,12 @@ pub async fn save_probed_models(
 /// The remembered model sets, keyed by backend name. Read once at startup to
 /// seed the registry before the first probe round — see [`save_probed_models`].
 pub async fn load_probed_models(db: &Pool) -> Result<HashMap<String, HashSet<String>>, DbError> {
-    let rows = sqlx::query("SELECT backend_name, model_id FROM backend_probed_models")
-        .fetch_all(db)
-        .await?;
+    let rows = sqlx::query(
+        r#"SELECT b.name AS backend_name, p.model_id
+              FROM backend_probed_models p JOIN backends b ON b.id = p.backend_id"#,
+    )
+    .fetch_all(db)
+    .await?;
     let mut out: HashMap<String, HashSet<String>> = HashMap::new();
     for row in &rows {
         let backend_name: String = row.try_get("backend_name")?;
@@ -466,125 +482,84 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
 }
 
 /// Delete a backend and all its dependent rows (models, aliases, pool links).
-/// Every table that stores a backend name, and the column it stores it in.
-///
-/// `backends.name` is the primary key and eight foreign keys point at it with
-/// `ON UPDATE NO ACTION`, so a rename is not an `UPDATE` — it is a move across
-/// all of these at once. The list is asserted complete by
-/// `rename_covers_every_backend_reference`, which reads the real foreign keys
-/// out of the schema: add a child table and that test names it.
-///
-/// `usage_daily` / `usage_events` carry the name without a foreign key. They
-/// move too: a backend is the *connection*, and an operator renaming one
-/// because the same host now serves a different model would otherwise see
-/// their own traffic split across two names on /usage.
-const BACKEND_NAME_REFERENCES: &[(&str, &str)] = &[
-    ("backend_models", "backend_name"),
-    ("backend_aliases", "backend_name"),
-    ("backend_probed_models", "backend_name"),
-    ("pool_backends", "backend_name"),
-    ("usage_daily", "backend"),
-    ("usage_events", "backend"),
-];
-
-/// Every table that stores a pool name. Same rules as
-/// [`BACKEND_NAME_REFERENCES`]; guarded by
-/// `rename_covers_every_pool_reference`.
-const POOL_NAME_REFERENCES: &[(&str, &str)] = &[
-    ("pool_backends", "pool_name"),
-    ("pool_models", "pool_name"),
-    ("pool_voices", "pool_name"),
-    ("pool_offer_voices", "pool_name"),
-];
-
 /// Outcome of a rename attempt, so callers can answer precisely rather than
 /// turning every refusal into a 500.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenameOutcome {
     Renamed,
-    /// No row by the old name.
+    /// No row by that name.
     NotFound,
     /// The new name is already taken.
     Taken,
 }
 
-/// Rename a backend, moving every row that names it.
+/// Rename a backend.
 ///
-/// One transaction with foreign keys deferred to COMMIT: the parent row has to
-/// change before the children can follow it, and with immediate enforcement
-/// that first `UPDATE` is a constraint violation. Deferring means the database
-/// still checks every reference — just at the end, when they all line up.
+/// One `UPDATE`, because the name is a label and `id` is the identity: no child
+/// row mentions the name, so nothing else has to move and nothing can be
+/// forgotten. Before the surrogate key this was a transaction across eight
+/// tables plus a hand-maintained list of them.
+///
+/// `usage_daily` / `usage_events` are the exception, and deliberately so: they
+/// record the name with no foreign key, as a denormalized historical label. They
+/// move with the rename, because an operator renaming a backend when the same
+/// host started serving a different model would otherwise find their own
+/// traffic split across two names on /usage.
 pub async fn rename_backend(db: &Pool, old: &str, new: &str) -> Result<RenameOutcome, DbError> {
-    rename_named_row(db, "backends", BACKEND_NAME_REFERENCES, old, new).await
+    let mut tx = db.begin().await?;
+    let outcome = rename_in(&mut tx, "backends", old, new).await?;
+    if outcome == RenameOutcome::Renamed {
+        for table in ["usage_daily", "usage_events"] {
+            sqlx::query(&format!("UPDATE {table} SET backend = ? WHERE backend = ?"))
+                .bind(new)
+                .bind(old)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(outcome)
 }
 
-/// Rename a pool, moving every row that names it. See [`rename_backend`].
+/// Rename a pool. Nothing outside the `pools` row names a pool, so this is the
+/// whole operation.
 pub async fn rename_pool(db: &Pool, old: &str, new: &str) -> Result<RenameOutcome, DbError> {
-    rename_named_row(db, "pools", POOL_NAME_REFERENCES, old, new).await
+    let mut tx = db.begin().await?;
+    let outcome = rename_in(&mut tx, "pools", old, new).await?;
+    tx.commit().await?;
+    Ok(outcome)
 }
 
-async fn rename_named_row(
-    db: &Pool,
+async fn rename_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     table: &str,
-    references: &[(&str, &str)],
     old: &str,
     new: &str,
 ) -> Result<RenameOutcome, DbError> {
-    if old == new {
-        // Nothing to move, but the caller still wants to know the row exists.
-        let exists: i64 = sqlx::query(&format!("SELECT COUNT(*) AS n FROM {table} WHERE name = ?"))
-            .bind(old)
-            .fetch_one(db)
+    if old != new {
+        let taken: i64 = sqlx::query(&format!("SELECT COUNT(*) AS n FROM {table} WHERE name = ?"))
+            .bind(new)
+            .fetch_one(&mut **tx)
             .await?
             .try_get("n")?;
-        return Ok(if exists > 0 {
-            RenameOutcome::Renamed
-        } else {
-            RenameOutcome::NotFound
-        });
+        if taken > 0 {
+            return Ok(RenameOutcome::Taken);
+        }
     }
-
-    let mut tx = db.begin().await?;
-    // Per-connection and cleared when the transaction ends; the pool hands the
-    // whole transaction one connection, so this cannot leak to other queries.
-    sqlx::query("PRAGMA defer_foreign_keys = ON")
-        .execute(&mut *tx)
-        .await?;
-
-    let taken: i64 = sqlx::query(&format!("SELECT COUNT(*) AS n FROM {table} WHERE name = ?"))
-        .bind(new)
-        .fetch_one(&mut *tx)
-        .await?
-        .try_get("n")?;
-    if taken > 0 {
-        return Ok(RenameOutcome::Taken);
-    }
-
     let moved = sqlx::query(&format!(
         "UPDATE {table} SET name = ?, updated_at = ? WHERE name = ?"
     ))
     .bind(new)
     .bind(now_rfc3339())
     .bind(old)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?
     .rows_affected();
-    if moved == 0 {
-        return Ok(RenameOutcome::NotFound);
-    }
-
-    for (child, column) in references {
-        sqlx::query(&format!(
-            "UPDATE {child} SET {column} = ? WHERE {column} = ?"
-        ))
-        .bind(new)
-        .bind(old)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    tx.commit().await?;
-    Ok(RenameOutcome::Renamed)
+    Ok(if moved > 0 {
+        RenameOutcome::Renamed
+    } else {
+        RenameOutcome::NotFound
+    })
 }
 
 pub async fn delete_backend(db: &Pool, name: &str) -> Result<(), DbError> {
@@ -600,18 +575,20 @@ async fn replace_backend_models(
     backend_name: &str,
     models: &[String],
 ) -> Result<(), DbError> {
-    sqlx::query("DELETE FROM backend_models WHERE backend_name = ?")
-        .bind(backend_name)
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "DELETE FROM backend_models WHERE backend_id = (SELECT id FROM backends WHERE name = ?)",
+    )
+    .bind(backend_name)
+    .execute(db)
+    .await?;
     for (i, model_id) in models.iter().enumerate() {
         sqlx::query(
-            r#"INSERT INTO backend_models (backend_name, model_id, sort_order)
-               VALUES (?, ?, ?)"#,
+            r#"INSERT INTO backend_models (backend_id, model_id, sort_order)
+               SELECT id, ?, ? FROM backends WHERE name = ?"#,
         )
-        .bind(backend_name)
         .bind(model_id)
         .bind(i as i64)
+        .bind(backend_name)
         .execute(db)
         .await?;
     }
@@ -623,18 +600,20 @@ async fn replace_backend_aliases(
     backend_name: &str,
     aliases: &[AliasRow],
 ) -> Result<(), DbError> {
-    sqlx::query("DELETE FROM backend_aliases WHERE backend_name = ?")
-        .bind(backend_name)
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "DELETE FROM backend_aliases WHERE backend_id = (SELECT id FROM backends WHERE name = ?)",
+    )
+    .bind(backend_name)
+    .execute(db)
+    .await?;
     for a in aliases {
         sqlx::query(
-            r#"INSERT INTO backend_aliases (backend_name, alias, target)
-               VALUES (?, ?, ?)"#,
+            r#"INSERT INTO backend_aliases (backend_id, alias, target)
+               SELECT id, ?, ? FROM backends WHERE name = ?"#,
         )
-        .bind(backend_name)
         .bind(&a.alias)
         .bind(&a.target)
+        .bind(backend_name)
         .execute(db)
         .await?;
     }
@@ -706,19 +685,22 @@ pub async fn set_backend_pool(
     backend_name: &str,
     pool: Option<&str>,
 ) -> Result<(), DbError> {
-    sqlx::query("DELETE FROM pool_backends WHERE backend_name = ?")
-        .bind(backend_name)
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "DELETE FROM pool_backends WHERE backend_id = (SELECT id FROM backends WHERE name = ?)",
+    )
+    .bind(backend_name)
+    .execute(db)
+    .await?;
     if let Some(pool_name) = pool {
         sqlx::query(
-            r#"INSERT INTO pool_backends (pool_name, backend_name, sort_order)
-               VALUES (?, ?, COALESCE(
-                   (SELECT MAX(sort_order) + 1 FROM pool_backends WHERE pool_name = ?), 0))"#,
+            r#"INSERT INTO pool_backends (pool_id, backend_id, sort_order)
+               SELECT p.id, b.id, COALESCE(
+                   (SELECT MAX(sort_order) + 1 FROM pool_backends WHERE pool_id = p.id), 0)
+                 FROM pools p, backends b
+                WHERE p.name = ? AND b.name = ?"#,
         )
         .bind(pool_name)
         .bind(backend_name)
-        .bind(pool_name)
         .execute(db)
         .await?;
     }
@@ -730,18 +712,19 @@ async fn replace_pool_backends(
     pool_name: &str,
     backend_names: &[String],
 ) -> Result<(), DbError> {
-    sqlx::query("DELETE FROM pool_backends WHERE pool_name = ?")
+    sqlx::query("DELETE FROM pool_backends WHERE pool_id = (SELECT id FROM pools WHERE name = ?)")
         .bind(pool_name)
         .execute(db)
         .await?;
     for (i, name) in backend_names.iter().enumerate() {
         sqlx::query(
-            r#"INSERT INTO pool_backends (pool_name, backend_name, sort_order)
-               VALUES (?, ?, ?)"#,
+            r#"INSERT INTO pool_backends (pool_id, backend_id, sort_order)
+               SELECT p.id, b.id, ? FROM pools p, backends b
+                WHERE p.name = ? AND b.name = ?"#,
         )
+        .bind(i as i64)
         .bind(pool_name)
         .bind(name)
-        .bind(i as i64)
         .execute(db)
         .await?;
     }
@@ -749,18 +732,18 @@ async fn replace_pool_backends(
 }
 
 async fn replace_pool_models(db: &Pool, pool_name: &str, models: &[String]) -> Result<(), DbError> {
-    sqlx::query("DELETE FROM pool_models WHERE pool_name = ?")
+    sqlx::query("DELETE FROM pool_models WHERE pool_id = (SELECT id FROM pools WHERE name = ?)")
         .bind(pool_name)
         .execute(db)
         .await?;
     for (i, model_id) in models.iter().enumerate() {
         sqlx::query(
-            r#"INSERT INTO pool_models (pool_name, model_id, sort_order)
-               VALUES (?, ?, ?)"#,
+            r#"INSERT INTO pool_models (pool_id, model_id, sort_order)
+               SELECT id, ?, ? FROM pools WHERE name = ?"#,
         )
-        .bind(pool_name)
         .bind(model_id)
         .bind(i as i64)
+        .bind(pool_name)
         .execute(db)
         .await?;
     }
@@ -770,7 +753,7 @@ async fn replace_pool_models(db: &Pool, pool_name: &str, models: &[String]) -> R
 /// Replace a pool's language→voice map.
 ///
 /// `ON CONFLICT … DO NOTHING` rather than a bare INSERT: the table is keyed by
-/// `(pool_name, lang_code)`, and a caller handing over two entries for the same
+/// `(pool_id, lang_code)`, and a caller handing over two entries for the same
 /// language used to abort the entire pool save with a raw SQLite 1555 — a
 /// constraint error surfaced at the admin form as an internal failure, for input
 /// whose meaning is unambiguous (the first entry is the one resolution would
@@ -781,19 +764,19 @@ async fn replace_pool_voices(
     pool_name: &str,
     voices: &[VoiceRow],
 ) -> Result<(), DbError> {
-    sqlx::query("DELETE FROM pool_voices WHERE pool_name = ?")
+    sqlx::query("DELETE FROM pool_voices WHERE pool_id = (SELECT id FROM pools WHERE name = ?)")
         .bind(pool_name)
         .execute(db)
         .await?;
     for v in voices {
         sqlx::query(
-            r#"INSERT INTO pool_voices (pool_name, lang_code, voice_id)
-               VALUES (?, ?, ?)
-               ON CONFLICT(pool_name, lang_code) DO NOTHING"#,
+            r#"INSERT INTO pool_voices (pool_id, lang_code, voice_id)
+               SELECT id, ?, ? FROM pools WHERE name = ?
+               ON CONFLICT(pool_id, lang_code) DO NOTHING"#,
         )
-        .bind(pool_name)
         .bind(&v.lang_code)
         .bind(&v.voice_id)
+        .bind(pool_name)
         .execute(db)
         .await?;
     }
@@ -801,27 +784,29 @@ async fn replace_pool_voices(
 }
 
 /// Replace a pool's selectable-voice menu. Same reasoning as
-/// [`replace_pool_voices`]: keyed by `(pool_name, voice_id)`, so a repeated
+/// [`replace_pool_voices`]: keyed by `(pool_id, voice_id)`, so a repeated
 /// voice keeps its first position instead of failing the save.
 async fn replace_pool_offer_voices(
     db: &Pool,
     pool_name: &str,
     voices: &[String],
 ) -> Result<(), DbError> {
-    sqlx::query("DELETE FROM pool_offer_voices WHERE pool_name = ?")
-        .bind(pool_name)
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "DELETE FROM pool_offer_voices WHERE pool_id = (SELECT id FROM pools WHERE name = ?)",
+    )
+    .bind(pool_name)
+    .execute(db)
+    .await?;
     // Position carries the menu order, so the operator's first line stays first.
     for (i, voice_id) in voices.iter().enumerate() {
         sqlx::query(
-            r#"INSERT INTO pool_offer_voices (pool_name, voice_id, sort_order)
-               VALUES (?, ?, ?)
-               ON CONFLICT(pool_name, voice_id) DO NOTHING"#,
+            r#"INSERT INTO pool_offer_voices (pool_id, voice_id, sort_order)
+               SELECT id, ?, ? FROM pools WHERE name = ?
+               ON CONFLICT(pool_id, voice_id) DO NOTHING"#,
         )
-        .bind(pool_name)
         .bind(voice_id)
         .bind(i as i64)
+        .bind(pool_name)
         .execute(db)
         .await?;
     }
@@ -930,61 +915,41 @@ mod tests {
         assert_eq!(reloaded.models, vec!["qwen-32b"]);
     }
 
-    /// Every foreign key that points at `backends(name)` is in
-    /// `BACKEND_NAME_REFERENCES`.
+    /// No foreign key points at a *name*.
     ///
-    /// Read out of the live schema rather than listed here twice: a new child
-    /// table would otherwise be silently left behind by a rename, pointing at
-    /// a name nothing answers to. The `usage_*` tables carry the name with no
-    /// foreign key, so they can never show up here — they are in the const on
-    /// purpose and excluded from this comparison.
+    /// This is the invariant that makes a rename one `UPDATE`: if a child table
+    /// referenced `backends(name)` or `pools(name)`, renaming would have to move
+    /// it too, and the old code kept a hand-maintained list of exactly that for
+    /// a reader to forget. Read out of the live schema, so a child table added
+    /// against the name is a failing test rather than a bug found on a rename.
     #[tokio::test]
-    async fn rename_covers_every_backend_reference() {
-        assert_declared_references_match(&test_pool().await, "backends", BACKEND_NAME_REFERENCES)
-            .await;
-    }
-
-    /// Same guard for `pools(name)`.
-    #[tokio::test]
-    async fn rename_covers_every_pool_reference() {
-        assert_declared_references_match(&test_pool().await, "pools", POOL_NAME_REFERENCES).await;
-    }
-
-    async fn assert_declared_references_match(
-        pool: &Pool,
-        parent: &str,
-        declared: &[(&str, &str)],
-    ) {
+    async fn nothing_references_a_topology_row_by_name() {
+        let pool = test_pool().await;
         let rows = sqlx::query(
-            r#"SELECT m.name AS child, f."from" AS col
+            r#"SELECT m.name AS child, f."from" AS col, f."table" AS parent, f."to" AS target
                FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f
-               WHERE m.type = 'table' AND f."table" = ?"#,
+               WHERE m.type = 'table' AND f."table" IN ('backends', 'pools')"#,
         )
-        .bind(parent)
-        .fetch_all(pool)
+        .fetch_all(&pool)
         .await
         .unwrap();
-        let mut actual: Vec<(String, String)> = rows
+        assert!(!rows.is_empty(), "expected foreign keys into the topology");
+        let by_name: Vec<String> = rows
             .iter()
+            .filter(|r| r.try_get::<Option<String>, _>("target").unwrap().as_deref() != Some("id"))
             .map(|r| {
-                (
+                format!(
+                    "{}.{} -> {}",
                     r.try_get::<String, _>("child").unwrap(),
                     r.try_get::<String, _>("col").unwrap(),
+                    r.try_get::<String, _>("parent").unwrap(),
                 )
             })
             .collect();
-        actual.sort();
-        assert!(!actual.is_empty(), "no foreign keys point at {parent}");
-
-        let known: HashSet<(String, String)> = declared
-            .iter()
-            .map(|(t, c)| ((*t).to_string(), (*c).to_string()))
-            .collect();
-        let missing: Vec<_> = actual.iter().filter(|r| !known.contains(r)).collect();
         assert!(
-            missing.is_empty(),
-            "these tables reference {parent}(name) but a rename would not move them: {missing:?} \
-             — add them to the reference list next to `rename_{parent}`"
+            by_name.is_empty(),
+            "these reference a topology row by something other than its id, so a rename \
+             would have to move them: {by_name:?}"
         );
     }
 
@@ -1146,11 +1111,10 @@ mod tests {
         assert!(get_backend(&pool, "tmp").await.unwrap().is_none());
 
         // Dependent rows should be gone.
-        let model_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM backend_models WHERE backend_name = 'tmp'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let model_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM backend_models")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(model_count, 0);
     }
 
@@ -1398,11 +1362,10 @@ mod tests {
         assert!(get_backend(&pool, "b").await.unwrap().is_some());
 
         // Pool-dependent rows gone.
-        let pb_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM pool_backends WHERE pool_name = 'p'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let pb_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pool_backends")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(pb_count, 0);
     }
 }
