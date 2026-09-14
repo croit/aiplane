@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { adminDelete, adminJson, adminPost, adminPut } from '$lib/admin-client';
+	import EditModal from '$lib/components/EditModal.svelte';
 	import ManagedTokenRow from '$lib/components/tokens/ManagedTokenRow.svelte';
 	import PushNotificationsCard from '$lib/components/tokens/PushNotificationsCard.svelte';
 	import TokenAccountCard from '$lib/components/tokens/TokenAccountCard.svelte';
@@ -15,6 +16,15 @@
 	let minted = $state<{ name: string; plaintext: string } | null>(null);
 	let name = $state('');
 	let ttlDays = $state(90);
+	// Two fields is a dialog, not a card wedged above the list — the tokens a
+	// user came to manage should be the first thing on the page.
+	let creating = $state(false);
+
+	function openCreate() {
+		name = '';
+		ttlDays = 90;
+		creating = true;
+	}
 
 	async function refresh() {
 		try { details = await adminJson<TokenManagementDetails>('/api/v0/tokens/details'); error = null; }
@@ -28,7 +38,7 @@
 		try {
 			const response = await api.createToken({ name: trimmed, ttl_days: ttlDays, tools_enabled: false, disabled_tools: [] });
 			minted = { name: response.token.name, plaintext: response.plaintext };
-			name = '';
+			creating = false;
 			await refresh();
 		} catch (caught) { notice = String(caught); } finally { busy = false; }
 	}
@@ -82,15 +92,12 @@
 	{/if}
 
 	{#if details?.push_enabled}<PushNotificationsCard />{/if}
-	<form class="card mb-6 border border-base-300" onsubmit={(event) => { event.preventDefault(); void create(); }}><div class="card-body">
-		<h2 class="card-title">{t('tokens-create-heading')}</h2><p class="text-base-content/70">{t('tokens-create-description')}</p>
-		<label class="flex w-full flex-col gap-1"><span class="label-text">{t('tokens-name-label')}</span><input class="input input-bordered w-full" required placeholder={t('tokens-name-placeholder')} bind:value={name} /></label>
-		<label class="flex w-32 flex-col gap-1"><span class="label-text">{t('tokens-ttl-label')}</span><input class="input input-bordered w-full" type="number" min="1" max="1825" bind:value={ttlDays} /></label>
-		<div class="card-actions mt-2 justify-end"><button class="btn btn-primary" type="submit" disabled={busy}>{t('tokens-create-submit')}</button></div>
-	</div></form>
 
 	<section class="card border border-base-300"><div class="card-body">
-		<h2 class="card-title">{t('tokens-list-heading')}</h2>
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<h2 class="card-title">{t('tokens-list-heading')}</h2>
+			<button class="btn btn-primary btn-sm" type="button" onclick={openCreate}>{t('tokens-create-heading')}</button>
+		</div>
 		{#if !details}<div class="skeleton h-24 w-full"></div>{:else if details.tokens.length === 0}<p class="text-sm text-base-content/60">{t('tokens-list-empty')}</p>{:else}
 			<ul class="flex flex-col divide-y divide-base-300">{#each details.tokens as token (token.id)}
 				<ManagedTokenRow {token} tools={details.tools} models={details.models} currency={details.currency} timezone={details.timezone} usageEnabled={details.usage_enabled}
@@ -102,3 +109,25 @@
 	</div></section>
 	{#if details}<TokenAccountCard account={details.account} />{/if}
 </div>
+
+<EditModal
+	bind:open={creating}
+	title={t('tokens-create-heading')}
+	description={t('tokens-create-description')}
+	cancellabel={t('admin-cancel')}
+	savelabel={t('tokens-create-submit')}
+	saving={busy}
+	onsave={create}
+>
+	<div class="flex flex-col gap-3">
+		<fieldset class="fieldset">
+			<legend class="fieldset-legend">{t('tokens-name-label')}</legend>
+			<!-- svelte-ignore a11y_autofocus -->
+			<input class="input w-full" required autofocus placeholder={t('tokens-name-placeholder')} bind:value={name} aria-label={t('tokens-name-label')} />
+		</fieldset>
+		<fieldset class="fieldset">
+			<legend class="fieldset-legend">{t('tokens-ttl-label')}</legend>
+			<input class="input w-32" type="number" min="1" max="1825" bind:value={ttlDays} aria-label={t('tokens-ttl-label')} />
+		</fieldset>
+	</div>
+</EditModal>

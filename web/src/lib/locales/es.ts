@@ -1388,7 +1388,7 @@ export const es: Catalog = {
  "tokens-limits-saved-toast": "Cuota del token guardada.",
  "tokens-limits-summary-none": "Cuota: ninguna",
  "tokens-limits-summary-some": "Cuota: {count} regla(s)",
- "tokens-list-empty": "Aún no hay tokens. Cree uno arriba.",
+ "tokens-list-empty": "Aún no hay tokens. Cree uno con el botón de arriba.",
  "tokens-list-heading": "Sus tokens",
  "tokens-mcp-allow-aria": "Permitir herramientas MCP en modo \"ask\" a través de la API",
  "tokens-mcp-allow-description": "Las herramientas de conector que requieren aprobación no pueden solicitar confirmación a través de la API; al activarlo se ejecutan sin preguntar.",

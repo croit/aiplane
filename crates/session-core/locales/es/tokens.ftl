@@ -10,7 +10,7 @@ tokens-ttl-label = TTL (días)
 tokens-create-submit = Crear token
 
 tokens-list-heading = Sus tokens
-tokens-list-empty = Aún no hay tokens. Cree uno arriba.
+tokens-list-empty = Aún no hay tokens. Cree uno con el botón de arriba.
 
 tokens-badge-revoked = revocado
 tokens-badge-active = activo

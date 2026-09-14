@@ -72,7 +72,7 @@ pub struct Config {
     /// gateway's CWD, which is fine for local dev but NOT for the
     /// container image (its rootfs is read-only). Operators MUST point
     /// `data_dir` at a writable path (typically a subdirectory of the
-    /// same named volume that backs `[db].path`).
+    /// same named volume that backs `$GATEWAY_DB_PATH`).
     #[serde(default)]
     pub rag: Option<RagConfig>,
     /// Agent Skills the gateway makes available to the chat model.
@@ -513,7 +513,7 @@ pub struct RagConfig {
     /// own self-contained folder `<data_dir>/<uuid>/` holding `rag.sqlite`
     /// (chunk text + FTS index), `index.usearch` (vectors), and `clone/`
     /// (the git working tree). This is the only heavy / regenerable state,
-    /// so keep it separate from the precious central `[db].path` — e.g. on
+    /// so keep it separate from the precious central `$GATEWAY_DB_PATH` — e.g. on
     /// a larger or cheaper drive/mount. The gateway `mkdir -p`s this on
     /// startup, so the **parent** must already exist + be writable by the
     /// runtime user (uid 1000 in the container image). Default is
@@ -1043,8 +1043,8 @@ impl Config {
         )
     }
 
-    /// Where the SQLite database lives: `$GATEWAY_DB_PATH`, else `[db].path`,
-    /// else `gateway.sqlite` under [`data_dir`].
+    /// Where the SQLite database lives: `$GATEWAY_DB_PATH`, else
+    /// `gateway.sqlite` under [`data_dir`].
     ///
     /// The env var exists so a deployment needs no config file for this either.
     /// It is the last thing that forced one: the gateway has to find the

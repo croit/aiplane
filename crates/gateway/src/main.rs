@@ -761,14 +761,14 @@ fn load_session_secret(raw: &str) -> anyhow::Result<[u8; 32]> {
 ///
 /// `GATEWAY_DATA_DIR` moved the *default* database path from the working
 /// directory to the data volume. That is right for new deployments and wrong,
-/// silently, for an existing one that ran without `[db].path` and persisted its
+/// silently, for an existing one that ran without a named path and persisted its
 /// working directory: `db::open` would happily create an empty database at the
 /// new path, the gateway would find no users, conclude it is a fresh install —
 /// and serve an **open, unauthenticated `/setup`** on a production URL while
 /// the real users, chats and sealed keys sat untouched a directory away.
 ///
 /// Fires only in that exact case: the path is the *default* (an operator who
-/// set `[db].path` explicitly chose it and is not affected), the default has
+/// set `$GATEWAY_DB_PATH` explicitly chose it and is not affected), the default has
 /// actually moved (`GATEWAY_DATA_DIR` is set), a database exists where the old
 /// default put it, and none exists where the new one points.
 fn refuse_to_orphan_an_existing_database(resolved: &std::path::Path) -> anyhow::Result<()> {
@@ -787,8 +787,8 @@ fn refuse_to_orphan_an_existing_database(resolved: &std::path::Path) -> anyhow::
          introduced. Booting would create an empty database and treat this deployment as a \
          fresh install — which opens an unauthenticated setup wizard while your real data \
          sits where it is. Nothing has been changed.\n\nMove the existing file to the new \
-         location (with its -wal and -shm siblings), or point GATEWAY_DATA_DIR / [db].path at \
-         where it already lives.",
+         location (with its -wal and -shm siblings), or point GATEWAY_DATA_DIR / \
+         GATEWAY_DB_PATH at where it already lives.",
         legacy.display(),
         resolved.display(),
     )

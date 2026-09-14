@@ -10,7 +10,7 @@ tokens-ttl-label = TTL (Tage)
 tokens-create-submit = Token erstellen
 
 tokens-list-heading = Ihre Tokens
-tokens-list-empty = Noch keine Tokens vorhanden. Erstellen Sie oben eines.
+tokens-list-empty = Noch keine Tokens vorhanden. Erstellen Sie eines über die Schaltfläche oben.
 
 tokens-badge-revoked = widerrufen
 tokens-badge-active = aktiv

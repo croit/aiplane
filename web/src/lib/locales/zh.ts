@@ -1373,7 +1373,7 @@ export const zh: Catalog = {
  "tokens-limits-saved-toast": "令牌配额已保存。",
  "tokens-limits-summary-none": "配额：无",
  "tokens-limits-summary-some": "配额：{count} 条规则",
- "tokens-list-empty": "暂无令牌。请在上方创建一个。",
+ "tokens-list-empty": "暂无令牌。请用上方的按钮创建一个。",
  "tokens-list-heading": "您的令牌",
  "tokens-mcp-allow-aria": "允许通过 API 使用“ask”模式的 MCP 工具",
  "tokens-mcp-allow-description": "需要批准的连接器工具无法通过 API 请求确认；启用后将不经询问直接运行它们。",

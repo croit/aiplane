@@ -10,7 +10,7 @@ tokens-ttl-label = 有效期（天）
 tokens-create-submit = 创建令牌
 
 tokens-list-heading = 您的令牌
-tokens-list-empty = 暂无令牌。请在上方创建一个。
+tokens-list-empty = 暂无令牌。请用上方的按钮创建一个。
 
 tokens-badge-revoked = 已吊销
 tokens-badge-active = 生效中

@@ -421,11 +421,9 @@ export IP=0.0.0.0                                     # optional: listen address
 export PORT=8080                                      # optional: listen port, default 8080
                                                       # (the container image already sets both)
 export GATEWAY_DB_PATH=/var/lib/gateway/gateway.sqlite # optional: overrides the path derived from
-                                                      # GATEWAY_DATA_DIR. On an upgrade, setting
-                                                      # this AND a different [db].path is fatal.
+                                                      # GATEWAY_DATA_DIR
 export GATEWAY_BOOTSTRAP_ADMIN_GROUPS=platform-admins # optional: break-glass admin claim values,
-                                                      # comma-separated; unioned with a legacy
-                                                      # file's list, never replacing it
+                                                      # comma-separated
 export GATEWAY_OIDC_CLIENT_SECRET=…                   # only for an upgrade: resolves the legacy
                                                       # [oidc] block's client_secret_env on import.
                                                       # A new install enters the secret at /setup
@@ -460,8 +458,8 @@ the gateway itself no longer reads any of them.
 | `[push]` | Web Push turn-complete notifications | `/admin/settings` → Notifications |
 | `[gateway]` | Session + API-token lifetimes, and whether admins may impersonate | `/admin/settings` → Access & usage |
 | `[gateway].public_url` | The gateway's own base URL | `/setup` |
-| `[gateway].bootstrap_admin_groups` | Break-glass admin claim values | Stays in the file (or `$GATEWAY_BOOTSTRAP_ADMIN_GROUPS`) — deliberately **not** in the DB, so a broken group table cannot lock everyone out |
-| `[db].path` | Where the SQLite database lives | Stays in the file (or `$GATEWAY_DB_PATH`) — it has to be found before anything can be read *out* of the database |
+| `[gateway].bootstrap_admin_groups` | Break-glass admin claim values | `$GATEWAY_BOOTSTRAP_ADMIN_GROUPS` — deliberately **not** in the DB, so a broken group table cannot lock everyone out |
+| `[db].path` | Where the SQLite database lives | `$GATEWAY_DB_PATH` — it has to be found before anything can be read *out* of the database |
 | `[oidc]` | The identity provider | `/setup` |
 | `[bind]` | The listen socket | **Removed** — use `$IP` / `$PORT` |
 

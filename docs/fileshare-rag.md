@@ -445,7 +445,7 @@ left alone, so a burst of file events does not pile up builds.
 
 ## Storage layout
 
-**Central DB** (`[db].path` — small, backed up):
+**Central DB** (`$GATEWAY_DB_PATH` — small, backed up):
 
 | Table | Holds |
 | --- | --- |

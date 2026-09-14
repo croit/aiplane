@@ -66,9 +66,13 @@ test("tokens preserve scopes, quotas, identity, and CRUD on mobile", async () =>
     assert.equal(await page.locator('span.badge:has-text("active")').count(), 2);
     assert.equal(await page.locator('span.badge:has-text("revoked")').count(), 1);
 
-    // Create → one-time plaintext banner with the gwk_ prefix.
-    await page.locator("input[placeholder='e.g. laptop, ci-runner']").fill("spa-e2e-token");
-    await page.locator('button:has-text("Create token")').click();
+    // Create → one-time plaintext banner with the gwk_ prefix. Two fields is a
+    // dialog now, not a card above the list.
+    await page.getByRole("button", { name: "Create token", exact: true }).click();
+    const createDialog = page.getByRole("dialog");
+    await createDialog.waitFor();
+    await createDialog.locator("input[placeholder='e.g. laptop, ci-runner']").fill("spa-e2e-token");
+    await createDialog.getByRole("button", { name: "Create token", exact: true }).click();
     const plaintext = page.locator("pre");
     await plaintext.waitFor({ state: "visible", timeout: 5000 });
     const text = (await plaintext.textContent()) ?? "";

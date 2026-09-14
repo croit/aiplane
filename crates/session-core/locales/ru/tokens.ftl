@@ -10,7 +10,7 @@ tokens-ttl-label = Срок действия (дней)
 tokens-create-submit = Создать токен
 
 tokens-list-heading = Ваши токены
-tokens-list-empty = Токенов пока нет. Создайте один выше.
+tokens-list-empty = Токенов пока нет. Создайте один кнопкой выше.
 
 tokens-badge-revoked = отозван
 tokens-badge-active = активен

@@ -6,6 +6,7 @@
 	import BackendCard from '$lib/components/upstreams/BackendCard.svelte';
 	import BackendEditor from '$lib/components/upstreams/BackendEditor.svelte';
 	import PoolCard from '$lib/components/upstreams/PoolCard.svelte';
+	import EditModal from '$lib/components/EditModal.svelte';
 	import PoolEditor from '$lib/components/upstreams/PoolEditor.svelte';
 	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 
@@ -18,7 +19,10 @@
 	let data = $state<Topology | null>(null);
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
-	let addForm = $state<'pool' | 'backend' | null>(null);
+	// One flag each, because `EditModal.open` is bindable: Escape and the
+	// backdrop write back through it, and a derived expression would swallow that.
+	let addingPool = $state(false);
+	let addingBackend = $state(false);
 	let assignments = $derived(backendAssignments(data?.pools ?? [], data?.backends ?? []));
 	let sortedPools = $derived(
 		(data?.pools ?? []).slice().sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name))
@@ -122,26 +126,33 @@
 			<p class="mt-1 text-sm text-base-content/70">{t('upstreams-description')}</p>
 		</div>
 		<div class="flex gap-2">
-			<button class="btn btn-sm" type="button" onclick={() => (addForm = addForm === 'pool' ? null : 'pool')}>+ {t('upstreams-add-pool')}</button>
-			<button class="btn btn-sm" type="button" onclick={() => (addForm = addForm === 'backend' ? null : 'backend')}>+ {t('upstreams-add-backend')}</button>
+			<button class="btn btn-sm" type="button" onclick={() => (addingPool = true)}>+ {t('upstreams-add-pool')}</button>
+			<button class="btn btn-sm" type="button" onclick={() => (addingBackend = true)}>+ {t('upstreams-add-backend')}</button>
 		</div>
 	</header>
 
-	{#if addForm === 'pool'}
-		<section class="card card-border bg-base-100 mb-4">
-			<div class="card-body">
-				<h2 class="card-title text-base">{t('pools-add-heading')}</h2>
-				<PoolEditor backends={data.backends} poolKinds={data.pool_kinds} poolStrategies={data.pool_strategies} existingNames={data.pools.map((pool) => pool.name)} sortOrder={Math.max(-1, ...data.pools.map((pool) => pool.sort_order)) + 1} onSaved={refresh} onCancel={() => (addForm = null)} />
-			</div>
-		</section>
-	{:else if addForm === 'backend'}
-		<section class="card card-border bg-base-100 mb-4">
-			<div class="card-body">
-				<h2 class="card-title text-base">{t('backends-add-heading')}</h2>
-				<BackendEditor pools={data.pools} existingNames={data.backends.map((backend) => backend.name)} onSaved={refresh} onCancel={() => (addForm = null)} />
-			</div>
-		</section>
-	{/if}
+	<!-- The same dialog the cards' Edit buttons open. Inline, these two pushed
+	     the whole topology down the page to make room for a form nobody had
+	     asked to see yet. -->
+	<EditModal
+		bind:open={addingPool}
+		wide
+		footer="none"
+		title={t('pools-add-heading')}
+		cancellabel={t('upstreams-cancel')}
+	>
+		<PoolEditor backends={data.backends} poolKinds={data.pool_kinds} poolStrategies={data.pool_strategies} existingNames={data.pools.map((pool) => pool.name)} sortOrder={Math.max(-1, ...data.pools.map((pool) => pool.sort_order)) + 1} onSaved={() => { addingPool = false; return refresh(); }} onCancel={() => (addingPool = false)} />
+	</EditModal>
+
+	<EditModal
+		bind:open={addingBackend}
+		wide
+		footer="none"
+		title={t('backends-add-heading')}
+		cancellabel={t('upstreams-cancel')}
+	>
+		<BackendEditor pools={data.pools} existingNames={data.backends.map((backend) => backend.name)} onSaved={() => { addingBackend = false; return refresh(); }} onCancel={() => (addingBackend = false)} />
+	</EditModal>
 
 	<div class="flex flex-col gap-4">
 		{#each sortedPools as pool (pool.name)}

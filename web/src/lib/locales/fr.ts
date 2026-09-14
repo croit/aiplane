@@ -1388,7 +1388,7 @@ export const fr: Catalog = {
  "tokens-limits-saved-toast": "Quota du jeton enregistré.",
  "tokens-limits-summary-none": "Quota : aucun",
  "tokens-limits-summary-some": "Quota : {count} règle(s)",
- "tokens-list-empty": "Aucun jeton pour l'instant. Créez-en un ci-dessus.",
+ "tokens-list-empty": "Aucun jeton pour l'instant. Créez-en un avec le bouton ci-dessus.",
  "tokens-list-heading": "Vos jetons",
  "tokens-mcp-allow-aria": "Autoriser les outils MCP en mode « ask » via l'API",
  "tokens-mcp-allow-description": "Les outils de connecteur nécessitant une approbation ne peuvent pas demander de confirmation via l'API ; l'activation les exécute sans demander.",

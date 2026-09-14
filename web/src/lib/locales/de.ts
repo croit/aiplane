@@ -1388,7 +1388,7 @@ export const de: Catalog = {
  "tokens-limits-saved-toast": "Token-Kontingent gespeichert.",
  "tokens-limits-summary-none": "Kontingent: keines",
  "tokens-limits-summary-some": "Kontingent: {count} Regel(n)",
- "tokens-list-empty": "Noch keine Tokens vorhanden. Erstellen Sie oben eines.",
+ "tokens-list-empty": "Noch keine Tokens vorhanden. Erstellen Sie eines über die Schaltfläche oben.",
  "tokens-list-heading": "Ihre Tokens",
  "tokens-mcp-allow-aria": "„Ask“-MCP-Werkzeuge über die API erlauben",
  "tokens-mcp-allow-description": "Verbindungs-Werkzeuge, die eine Bestätigung erfordern, können über die API nicht nachfragen; die Aktivierung führt sie ohne Rückfrage aus.",

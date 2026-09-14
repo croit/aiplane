@@ -1388,7 +1388,7 @@ export const en: Catalog = {
  "tokens-limits-saved-toast": "Token quota saved.",
  "tokens-limits-summary-none": "Quota: none",
  "tokens-limits-summary-some": "Quota: {count} rule(s)",
- "tokens-list-empty": "No tokens yet. Create one above.",
+ "tokens-list-empty": "No tokens yet. Create one with the button above.",
  "tokens-list-heading": "Your tokens",
  "tokens-mcp-allow-aria": "Allow ask-mode MCP tools over API",
  "tokens-mcp-allow-description": "Approval-required connector tools can't prompt over the API; enabling runs them without asking.",

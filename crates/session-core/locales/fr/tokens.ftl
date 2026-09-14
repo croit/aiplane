@@ -10,7 +10,7 @@ tokens-ttl-label = Durée de vie (jours)
 tokens-create-submit = Créer un jeton
 
 tokens-list-heading = Vos jetons
-tokens-list-empty = Aucun jeton pour l'instant. Créez-en un ci-dessus.
+tokens-list-empty = Aucun jeton pour l'instant. Créez-en un avec le bouton ci-dessus.
 
 tokens-badge-revoked = révoqué
 tokens-badge-active = actif

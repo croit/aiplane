@@ -1396,7 +1396,7 @@ export const ru: Catalog = {
  "tokens-limits-saved-toast": "Квота токена сохранена.",
  "tokens-limits-summary-none": "Квота: нет",
  "tokens-limits-summary-some": "Квота: правил — {count}",
- "tokens-list-empty": "Токенов пока нет. Создайте один выше.",
+ "tokens-list-empty": "Токенов пока нет. Создайте один кнопкой выше.",
  "tokens-list-heading": "Ваши токены",
  "tokens-mcp-allow-aria": "Разрешить MCP-инструменты в режиме «ask» через API",
  "tokens-mcp-allow-description": "Инструменты коннектора, требующие подтверждения, не могут запрашивать его через API; включение этой опции запускает их без запроса.",
