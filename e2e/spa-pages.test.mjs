@@ -34,7 +34,8 @@ const PAGES = [
     ["/memory", "Preferences", "Memory — LLM Gateway"],
     ["/scheduled", "Your scheduled actions", "Scheduled actions — LLM Gateway"],
     ["/scheduled/new", "Create scheduled action", "New scheduled action"],
-    ["/webhooks", "Create webhook", "Webhooks — LLM Gateway"],
+    ["/webhooks", "Your webhooks", "Webhooks — LLM Gateway"],
+    ["/webhooks/new", "Create webhook", "New webhook"],
     ["/skills", "Skills", "My Skills — LLM Gateway"],
     ["/integrations", "Integrations", "Integrations — LLM Gateway"],
     ["/tokens", "Create token", "API tokens — LLM Gateway"],
@@ -244,7 +245,12 @@ test("webhooks preserve security, reuse, reveal, and edit workflows on mobile", 
     await ctx.addCookies([{ name: "id", value: await devSessionCookie(), url: BASE }]);
     const page = await ctx.newPage();
     const hookName = `Mobile deploy digest ${Date.now()}`;
+    // The builder lives on its own route now; the list page is a list.
     await page.goto(`${BASE}/webhooks`, { waitUntil: "networkidle" });
+    await page.getByRole("link", { name: "New webhook", exact: true }).click();
+    await page.waitForURL(`${BASE}/webhooks/new`);
+    // The editor fetches its model list before it renders the form.
+    await page.getByRole("textbox", { name: "Prompt", exact: true }).waitFor();
 
     await page.getByRole("textbox", { name: "Name", exact: true }).fill(hookName);
     await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Summarise this deploy payload");
@@ -264,10 +270,15 @@ test("webhooks preserve security, reuse, reveal, and edit workflows on mobile", 
     // against a gateway on any port (a second dev-ui alongside the first).
     const { port } = new URL(BASE);
     assert.match(await revealedUrl.inputValue(), new RegExp(`^https?://(?:localhost|127\\.0\\.0\\.1):${port}/hooks/gwh_`));
-    const row = page.getByText(hookName, { exact: true }).locator("xpath=ancestor::li");
+    // The secret is revealed on the editor route and never rides back in a
+    // query string, so leaving is an explicit step.
+    await page.getByRole("link", { name: /back to webhooks/ }).click();
+    await page.waitForURL(/\/webhooks\?notice=created$/);
+
+    const row = page.locator("article").filter({ hasText: hookName });
     await row.getByText(/Waits for response/).waitFor();
     await row.getByRole("link", { name: "Edit", exact: true }).click();
-    await page.getByRole("heading", { name: "Edit webhook", exact: true }).waitFor();
+    await page.getByRole("heading", { name: `Edit ${hookName}`, exact: true }).waitFor();
     assert.equal(await page.title(), "Edit webhook — LLM Gateway");
     assert.equal(await page.getByRole("checkbox", { name: /Wait for the response/ }).isChecked(), true);
     assert.equal(await page.getByRole("checkbox", { name: /Allow tools/ }).isChecked(), true);
@@ -275,8 +286,9 @@ test("webhooks preserve security, reuse, reveal, and edit workflows on mobile", 
     assert.ok(await page.locator("main").evaluate((element) => element.scrollWidth <= element.clientWidth));
 
     await page.getByRole("link", { name: /Back/ }).click();
+    await page.waitForURL(/\/webhooks$/);
     page.once("dialog", (dialog) => dialog.accept());
-    await page.getByText(hookName, { exact: true }).locator("xpath=ancestor::li").getByRole("button", { name: "Delete", exact: true }).click();
+    await page.locator("article").filter({ hasText: hookName }).getByRole("button", { name: "Delete", exact: true }).click();
     await page.getByText(hookName, { exact: true }).waitFor({ state: "detached" });
     await ctx.close();
 });

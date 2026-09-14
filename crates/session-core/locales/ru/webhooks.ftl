@@ -8,7 +8,7 @@ webhooks-save-submit = Сохранить изменения
 webhooks-edit-heading = Редактировать вебхук
 webhooks-back = Назад
 webhooks-list-heading = Ваши вебхуки
-webhooks-list-empty = Пока нет вебхуков. Создайте один выше.
+webhooks-list-empty = Пока нет вебхуков. Создайте один кнопкой выше.
 
 webhooks-name-label = Название
 webhooks-name-placeholder = напр. Сводка развёртывания
@@ -34,9 +34,7 @@ webhooks-mode-sync = Ждёт ответа
 webhooks-mode-async = Без ожидания
 webhooks-never-fired = Ещё не запускался
 webhooks-last-success = Последний запуск { $when }
-webhooks-last-success-open = Последний запуск { $when } — открыть
 webhooks-last-failure = Последний запуск не удался { $when }
-webhooks-last-failure-open = Последний запуск не удался { $when } — открыть
 
 webhooks-pause-title = Приостановить
 webhooks-resume-title = Возобновить
@@ -80,3 +78,26 @@ webhooks-reuse-rounds-aria = Сколько раундов истории вос
 webhooks-toast-rerun-failed = Повторный запуск: { $status }
 webhooks-rotate-confirm = Выпустить новый секрет триггера? Старый URL сразу перестанет работать.
 webhooks-delete-confirm = Удалить этот вебхук?
+
+# Ссылки на странице списка на то, что создал вебхук, и редактор на
+# собственном маршруте (`/webhooks/new`, `/webhooks/{id}/edit`).
+webhooks-create-heading = Новый вебхук
+webhooks-new-page-title = Новый вебхук
+webhooks-edit-named-heading = Изменить { $name }
+webhooks-toast-created = Вебхук создан.
+webhooks-toast-saved = Вебхук сохранён.
+webhooks-badge-reuses-chat = одна беседа
+webhooks-open-chat = Открыть чат
+webhooks-open-chats = { $count ->
+    [one] { $count } чат
+    [few] { $count } чата
+    [many] { $count } чатов
+   *[other] { $count } чата
+}
+webhooks-open-runs = { $count ->
+    [one] { $count } запуск
+    [few] { $count } запуска
+    [many] { $count } запусков
+   *[other] { $count } запуска
+}
+webhooks-reveal-done = Готово — вернуться к вебхукам

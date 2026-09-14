@@ -591,6 +591,7 @@ async fn main() -> anyhow::Result<()> {
 async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
     use gateway_core::server::db::{chat_compactions, documents, rag};
     use gateway_runtime::server::scheduled::{self, NewAction};
+    use gateway_runtime::server::webhooks::{self, NewWebhook};
     use session_core::attachments;
     use session_core::db::{self as chatdb, ToolCallStatus, TurnStatus};
 
@@ -980,6 +981,111 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
                 error,
             )
             .await?;
+        }
+    }
+
+    // --- Webhooks, with the run history behind them -----------------------
+    //
+    // The same three shapes /webhooks has to render as /scheduled: a hook
+    // that opens a fresh chat per fire, one that reuses a single conversation,
+    // and one that has never fired. The last also carries a stored payload, so
+    // the rerun link has something to replay.
+    let hooks = [
+        (
+            "Deploy digest",
+            "Summarise this deploy payload and flag anything that looks risky.",
+            false,
+            false,
+            3,
+        ),
+        (
+            "Incident tracker",
+            "Append this alert to the running incident summary.",
+            true,
+            true,
+            4,
+        ),
+        (
+            "Release notes draft",
+            "Turn this changelog payload into customer-facing release notes.",
+            false,
+            true,
+            0,
+        ),
+    ];
+    for (index, (name, prompt, reuse, synchronous, fires)) in hooks.into_iter().enumerate() {
+        let hook = webhooks::create(
+            &state.db,
+            NewWebhook {
+                user_id: "dev".into(),
+                name: name.into(),
+                prompt: prompt.into(),
+                model: "demo-model".into(),
+                tools_enabled: false,
+                synchronous,
+                reuse_conversation: reuse,
+                reuse_rounds: 5,
+                // A hash of nothing anyone can fire: the fixture demonstrates
+                // the UI, and a guessable trigger secret would be a bad habit
+                // to ship even in an example.
+                secret_hash: format!("dev-ui-unfireable-{index}"),
+            },
+        )
+        .await?;
+        let mut reused: Option<String> = None;
+        for fire in 0..fires {
+            let session = match &reused {
+                Some(id) => id.clone(),
+                None => {
+                    let s = chatdb::create_session(&state.db, "dev").await?;
+                    chatdb::set_session_title(&state.db, &s.id, name).await?;
+                    if reuse {
+                        reused = Some(s.id.clone());
+                    }
+                    s.id
+                }
+            };
+            let user_turn = uuid::Uuid::new_v4().to_string();
+            chatdb::create_user_turn(&state.db, &session, &user_turn, prompt).await?;
+            let turn = uuid::Uuid::new_v4().to_string();
+            chatdb::create_assistant_turn_in_progress(&state.db, &session, &turn, "demo-model")
+                .await?;
+            chatdb::append_content(&state.db, &turn, "Here is the summary for this fire.").await?;
+            chatdb::finalize_turn(&state.db, &turn, TurnStatus::Completed, None).await?;
+
+            // The tracker's last fire failed, so the page has a failure to
+            // render as well as successes.
+            let failed = reuse && fire + 1 == fires;
+            let (status, error) = if failed {
+                ("error", Some("upstream returned 503"))
+            } else {
+                ("ok", None)
+            };
+            let run = webhooks::record_run_start(
+                &state.db,
+                &hook.id,
+                &session,
+                prompt,
+                r#"{"ref":"refs/heads/main"}"#,
+                "fire",
+            )
+            .await?;
+            webhooks::finish_run(&state.db, &run, status, error).await?;
+            webhooks::mark_fired(&state.db, &hook.id, status, Some(&session), error).await?;
+            // The stored payload is what a rerun replays, so it only exists
+            // once something has actually fired — a never-fired hook must not
+            // offer a rerun link.
+            webhooks::set_last_payload(&state.db, &hook.id, r#"{"ref":"refs/heads/main"}"#).await?;
+            // Seeded in a tight loop; space the fires out so the history page
+            // does not look like one instant.
+            let fired_at = (jiff::Timestamp::now()
+                - jiff::SignedDuration::from_hours(24 * (fires - fire - 1)))
+            .to_string();
+            sqlx::query("UPDATE webhook_runs SET fired_at = ? WHERE id = ?")
+                .bind(&fired_at)
+                .bind(&run)
+                .execute(&state.db)
+                .await?;
         }
     }
 

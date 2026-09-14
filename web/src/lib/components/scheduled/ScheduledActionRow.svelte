@@ -2,7 +2,8 @@
 	import { base } from '$app/paths';
 	import { adminDelete, adminPost } from '$lib/admin-client';
 	import { locale, t } from '$lib/i18n.svelte';
-	import { formatScheduledRun, scheduleLinks, type ScheduledAction } from '$lib/scheduled';
+	import { runLinks } from '$lib/run-links';
+	import { formatScheduledRun, type ScheduledAction } from '$lib/scheduled';
 
 	/**
 	 * One schedule on `/scheduled`.
@@ -19,7 +20,7 @@
 		onnotice: (message: string) => void;
 	}>();
 
-	let links = $derived(scheduleLinks(action));
+	let links = $derived(runLinks(action, '/scheduled'));
 
 	function runTime(value: string): string {
 		return formatScheduledRun(value, locale.current, action.timezone);

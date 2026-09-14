@@ -43,6 +43,7 @@ const plain = [
 	['/admin/models/edit', 'admin-edit-model-page-title'],
 	['/rag/new', 'rag-new-page-title'],
 	['/scheduled/new', 'scheduled-new-page-title'],
+	['/webhooks/new', 'webhooks-new-page-title'],
 	['/rag/42/edit', 'rag-edit-page-title'],
 	['/admin/limits', 'limits-heading'],
 	['/admin/settings', 'settings-heading'],

@@ -47,8 +47,6 @@
 	});
 </script>
 
-<svelte:head><title>{id === null ? t('scheduled-new-page-title') : t('scheduled-edit-heading')}</title></svelte:head>
-
 <div class="w-full max-w-4xl">
 	<a class="link link-hover text-sm text-base-content/60" href="{base}/scheduled">← {t('scheduled-back')}</a>
 	<h1 class="m-0 mt-2 text-2xl font-bold">

@@ -10,7 +10,7 @@ webhooks-save-submit = Save changes
 webhooks-edit-heading = Edit webhook
 webhooks-back = Back
 webhooks-list-heading = Your webhooks
-webhooks-list-empty = No webhooks yet. Create one above.
+webhooks-list-empty = No webhooks yet. Create one with the button above.
 
 webhooks-name-label = Name
 webhooks-name-placeholder = e.g. Deploy digest
@@ -36,9 +36,7 @@ webhooks-mode-sync = Waits for response
 webhooks-mode-async = Fire-and-forget
 webhooks-never-fired = Never fired yet
 webhooks-last-success = Last fired { $when }
-webhooks-last-success-open = Last fired { $when } — open
 webhooks-last-failure = Last fire failed { $when }
-webhooks-last-failure-open = Last fire failed { $when } — open
 
 webhooks-pause-title = Pause
 webhooks-resume-title = Resume
@@ -82,3 +80,22 @@ webhooks-reuse-rounds-aria = Rounds of history to replay
 webhooks-toast-rerun-failed = Rerun { $status }
 webhooks-rotate-confirm = Issue a new trigger secret? The old URL stops working immediately.
 webhooks-delete-confirm = Delete this webhook?
+
+# The list page's per-webhook links into what it produced, and the editor on
+# its own route (`/webhooks/new`, `/webhooks/{id}/edit`).
+webhooks-create-heading = New webhook
+webhooks-new-page-title = New webhook
+webhooks-edit-named-heading = Edit { $name }
+webhooks-toast-created = Webhook created.
+webhooks-toast-saved = Webhook saved.
+webhooks-badge-reuses-chat = one conversation
+webhooks-open-chat = Open chat
+webhooks-open-chats = { $count ->
+    [one] { $count } chat
+   *[other] { $count } chats
+}
+webhooks-open-runs = { $count ->
+    [one] { $count } run
+   *[other] { $count } runs
+}
+webhooks-reveal-done = Done — back to webhooks

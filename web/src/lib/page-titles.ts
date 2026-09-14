@@ -23,6 +23,7 @@ const exactTitles: Record<string, PageTitleDescriptor> = {
 	'/rag/profiles': { key: 'rag-profile-heading', branded: true },
 	'/rag/new': { key: 'rag-new-page-title', branded: false },
 	'/scheduled/new': { key: 'scheduled-new-page-title', branded: false },
+	'/webhooks/new': { key: 'webhooks-new-page-title', branded: false },
 	'/admin/skills': { key: 'skills-heading', branded: true },
 	'/admin/connectors': { key: 'connectors-page-title', branded: false },
 	'/admin/connectors/new': { key: 'connectors-add-page-title', branded: false },

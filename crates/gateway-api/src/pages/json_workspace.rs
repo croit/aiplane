@@ -519,7 +519,19 @@ pub async fn scheduled_preview(State(state): State<Arc<RamaState>>, req: Request
 // Webhooks
 
 fn webhook_json(w: &webhooks::Webhook) -> serde_json::Value {
+    webhook_json_with_counts(w, (0, 0))
+}
+
+/// `webhook_json` plus the hook's `(runs, chats)` totals — the two differ for
+/// a `reuse_conversation` hook, and the list row's link uses exactly that
+/// difference to decide whether to link to *the* chat or to the run history.
+fn webhook_json_with_counts(
+    w: &webhooks::Webhook,
+    (run_count, chat_count): (i64, i64),
+) -> serde_json::Value {
     serde_json::json!({
+        "run_count": run_count,
+        "chat_count": chat_count,
         "id": w.id,
         "name": w.name,
         "prompt": w.prompt,
@@ -540,16 +552,25 @@ fn webhook_json(w: &webhooks::Webhook) -> serde_json::Value {
 /// GET /api/v0/webhooks — the caller's webhooks.
 pub async fn webhooks_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    match webhooks::list_for_user(&state.db, &user.id).await {
-        Ok(rows) => json_ok(
-            StatusCode::OK,
-            serde_json::json!({
-                "webhooks": rows.iter().map(webhook_json).collect::<Vec<_>>(),
-                "models": chat_model_options(&state),
-            }),
-        ),
-        Err(err) => internal(err),
-    }
+    let rows = match webhooks::list_for_user(&state.db, &user.id).await {
+        Ok(rows) => rows,
+        Err(err) => return internal(err),
+    };
+    // One grouped query for the whole list, not one per row.
+    let counts = match webhooks::run_counts_for_user(&state.db, &user.id).await {
+        Ok(counts) => counts,
+        Err(err) => return internal(err),
+    };
+    json_ok(
+        StatusCode::OK,
+        serde_json::json!({
+            "webhooks": rows
+                .iter()
+                .map(|w| webhook_json_with_counts(w, counts.get(&w.id).copied().unwrap_or((0, 0))))
+                .collect::<Vec<_>>(),
+            "models": chat_model_options(&state),
+        }),
+    )
 }
 
 #[derive(serde::Deserialize)]

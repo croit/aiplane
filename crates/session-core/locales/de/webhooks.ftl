@@ -8,7 +8,7 @@ webhooks-save-submit = Änderungen speichern
 webhooks-edit-heading = Webhook bearbeiten
 webhooks-back = Zurück
 webhooks-list-heading = Deine Webhooks
-webhooks-list-empty = Noch keine Webhooks. Erstelle oben einen.
+webhooks-list-empty = Noch keine Webhooks. Erstelle einen über die Schaltfläche oben.
 
 webhooks-name-label = Name
 webhooks-name-placeholder = z. B. Deploy-Zusammenfassung
@@ -34,9 +34,7 @@ webhooks-mode-sync = Wartet auf Antwort
 webhooks-mode-async = Feuern und vergessen
 webhooks-never-fired = Noch nie ausgelöst
 webhooks-last-success = Zuletzt ausgelöst { $when }
-webhooks-last-success-open = Zuletzt ausgelöst { $when } — öffnen
 webhooks-last-failure = Letzte Auslösung fehlgeschlagen { $when }
-webhooks-last-failure-open = Letzte Auslösung fehlgeschlagen { $when } — öffnen
 
 webhooks-pause-title = Pausieren
 webhooks-resume-title = Fortsetzen
@@ -80,3 +78,22 @@ webhooks-reuse-rounds-aria = Anzahl der wiederzugebenden Verlaufsrunden
 webhooks-toast-rerun-failed = Erneuter Lauf: { $status }
 webhooks-rotate-confirm = Ein neues Trigger-Secret erzeugen? Die alte URL funktioniert sofort nicht mehr.
 webhooks-delete-confirm = Diesen Webhook löschen?
+
+# Die Links der Listenseite auf das, was ein Webhook erzeugt hat, und der
+# Editor auf eigener Route (`/webhooks/new`, `/webhooks/{id}/edit`).
+webhooks-create-heading = Neuer Webhook
+webhooks-new-page-title = Neuer Webhook
+webhooks-edit-named-heading = { $name } bearbeiten
+webhooks-toast-created = Webhook erstellt.
+webhooks-toast-saved = Webhook gespeichert.
+webhooks-badge-reuses-chat = eine Unterhaltung
+webhooks-open-chat = Chat öffnen
+webhooks-open-chats = { $count ->
+    [one] { $count } Chat
+   *[other] { $count } Chats
+}
+webhooks-open-runs = { $count ->
+    [one] { $count } Ausführung
+   *[other] { $count } Ausführungen
+}
+webhooks-reveal-done = Fertig — zurück zu den Webhooks

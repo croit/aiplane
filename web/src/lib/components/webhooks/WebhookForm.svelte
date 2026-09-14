@@ -40,14 +40,11 @@
 		try {
 			if (webhook) await adminPut(`/api/v0/webhooks/${webhook.id}`, body);
 			else {
+				// The trigger URL is shown exactly once. The editor route swaps
+				// this form for the reveal, so there is no form left to clear —
+				// it used to live above the list and had to reset itself.
 				const created = await adminPost<{ secret: string }>('/api/v0/webhooks', body);
 				onsecret?.(created.secret);
-				name = '';
-				prompt = '';
-				synchronous = false;
-				toolsEnabled = false;
-				reuseConversation = false;
-				reuseRounds = 5;
 			}
 			await onsaved();
 		} catch (caught) {

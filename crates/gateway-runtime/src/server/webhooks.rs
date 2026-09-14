@@ -440,6 +440,38 @@ pub async fn list_runs(
     rows.iter().map(map_run).collect()
 }
 
+/// How many runs, and how many distinct chats, each of a user's webhooks has.
+///
+/// Both numbers in one grouped query rather than one per row: the list page
+/// renders every webhook, and the two differ for a `reuse_conversation` hook
+/// — many fires, one conversation — which is exactly the distinction the
+/// row's link has to make.
+pub async fn run_counts_for_user(
+    pool: &Pool,
+    user_id: &str,
+) -> Result<std::collections::HashMap<String, (i64, i64)>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT r.webhook_id AS webhook_id,
+                  COUNT(*) AS runs,
+                  COUNT(DISTINCT r.session_id) AS chats
+           FROM webhook_runs r
+           JOIN webhooks w ON w.id = r.webhook_id
+           WHERE w.user_id = ?
+           GROUP BY r.webhook_id"#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|row| {
+            Ok((
+                row.try_get::<String, _>("webhook_id")?,
+                (row.try_get("runs")?, row.try_get("chats")?),
+            ))
+        })
+        .collect()
+}
+
 /// One run, scoped to its webhook (the caller has verified webhook ownership).
 pub async fn get_run(
     pool: &Pool,
@@ -663,5 +695,40 @@ mod tests {
 
         // The limit caps the list.
         assert_eq!(list_runs(&pool, &hook.id, 1).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn run_counts_separate_runs_from_chats() {
+        let pool = fresh_db().await;
+        seed_user(&pool, "u1").await;
+        seed_user(&pool, "u2").await;
+        let fresh_each_time = create(&pool, sample("u1", "hash-a")).await.unwrap();
+        let reuses = create(&pool, sample("u1", "hash-b")).await.unwrap();
+        let other_owner = create(&pool, sample("u2", "hash-c")).await.unwrap();
+
+        for session in ["sess-a", "sess-b"] {
+            let run = record_run_start(&pool, &fresh_each_time.id, session, "p", "{}", "fire")
+                .await
+                .unwrap();
+            finish_run(&pool, &run, "ok", None).await.unwrap();
+        }
+        // A reusing webhook fires repeatedly into one conversation: three
+        // runs, one chat. That is the distinction the list row's link makes.
+        for _ in 0..3 {
+            let run = record_run_start(&pool, &reuses.id, "sess-shared", "p", "{}", "fire")
+                .await
+                .unwrap();
+            finish_run(&pool, &run, "ok", None).await.unwrap();
+        }
+        let run = record_run_start(&pool, &other_owner.id, "sess-other", "p", "{}", "fire")
+            .await
+            .unwrap();
+        finish_run(&pool, &run, "ok", None).await.unwrap();
+
+        let counts = run_counts_for_user(&pool, "u1").await.unwrap();
+        assert_eq!(counts.get(&fresh_each_time.id), Some(&(2, 2)));
+        assert_eq!(counts.get(&reuses.id), Some(&(3, 1)));
+        // Another user's webhook never appears in this user's counts.
+        assert_eq!(counts.get(&other_owner.id), None);
     }
 }

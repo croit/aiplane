@@ -15,6 +15,10 @@ export interface Webhook {
 	last_session_id: string | null;
 	last_error: string | null;
 	has_payload: boolean;
+	/** Recorded fires. */
+	run_count: number;
+	/** Distinct chats those fires opened — one, for a reusing webhook. */
+	chat_count: number;
 }
 
 export interface WebhookRun {

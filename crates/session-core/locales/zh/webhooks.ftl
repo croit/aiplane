@@ -8,7 +8,7 @@ webhooks-save-submit = 保存更改
 webhooks-edit-heading = 编辑 Webhook
 webhooks-back = 返回
 webhooks-list-heading = 你的 Webhook
-webhooks-list-empty = 还没有 Webhook。在上方创建一个。
+webhooks-list-empty = 还没有 Webhook。请用上方的按钮创建一个。
 
 webhooks-name-label = 名称
 webhooks-name-placeholder = 例如：部署摘要
@@ -34,9 +34,7 @@ webhooks-mode-sync = 等待响应
 webhooks-mode-async = 触发即忘
 webhooks-never-fired = 尚未触发
 webhooks-last-success = 上次触发于 { $when }
-webhooks-last-success-open = 上次触发于 { $when } — 打开
 webhooks-last-failure = 上次触发失败于 { $when }
-webhooks-last-failure-open = 上次触发失败于 { $when } — 打开
 
 webhooks-pause-title = 暂停
 webhooks-resume-title = 恢复
@@ -80,3 +78,16 @@ webhooks-reuse-rounds-aria = 要重放的历史轮数
 webhooks-toast-rerun-failed = 重跑 { $status }
 webhooks-rotate-confirm = 生成新的触发密钥？旧的 URL 会立即失效。
 webhooks-delete-confirm = 删除此 Webhook？
+
+# 列表页指向 Webhook 所产出内容的链接，以及位于独立路由的编辑器
+# （`/webhooks/new`、`/webhooks/{id}/edit`）。
+webhooks-create-heading = 新建 Webhook
+webhooks-new-page-title = 新建 Webhook
+webhooks-edit-named-heading = 编辑 { $name }
+webhooks-toast-created = 已创建 Webhook。
+webhooks-toast-saved = 已保存 Webhook。
+webhooks-badge-reuses-chat = 同一个对话
+webhooks-open-chat = 打开对话
+webhooks-open-chats = { $count } 个对话
+webhooks-open-runs = { $count } 次运行
+webhooks-reveal-done = 完成 — 返回 Webhook 列表
