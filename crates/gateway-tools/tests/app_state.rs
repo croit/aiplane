@@ -66,7 +66,7 @@ mod skill_overlay_tests {
         ));
         let et = EnableTools::from_registry(&reg);
         reg = reg.with(et);
-        let upstreams = UpstreamRegistry::new(&config.upstream_pools).unwrap();
+        let upstreams = UpstreamRegistry::new(&Default::default()).unwrap();
         AppState::new(config, pool, upstreams, Arc::new(reg), rbac)
             .with_skills(skills)
             .with_user_skills(user_skills)

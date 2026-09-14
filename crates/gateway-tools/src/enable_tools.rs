@@ -752,7 +752,7 @@ mod tests {
             ..Config::default()
         };
         let rbac = Resolver::build(config.rbac.clone(), config.roles.clone()).unwrap();
-        let upstreams = UpstreamRegistry::new(&config.upstream_pools).unwrap();
+        let upstreams = UpstreamRegistry::new(&Default::default()).unwrap();
         let state = AppState::new(
             config,
             pool.clone(),

@@ -14,7 +14,6 @@
 //!
 //! See `gateway.example.toml` at the repo root for the schema.
 
-use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
@@ -22,7 +21,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::server::rbac::config::{RbacConfig, RoleConfig};
-use crate::server::upstreams::config::{FallbackConfig, UpstreamPoolConfig};
+use crate::server::upstreams::config::FallbackConfig;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -60,13 +59,6 @@ pub struct Config {
     pub loaded_from: Option<PathBuf>,
     pub bind: BindConfig,
     pub db: DbConfig,
-    /// Named upstream pools: `[upstream_pools.<name>]` blocks in TOML.
-    /// Routes from model name → pool are *not* declared here; they're
-    /// derived at runtime from each backend's `/models` response (see
-    /// `upstreams::health`). Add a backend in the right kind of pool
-    /// and any model it serves becomes routable automatically.
-    #[serde(default)]
-    pub upstream_pools: HashMap<String, UpstreamPoolConfig>,
     /// Legacy OIDC provider block. As of the setup wizard this is **seed-only**,
     /// exactly like [`Self::rbac`] below: on the first boot after upgrading,
     /// [`crate::server::setup::import_config_once`] copies it into the database
@@ -1437,9 +1429,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_have_no_upstreams_and_bind_to_localhost() {
-        let c = Config::default();
-        assert!(c.upstream_pools.is_empty());
+    fn defaults_bind_to_localhost() {
         assert_eq!(
             bind_address_from(None, None),
             "127.0.0.1:8080".parse::<SocketAddr>().unwrap(),
@@ -1562,46 +1552,6 @@ mod tests {
             empty.bind.host.is_none() && empty.bind.port.is_none(),
             "no block, so nothing to warn about"
         );
-    }
-
-    #[test]
-    fn parses_full_config() {
-        let toml = r#"
-            [bind]
-            host = "0.0.0.0"
-            port = 9000
-
-            [upstream_pools.local_chat]
-            kind = "chat"
-            strategy = "round_robin"
-
-            [[upstream_pools.local_chat.backend]]
-            name = "gpu-01"
-            base_url = "http://gpu-01:8000/v1"
-            api_key_env = "GPU01_KEY"
-
-            [[upstream_pools.local_chat.backend]]
-            name = "gpu-02"
-            base_url = "http://gpu-02:8000/v1"
-        "#;
-        let c: Config = toml::from_str(toml).unwrap();
-        let pool = &c.upstream_pools["local_chat"];
-        assert_eq!(pool.backend.len(), 2);
-    }
-
-    #[test]
-    fn unknown_fields_are_rejected() {
-        let toml = r#"
-            [upstream_pools.x]
-            kind = "chat"
-            mystery_field = true
-
-            [[upstream_pools.x.backend]]
-            name = "a"
-            base_url = "http://a"
-        "#;
-        let err = toml::from_str::<Config>(toml).unwrap_err();
-        assert!(err.to_string().contains("mystery_field"), "{err}");
     }
 
     #[test]

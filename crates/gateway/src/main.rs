@@ -52,13 +52,6 @@ async fn main() -> anyhow::Result<()> {
         _ => anyhow::bail!("unrecognised arguments: {}\n\n{USAGE}", args.join(" ")),
     }
 
-    for (name, pool) in &config.upstream_pools {
-        tracing::info!(
-            pool = %name, kind = ?pool.kind, strategy = ?pool.strategy,
-            backends = pool.backend.len(),
-            "upstream pool configured"
-        );
-    }
     config.warn_about_ignored_blocks();
     let db_path = config.db_path()?;
     refuse_to_orphan_an_existing_database(&db_path)?;
@@ -169,47 +162,6 @@ async fn main() -> anyhow::Result<()> {
     // is why the field is named `public_url_import_only`.
     let runtime =
         gateway_runtime::server::state::RuntimeSettings::new_handle(config.public_url_fallback());
-
-    // On first boot (or after migrating from config-managed topology), seed
-    // the DB from config.toml. After that the DB is the source of truth and
-    // the TOML sections are ignored — admins manage topology via the UI.
-    //
-    // Gated on a persistent marker, NOT on the pool table being empty: once an
-    // admin has (re)configured topology through the UI — including deleting
-    // every pool to start over — we must not resurrect the config.toml pools on
-    // the next restart. The marker is set exactly once, after the first boot's
-    // seed succeeds. A seed failure is fatal (aborts boot) rather than logged
-    // and forgotten, so we never start serving a half-seeded topology; upserts
-    // are idempotent, so the next boot retries cleanly.
-    const SEED_MARKER: &str = "topology.seeded";
-    let already_seeded = srv::db::app_settings::get(&db, SEED_MARKER)
-        .await
-        .map_err(|e| anyhow::anyhow!("reading topology seed marker: {e:#}"))?
-        .is_some();
-    if !already_seeded {
-        if !config.upstream_pools.is_empty() {
-            tracing::info!("first boot: seeding upstream topology from config.toml to DB");
-            srv::db::upstreams_config::seed_from_config(
-                &db,
-                &config.upstream_pools,
-                &config.fallback,
-                &crypto,
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("seeding upstream topology from config.toml: {e:#}"))?;
-        }
-        // Only final once a file was actually read. Without this, a boot that
-        // found no config file — a volume mounted late, or the binary started
-        // from the wrong directory — burns the marker having seeded nothing,
-        // and the deployment silently loses its whole topology: the pools stay
-        // absent for good and the file is never looked at again. Same rule
-        // `settings::import_once` and `setup::import_config_once` follow.
-        if config.loaded_from.is_some() {
-            srv::db::app_settings::set(&db, SEED_MARKER, "1")
-                .await
-                .map_err(|e| anyhow::anyhow!("recording topology seed marker: {e:#}"))?;
-        }
-    }
 
     // Web-search settings used to be env-only. Take over whatever the
     // environment still carries into any setting that's still empty, then

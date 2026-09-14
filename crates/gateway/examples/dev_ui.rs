@@ -290,15 +290,60 @@ async fn main() -> anyhow::Result<()> {
             }],
         },
     );
-    let registry = upstreams::UpstreamRegistry::new(&pools)?;
-    // The `/admin/upstreams` page reads topology from the DB (not the in-memory
-    // registry), so seed the same pools into the DB. Health rows key off the
-    // registry by backend name, which matches — so the seeded pools render as
-    // live "up" backends. Backends here carry no API key, so the crypto instance
-    // is never actually used to seal anything. Fresh in-memory DB every boot, so
-    // this always runs (no seed marker like main.rs).
+    // The database is the only source of topology now, so the fixture writes
+    // rows and then builds the registry back out of them — the same path the
+    // real boot takes, rather than a parallel one that could drift from it.
+    // Backends here carry no API key, so the crypto instance never seals
+    // anything. Fresh in-memory DB every boot, so this always runs.
     let crypto = gateway_core::server::crypto::Crypto::from_env_or_session(&SESSION_SECRET);
-    db::upstreams_config::seed_from_config(&pool, &pools, &Default::default(), &crypto).await?;
+    for (sort_order, (name, cfg)) in pools.iter().enumerate() {
+        for backend in &cfg.backend {
+            db::upstreams_config::upsert_backend(
+                &pool,
+                &db::upstreams_config::BackendRow {
+                    name: backend.name.clone(),
+                    base_url: backend.base_url.clone(),
+                    api_key_env: backend.api_key_env.clone(),
+                    api_key_ct: None,
+                    api_key_nonce: None,
+                    weight: backend.weight,
+                    max_inflight: backend.max_inflight,
+                    health_path: backend.health_path.clone(),
+                    probe_models: backend.probe_models,
+                    supports_edit: backend.supports_edit,
+                    enabled: backend.enabled,
+                    models: backend.models.clone(),
+                    aliases: Vec::new(),
+                    created_at: jiff::Timestamp::now(),
+                    updated_at: jiff::Timestamp::now(),
+                },
+            )
+            .await?;
+        }
+        db::upstreams_config::upsert_pool(
+            &pool,
+            &db::upstreams_config::PoolRow {
+                name: name.clone(),
+                kind: cfg.kind.as_str().to_string(),
+                strategy: format!("{:?}", cfg.strategy).to_lowercase(),
+                fallback_offline: cfg.fallback_offline.clone(),
+                compliance_gdpr: cfg.compliance.gdpr,
+                compliance_nda: cfg.compliance.nda,
+                enforce_limits: cfg.enforce_limits,
+                sort_order: sort_order as i64,
+                backends: cfg.backend.iter().map(|b| b.name.clone()).collect(),
+                models: cfg.models.clone(),
+                voices: Vec::new(),
+                offer_voices: Vec::new(),
+                allowed_groups: cfg.allowed_groups.clone(),
+                created_at: jiff::Timestamp::now(),
+                updated_at: jiff::Timestamp::now(),
+            },
+        )
+        .await?;
+    }
+    let snapshot = db::upstreams_config::load_snapshot(&pool).await?;
+    let registry = upstreams::UpstreamRegistry::from_snapshot(&snapshot, &crypto)?;
     // Run the initial probe round so each backend's `/models` set is
     // populated before we start serving requests. Without this, the
     // first chat-page render lands on empty dropdowns until the
