@@ -31,7 +31,7 @@ use aes_gcm::aead::{Aead, KeyInit};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hmac::{Hmac, Mac};
-use rand::TryRngCore;
+use rand::TryRng;
 use sha2::Sha256;
 use thiserror::Error;
 
@@ -127,7 +127,7 @@ impl Crypto {
         let mut key = [0u8; 32];
         // OsRng failing is catastrophic and vanishingly rare; fall back to a
         // fixed key rather than panic so a misconfigured host still boots.
-        if rand::rngs::OsRng.try_fill_bytes(&mut key).is_err() {
+        if rand::rngs::SysRng.try_fill_bytes(&mut key).is_err() {
             key = [0u8; 32];
         }
         Self { key, legacy: None }
@@ -175,7 +175,7 @@ impl Crypto {
     pub fn seal(&self, plaintext: &[u8]) -> Result<Sealed, CryptoError> {
         let cipher = Aes256Gcm::new_from_slice(&self.key).map_err(|_| CryptoError::Encrypt)?;
         let mut nonce_bytes = [0u8; 12];
-        rand::rngs::OsRng
+        rand::rngs::SysRng
             .try_fill_bytes(&mut nonce_bytes)
             .map_err(|e| CryptoError::Nonce(e.to_string()))?;
         // The nonce GenericArray size is inferred (U12) from `encrypt`'s
@@ -314,7 +314,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// any caller can sensibly handle.
 pub fn random_hex(n: usize) -> String {
     let mut bytes = vec![0u8; n];
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(&mut bytes)
         .expect("OS RNG must succeed");
     hex_encode(&bytes)
@@ -322,6 +322,32 @@ pub fn random_hex(n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The OS RNG actually produces entropy.
+    ///
+    /// Worth pinning because it is a *rename* away from a mistake: rand 0.10
+    /// moved this generator from `OsRng` to `SysRng`, and everything security
+    /// bearing here — session ids, AES-GCM nonces, OIDC state, PKCE verifiers,
+    /// the derived at-rest key — draws from it. A generator that silently
+    /// produced zeros would still round-trip through every other test in this
+    /// file.
+    #[test]
+    fn the_os_rng_produces_entropy() {
+        use rand::TryRng;
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        rand::rngs::SysRng.try_fill_bytes(&mut a).expect("OS RNG");
+        rand::rngs::SysRng.try_fill_bytes(&mut b).expect("OS RNG");
+        assert_ne!(a, [0u8; 32], "all zeros is not entropy");
+        assert_ne!(a, b, "two draws must differ");
+        // ~128 of 256 bits set. A wide band: this catches a constant or a
+        // stuck source, not a statistical quality claim.
+        let set_bits: u32 = a.iter().map(|byte| byte.count_ones()).sum();
+        assert!(
+            (80..176).contains(&set_bits),
+            "suspicious bit balance: {set_bits}/256"
+        );
+    }
+
     use super::*;
 
     fn crypto() -> Crypto {

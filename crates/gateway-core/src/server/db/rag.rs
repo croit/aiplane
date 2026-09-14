@@ -636,7 +636,7 @@ pub fn hash_sync_token(token: &str) -> String {
 /// Shown to the operator once, at the moment they create it — after that
 /// only the hash exists, and rotating is the only way to get a new one.
 pub async fn rotate_sync_token(pool: &Pool, id: i64) -> Result<String, DbError> {
-    use rand::Rng as _;
+    use rand::RngExt as _;
     let token: String = {
         const ALPHABET: &[u8] = b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         let mut rng = rand::rng();

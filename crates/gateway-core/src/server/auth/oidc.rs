@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
-use rand::TryRngCore;
+use rand::TryRng;
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -625,7 +625,7 @@ fn extract_roles(claims: &Value, key: &str) -> Vec<String> {
 /// to be unguessable, hence OsRng directly rather than a seeded PRNG.
 fn random_url_safe(byte_len: usize) -> String {
     let mut buf = vec![0u8; byte_len];
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(&mut buf)
         .expect("OsRng must produce bytes");
     base64url_no_pad(&buf)

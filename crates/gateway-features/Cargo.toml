@@ -29,7 +29,7 @@ toml = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"
 tempfile = { workspace = true }
 # Chat-attachment uploader (S3 or S3-compatible).
 rust-s3 = { workspace = true }

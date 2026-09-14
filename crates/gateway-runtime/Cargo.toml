@@ -32,7 +32,7 @@ toml = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"
 tempfile = { workspace = true }
 regex = { workspace = true }
 # Rama wire types used by the driver and tool surface.
@@ -49,7 +49,7 @@ rmcp = { version = "1.7", default-features = false, features = [
 # `tls_cert`: a raw rustls handshake with verification off so the tool can
 # inspect the presented certificate, plus x509 parsing.
 tokio-rustls = { workspace = true }
-x509-parser = "0.16"
+x509-parser = "0.18"
 image = { workspace = true }
 zip = { workspace = true }
 

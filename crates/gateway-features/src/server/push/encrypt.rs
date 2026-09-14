@@ -29,7 +29,8 @@ use hkdf::Hkdf;
 use p256::PublicKey;
 use p256::SecretKey;
 use p256::elliptic_curve::sec1::ToEncodedPoint;
-use rand::{Rng, TryRngCore};
+use rand::rand_core::UnwrapErr;
+use rand::{RngExt, TryRng};
 use sha2::Sha256;
 
 /// The `rs` (record size) we advertise. Our payloads are a few hundred bytes
@@ -61,7 +62,7 @@ pub fn encrypt(ua_public: &[u8], auth: &[u8], plaintext: &[u8]) -> Result<Vec<u8
     let mut ephemeral = None;
     for _ in 0..8 {
         let mut bytes = [0u8; 32];
-        rand::rngs::OsRng
+        rand::rngs::SysRng
             .try_fill_bytes(&mut bytes)
             .map_err(|e| EncryptError::Rng(e.to_string()))?;
         if let Ok(sk) = SecretKey::from_slice(&bytes) {
@@ -71,16 +72,16 @@ pub fn encrypt(ua_public: &[u8], auth: &[u8], plaintext: &[u8]) -> Result<Vec<u8
     }
     let ephemeral = ephemeral.ok_or_else(|| EncryptError::Rng("no valid scalar".into()))?;
 
-    // RFC 8188 content-encoding salt: 16 random bytes from OsRng, generated as
+    // RFC 8188 content-encoding salt: 16 random bytes from the OS RNG, generated as
     // a returned value rather than by filling a zero buffer. The buffer-fill
-    // form (`let mut salt = [0u8; 16]; OsRng.try_fill_bytes(&mut salt)`) leaves
+    // form (`let mut salt = [0u8; 16]; SysRng.try_fill_bytes(&mut salt)`) leaves
     // an all-zero literal in the salt's data-flow, which static analysis (CodeQL
     // `rust/hard-coded-cryptographic-value`) reports as a hard-coded salt — it
     // doesn't model the in-place `&mut` overwrite. Generating the value keeps
-    // the salt provably literal-free. `unwrap_err()` adapts the fallible
-    // `OsRng` into an infallible `RngCore` that panics only on a catastrophic
+    // the salt provably literal-free. `UnwrapErr` adapts the fallible
+    // `SysRng` into an infallible `Rng` that panics only on a catastrophic
     // OS-RNG failure (see `server::crypto`).
-    let salt: [u8; 16] = rand::rngs::OsRng.unwrap_err().random();
+    let salt: [u8; 16] = UnwrapErr(rand::rngs::SysRng).random();
 
     encrypt_with(ua_public, auth, plaintext, &ephemeral, salt)
 }

@@ -25,7 +25,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
-use rand::TryRngCore;
+use rand::TryRng;
 
 use gateway_core::server::crypto::Crypto;
 use gateway_core::server::db::push_subscriptions::PushSubscription;
@@ -94,7 +94,7 @@ impl Vapid {
     fn generate() -> anyhow::Result<([u8; 32], Self)> {
         for _ in 0..8 {
             let mut bytes = [0u8; 32];
-            rand::rngs::OsRng
+            rand::rngs::SysRng
                 .try_fill_bytes(&mut bytes)
                 .map_err(|e| anyhow::anyhow!("RNG failure generating VAPID key: {e}"))?;
             if let Ok(v) = Self::from_private_bytes(&bytes) {

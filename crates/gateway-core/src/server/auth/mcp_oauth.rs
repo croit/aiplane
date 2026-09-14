@@ -24,7 +24,7 @@
 use std::time::Duration;
 
 use jiff::Timestamp;
-use rand::TryRngCore;
+use rand::TryRng;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -609,7 +609,7 @@ async fn post_token(
 
 fn random_url_safe(byte_len: usize) -> String {
     let mut buf = vec![0u8; byte_len];
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(&mut buf)
         .expect("OsRng must produce bytes");
     base64url_no_pad(&buf)

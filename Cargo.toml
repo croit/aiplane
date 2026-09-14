@@ -116,7 +116,7 @@ wiremock = "0.6"
 
 # Persistence + crypto.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
-rand = "0.9"
+rand = "0.10"
 sha2 = "0.10"
 hmac = "0.12"
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -281,7 +281,7 @@ regex = "1"
 # `include_str!` alone can't see). `fluent-bundle` is pulled in
 # directly (not re-exported by fluent-templates) to construct
 # `FluentValue` args for interpolated/pluralised messages.
-fluent-templates = "0.14"
+fluent-templates = "0.15"
 fluent-bundle = "0.16"
 
 # In-process vector index for the RAG subsystem. Unum's usearch — a

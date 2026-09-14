@@ -31,7 +31,7 @@ use hmac::{Hmac, Mac};
 use jiff::{SignedDuration, Timestamp};
 use rama::http::HeaderMap;
 use rama::http::header::COOKIE;
-use rand::TryRngCore;
+use rand::TryRng;
 use sha2::Sha256;
 use thiserror::Error;
 
@@ -476,7 +476,7 @@ fn secs(d: Duration) -> i64 {
 /// risk of accidentally narrowing the space in some future refactor.
 fn random_session_id() -> String {
     let mut buf = [0u8; 32];
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(&mut buf)
         .expect("OsRng fill");
     hex_encode(&buf)

@@ -83,7 +83,7 @@ aes-gcm = "0.10"
 # both ECDSA and ECDH; hkdf the key schedule; base64 the URL-safe wire coding.
 p256 = { version = "0.13", features = ["ecdh"] }
 hkdf = "0.12"
-base64 = "0.22"
+base64 = "0.23"
 # typst compile scratch dirs (one per render) + RAG index staging.
 tempfile = { workspace = true }
 
@@ -91,7 +91,7 @@ tempfile = { workspace = true }
 # *inspecting* the presented cert, including expired/self-signed ones) +
 # x509 parsing for subject/issuer/SAN/validity.
 tokio-rustls = { workspace = true }
-x509-parser = "0.16"
+x509-parser = "0.18"
 
 # GeoIP: client-IP → location lookup for the `get_user_location` tool.
 # `ip2location` reads the IP2Location LITE DB11 BIN; `notify` hot-reloads it
