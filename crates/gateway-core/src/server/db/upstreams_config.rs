@@ -706,43 +706,64 @@ pub async fn delete_pool(db: &Pool, name: &str) -> Result<(), DbError> {
     Ok(())
 }
 
-/// Set a backend's pool membership to *exactly* `pool` (or none): clears every
-/// existing `pool_backends` row for the backend, then — if a pool is given —
-/// appends it to that pool. Backs the single "Pool" select on the backend
-/// editor, which trades the DB's many-to-many capability for a simpler UI: a
-/// backend in several pools collapses to the one selected here. Pool-side
-/// editing (the pool's backend checkboxes) still supports multi-pool membership.
+/// Set a backend's pool membership to *exactly* `pool` (or none). Backs the
+/// single "Pool" select on the backend editor, which trades the DB's
+/// many-to-many capability for a simpler UI: a backend in several pools
+/// collapses to the one selected here. Pool-side editing (the pool's backend
+/// checkboxes) still supports multi-pool membership.
 pub async fn set_backend_pool(
     db: &Pool,
     backend_name: &str,
     pool: Option<&str>,
 ) -> Result<(), DbError> {
-    sqlx::query(
-        "DELETE FROM pool_backends WHERE backend_id = (SELECT id FROM backends WHERE name = ?)",
-    )
-    .bind(backend_name)
-    .execute(db)
-    .await?;
     if let Some(pool_name) = pool {
-        let linked = sqlx::query(
-            r#"INSERT INTO pool_backends (pool_id, backend_id, sort_order)
+        let pool_id = sqlx::query_scalar::<_, i64>("SELECT id FROM pools WHERE name = ?")
+            .bind(pool_name)
+            .fetch_optional(db)
+            .await?
+            .ok_or(DbError::Query(sqlx::Error::RowNotFound))?;
+        let linked = sqlx::query_scalar::<_, bool>(
+            r#"SELECT EXISTS(
+                   SELECT 1 FROM pool_backends
+                    WHERE pool_id = ?
+                      AND backend_id = (SELECT id FROM backends WHERE name = ?)
+               )"#,
+        )
+        .bind(pool_id)
+        .bind(backend_name)
+        .fetch_one(db)
+        .await?;
+        sqlx::query(
+            "DELETE FROM pool_backends WHERE backend_id = (SELECT id FROM backends WHERE name = ?) AND pool_id != ?",
+        )
+        .bind(backend_name)
+        .bind(pool_id)
+        .execute(db)
+        .await?;
+        if !linked {
+            let inserted = sqlx::query(
+                r#"INSERT INTO pool_backends (pool_id, backend_id, sort_order)
                SELECT p.id, b.id, COALESCE(
                    (SELECT MAX(sort_order) + 1 FROM pool_backends WHERE pool_id = p.id), 0)
                  FROM pools p, backends b
                 WHERE p.name = ? AND b.name = ?"#,
+            )
+            .bind(pool_name)
+            .bind(backend_name)
+            .execute(db)
+            .await?
+            .rows_affected();
+            if inserted == 0 {
+                return Err(DbError::Query(sqlx::Error::RowNotFound));
+            }
+        }
+    } else {
+        sqlx::query(
+            "DELETE FROM pool_backends WHERE backend_id = (SELECT id FROM backends WHERE name = ?)",
         )
-        .bind(pool_name)
         .bind(backend_name)
         .execute(db)
-        .await?
-        .rows_affected();
-        // `INSERT … SELECT` matching nothing is not an error the way a foreign
-        // key violation was: if the pool was deleted between the page load and
-        // the save, this inserts zero rows and the caller would answer 200 for
-        // an assignment that never happened.
-        if linked == 0 {
-            return Err(DbError::Query(sqlx::Error::RowNotFound));
-        }
+        .await?;
     }
     Ok(())
 }
@@ -1237,29 +1258,28 @@ mod tests {
     async fn pool_round_trip() {
         let pool = test_pool().await;
 
-        // Create a backend first.
-        upsert_backend(
-            &pool,
-            &BackendRow {
-                name: "b1".into(),
-                base_url: "http://b1".into(),
-                api_key_env: None,
-                api_key_ct: None,
-                api_key_nonce: None,
-                weight: 1,
-                max_inflight: 16,
-                health_path: "/models".into(),
-                probe_models: true,
-                supports_edit: false,
-                enabled: true,
-                models: vec![],
-                aliases: vec![],
-                created_at: Timestamp::now(),
-                updated_at: Timestamp::now(),
-            },
-        )
-        .await
-        .unwrap();
+        let backend = BackendRow {
+            name: "b1".into(),
+            base_url: "http://b1".into(),
+            api_key_env: None,
+            api_key_ct: None,
+            api_key_nonce: None,
+            weight: 1,
+            max_inflight: 16,
+            health_path: "/models".into(),
+            probe_models: true,
+            supports_edit: false,
+            enabled: true,
+            models: vec![],
+            aliases: vec![],
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+        };
+        upsert_backend(&pool, &backend).await.unwrap();
+        let mut second_backend = backend.clone();
+        second_backend.name = "b2".into();
+        second_backend.base_url = "http://b2".into();
+        upsert_backend(&pool, &second_backend).await.unwrap();
 
         let pool_row = PoolRow {
             name: "chat-pool".into(),
@@ -1291,6 +1311,15 @@ mod tests {
         assert_eq!(p.backends, vec!["b1"]);
         assert_eq!(p.models, vec!["pool-fallback-model"]);
         assert!(!is_empty(&pool).await.unwrap());
+
+        set_backend_pool(&pool, "b2", Some("chat-pool"))
+            .await
+            .unwrap();
+        set_backend_pool(&pool, "b1", Some("chat-pool"))
+            .await
+            .unwrap();
+        let snap = load_snapshot(&pool).await.unwrap();
+        assert_eq!(snap.pools[0].backends, ["b1", "b2"]);
     }
 
     #[tokio::test]
