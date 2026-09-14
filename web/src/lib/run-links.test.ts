@@ -59,3 +59,20 @@ test('the same rule serves webhooks, under their own section', () => {
 		runs: null
 	});
 });
+
+test('a webhook keeps its history after one fire, because a run records the payload', () => {
+	// The asymmetry with a schedule: a webhook run stores the request payload
+	// and the rendered prompt, so "the chat link already shows everything" is
+	// false for it even when there is exactly one of each.
+	assert.deepEqual(
+		runLinks(source({ run_count: 1, chat_count: 1, last_session_id: 'sess-1' }), '/webhooks', {
+			runsCarryMore: true
+		}),
+		{ chat: '/chat/sess-1', runs: '/webhooks/row-1/runs' }
+	);
+	// And still nothing to reach when it has never fired.
+	assert.deepEqual(runLinks(source({}), '/webhooks', { runsCarryMore: true }), {
+		chat: null,
+		runs: null
+	});
+});

@@ -645,6 +645,12 @@ pub async fn limits_list(State(state): State<Arc<RamaState>>, req: Request) -> R
         Ok(v) => v,
         Err(err) => return internal(err),
     };
+    // Not `unwrap_or_default()`: an empty list renders as "this gateway has no
+    // groups", which is indistinguishable from a read that failed.
+    let roles: Vec<String> = match db::gateway_groups::list_groups(&state.db).await {
+        Ok(groups) => groups.into_iter().map(|g| g.name).collect(),
+        Err(err) => return internal(err),
+    };
     let users = db::users::list_all(&state.db)
         .await
         .unwrap_or_default()
@@ -664,12 +670,7 @@ pub async fn limits_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             "users": users,
             "tokens": tokens,
             // Groups are database rows now, not `[[roles]]` in a config file.
-            "roles": db::gateway_groups::list_groups(&state.db)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|g| g.name)
-                .collect::<Vec<String>>(),
+            "roles": roles,
             "models": state.upstreams.all_models(),
             "currency": state.config().usage.currency,
         }),
@@ -2033,11 +2034,6 @@ pub async fn topology_reload(State(state): State<Arc<RamaState>>, req: Request) 
     )
 }
 
-/// GET /api/v0/admin/upstreams/events — the live health stream as JSON
-/// events: every 2 s, one `status` event per backend whose state changed
-/// since it was last sent (plus the dirty counter inside each event), a
-/// comment keepalive every 20 s. The JSON twin of the legacy
-/// `/admin/upstreams/live` HTML-patch stream.
 /// A `HashSet` of model ids as a stable, sorted `Vec`.
 fn sorted(set: std::collections::HashSet<String>) -> Vec<String> {
     let mut out: Vec<String> = set.into_iter().collect();
@@ -2045,6 +2041,12 @@ fn sorted(set: std::collections::HashSet<String>) -> Vec<String> {
     out
 }
 
+/// GET /api/v0/admin/upstreams/events — the live health stream as JSON
+/// events: one `status` event per backend whose state changed since it was
+/// last sent (plus the dirty counter inside each event), and a comment
+/// keepalive when nothing has changed for a while. See `TICK` and `KEEPALIVE`
+/// below for the cadence. The JSON twin of the legacy
+/// `/admin/upstreams/live` HTML-patch stream.
 pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let (tx, rx) =
@@ -2063,15 +2065,20 @@ pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) 
         /// sends nothing, so this only bounds how stale a health flip can look
         /// — it is not what drives traffic.
         const TICK: Duration = Duration::from_secs(15);
-        const KEEPALIVE: Duration = Duration::from_secs(20);
-        /// How often the rolling hour counts are re-aggregated. The tick is
-        /// fast so a health flip lands promptly; this figure is not.
+        /// Idle gap after which a comment frame goes out, so a proxy with an
+        /// idle timeout in front of the stream does not cut it. `since_send`
+        /// advances in whole ticks, so this is reached at the first tick at or
+        /// past it — keep it a multiple of `TICK`, or the effective gap is the
+        /// next multiple up (a 20 s threshold on a 15 s tick fires at 30 s).
+        const KEEPALIVE: Duration = Duration::from_secs(15);
+        /// How often the rolling hour counts are re-aggregated. Slower than
+        /// the tick, because an hour bucket does not move that fast.
         const USAGE_REFRESH: Duration = Duration::from_secs(60);
 
         // Both of these are re-read only when they can actually have changed:
         // the topology when the dirty counter moves, the usage aggregate on
-        // its own slow cadence. The 2 s tick then touches only in-memory
-        // registry state.
+        // its own slow cadence. A tick then touches only in-memory registry
+        // state, and sends nothing unless something actually changed.
         let mut snapshot = match upstreams_config::load_snapshot(&state.db).await {
             Ok(s) => s,
             Err(_) => return,

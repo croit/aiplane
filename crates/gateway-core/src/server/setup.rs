@@ -88,6 +88,18 @@ pub enum SetupAccess {
 /// Resolve the current access mode. Reads at most three rows and is only
 /// called on `/setup*` requests, so the operating path pays nothing for it.
 pub async fn access(pool: &Pool) -> Result<SetupAccess, DbError> {
+    // Recovery first, and deliberately before everything else: `restore-setup`
+    // sets only the window and its token, never the completion marker, so a
+    // database that has users but never completed the wizard — one that
+    // predates it, or one whose wizard died between writing its groups and
+    // marking itself done — would otherwise read as Closed with no way back in.
+    // That is precisely the case break-glass exists for, and the window is
+    // token-gated, so honouring it on a live deployment is safe.
+    if let Some(deadline) = recovery_deadline(pool).await?
+        && deadline > Timestamp::now()
+    {
+        return Ok(SetupAccess::Recovery);
+    }
     if !is_completed(pool).await? {
         // First-run mode leaves `/setup` **open and unauthenticated** — fine on
         // an empty box with nothing to steal, a takeover vector on a live one.
@@ -105,10 +117,7 @@ pub async fn access(pool: &Pool) -> Result<SetupAccess, DbError> {
             SetupAccess::FirstRun
         });
     }
-    match recovery_deadline(pool).await? {
-        Some(deadline) if deadline > Timestamp::now() => Ok(SetupAccess::Recovery),
-        _ => Ok(SetupAccess::Closed),
-    }
+    Ok(SetupAccess::Closed)
 }
 
 /// Has this database ever been used? True as soon as one person has signed in
@@ -343,6 +352,30 @@ mod tests {
             access(&pool).await.unwrap(),
             SetupAccess::Closed,
             "a gateway with users must not open its setup wizard"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_reopens_a_used_database_that_never_completed_setup() {
+        // The lockout this ordering exists to prevent: a deployment that
+        // predates the wizard, or whose wizard died between writing its groups
+        // and marking itself done, has users but no completion marker. Without
+        // recovery taking precedence it reads as Closed forever, and
+        // `restore-setup` — which sets only the window — cannot reach it.
+        let pool = fresh().await;
+        seed_a_user(&pool).await;
+        assert_eq!(access(&pool).await.unwrap(), SetupAccess::Closed);
+
+        open_recovery(&pool, "break-glass").await.unwrap();
+        assert_eq!(
+            access(&pool).await.unwrap(),
+            SetupAccess::Recovery,
+            "break-glass must reach a database that never completed setup"
+        );
+        assert!(
+            recovery_token_matches(&pool, SetupAccess::Recovery, "break-glass")
+                .await
+                .unwrap()
         );
     }
 

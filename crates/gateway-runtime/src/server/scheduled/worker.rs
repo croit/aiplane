@@ -110,7 +110,20 @@ async fn run_action(state: Arc<RamaState>, action: ScheduledAction, next: Option
             return;
         }
         Err(err) => {
+            // Close the row rather than returning straight out: the comment
+            // above promises every exit goes through `record`, and a run left
+            // open reads as "still running" on the history page forever.
             tracing::warn!(action = %action.id, error = %err, "loading schedule owner");
+            record(
+                &state,
+                &action,
+                run_id.as_deref(),
+                "error",
+                None,
+                next,
+                Some("could not load the schedule owner"),
+            )
+            .await;
             return;
         }
     };

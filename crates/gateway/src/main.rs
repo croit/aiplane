@@ -54,6 +54,21 @@ async fn main() -> anyhow::Result<()> {
 
     let db_path = config.db_path()?;
     refuse_to_orphan_an_existing_database(&db_path)?;
+    // Creating a database, at a path nobody named, is the shape of a genuine
+    // fresh install — and also the shape of an upgrade whose path used to live
+    // in the config file this release stopped reading. The two are
+    // indistinguishable from here (there is no file left to compare against),
+    // and the second ends in an unauthenticated `/setup` on a live URL, so say
+    // plainly which file is about to be created rather than only logging it.
+    if !db_path.exists() && std::env::var_os("GATEWAY_DB_PATH").is_none() {
+        tracing::warn!(
+            path = %db_path.display(),
+            "no database here yet — creating one. If this deployment already had a database, \
+             its path came from the config file, which this release no longer reads: stop the \
+             gateway and set $GATEWAY_DB_PATH to where it actually lives, or this boots as a \
+             fresh install and serves an open setup wizard."
+        );
+    }
     tracing::info!(path = %db_path.display(), "database");
 
     let db = srv::db::open(&db_path)

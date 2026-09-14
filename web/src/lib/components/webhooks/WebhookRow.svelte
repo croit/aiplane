@@ -20,7 +20,10 @@
 		onsecret: (secret: string) => void;
 	}>();
 
-	let links = $derived(runLinks(webhook, '/webhooks'));
+	// A webhook run stores the payload it fired with and the prompt that payload
+	// was rendered into — neither is in the chat — so its history is worth
+	// reaching even after a single fire.
+	let links = $derived(runLinks(webhook, '/webhooks', { runsCarryMore: true }));
 
 	async function toggle() {
 		try {

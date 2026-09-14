@@ -325,7 +325,7 @@ async fn main() -> anyhow::Result<()> {
             &db::upstreams_config::PoolRow {
                 name: name.clone(),
                 kind: cfg.kind.as_str().to_string(),
-                strategy: format!("{:?}", cfg.strategy).to_lowercase(),
+                strategy: cfg.strategy.as_str().to_string(),
                 fallback_offline: cfg.fallback_offline.clone(),
                 compliance_gdpr: cfg.compliance.gdpr,
                 compliance_nda: cfg.compliance.nda,
@@ -1061,6 +1061,16 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             false,
             true,
             0,
+        ),
+        // Fired exactly once: its chat is one click away *and* its history is
+        // still reachable, because a webhook run records the payload it fired
+        // with and the chat does not show that.
+        (
+            "Signup alert",
+            "Summarise this signup event for the growth channel.",
+            false,
+            false,
+            1,
         ),
     ];
     for (index, (name, prompt, reuse, synchronous, fires)) in hooks.into_iter().enumerate() {

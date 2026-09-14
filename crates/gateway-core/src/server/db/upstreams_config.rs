@@ -509,13 +509,45 @@ pub async fn rename_backend(db: &Pool, old: &str, new: &str) -> Result<RenameOut
     let mut tx = db.begin().await?;
     let outcome = rename_in(&mut tx, "backends", old, new).await?;
     if outcome == RenameOutcome::Renamed {
-        for table in ["usage_daily", "usage_events"] {
-            sqlx::query(&format!("UPDATE {table} SET backend = ? WHERE backend = ?"))
-                .bind(new)
-                .bind(old)
-                .execute(&mut *tx)
-                .await?;
-        }
+        // `usage_events` is keyed by a uuid, so its label moves with an UPDATE.
+        sqlx::query("UPDATE usage_events SET backend = ? WHERE backend = ?")
+            .bind(new)
+            .bind(old)
+            .execute(&mut *tx)
+            .await?;
+        // `usage_daily` is not: `backend` is part of its primary key, so an
+        // UPDATE onto a name that already has a row for the same day, user,
+        // token, source, kind and model violates it — and because usage rows
+        // deliberately outlive the backend they name, reusing a name that once
+        // had traffic is exactly when a rename would hit this. Merge instead:
+        // sum the counters into the target row, then drop the source rows.
+        sqlx::query(
+            r#"INSERT INTO usage_daily
+                   (day, user_id, user_email, token_id, token_name, source, kind, backend, model,
+                    req_count, error_count, prompt_tokens, completion_tokens, total_tokens,
+                    input_units, output_units, cost)
+               SELECT day, user_id, user_email, token_id, token_name, source, kind, ?, model,
+                      req_count, error_count, prompt_tokens, completion_tokens, total_tokens,
+                      input_units, output_units, cost
+                 FROM usage_daily WHERE backend = ?
+               ON CONFLICT(day, user_id, token_id, source, kind, backend, model) DO UPDATE SET
+                   req_count         = req_count + excluded.req_count,
+                   error_count       = error_count + excluded.error_count,
+                   prompt_tokens     = prompt_tokens + excluded.prompt_tokens,
+                   completion_tokens = completion_tokens + excluded.completion_tokens,
+                   total_tokens      = total_tokens + excluded.total_tokens,
+                   input_units       = input_units + excluded.input_units,
+                   output_units      = output_units + excluded.output_units,
+                   cost              = cost + excluded.cost"#,
+        )
+        .bind(new)
+        .bind(old)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM usage_daily WHERE backend = ?")
+            .bind(old)
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     Ok(outcome)
@@ -692,7 +724,7 @@ pub async fn set_backend_pool(
     .execute(db)
     .await?;
     if let Some(pool_name) = pool {
-        sqlx::query(
+        let linked = sqlx::query(
             r#"INSERT INTO pool_backends (pool_id, backend_id, sort_order)
                SELECT p.id, b.id, COALESCE(
                    (SELECT MAX(sort_order) + 1 FROM pool_backends WHERE pool_id = p.id), 0)
@@ -702,7 +734,15 @@ pub async fn set_backend_pool(
         .bind(pool_name)
         .bind(backend_name)
         .execute(db)
-        .await?;
+        .await?
+        .rows_affected();
+        // `INSERT … SELECT` matching nothing is not an error the way a foreign
+        // key violation was: if the pool was deleted between the page load and
+        // the save, this inserts zero rows and the caller would answer 200 for
+        // an assignment that never happened.
+        if linked == 0 {
+            return Err(DbError::Query(sqlx::Error::RowNotFound));
+        }
     }
     Ok(())
 }
@@ -1035,6 +1075,81 @@ mod tests {
             .await
             .unwrap();
         assert!(violations.is_empty(), "rename left dangling references");
+    }
+
+    #[tokio::test]
+    async fn renaming_onto_a_name_with_usage_history_merges_rather_than_collides() {
+        // `usage_daily`'s primary key includes `backend`, and its rows outlive
+        // the backend they name. Rename onto a name that once had traffic on
+        // the same day/model and a blind UPDATE violates the key, aborting the
+        // whole rename with a 500.
+        let pool = test_pool().await;
+        for name in ["new-gpu"] {
+            upsert_backend(
+                &pool,
+                &BackendRow {
+                    name: name.into(),
+                    base_url: "http://x/v1".into(),
+                    api_key_env: None,
+                    api_key_ct: None,
+                    api_key_nonce: None,
+                    weight: 1,
+                    max_inflight: 16,
+                    health_path: "/models".into(),
+                    probe_models: true,
+                    supports_edit: false,
+                    enabled: true,
+                    models: vec![],
+                    aliases: vec![],
+                    created_at: Timestamp::now(),
+                    updated_at: Timestamp::now(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        // `old-gpu` is gone as a backend but its accounting rows remain — that
+        // is the whole point of leaving `usage_daily` without a foreign key,
+        // and it is what makes the name reusable while the history is not.
+        for (backend, reqs) in [("old-gpu", 3_i64), ("new-gpu", 4_i64)] {
+            sqlx::query(
+                r#"INSERT INTO usage_daily
+                       (day, user_id, token_id, source, kind, backend, model, req_count, total_tokens)
+                   VALUES ('2026-09-14', 'u1', '', 'chat', 'chat', ?, 'qwen', ?, ?)"#,
+            )
+            .bind(backend)
+            .bind(reqs)
+            .bind(reqs * 10)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(
+            rename_backend(&pool, "new-gpu", "old-gpu").await.unwrap(),
+            RenameOutcome::Renamed
+        );
+
+        let rows: Vec<(String, i64, i64)> = sqlx::query(
+            "SELECT backend, req_count, total_tokens FROM usage_daily ORDER BY backend",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("backend").unwrap(),
+                r.try_get("req_count").unwrap(),
+                r.try_get("total_tokens").unwrap(),
+            )
+        })
+        .collect();
+        assert_eq!(
+            rows,
+            vec![("old-gpu".to_string(), 7, 70)],
+            "the two days' counters must be summed into one row, not lost or duplicated"
+        );
     }
 
     #[tokio::test]

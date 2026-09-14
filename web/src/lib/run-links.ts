@@ -25,6 +25,20 @@ export interface RunLinks {
 	runs: string | null;
 }
 
+export interface RunLinkOptions {
+	/**
+	 * Does a run record something the chat it opened does not show?
+	 *
+	 * A webhook run does: it stores the request payload it was fired with and
+	 * the prompt that payload was rendered into, and it can be replayed. A
+	 * scheduled run does not — the prompt is the schedule's, and the run adds
+	 * only a timestamp and an outcome, both of which the list row already
+	 * shows. So a webhook that has fired exactly once still has a history
+	 * worth reaching; a schedule that has run once does not.
+	 */
+	runsCarryMore?: boolean;
+}
+
 /**
  * The links a row offers. `section` is the route prefix the run history lives
  * under (`/scheduled`, `/webhooks`).
@@ -36,9 +50,13 @@ export interface RunLinks {
  * (over quota, the model never answered) are still worth seeing, so the
  * history stays reachable whenever it holds anything the chat link does not.
  */
-export function runLinks(source: RunLinkSource, section: string): RunLinks {
+export function runLinks(
+	source: RunLinkSource,
+	section: string,
+	{ runsCarryMore = false }: RunLinkOptions = {}
+): RunLinks {
 	const chat = source.chat_count <= 1 && source.last_session_id ? `/chat/${source.last_session_id}` : null;
-	const everythingIsInTheChatLink = chat !== null && source.run_count <= 1;
+	const everythingIsInTheChatLink = chat !== null && source.run_count <= 1 && !runsCarryMore;
 	return {
 		chat,
 		runs: source.run_count > 0 && !everythingIsInTheChatLink ? `${section}/${source.id}/runs` : null

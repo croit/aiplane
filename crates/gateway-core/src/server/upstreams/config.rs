@@ -203,6 +203,22 @@ pub enum PickerStrategy {
     PrefixAffinity,
 }
 
+impl PickerStrategy {
+    /// The wire name, matching `#[serde(rename_all = "snake_case")]` and the
+    /// strings `db_bridge::parse_strategy` accepts.
+    ///
+    /// Exists so nobody reaches for `format!("{:?}")` to produce one: that
+    /// yields `LeastInflight`, which parses as unknown and silently falls back
+    /// to the default while the admin UI shows a value not in its own dropdown.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RoundRobin => "round_robin",
+            Self::LeastInflight => "least_inflight",
+            Self::PrefixAffinity => "prefix_affinity",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackendConfig {

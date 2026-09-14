@@ -413,4 +413,20 @@ mod tests {
         let (pools, _) = snapshot_to_configs(&snap, &Crypto::from_key([2u8; 32]));
         assert!(pools["p"].backend[0].api_key().is_none());
     }
+
+    /// `as_str` and `parse_strategy` are inverses.
+    ///
+    /// They are the two halves of one mapping written in two places, and a
+    /// mismatch is silent: the write side stores a string the read side does
+    /// not recognise, so the pool quietly runs on the default strategy.
+    #[test]
+    fn every_strategy_round_trips_through_its_wire_name() {
+        for s in [
+            PickerStrategy::RoundRobin,
+            PickerStrategy::LeastInflight,
+            PickerStrategy::PrefixAffinity,
+        ] {
+            assert_eq!(parse_strategy("p", s.as_str()), s, "{:?}", s);
+        }
+    }
 }
