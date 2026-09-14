@@ -737,21 +737,21 @@ mod tests {
                 .with(EnableTools::from_registry(
                     &ToolRegistry::new().with(FetchUrl).with(SearchWeb),
                 ));
-        let config = Config {
-            rbac: RbacConfig {
-                default_role: Some("user".into()),
-                mappings: vec![],
-            },
-            roles: vec![RoleConfig {
-                id: "user".into(),
-                admin: false,
-                tools: vec!["*".into()],
-                models: vec!["*".into()],
-                skills: vec![],
-            }],
-            ..Config::default()
+        let config = Config::default();
+        // Groups live in the database now, so the grants a fixture wants are
+        // built straight into the resolver rather than through a config block.
+        let rbac_config = RbacConfig {
+            default_role: Some("user".into()),
+            mappings: vec![],
         };
-        let rbac = Resolver::build(config.rbac.clone(), config.roles.clone()).unwrap();
+        let roles = vec![RoleConfig {
+            id: "user".into(),
+            admin: false,
+            tools: vec!["*".into()],
+            models: vec!["*".into()],
+            skills: vec![],
+        }];
+        let rbac = Resolver::build(rbac_config, roles).unwrap();
         let upstreams = UpstreamRegistry::new(&Default::default()).unwrap();
         let state = AppState::new(
             config,

@@ -149,10 +149,9 @@ async fn state_with_oidc(idp_uri: &str, roles_claim: Option<&str>) -> RamaState 
         scopes: vec!["email".into(), "profile".into()],
         roles_claim: roles_claim.map(String::from),
     };
-    let mut config = Config {
-        oidc: Some(oidc_config.clone()),
-        ..Default::default()
-    };
+    // The provider is a database row now; the test builds its client straight
+    // from `oidc_config` below, which is the only thing it was ever kept for.
+    let mut config = Config::default();
     config.gateway.public_url_import_only = "http://gateway.test".into();
 
     let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();

@@ -39,21 +39,21 @@ mod skill_overlay_tests {
             std::path::PathBuf::from("/nonexistent"),
             registry,
         ));
-        let config = Config {
-            rbac: RbacConfig {
-                default_role: Some("user".into()),
-                mappings: vec![],
-            },
-            roles: vec![RoleConfig {
-                id: "user".into(),
-                admin: false,
-                tools: vec!["*".into()],
-                models: vec!["*".into()],
-                skills: skill_grant.iter().map(|s| (*s).to_string()).collect(),
-            }],
-            ..Config::default()
+        let config = Config::default();
+        // Groups live in the database now, so the grants a fixture wants are
+        // built straight into the resolver rather than through a config block.
+        let rbac_config = RbacConfig {
+            default_role: Some("user".into()),
+            mappings: vec![],
         };
-        let rbac = Arc::new(Resolver::build(config.rbac.clone(), config.roles.clone()).unwrap());
+        let roles = vec![RoleConfig {
+            id: "user".into(),
+            admin: false,
+            tools: vec!["*".into()],
+            models: vec!["*".into()],
+            skills: skill_grant.iter().map(|s| (*s).to_string()).collect(),
+        }];
+        let rbac = Arc::new(Resolver::build(rbac_config, roles).unwrap());
         // Empty per-user store (its dir doesn't exist → scans to nothing), so
         // these tests exercise the global-skill path exactly as before.
         let user_skills = Arc::new(UserSkillStore::new(std::path::PathBuf::from(

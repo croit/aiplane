@@ -32,10 +32,8 @@
 use jiff::{SignedDuration, Timestamp};
 
 use crate::server::auth::oidc::OidcParams;
-use crate::server::config::OidcConfig;
 use crate::server::crypto::{self, Crypto};
 use crate::server::db::{DbError, Pool, app_settings};
-use crate::server::oidc_settings;
 
 /// Set to `"1"` once the wizard has finished. Its *absence* is what puts the
 /// gateway in first-run mode, so it must only ever be written after a login
@@ -53,13 +51,6 @@ pub const RECOVERY_UNTIL_KEY: &str = "setup.recovery_until";
 const RECOVERY_TOKEN_KEY: &str = "setup.recovery_token";
 
 const PUBLIC_URL_KEY: &str = "gateway.public_url";
-
-/// Marks that the one-time import of `[oidc]` / `[gateway].public_url` from a
-/// legacy config file has run. Same shape as the `topology.seeded` and
-/// `rbac.seeded` markers: gated on the marker rather than on the rows being
-/// empty, so an operator who deliberately clears a setting does not get the
-/// config file's value resurrected on the next restart.
-const IMPORT_MARKER_KEY: &str = "setup.config_imported";
 
 /// How long `restore-setup` keeps `/setup` reachable. Long enough to walk
 /// through the wizard including a trip to the IdP's admin console, short
@@ -94,16 +85,46 @@ pub enum SetupAccess {
     Closed,
 }
 
-/// Resolve the current access mode. Reads at most two rows and is only called
-/// on `/setup*` requests, so the operating path pays nothing for it.
+/// Resolve the current access mode. Reads at most three rows and is only
+/// called on `/setup*` requests, so the operating path pays nothing for it.
 pub async fn access(pool: &Pool) -> Result<SetupAccess, DbError> {
     if !is_completed(pool).await? {
-        return Ok(SetupAccess::FirstRun);
+        // First-run mode leaves `/setup` **open and unauthenticated** — fine on
+        // an empty box with nothing to steal, a takeover vector on a live one.
+        // A gateway can be in use and yet never have completed the wizard: a
+        // token-only `/v1` deployment is a supported shape, and one that
+        // predates the wizard has users but no completion marker. Asking "is
+        // anybody here?" is what keeps those out of first-run mode.
+        //
+        // This check used to live inside the config-file importer, which ran
+        // once at boot. It belongs here, where it is re-answered on every
+        // request that could open the wizard.
+        return Ok(if has_been_used(pool).await? {
+            SetupAccess::Closed
+        } else {
+            SetupAccess::FirstRun
+        });
     }
     match recovery_deadline(pool).await? {
         Some(deadline) if deadline > Timestamp::now() => Ok(SetupAccess::Recovery),
         _ => Ok(SetupAccess::Closed),
     }
+}
+
+/// Has this database ever been used? True as soon as one person has signed in
+/// or one gateway group exists.
+///
+/// Deliberately not "is a provider configured": a deployment with no OIDC at
+/// all is legitimate, and one whose provider is temporarily unreadable is
+/// still a running gateway with real users, real chats and real sealed backend
+/// keys behind it.
+async fn has_been_used(pool: &Pool) -> Result<bool, DbError> {
+    let used: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users) OR EXISTS(SELECT 1 FROM gateway_groups)",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(used != 0)
 }
 
 async fn recovery_deadline(pool: &Pool) -> Result<Option<Timestamp>, DbError> {
@@ -260,107 +281,6 @@ async fn load_sealed_json<T: serde::de::DeserializeOwned>(
         .and_then(|json| serde_json::from_str(&json).ok()))
 }
 
-/// Has this database ever been used? True as soon as one person has signed in
-/// or one gateway group exists.
-///
-/// This is the safety net under [`import_config_once`], and it guards
-/// something serious. First-run mode leaves `/setup` **open and
-/// unauthenticated** — fine on an empty box with nothing to steal, a takeover
-/// vector on a live one. An existing deployment must therefore never be able to
-/// fall into it, and "has an importable `[oidc]` block" is too narrow a test:
-/// a token-only `/v1` deployment may legitimately have no `[oidc]` at all, and
-/// an operator upgrading with their `EnvironmentFile` temporarily missing has
-/// one that cannot be resolved. Both of those are running gateways with real
-/// users, real chats and real sealed backend keys.
-///
-/// So the question we actually ask is "is anybody here?", not "was the config
-/// importable".
-async fn has_been_used(pool: &Pool) -> Result<bool, DbError> {
-    let used: i64 = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM users) OR EXISTS(SELECT 1 FROM gateway_groups)",
-    )
-    .fetch_one(pool)
-    .await?;
-    Ok(used != 0)
-}
-
-/// Copy `[oidc]` and `[gateway].public_url` out of a legacy config file into
-/// empty settings, exactly once.
-///
-/// This is what upgrades an existing config-file deployment in place: on the
-/// first boot after this release its provider moves into the database and the
-/// gateway marks setup complete, so nobody is redirected to a wizard and
-/// `/setup` never opens. From then on the file's `[oidc]` block is ignored.
-/// A genuinely fresh install imports nothing and lands in first-run mode.
-///
-/// Returns whether a provider was imported, for logging.
-pub async fn import_config_once(
-    pool: &Pool,
-    crypto: &Crypto,
-    oidc: Option<&OidcConfig>,
-    config_public_url: &str,
-) -> Result<bool, DbError> {
-    if app_settings::get(pool, IMPORT_MARKER_KEY).await?.is_some() {
-        return Ok(false);
-    }
-    let mut imported = false;
-    // Whether the decision is final, i.e. whether the marker may be burned.
-    //
-    // Only two boots are final: one that imported a provider, and one that
-    // found a provider already in the database. Everything else has to be
-    // retried, because the *reason* nothing was imported may not survive to
-    // the next boot:
-    //
-    // - the `[oidc]` block resolved to nothing because its client-secret env
-    //   var is unset on this boot (an `EnvironmentFile` not yet in place);
-    // - there was no config file at all — a volume mounted late, a bind mount
-    //   not ready, or an operator starting the binary once from the wrong
-    //   directory.
-    //
-    // The second case is the one that bit: a single boot without the file used
-    // to burn the marker, and the deployment was then stuck with no provider
-    // and no way to import one, reachable only through `restore-setup`. Same
-    // rule `settings::import_once` follows for the operator settings.
-    let mut settled = true;
-
-    if oidc_settings::params(pool, crypto).await?.is_none() {
-        match oidc {
-            Some(cfg) => match cfg.to_params() {
-                Some(params) => {
-                    oidc_settings::set_params(pool, crypto, &params).await?;
-                    imported = true;
-                }
-                None => {
-                    settled = false;
-                    tracing::warn!(
-                        env = %cfg.client_secret_env,
-                        "config file has an [oidc] block but its client-secret env var is \
-                         unset, so there is nothing to import; set it and restart, or \
-                         configure the provider at /setup"
-                    );
-                }
-            },
-            None => settled = false,
-        }
-    }
-
-    if imported && public_url(pool).await?.is_none() {
-        set_public_url(pool, config_public_url).await?;
-    }
-
-    // Never drop a deployment that is already in use into first-run mode: that
-    // would redirect all its users to a wizard AND open `/setup` to anyone who
-    // can reach the port. See [`has_been_used`].
-    if imported || has_been_used(pool).await? {
-        app_settings::set(pool, COMPLETED_KEY, "1").await?;
-    }
-
-    if settled {
-        app_settings::set(pool, IMPORT_MARKER_KEY, "1").await?;
-    }
-    Ok(imported)
-}
-
 /// Compares without an early return on the first differing byte, so the
 /// comparison time does not leak how much of a guessed token was right.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -406,11 +326,6 @@ mod tests {
     #[tokio::test]
     async fn an_empty_install_stays_in_first_run_mode() {
         let pool = fresh().await;
-        assert!(
-            !import_config_once(&pool, &crypto(), None, "http://localhost:8080")
-                .await
-                .unwrap()
-        );
         assert_eq!(access(&pool).await.unwrap(), SetupAccess::FirstRun);
     }
 
@@ -424,91 +339,11 @@ mod tests {
         let pool = fresh().await;
         seed_a_user(&pool).await;
 
-        assert!(
-            !import_config_once(&pool, &crypto(), None, "http://localhost:8080")
-                .await
-                .unwrap(),
-            "nothing to import"
-        );
         assert_eq!(
             access(&pool).await.unwrap(),
             SetupAccess::Closed,
             "a gateway with users must not open its setup wizard"
         );
-    }
-
-    #[tokio::test]
-    async fn a_config_provider_is_imported_and_marks_the_gateway_configured() {
-        let pool = fresh().await;
-        // SAFETY: this test's own env var, read synchronously below.
-        unsafe { std::env::set_var("GATEWAY_SETUP_TEST_SECRET", "shh") };
-        let cfg = OidcConfig {
-            issuer: "https://id.example.com".into(),
-            client_id: "gw".into(),
-            client_secret_env: "GATEWAY_SETUP_TEST_SECRET".into(),
-            scopes: vec!["email".into()],
-            roles_claim: Some("groups".into()),
-        };
-
-        assert!(
-            import_config_once(&pool, &crypto(), Some(&cfg), "https://gw.example.com")
-                .await
-                .unwrap()
-        );
-        assert_eq!(access(&pool).await.unwrap(), SetupAccess::Closed);
-        let params = oidc_settings::params(&pool, &crypto())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(params.client_secret, "shh");
-        assert_eq!(
-            public_url(&pool).await.unwrap().as_deref(),
-            Some("https://gw.example.com")
-        );
-
-        // Second boot imports nothing more, even if the config changes.
-        assert!(
-            !import_config_once(&pool, &crypto(), Some(&cfg), "https://gw.example.com")
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn an_unresolvable_config_provider_is_retried_on_the_next_boot() {
-        // An `EnvironmentFile` that was not in place yet must not permanently
-        // burn the import marker and leave the `[oidc]` block ignored forever.
-        let pool = fresh().await;
-        let cfg = OidcConfig {
-            issuer: "https://id.example.com".into(),
-            client_id: "gw".into(),
-            client_secret_env: "GATEWAY_SETUP_DEFINITELY_UNSET".into(),
-            scopes: vec![],
-            roles_claim: None,
-        };
-
-        assert!(
-            !import_config_once(&pool, &crypto(), Some(&cfg), "https://gw.example.com")
-                .await
-                .unwrap()
-        );
-        assert!(
-            app_settings::get(&pool, IMPORT_MARKER_KEY)
-                .await
-                .unwrap()
-                .is_none(),
-            "the decision was not final, so the marker must not be set"
-        );
-
-        // Env var appears; the next boot imports it.
-        // SAFETY: this test's own env var, read synchronously below.
-        unsafe { std::env::set_var("GATEWAY_SETUP_DEFINITELY_UNSET", "late") };
-        assert!(
-            import_config_once(&pool, &crypto(), Some(&cfg), "https://gw.example.com")
-                .await
-                .unwrap()
-        );
-        unsafe { std::env::remove_var("GATEWAY_SETUP_DEFINITELY_UNSET") };
     }
 
     #[tokio::test]
@@ -588,84 +423,5 @@ mod tests {
         assert!(constant_time_eq(b"abc", b"abc"));
         assert!(!constant_time_eq(b"abc", b"abd"));
         assert!(!constant_time_eq(b"abc", b"ab"));
-    }
-
-    #[tokio::test]
-    async fn a_boot_without_a_config_file_does_not_lock_out_a_later_import() {
-        // The sequence that actually happened: an existing deployment (users in
-        // the DB, provider still only in `gateway.toml`) booted once without
-        // the file — a bind mount not ready, or the binary started from the
-        // wrong directory. That boot must not burn the import marker, or the
-        // deployment is stuck forever with no provider: everyone is locked out
-        // of sign-in and `/setup` is closed because setup reads as complete.
-        let pool = fresh().await;
-        seed_a_user(&pool).await;
-
-        assert!(
-            !import_config_once(&pool, &crypto(), None, "https://gw.example.com")
-                .await
-                .unwrap(),
-            "nothing to import with no config file"
-        );
-        assert!(
-            app_settings::get(&pool, IMPORT_MARKER_KEY)
-                .await
-                .unwrap()
-                .is_none(),
-            "no file was seen, so the decision cannot be final"
-        );
-
-        // The file shows up on the next boot and must still be imported.
-        // SAFETY: this test's own env var, read synchronously below.
-        unsafe { std::env::set_var("GATEWAY_SETUP_TEST_SECRET", "s3cret") };
-        let cfg = OidcConfig {
-            issuer: "https://id.example.com".into(),
-            client_id: "gw".into(),
-            client_secret_env: "GATEWAY_SETUP_TEST_SECRET".into(),
-            scopes: vec![],
-            roles_claim: None,
-        };
-        assert!(
-            import_config_once(&pool, &crypto(), Some(&cfg), "https://gw.example.com")
-                .await
-                .unwrap(),
-            "the provider from the config file must still be importable"
-        );
-        assert!(
-            oidc_settings::params(&pool, &crypto())
-                .await
-                .unwrap()
-                .is_some(),
-            "and sign-in must work afterwards"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_provider_already_in_the_database_settles_the_decision() {
-        // The counterpart: once the DB has a provider, there is nothing a
-        // config file could add, so the marker is burned and later boots skip
-        // the whole check.
-        let pool = fresh().await;
-        // SAFETY: this test's own env var, read synchronously below.
-        unsafe { std::env::set_var("GATEWAY_SETUP_TEST_SECRET", "s3cret") };
-        let cfg = OidcConfig {
-            issuer: "https://id.example.com".into(),
-            client_id: "gw".into(),
-            client_secret_env: "GATEWAY_SETUP_TEST_SECRET".into(),
-            scopes: vec![],
-            roles_claim: None,
-        };
-        assert!(
-            import_config_once(&pool, &crypto(), Some(&cfg), "https://gw.example.com")
-                .await
-                .unwrap()
-        );
-        assert!(
-            app_settings::get(&pool, IMPORT_MARKER_KEY)
-                .await
-                .unwrap()
-                .is_some(),
-            "an import that succeeded is final"
-        );
     }
 }

@@ -466,8 +466,6 @@ async fn main() -> anyhow::Result<()> {
             bootstrap_admin_groups: vec!["platform-admins".into()],
             ..Default::default()
         },
-        rbac: dev_rbac.clone(),
-        roles: roles.clone(),
         // Seed a feedback config so the floating feedback button + dialog
         // render in local UI debugging. The token is a dummy — recording,
         // transcription, model pickers, and field extraction all work against
@@ -504,7 +502,7 @@ async fn main() -> anyhow::Result<()> {
     // seeding), then build the resolver from the DB snapshot — so `/admin/groups`
     // shows the seeded groups and an edit + `reload_rbac` round-trips through the
     // same DB path production uses. `bootstrap_admin_groups` keeps `dev` admin.
-    gateway_core::server::db::gateway_groups::seed_from_config(&pool, &dev_rbac, &config.roles)
+    gateway_core::server::db::gateway_groups::seed_from_config(&pool, &dev_rbac, &roles)
         .await
         .expect("dev_ui RBAC seed");
     let group_snapshot = gateway_core::server::db::gateway_groups::load_snapshot(&pool)

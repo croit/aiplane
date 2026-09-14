@@ -663,7 +663,13 @@ pub async fn limits_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             "limits": rules.iter().map(limit_json).collect::<Vec<_>>(),
             "users": users,
             "tokens": tokens,
-            "roles": state.config().roles.iter().map(|r| r.id.clone()).collect::<Vec<String>>(),
+            // Groups are database rows now, not `[[roles]]` in a config file.
+            "roles": db::gateway_groups::list_groups(&state.db)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|g| g.name)
+                .collect::<Vec<String>>(),
             "models": state.upstreams.all_models(),
             "currency": state.config().usage.currency,
         }),
@@ -711,16 +717,14 @@ pub async fn limits_save(State(state): State<Arc<RamaState>>, req: Request) -> R
     let Some(subject_type) = limits::SubjectType::parse(&parsed.subject_type) else {
         return bad_request(format!("unknown subject type: {}", parsed.subject_type));
     };
-    // Subject validation mirrors the form path: roles must exist in config,
-    // tokens in the DB, users by id or email.
+    // Subject validation mirrors the form path: roles must exist as gateway
+    // groups, tokens in the DB, users by id or email.
     let subject_id = match subject_type {
         limits::SubjectType::Role => {
-            if !state
-                .config()
-                .roles
-                .iter()
-                .any(|r| r.id == parsed.subject_id)
-            {
+            let known = db::gateway_groups::list_groups(&state.db)
+                .await
+                .unwrap_or_default();
+            if !known.iter().any(|g| g.name == parsed.subject_id) {
                 return bad_request(format!("unknown role: {}", parsed.subject_id));
             }
             parsed.subject_id

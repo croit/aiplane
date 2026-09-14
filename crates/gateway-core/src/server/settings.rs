@@ -510,7 +510,7 @@ pub static SECTIONS: &[SectionSpec] = &[
 ///
 /// * `public_url` — owned by the setup wizard (`/setup`), which stores it in
 ///   its own row. The file's copy is a one-time import; see
-///   [`crate::server::setup::import_config_once`].
+///   the setup wizard.
 /// * `bootstrap_admin_groups` — the anti-lockout anchor. It exists so a
 ///   break-glass admin works *regardless of what is in the database*, which
 ///   makes the database the one place it must not live: a botched group mapping

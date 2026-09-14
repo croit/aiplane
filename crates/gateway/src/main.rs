@@ -87,27 +87,6 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
-    // Setup state, resolved before anything that needs the public URL. A config
-    // file's `[oidc]` block is imported into the DB once — that is what carries
-    // an existing deployment across this release without an operator touching
-    // anything — and from then on the DB is the only source of truth, edited
-    // through the setup wizard.
-    match srv::setup::import_config_once(
-        &db,
-        &crypto,
-        config.oidc.as_ref(),
-        config.public_url_fallback(),
-    )
-    .await
-    {
-        Ok(true) => tracing::info!(
-            "imported the config file's [oidc] provider into the database; it is managed \
-             at /setup from now on and the config block is ignored"
-        ),
-        Ok(false) => {}
-        Err(err) => tracing::warn!(error = %err, "importing OIDC settings from the config file"),
-    }
-
     // The operator settings — `[chat]`, `[sandbox]`, `[comfyui]`, `[rag]`,
     // `[skills]`, `[typst]`, `[geoip]`, `[usage]`, `[limits]`, `[feedback]`,
     // `[push]`, and the session/token half of `[gateway]`. Same one-way move as
@@ -199,35 +178,6 @@ async fn main() -> anyhow::Result<()> {
     // Positive liveness heartbeat (one line every 15s) so quiet logs can't be
     // mistaken for a hung process — see `spawn_heartbeat`.
     srv::upstreams::health::spawn_heartbeat(upstreams.clone());
-
-    // Seed the RBAC group tables from the legacy `[rbac]` + `[[roles]]` config
-    // on first boot, then treat the DB as the source of truth — same
-    // marker-gated pattern as the upstream topology above, so an admin who
-    // later deletes every group in the UI doesn't get the config resurrected on
-    // the next restart. We validate the config through `Resolver::build` first
-    // so a malformed `[[roles]]` block still fails fast with a clear error.
-    const RBAC_SEED_MARKER: &str = "rbac.seeded";
-    let rbac_already_seeded = srv::db::app_settings::get(&db, RBAC_SEED_MARKER)
-        .await
-        .map_err(|e| anyhow::anyhow!("reading rbac seed marker: {e:#}"))?
-        .is_some();
-    if !rbac_already_seeded {
-        srv::rbac::Resolver::build(config.rbac.clone(), config.roles.clone())
-            .map_err(|e| anyhow::anyhow!("validating RBAC config for seeding: {e}"))?;
-        srv::db::gateway_groups::seed_from_config(&db, &config.rbac, &config.roles)
-            .await
-            .map_err(|e| anyhow::anyhow!("seeding RBAC groups from config: {e:#}"))?;
-        // Only final once there was a file to seed *from*. A boot that found no
-        // config file — a volume mounted late, or the binary started from the
-        // wrong directory — has seeded nothing, and burning the marker there
-        // would ignore the file for good when it does turn up. Same rule
-        // `settings::import_once` and `setup::import_config_once` follow.
-        if config.loaded_from.is_some() {
-            srv::db::app_settings::set(&db, RBAC_SEED_MARKER, "1")
-                .await
-                .map_err(|e| anyhow::anyhow!("recording rbac seed marker: {e:#}"))?;
-        }
-    }
 
     // Build the RBAC resolver from the DB snapshot: the `read_skill` tool holds
     // a clone so it can authorize skill access at call time, the same way the

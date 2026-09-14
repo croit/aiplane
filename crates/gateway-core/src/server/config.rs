@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::server::rbac::config::{RbacConfig, RoleConfig};
 use crate::server::upstreams::config::FallbackConfig;
 
 #[derive(Debug, Error)]
@@ -59,27 +58,7 @@ pub struct Config {
     pub loaded_from: Option<PathBuf>,
     pub bind: BindConfig,
     pub db: DbConfig,
-    /// Legacy OIDC provider block. As of the setup wizard this is **seed-only**,
-    /// exactly like [`Self::rbac`] below: on the first boot after upgrading,
-    /// [`crate::server::setup::import_config_once`] copies it into the database
-    /// (resolving `client_secret_env` to its value) and marks the gateway
-    /// configured; after that `/setup` owns the provider and this block is
-    /// ignored. A new deployment leaves it out and configures the provider in
-    /// the browser.
-    pub oidc: Option<OidcConfig>,
     pub gateway: GatewayConfig,
-    /// Legacy RBAC config. As of the gateway-groups migration this is a
-    /// **seed-only** mechanism: on first boot (when the `gateway_groups` table
-    /// is empty) `[rbac]` + `[[roles]]` are imported once into the DB, after
-    /// which `/admin/groups` owns everything and this block is ignored. Kept so
-    /// existing config-driven deployments upgrade in place; new deployments can
-    /// leave it out and manage groups entirely in the UI. The only RBAC bit
-    /// that still lives in the config is `[gateway].bootstrap_admin_groups`;
-    /// the OIDC provider moved to the setup wizard (see [`Self::oidc`]).
-    #[serde(default)]
-    pub rbac: RbacConfig,
-    #[serde(default, rename = "roles")]
-    pub roles: Vec<RoleConfig>,
     /// Chat-page knobs that aren't routing-related — attachment
     /// storage + which model names are allowed to receive image
     /// content. Optional; defaults are conservative (S3 disabled,
@@ -1103,7 +1082,7 @@ where
 impl Config {
     /// The config file's public URL — a *fallback*, used only until the setup
     /// wizard records the real one, and as the value
-    /// [`crate::server::setup::import_config_once`] carries into the database
+    /// the setup wizard writes into the database
     /// when upgrading a config-file deployment.
     ///
     /// The single reader of [`GatewayConfig::public_url_import_only`], so
