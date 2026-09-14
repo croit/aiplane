@@ -156,7 +156,10 @@ services:
       MCP_ENABLE_OAUTH21: "true"
       WORKSPACE_MCP_STATELESS_MODE: "true"
       WORKSPACE_MCP_PORT: "8000"
-      TOOL_TIER: core # core | extended | complete (consumed by the image CMD)
+      TOOL_TIER: core # core | extended | complete (consumed by the image CMD).
+      # `extended` adds get_gmail_attachment_content — needed to download mail
+      # attachments. The gateway stores returned files as conversation artifacts,
+      # so their bytes never enter the model's context.
       # Persist the OAuth store on the volume above.
       WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND: disk
       WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY: /var/lib/gworkspace-mcp/oauth-proxy

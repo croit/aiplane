@@ -39,6 +39,7 @@ use shared::api::ToolDef;
 use super::{Tool, ToolContext, ToolError, ToolFuture, ToolResult, tool_content_parts};
 
 pub mod manager;
+pub(crate) mod spill;
 pub mod worker;
 
 /// Prefix every bridged tool id carries, so the catalog can group them and
@@ -113,15 +114,21 @@ impl Tool for McpTool {
         self.schema.clone()
     }
 
-    fn run<'a>(&'a self, _ctx: ToolContext, args: Value) -> ToolFuture<'a> {
+    fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         // Own everything the call needs so the future doesn't borrow `self`
         // across the await (and the `Arc` keeps the session alive regardless).
         let conn = self.conn.clone();
         let remote = self.remote_name.clone();
+        let schema = self.schema.function.parameters.clone();
         Box::pin(async move {
             let mut params = CallToolRequestParams::new(remote.clone());
             // The model's tool-call arguments are already a JSON object;
             // a non-object (or absent) becomes "no arguments".
+            let mut args = if args.is_object() { args } else { json!({}) };
+            // A server that gates file bytes behind a boolean gets it turned
+            // on: the bytes never reach the model's context, they are spilled
+            // to a conversation artifact below. See `spill`.
+            spill::default_blob_switches(&schema, &mut args);
             params.arguments = args.as_object().cloned();
 
             let res = tokio::time::timeout(CALL_TIMEOUT, conn.service.call_tool(params))
@@ -139,6 +146,10 @@ impl Tool for McpTool {
                         conn.name
                     ))
                 })?;
+            // Strip file bytes out of the result before the model ever sees
+            // it: a megabyte of base64 in the context buys nothing, and the
+            // same file by id can be read, sandboxed and handed to the user.
+            let res = spill::spill_payloads(&conn.name, &remote, res, &ctx).await;
             map_call_result(res)
         })
     }
@@ -186,6 +197,15 @@ fn build_tools(
             .and_then(|a| a.destructive_hint)
             .unwrap_or(false);
         let parameters = Value::Object((*t.input_schema).clone());
+        // A server that can return file bytes should be *told* it is safe to
+        // here, or the model reads the upstream warning about flooding its
+        // context and leaves the switch off — and then asks for an attachment
+        // and gets a 100-character preview of one.
+        let description = if spill::has_blob_switch(&parameters) {
+            format!("{description}{}", spill::BLOB_SWITCH_NOTE)
+        } else {
+            description
+        };
         let schema = ToolDef::function(registry_id.clone(), description, parameters);
         out.push(McpTool {
             registry_id,

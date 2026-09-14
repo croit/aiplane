@@ -175,6 +175,57 @@ A production alternative to the disk store is Valkey/Redis
 `WORKSPACE_MCP_OAUTH_PROXY_VALKEY_HOST`), which is what you want if you ever run
 more than one replica of the server — the disk store is single-node.
 
+## Files a connector returns become conversation artifacts
+
+MCP has one way to hand back a file: base64, inline, in the tool result. A
+mail with a 1 MB PDF invoice is then a ~1.4 MB wall of base64 in the model's
+context — paid for on every subsequent round of the turn, crowding out the
+work, and useless besides: a model can do nothing with base64 except copy it
+out again at the same cost.
+
+So the gateway takes it out. Any base64 payload of 4 KiB or more in a tool
+result is decoded, stored as an ordinary chat attachment (same bucket, same
+`<turn_id>/<filename>` id, same chip in the reply as a user upload), and
+replaced in the result by a single line naming the id. The model then works
+with the file the way it works with any other conversation file:
+
+- `fetch_attachment` reads it (text, PDF text layer, OCR, images for vision),
+- `run_in_sandbox` stages it into `/work`,
+- a `typst_*` render embeds it as `att:<id>`,
+- `offer_download` hands it to the user,
+- and the user simply sees the file in the reply.
+
+Two shapes are recognised, which between them cover what the Google Workspace
+server actually emits: a **labelled base64 block**
+(`get_gmail_attachment_content`), and **raw MIME**
+(`get_gmail_message_content` with `body_format="raw"`), where each attachment
+is a base64 part wrapped at 76 columns behind its own `Content-Type` and
+`filename=` headers. Those headers are read, so a spilled artifact is called
+`invoice.pdf` with mime `application/pdf` rather than something generic.
+
+Related, and deliberate:
+
+- **A server's "return the bytes" switch defaults to on here.** Servers gate
+  file bytes behind a boolean (`return_base64`) whose default is off precisely
+  because the bytes would flood a normal client's context. On this gateway
+  they never reach the context, so the switch is filled in as `true` when the
+  model didn't set it, and the tool's description says why. An explicit
+  `false` from the model still stands.
+- **Nothing is silently dropped.** If there is nowhere to store the file (a
+  `/v1` proxy request has no conversation; a gateway without `[chat.s3]`) or
+  it is over the 25 MB ceiling, the base64 is *still* removed and the
+  replacement line says what happened, so the model tells the user instead of
+  pretending it has the file.
+- **Limits.** 10 artifacts per tool call; payloads under 4 KiB are left alone
+  (an ETag or a cursor is data the model is meant to read, not a file).
+
+> **Gmail attachments need `TOOL_TIER=extended`.** The Google Workspace
+> server's own tiering puts `get_gmail_attachment_content` in `extended`, not
+> `core` — with the shipped `TOOL_TIER=core` the model can still get
+> attachments out of a raw message export, but there is no direct
+> "download attachment N" tool for it to reach for. Set `TOOL_TIER=extended`
+> in the server's env file if your users work with mail attachments.
+
 ---
 
 ## GitHub
@@ -277,6 +328,7 @@ needs a toggle flipped — it's not a gateway problem.
 | OAuth `missing field access_token` / token-exchange errors | The provider returned an OAuth error body instead of a token (bad client secret, wrong redirect URI, unsupported grant). The gateway surfaces the provider's `error_description`. |
 | Refresh tokens die after ~7 days (Google) | App is **External + Testing**. Publish to production or switch the audience to **Internal**. |
 | `invalid_client: Invalid client_id` on refresh, everyone "Needs reconnect" at once, recurring | The MCP server lost the OAuth store that holds the gateway's registered client — an ephemeral container filesystem (no volume), or a changed `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` / `GOOGLE_OAUTH_CLIENT_SECRET`. See *The server's OAuth state must be persisted*. Users must reconnect once after fixing it; the old grants are unrecoverable. |
+| A tool returned a file and the model says it can't use it | Look at the replacement line in the tool result: the gateway removes file bytes from every result and stores them as an attachment instead (see *Files a connector returns become conversation artifacts*). If it says the file was **not** stored, the cause is named there — no conversation to attach to (a `/v1` proxy call), `[chat.s3]` unconfigured, or over the 25 MB ceiling. |
 | `MCP integrations are not enabled on this installation` (404) | Server-side: the target MCP server hasn't enabled its MCP endpoint. Not a gateway issue. |
 
 The gateway logs each failed tool call as `tool failed tool=mcp__… error=…`

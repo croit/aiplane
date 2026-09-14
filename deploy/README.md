@@ -160,7 +160,7 @@ default CMD that already runs `uv run main.py --transport streamable-http`):
 | `MCP_ENABLE_OAUTH21` | `true` | Multi-user OAuth 2.1 + DCR. |
 | `WORKSPACE_MCP_STATELESS_MODE` | `true` | In-memory sessions. |
 | `WORKSPACE_MCP_PORT` | `8000` | Endpoint served at **`/mcp`** (no trailing slash; `/mcp/` 307-redirects). |
-| `TOOL_TIER` | `core` | `core`/`extended`/`complete`. **Not** `WORKSPACE_MCP_TOOL_TIER`. |
+| `TOOL_TIER` | `core` | `core`/`extended`/`complete`. **Not** `WORKSPACE_MCP_TOOL_TIER`. Mail attachments need `extended`: `get_gmail_attachment_content` is not in `core`. The gateway stores any file a tool returns as a conversation artifact rather than letting the base64 into the model's context, so the wider tier costs context only in tool definitions. |
 | `WORKSPACE_EXTERNAL_URL` | `https://<mcp-host>` | Public URL the browser reaches during consent. |
 | `WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS` | `https://<gateway-host>/integrations/callback` | The gateway's callback (DCR allowlist). |
 | `UV_CACHE_DIR` / `XDG_CACHE_HOME` | `/tmp/uv-cache` / `/tmp` | uv builds an editable install at startup; **the rootfs must stay writable** (no read-only) and the cache is redirected to tmpfs. |

@@ -195,7 +195,7 @@ An admin curates which servers the catalog offers at `/admin/connectors`; users 
 - **User-supplied token** — each user pastes their own API token / PAT (e.g. self-managed GitLab CE).
 - **None** — a public, unauthenticated server (e.g. Kiwi.com flight search); users still connect individually to opt its tools into their own chats.
 
-Per-user OAuth tokens are **encrypted at rest** (AES-256-GCM) and **refreshed in the background** so connections don't silently expire. Each connected server's tools are namespaced (`mcp__<server>__*`) and obey the same per-tool always/ask/off controls as the built-in tools. Provider and deployment setup — including the self-hosted Google Workspace and GitLab CE bridges — is in [`deploy/README.md`](deploy/README.md) and [`docs/connectors.md`](docs/connectors.md).
+Per-user OAuth tokens are **encrypted at rest** (AES-256-GCM) and **refreshed in the background** so connections don't silently expire. Each connected server's tools are namespaced (`mcp__<server>__*`) and obey the same per-tool always/ask/off controls as the built-in tools. Files a connector hands back — a mail attachment, a Drive export — never reach the model as base64: the gateway decodes them into ordinary conversation attachments and gives the model the id, so the file is readable, sandbox-stageable and downloadable at a few dozen tokens instead of a megabyte of context. Provider and deployment setup — including the self-hosted Google Workspace and GitLab CE bridges — is in [`deploy/README.md`](deploy/README.md) and [`docs/connectors.md`](docs/connectors.md).
 
 ## Claude Code against your own models
 

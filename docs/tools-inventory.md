@@ -248,6 +248,8 @@ connected server. The drift guard matches them by prefix.
 | `comfyui_<id>` | one per manifest in the `[comfyui]` catalog, hot-reloadable | `comfyui` — **one key for the whole family**, so a newly reloaded workflow is enabled automatically |
 | `mcp__<server>__<tool>` | per-user MCP connectors, connected lazily per request | `mcp__<server>` — one key per integration |
 
+File bytes an MCP tool returns (base64, inline — the only way the protocol has) are spilled into conversation attachments before the result reaches the model, and referenced by `<turn_id>/<filename>` id like any upload. See [`connectors.md`](connectors.md) → *Files a connector returns become conversation artifacts*.
+
 `typst_<id>_pptx` additionally requires `[sandbox]` (the conversion runs
 there) and the template opting in via a `[pptx]` block in its manifest.
 

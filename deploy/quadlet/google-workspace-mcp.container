@@ -60,7 +60,11 @@ Volume=gworkspace-mcp-oauth.volume:/var/lib/gworkspace-mcp:z,U
 # default CMD already runs `uv run main.py --transport streamable-http` — do NOT
 # add an `Exec=` override (it would be parsed as `sh -c --transport …` → error).
 # Tool surface is selected via TOOL_TIER (core|extended|complete), consumed by
-# that CMD. uv builds an editable install under /app at startup, so the rootfs
+# that CMD. Raise it to `extended` if your users work with mail attachments:
+# `get_gmail_attachment_content` lives in that tier, not in `core`. The gateway
+# spills any file a tool returns into a conversation artifact (it never reaches
+# the model's context as base64), so the only cost of a wider tier is the tool
+# definitions themselves. uv builds an editable install under /app at startup, so the rootfs
 # must stay writable (no ReadOnly=); redirect uv's cache onto the /tmp tmpfs.
 Environment=MCP_ENABLE_OAUTH21=true
 Environment=WORKSPACE_MCP_STATELESS_MODE=true
