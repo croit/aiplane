@@ -37,8 +37,72 @@
 	let selected = $derived(options.find((option) => option.value === value));
 	let buttonSize = $derived(size === 'xs' ? 'btn-xs' : size === 'sm' ? 'btn-sm' : 'btn-md');
 
+	/* Where the popup sits, in viewport coordinates. It is NOT laid out inside
+	 * the trigger's own box: an absolutely positioned panel is clipped by any
+	 * scrolling ancestor, and this select lives inside plenty of them — the
+	 * document canvas (`overflow-y-auto`, and a panel narrower than the popup),
+	 * a `modal-box`, an admin card. In the canvas that clipping cut the option
+	 * rows off at the panel edge: what was left looked like an empty box and
+	 * every click in it landed on the chat behind. So the popup goes into the
+	 * browser's top layer (`popover`) and is placed against the viewport here,
+	 * clamped so it can never hang off-screen. */
+	type Placement = { left: number; top: number | null; bottom: number | null; width: number; maxHeight: number };
+	const gap = 4;
+	const edge = 8;
+	const roomy = 672;
+	const shortest = 160;
+	const tallest = 360;
+	let placement = $state<Placement>({ left: 0, top: 0, bottom: null, width: 0, maxHeight: tallest });
+
+	const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), Math.max(low, high));
+
+	function place() {
+		const anchor = trigger?.getBoundingClientRect();
+		if (!anchor) return;
+		const viewport = { width: window.innerWidth, height: window.innerHeight };
+		const width = clamp(anchor.width, Math.min(roomy, viewport.width - edge * 2), viewport.width - edge * 2);
+		// Right-aligned with the trigger, then pulled back inside the viewport.
+		const left = clamp(anchor.right - width, edge, viewport.width - edge - width);
+		const below = viewport.height - anchor.bottom - gap - edge;
+		const above = anchor.top - gap - edge;
+		const drop = below >= tallest || below >= above;
+		const space = drop ? below : above;
+		const maxHeight = Math.min(clamp(space, shortest, tallest), viewport.height - edge * 2);
+		// In a viewport too short for even the smallest panel, overlapping the
+		// trigger beats hanging off the edge where nothing can reach it.
+		const offset = clamp(drop ? anchor.bottom + gap : viewport.height - anchor.top + gap, edge, viewport.height - edge - maxHeight);
+		placement = drop
+			? { left, top: offset, bottom: null, width, maxHeight }
+			: { left, top: null, bottom: offset, width, maxHeight };
+	}
+
+	/* The top layer does not follow the trigger, so re-place it whenever
+	 * anything that moved the trigger happens while the popup is open. */
+	$effect(() => {
+		if (!open) return;
+		const follow = () => place();
+		window.addEventListener('resize', follow);
+		window.addEventListener('scroll', follow, true);
+		return () => {
+			window.removeEventListener('resize', follow);
+			window.removeEventListener('scroll', follow, true);
+		};
+	});
+
+	/* Raise the panel into the top layer, above every stacking context and
+	 * outside every scroll clip. Older browsers without the popover API fall
+	 * back to the same fixed coordinates, which already escape overflow. */
+	function raise(node: HTMLElement) {
+		try {
+			node.showPopover();
+		} catch {
+			/* no popover support — the fixed placement stands on its own */
+		}
+	}
+
 	async function show() {
 		if (disabled) return;
+		place();
 		open = true;
 		query = '';
 		const selectedIndex = options.findIndex((option) => option.value === value && !option.disabled);
@@ -94,7 +158,7 @@
 
 <svelte:window onclick={closeFromOutside} />
 
-<div bind:this={root} class="dropdown dropdown-end relative min-w-0 {className}">
+<div bind:this={root} class="relative min-w-0 {className}">
 	<button
 		bind:this={trigger}
 		type="button"
@@ -113,15 +177,25 @@
 	</button>
 
 	{#if open}
-		<div class="dropdown-content absolute right-0 top-full z-50 mt-1 w-[min(42rem,calc(100vw-2rem))] min-w-full rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
-			<label class="input input-sm flex w-full items-center gap-2 focus-within:outline-1 focus-within:outline-info focus-within:outline-offset-1">
+		<div
+			use:raise
+			popover="manual"
+			class="fixed z-50 m-0 flex flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 p-2 text-base-content shadow-xl"
+			style:left="{placement.left}px"
+			style:top={placement.top === null ? 'auto' : `${placement.top}px`}
+			style:bottom={placement.bottom === null ? 'auto' : `${placement.bottom}px`}
+			style:right="auto"
+			style:width="{placement.width}px"
+			style:max-height="{placement.maxHeight}px"
+		>
+			<label class="input input-sm flex w-full shrink-0 items-center gap-2 focus-within:outline-1 focus-within:outline-info focus-within:outline-offset-1">
 				<svg class="size-4 shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
 				<input bind:this={searchInput} class="min-w-0 flex-1" value={query} oninput={search} onkeydown={onSearchKeydown} placeholder={t('searchable-select-search-placeholder')} aria-label={t('searchable-select-search-aria', { field: ariaLabel })} />
 				{#if query}<button type="button" class="btn btn-ghost btn-xs btn-circle" onclick={() => { query = ''; activeIndex = nextEnabledOptionIndex(options, -1, 1); void tick().then(() => searchInput?.focus()); }} aria-label={t('searchable-select-clear-search')}>✕</button>{/if}
 			</label>
 
 			{#if filtered.length > 0}
-				<ul bind:this={listbox} id={`${id}-listbox`} class="mt-2 flex max-h-72 w-full flex-col gap-1 overflow-y-auto p-0" role="listbox" aria-label={ariaLabel}>
+				<ul bind:this={listbox} id={`${id}-listbox`} class="mt-2 flex min-h-0 w-full flex-1 flex-col gap-1 overflow-y-auto p-0" role="listbox" aria-label={ariaLabel}>
 					{#each filtered as option, index (option.value)}
 						<li class="list-none">
 							<button

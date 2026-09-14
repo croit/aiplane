@@ -285,6 +285,33 @@ test("the transcript keeps edit, retry, code, tool-detail, and canvas workflows"
     await chooseSearchable(page, "Version", "v2", "v2");
     await page.getByText("Release criteria", { exact: true }).waitFor();
 
+    // A canvas narrower than the option popup. The popup has to leave the
+    // canvas's scroll box for the top layer: clipped to the panel, its rows
+    // were cut off at the panel edge — what showed looked like an empty box,
+    // and every click in it went to the chat behind.
+    await page.evaluate(() => localStorage.setItem("chat-canvas-width", "340"));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByText("Release criteria", { exact: true }).waitFor();
+    await page.getByRole("combobox", { name: "Version", exact: true }).click();
+    const popup = await page.evaluate(() => {
+        const trigger = [...document.querySelectorAll('[role="combobox"]')].find((element) => element.getAttribute("aria-label") === "Version");
+        const listbox = document.getElementById(`${trigger.id}-listbox`);
+        const panel = listbox.closest("[popover]");
+        const option = listbox.querySelector('[role="option"]');
+        const box = option.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        const panelBox = panel?.getBoundingClientRect();
+        return {
+            inTopLayer: panel?.matches(":popover-open") ?? false,
+            reachable: option.contains(hit),
+            onScreen: !!panelBox && panelBox.left >= 0 && panelBox.top >= 0 && panelBox.right <= window.innerWidth && panelBox.bottom <= window.innerHeight,
+        };
+    });
+    assert.ok(popup.inTopLayer, "the option popup must open in the top layer");
+    assert.ok(popup.reachable, "a click in the middle of an option must reach the option, not the chat behind the canvas");
+    assert.ok(popup.onScreen, "the option popup must stay inside the viewport");
+    await page.keyboard.press("Escape");
+
     const desktopCanvas = page.getByRole("complementary", { name: "Canvas", exact: true });
     const initialCanvasBox = await desktopCanvas.boundingBox();
     const resizeHandle = page.getByRole("slider", { name: "Resize canvas", exact: true });

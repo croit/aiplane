@@ -17,4 +17,23 @@ describe('searchable select option layout', () => {
 		assert.match(searchableSelect, /justify-between gap-x-3/);
 		assert.match(searchableSelect, /justify-end gap-1/);
 	});
+
+	// The popup used to be an absolutely positioned `dropdown-content`, which
+	// every scrolling ancestor was free to clip — in the document canvas it cut
+	// the option rows off at the panel edge, leaving a box that looked empty and
+	// passed every click through to the chat behind it. It now lives in the
+	// browser's top layer at viewport coordinates.
+	test('raises the popup into the top layer instead of a clipped absolute panel', () => {
+		assert.doesNotMatch(searchableSelect, /dropdown-content/);
+		assert.doesNotMatch(searchableSelect, /absolute right-0 top-full/);
+		assert.match(searchableSelect, /popover="manual"/);
+		assert.match(searchableSelect, /node\.showPopover\(\)/);
+		assert.match(searchableSelect, /class="fixed [^"]*"/);
+		assert.match(searchableSelect, /style:left=/);
+		assert.match(searchableSelect, /style:max-height=/);
+		// Nothing moves the top layer with the trigger, so the popup has to
+		// follow it itself while open.
+		assert.match(searchableSelect, /addEventListener\('scroll', follow, true\)/);
+		assert.match(searchableSelect, /addEventListener\('resize', follow\)/);
+	});
 });
