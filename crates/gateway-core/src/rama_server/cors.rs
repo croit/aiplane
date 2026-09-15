@@ -21,8 +21,8 @@
 //!     signature and the test harness — instead of the
 //!     `Response<OptionalBody<_>>` rama's `Cors` produces.
 //!
-//! Auth is a bearer token in the `Authorization` header, never a cookie,
-//! so credentials mode is not needed: we reflect the request `Origin`
+//! Auth is a bearer token (in `Authorization` or its `x-api-key` spelling),
+//! never a cookie, so credentials mode is not needed: we reflect the `Origin`
 //! (falling back to `*` when none is sent, e.g. a non-browser client) and
 //! deliberately do **not** emit `Access-Control-Allow-Credentials`.
 
@@ -99,6 +99,17 @@ where
     }
 }
 
+/// The request headers a cross-origin caller may set on a `/v1` request.
+///
+/// `authorization` and `x-api-key` are the two spellings of the same gateway
+/// token (see `rama_server::auth`), so allowing only the first would let an
+/// Anthropic-format browser client authenticate in Node and fail in a page.
+/// `anthropic-version` rides on *every* Messages API request, and
+/// `anthropic-beta` is forwarded upstream deliberately — both are useless if
+/// the preflight rejects them before the handler ever runs.
+const ALLOWED_REQUEST_HEADERS: &str =
+    "authorization, content-type, x-api-key, anthropic-version, anthropic-beta";
+
 /// Write the four `Access-Control-*` headers — plus `Vary: Origin`, since
 /// the allow-origin value is derived from the request — into `headers`.
 fn apply_cors_headers(headers: &mut HeaderMap, origin: HeaderValue) {
@@ -109,7 +120,7 @@ fn apply_cors_headers(headers: &mut HeaderMap, origin: HeaderValue) {
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("authorization, content-type"),
+        HeaderValue::from_static(ALLOWED_REQUEST_HEADERS),
     );
     headers.insert(
         header::ACCESS_CONTROL_MAX_AGE,

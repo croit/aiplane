@@ -18,15 +18,19 @@ use rama::http::{Body, Method, Request, StatusCode, header};
 /// A browser preflight: `OPTIONS` + `Origin` + the two `Access-Control-
 /// Request-*` headers a fetch with a bearer token and JSON body triggers.
 fn preflight(uri: &str, origin: &str) -> Request {
+    preflight_asking_for(uri, origin, "authorization,content-type")
+}
+
+/// The same preflight, but for a client that sets other headers — an
+/// Anthropic-format SDK asks for `x-api-key` and `anthropic-version` rather
+/// than `authorization`.
+fn preflight_asking_for(uri: &str, origin: &str, request_headers: &str) -> Request {
     Request::builder()
         .method(Method::OPTIONS)
         .uri(uri)
         .header(header::ORIGIN, origin)
         .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
-        .header(
-            header::ACCESS_CONTROL_REQUEST_HEADERS,
-            "authorization,content-type",
-        )
+        .header(header::ACCESS_CONTROL_REQUEST_HEADERS, request_headers)
         .body(Body::empty())
         .unwrap()
 }
@@ -68,7 +72,7 @@ async fn preflight_on_chat_completions_is_unauthenticated_2xx_with_cors() {
     );
     assert_eq!(
         h.get(header::ACCESS_CONTROL_ALLOW_HEADERS).unwrap(),
-        "authorization, content-type",
+        "authorization, content-type, x-api-key, anthropic-version, anthropic-beta",
     );
     assert_eq!(h.get(header::ACCESS_CONTROL_MAX_AGE).unwrap(), "86400");
     // Bearer auth ⇒ credentials mode stays off.
@@ -76,6 +80,43 @@ async fn preflight_on_chat_completions_is_unauthenticated_2xx_with_cors() {
         h.get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none(),
         "must not set allow-credentials",
     );
+}
+
+/// A browser-side Anthropic client authenticates with `x-api-key` (the
+/// second spelling of the same gateway token, see `rama_server::auth`) and
+/// sets `anthropic-version` on every Messages API request. The handler
+/// accepts both — but a preflight that doesn't allow them is rejected by the
+/// browser before the handler is ever reached, so auth support alone is not
+/// enough. Every header such a client sends must be in the allow list.
+#[tokio::test]
+async fn preflight_allows_the_headers_an_anthropic_client_sends() {
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let app = common::app(state);
+
+    let asked = ["x-api-key", "anthropic-version", "anthropic-beta"];
+    let resp = app
+        .serve(preflight_asking_for(
+            "/v1/messages",
+            "https://app.example.com",
+            &asked.join(","),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let allowed = resp
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+        .expect("preflight must carry allow-headers")
+        .to_str()
+        .unwrap()
+        .to_ascii_lowercase();
+    for name in asked {
+        assert!(
+            allowed.split(',').any(|h| h.trim() == name),
+            "{name} must be in allow-headers, got {allowed:?}",
+        );
+    }
 }
 
 /// Preflight works on every `/v1` endpoint, including the multipart upload
