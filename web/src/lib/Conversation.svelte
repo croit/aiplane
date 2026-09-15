@@ -8,6 +8,7 @@
 	import { createVoiceController } from '$lib/voice.svelte';
 	import { refreshSidebar, sidebar } from '$lib/sidebar.svelte';
 	import { parseUserContent, replaceUserText } from '$lib/chat-protocol';
+	import { endScrollTop, nextFollow } from '$lib/chat-autoscroll';
 	import type { ChatSession } from '$lib/chat-protocol';
 	import { canonicalAttachments } from '$lib/conversation-assets';
 	import { DragDepth, carriesFiles, droppedOnlyDirectories, filesFrom } from '$lib/drop-files';
@@ -58,6 +59,47 @@
 
 	let documents = $state<CanvasDocument[]>([]);
 	let canvasOpen = $state(false);
+
+	// The transcript's scroll box and everything inside it. The inner element
+	// is what grows while a reply streams; the box itself only changes when
+	// the window does (or the canvas opens beside it), and both are reasons to
+	// re-check where the end is.
+	let transcript = $state<HTMLElement | null>(null);
+	let transcriptBody = $state<HTMLElement | null>(null);
+	// Whether the view is following the end of the conversation. A plain
+	// `let`, deliberately NOT `$state`: it is written on every scroll event
+	// and read only from DOM callbacks, so making it reactive would re-render
+	// the transcript on every wheel tick for nothing.
+	let following = true;
+	// Where the box sat at the previous scroll event, so the next one can be
+	// read as a direction rather than an absolute position — see `nextFollow`.
+	let lastScrollTop = 0;
+
+	/** Re-read whether the reader is at the end. Their scrolling decides it. */
+	function onTranscriptScroll() {
+		if (!transcript) return;
+		following = nextFollow(following, lastScrollTop, transcript);
+		lastScrollTop = transcript.scrollTop;
+	}
+
+	function scrollToEnd() {
+		if (!transcript) return;
+		transcript.scrollTop = endScrollTop(transcript);
+		lastScrollTop = transcript.scrollTop;
+	}
+
+	/**
+	 * Put the end of the conversation back on screen and keep it there.
+	 *
+	 * Sending is the one action that overrides where the reader had scrolled
+	 * to: a message you just wrote and cannot see reads as a message that was
+	 * not sent. Everything else — a reply streaming in, a tool call landing —
+	 * only follows if they were already at the end.
+	 */
+	function followEnd() {
+		following = true;
+		scrollToEnd();
+	}
 
 	const turns = $derived(controller ? controller.state.turns : []);
 	const streaming = $derived(controller !== null && controller.state.liveTurnId !== null);
@@ -214,8 +256,20 @@
 		controller = c;
 		void loadMeta();
 		void loadDocuments();
+		// Follow the end as the transcript grows. A ResizeObserver rather than
+		// a reaction to the turn state: the height also changes for things no
+		// event announces — an image finishing, a tool-call block unfolding,
+		// the window or the canvas beside it resizing — and the reader
+		// notices those exactly as much as they notice a token arriving.
+		// It is also what lands a freshly opened conversation at its end.
+		const observer = new ResizeObserver(() => {
+			if (following) scrollToEnd();
+		});
+		if (transcript) observer.observe(transcript);
+		if (transcriptBody) observer.observe(transcriptBody);
 		const timer = window.setInterval(() => (clock = Date.now()), 100);
 		return () => {
+			observer.disconnect();
 			window.clearInterval(timer);
 			c.destroy();
 		};
@@ -230,6 +284,7 @@
 		sending = true;
 		try {
 			await api.sendChatMessage(id, { model: model.trim(), message: text, voice: true });
+			followEnd();
 			controller?.attach();
 			void refreshSidebar();
 		} catch (err) {
@@ -308,6 +363,7 @@
 			}
 			draft = '';
 			files = [];
+			followEnd();
 			// The reply arrives on a fresh stream (the idle one closed).
 			controller?.attach();
 		} catch (err) {
@@ -629,7 +685,8 @@
 	{/if}
 
 	<div class="flex min-h-0 flex-1 gap-3" data-chat-workspace>
-		<main data-chat-transcript class="min-h-0 min-w-0 flex-1 overflow-y-auto pe-1 xl:min-w-[35rem]">
+		<main bind:this={transcript} onscroll={onTranscriptScroll} data-chat-transcript class="min-h-0 min-w-0 flex-1 overflow-y-auto pe-1 xl:min-w-[35rem]">
+		<div bind:this={transcriptBody}>
 
 {#if notice}
 	<div class="alert alert-warning mb-4"><span>{notice}</span></div>
@@ -759,6 +816,7 @@
 	{/each}
 </div>
 
+		</div>
 		</main>
 		{#if canvasOpen && hasCanvas}
 			<ConversationCanvas {id} {documents} {assets} {isOwner} onclose={() => (canvasOpen = false)} onerror={(message) => (notice = message)} />

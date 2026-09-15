@@ -299,6 +299,140 @@ test("a document version written behind the panel's back shows up without a relo
     await ctx.close();
 });
 
+// The transcript is a scroll box that nothing ever scrolled: a conversation
+// opened at its beginning, a sent message landed below the fold, and a reply
+// grew out of sight. It now follows the end — but only while the reader is at
+// the end, because the other half of the bug would be dragging the page away
+// from someone in the middle of reading.
+test("the transcript follows the end, and stops the moment the reader scrolls back", async () => {
+    const cookie = process.env.GATEWAY_SESSION_COOKIE;
+    assert.ok(cookie, "set GATEWAY_SESSION_COOKIE to the dev-ui seed cookie");
+    const cookieValue = cookie.startsWith("id=") ? cookie.slice("id=".length) : cookie;
+    // Short on purpose: the seeded conversation has to overflow the window,
+    // or every assertion below passes without meaning anything.
+    const ctx = await browser.newContext({ viewport: { width: 1200, height: 520 } });
+    await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
+    const page = await ctx.newPage();
+
+    const transcriptUrl = await conversationUrl(`id=${cookieValue}`, "Enabling gzip in nginx");
+    await page.goto(`${BASE}${transcriptUrl}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Copy code", exact: true }).waitFor();
+    const box = page.locator("[data-chat-transcript]");
+    const where = () => box.evaluate((el) => ({ top: el.scrollTop, height: el.scrollHeight, view: el.clientHeight }));
+
+    await page.waitForFunction(
+        () => { const el = document.querySelector("[data-chat-transcript]"); return el && el.scrollHeight > el.clientHeight + 200; },
+        undefined,
+        { timeout: 5000 },
+    );
+    // Landing on a conversation puts you at its end, not at its beginning.
+    const landed = await where();
+    assert.ok(landed.height - landed.view - landed.top <= 8, `opened mid-conversation: ${JSON.stringify(landed)}`);
+
+    // Growth stands in for a streaming reply: unfolding the tool detail near
+    // the top of the transcript makes it taller, exactly as arriving tokens
+    // do. Toggled through the DOM, not `locator.click()`, which would scroll
+    // the summary into view first and so decide the very thing under test.
+    const summary = page.locator("details").filter({ hasText: "search_web" }).locator("summary");
+    const toggle = () => summary.evaluate((el) => el.click());
+    const input = page.getByText("Input", { exact: true }).first();
+    const atEnd = () =>
+        page.waitForFunction(() => {
+            const el = document.querySelector("[data-chat-transcript]");
+            return el && el.scrollHeight - el.clientHeight - el.scrollTop <= 8;
+        }, undefined, { timeout: 5000 });
+
+    // Scroll back into the conversation to read. Growth from here on must not
+    // move the view a pixel.
+    await box.evaluate((el) => { el.scrollTop = 0; });
+    await toggle();
+    await input.waitFor();
+    const reading = await where();
+    assert.equal(reading.top, 0, "content arriving elsewhere must not scroll the reader");
+    assert.ok(reading.height > landed.height, "the tool detail did not actually grow the transcript");
+
+    // Back at the end, following is on again: content growing above the fold
+    // is followed rather than pushing the end out of sight.
+    await toggle();
+    await input.waitFor({ state: "hidden" });
+    await box.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await toggle();
+    await input.waitFor();
+    await atEnd();
+
+    await ctx.close();
+});
+
+// The half that started the report: a message you just sent must be on
+// screen. On its own conversation, because sending leaves a turn behind and
+// the seeded fixtures are read by the tests around this one.
+test("a sent message is put on screen however far back the reader had scrolled", async () => {
+    const cookie = process.env.GATEWAY_SESSION_COOKIE;
+    assert.ok(cookie, "set GATEWAY_SESSION_COOKIE to the dev-ui seed cookie");
+    const cookieValue = cookie.startsWith("id=") ? cookie.slice("id=".length) : cookie;
+    const sessionId = await seededConversation(`id=${cookieValue}`, 6);
+
+    const ctx = await browser.newContext({ viewport: { width: 1200, height: 520 } });
+    await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/chat/${sessionId}`, { waitUntil: "domcontentloaded" });
+    const box = page.locator("[data-chat-transcript]");
+    await page.waitForFunction(
+        () => { const el = document.querySelector("[data-chat-transcript]"); return el && el.scrollHeight > el.clientHeight + 200; },
+        undefined,
+        { timeout: 5000 },
+    );
+
+    // Right back at the beginning — the worst case for the sent message.
+    await box.evaluate((el) => { el.scrollTop = 0; });
+    if (await page.getByRole("combobox", { name: "Chat model", exact: true }).count()) {
+        await chooseSearchable(page, "Chat model", "demo-model");
+    }
+    const sent = `scrolled into view ${Date.now()}`;
+    await page.locator("textarea").fill(sent);
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+
+    const bubble = page.getByText(sent, { exact: true });
+    await bubble.waitFor({ timeout: 10_000 });
+    await page.waitForFunction(() => {
+        const el = document.querySelector("[data-chat-transcript]");
+        return el && el.scrollHeight - el.clientHeight - el.scrollTop <= 8;
+    }, undefined, { timeout: 5000 });
+    const bubbleBox = await bubble.boundingBox();
+    const viewport = await box.boundingBox();
+    assert.ok(bubbleBox && viewport, "the sent message never rendered");
+    assert.ok(
+        bubbleBox.y >= viewport.y && bubbleBox.y + bubbleBox.height <= viewport.y + viewport.height + 1,
+        `the sent message is off screen: ${JSON.stringify({ bubbleBox, viewport })}`,
+    );
+    await ctx.close();
+});
+
+/** A conversation of this test's own, long enough to need scrolling. */
+async function seededConversation(cookie, turns) {
+    const created = await fetch(`${BASE}/api/v0/chat/sessions`, { method: "POST", headers: { cookie } });
+    assert.equal(created.status, 201, "could not create a conversation");
+    const { session } = await created.json();
+    for (let i = 0; i < turns; i++) {
+        const posted = await fetch(`${BASE}/api/v0/chat/sessions/${session.id}/messages`, {
+            method: "POST",
+            headers: { cookie, "content-type": "application/json" },
+            body: JSON.stringify({ model: "demo-model", message: `filling the window, message ${i + 1}` }),
+        });
+        assert.ok(posted.ok, `seeding turn ${i + 1} failed: ${posted.status}`);
+        // One turn at a time: a second submit while the first still streams is
+        // refused with a 409.
+        for (let wait = 0; wait < 50; wait++) {
+            const snap = await fetch(`${BASE}/api/v0/chat/sessions/${session.id}`, { headers: { cookie } });
+            const { turns: rows } = await snap.json();
+            const live = rows.filter((row) => row.turn.role === "assistant");
+            if (live.length > i && live[live.length - 1].turn.status !== "in_progress") break;
+            await new Promise((resume) => setTimeout(resume, 100));
+        }
+    }
+    return session.id;
+}
+
 test("the transcript keeps edit, retry, code, tool-detail, and canvas workflows", async () => {
     // Every other suite reads this variable as the bare cookie value; accept
     // either spelling so one export drives the whole run.
