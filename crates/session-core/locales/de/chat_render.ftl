@@ -22,6 +22,9 @@ chat-render-composer-placeholder = Nachricht an das Modell…
 
 chat-render-effort-title = Denkaufwand
 chat-render-effort-tooltip = Denkaufwand: höher = mehr Reasoning und mehr Tool-Runden, aber langsamer
+# Shown instead when the selected model has no reasoning parameter at all,
+# so the control is disabled rather than silently inert.
+chat-render-effort-unsupported = Dieses Modell hat keine Reasoning-Steuerung — der Denkaufwand würde hier nichts ändern.
 chat-render-effort-label-prefix = Denkaufwand:
 chat-render-effort-fast = Schnell
 chat-render-effort-standard = Standard

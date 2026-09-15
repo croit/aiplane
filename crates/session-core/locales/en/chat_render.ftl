@@ -21,6 +21,9 @@ chat-render-composer-placeholder = Message the model…
 
 chat-render-effort-title = Thinking effort
 chat-render-effort-tooltip = Thinking effort: higher = more reasoning and more tool rounds, but slower
+# Shown instead when the selected model has no reasoning parameter at all,
+# so the control is disabled rather than silently inert.
+chat-render-effort-unsupported = This model has no reasoning control, so the effort setting would change nothing.
 chat-render-effort-label-prefix = Thinking:
 chat-render-effort-fast = Fast
 chat-render-effort-standard = Standard

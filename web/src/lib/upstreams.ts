@@ -7,6 +7,38 @@ export interface LiveBackend {
 	models: string[];
 	withheld: string[];
 	pool: string | null;
+	/** What kind of server this turned out to be. Never shown as a setting. */
+	profile: BackendProfileName;
+	detected_version: string | null;
+	/** Requests the server said it runs at once; null = it did not say. */
+	detected_max_parallel: number | null;
+	/**
+	 * When this backend was last identified (RFC3339), or null if never.
+	 *
+	 * Identification runs only when a topology is applied, unlike the context
+	 * reading beside it, which the health probe refreshes every tick — so how
+	 * long ago it ran is worth knowing.
+	 */
+	detected_at: string | null;
+}
+
+export type BackendProfileName = 'generic' | 'vllm' | 'ollama' | 'llamacpp' | 'sglang';
+
+/**
+ * Whether the configured in-flight ceiling promises more concurrency than the
+ * server said it has.
+ *
+ * Worth surfacing because the failure is invisible: Ollama runs one request
+ * per model by default and queues up to 512 rather than rejecting, so the
+ * picker sees free slots, keeps dispatching, and back-pressure simply stops
+ * applying. Nothing errors — it just gets slower.
+ */
+export function parallelismMismatch(
+	detected: number | null | undefined,
+	configured: number
+): number | null {
+	if (!detected) return null;
+	return detected < configured ? detected : null;
 }
 
 export interface BackendAlias {
@@ -68,6 +100,12 @@ export interface BackendTestResult {
 	model_count?: number;
 	models: string[];
 	key_source?: { kind: 'typed' | 'stored' | 'env' | 'env_unset' | 'none'; name?: string };
+	/** Identification runs alongside the reachability test — see `profile.rs`. */
+	profile?: BackendProfileName;
+	detected_version?: string | null;
+	detected_max_parallel?: number | null;
+	/** The tightest context window this server reports, if it reports one. */
+	detected_context?: number | null;
 }
 
 export interface PendingChange {

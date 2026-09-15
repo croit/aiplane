@@ -519,13 +519,49 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
     use gateway_core::server::feature_defaults::{self, Feature};
     let configured = feature_defaults::get(&state.db, Feature::Chat).await;
     feature_defaults::promote(configured.as_deref(), &mut models, |m| m.0.as_str());
+    // Whether the composer's effort control does anything for each model.
+    //
+    // It is a select that has always been rendered the same for every model,
+    // including the ones where it resolves to no parameter at all and changes
+    // nothing. That is a control that lies, and it is the same class of
+    // problem as the effort spelling being silently dropped: the user turns a
+    // knob, nothing happens, and the model looks bad. Resolved exactly as the
+    // request path resolves it — admin choice, then the serving backend's
+    // dialect, then the model name — so the UI and the wire cannot disagree.
+    //
+    // One query for every stored row, not one per model. `resolve_for_model`
+    // would be a `SELECT` each time round, and this runs on every chat page
+    // load — a deployment with fifty models would have made fifty round trips
+    // to answer a question about a dropdown. Most models have no row at all,
+    // so the map is small and the lookup usually misses.
+    let stored: std::collections::HashMap<String, Option<String>> =
+        gateway_core::server::db::model_defaults::all(&state.db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| (row.model_name, row.reasoning_style))
+            .collect();
     let listed: Vec<_> = models
         .into_iter()
         .map(|(id, compliance)| {
+            let dialect = state
+                .upstreams
+                .serving_profile(
+                    &id,
+                    gateway_core::server::upstreams::PoolKind::Chat,
+                    &access,
+                )
+                .dialect;
+            let style = gateway_core::server::reasoning::ReasoningStyle::resolve(
+                stored.get(&id).and_then(Option::as_deref),
+                dialect,
+                &id,
+            );
             json!({
                 "id": id,
                 "gdpr": compliance.gdpr,
                 "nda": compliance.nda,
+                "reasoning": style != gateway_core::server::reasoning::ReasoningStyle::None,
             })
         })
         .collect();

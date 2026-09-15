@@ -33,7 +33,7 @@
 	let controller = $state<ReturnType<typeof createConversationController> | null>(null);
 	let session = $state<ChatSession | null>(null);
 	let model = $state('');
-	let models = $state<{ id: string; gdpr: boolean; nda: boolean }[]>([]);
+	let models = $state<{ id: string; gdpr: boolean; nda: boolean; reasoning: boolean }[]>([]);
 	let transcriptionModels = $state<string[]>([]);
 	let transcriptionModel = $state('');
 	let speechAvailable = $state(false);
@@ -63,6 +63,19 @@
 	const streaming = $derived(controller !== null && controller.state.liveTurnId !== null);
 	const prompt = $derived(controller?.state.prompt ?? null);
 	const selectedModel = $derived(models.find((candidate) => candidate.id === model));
+	/**
+	 * Whether the effort control does anything for the selected model.
+	 *
+	 * The server resolves this exactly as the request path does. A model the
+	 * gateway has no reasoning parameter for gets a disabled picker with a
+	 * reason, rather than a working-looking select that changes nothing —
+	 * which is the same lie as an effort parameter dropped in silence, just on
+	 * the other side of the wire.
+	 *
+	 * Free-typed model names are not in the list, and there we do not know, so
+	 * the control stays enabled rather than being wrongly greyed out.
+	 */
+	const effortApplies = $derived(selectedModel?.reasoning ?? true);
 	const hasCanvas = $derived(documents.length > 0 || assets.length > 0);
 	// The composer's feedback button captures the page before the dialog opens,
 	// so it needs the same busy state the floating button has elsewhere.
@@ -750,7 +763,8 @@
 			<select
 				class="select select-bordered select-xs w-auto max-w-48"
 				aria-label={t('chat-render-effort-title')}
-				title={t('chat-render-effort-tooltip')}
+				title={effortApplies ? t('chat-render-effort-tooltip') : t('chat-render-effort-unsupported')}
+				disabled={!effortApplies}
 				bind:value={effort}
 				onchange={saveEffort}
 			>

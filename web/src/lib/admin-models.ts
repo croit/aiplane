@@ -37,8 +37,68 @@ export interface AdminModel {
 	resolved_reasoning_style: string;
 	uses_token_budget: boolean;
 	effort_levels: string[];
+	/**
+	 * The context window the serving backend reports, already capped by what
+	 * it says it actually allocated. `null` when nothing serves this model, or
+	 * when the server does not report one (Ollama, most hosted providers).
+	 */
+	detected_context_window: number | null;
 	defaults: ModelDefaults | null;
 }
+
+/**
+ * What to say beneath the context-window field.
+ *
+ * The value is discovered where the backend reports one, and the operator may
+ * always override it. Lowering is legitimate — capping a model to save VRAM —
+ * and passes without comment. Raising it above what the server actually serves
+ * is the one case worth interrupting for: nothing here compacts the prompt,
+ * and the server truncates it without an error, which is indistinguishable
+ * from a model that has simply forgotten the start of the conversation.
+ *
+ * `null` means say nothing.
+ */
+export interface ContextHint {
+	tone: 'info' | 'warning';
+	key: 'admin-context-detected' | 'admin-context-unreported' | 'admin-context-exceeds-detected';
+	window?: number;
+}
+
+/**
+ * `entered` is deliberately not typed `string`.
+ *
+ * The field is `<input type="number">` with `bind:value`, and Svelte coerces
+ * that binding to a number on every edit — so the state starts as the string
+ * the row was seeded with and becomes `number | null` the moment anyone types.
+ * Declaring `string` compiled, passed its tests (which only ever handed it
+ * string literals) and threw `entered.trim is not a function` inside a
+ * `$derived` on the first keystroke, taking the editor down with it.
+ */
+export function contextWindowHint(
+	entered: string | number | null | undefined,
+	detected: number | null
+): ContextHint | null {
+	// Where the number would come from if the operator supplied none. Also the
+	// answer whenever their value is at or below it, and whenever there is
+	// nothing to compare against.
+	const provenance: ContextHint =
+		detected === null
+			? { tone: 'info', key: 'admin-context-unreported' }
+			: { tone: 'info', key: 'admin-context-detected', window: detected };
+
+	const typed = String(entered ?? '').trim();
+	if (typed === '') return provenance;
+
+	const value = Number(typed);
+	// Not a usable window: say nothing rather than guess what was meant.
+	if (!Number.isFinite(value) || value <= 0) return null;
+
+	return detected !== null && value > detected
+		? { tone: 'warning', key: 'admin-context-exceeds-detected', window: detected }
+		: provenance;
+}
+
+
 
 export interface FeatureDefault {
 	feature: string;

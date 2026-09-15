@@ -22,6 +22,9 @@ chat-render-composer-placeholder = Сообщение модели…
 
 chat-render-effort-title = Уровень размышлений
 chat-render-effort-tooltip = Уровень размышлений: выше = больше рассуждений и больше циклов инструментов, но медленнее
+# Shown instead when the selected model has no reasoning parameter at all,
+# so the control is disabled rather than silently inert.
+chat-render-effort-unsupported = У этой модели нет управления рассуждением — уровень усилий ничего не изменит.
 chat-render-effort-label-prefix = Размышления:
 chat-render-effort-fast = Быстро
 chat-render-effort-standard = Стандарт

@@ -130,21 +130,50 @@ pub enum ReasoningStyle {
     Glm,
     /// Anthropic `thinking.{type, budget_tokens}`.
     Anthropic,
+    /// Ollama `reasoning_effort`, which takes the wider scale
+    /// `"none"|"low"|"medium"|"high"|"max"`.
+    ///
+    /// Distinct from [`OpenAi`](Self::OpenAi) for one reason that matters to
+    /// the user: it has an *off*. OpenAI's reasoning models always reason, so
+    /// that style maps Fast to the cheapest `"low"` — send that to Ollama and
+    /// "Fast" still thinks, which is a control that does not do what its label
+    /// says. Ollama accepts `"none"`, so Fast can mean fast.
+    ///
+    /// Never auto-detected from a model name; only a backend identified as
+    /// Ollama resolves to it (see `upstreams::profile`).
+    Ollama,
 }
 
 impl ReasoningStyle {
-    /// Resolve the effective style: an explicit admin choice wins, otherwise
-    /// auto-detect from the model name. An explicit `"none"` is honoured (lets
-    /// an admin silence a model that name-detection would otherwise enable).
-    pub fn resolve(explicit: Option<&str>, model: &str) -> Self {
+    /// Resolve the effective style, most specific source first:
+    ///
+    ///   1. an explicit admin choice on `/admin/models`, including `"none"`
+    ///      (which lets an admin silence a model name-detection would enable);
+    ///   2. the spelling the *serving backend* dictates, when it dictates one;
+    ///   3. auto-detection from the model name.
+    ///
+    /// Step 2 is what makes the effort control work on a server that
+    /// re-encodes requests through its own API. Ollama discards
+    /// `chat_template_kwargs` — it has no such field — so a model called
+    /// `qwen3:8b` would get Qwen's spelling from step 3, have it dropped in
+    /// silence, and leave the user with a knob that does nothing. Servers that
+    /// pass model parameters through (vLLM, llama.cpp, SGLang) dictate nothing
+    /// and fall to step 3, where the model family really is the right signal.
+    ///
+    /// The admin choice still wins over the backend: an operator who has
+    /// established what a particular deployment wants should not be overruled
+    /// by a fingerprint.
+    pub fn resolve(explicit: Option<&str>, dialect: Option<Self>, model: &str) -> Self {
         match explicit.map(str::trim) {
             Some("qwen") => Self::Qwen,
             Some("openai") => Self::OpenAi,
             Some("glm") => Self::Glm,
             Some("anthropic") => Self::Anthropic,
+            Some("ollama") => Self::Ollama,
             Some("none") => Self::None,
-            // Empty string / "auto" / unknown / missing → detect.
-            _ => Self::detect(model),
+            // Empty string / "auto" / unknown / missing → the backend, then
+            // the model name.
+            _ => dialect.unwrap_or_else(|| Self::detect(model)),
         }
     }
 
@@ -180,6 +209,7 @@ impl ReasoningStyle {
             Self::OpenAi => "openai",
             Self::Glm => "glm",
             Self::Anthropic => "anthropic",
+            Self::Ollama => "ollama",
         }
     }
 
@@ -194,7 +224,7 @@ impl ReasoningStyle {
     /// per effort (OpenAI, GLM/z.AI — neither exposes a token cap). The admin
     /// UI shows a level dropdown for these.
     pub fn uses_effort_level(self) -> bool {
-        matches!(self, Self::OpenAi | Self::Glm)
+        matches!(self, Self::OpenAi | Self::Glm | Self::Ollama)
     }
 
     /// Allowed `reasoning_effort` values for this style, most→least thinking.
@@ -206,6 +236,8 @@ impl ReasoningStyle {
             Self::OpenAi => &["high", "medium", "low"],
             // z.AI / GLM accepts the full intensity scale.
             Self::Glm => &["max", "xhigh", "high", "medium", "low", "minimal", "none"],
+            // Ollama's scale, including the "none" that makes Fast mean off.
+            Self::Ollama => &["max", "high", "medium", "low", "none"],
             _ => &[],
         }
     }
@@ -230,6 +262,18 @@ fn openai_effort(effort: Effort) -> &'static str {
         Effort::Fast => "low",
         Effort::Standard => "medium",
         Effort::Deep | Effort::Max => "high",
+    }
+}
+
+/// Ollama `reasoning_effort` value per level. Unlike OpenAI's three-value
+/// scale this one has an off switch, so Fast genuinely stops the model
+/// thinking rather than making it think cheaply.
+fn ollama_effort(effort: Effort) -> &'static str {
+    match effort {
+        Effort::Fast => "none",
+        Effort::Standard => "medium",
+        Effort::Deep => "high",
+        Effort::Max => "max",
     }
 }
 
@@ -279,12 +323,14 @@ pub struct ReasoningOverrides {
 ///
 /// Both halves come from the same `model_defaults` row, and every caller that
 /// wants one wants the other — the chat driver and the `/v1/messages`
-/// compatibility layer had the identical three-step lookup before this
-/// existed. A model with no row resolves by name and takes the built-in
-/// budgets, which is the common case.
+/// compatibility layer had the identical lookup before this existed. A model
+/// with no row takes the built-in budgets and resolves its style from
+/// `dialect` (the serving backend, see `upstreams::ServingProfile`) or, failing
+/// that, its own name — which is the common case.
 pub async fn resolve_for_model(
     pool: &crate::server::db::Pool,
     model: &str,
+    dialect: Option<ReasoningStyle>,
 ) -> (ReasoningStyle, ReasoningOverrides) {
     let row = crate::server::db::model_defaults::get(pool, model)
         .await
@@ -292,6 +338,7 @@ pub async fn resolve_for_model(
         .flatten();
     let style = ReasoningStyle::resolve(
         row.as_ref().and_then(|r| r.reasoning_style.as_deref()),
+        dialect,
         model,
     );
     let overrides = row
@@ -379,11 +426,18 @@ pub fn apply_effort(
                 obj.insert("thinking_token_budget".into(), json!(budget));
             }
         }
-        ReasoningStyle::OpenAi => {
+        // Both spell the parameter the same way and differ only in what each
+        // level means: OpenAI's reasoning models always reason, so Fast is
+        // their cheapest tier, while Ollama's scale has an off. One arm, so the
+        // client-wins rule cannot drift between two copies of it.
+        ReasoningStyle::OpenAi | ReasoningStyle::Ollama => {
             if !obj.contains_key("reasoning_effort") {
                 let level = overrides
                     .effort_level(effort)
-                    .unwrap_or(openai_effort(effort));
+                    .unwrap_or_else(|| match style {
+                        ReasoningStyle::Ollama => ollama_effort(effort),
+                        _ => openai_effort(effort),
+                    });
                 obj.insert("reasoning_effort".into(), Value::String(level.into()));
             }
         }
@@ -481,23 +535,100 @@ mod tests {
     fn style_explicit_overrides_detection() {
         // An admin can force a style the name wouldn't detect…
         assert_eq!(
-            ReasoningStyle::resolve(Some("anthropic"), "mystery"),
+            ReasoningStyle::resolve(Some("anthropic"), None, "mystery"),
             ReasoningStyle::Anthropic
         );
         // …or silence one the name would enable.
         assert_eq!(
-            ReasoningStyle::resolve(Some("none"), "Qwen/Qwen3"),
+            ReasoningStyle::resolve(Some("none"), None, "Qwen/Qwen3"),
             ReasoningStyle::None
         );
         // Empty/auto → fall back to detection.
         assert_eq!(
-            ReasoningStyle::resolve(Some(""), "gpt-4o"),
+            ReasoningStyle::resolve(Some(""), None, "gpt-4o"),
             ReasoningStyle::OpenAi
         );
         assert_eq!(
-            ReasoningStyle::resolve(None, "gpt-4o"),
+            ReasoningStyle::resolve(None, None, "gpt-4o"),
             ReasoningStyle::OpenAi
         );
+    }
+
+    /// The failure this exists for: Ollama serving `qwen3:8b`. The model name
+    /// says Qwen, so the gateway sent `chat_template_kwargs.enable_thinking` —
+    /// a field Ollama has no member for, discarded without an error, leaving
+    /// the user with an effort control that did nothing. The serving backend
+    /// has to win over the name.
+    #[test]
+    fn a_backend_dialect_beats_the_model_name() {
+        assert_eq!(
+            ReasoningStyle::resolve(None, Some(ReasoningStyle::Ollama), "qwen3:8b"),
+            ReasoningStyle::Ollama
+        );
+        // Without a dialect the name still decides — which is right on every
+        // server that passes model parameters through untouched.
+        assert_eq!(
+            ReasoningStyle::resolve(None, None, "qwen3:8b"),
+            ReasoningStyle::Qwen
+        );
+    }
+
+    /// An operator who has worked out what a particular deployment wants must
+    /// not be overruled by a fingerprint.
+    #[test]
+    fn an_admin_choice_beats_the_backend_dialect() {
+        assert_eq!(
+            ReasoningStyle::resolve(Some("qwen"), Some(ReasoningStyle::Ollama), "qwen3:8b"),
+            ReasoningStyle::Qwen
+        );
+        assert_eq!(
+            ReasoningStyle::resolve(Some("none"), Some(ReasoningStyle::Ollama), "qwen3:8b"),
+            ReasoningStyle::None
+        );
+    }
+
+    /// The point of a separate Ollama style: its scale has an off switch, so
+    /// "Fast" stops the model thinking instead of making it think cheaply.
+    /// OpenAI's reasoning models always reason, which is why that style maps
+    /// Fast to "low" — correct there, a broken promise here.
+    #[test]
+    fn ollama_fast_actually_turns_thinking_off() {
+        let mut body = json!({"model": "qwen3:8b", "messages": []});
+        apply_effort(
+            ReasoningStyle::Ollama,
+            Effort::Fast,
+            &ReasoningOverrides::default(),
+            &mut body,
+        );
+        assert_eq!(body["reasoning_effort"], json!("none"));
+
+        for (effort, expected) in [
+            (Effort::Standard, "medium"),
+            (Effort::Deep, "high"),
+            (Effort::Max, "max"),
+        ] {
+            let mut body = json!({"model": "qwen3:8b", "messages": []});
+            apply_effort(
+                ReasoningStyle::Ollama,
+                effort,
+                &ReasoningOverrides::default(),
+                &mut body,
+            );
+            assert_eq!(body["reasoning_effort"], json!(expected), "{effort:?}");
+        }
+    }
+
+    /// A client that set its own value keeps it, like every other style.
+    #[test]
+    fn ollama_style_does_not_overwrite_a_client_value() {
+        let mut body = json!({"model": "m", "messages": [], "reasoning_effort": "low"});
+        apply_effort(
+            ReasoningStyle::Ollama,
+            Effort::Max,
+            &ReasoningOverrides::default(),
+            &mut body,
+        );
+        assert_eq!(body["reasoning_effort"], json!("low"));
     }
 
     #[test]

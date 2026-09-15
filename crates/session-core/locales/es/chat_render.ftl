@@ -22,6 +22,9 @@ chat-render-composer-placeholder = Escribe un mensaje al modelo…
 
 chat-render-effort-title = Esfuerzo de razonamiento
 chat-render-effort-tooltip = Esfuerzo de razonamiento: más alto = más razonamiento y más rondas de herramientas, pero más lento
+# Shown instead when the selected model has no reasoning parameter at all,
+# so the control is disabled rather than silently inert.
+chat-render-effort-unsupported = Este modelo no tiene control de razonamiento, por lo que el nivel de esfuerzo no cambiaría nada.
 chat-render-effort-label-prefix = Razonamiento:
 chat-render-effort-fast = Rápido
 chat-render-effort-standard = Estándar

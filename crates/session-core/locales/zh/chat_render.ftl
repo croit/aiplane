@@ -22,6 +22,9 @@ chat-render-composer-placeholder = 给模型发消息…
 
 chat-render-effort-title = 思考强度
 chat-render-effort-tooltip = 思考强度：越高 = 推理越多、工具调用轮次越多，但速度更慢
+# Shown instead when the selected model has no reasoning parameter at all,
+# so the control is disabled rather than silently inert.
+chat-render-effort-unsupported = 此模型没有推理控制，思考强度设置不会产生任何效果。
 chat-render-effort-label-prefix = 思考：
 chat-render-effort-fast = 快速
 chat-render-effort-standard = 标准

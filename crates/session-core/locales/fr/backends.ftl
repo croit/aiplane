@@ -71,3 +71,6 @@ backends-test-key-env = depuis env { $var }
 backends-test-key-env-unset = env { $var } N'EST PAS DÉFINIE — la requête est partie sans identifiant
 backends-test-key-none = aucun identifiant envoyé
 backends-error-base-url-required = l'URL de base est requise
+
+backends-parallel-mismatch = le serveur en traite { $parallel } à la fois
+backends-detect-profile = identifié : { $profile }

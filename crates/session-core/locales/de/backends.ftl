@@ -71,3 +71,7 @@ backends-test-key-env = aus env { $var }
 backends-test-key-env-unset = env { $var } ist NICHT GESETZT — die Anfrage ging ohne Zugangsdaten raus
 backends-test-key-none = keine Zugangsdaten gesendet
 backends-error-base-url-required = Basis-URL ist erforderlich
+
+# Was die Erkennung über ein Backend ergeben hat.
+backends-parallel-mismatch = Server verarbeitet { $parallel } gleichzeitig
+backends-detect-profile = erkannt: { $profile }

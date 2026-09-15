@@ -192,6 +192,7 @@ admin-reasoning-openai = OpenAI
 admin-reasoning-glm = GLM / z.AI
 
 admin-reasoning-anthropic = Anthropic
+admin-reasoning-ollama = Ollama
 
 admin-effort-standard = Standard
 
@@ -268,3 +269,11 @@ admin-search-brave-key-set = Ein Key ist gespeichert (verschlüsselt).
 admin-search-brave-key-unset = Kein Key gespeichert.
 
 admin-search-brave-key-clear = Gespeicherten Key entfernen
+
+# Herkunft des Kontextfensters. Der Wert wird vom Backend ermittelt, sofern es
+# ihn meldet; überschreiben bleibt erlaubt, auch nach unten. Nur ein höherer
+# Wert als der gemeldete ist eine Warnung wert: hier wird nicht kompaktiert,
+# dort wird stillschweigend abgeschnitten.
+admin-context-detected = Erkannt: { $window } Tokens
+admin-context-unreported = Dieses Backend meldet sein Kontextfenster nicht. Am Server prüfen — `ollama ps` zeigt die tatsächlich allozierte Größe.
+admin-context-exceeds-detected = Dieses Backend meldet { $window } Tokens. Höhere Werte werden nicht kompaktiert, sondern vom Server still abgeschnitten.

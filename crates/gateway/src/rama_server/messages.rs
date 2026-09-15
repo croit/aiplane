@@ -140,7 +140,14 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
         // reason to fail the caller's request.
         tracing::warn!(error = %err, model = %real_model, "model_defaults: skipping merge");
     }
-    apply_thinking(&state, &real_model, translated.effort, &mut request_body).await;
+    apply_thinking(
+        &state,
+        &real_model,
+        &access,
+        translated.effort,
+        &mut request_body,
+    )
+    .await;
 
     let resp = if translated.stream {
         proxy::stream_with_tools(
@@ -291,8 +298,8 @@ pub async fn count_tokens(State(state): State<Arc<RamaState>>, req: Request) -> 
 /// root, *not* under the OpenAI `/v1` prefix that `base_url` carries — asking
 /// for `…/v1/tokenize` is a 404.
 fn tokenize_url(base_url: &str) -> String {
-    let root = base_url.trim_end_matches('/');
-    let root = root.strip_suffix("/v1").unwrap_or(root);
+    let root =
+        gateway_core::server::upstreams::profile::server_root(base_url.trim_end_matches('/'));
     format!("{root}/tokenize")
 }
 
@@ -428,6 +435,7 @@ async fn buffered(
 async fn apply_thinking(
     state: &RamaState,
     real_model: &str,
+    access: &gateway_core::server::upstreams::PoolAccess,
     effort: Option<gateway_core::server::reasoning::Effort>,
     body: &mut Value,
 ) {
@@ -437,8 +445,20 @@ async fn apply_thinking(
     let Some(effort) = effort else {
         return;
     };
+    // Same three-source resolution as the chat driver — an Anthropic-format
+    // client asking for extended thinking against an Ollama backend has to get
+    // the spelling that server understands, or its `thinking` block translates
+    // into a parameter that is silently dropped.
+    let dialect = state
+        .upstreams
+        .serving_profile(
+            real_model,
+            gateway_core::server::upstreams::PoolKind::Chat,
+            access,
+        )
+        .dialect;
     let (style, overrides) =
-        gateway_core::server::reasoning::resolve_for_model(&state.db, real_model).await;
+        gateway_core::server::reasoning::resolve_for_model(&state.db, real_model, dialect).await;
     gateway_core::server::reasoning::apply_effort(style, effort, &overrides, body);
 }
 

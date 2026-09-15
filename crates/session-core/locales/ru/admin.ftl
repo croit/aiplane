@@ -184,6 +184,7 @@ admin-reasoning-openai = OpenAI
 admin-reasoning-glm = GLM / z.AI
 
 admin-reasoning-anthropic = Anthropic
+admin-reasoning-ollama = Ollama
 
 admin-effort-standard = Стандартный
 
@@ -260,3 +261,8 @@ admin-search-brave-key-set = Ключ сохранён (в зашифрован�
 admin-search-brave-key-unset = Ключ не сохранён.
 
 admin-search-brave-key-clear = Удалить сохранённый ключ
+
+# Источник значения окна контекста.
+admin-context-detected = Определено: { $window } токенов
+admin-context-unreported = Этот бэкенд не сообщает размер окна контекста. Проверьте сервер — `ollama ps` покажет фактически выделенный размер.
+admin-context-exceeds-detected = Этот бэкенд сообщает { $window } токенов. Большие значения не уплотняются — сервер молча обрезает их.

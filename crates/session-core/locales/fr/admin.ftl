@@ -184,6 +184,7 @@ admin-reasoning-openai = OpenAI
 admin-reasoning-glm = GLM / z.AI
 
 admin-reasoning-anthropic = Anthropic
+admin-reasoning-ollama = Ollama
 
 admin-effort-standard = Standard
 
@@ -260,3 +261,8 @@ admin-search-brave-key-set = Une clé est enregistrée (chiffrée).
 admin-search-brave-key-unset = Aucune clé enregistrée.
 
 admin-search-brave-key-clear = Supprimer la clé enregistrée
+
+# Provenance de la fenêtre de contexte.
+admin-context-detected = Détecté : { $window } jetons
+admin-context-unreported = Ce backend ne communique pas sa fenêtre de contexte. Vérifiez le serveur — `ollama ps` indique la taille réellement allouée.
+admin-context-exceeds-detected = Ce backend annonce { $window } jetons. Les valeurs supérieures ne sont pas compactées : le serveur les tronque silencieusement.

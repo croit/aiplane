@@ -74,3 +74,8 @@ backends-test-key-env = from env { $var }
 backends-test-key-env-unset = env { $var } is NOT SET — the request went out with no credential
 backends-test-key-none = no credential sent
 backends-error-base-url-required = base URL is required
+
+# What detection made of a backend. Never shown as a setting — only where it
+# changes what the operator should do.
+backends-parallel-mismatch = server runs { $parallel } at a time
+backends-detect-profile = identified: { $profile }

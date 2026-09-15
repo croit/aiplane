@@ -3,7 +3,7 @@
 	import { adminDelete, adminPost, adminPut } from '$lib/admin-client';
 	import { t, n } from '$lib/i18n.svelte';
 	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
-	import { completeAliasLine, parseAliases, splitList, type Backend, type BackendTestResult, type Pool } from '$lib/upstreams';
+	import { completeAliasLine, parallelismMismatch, parseAliases, splitList, type Backend, type BackendTestResult, type Pool } from '$lib/upstreams';
 
 	interface Props {
 		backend?: Backend | null;
@@ -210,6 +210,25 @@
 		</div>
 		{#if testResult}
 			<div class={`alert text-sm ${testResult.outcome === 'success' ? 'alert-success' : testResult.outcome === 'warning' ? 'alert-info' : 'alert-error'}`} role="status"><span>{testMessage(testResult)}</span></div>
+			{#if testResult.profile && testResult.profile !== 'generic'}
+				<!--
+					What the server turned out to be, and the two things that
+					follow from it. Shown here because this is where an operator
+					can still act on them — a context window nobody reports is a
+					value they have to look up, and a server that runs one
+					request at a time is a max-inflight they should lower.
+				-->
+				{@const parallelWarning = parallelismMismatch(testResult.detected_max_parallel, maxInflight)}
+				<div class="flex flex-wrap items-center gap-1 text-xs">
+					<span class="badge badge-ghost badge-sm font-mono" title={testResult.detected_version ?? undefined}>{t('backends-detect-profile', { profile: testResult.profile })}</span>
+					{#if parallelWarning !== null}
+						<span class="badge badge-warning badge-sm">{t('backends-parallel-mismatch', { parallel: parallelWarning })}</span>
+					{/if}
+					<span class="text-base-content/60">
+						{testResult.detected_context ? t('admin-context-detected', { window: n(testResult.detected_context) }) : t('admin-context-unreported')}
+					</span>
+				</div>
+			{/if}
 			{#if testResult.models.length}
 				<div class="flex flex-col gap-1">
 					<span class="text-xs text-base-content/60">{t('backends-test-insert-hint')}</span>

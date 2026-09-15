@@ -46,7 +46,58 @@ For aliases and the two fallback mechanisms, see [Model aliases](#model-aliases)
 
 Every 5 s, each backend gets a `GET <base_url>/models` probe (with the backend's bearer token, if configured). On 200 + parseable OpenAI envelope (`{"data": [{"id": ...}, ...]}`), the backend's advertised-model set is **replaced wholesale** with the names in `data[].id`. On 401 or non-parseable 200, the backend is marked alive but its model set is left as-is (so a previously-populated set survives a transient parser failure). On network error, timeout, or 5xx, the probe counts toward the unhealthy threshold.
 
-At startup, `health::spawn` runs an initial parallel probe round and awaits it before returning, so the first request lands on a registry that already knows what each backend serves. Worst case (every backend unreachable): the gateway waits the 2 s probe timeout and starts serving with empty model sets, returning `400 invalid_request` until the looping probe populates them.
+At startup, `health::spawn` runs an initial parallel probe round and awaits it before returning, so the first request lands on a registry that already knows what each backend serves. Worst case (every backend unreachable): the gateway waits the 2 s probe timeout and starts serving with empty model sets, returning `400 invalid_request` until the looping probe populates them. [Backend identification](#backend-profiles-what-kind-of-server-is-this) runs concurrently with that round, on the same 2 s budget, so it costs no extra startup time.
+
+## Backend profiles (what kind of server is this?)
+
+The OpenAI wire is the right abstraction for *requests* and the wrong one for two facts a request depends on. Both were answered for years by assuming vLLM, and both failed in silence against anything else:
+
+- **How much context does this model have?** vLLM reports `max_model_len` per model on `/models`. llama.cpp reports the model's trained context as `meta.n_ctx_train` and the context it was actually started with on `/props`. Ollama reports neither — its context is a server setting (`OLLAMA_CONTEXT_LENGTH`), divided by `OLLAMA_NUM_PARALLEL`, and invisible on the OpenAI surface; its own `/api/ps` does state what the running instance allocated, which on a default install is **4096**. Falling back to the global 32768 guess against that means the server truncates the prompt instead of the gateway compacting it. No error is raised anywhere; the model simply appears to forget the start of the conversation.
+- **How is "think harder" spelled?** Ollama re-encodes every request through its own API, so `chat_template_kwargs` never reaches the template no matter which model is loaded. A model called `qwen3:8b` got Qwen's spelling from its *name*, Ollama discarded the field without a word, and the effort control did nothing.
+
+So the gateway identifies the server. `upstreams::profile::detect` fires a handful of cheap GETs (`/api/version`, `/props`, `/v1/models`, `/get_model_info`) in parallel and resolves one of `vllm` | `ollama` | `llamacpp` | `sglang` | `generic`. **`generic` is not a failure** — it is the honest answer for hosted providers and anything unrecognised, and it reproduces exactly the pre-profile behaviour.
+
+The operator never configures a profile and never picks a server name from a list. The profile exists so that "context" and "effort" stay one vocabulary in the UI while meaning different bytes on the wire.
+
+| | context window | reasoning spelling | honours `tool_choice` |
+|---|---|---|---|
+| vLLM | `max_model_len` | from the model name | yes |
+| llama.cpp | `meta.n_ctx_train`, capped by `/props` `n_ctx` every tick | from the model name | yes |
+| SGLang | `/models`, when present | from the model name | yes |
+| Ollama | `/api/ps` `context_length`, per loaded model, every tick | `reasoning_effort`, server-dictated, on a scale with an *off* (`none`…`max`) | **no** |
+| generic / hosted | not reported | from the model name | yes |
+
+Only Ollama dictates a spelling. Every other server passes model-specific parameters through untouched, so there the model family really is the right signal and name detection keeps deciding. An explicit `reasoning_style` on `/admin/models` still beats both.
+
+Ollama gets its own style rather than reusing OpenAI's for one reason that shows up in the UI: its scale has an off switch. OpenAI's reasoning models always reason, so that style maps *Fast* to the cheapest `"low"` — correct there, but on Ollama it would mean the control labelled *Fast* still makes the model think. `none` is what lets *Fast* mean fast.
+
+`tool_choice` is the third consequence. The final tool round normally keeps the tool definitions in the request and sends `tool_choice: "none"`, because some templates need the definitions present to render an explicit no-tools turn. Ollama has no `tool_choice` field, so on that profile the definitions are **withheld** instead — cruder, and the only thing that actually stops a model calling a tool on the round meant to end the turn.
+
+### Two cadences, because two different things are being learned
+
+**What a server *is*** — its profile, version, slot count — changes only when someone reconfigures it. That is read on topology **apply** (the admin UI's *Apply changes* → `topology_reload` → `health::spawn`), and previewed by the backend editor's **Test** button. Results are persisted (`backend_detected`, migration 0067) and re-seeded at boot, so a gateway that starts while a backend is down still knows what that backend is rather than reading back as `generic`.
+
+**What a server currently *has loaded*** is runtime state, and is read by the existing 5 s health probe, on the same tick and concurrently with `/models` (`BackendProfile::context_endpoint` says where). This is not a refinement: Ollama loads models on first use, so at apply time `/api/ps` reports nothing at all. Reading the context only at identification would leave every model with no window and drop it onto the 32768 guess against a 4096 allocation — the failure this feature exists to remove, arriving through its own refresh policy. A model used for the first time now has its real window within five seconds.
+
+Because the probe keeps the readings current, nothing needs applying after a server is reconfigured: raise `OLLAMA_CONTEXT_LENGTH`, restart, and the gateway follows within a tick. The **Test** button is a preview against the address being *typed*, which is the one thing the probe cannot offer — it only knows about backends that are already saved.
+
+A profile is only ever overwritten by a *positive* identification. `detect` cannot fail — an unreachable server comes back as `generic` — so writing that result would undo the boot seed milliseconds after it ran, and persist the loss.
+
+### Context window: detected, overridable, and warned about
+
+Resolution order for a model's context window, most specific first:
+
+1. `model_defaults.context_window` — what an operator set on `/admin/models`;
+2. what the serving backends reported, capped by what they said they allocated (the smallest wins when several serve the same model — a request may land on any of them);
+3. the global `[chat.compaction] default_context_window` (32768).
+
+An operator may always override. **Lowering** is legitimate — capping a model to save VRAM — and passes without comment. **Raising it above what the backend reports** gets a warning next to the field, because that is the silent-truncation failure in new packaging: nothing here compacts the prompt, and the server discards the overflow without an error.
+
+Where nothing was detected there is no ceiling to compare against, so the field says so instead of inventing a warning. On Ollama that is per model rather than per backend: `/api/ps` answers only for models the server currently has **loaded**, so a model nobody has used yet has no window until it is — at which point the next probe tick supplies one. Everywhere else it means a hosted provider, where an operator has to supply the figure.
+
+### Concurrency
+
+llama.cpp reports its slot count; nothing else does. Where the reported figure is **below** the configured `max_inflight`, the backend card says so. It is worth surfacing because the failure is invisible: Ollama runs one request per model by default (`OLLAMA_NUM_PARALLEL`) and queues up to 512 rather than rejecting, so the picker sees free slots, keeps dispatching, and back-pressure quietly stops applying. Nothing errors — it just gets slower.
 
 ### Routing rules
 
@@ -244,4 +295,5 @@ We do **not** transcode audio in the gateway — upstreams handle the formats th
 - Add, edit, or remove pools and backends at `/admin/upstreams`, then click **Apply changes** to reload the runtime registry (a sticky bar counts unapplied edits). Topology edits are saved to the database and take effect without a restart.
 - Add a model on a backend → it shows up in `/v1/models` and the chat picker within 5 s.
 - Drop a model → it disappears from routing within 5 s (next probe).
-- Want to verify? Check `tracing` output: every model-set change logs `advertised models updated added=[...] removed=[...] total=N`.
+- Want to verify? Check `tracing` output: every model-set change logs `advertised models updated added=[...] removed=[...] total=N`, and every apply logs one `identified backend profile=… context_windows=N` per backend.
+- Adding an Ollama or llama.cpp backend needs nothing special: point `base_url` at `…/v1`, apply, and the context window and effort spelling are worked out for you. A model shows no window until it has been used once — Ollama loads on demand — and then gets one within five seconds. A detected **4096** is Ollama's small-VRAM default and worth raising with `OLLAMA_CONTEXT_LENGTH`, not working around in the gateway.

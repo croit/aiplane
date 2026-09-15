@@ -22,6 +22,9 @@ chat-render-composer-placeholder = Écrire au modèle…
 
 chat-render-effort-title = Effort de réflexion
 chat-render-effort-tooltip = Effort de réflexion : plus élevé = plus de raisonnement et de cycles d'outils, mais plus lent
+# Shown instead when the selected model has no reasoning parameter at all,
+# so the control is disabled rather than silently inert.
+chat-render-effort-unsupported = Ce modèle n'a pas de contrôle de raisonnement : le niveau d'effort ne changerait rien.
 chat-render-effort-label-prefix = Réflexion :
 chat-render-effort-fast = Rapide
 chat-render-effort-standard = Standard

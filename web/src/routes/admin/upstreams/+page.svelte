@@ -58,6 +58,11 @@
 
 	function applyStatus(status: StatusEvent) {
 		if (!data) return;
+		// The status stream carries what changes every few seconds. Detection
+		// results are not that — they change when a server is reconfigured — so
+		// they ride in on the full topology load and are carried forward here
+		// rather than re-sent on every tick.
+		const previous = data.backends.find((backend) => backend.name === status.name)?.live ?? null;
 		const live = status.pool === null ? null : {
 			healthy: status.healthy,
 			enabled: status.enabled,
@@ -66,7 +71,11 @@
 			max_inflight: status.max_inflight,
 			models: status.models,
 			withheld: status.withheld,
-			pool: status.pool
+			pool: status.pool,
+			profile: previous?.profile ?? 'generic',
+			detected_version: previous?.detected_version ?? null,
+			detected_max_parallel: previous?.detected_max_parallel ?? null,
+			detected_at: previous?.detected_at ?? null
 		};
 		data = {
 			...data,

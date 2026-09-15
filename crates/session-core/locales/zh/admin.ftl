@@ -182,6 +182,7 @@ admin-reasoning-openai = OpenAI
 admin-reasoning-glm = GLM / z.AI
 
 admin-reasoning-anthropic = Anthropic
+admin-reasoning-ollama = Ollama
 
 admin-effort-standard = 标准
 
@@ -258,3 +259,8 @@ admin-search-brave-key-set = 已存储密钥（加密）。
 admin-search-brave-key-unset = 未存储密钥。
 
 admin-search-brave-key-clear = 删除已存储的密钥
+
+# 上下文窗口的来源。
+admin-context-detected = 已检测：{ $window } 词元
+admin-context-unreported = 此后端不报告其上下文窗口。请在服务器上确认 — `ollama ps` 会显示实际分配的大小。
+admin-context-exceeds-detected = 此后端报告为 { $window } 词元。更大的值不会被压缩，服务器会静默截断。

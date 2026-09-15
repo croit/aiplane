@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import {
 	activityCounts,
 	backendAssignments,
+	parallelismMismatch,
 	completeAliasLine,
 	poolCoverage,
 	type Backend,
@@ -32,7 +33,11 @@ const backends: Backend[] = [
 			max_inflight: 8,
 			models: ['model-a'],
 			withheld: [],
-			pool: 'chat'
+			pool: 'chat',
+			profile: 'generic' as const,
+			detected_version: null,
+			detected_max_parallel: null,
+		detected_at: null
 		}
 	},
 	{
@@ -57,7 +62,11 @@ const backends: Backend[] = [
 			max_inflight: 8,
 			models: ['model-b'],
 			withheld: [],
-			pool: 'chat'
+			pool: 'chat',
+			profile: 'generic' as const,
+			detected_version: null,
+			detected_max_parallel: null,
+		detected_at: null
 		}
 	},
 	{
@@ -144,4 +153,33 @@ test('model ids sort the way a person reads a version, not by byte', () => {
 	const input = ['b', 'a'];
 	naturalSort(input);
 	assert.deepEqual(input, ['b', 'a']);
+});
+
+/**
+ * Ollama runs one request per model by default and queues up to 512 rather
+ * than rejecting, so a `max_inflight` of 16 produces no error anywhere — the
+ * picker just keeps dispatching into a queue and back-pressure stops meaning
+ * anything. The badge is the only place that can say so.
+ */
+test('a server that runs fewer requests than we send it is flagged', () => {
+	const live = {
+		healthy: true,
+		enabled: true,
+		auth_failed: false,
+		inflight: 0,
+		max_inflight: 16,
+		models: [],
+		withheld: [],
+		pool: 'chat',
+		profile: 'ollama' as const,
+		detected_version: '0.34.0',
+		detected_max_parallel: 1,
+		detected_at: null
+	};
+	assert.equal(parallelismMismatch(live.detected_max_parallel, live.max_inflight), 1);
+	// Configured at or below what the server runs: nothing to say.
+	assert.equal(parallelismMismatch(live.detected_max_parallel, 1), null);
+	// A server that did not say is not a mismatch, it is an unknown.
+	assert.equal(parallelismMismatch(null, 16), null);
+	assert.equal(parallelismMismatch(undefined, 16), null);
 });

@@ -21,13 +21,12 @@
 //! serving traffic with empty model sets — the first `POST /v1/chat/
 //! completions` lands on a registry that already knows what's where.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Deserialize;
 use tokio::time::sleep;
 
+use super::profile;
 use super::registry::{Backend, UpstreamRegistry};
 use crate::server::db::{Pool, upstreams_config};
 
@@ -42,24 +41,6 @@ const DOWN_PROBE_INTERVAL: Duration = Duration::from_secs(1);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const FAILURE_THRESHOLD: u32 = 3;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
-
-/// OpenAI `/models` response envelope — only the `id` field per item is
-/// load-bearing. `created`, `object`, `owned_by` are present in the wire
-/// shape but we don't use them, so we skip them entirely instead of
-/// deserialising into `serde_json::Value`.
-#[derive(Deserialize)]
-struct ModelsEnvelope {
-    data: Vec<ModelEntry>,
-}
-
-#[derive(Deserialize)]
-struct ModelEntry {
-    id: String,
-    /// vLLM (and several other OpenAI-compatible servers) report each model's
-    /// real context window here. Absent on most hosted APIs, hence optional.
-    #[serde(default)]
-    max_model_len: Option<i64>,
-}
 
 /// reqwest client for health probes: NO idle connection pooling. Probes fire
 /// every [`PROBE_INTERVAL`], so a pooled keep-alive would sit idle between
@@ -82,7 +63,20 @@ pub async fn spawn(registry: Arc<UpstreamRegistry>, db: Option<Pool>) {
     let http = probe_client();
     if let Some(db) = db.as_ref() {
         seed_remembered_models(&registry, db).await;
+        seed_remembered_detection(&registry, db).await;
     }
+    // Identification runs *alongside* the first probe round rather than before
+    // it. The two ask different servers different questions and neither needs
+    // the other's answer, so serialising them would have added a second
+    // timeout's worth of delay to every boot and every topology apply that
+    // happens to include an unreachable backend — a cost paid on exactly the
+    // occasions an operator is already waiting and already unhappy.
+    let detection = tokio::spawn({
+        let http = http.clone();
+        let registry = Arc::clone(&registry);
+        let db = db.clone();
+        async move { detect_all(&http, &registry, db.as_ref()).await }
+    });
     let mut initial = Vec::new();
     for pool in registry.pools() {
         for backend in &pool.backends {
@@ -111,6 +105,10 @@ pub async fn spawn(registry: Arc<UpstreamRegistry>, db: Option<Pool>) {
     for handle in initial {
         let _ = handle.await;
     }
+    // Detection is awaited too, so the admin page reflects the apply that just
+    // finished rather than filling in a moment later, and so the first request
+    // through a freshly-applied topology already knows how to phrase itself.
+    let _ = detection.await;
 
     // Now arm the looping probe per backend. Each loop owns its own
     // failure counter — the bootstrap probe above doesn't pre-seed it
@@ -214,6 +212,117 @@ async fn seed_remembered_models(registry: &UpstreamRegistry, db: &Pool) {
     }
 }
 
+/// Identify every backend once, in parallel, and record what it said.
+///
+/// Runs here rather than in the 5 s probe loop because this is exactly the
+/// moment the operator means by "save": the admin UI applies a topology by
+/// calling `topology_reload`, which rebuilds the registry and calls [`spawn`].
+/// Re-running it every five seconds would add four requests per backend per
+/// tick to learn something that only changes when a server is reconfigured.
+///
+/// The cost of that choice is honest and known: change a server's context
+/// setting and the gateway keeps the old value until the next apply or a press
+/// of the admin page's test button. It never *invents* one, which is the
+/// failure that mattered.
+///
+/// Failures are silent by design — `profile::detect` cannot fail; it returns
+/// `Generic` with nothing filled in, which is precisely how the gateway behaved
+/// before profiles existed.
+async fn detect_all(http: &reqwest::Client, registry: &UpstreamRegistry, db: Option<&Pool>) {
+    let mut rounds = Vec::new();
+    for pool in registry.pools() {
+        for backend in &pool.backends {
+            // A drained backend takes no traffic, so nothing depends on
+            // knowing what it is — and identification is five requests, not
+            // the probe's one. It keeps whatever was seeded from the database
+            // and is identified on the apply that brings it back.
+            if !backend.is_enabled() {
+                continue;
+            }
+            let http = http.clone();
+            let backend = Arc::clone(backend);
+            let pool_name = pool.name.clone();
+            rounds.push(tokio::spawn(async move {
+                let detected =
+                    profile::detect(&http, &backend.base_url, backend.api_key.as_deref()).await;
+                tracing::info!(
+                    pool = %pool_name, backend = %backend.name,
+                    profile = detected.profile.as_str(),
+                    version = detected.version.as_deref().unwrap_or("-"),
+                    context_windows = detected.context_windows.len(),
+                    max_parallel = ?detected.max_parallel,
+                    "identified backend"
+                );
+
+                // Only a *positive* identification is allowed to overwrite
+                // what we already knew, exactly as `probe_once` replaces the
+                // model set only on a successful parse.
+                //
+                // `detect` cannot fail: an unreachable server comes back as
+                // `Generic` with nothing filled in. Writing that would undo
+                // `seed_remembered_detection` and the reload carry-forward
+                // milliseconds after they ran — and persist the loss, so a
+                // gateway restarted while the Ollama box happened to be
+                // rebooting would forget it was Ollama *permanently*, send
+                // `chat_template_kwargs` at it again, and put every model on
+                // it back on the 32768 guess. The failure this feature exists
+                // to remove, reintroduced by its own bookkeeping.
+                if detected.profile == profile::BackendProfile::Generic {
+                    // Not an error — but worth a line, because "generic" is
+                    // also what an unreachable server looks like, and the two
+                    // have very different fixes.
+                    tracing::debug!(
+                        pool = %pool_name, backend = %backend.name,
+                        "backend was not identified as a known server kind; it will be treated \
+                         as plain OpenAI-compatible (no separate context endpoint, reasoning \
+                         spelling guessed from the model name)"
+                    );
+                    return None;
+                }
+                backend.set_detected(&detected);
+                Some((backend.name.clone(), detected))
+            }));
+        }
+    }
+    for round in rounds {
+        let Ok(Some((name, detected))) = round.await else {
+            continue;
+        };
+        if let Some(db) = db
+            && let Err(err) = upstreams_config::save_detected(db, &name, &detected).await
+        {
+            tracing::debug!(
+                backend = %name, error = %err,
+                "could not remember what detection found"
+            );
+        }
+    }
+}
+
+/// Restore the last detection result before anything is re-detected.
+///
+/// Without it a boot against an unreachable backend reads back as `Generic`
+/// with no context windows, so every model on it silently falls back to the
+/// global 32768 guess — the exact failure profiles exist to remove. Same
+/// reasoning as [`seed_remembered_models`], and deliberately the same shape.
+async fn seed_remembered_detection(registry: &UpstreamRegistry, db: &Pool) {
+    let remembered = match upstreams_config::load_detected(db).await {
+        Ok(d) if !d.is_empty() => d,
+        Ok(_) => return,
+        Err(err) => {
+            tracing::debug!(error = %err, "could not load remembered backend detection");
+            return;
+        }
+    };
+    for pool in registry.pools() {
+        for backend in &pool.backends {
+            if let Some(detected) = remembered.get(&backend.name) {
+                backend.set_detected(detected);
+            }
+        }
+    }
+}
+
 /// Single round of probing — used by both the bootstrap path and the
 /// looping path. Updates liveness + advertised-model set on success; on
 /// failure, only returns the outcome (the caller decides whether one
@@ -225,6 +334,20 @@ async fn probe_once(
     db: Option<&Pool>,
 ) -> ProbeOutcome {
     let url = format!("{}{}", backend.base_url, backend.health_path);
+    // The profile's context endpoint, read on the same tick and concurrently
+    // with `/models` — they are independent, and serialising them would double
+    // the worst case of a probe that gates routing.
+    //
+    // Every tick rather than once at identification, because this is runtime
+    // state: Ollama loads models on first use, so at apply time `/api/ps`
+    // reports nothing and a freshly applied topology would know no window for
+    // any model. Now one arrives within five seconds of the model being used.
+    let context = profile::read_context(
+        http,
+        &backend.base_url,
+        backend.api_key.as_deref(),
+        backend.profile(),
+    );
     // Send the backend's API key on the probe — same `Authorization:
     // Bearer …` header `proxy.rs` adds to real requests. Without it the
     // upstream's access log fills with anonymous-401s from the gateway
@@ -236,7 +359,8 @@ async fn probe_once(
     if let Some(key) = backend.api_key.as_deref() {
         req = req.bearer_auth(key);
     }
-    let result = tokio::time::timeout(PROBE_TIMEOUT, req.send()).await;
+    let (result, (endpoint_windows, context_cap)) =
+        tokio::join!(tokio::time::timeout(PROBE_TIMEOUT, req.send()), context);
 
     let resp = match result {
         Ok(Ok(resp)) => resp,
@@ -310,9 +434,9 @@ async fn probe_once(
             return ProbeOutcome::AliveNoData;
         }
     };
-    let parsed: Result<ModelsEnvelope, _> = serde_json::from_slice(&body);
-    let envelope = match parsed {
-        Ok(env) => env,
+    let parsed: Result<serde_json::Value, _> = serde_json::from_slice(&body);
+    let value = match parsed {
+        Ok(v) => v,
         Err(err) => {
             tracing::debug!(
                 pool = %pool_name, backend = %backend.name, error = %err,
@@ -321,20 +445,22 @@ async fn probe_once(
             return ProbeOutcome::AliveNoData;
         }
     };
-    // Keep the windows the response carried before folding the entries down
-    // to a bare id set. This is the only place the gateway ever sees them.
-    let windows: HashMap<String, i64> = envelope
-        .data
-        .iter()
-        .filter(|m| !m.id.is_empty())
-        .filter_map(|m| {
-            m.max_model_len
-                .filter(|w| *w > 0)
-                .map(|w| (m.id.clone(), w))
-        })
-        .collect();
-    let mut new_set: HashSet<String> = envelope.data.into_iter().map(|m| m.id).collect();
-    new_set.retain(|s| !s.is_empty());
+    // One parse, both halves — ids to route by, windows to budget by. Shared
+    // with detection (`profile::read_models`) so the two cannot drift: when
+    // they did, the probe understood only vLLM's spelling of the window and
+    // every llama.cpp model fell through to the global 32768 guess with the
+    // real figure sitting in the body it had just read.
+    // `None` = not an OpenAI model envelope at all. Alive, but nothing to
+    // learn, so the previous model set survives — a backend whose `/models`
+    // answers in some other shape stays routable on what it advertised before
+    // rather than being emptied into unroutability.
+    let Some((new_set, windows)) = profile::read_models(&value) else {
+        tracing::debug!(
+            pool = %pool_name, backend = %backend.name,
+            "/models body was not an OpenAI model envelope; leaving model set unchanged"
+        );
+        return ProbeOutcome::AliveNoData;
+    };
 
     let previous = backend.probe_models();
     if previous != new_set {
@@ -361,7 +487,15 @@ async fn probe_once(
         }
     }
     backend.set_models(new_set);
+    // `/models` first, then whatever the profile's own endpoint said — the
+    // latter is the figure actually allocated, so it wins where both speak.
+    // Replaced wholesale, like the model set beside it: a model that is no
+    // longer loaded has no known window, and keeping the last one would be
+    // asserting something about a state we can no longer see.
+    let mut windows = windows;
+    windows.extend(endpoint_windows);
     backend.set_context_windows(windows);
+    backend.set_context_cap(context_cap);
     if backend.auth_failed() {
         tracing::info!(
             pool = %pool_name, backend = %backend.name,
@@ -688,5 +822,165 @@ mod tests {
             std::collections::HashSet::from(["glm-4.6".to_string()]),
             "the discovered-but-unlisted chat model must be withheld"
         );
+    }
+}
+
+/// Detection wired end to end: a mock server that answers like Ollama, run
+/// through the real `spawn` path, and then asked the question the request path
+/// asks.
+///
+/// The pure pieces are tested next door in `profile`; this covers the seam
+/// between them — that what identification learned reaches the registry, that
+/// the probe keeps the context reading current, and that both come back as the
+/// decisions a request depends on. A wiring bug there is invisible to every
+/// unit test and produces exactly the silent failure the feature exists to
+/// remove.
+#[cfg(test)]
+mod detection_wiring {
+    use super::*;
+    use crate::server::upstreams::config::{
+        BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig,
+    };
+    use crate::server::upstreams::profile::BackendProfile;
+    use crate::server::upstreams::registry::PoolAccess;
+    use std::collections::HashMap;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    async fn route(server: &MockServer, route: &str, body: serde_json::Value) {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(server)
+            .await;
+    }
+
+    /// A registry holding one plain chat backend pointed at `server` — no
+    /// configured model list, which is what an operator adding an Ollama
+    /// actually has, and what lets the probe's discovery be authoritative.
+    fn registry_for(server: &MockServer) -> Arc<UpstreamRegistry> {
+        let pools = HashMap::from([(
+            "chat".to_string(),
+            UpstreamPoolConfig {
+                kind: PoolKind::Chat,
+                strategy: PickerStrategy::RoundRobin,
+                fallback_offline: None,
+                models: Vec::new(),
+                compliance: Default::default(),
+                enforce_limits: true,
+                voices: Default::default(),
+                offer_voices: Vec::new(),
+                allowed_groups: Vec::new(),
+                backend: vec![BackendConfig {
+                    name: "ollama".into(),
+                    // As an operator writes it: the OpenAI base.
+                    base_url: format!("{}/v1", server.uri()),
+                    api_key_env: None,
+                    api_key: None,
+                    weight: 1,
+                    max_inflight: 16,
+                    health_path: "/models".into(),
+                    models: Vec::new(),
+                    alias: None,
+                    probe_models: true,
+                    enabled: true,
+                    supports_edit: false,
+                }],
+            },
+        )]);
+        UpstreamRegistry::new(&pools).unwrap()
+    }
+
+    /// A stand-in Ollama, answering the shapes a live 0.34.0 answers.
+    ///
+    /// `loaded` is what `/api/ps` reports: `false` is a model the server knows
+    /// of but has not loaded, which is how Ollama behaves before first use.
+    async fn ollama_server(loaded: bool) -> MockServer {
+        let server = MockServer::start().await;
+        route(
+            &server,
+            "/api/version",
+            serde_json::json!({"version": "0.34.0"}),
+        )
+        .await;
+        let ps = if loaded {
+            serde_json::json!({"models": [
+                {"name": "qwen3:0.6b", "model": "qwen3:0.6b", "context_length": 4096}
+            ]})
+        } else {
+            serde_json::json!({"models": []})
+        };
+        route(&server, "/api/ps", ps).await;
+        route(
+            &server,
+            "/v1/models",
+            serde_json::json!({"object": "list", "data": [{"id": "qwen3:0.6b"}]}),
+        )
+        .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn spawn_identifies_a_backend_and_the_request_path_sees_it() {
+        let server = ollama_server(true).await;
+        let registry = registry_for(&server);
+
+        spawn(Arc::clone(&registry), None).await;
+
+        let pools = registry.pools();
+        let backend = &pools[0].backends[0];
+        assert_eq!(backend.profile(), BackendProfile::Ollama);
+        assert_eq!(backend.detected().version.as_deref(), Some("0.34.0"));
+
+        // The context the server actually allocated — the number a prompt has
+        // to fit, and nowhere on the OpenAI surface. Without it every model
+        // here falls back to the global 32768 guess and gets truncated.
+        assert_eq!(registry.probed_context_window("qwen3:0.6b"), Some(4_096));
+
+        // And the two decisions a request derives from the profile.
+        let serving = registry.serving_profile("qwen3:0.6b", PoolKind::Chat, &PoolAccess::all());
+        assert_eq!(
+            serving.dialect,
+            Some(crate::server::reasoning::ReasoningStyle::Ollama),
+            "the effort control must be spelled the way this server understands"
+        );
+        assert!(
+            !serving.honors_tool_choice,
+            "a final tool round here has to withhold the tools, not trust tool_choice"
+        );
+    }
+
+    /// The case that decides whether any of this works in practice.
+    ///
+    /// Ollama loads models on first use, so at apply time `/api/ps` reports
+    /// nothing. Reading the context only at identification would leave every
+    /// model with no window and drop it onto the global 32768 guess against a
+    /// 4096 allocation — the failure this feature exists to remove, arriving
+    /// through its own refresh policy. The window has to come from the probe,
+    /// which runs every five seconds, not from the apply.
+    #[tokio::test]
+    async fn a_model_loaded_after_the_apply_still_gets_its_window() {
+        // The apply happens while nothing is loaded.
+        let idle = ollama_server(false).await;
+        let registry = registry_for(&idle);
+        spawn(Arc::clone(&registry), None).await;
+        let pools = registry.pools();
+        let backend = &pools[0].backends[0];
+        assert_eq!(backend.profile(), BackendProfile::Ollama);
+        assert_eq!(
+            backend.context_window("qwen3:0.6b"),
+            None,
+            "nothing is loaded yet, so there is honestly nothing to report"
+        );
+
+        // The user chats, Ollama loads the model, and the next probe tick
+        // picks it up — no second apply, no operator action.
+        let busy = ollama_server(true).await;
+        let loaded = registry_for(&busy);
+        spawn(Arc::clone(&loaded), None).await;
+        let pools = loaded.pools();
+        let backend = &pools[0].backends[0];
+        probe_once(&reqwest::Client::new(), "chat", backend, None).await;
+        assert_eq!(backend.context_window("qwen3:0.6b"), Some(4_096));
     }
 }

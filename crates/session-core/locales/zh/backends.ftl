@@ -71,3 +71,6 @@ backends-test-key-env = 来自环境变量 { $var }
 backends-test-key-env-unset = 环境变量 { $var } 未设置 —— 请求未携带任何凭据
 backends-test-key-none = 未发送凭据
 backends-error-base-url-required = 基础 URL 为必填项
+
+backends-parallel-mismatch = 服务器同时处理 { $parallel } 个
+backends-detect-profile = 已识别：{ $profile }

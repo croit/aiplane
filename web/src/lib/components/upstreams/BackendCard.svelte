@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { adminPost } from '$lib/admin-client';
 	import { t, n } from '$lib/i18n.svelte';
-	import { activityCounts, naturalSort, type Backend, type Pool } from '$lib/upstreams';
+	import { activityCounts, naturalSort, parallelismMismatch, type Backend, type Pool } from '$lib/upstreams';
 	import BackendEditor from './BackendEditor.svelte';
 	import EditModal from '$lib/components/EditModal.svelte';
 
@@ -25,6 +25,12 @@
 	let toggling = $state(false);
 	let toggleError = $state<string | null>(null);
 	let activity = $derived(activityCounts(usage));
+	// The server said it runs fewer requests at once than we are configured to
+	// send it. Not an error anywhere — Ollama queues rather than rejecting — so
+	// the only place it can surface is here.
+	let parallelWarning = $derived(
+		parallelismMismatch(backend.live?.detected_max_parallel, backend.live?.max_inflight ?? backend.max_inflight)
+	);
 	let saturated = $derived(!!backend.live?.healthy && backend.live.inflight >= backend.live.max_inflight);
 	let sparkline = $derived.by(() => {
 		const maximum = Math.max(1, ...usage);
@@ -65,6 +71,8 @@
 				<span class={`badge badge-sm ${status().class}`}>{status().label}</span>
 				{#if backend.live?.auth_failed}<span class="badge badge-error badge-sm" title={t('backends-auth-failed-title')}>{t('backends-auth-failed')}</span>{/if}
 				{#if backend.live && backend.live.models.length === 0}<span class="badge badge-warning badge-sm" title={t('backends-no-models-title')}>{t('backends-no-models')}</span>{/if}
+				{#if backend.live && backend.live.profile !== 'generic'}<span class="badge badge-ghost badge-sm font-mono" title={[backend.live.detected_version, backend.live.detected_at].filter(Boolean).join(' · ') || undefined}>{t('backends-detect-profile', { profile: backend.live.profile })}</span>{/if}
+				{#if parallelWarning !== null}<span class="badge badge-warning badge-sm">{t('backends-parallel-mismatch', { parallel: parallelWarning })}</span>{/if}
 				{#if !backend.has_stored_key && backend.api_key_env}
 					<span class={`badge badge-sm font-mono ${backend.api_key_env_set ? 'badge-ghost' : 'badge-error'}`}>
 						{backend.api_key_env_set ? t('backends-key-env-badge', { var: backend.api_key_env }) : t('backends-key-env-unset-badge', { var: backend.api_key_env })}

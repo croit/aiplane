@@ -1,9 +1,9 @@
 <script lang="ts">
 	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 	import { untrack } from 'svelte';
-	import { pricingUnitFor } from '$lib/admin-models';
+	import { contextWindowHint, pricingUnitFor } from '$lib/admin-models';
 	import type { AdminModel } from '$lib/admin-models';
-	import { t } from '$lib/i18n.svelte';
+	import { n, t } from '$lib/i18n.svelte';
 
 	/**
 	 * The per-model override form.
@@ -89,6 +89,12 @@
 	}
 
 	const isChat = $derived(model.kind === 'chat');
+	// What to say beneath the context field: where the number came from, or —
+	// the case that matters — that the one being typed is larger than what the
+	// server will actually hold, and so will be truncated there rather than
+	// compacted here.
+	const contextHint = $derived(contextWindowHint(contextWindow, model.detected_context_window));
+
 	const priceLabel = $derived(t('admin-price-label', { cur: currency, unit: unitLabel(pricingUnitFor(model)) }));
 </script>
 
@@ -99,8 +105,14 @@
 			<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-price-in-label')} ({priceLabel})</span><input type="number" min="0" step="any" class="input input-bordered input-sm" bind:value={inputPrice} placeholder={t('admin-price-in-placeholder')} /></label>
 			<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-price-out-label')} ({priceLabel})</span><input type="number" min="0" step="any" class="input input-bordered input-sm" bind:value={outputPrice} placeholder={t('admin-price-out-placeholder')} /></label>
 			{#if isChat}
-				<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-context-window-full-label')}</span><input type="number" min="1" class="input input-bordered input-sm" bind:value={contextWindow} placeholder={t('admin-context-window-placeholder')} /></label>
-				<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-reasoning-style-label')}</span><select class="select select-bordered select-sm" aria-label={t('admin-reasoning-style-aria')} bind:value={reasoningStyle}><option value="">{t('admin-reasoning-auto')}</option><option value="none">{t('admin-reasoning-none')}</option><option value="qwen">{t('admin-reasoning-qwen')}</option><option value="openai">{t('admin-reasoning-openai')}</option><option value="glm">{t('admin-reasoning-glm')}</option><option value="anthropic">{t('admin-reasoning-anthropic')}</option></select></label>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs opacity-70">{t('admin-context-window-full-label')}</span>
+					<input type="number" min="1" class="input input-bordered input-sm" class:input-warning={contextHint?.tone === 'warning'} bind:value={contextWindow} placeholder={t('admin-context-window-placeholder')} aria-describedby={contextHint ? 'context-window-hint' : undefined} />
+					{#if contextHint}
+						<span id="context-window-hint" class="text-xs {contextHint.tone === 'warning' ? 'text-warning' : 'opacity-60'}">{contextHint.tone === 'warning' ? '⚠ ' : ''}{t(contextHint.key, contextHint.window === undefined ? undefined : { window: n(contextHint.window) })}</span>
+					{/if}
+				</label>
+				<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-reasoning-style-label')}</span><select class="select select-bordered select-sm" aria-label={t('admin-reasoning-style-aria')} bind:value={reasoningStyle}><option value="">{t('admin-reasoning-auto')}</option><option value="none">{t('admin-reasoning-none')}</option><option value="qwen">{t('admin-reasoning-qwen')}</option><option value="openai">{t('admin-reasoning-openai')}</option><option value="glm">{t('admin-reasoning-glm')}</option><option value="anthropic">{t('admin-reasoning-anthropic')}</option><option value="ollama">{t('admin-reasoning-ollama')}</option></select></label>
 			{/if}
 		</div>
 		{#if isChat && model.uses_token_budget}

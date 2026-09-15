@@ -192,6 +192,7 @@ admin-reasoning-openai = OpenAI
 admin-reasoning-glm = GLM / z.AI
 
 admin-reasoning-anthropic = Anthropic
+admin-reasoning-ollama = Ollama
 
 admin-effort-standard = Standard
 
@@ -268,3 +269,12 @@ admin-search-brave-key-set = A key is stored (encrypted).
 admin-search-brave-key-unset = No key stored.
 
 admin-search-brave-key-clear = Remove the stored key
+
+# Context window provenance. The value is discovered from the serving backend
+# where the backend reports one; an operator may still override it, and may
+# legitimately lower it. Raising it above what the server serves is the one
+# case worth warning about: the prompt is not compacted here, it is truncated
+# there, in silence.
+admin-context-detected = Detected: { $window } tokens
+admin-context-unreported = This backend does not report its context window. Check the server — `ollama ps` shows what was actually allocated.
+admin-context-exceeds-detected = This backend reports { $window } tokens. Higher values are not compacted — the server truncates them silently.

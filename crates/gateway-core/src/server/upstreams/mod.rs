@@ -26,6 +26,11 @@
 //!   healthy backend rather than failing it on the spot, so a short upstream
 //!   outage (a restarting GPU box, a model swap) is a pause in the client's
 //!   stream instead of a broken turn.
+//! - **Profile** (`profile.rs`): what *kind* of server a backend is, detected
+//!   rather than configured. Answers the two questions the OpenAI wire does
+//!   not — where this server keeps its context window, and how it spells
+//!   "think harder" — so those stay one vocabulary in the UI while meaning
+//!   different bytes per upstream.
 //! - **Health** (`health.rs`): one background task per backend, hitting
 //!   `<base_url>/models`. On every successful probe the response is
 //!   parsed as the OpenAI envelope (`{"data": [{"id": ...}]}`) and the
@@ -42,6 +47,7 @@ pub mod db_bridge;
 pub mod error_classify;
 pub mod health;
 pub mod prefix_index;
+pub mod profile;
 pub mod registry;
 pub mod wait;
 
@@ -50,6 +56,7 @@ pub use config::{
     UpstreamPoolConfig,
 };
 pub use prefix_index::PrefixIndex;
+pub use profile::{BackendProfile, Detected};
 pub use registry::{
     AcquireError, Acquired, AliasStatus, Backend, LiveBackend, LivePool, LiveTopology, Pool,
     PoolAccess, RouteError, UpstreamRegistry,

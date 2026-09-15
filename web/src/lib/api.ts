@@ -253,7 +253,7 @@ export const api = {
 
 	/** GET /api/v0/models — the caller's chat models (compliance flags included). */
 	listChatModels: () =>
-		request<{ models: { id: string; gdpr: boolean; nda: boolean }[] }>('/api/v0/models'),
+		request<{ models: { id: string; gdpr: boolean; nda: boolean; reasoning: boolean }[] }>('/api/v0/models'),
 
 	/** Voice input and spoken-reply choices available to this user. */
 	chatVoiceConfig: () =>

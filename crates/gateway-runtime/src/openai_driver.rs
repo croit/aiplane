@@ -353,9 +353,35 @@ fn take_safe_content(buf: &mut String) -> String {
 
 use crate::server::tools::runner::ToolCallAcc;
 
-fn configure_final_tool_round(body: &mut serde_json::Value) {
-    if let Some(obj) = body.as_object_mut() {
-        obj.insert("tool_choice".into(), serde_json::json!("none"));
+/// Tell the upstream that the round it is about to take must not call a tool.
+///
+/// `honors_tool_choice` is what the serving backend said about itself (see
+/// `upstreams::ServingProfile`), and it changes *which* mechanism does the
+/// work:
+///
+///   * **`true`** — send `tool_choice: "none"` and keep the definitions in the
+///     request. Providers whose templates need the definitions to render an
+///     explicit no-tools turn depend on them being there; vLLM Gemma
+///     deployments pair this with `--exclude-tools-when-tool-choice-none` to
+///     drop them from the prompt while keeping the signal.
+///   * **`false`** — withhold the definitions entirely. Ollama's OpenAI layer
+///     has no `tool_choice` field, so the value is discarded without a word
+///     and the model still sees its tools on the round that was supposed to
+///     end the turn. It then calls one, the loop is over, and the turn ends on
+///     a preamble for work that never happened — with nothing in any log to
+///     say why. Taking the tools away is cruder, and it is the only thing that
+///     actually holds on a server that ignores the polite version.
+///
+/// `tool_choice` is still sent in the second case: it costs nothing on a
+/// server that ignores it, and any server that later learns the field gets the
+/// clearer signal without a code change.
+fn configure_final_tool_round(body: &mut serde_json::Value, honors_tool_choice: bool) {
+    let Some(obj) = body.as_object_mut() else {
+        return;
+    };
+    obj.insert("tool_choice".into(), serde_json::json!("none"));
+    if !honors_tool_choice {
+        obj.remove("tools");
     }
 }
 
@@ -842,8 +868,23 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
             .flatten()
             .as_deref(),
     );
+    // What the servers that could take this request imply about how to phrase
+    // it: which reasoning spelling they understand, and whether `tool_choice`
+    // is worth sending. Resolved here rather than after routing because the
+    // body is built and serialised before a backend is picked, and both facts
+    // decide what goes into it.
+    let serving = d.state.upstreams.serving_profile(
+        &real_model,
+        gateway_core::server::upstreams::PoolKind::Chat,
+        &access,
+    );
     let (reasoning_style, reasoning_overrides) =
-        gateway_core::server::reasoning::resolve_for_model(&d.state.db, &real_model).await;
+        gateway_core::server::reasoning::resolve_for_model(
+            &d.state.db,
+            &real_model,
+            serving.dialect,
+        )
+        .await;
     let max_rounds = effort.max_rounds();
 
     let turns = chat::list_turns(&d.state.db, &ctx.session_id)
@@ -1028,16 +1069,16 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
         d.state
             .union_enabled_mcp_tool_ids(&mut allowed_tools, &user_mcp, &enabled_keys);
         if final_round {
-            // Keep the tool definitions in the request so providers whose
-            // templates need them can render an explicit no-tools turn. vLLM
-            // Gemma deployments use --exclude-tools-when-tool-choice-none to
-            // remove them from the actual prompt while retaining the signal.
+            // Inject, then let `configure_final_tool_round` decide whether the
+            // definitions may stay — which depends on whether this backend
+            // honours `tool_choice` at all.
             runner::inject_tools(&mut request_body, &tool_source, &allowed_tools)
                 .map_err(upstream_err)?;
-            configure_final_tool_round(&mut request_body);
+            configure_final_tool_round(&mut request_body, serving.honors_tool_choice);
             announce_final_round(&mut request_body);
             tracing::info!(
                 max_rounds,
+                tools_withheld = !serving.honors_tool_choice,
                 "tool-round budget reached; requesting final answer with tool choice none"
             );
         } else {
@@ -2850,8 +2891,27 @@ mod tests {
 
     #[test]
     fn final_tool_round_explicitly_disables_tool_choice() {
-        let mut body = serde_json::json!({"messages": []});
-        configure_final_tool_round(&mut body);
+        let mut body = serde_json::json!({"messages": [], "tools": [{"name": "a"}]});
+        configure_final_tool_round(&mut body, true);
+        assert_eq!(body["tool_choice"], serde_json::json!("none"));
+        // A backend that honours it keeps the definitions: some templates need
+        // them present to render an explicit no-tools turn.
+        assert!(body.get("tools").is_some());
+    }
+
+    /// Ollama has no `tool_choice` field, so the value is discarded in silence
+    /// and the model still sees its tools on the round meant to end the turn.
+    /// The only thing that holds there is taking them away.
+    #[test]
+    fn final_tool_round_withholds_tools_when_tool_choice_is_ignored() {
+        let mut body = serde_json::json!({"messages": [], "tools": [{"name": "a"}]});
+        configure_final_tool_round(&mut body, false);
+        assert!(
+            body.get("tools").is_none(),
+            "a backend that ignores tool_choice must not be left holding the tools"
+        );
+        // Still sent: free on a server that ignores it, and correct the moment
+        // one starts honouring it.
         assert_eq!(body["tool_choice"], serde_json::json!("none"));
     }
 

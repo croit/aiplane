@@ -71,3 +71,6 @@ backends-test-key-env = из env { $var }
 backends-test-key-env-unset = env { $var } НЕ ЗАДАНА — запрос ушёл без учётных данных
 backends-test-key-none = учётные данные не отправлены
 backends-error-base-url-required = требуется базовый URL
+
+backends-parallel-mismatch = сервер обрабатывает { $parallel } одновременно
+backends-detect-profile = определено: { $profile }

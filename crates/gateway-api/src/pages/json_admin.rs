@@ -377,10 +377,23 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 .is_none()
                 .then(|| configured.remove(&name))
                 .flatten();
+            // The same three-source resolution the request path uses, so the
+            // page shows what will actually be sent rather than what the model
+            // name suggests. On an Ollama backend that is the visible
+            // difference between "qwen" (dropped in silence) and "openai"
+            // (understood).
             let reasoning = gateway_core::server::reasoning::ReasoningStyle::resolve(
                 defaults
                     .as_ref()
                     .and_then(|value| value.reasoning_style.as_deref()),
+                state
+                    .upstreams
+                    .serving_profile(
+                        &name,
+                        kind,
+                        &gateway_core::server::upstreams::PoolAccess::all(),
+                    )
+                    .dialect,
                 &name,
             );
             models.push(serde_json::json!({
@@ -391,6 +404,12 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 "resolved_reasoning_style": reasoning.as_str(),
                 "uses_token_budget": reasoning.uses_token_budget(),
                 "effort_levels": reasoning.effort_levels(),
+                // What the serving backend says this model's context is, if it
+                // says anything. The page puts it beside the operator's own
+                // value: equal or larger is the ordinary case, *smaller* means
+                // the configured figure will not be compacted but silently
+                // truncated upstream, and that is worth saying out loud.
+                "detected_context_window": state.upstreams.probed_context_window(&name),
                 "defaults": defaults.map(|d| model_defaults_json(&d)),
             }));
         }
@@ -398,8 +417,11 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
     let mut leftover: Vec<_> = configured.into_values().collect();
     leftover.sort_by(|a, b| a.model_name.cmp(&b.model_name));
     for defaults in leftover {
+        // These are rows for models nothing currently serves, so there is no
+        // backend to ask — the model name decides, as it always did.
         let reasoning = gateway_core::server::reasoning::ReasoningStyle::resolve(
             defaults.reasoning_style.as_deref(),
+            None,
             &defaults.model_name,
         );
         models.push(serde_json::json!({
@@ -410,6 +432,8 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             "resolved_reasoning_style": reasoning.as_str(),
             "uses_token_budget": reasoning.uses_token_budget(),
             "effort_levels": reasoning.effort_levels(),
+            // Nothing serves this model, so nothing has reported a window.
+            "detected_context_window": null,
             "defaults": model_defaults_json(&defaults),
         }));
     }
@@ -1159,6 +1183,11 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
         std::collections::HashMap::new();
     for pool in state.upstreams.pools() {
         for backend in &pool.backends {
+            // One snapshot each: `models_snapshot` materialises the effective
+            // set, and `detected` clones the identification record — both were
+            // being taken more than once per backend.
+            let models = backend.models_snapshot();
+            let detected = backend.detected();
             let entry = serde_json::json!({
                 "healthy": backend.is_healthy(),
                 "enabled": backend.is_enabled(),
@@ -1167,9 +1196,20 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 "max_inflight": backend.max_inflight,
                 // Sorted for the same reason the live stream sorts them: a
                 // `HashSet` would render the first paint in a random order.
-                "models": sorted(backend.models_snapshot()),
+                "models": sorted(models),
                 "withheld": sorted(backend.withheld_models()),
                 "pool": pool.name,
+                // What identification made of this backend. The UI never shows
+                // the profile as a setting — it shows the one consequence an
+                // operator can act on: that the configured in-flight ceiling
+                // promises more than the server said it runs.
+                "profile": detected.profile.as_str(),
+                "detected_version": detected.version,
+                "detected_max_parallel": detected.max_parallel,
+                // Identification runs only on apply, so how long ago it ran is
+                // the difference between a profile describing this server and
+                // one describing the server it used to be.
+                "detected_at": detected.detected_at,
             });
             live.insert(backend.name.clone(), entry);
         }
@@ -1537,6 +1577,18 @@ pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) ->
     } else {
         "success"
     };
+    // Identify the server while we have the operator's attention, so the panel
+    // can say what it found and flag an in-flight ceiling the server cannot
+    // honour.
+    //
+    // Display only, deliberately. The windows themselves need no applying: the
+    // health probe reads the profile's context endpoint every tick, so a
+    // server reconfigured a moment ago is already current in the registry by
+    // the time anyone reads this. What the button adds is an answer *before*
+    // saving, against the address being typed rather than the one stored.
+    let detected =
+        gateway_core::server::upstreams::profile::detect(&state.http, base_url, key.as_deref())
+            .await;
     json_ok(
         StatusCode::OK,
         serde_json::json!({
@@ -1545,6 +1597,19 @@ pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) ->
             "model_count": models.len(),
             "models": models.into_iter().take(BACKEND_TEST_MAX_MODELS).collect::<Vec<_>>(),
             "key_source": key_source,
+            "profile": detected.profile.as_str(),
+            "detected_version": detected.version,
+            "detected_max_parallel": detected.max_parallel,
+            // The tightest window this server reports, or nothing when it
+            // reports none. One number, because the only thing the panel ever
+            // did with the list was take its minimum.
+            "detected_context": detected
+                .context_windows
+                .values()
+                .copied()
+                .chain(detected.context_cap)
+                .filter(|w| *w > 0)
+                .min(),
         }),
     )
 }
@@ -1582,21 +1647,21 @@ async fn backend_test_key(
     (None, serde_json::json!({"kind": "none"}))
 }
 
+/// The model ids a `/models` body advertises, by the same parser the health
+/// probe uses.
+///
+/// Hand-rolling this a third time is how the Test panel came to list rows the
+/// probe rejects — the panel would show a model the router would never route,
+/// which is precisely the confusion the panel exists to prevent.
 fn backend_test_model_ids(body: &[u8]) -> Vec<String> {
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
         return Vec::new();
     };
-    let Some(data) = value.get("data").and_then(serde_json::Value::as_array) else {
+    let Some((ids, _)) = gateway_core::server::upstreams::profile::read_models(&value) else {
         return Vec::new();
     };
-    let mut models = data
-        .iter()
-        .filter_map(|model| model.get("id").and_then(serde_json::Value::as_str))
-        .filter(|model| !model.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+    let mut models: Vec<String> = ids.into_iter().collect();
     models.sort();
-    models.dedup();
     models
 }
 

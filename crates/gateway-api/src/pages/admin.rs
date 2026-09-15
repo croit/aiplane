@@ -89,7 +89,7 @@ pub(crate) async fn apply_model_form(state: &RamaState, form: &SaveForm) -> Resu
     };
     let reasoning_style = match form.reasoning_style.trim() {
         "" | "auto" => None,
-        s @ ("none" | "qwen" | "openai" | "glm" | "anthropic") => Some(s.to_string()),
+        s @ ("none" | "qwen" | "openai" | "glm" | "anthropic" | "ollama") => Some(s.to_string()),
         other => {
             return Err(format!("unknown reasoning style: {other}"));
         }

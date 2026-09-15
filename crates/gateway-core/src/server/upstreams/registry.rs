@@ -31,6 +31,7 @@ use thiserror::Error;
 use super::config::{
     BackendConfig, Compliance, FallbackConfig, PickerStrategy, PoolKind, UpstreamPoolConfig,
 };
+use super::profile::{BackendProfile, Detected};
 
 /// A configured alias and its current state, for the read-only admin view.
 #[derive(Debug, Clone)]
@@ -138,6 +139,21 @@ pub struct Backend {
     /// operator has to notice the field exists before they can set it, and
     /// the backend already knows the answer.
     context_windows: RwLock<HashMap<String, i64>>,
+    /// What the last identification round made of this server, and what it
+    /// said about itself — see `upstreams::profile`. Observed, never
+    /// configured.
+    ///
+    /// One lock rather than a field each, because every part of it is written
+    /// in the same breath and read in the same breath. Five independent locks
+    /// could be observed half-updated, and each new fact a server might report
+    /// cost five edits to add.
+    ///
+    /// `context_windows` inside it is *not* used: windows are the probe's,
+    /// refreshed every tick (they are runtime state — see
+    /// `BackendProfile::context_endpoint`). They ride along here only so a
+    /// boot against an unreachable backend can seed the probe's map from the
+    /// database before any probe succeeds.
+    detected: RwLock<Detected>,
 }
 
 impl Backend {
@@ -171,6 +187,7 @@ impl Backend {
             aliases,
             disabled_aliases: RwLock::new(HashSet::new()),
             context_windows: RwLock::new(HashMap::new()),
+            detected: RwLock::new(Detected::default()),
         };
         // Evaluate against the config-model set now, so a bare alias declared
         // alongside multiple static models is disabled from the start; the
@@ -278,9 +295,23 @@ impl Backend {
     }
 
     /// Real-model membership only (no aliases): the backend's effective set
-    /// (live probe, else config fallback) contains `model`. Cheap read-lock.
+    /// (live probe, else config fallback) contains `model`.
+    ///
+    /// Spelled out rather than going through
+    /// [`with_effective_models`](Self::with_effective_models), because that
+    /// *materialises* the intersection — a fresh `HashSet` with a cloned
+    /// `String` per model — whenever a configured allowlist is filtering a live
+    /// probe. This is a membership test on the routing path, and it is also
+    /// reached once per model from the admin pages; the same answer comes out
+    /// of two `contains` calls with no allocation at all.
     fn serves_real(&self, model: &str) -> bool {
-        self.with_effective_models(|set| set.contains(model))
+        if let Ok(probe) = self.models.read()
+            && !probe.is_empty()
+        {
+            return probe.contains(model)
+                && (self.config_models.is_empty() || self.config_models.contains(model));
+        }
+        self.config_models.contains(model)
     }
 
     /// The backend's sole effective model, if it serves exactly one. Backs
@@ -376,13 +407,91 @@ impl Backend {
         }
     }
 
-    /// The probed context window for one model, if this backend reported one.
+    /// Record what a detection round learned, wholesale.
+    ///
+    /// The window map it carries seeds [`Self::context_windows`] only while
+    /// that is still empty — at boot, from the database, before any probe has
+    /// succeeded. After that the probe owns windows and refreshes them every
+    /// tick, so letting an identification round write them would replace live
+    /// readings with whatever was true when the topology was applied.
+    pub fn set_detected(&self, detected: &Detected) {
+        if let Ok(mut guard) = self.detected.write() {
+            *guard = detected.clone();
+        }
+        if !detected.context_windows.is_empty()
+            && let Ok(mut guard) = self.context_windows.write()
+            && guard.is_empty()
+        {
+            *guard = detected.context_windows.clone();
+        }
+    }
+
+    /// Everything identification last learned. One snapshot rather than an
+    /// accessor per field, so a caller that wants several gets a consistent
+    /// set and the struct can grow without growing this impl.
+    pub fn detected(&self) -> Detected {
+        self.detected.read().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// What kind of server this is. [`BackendProfile::Generic`] until detected.
+    ///
+    /// Kept as its own accessor because the request path asks only this, on
+    /// every turn, and should not clone the rest to find out.
+    pub fn profile(&self) -> BackendProfile {
+        self.detected
+            .read()
+            .map(|g| g.profile)
+            .unwrap_or(BackendProfile::Generic)
+    }
+
+    /// The context this server says it allocated, if it reports one. Refreshed
+    /// by the probe — see [`Detected::context_cap`].
+    pub fn context_cap(&self) -> Option<i64> {
+        self.detected.read().ok().and_then(|g| g.context_cap)
+    }
+
+    /// Record the server-wide context allocation the probe just read.
+    pub fn set_context_cap(&self, cap: Option<i64>) {
+        if let Ok(mut guard) = self.detected.write() {
+            guard.context_cap = cap;
+        }
+    }
+
+    /// The context window one model actually has here: what the `/models`
+    /// probe read, capped by what the server says it allocated.
+    ///
+    /// The cap is the whole point on llama.cpp, where `/models` reports the
+    /// model's *trained* context (`n_ctx_train`) and `/props` reports the far
+    /// smaller figure it was actually started with. Believing the trained
+    /// number puts prompts past what the server will hold, which it then
+    /// truncates without telling anyone — the failure this is here to prevent.
+    ///
+    /// With no probed window the cap stands alone: a server that reports only
+    /// its allocation still tells us more than nothing.
     pub fn context_window(&self, model: &str) -> Option<i64> {
-        self.context_windows
+        // A backend has nothing to say about a model it does not serve, and
+        // saying something anyway is not harmless: the allocated cap and any
+        // window left over from a previous loadout would otherwise answer for
+        // *every* model id, and `UpstreamRegistry::probed_context_window` takes
+        // the minimum across every backend in the deployment. One llama.cpp
+        // instance started with `-c 4096` in an unrelated pool would have
+        // budgeted a 262k vLLM model at 4096 tokens.
+        if !self.serves_model(model) {
+            return None;
+        }
+        // The tightest of what this server reports, for the same reason the
+        // tightest backend wins across a pool: a prompt has to fit whatever it
+        // meets. Both sources come from the probe, one tick apart at most.
+        let probed = self
+            .context_windows
             .read()
             .ok()
             .and_then(|g| g.get(model).copied())
-            .filter(|w| *w > 0)
+            .filter(|w| *w > 0);
+        [probed, self.context_cap().filter(|c| *c > 0)]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     /// Effective advertised-model set: the live probe set if it reported
@@ -1180,6 +1289,29 @@ fn build_data(
     Ok(RegistryData { pools, fallback })
 }
 
+/// How the backends serving one model want a request phrased. See
+/// [`UpstreamRegistry::serving_profile`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServingProfile {
+    /// The reasoning spelling the *server* dictates, if it dictates one and
+    /// every candidate agrees. `None` means the model name decides, which is
+    /// right for every server that passes model parameters through untouched.
+    pub dialect: Option<crate::server::reasoning::ReasoningStyle>,
+    /// Whether `tool_choice: "none"` can be trusted to end a tool loop here.
+    /// `false` means the caller must withhold the tool definitions instead.
+    pub honors_tool_choice: bool,
+}
+
+impl Default for ServingProfile {
+    /// What an unknown or unrouted model gets: the pre-profile behaviour.
+    fn default() -> Self {
+        Self {
+            dialect: None,
+            honors_tool_choice: true,
+        }
+    }
+}
+
 impl UpstreamRegistry {
     /// Build with no unknown-model fallback. Used by tests and any caller that
     /// doesn't route `[fallback]` (RAG embeddings, etc.).
@@ -1253,20 +1385,31 @@ impl UpstreamRegistry {
         // `old` (an `Arc<RegistryData>`) is held for this whole block, so the
         // map can borrow the outgoing backends' names/urls as keys — no clones
         // on either insert or lookup.
+        //
+        // The detected profile rides along on the same identity test and for a
+        // sharper reason: re-detection happens *after* this swap, so between
+        // the two every backend would otherwise read back as `Generic` — and a
+        // request served in that window would spell its effort control wrong
+        // and trust `tool_choice` on a server that ignores it. An edited
+        // base_url drops both, which is correct: it may be a different server.
         let old = self.data();
-        let mut prior: HashMap<(&str, &str), HashSet<String>> = HashMap::new();
+        let mut prior: HashMap<(&str, &str), (HashSet<String>, Detected)> = HashMap::new();
         for pool in old.pools.values() {
             for b in &pool.backends {
                 let live = b.live_models();
-                if !live.is_empty() {
-                    prior.insert((b.name.as_str(), b.base_url.as_str()), live);
+                let detected = b.detected();
+                if !live.is_empty() || detected != Detected::default() {
+                    prior.insert((b.name.as_str(), b.base_url.as_str()), (live, detected));
                 }
             }
         }
         for pool in data.pools.values() {
             for b in &pool.backends {
-                if let Some(live) = prior.get(&(b.name.as_str(), b.base_url.as_str())) {
-                    b.set_models(live.clone());
+                if let Some((live, detected)) = prior.get(&(b.name.as_str(), b.base_url.as_str())) {
+                    if !live.is_empty() {
+                        b.set_models(live.clone());
+                    }
+                    b.set_detected(detected);
                 }
             }
         }
@@ -1403,6 +1546,62 @@ impl UpstreamRegistry {
 
     pub fn pools(&self) -> Vec<Arc<Pool>> {
         self.data().pools.values().cloned().collect()
+    }
+
+    /// What the backends that could serve `model` imply about how to phrase a
+    /// request for it.
+    ///
+    /// Resolved before routing rather than after, because the request body is
+    /// built and serialised before a backend is picked — and these two facts
+    /// decide what goes *into* the body.
+    ///
+    /// The two halves combine differently on purpose when candidates disagree:
+    ///
+    ///   * **Dialect** needs unanimity. Sending Ollama's spelling to a vLLM
+    ///     means sending a parameter that server never asked for, so a mixed
+    ///     set falls back to `None` — "ask the model name", exactly what the
+    ///     gateway did before profiles.
+    ///   * **`tool_choice`** takes the cautious side. Withholding the tools on
+    ///     the final round is correct on every server; trusting `tool_choice`
+    ///     is correct on all but one. So one Ollama in the candidate set is
+    ///     enough to stop trusting it.
+    ///
+    /// In practice a pool is one kind of server and the question does not
+    /// arise; this decides what happens when it does.
+    pub fn serving_profile(
+        &self,
+        model: &str,
+        kind: PoolKind,
+        access: &PoolAccess,
+    ) -> ServingProfile {
+        // One pass, one `profile()` read per candidate, no intermediate `Vec` —
+        // this runs on every turn and once per model on two admin pages.
+        let data = self.data();
+        let mut agreed: Option<BackendProfile> = None;
+        let mut unanimous = true;
+        let mut honors_tool_choice = true;
+        for backend in data
+            .pools
+            .values()
+            .filter(|p| p.kind == kind && access.allows(p))
+            .flat_map(|p| p.backends.iter())
+            .filter(|b| b.serves_model(model))
+        {
+            let profile = backend.profile();
+            honors_tool_choice &= profile.honors_tool_choice();
+            match agreed {
+                None => agreed = Some(profile),
+                Some(seen) if seen != profile => unanimous = false,
+                Some(_) => {}
+            }
+        }
+        ServingProfile {
+            dialect: unanimous
+                .then_some(agreed)
+                .flatten()
+                .and_then(BackendProfile::reasoning_dialect),
+            honors_tool_choice,
+        }
     }
 
     /// Sorted, de-duplicated union of the effective model sets of every
@@ -2716,6 +2915,192 @@ mod tests {
             supports_edit: false,
             enabled: true,
         }
+    }
+
+    /// A registry serving `model` from backends carrying the given profiles.
+    fn registry_with_profiles(model: &str, profiles: &[BackendProfile]) -> Arc<UpstreamRegistry> {
+        let backends: Vec<BackendConfig> = profiles
+            .iter()
+            .enumerate()
+            .map(|(i, _)| backend_with_models(&format!("b{i}"), &[model]))
+            .collect();
+        let pools = HashMap::from([(
+            "p".to_string(),
+            pool_config(PoolKind::Chat, PickerStrategy::RoundRobin, backends),
+        )]);
+        let registry = UpstreamRegistry::new(&pools).unwrap();
+        for pool in registry.pools() {
+            for (backend, profile) in pool.backends.iter().zip(profiles) {
+                backend.set_detected(&Detected {
+                    profile: *profile,
+                    ..Detected::default()
+                });
+            }
+        }
+        registry
+    }
+
+    /// The whole point: a model served by Ollama gets Ollama's spelling of
+    /// "think harder", regardless of what the model is called.
+    #[test]
+    fn serving_profile_reports_the_backends_dialect() {
+        let registry = registry_with_profiles("qwen3:8b", &[BackendProfile::Ollama]);
+        let serving = registry.serving_profile("qwen3:8b", PoolKind::Chat, &PoolAccess::all());
+        assert_eq!(
+            serving.dialect,
+            Some(crate::server::reasoning::ReasoningStyle::Ollama)
+        );
+        assert!(!serving.honors_tool_choice);
+    }
+
+    /// Servers that pass model parameters through dictate nothing, so the
+    /// model name keeps deciding — the pre-profile behaviour, preserved.
+    #[test]
+    fn serving_profile_defers_to_the_model_name_on_passthrough_servers() {
+        for profile in [
+            BackendProfile::VLlm,
+            BackendProfile::LlamaCpp,
+            BackendProfile::SgLang,
+            BackendProfile::Generic,
+        ] {
+            let registry = registry_with_profiles("m", &[profile]);
+            let serving = registry.serving_profile("m", PoolKind::Chat, &PoolAccess::all());
+            assert_eq!(serving.dialect, None, "{profile:?}");
+            assert!(serving.honors_tool_choice, "{profile:?}");
+        }
+    }
+
+    /// Candidates that disagree: guessing a dialect would send a parameter one
+    /// of them never asked for, so nothing is guessed. `tool_choice` goes the
+    /// other way — withholding the tools is safe everywhere, so one backend
+    /// that ignores the field is enough to stop relying on it.
+    #[test]
+    fn mixed_backends_drop_the_dialect_but_keep_the_cautious_tool_choice() {
+        let registry = registry_with_profiles("m", &[BackendProfile::Ollama, BackendProfile::VLlm]);
+        let serving = registry.serving_profile("m", PoolKind::Chat, &PoolAccess::all());
+        assert_eq!(
+            serving.dialect, None,
+            "a mixed set must not guess a spelling"
+        );
+        assert!(
+            !serving.honors_tool_choice,
+            "one backend that ignores tool_choice is enough to stop trusting it"
+        );
+    }
+
+    /// A model nothing serves resolves to the pre-profile defaults rather than
+    /// to anything invented.
+    #[test]
+    fn an_unserved_model_gets_the_neutral_profile() {
+        let registry = registry_with_profiles("m", &[BackendProfile::Ollama]);
+        assert_eq!(
+            registry.serving_profile("other", PoolKind::Chat, &PoolAccess::all()),
+            ServingProfile::default()
+        );
+    }
+
+    /// llama.cpp reports a model's *trained* context on `/models` and the far
+    /// smaller figure it was actually started with on `/props`. Believing the
+    /// trained number is how prompts end up past what the server will hold,
+    /// which it truncates in silence.
+    #[test]
+    fn the_allocated_context_caps_the_reported_one() {
+        let registry = registry_with_profiles("gemma", &[BackendProfile::LlamaCpp]);
+        let pools = registry.pools();
+        let backend = &pools[0].backends[0];
+        backend.set_detected(&Detected {
+            profile: BackendProfile::LlamaCpp,
+            context_windows: HashMap::from([("gemma".to_string(), 131_072)]),
+            context_cap: Some(8_192),
+            ..Detected::default()
+        });
+        assert_eq!(backend.context_window("gemma"), Some(8_192));
+        assert_eq!(registry.probed_context_window("gemma"), Some(8_192));
+    }
+
+    /// A cap with nothing probed still beats knowing nothing.
+    #[test]
+    fn the_allocated_context_stands_alone_when_models_reported_none() {
+        let registry = registry_with_profiles("gemma", &[BackendProfile::LlamaCpp]);
+        let pools = registry.pools();
+        let backend = &pools[0].backends[0];
+        backend.set_detected(&Detected {
+            profile: BackendProfile::LlamaCpp,
+            context_cap: Some(4_096),
+            ..Detected::default()
+        });
+        assert_eq!(backend.context_window("gemma"), Some(4_096));
+    }
+
+    /// Re-detecting against a server that reports no windows (Ollama, hosted)
+    /// must not erase what an earlier `/models` probe managed to read.
+    #[test]
+    fn detection_without_windows_leaves_probed_ones_alone() {
+        let registry = registry_with_profiles("m", &[BackendProfile::VLlm]);
+        let pools = registry.pools();
+        let backend = &pools[0].backends[0];
+        backend.set_context_windows(HashMap::from([("m".to_string(), 262_144)]));
+        backend.set_detected(&Detected {
+            profile: BackendProfile::Generic,
+            ..Detected::default()
+        });
+        assert_eq!(backend.context_window("m"), Some(262_144));
+    }
+
+    /// A backend answers for the models it serves and for nothing else.
+    ///
+    /// `probed_context_window` takes the minimum across every backend in the
+    /// deployment, so a backend that answered for a model it does not serve
+    /// would impose its ceiling on the whole gateway: one llama.cpp started
+    /// with `-c 4096` in an unrelated pool budgeting a 262k vLLM model at 4096.
+    #[test]
+    fn a_backend_has_nothing_to_say_about_a_model_it_does_not_serve() {
+        let registry = registry_with_profiles("mine", &[BackendProfile::LlamaCpp]);
+        let pools = registry.pools();
+        let backend = &pools[0].backends[0];
+        backend.set_detected(&Detected {
+            profile: BackendProfile::LlamaCpp,
+            context_windows: HashMap::from([("stale".to_string(), 2_048)]),
+            context_cap: Some(4_096),
+            ..Detected::default()
+        });
+
+        // Serves it: the cap applies.
+        assert_eq!(backend.context_window("mine"), Some(4_096));
+        // Does not serve it: silence, cap and stale entry alike.
+        assert_eq!(backend.context_window("someone-elses"), None);
+        assert_eq!(backend.context_window("stale"), None);
+        assert_eq!(registry.probed_context_window("someone-elses"), None);
+    }
+
+    /// Ollama's `/api/ps` lists only *loaded* models, so a detection round
+    /// taken while one is idle says nothing about it. Replacing the map on
+    /// every round would erase a window learned minutes earlier and drop that
+    /// model back onto the global guess.
+    #[test]
+    fn a_partial_detection_round_keeps_windows_it_did_not_mention() {
+        let registry = registry_with_profiles("loaded", &[BackendProfile::Ollama]);
+        let pools = registry.pools();
+        let backend = &pools[0].backends[0];
+
+        backend.set_detected(&Detected {
+            profile: BackendProfile::Ollama,
+            context_windows: HashMap::from([("loaded".to_string(), 4_096)]),
+            ..Detected::default()
+        });
+        assert_eq!(backend.context_window("loaded"), Some(4_096));
+
+        // A later round with the model unloaded: same server, nothing to say.
+        backend.set_detected(&Detected {
+            profile: BackendProfile::Ollama,
+            context_windows: HashMap::new(),
+            ..Detected::default()
+        });
+        assert_eq!(
+            backend.context_window("loaded"),
+            Some(4_096),
+            "an idle model must not lose the window we already learned"
+        );
     }
 
     /// Backend with a static fallback model list (no probe needed to route).

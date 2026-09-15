@@ -71,3 +71,6 @@ backends-test-key-env = desde env { $var }
 backends-test-key-env-unset = env { $var } NO ESTÁ DEFINIDA: la petición salió sin credencial
 backends-test-key-none = sin credencial enviada
 backends-error-base-url-required = la URL base es obligatoria
+
+backends-parallel-mismatch = el servidor procesa { $parallel } a la vez
+backends-detect-profile = identificado: { $profile }

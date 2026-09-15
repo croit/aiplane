@@ -399,6 +399,126 @@ pub async fn load_probed_models(db: &Pool) -> Result<HashMap<String, HashSet<Str
     Ok(out)
 }
 
+/// Store what a detection round learned about one backend (migration
+/// `0067_backend_detected_profile`). Replaces the whole record for that
+/// backend, context windows included.
+///
+/// Called when the topology is applied and from the admin test button — never
+/// from the recurring health probe, which stays a liveness + model-set check.
+/// The point is the same as [`save_probed_models`]'s: a gateway that boots
+/// while a backend is down would otherwise show "generic" for it and read its
+/// context from nowhere, so every model on it would silently fall back to the
+/// global 32768 guess.
+pub async fn save_detected(
+    db: &Pool,
+    backend_name: &str,
+    detected: &crate::server::upstreams::profile::Detected,
+) -> Result<(), DbError> {
+    let now = now_rfc3339();
+    // Resolve the id once. Every statement below used to carry its own
+    // `SELECT id FROM backends WHERE name = ?` subquery — including the
+    // per-window insert, so a fifty-model backend re-ran that lookup fifty
+    // times inside one transaction. It also makes "no such backend" an
+    // explicit no-op instead of a silent zero-row insert.
+    let Some(backend_id): Option<i64> =
+        sqlx::query_scalar("SELECT id FROM backends WHERE name = ?")
+            .bind(backend_name)
+            .fetch_optional(db)
+            .await?
+    else {
+        return Ok(());
+    };
+    let mut tx = db.begin().await?;
+    sqlx::query(
+        r#"INSERT INTO backend_detected
+               (backend_id, profile, context_cap, max_parallel, version, detected_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(backend_id) DO UPDATE SET
+               profile = excluded.profile,
+               context_cap = excluded.context_cap,
+               max_parallel = excluded.max_parallel,
+               version = excluded.version,
+               detected_at = excluded.detected_at"#,
+    )
+    .bind(backend_id)
+    .bind(detected.profile.as_str())
+    .bind(detected.context_cap)
+    .bind(detected.max_parallel.map(i64::from))
+    .bind(detected.version.as_deref())
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM backend_detected_context WHERE backend_id = ?")
+        .bind(backend_id)
+        .execute(&mut *tx)
+        .await?;
+    for (model_id, window) in &detected.context_windows {
+        sqlx::query(
+            r#"INSERT INTO backend_detected_context (backend_id, model_id, context_window)
+               VALUES (?, ?, ?)"#,
+        )
+        .bind(backend_id)
+        .bind(model_id)
+        .bind(window)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Everything detection last learned, keyed by backend name. Read at startup
+/// to seed the registry before anything is re-detected — see [`save_detected`].
+pub async fn load_detected(
+    db: &Pool,
+) -> Result<HashMap<String, crate::server::upstreams::profile::Detected>, DbError> {
+    use crate::server::upstreams::profile::{BackendProfile, Detected};
+
+    let rows = sqlx::query(
+        r#"SELECT b.name AS backend_name, d.profile, d.context_cap, d.max_parallel,
+                     d.version, d.detected_at
+              FROM backend_detected d JOIN backends b ON b.id = d.backend_id"#,
+    )
+    .fetch_all(db)
+    .await?;
+    let mut out: HashMap<String, Detected> = HashMap::new();
+    for row in &rows {
+        let backend_name: String = row.try_get("backend_name")?;
+        let profile: String = row.try_get("profile")?;
+        let context_cap: Option<i64> = row.try_get("context_cap")?;
+        let max_parallel: Option<i64> = row.try_get("max_parallel")?;
+        let version: Option<String> = row.try_get("version")?;
+        let detected_at: Option<String> = row.try_get("detected_at")?;
+        out.insert(
+            backend_name,
+            Detected {
+                profile: BackendProfile::parse(Some(&profile)),
+                context_windows: HashMap::new(),
+                context_cap,
+                max_parallel: max_parallel.and_then(|n| u32::try_from(n).ok()),
+                version,
+                detected_at,
+            },
+        );
+    }
+
+    let windows = sqlx::query(
+        r#"SELECT b.name AS backend_name, c.model_id, c.context_window
+              FROM backend_detected_context c JOIN backends b ON b.id = c.backend_id"#,
+    )
+    .fetch_all(db)
+    .await?;
+    for row in &windows {
+        let backend_name: String = row.try_get("backend_name")?;
+        let model_id: String = row.try_get("model_id")?;
+        let window: i64 = row.try_get("context_window")?;
+        if let Some(entry) = out.get_mut(&backend_name) {
+            entry.context_windows.insert(model_id, window);
+        }
+    }
+    Ok(out)
+}
+
 /// Flip a backend's maintenance switch in the database.
 ///
 /// The **live** registry is flipped separately and immediately
@@ -923,6 +1043,112 @@ mod tests {
         assert!(snap.backends.is_empty());
         assert!(snap.fallbacks.is_empty());
         assert!(is_empty(&pool).await.unwrap());
+    }
+
+    /// A backend with nothing else set, for the detection tests.
+    fn bare_backend(name: &str) -> BackendRow {
+        BackendRow {
+            name: name.into(),
+            base_url: "http://host:11434/v1".into(),
+            api_key_env: None,
+            api_key_ct: None,
+            api_key_nonce: None,
+            weight: 1,
+            max_inflight: 16,
+            health_path: "/models".into(),
+            probe_models: true,
+            supports_edit: false,
+            enabled: true,
+            models: Vec::new(),
+            aliases: Vec::new(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+        }
+    }
+
+    /// Detection results have to survive a restart: a gateway that boots while
+    /// a backend is down would otherwise read it back as `generic` with no
+    /// context, and every model on it would silently fall to the global 32768
+    /// guess — the failure profiles exist to remove.
+    #[tokio::test]
+    async fn detected_profile_round_trips() {
+        use crate::server::upstreams::profile::{BackendProfile, Detected};
+
+        let pool = test_pool().await;
+        upsert_backend(&pool, &bare_backend("llama")).await.unwrap();
+
+        let detected = Detected {
+            profile: BackendProfile::LlamaCpp,
+            context_windows: HashMap::from([
+                ("gemma".to_string(), 131_072),
+                ("qwen".to_string(), 32_768),
+            ]),
+            context_cap: Some(8_192),
+            max_parallel: Some(4),
+            version: Some("b1234".into()),
+            detected_at: None,
+        };
+        save_detected(&pool, "llama", &detected).await.unwrap();
+
+        // `detected_at` is stamped on the way in, so compare the rest and
+        // assert only that a stamp came back.
+        let loaded = load_detected(&pool).await.unwrap();
+        let back = loaded.get("llama").expect("row was written");
+        assert!(back.detected_at.is_some(), "the write must stamp a time");
+        assert_eq!(
+            Detected {
+                detected_at: None,
+                ..back.clone()
+            },
+            detected
+        );
+    }
+
+    /// Re-detecting replaces the record rather than merging into it: a server
+    /// that was reconfigured has to be able to *shrink* a window, and a
+    /// backend repointed at a different kind of server must not keep the old
+    /// one's models.
+    #[tokio::test]
+    async fn re_detecting_replaces_the_previous_record() {
+        use crate::server::upstreams::profile::{BackendProfile, Detected};
+
+        let pool = test_pool().await;
+        upsert_backend(&pool, &bare_backend("b")).await.unwrap();
+
+        save_detected(
+            &pool,
+            "b",
+            &Detected {
+                profile: BackendProfile::LlamaCpp,
+                context_windows: HashMap::from([("old".to_string(), 131_072)]),
+                context_cap: Some(65_536),
+                max_parallel: Some(8),
+                version: Some("b1".into()),
+                detected_at: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let now = Detected {
+            profile: BackendProfile::Ollama,
+            context_windows: HashMap::new(),
+            context_cap: None,
+            max_parallel: None,
+            version: Some("0.13.3".into()),
+            detected_at: None,
+        };
+        save_detected(&pool, "b", &now).await.unwrap();
+
+        let loaded = load_detected(&pool).await.unwrap();
+        let back = loaded.get("b").expect("row was written");
+        assert_eq!(
+            Detected {
+                detected_at: None,
+                ..back.clone()
+            },
+            now
+        );
     }
 
     #[tokio::test]
