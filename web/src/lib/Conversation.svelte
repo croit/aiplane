@@ -776,9 +776,17 @@
 			</select>
 			<!-- The feedback entry point for conversation pages. The floating
 			     button is suppressed here (it would sit on top of send/stop),
-			     so this is the only one — never width-gated. -->
+			     so this is the only one — never width-gated.
+			
+			     Styled as `btn-primary`, exactly like the floating button it
+			     stands in for: that is a filled circle (white on the dark
+			     theme, near-black on the light one — see `--color-primary` in
+			     app.css), and it is how people recognise this control. It had
+			     been `btn-ghost btn-xs` here, which left a bare outline
+			     smaller than every other control in the composer — findable
+			     only if you already knew it was there. -->
 			<button
-				class="btn btn-circle btn-ghost btn-xs"
+				class="btn btn-circle btn-primary btn-sm shadow"
 				data-feedback-fab
 				onclick={() => void openFeedback()}
 				disabled={feedbackCapturing}
@@ -788,7 +796,7 @@
 				{#if feedbackCapturing}
 					<span class="loading loading-spinner loading-xs"></span>
 				{:else}
-					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 2 1.88 1.88M14.12 3.88 16 2"/><path d="M9 7.13V6a3 3 0 1 1 6 0v1.13"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6Z"/><path d="M6 13H2M6 17H3M6 9H3M18 13h4M18 17h3M18 9h3"/></svg>
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 2 1.88 1.88M14.12 3.88 16 2"/><path d="M9 7.13V6a3 3 0 1 1 6 0v1.13"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6Z"/><path d="M6 13H2M6 17H3M6 9H3M18 13h4M18 17h3M18 9h3"/></svg>
 				{/if}
 			</button>
 		</div>
