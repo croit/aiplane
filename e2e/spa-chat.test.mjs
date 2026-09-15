@@ -240,6 +240,65 @@ test("conversation tools use a responsive full-screen selector", async () => {
     await ctx.close();
 });
 
+// A document that changes while the conversation is open must show up in the
+// canvas without a reload. The panel used to fetch the open document once and
+// keep it: every version the assistant appended mid-turn stayed invisible
+// until the page was refreshed, so the reader was looking at v4 of a document
+// the model had already grown to v9.
+//
+// The hand-edit route stands in for the assistant's write here (it appends a
+// version through the same store), and the end of a turn stands in for the
+// mid-turn `sidebar_changed` — both cues run the same client refresh.
+test("a document version written behind the panel's back shows up without a reload", async () => {
+    const cookie = process.env.GATEWAY_SESSION_COOKIE;
+    assert.ok(cookie, "set GATEWAY_SESSION_COOKIE to the dev-ui seed cookie");
+    const cookieValue = cookie.startsWith("id=") ? cookie.slice("id=".length) : cookie;
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 950 } });
+    await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
+    const page = await ctx.newPage();
+
+    const workspaceUrl = await conversationUrl(`id=${cookieValue}`, "Draft a project brief");
+    await page.goto(`${BASE}${workspaceUrl}`, { waitUntil: "domcontentloaded" });
+    const canvas = page.getByRole("complementary", { name: "Canvas", exact: true });
+    await canvas.getByText("Release criteria", { exact: true }).waitFor();
+    const sessionId = page.url().split("/").at(-1);
+
+    // Unique per run: a save whose content matches the head mints no version,
+    // and this file is run repeatedly against the same seeded fixture.
+    const proof = `Live refresh proof ${Date.now()}`;
+    const saved = await page.evaluate(async ([id, line]) => {
+        const listed = await fetch(`/api/v0/chat/sessions/${id}/documents`);
+        const { documents } = await listed.json();
+        const documentId = documents[0].id;
+        const read = await fetch(`/api/v0/chat/sessions/${id}/documents/${documentId}`);
+        const opened = await read.json();
+        const response = await fetch(`/api/v0/chat/sessions/${id}/documents/${documentId}`, {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ content: `${opened.version.content}\n\n## ${line}` }),
+        });
+        return { status: response.status, before: opened.document.current_ver, after: (await response.json()).document.current_ver };
+    }, [sessionId, proof]);
+    assert.equal(saved.status, 200);
+    assert.equal(saved.after, saved.before + 1, "the hand edit must mint a new version");
+
+    // Nothing polls, so the panel is still showing the version it opened.
+    assert.equal(await canvas.getByText(proof, { exact: true }).count(), 0);
+
+    // Finish a turn in this conversation — the cue the SPA gets in production
+    // when the assistant writes to the canvas.
+    if (await page.getByRole("combobox", { name: "Chat model", exact: true }).count()) {
+        await chooseSearchable(page, "Chat model", "demo-model");
+    }
+    await page.locator("textarea").fill("carry on");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+
+    // No reload anywhere in here: the panel has to re-read the document itself.
+    await canvas.getByText(proof, { exact: true }).waitFor({ timeout: 15_000 });
+    await page.getByRole("combobox", { name: "Version", exact: true }).getByText(`v${saved.after}`, { exact: true }).waitFor({ timeout: 5000 });
+    await ctx.close();
+});
+
 test("the transcript keeps edit, retry, code, tool-detail, and canvas workflows", async () => {
     // Every other suite reads this variable as the bare cookie value; accept
     // either spelling so one export drives the whole run.

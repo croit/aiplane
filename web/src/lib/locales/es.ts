@@ -986,6 +986,8 @@ export const es: Catalog = {
  "render-canvas-edit-button": "✎ Editar",
  "render-canvas-edit-hint": "Se guarda como una nueva versión; el asistente sabrá que lo cambiaste.",
  "render-canvas-hand-edited": "editado por ti",
+ "render-canvas-load-newer": "Descartar mi edición y mostrarla",
+ "render-canvas-newer-version": "El asistente guardó la v{version} mientras editabas.",
  "render-canvas-resize-aria": "Cambiar tamaño del lienzo",
  "render-canvas-save": "Guardar como nueva versión",
  "render-canvas-version-aria": "Versión",

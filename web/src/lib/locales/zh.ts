@@ -977,6 +977,8 @@ export const zh: Catalog = {
  "render-canvas-edit-button": "✎ 编辑",
  "render-canvas-edit-hint": "将保存为新版本；助手会知道你做了修改。",
  "render-canvas-hand-edited": "你已编辑",
+ "render-canvas-load-newer": "放弃我的修改并显示该版本",
+ "render-canvas-newer-version": "助手在你编辑期间保存了 v{version}。",
  "render-canvas-resize-aria": "调整画布大小",
  "render-canvas-save": "另存为新版本",
  "render-canvas-version-aria": "版本",

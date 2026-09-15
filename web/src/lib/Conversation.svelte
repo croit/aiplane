@@ -203,7 +203,13 @@
 			// also the cue to re-read the document list.
 			void loadDocuments();
 		};
-		c.onTurnFinalized = () => void refreshConversationMeta();
+		// The mid-turn `sidebar_changed` is the usual cue, but it can be missed
+		// (a dropped stream reconnects with a snapshot, not a replay of it), so
+		// the end of a turn re-reads the documents as well.
+		c.onTurnFinalized = () => {
+			void refreshConversationMeta();
+			void loadDocuments();
+		};
 		c.attach();
 		controller = c;
 		void loadMeta();
@@ -479,9 +485,14 @@
 	}
 
 	async function loadDocuments() {
+		const had = documents.length > 0;
 		try {
 			documents = (await api.listChatDocuments(id)).documents;
-			if (documents.length > 0 && window.innerWidth >= 768) canvasOpen = true;
+			// Open the panel when the conversation GAINS a canvas, not on every
+			// refresh: the list is now re-read after each document write too, and
+			// re-opening a panel the reader just closed on every edit is worse
+			// than not opening it at all.
+			if (!had && documents.length > 0 && window.innerWidth >= 768) canvasOpen = true;
 		} catch {
 			// A conversation with no canvas is the normal case — stay quiet.
 			documents = [];

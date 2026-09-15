@@ -71,5 +71,7 @@ render-compaction-divider = Mensajes anteriores condensados para ahorrar context
 render-canvas-version-by-you = tú
 render-canvas-hand-edited = editado por ti
 render-canvas-edit-hint = Se guarda como una nueva versión; el asistente sabrá que lo cambiaste.
+render-canvas-newer-version = El asistente guardó la v{ $version } mientras editabas.
+render-canvas-load-newer = Descartar mi edición y mostrarla
 render-canvas-version-aria = Versión
 render-canvas-resize-aria = Cambiar tamaño del lienzo

@@ -61,6 +61,9 @@ export function createConversationController(sessionId: string): ConversationCon
 	const MAX_RETRIES = 6;
 	let retries = 0;
 	let retryTimer: ReturnType<typeof setTimeout> | null = null;
+	// How many times this controller has opened a stream. The first is the
+	// page load; see the `idle` branch in `apply` for why that one is special.
+	let attaches = 0;
 
 	const controller: ConversationController = {
 		id: sessionId,
@@ -70,6 +73,7 @@ export function createConversationController(sessionId: string): ConversationCon
 
 		attach() {
 			closeCurrent();
+			attaches += 1;
 			const es = new EventSource(api.chatEventsUrl(sessionId));
 			source = es;
 			es.onopen = () => {
@@ -104,6 +108,15 @@ export function createConversationController(sessionId: string): ConversationCon
 			applyEvent(state, event);
 			if (event.type === 'sidebar_changed') controller.onSidebarChanged?.();
 			if (event.type === 'turn_finalized') controller.onTurnFinalized?.();
+			// A turn that finishes before the re-attach lands — a cached reply,
+			// a tool-only round, a fast backend — is reported as nothing but a
+			// snapshot and `idle`. Without this the transcript caught up (the
+			// snapshot replaces it) while everything read over the JSON API
+			// beside it did not: the conversation title, and the canvas, which
+			// then sat on the version it opened with until a page reload.
+			// Skipped on the first attach only, because the page load that
+			// created this controller is already reading all of it.
+			if (event.type === 'idle' && attaches > 1) controller.onTurnFinalized?.();
 			if (event.type === 'turn_finalized' || event.type === 'idle') closeCurrent();
 		},
 

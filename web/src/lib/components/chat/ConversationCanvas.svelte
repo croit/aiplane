@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import type { CanvasDocument, ChatAsset } from '$lib/api';
 	import { canvasBounds, clampCanvasWidth } from '$lib/canvas-layout';
+	import { canvasRefresh } from '$lib/canvas-refresh';
 	import { n, t } from '$lib/i18n.svelte';
 	import Markdown from './Markdown.svelte';
 	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
@@ -21,6 +22,15 @@
 	let draft = $state('');
 	let editing = $state(false);
 	let saving = $state(false);
+	/** Set when a newer version landed while a hand edit was open. */
+	let newerVersion = $state<number | null>(null);
+	/**
+	 * The read the panel is waiting on, as `id@version`. Deliberately NOT
+	 * `$state`: the reconciling effect writes `selectedId`, which re-runs it
+	 * before the fetch it just started can land, and a tracked guard would
+	 * simply re-run it again. A plain variable stops the duplicate request.
+	 */
+	let inFlight: string | null = null;
 	const initialBounds = canvasBounds(1200);
 	let panel: HTMLElement;
 	let bounds = $state(initialBounds);
@@ -54,18 +64,45 @@
 		return () => observer.disconnect();
 	});
 
+	// The document list is re-read whenever the conversation reports a change
+	// (a `sidebar_changed` event, which every canvas tool call pushes). That is
+	// also the only cue the panel gets that the *open* document grew, so it
+	// reconciles what it is showing against the list here rather than waiting
+	// for a page reload.
 	$effect(() => {
-		if (documents.length === 0) {
+		const next = canvasRefresh({
+			documents,
+			selectedId,
+			opened: opened && {
+				id: opened.document.id,
+				shownVersion: opened.version.version,
+				knownHead: opened.document.current_ver
+			},
+			editing
+		});
+		if (next.action === 'none') return;
+		if (next.action === 'clear') {
 			tab = 'assets';
 			selectedId = '';
 			opened = null;
+			newerVersion = null;
 			return;
 		}
-		if (!documents.some((document: CanvasDocument) => document.id === selectedId)) {
-			tab = 'document';
-			selectedId = documents[0].id;
-			void openDocument(selectedId);
+		if (next.action === 'notify') {
+			newerVersion = next.version;
+			return;
 		}
+		// Switching documents (or opening the first one) also brings the tab
+		// forward; a document that merely grew must not yank someone off the
+		// assets tab.
+		if (opened?.document.id !== next.documentId) tab = 'document';
+		const key = `${next.documentId}@${next.version ?? 'head'}`;
+		if (inFlight === key) return;
+		inFlight = key;
+		selectedId = next.documentId;
+		void openDocument(next.documentId, next.version).finally(() => {
+			if (inFlight === key) inFlight = null;
+		});
 	});
 
 	async function openDocument(documentId: string, version?: number) {
@@ -74,6 +111,7 @@
 			opened = await api.getChatDocument(id, documentId, version);
 			draft = opened.version.content;
 			editing = false;
+			newerVersion = null;
 		} catch (error) {
 			onerror(String(error));
 		}
@@ -151,7 +189,7 @@
 					<span class="flex-1"></span>
 					{#if isOwner}
 						{#if editing}
-							<button class="btn btn-ghost btn-sm" onclick={() => { editing = false; draft = opened?.version.content ?? ''; }}>{t('render-canvas-cancel')}</button>
+							<button class="btn btn-ghost btn-sm" onclick={() => { editing = false; newerVersion = null; draft = opened?.version.content ?? ''; }}>{t('render-canvas-cancel')}</button>
 							<button class="btn btn-primary btn-sm" disabled={saving} onclick={save}>{saving ? t('chat-render-canvas-saving') : t('render-canvas-save')}</button>
 						{:else}
 							<button class="btn btn-ghost btn-sm" onclick={() => (editing = true)}>{t('render-canvas-edit-button')}</button>
@@ -159,6 +197,12 @@
 					{/if}
 				</div>
 				{#if editing}
+					{#if newerVersion !== null}
+						<div class="alert alert-warning py-2 text-sm">
+							<span>{t('render-canvas-newer-version', { version: newerVersion })}</span>
+							<button class="btn btn-ghost btn-xs" onclick={() => { editing = false; newerVersion = null; void openDocument(selectedId); }}>{t('render-canvas-load-newer')}</button>
+						</div>
+					{/if}
 					<p class="text-xs opacity-60">{t('render-canvas-edit-hint')}</p>
 					<textarea class="textarea textarea-bordered min-h-96 w-full flex-1 font-mono text-sm" bind:value={draft}></textarea>
 				{:else}

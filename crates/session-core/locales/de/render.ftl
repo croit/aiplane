@@ -71,5 +71,7 @@ render-compaction-divider = Frühere Nachrichten zur Kontexteinsparung zusammeng
 render-canvas-version-by-you = von dir
 render-canvas-hand-edited = von dir bearbeitet
 render-canvas-edit-hint = Wird als neue Version gespeichert; der Assistent erfährt von deiner Änderung.
+render-canvas-newer-version = Der Assistent hat v{ $version } gespeichert, während du bearbeitet hast.
+render-canvas-load-newer = Meine Änderung verwerfen und anzeigen
 render-canvas-version-aria = Version
 render-canvas-resize-aria = Zeichenfläche skalieren

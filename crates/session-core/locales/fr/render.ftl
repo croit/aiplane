@@ -71,5 +71,7 @@ render-compaction-divider = Messages précédents condensés pour économiser du
 render-canvas-version-by-you = vous
 render-canvas-hand-edited = modifié par vous
 render-canvas-edit-hint = Enregistré comme nouvelle version ; l'assistant est informé de votre modification.
+render-canvas-newer-version = L'assistant a enregistré la v{ $version } pendant votre modification.
+render-canvas-load-newer = Abandonner ma modification et l'afficher
 render-canvas-version-aria = Version
 render-canvas-resize-aria = Redimensionner le canevas

@@ -986,6 +986,8 @@ export const fr: Catalog = {
  "render-canvas-edit-button": "✎ Modifier",
  "render-canvas-edit-hint": "Enregistré comme nouvelle version ; l'assistant est informé de votre modification.",
  "render-canvas-hand-edited": "modifié par vous",
+ "render-canvas-load-newer": "Abandonner ma modification et l'afficher",
+ "render-canvas-newer-version": "L'assistant a enregistré la v{version} pendant votre modification.",
  "render-canvas-resize-aria": "Redimensionner le canevas",
  "render-canvas-save": "Enregistrer comme nouvelle version",
  "render-canvas-version-aria": "Version",

@@ -71,5 +71,7 @@ render-compaction-divider = Ранние сообщения свёрнуты д�
 render-canvas-version-by-you = вы
 render-canvas-hand-edited = изменено вами
 render-canvas-edit-hint = Сохраняется как новая версия; ассистент узнает о вашей правке.
+render-canvas-newer-version = Ассистент сохранил v{ $version }, пока вы редактировали.
+render-canvas-load-newer = Отменить мою правку и показать её
 render-canvas-version-aria = Версия
 render-canvas-resize-aria = Изменить размер холста

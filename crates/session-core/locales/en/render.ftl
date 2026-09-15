@@ -70,5 +70,7 @@ render-compaction-divider = Earlier messages condensed to save context
 render-canvas-version-by-you = you
 render-canvas-hand-edited = edited by you
 render-canvas-edit-hint = Saved as a new version; the assistant is told you changed it.
+render-canvas-newer-version = The assistant saved v{ $version } while you were editing.
+render-canvas-load-newer = Discard my edit and show it
 render-canvas-version-aria = Version
 render-canvas-resize-aria = Resize canvas

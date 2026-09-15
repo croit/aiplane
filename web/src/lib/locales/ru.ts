@@ -990,6 +990,8 @@ export const ru: Catalog = {
  "render-canvas-edit-button": "✎ Редактировать",
  "render-canvas-edit-hint": "Сохраняется как новая версия; ассистент узнает о вашей правке.",
  "render-canvas-hand-edited": "изменено вами",
+ "render-canvas-load-newer": "Отменить мою правку и показать её",
+ "render-canvas-newer-version": "Ассистент сохранил v{version}, пока вы редактировали.",
  "render-canvas-resize-aria": "Изменить размер холста",
  "render-canvas-save": "Сохранить как новую версию",
  "render-canvas-version-aria": "Версия",
