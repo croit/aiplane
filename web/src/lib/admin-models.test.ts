@@ -53,8 +53,9 @@ test('an empty context field reports what the backend said, or admits it said no
 		key: 'admin-context-detected',
 		window: 262144
 	});
-	// Ollama and hosted providers: no ceiling exists to show, and inventing a
-	// default that looks like knowledge is the bug this replaces.
+	// No ceiling exists to show — a hosted provider, or a model this backend
+	// has not loaded. Inventing a default that looks like knowledge is the bug
+	// this replaces.
 	assert.deepEqual(contextWindowHint('', null), {
 		tone: 'info',
 		key: 'admin-context-unreported'

@@ -262,5 +262,5 @@ admin-search-brave-key-clear = 删除已存储的密钥
 
 # 上下文窗口的来源。
 admin-context-detected = 已检测：{ $window } 词元
-admin-context-unreported = 此后端不报告其上下文窗口。请在服务器上确认 — `ollama ps` 会显示实际分配的大小。
+admin-context-unreported = 此后端未报告该模型的上下文窗口。请在此填写，或在服务器上确认。
 admin-context-exceeds-detected = 此后端报告为 { $window } 词元。更大的值不会被压缩，服务器会静默截断。

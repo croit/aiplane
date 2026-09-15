@@ -26,8 +26,8 @@
 	let toggleError = $state<string | null>(null);
 	let activity = $derived(activityCounts(usage));
 	// The server said it runs fewer requests at once than we are configured to
-	// send it. Not an error anywhere — Ollama queues rather than rejecting — so
-	// the only place it can surface is here.
+	// send it. Only llama.cpp says; Ollama has the worse default and reports
+	// nothing, so this stays null for it.
 	let parallelWarning = $derived(
 		parallelismMismatch(backend.live?.detected_max_parallel, backend.live?.max_inflight ?? backend.max_inflight)
 	);

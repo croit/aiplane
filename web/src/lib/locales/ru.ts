@@ -103,7 +103,7 @@ export const ru: Catalog = {
  "admin-comfyui-worker-vram": "{free} свободно из {total}",
  "admin-context-detected": "Определено: {window} токенов",
  "admin-context-exceeds-detected": "Этот бэкенд сообщает {window} токенов. Большие значения не уплотняются — сервер молча обрезает их.",
- "admin-context-unreported": "Этот бэкенд не сообщает размер окна контекста. Проверьте сервер — `ollama ps` покажет фактически выделенный размер.",
+ "admin-context-unreported": "Этот бэкенд не сообщает окно контекста для этой модели. Укажите его здесь или проверьте на сервере.",
  "admin-context-window-full-label": "Окно контекста (токены)",
  "admin-context-window-placeholder": "по умолч.",
  "admin-defaults-chat-label": "Чат",

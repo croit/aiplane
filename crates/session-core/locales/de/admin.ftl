@@ -275,5 +275,5 @@ admin-search-brave-key-clear = Gespeicherten Key entfernen
 # Wert als der gemeldete ist eine Warnung wert: hier wird nicht kompaktiert,
 # dort wird stillschweigend abgeschnitten.
 admin-context-detected = Erkannt: { $window } Tokens
-admin-context-unreported = Dieses Backend meldet sein Kontextfenster nicht. Am Server prüfen — `ollama ps` zeigt die tatsächlich allozierte Größe.
+admin-context-unreported = Dieses Backend meldet für dieses Modell kein Kontextfenster. Hier eintragen oder am Server nachsehen.
 admin-context-exceeds-detected = Dieses Backend meldet { $window } Tokens. Höhere Werte werden nicht kompaktiert, sondern vom Server still abgeschnitten.

@@ -103,7 +103,7 @@ export const de: Catalog = {
  "admin-comfyui-worker-vram": "{free} frei von {total}",
  "admin-context-detected": "Erkannt: {window} Tokens",
  "admin-context-exceeds-detected": "Dieses Backend meldet {window} Tokens. Höhere Werte werden nicht kompaktiert, sondern vom Server still abgeschnitten.",
- "admin-context-unreported": "Dieses Backend meldet sein Kontextfenster nicht. Am Server prüfen — `ollama ps` zeigt die tatsächlich allozierte Größe.",
+ "admin-context-unreported": "Dieses Backend meldet für dieses Modell kein Kontextfenster. Hier eintragen oder am Server nachsehen.",
  "admin-context-window-full-label": "Kontextfenster (Tokens)",
  "admin-context-window-placeholder": "Standard",
  "admin-defaults-chat-label": "Chat",

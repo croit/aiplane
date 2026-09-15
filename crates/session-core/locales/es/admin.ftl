@@ -265,5 +265,5 @@ admin-search-brave-key-clear = Eliminar la clave almacenada
 
 # Procedencia de la ventana de contexto.
 admin-context-detected = Detectado: { $window } tokens
-admin-context-unreported = Este backend no informa de su ventana de contexto. Compruébelo en el servidor — `ollama ps` muestra el tamaño realmente asignado.
+admin-context-unreported = Este backend no informa de una ventana de contexto para este modelo. Indíquela aquí o compruébela en el servidor.
 admin-context-exceeds-detected = Este backend informa de { $window } tokens. Los valores superiores no se compactan: el servidor los trunca en silencio.

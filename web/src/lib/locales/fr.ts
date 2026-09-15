@@ -103,7 +103,7 @@ export const fr: Catalog = {
  "admin-comfyui-worker-vram": "{free} libres sur {total}",
  "admin-context-detected": "Détecté : {window} jetons",
  "admin-context-exceeds-detected": "Ce backend annonce {window} jetons. Les valeurs supérieures ne sont pas compactées : le serveur les tronque silencieusement.",
- "admin-context-unreported": "Ce backend ne communique pas sa fenêtre de contexte. Vérifiez le serveur — `ollama ps` indique la taille réellement allouée.",
+ "admin-context-unreported": "Ce backend ne communique pas de fenêtre de contexte pour ce modèle. Saisissez-la ici ou vérifiez sur le serveur.",
  "admin-context-window-full-label": "Fenêtre de contexte (jetons)",
  "admin-context-window-placeholder": "défaut",
  "admin-defaults-chat-label": "Chat",

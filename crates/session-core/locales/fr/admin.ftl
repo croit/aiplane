@@ -264,5 +264,5 @@ admin-search-brave-key-clear = Supprimer la clé enregistrée
 
 # Provenance de la fenêtre de contexte.
 admin-context-detected = Détecté : { $window } jetons
-admin-context-unreported = Ce backend ne communique pas sa fenêtre de contexte. Vérifiez le serveur — `ollama ps` indique la taille réellement allouée.
+admin-context-unreported = Ce backend ne communique pas de fenêtre de contexte pour ce modèle. Saisissez-la ici ou vérifiez sur le serveur.
 admin-context-exceeds-detected = Ce backend annonce { $window } jetons. Les valeurs supérieures ne sont pas compactées : le serveur les tronque silencieusement.

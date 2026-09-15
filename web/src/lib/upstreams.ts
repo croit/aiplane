@@ -15,9 +15,9 @@ export interface LiveBackend {
 	/**
 	 * When this backend was last identified (RFC3339), or null if never.
 	 *
-	 * Identification runs only when a topology is applied, unlike the context
-	 * reading beside it, which the health probe refreshes every tick — so how
-	 * long ago it ran is worth knowing.
+	 * Identification runs at process start and on every topology apply, unlike
+	 * the context reading beside it, which the health probe refreshes every
+	 * tick — so how long ago it ran is worth knowing.
 	 */
 	detected_at: string | null;
 }
@@ -28,10 +28,12 @@ export type BackendProfileName = 'generic' | 'vllm' | 'ollama' | 'llamacpp' | 's
  * Whether the configured in-flight ceiling promises more concurrency than the
  * server said it has.
  *
- * Worth surfacing because the failure is invisible: Ollama runs one request
- * per model by default and queues up to 512 rather than rejecting, so the
- * picker sees free slots, keeps dispatching, and back-pressure simply stops
- * applying. Nothing errors — it just gets slower.
+ * Only llama.cpp says — it reports a slot count. Ollama, which has the more
+ * dangerous default (one request per model, queueing up to 512 rather than
+ * rejecting, so the picker sees free slots and back-pressure quietly stops
+ * meaning anything), reports nothing, and this returns null for it. The badge
+ * is therefore a help where the answer is known, not a guard against the case
+ * that motivated wanting one.
  */
 export function parallelismMismatch(
 	detected: number | null | undefined,
@@ -104,8 +106,11 @@ export interface BackendTestResult {
 	profile?: BackendProfileName;
 	detected_version?: string | null;
 	detected_max_parallel?: number | null;
-	/** The tightest context window this server reports, if it reports one. */
-	detected_context?: number | null;
+	/**
+	 * The tightest context window this server reports, if it reports one.
+	 * Same name and meaning as `AdminModel.detected_context_window`.
+	 */
+	detected_context_window?: number | null;
 }
 
 export interface PendingChange {

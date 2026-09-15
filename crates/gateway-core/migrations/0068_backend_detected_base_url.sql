@@ -1,0 +1,48 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Copyright (C) 2026 croit GmbH
+--
+-- Tie a remembered profile to the address it was learned from.
+--
+-- 0067 keyed the identification record on the backend alone. The registry is
+-- stricter than that on purpose: `UpstreamRegistry::reload` carries a profile
+-- across a topology change only when the name *and* the base URL both match,
+-- because an edited URL may point at an entirely different server.
+--
+-- The persisted row did not carry that rule, and `seed_remembered_detection`
+-- reinstated it by name a few lines later — so the carry-forward's refusal was
+-- undone immediately, and the stale profile then stood permanently: the fresh
+-- round could not displace it either, because an unreachable server and a
+-- plain OpenAI server were the same answer.
+--
+-- Repoint a backend from an Ollama box to a hosted OpenAI-compatible provider
+-- and the gateway kept spelling reasoning Ollama's way (`reasoning_effort:
+-- "max"`, which that provider rejects) and kept stripping tools from the final
+-- tool round, across every apply and every restart, with no operator action
+-- that could clear it.
+--
+-- So store the URL alongside the profile and ignore a row whose URL no longer
+-- matches. Keeping the row rather than deleting it means repointing a backend
+-- away and back again costs one round of re-identification, not a permanent
+-- loss.
+--
+-- Existing rows get the empty string, which matches no configured backend
+-- (`base_url` is required), so every pre-0068 record is re-earned on the next
+-- apply rather than trusted blindly. That is the safe direction: the cost is
+-- one identification round, the alternative is inheriting exactly the stale
+-- association this migration exists to end.
+
+ALTER TABLE backend_detected ADD COLUMN base_url TEXT NOT NULL DEFAULT '';
+
+-- Correction to 0067's header, which cannot be edited: sqlx checksums an
+-- applied migration, so touching it would refuse to start on any database that
+-- already ran it.
+--
+-- 0067 says identification "runs when the topology is applied and on demand
+-- from the admin UI's test button -- not on the recurring 5 s health probe,
+-- which stays a liveness + model-set check". Two parts of that are no longer
+-- true. The test button only *previews*: it never writes these rows and never
+-- touches the registry. And the probe is no longer liveness + models — it also
+-- re-reads each profile's context endpoint every tick, because what a server
+-- has loaded is runtime state (Ollama loads on first use). The `context_cap`
+-- column likewise records what the probe last read, not what identification
+-- found.

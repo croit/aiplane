@@ -1199,10 +1199,11 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 "models": sorted(models),
                 "withheld": sorted(backend.withheld_models()),
                 "pool": pool.name,
-                // What identification made of this backend. The UI never shows
-                // the profile as a setting — it shows the one consequence an
-                // operator can act on: that the configured in-flight ceiling
-                // promises more than the server said it runs.
+                // What identification made of this backend: shown as a badge,
+                // never as a setting — nothing here is an operator's choice.
+                // `detected_max_parallel` is the one an operator can act on,
+                // when the configured in-flight ceiling promises more than the
+                // server said it runs.
                 "profile": detected.profile.as_str(),
                 "detected_version": detected.version,
                 "detected_max_parallel": detected.max_parallel,
@@ -1586,9 +1587,13 @@ pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) ->
     // server reconfigured a moment ago is already current in the registry by
     // the time anyone reads this. What the button adds is an answer *before*
     // saving, against the address being typed rather than the one stored.
+    // `None` means nothing answered — which the reachability test above has
+    // already ruled out, but the panel should not invent a profile if it ever
+    // did.
     let detected =
         gateway_core::server::upstreams::profile::detect(&state.http, base_url, key.as_deref())
-            .await;
+            .await
+            .unwrap_or_default();
     json_ok(
         StatusCode::OK,
         serde_json::json!({
@@ -1603,7 +1608,7 @@ pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) ->
             // The tightest window this server reports, or nothing when it
             // reports none. One number, because the only thing the panel ever
             // did with the list was take its minimum.
-            "detected_context": detected
+            "detected_context_window": detected
                 .context_windows
                 .values()
                 .copied()
@@ -2090,8 +2095,19 @@ pub async fn topology_reload(State(state): State<Arc<RamaState>>, req: Request) 
     if let Err(err) = state.upstreams.reload(&snapshot, &state.crypto) {
         return internal(err);
     }
-    gateway_core::server::upstreams::health::spawn(state.upstreams.clone(), Some(state.db.clone()))
-        .await;
+    // Spawned, then awaited, so a client that disconnects mid-apply cannot
+    // cancel it. `reload` has already published the new topology and retired
+    // the old probe loops; dropping this future before it arms the new ones
+    // would leave a live registry with no health probing at all — every
+    // backend frozen at `healthy` and never re-checked, for the life of the
+    // process.
+    let armed = tokio::spawn(gateway_core::server::upstreams::health::spawn(
+        state.upstreams.clone(),
+        Some(state.db.clone()),
+    ));
+    if let Err(err) = armed.await {
+        tracing::error!(error = %err, "arming the health probes after a topology apply panicked");
+    }
     state.topology_dirty_reset();
     json_ok(
         StatusCode::OK,

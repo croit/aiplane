@@ -403,15 +403,15 @@ pub async fn load_probed_models(db: &Pool) -> Result<HashMap<String, HashSet<Str
 /// `0067_backend_detected_profile`). Replaces the whole record for that
 /// backend, context windows included.
 ///
-/// Called when the topology is applied and from the admin test button — never
-/// from the recurring health probe, which stays a liveness + model-set check.
-/// The point is the same as [`save_probed_models`]'s: a gateway that boots
-/// while a backend is down would otherwise show "generic" for it and read its
-/// context from nowhere, so every model on it would silently fall back to the
-/// global 32768 guess.
+/// Written by `health::detect_all` when a topology is applied — the admin test
+/// button only previews, it never persists. The point is the same as
+/// [`save_probed_models`]'s: a gateway that boots while a backend is down
+/// would otherwise show "generic" for it and read its context from nowhere, so
+/// every model on it would silently fall back to the global 32768 guess.
 pub async fn save_detected(
     db: &Pool,
     backend_name: &str,
+    base_url: &str,
     detected: &crate::server::upstreams::profile::Detected,
 ) -> Result<(), DbError> {
     let now = now_rfc3339();
@@ -431,9 +431,10 @@ pub async fn save_detected(
     let mut tx = db.begin().await?;
     sqlx::query(
         r#"INSERT INTO backend_detected
-               (backend_id, profile, context_cap, max_parallel, version, detected_at)
-           VALUES (?, ?, ?, ?, ?, ?)
+               (backend_id, base_url, profile, context_cap, max_parallel, version, detected_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(backend_id) DO UPDATE SET
+               base_url = excluded.base_url,
                profile = excluded.profile,
                context_cap = excluded.context_cap,
                max_parallel = excluded.max_parallel,
@@ -441,11 +442,12 @@ pub async fn save_detected(
                detected_at = excluded.detected_at"#,
     )
     .bind(backend_id)
+    .bind(base_url)
     .bind(detected.profile.as_str())
     .bind(detected.context_cap)
     .bind(detected.max_parallel.map(i64::from))
     .bind(detected.version.as_deref())
-    .bind(&now)
+    .bind(detected.detected_at.as_deref().unwrap_or(&now))
     .execute(&mut *tx)
     .await?;
     sqlx::query("DELETE FROM backend_detected_context WHERE backend_id = ?")
@@ -467,8 +469,13 @@ pub async fn save_detected(
     Ok(())
 }
 
-/// Everything detection last learned, keyed by backend name. Read at startup
-/// to seed the registry before anything is re-detected — see [`save_detected`].
+/// Everything identification last learned, keyed by backend name, for the
+/// backends whose address has not changed since.
+///
+/// The `base_url` join is the point: a row learned from a different address
+/// describes a different server, and reinstating it is how a repointed backend
+/// used to keep the old one's profile forever (migration 0068). The registry's
+/// in-memory carry-forward applies the same identity test.
 pub async fn load_detected(
     db: &Pool,
 ) -> Result<HashMap<String, crate::server::upstreams::profile::Detected>, DbError> {
@@ -477,7 +484,8 @@ pub async fn load_detected(
     let rows = sqlx::query(
         r#"SELECT b.name AS backend_name, d.profile, d.context_cap, d.max_parallel,
                      d.version, d.detected_at
-              FROM backend_detected d JOIN backends b ON b.id = d.backend_id"#,
+              FROM backend_detected d JOIN backends b ON b.id = d.backend_id
+             WHERE d.base_url = b.base_url"#,
     )
     .fetch_all(db)
     .await?;
@@ -1088,7 +1096,9 @@ mod tests {
             version: Some("b1234".into()),
             detected_at: None,
         };
-        save_detected(&pool, "llama", &detected).await.unwrap();
+        save_detected(&pool, "llama", "http://host:11434/v1", &detected)
+            .await
+            .unwrap();
 
         // `detected_at` is stamped on the way in, so compare the rest and
         // assert only that a stamp came back.
@@ -1101,6 +1111,43 @@ mod tests {
                 ..back.clone()
             },
             detected
+        );
+    }
+
+    /// A row learned from a different address describes a different server.
+    ///
+    /// Reinstating it is how a backend repointed from an Ollama box to a
+    /// hosted provider kept being treated as Ollama — forever, because the
+    /// fresh round could not displace it either. The registry applies the same
+    /// identity test in memory; this is the persisted half of it.
+    #[tokio::test]
+    async fn a_row_learned_from_another_address_is_not_reinstated() {
+        use crate::server::upstreams::profile::{BackendProfile, Detected};
+
+        let pool = test_pool().await;
+        upsert_backend(&pool, &bare_backend("moved")).await.unwrap();
+        save_detected(
+            &pool,
+            "moved",
+            "http://host:11434/v1",
+            &Detected {
+                profile: BackendProfile::Ollama,
+                ..Detected::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(load_detected(&pool).await.unwrap().contains_key("moved"));
+
+        // The operator repoints it somewhere else.
+        let moved = BackendRow {
+            base_url: "https://api.example.com/v1".into(),
+            ..bare_backend("moved")
+        };
+        upsert_backend(&pool, &moved).await.unwrap();
+        assert!(
+            !load_detected(&pool).await.unwrap().contains_key("moved"),
+            "the old address's profile must not follow the backend to a new one"
         );
     }
 
@@ -1118,6 +1165,7 @@ mod tests {
         save_detected(
             &pool,
             "b",
+            "http://host:11434/v1",
             &Detected {
                 profile: BackendProfile::LlamaCpp,
                 context_windows: HashMap::from([("old".to_string(), 131_072)]),
@@ -1138,7 +1186,9 @@ mod tests {
             version: Some("0.13.3".into()),
             detected_at: None,
         };
-        save_detected(&pool, "b", &now).await.unwrap();
+        save_detected(&pool, "b", "http://host:11434/v1", &now)
+            .await
+            .unwrap();
 
         let loaded = load_detected(&pool).await.unwrap();
         let back = loaded.get("b").expect("row was written");

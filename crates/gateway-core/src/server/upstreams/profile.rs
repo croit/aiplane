@@ -27,10 +27,11 @@
 //!
 //! This module looks. [`detect`] fingerprints a backend with a handful of
 //! cheap GETs and returns a [`BackendProfile`] plus whatever the server was
-//! willing to say about itself. The operator never types any of it, and never
-//! sees a server name in the UI: the profile exists so that "context" and
-//! "effort" can stay one vocabulary for the user while meaning different
-//! bytes on the wire.
+//! willing to say about itself. The operator never *configures* any of it —
+//! the admin page shows what was identified, as a badge, but the context and
+//! effort controls stay one vocabulary whatever is behind them. The profile
+//! exists so those two can mean different bytes on the wire without meaning
+//! different things to the user.
 //!
 //! Deliberately small. A profile answers only questions whose answer the
 //! *server* determines. Anything a model determines (does it think at all,
@@ -183,14 +184,23 @@ impl BackendProfile {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Detected {
     pub profile: BackendProfile,
-    /// Context window per model id, for the servers that report one. Empty
-    /// for [`BackendProfile::Ollama`] and most hosted providers — see
-    /// [`BackendProfile::reports_context`], which is what lets the UI tell
-    /// "nothing reported" apart from "nothing serving".
+    /// Context windows this round read, by model id.
     ///
-    /// This is the *model's* window (vLLM's `max_model_len`, llama.cpp's
-    /// `meta.n_ctx_train`), which is not necessarily the window it was loaded
-    /// with — see [`context_cap`](Self::context_cap).
+    /// Identification-time only, and largely a boot seed: the *live* windows
+    /// belong to the health probe, which re-reads them every tick because they
+    /// are runtime state (see [`BackendProfile::context_endpoint`]). These are
+    /// what gets persisted, so a gateway booting against an unreachable
+    /// backend still knows a window rather than falling to the global
+    /// assumption.
+    ///
+    /// Sources differ by server: vLLM's `max_model_len` and llama.cpp's
+    /// `meta.n_ctx_train` come off `/models`, while Ollama's come off
+    /// `/api/ps` and are the context the running instance actually allocated —
+    /// so for Ollama this is precisely the loaded window, and for the others
+    /// it is the model's maximum, which [`context_cap`](Self::context_cap)
+    /// then bounds.
+    ///
+    /// Empty for a hosted provider, which reports no window anywhere.
     pub context_windows: HashMap<String, i64>,
     /// The context this server actually allocated, when it says so
     /// (llama.cpp's `/props`). A ceiling over [`context_windows`](Self::context_windows),
@@ -198,9 +208,9 @@ pub struct Detected {
     /// `-c 8192` has 8192 tokens, and using the trained figure would put us
     /// right back at prompts the server silently truncates.
     ///
-    /// Kept separate rather than folded into the map because the recurring
-    /// `/models` probe rewrites that map every five seconds and would
-    /// otherwise restore the looser number each time.
+    /// Kept separate rather than folded into the map because the probe
+    /// rewrites that map every tick and would otherwise restore the looser
+    /// number each time.
     pub context_cap: Option<i64>,
     /// How many requests this server will genuinely run at once, when it says
     /// so. llama.cpp reports its slot count; nothing else we know of does.
@@ -221,14 +231,23 @@ pub struct Detected {
 
 /// Identify `base_url` and read what it will tell us.
 ///
-/// Never fails: an unreachable or unrecognisable server is
-/// [`BackendProfile::Generic`] with nothing filled in, which is exactly the
-/// behaviour the gateway had before this module existed. The caller decides
-/// whether "generic" is worth surfacing.
+/// `None` means **nothing answered** — no socket, no HTTP status, nothing. The
+/// caller must keep whatever it already knew rather than concluding anything,
+/// because an unreachable server is not a plain OpenAI server.
+///
+/// `Some(Detected::default())` is a different answer: something *is* there and
+/// is none of the servers we recognise, which is the truth for a hosted
+/// provider. That result is allowed to overwrite a stale profile, and is what
+/// lets a backend repointed from an Ollama box to a hosted API stop being
+/// treated as Ollama.
 ///
 /// `base_url` is the OpenAI base (`…/v1`); several probes need the server root
 /// instead, which is why [`server_root`] exists.
-pub async fn detect(http: &reqwest::Client, base_url: &str, api_key: Option<&str>) -> Detected {
+pub async fn detect(
+    http: &reqwest::Client,
+    base_url: &str,
+    api_key: Option<&str>,
+) -> Option<Detected> {
     let base = base_url.trim_end_matches('/');
     let root = server_root(base);
 
@@ -249,6 +268,15 @@ pub async fn detect(http: &reqwest::Client, base_url: &str, api_key: Option<&str
         get_json(http, &ps_url, api_key),
     );
 
+    let reached = [&ollama, &props, &models, &sglang, &ps]
+        .iter()
+        .any(|p| p.reached);
+    let (ollama, props, models, sglang, ps) =
+        (ollama.body, props.body, models.body, sglang.body, ps.body);
+    if !reached {
+        return None;
+    }
+
     // Order matters: the first *positive* identification wins, and each test
     // keys on something only that server emits. `/v1/models` is last because
     // everyone serves it — it identifies vLLM only by a field, never by
@@ -265,14 +293,15 @@ pub async fn detect(http: &reqwest::Client, base_url: &str, api_key: Option<&str
         .and_then(|v| v.as_str())
         .filter(|v| !v.trim().is_empty());
     // Windows from `/models`, wanted by three of the four branches. Computed
-    // once; the ids half is dropped, which is why this is not `read_models`.
+    // once, and only the windows half is kept — the ids are the probe's
+    // business, not identification's.
     let models_windows = models
         .as_ref()
         .and_then(|m| read_models(m).map(|(_, w)| w))
         .unwrap_or_default();
 
     if let Some(version) = ollama_version {
-        return Detected {
+        return Some(Detected {
             profile: BackendProfile::Ollama,
             // Not on the OpenAI surface — Ollama's `/v1/models` carries no
             // window, because its context is a server setting
@@ -283,14 +312,14 @@ pub async fn detect(http: &reqwest::Client, base_url: &str, api_key: Option<&str
             context_windows: ps.as_ref().map(ps_context_windows).unwrap_or_default(),
             version: Some(version.to_string()),
             ..Detected::default()
-        };
+        });
     }
 
     if let Some(p) = props.as_ref() {
         // llama.cpp's `/props` is the only one of these shapes that carries a
         // slot count and a `default_generation_settings` block.
         if p.get("default_generation_settings").is_some() || p.get("total_slots").is_some() {
-            return Detected {
+            return Some(Detected {
                 profile: BackendProfile::LlamaCpp,
                 context_windows: models_windows,
                 context_cap: props_n_ctx(p),
@@ -304,7 +333,7 @@ pub async fn detect(http: &reqwest::Client, base_url: &str, api_key: Option<&str
                     .and_then(|v| v.as_str())
                     .map(str::to_owned),
                 ..Detected::default()
-            };
+            });
         }
     }
 
@@ -316,25 +345,25 @@ pub async fn detect(http: &reqwest::Client, base_url: &str, api_key: Option<&str
             .any(|key| v.get(*key).is_some())
     });
     if sglang_identified {
-        return Detected {
+        return Some(Detected {
             profile: BackendProfile::SgLang,
             context_windows: models_windows,
             ..Detected::default()
-        };
+        });
     }
 
     // `max_model_len` is vLLM's; nobody else we have met emits it. An
     // OpenAI-shaped `/models` with no window at all stays Generic, which is the
     // truthful answer for a hosted provider.
     if !models_windows.is_empty() {
-        return Detected {
+        return Some(Detected {
             profile: BackendProfile::VLlm,
             context_windows: models_windows,
             ..Detected::default()
-        };
+        });
     }
 
-    Detected::default()
+    Some(Detected::default())
 }
 
 /// What `profile`'s context endpoint says right now: a window per loaded
@@ -350,19 +379,20 @@ pub async fn read_context(
     base_url: &str,
     api_key: Option<&str>,
     profile: BackendProfile,
-) -> (HashMap<String, i64>, Option<i64>) {
-    let Some(endpoint) = profile.context_endpoint() else {
-        return (HashMap::new(), None);
-    };
+) -> Option<(HashMap<String, i64>, Option<i64>)> {
+    let endpoint = profile.context_endpoint()?;
     let url = format!("{}{endpoint}", server_root(base_url.trim_end_matches('/')));
-    let Some(body) = get_json(http, &url, api_key).await else {
-        return (HashMap::new(), None);
-    };
-    match profile {
+    // `None` when the endpoint did not answer usefully — a timeout, a 404
+    // after an upgrade, a revoked key. The caller must then keep the figure it
+    // had: overwriting with "nothing" drops every model on that backend onto
+    // the assumed window, which is the silent truncation this exists to
+    // prevent, arriving on a single bad tick.
+    let body = get_json(http, &url, api_key).await.body?;
+    Some(match profile {
         BackendProfile::Ollama => (ps_context_windows(&body), None),
         BackendProfile::LlamaCpp => (HashMap::new(), props_n_ctx(&body)),
         _ => (HashMap::new(), None),
-    }
+    })
 }
 
 /// The server root for a backend whose `base_url` ends in the OpenAI prefix.
@@ -381,11 +411,20 @@ pub fn server_root(base_url: &str) -> &str {
 /// carrying a JSON object — a 404 for an endpoint this server does not have
 /// is the *expected* outcome of most of these calls, not an error worth
 /// reporting.
-async fn get_json(
-    http: &reqwest::Client,
-    url: &str,
-    api_key: Option<&str>,
-) -> Option<serde_json::Value> {
+/// One identification request's outcome.
+///
+/// `reached` is the distinction that decides whether a `Generic` result may
+/// overwrite what we already knew. Collapsing "nothing answered" into "this is
+/// an ordinary OpenAI server" is how a backend could never leave a profile: an
+/// unreachable box looked exactly like a hosted provider, so the only safe
+/// rule was to never overwrite — and a genuinely repointed backend then kept
+/// the old server's profile forever.
+struct Probe {
+    reached: bool,
+    body: Option<serde_json::Value>,
+}
+
+async fn get_json(http: &reqwest::Client, url: &str, api_key: Option<&str>) -> Probe {
     let mut req = http.get(url).header(
         "user-agent",
         concat!("llm-gateway/", env!("CARGO_PKG_VERSION"), " detect"),
@@ -400,16 +439,36 @@ async fn get_json(
     // that is not a slow probe: it is a gateway that never finishes starting,
     // and an admin "Test" request that never returns.
     tokio::time::timeout(DETECT_TIMEOUT, async {
-        let resp = req.send().await.ok()?;
+        let Ok(resp) = req.send().await else {
+            return Probe {
+                reached: false,
+                body: None,
+            };
+        };
+        // An HTTP status — any status — means something is listening and
+        // speaking HTTP. A 404 for an endpoint this server does not have is
+        // the *expected* outcome of most of these calls.
         if !resp.status().is_success() {
-            return None;
+            return Probe {
+                reached: true,
+                body: None,
+            };
         }
-        let value: serde_json::Value = resp.json().await.ok()?;
-        value.is_object().then_some(value)
+        let body = resp
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .filter(serde_json::Value::is_object);
+        Probe {
+            reached: true,
+            body,
+        }
     })
     .await
-    .ok()
-    .flatten()
+    .unwrap_or(Probe {
+        reached: false,
+        body: None,
+    })
 }
 
 /// The `/models` entry shape, across the servers that put a window on it.
@@ -419,8 +478,8 @@ async fn get_json(
 /// simply a model with no known window.
 #[derive(Deserialize)]
 struct ModelEntry {
-    #[serde(default)]
-    id: String,
+    // No `id`: it is read straight off the raw value, so that a row whose
+    // window field has an unexpected shape still yields a routable model.
     #[serde(default)]
     max_model_len: Option<i64>,
     #[serde(default)]
@@ -462,24 +521,31 @@ pub fn read_models(body: &serde_json::Value) -> Option<(HashSet<String>, HashMap
         // backend's advertised set with an empty one and make it unroutable,
         // where the honest answer is "that row made no sense, the others are
         // fine".
+        // The id is read straight off the raw value, never through the typed
+        // entry. A row whose *window* field has an unexpected shape is still a
+        // model the backend serves, and dropping it with its window made that
+        // model unroutable — a live model taken out of service by one odd
+        // field, with nothing in any log.
+        let Some(id) = raw
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| !id.is_empty())
+        else {
+            continue;
+        };
         // Borrowed, not cloned: `&Value` is itself a `Deserializer`, so the
         // per-row tolerance costs nothing. Cloning here deep-copied every
         // entry's whole sub-tree — `permission` arrays and all — once per
         // model per backend on a five-second loop.
-        let Ok(entry) = ModelEntry::deserialize(raw) else {
-            continue;
-        };
-        if entry.id.is_empty() {
-            continue;
-        }
-        if let Some(window) = entry
-            .max_model_len
-            .or_else(|| entry.meta.as_ref().and_then(|meta| meta.n_ctx_train))
-            .filter(|w| *w > 0)
+        if let Ok(entry) = ModelEntry::deserialize(raw)
+            && let Some(window) = entry
+                .max_model_len
+                .or_else(|| entry.meta.as_ref().and_then(|meta| meta.n_ctx_train))
+                .filter(|w| *w > 0)
         {
-            windows.insert(entry.id.clone(), window);
+            windows.insert(id.to_string(), window);
         }
-        ids.insert(entry.id);
+        ids.insert(id.to_string());
     }
     Some((ids, windows))
 }
@@ -636,9 +702,13 @@ mod tests {
             {"id": "also-good", "max_model_len": 8192},
         ]});
         let (ids, windows) = read_models(&body).unwrap();
-        assert!(ids.contains("good") && ids.contains("also-good"));
         assert_eq!(windows.get("good"), Some(&32768));
         assert_eq!(windows.get("also-good"), Some(&8192));
+        // And the odd rows keep their ids: a model whose *window* is
+        // unreadable is still a model the backend serves. Dropping it made a
+        // live model unroutable over one malformed field.
+        assert_eq!(ids.len(), 4, "got {ids:?}");
+        assert!(!windows.contains_key("stringly"));
     }
 
     /// A body with no `data` array is not an empty catalogue — it is not a
@@ -736,7 +806,9 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None).await;
+        let detected = detect(&reqwest::Client::new(), &base(&server), None)
+            .await
+            .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::Ollama);
         assert_eq!(detected.version.as_deref(), Some("0.34.0"));
         assert_eq!(detected.context_windows.get("qwen3:0.6b"), Some(&4_096));
@@ -764,7 +836,9 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None).await;
+        let detected = detect(&reqwest::Client::new(), &base(&server), None)
+            .await
+            .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::Ollama);
         assert!(detected.context_windows.is_empty());
     }
@@ -794,7 +868,9 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None).await;
+        let detected = detect(&reqwest::Client::new(), &base(&server), None)
+            .await
+            .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::LlamaCpp);
         assert_eq!(detected.version.as_deref(), Some("b1234"));
         assert_eq!(detected.max_parallel, Some(4));
@@ -819,7 +895,9 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None).await;
+        let detected = detect(&reqwest::Client::new(), &base(&server), None)
+            .await
+            .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::VLlm);
         assert_eq!(detected.context_windows.get("Qwen/Qwen3"), Some(&262_144));
         assert_eq!(detected.context_cap, None);
@@ -843,7 +921,9 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None).await;
+        let detected = detect(&reqwest::Client::new(), &base(&server), None)
+            .await
+            .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::Generic);
     }
 
@@ -859,7 +939,9 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None).await;
+        let detected = detect(&reqwest::Client::new(), &base(&server), None)
+            .await
+            .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::Generic);
     }
 
@@ -876,17 +958,22 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None).await;
+        let detected = detect(&reqwest::Client::new(), &base(&server), None)
+            .await
+            .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected, Detected::default());
         assert_eq!(detected.profile.reasoning_dialect(), None);
         assert!(detected.profile.honors_tool_choice());
     }
 
-    /// Detection must never fail a caller: an unreachable server is `Generic`
-    /// with nothing filled in, which is how the gateway behaved before
-    /// profiles existed.
+    /// An unreachable server is *silence*, not an answer.
+    ///
+    /// Collapsing the two is how a backend could never leave a profile: an
+    /// unreachable box looked exactly like a hosted provider, so the only safe
+    /// rule was to never overwrite — and a genuinely repointed backend then
+    /// kept the old server's profile forever.
     #[tokio::test]
-    async fn an_unreachable_server_is_generic_rather_than_an_error() {
+    async fn an_unreachable_server_reports_silence_not_generic() {
         // A bound-then-dropped port: nothing is listening, so every probe
         // fails at connect rather than waiting out the timeout.
         let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -894,7 +981,10 @@ mod detect_tests {
         drop(dead);
 
         let detected = detect(&reqwest::Client::new(), &format!("http://{addr}/v1"), None).await;
-        assert_eq!(detected, Detected::default());
+        assert_eq!(
+            detected, None,
+            "nothing answered, so nothing may be concluded"
+        );
     }
 
     /// The identifying endpoints live at the server root, not under `/v1` —
@@ -912,7 +1002,9 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None).await;
+        let detected = detect(&reqwest::Client::new(), &base(&server), None)
+            .await
+            .expect("the mock answered, so identification must not report silence");
         assert_eq!(
             detected.profile,
             BackendProfile::Generic,
@@ -956,7 +1048,9 @@ mod live_ollama {
     #[tokio::test]
     #[ignore = "needs a running Ollama; set GATEWAY_LIVE_OLLAMA to its /v1 base url"]
     async fn a_real_ollama_is_identified() {
-        let detected = detect(&reqwest::Client::new(), &base_url(), None).await;
+        let detected = detect(&reqwest::Client::new(), &base_url(), None)
+            .await
+            .expect("a running Ollama must answer");
 
         assert_eq!(detected.profile, BackendProfile::Ollama);
         assert!(
@@ -991,6 +1085,7 @@ mod live_ollama {
             None,
         )
         .await
+        .body
         .expect("/v1/models should answer");
         let (ids, _) = read_models(&models).expect("an OpenAI model envelope");
         let model = ids.iter().next().expect("pull a model first").clone();
@@ -1005,7 +1100,9 @@ mod live_ollama {
             .send()
             .await;
 
-        let (windows, cap) = read_context(&http, &base, None, BackendProfile::Ollama).await;
+        let (windows, cap) = read_context(&http, &base, None, BackendProfile::Ollama)
+            .await
+            .expect("/api/ps must answer on a running Ollama");
         assert_eq!(cap, None, "Ollama states no server-wide cap");
         let window = windows
             .get(&model)

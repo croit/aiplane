@@ -149,7 +149,8 @@ impl ReasoningStyle {
     ///
     ///   1. an explicit admin choice on `/admin/models`, including `"none"`
     ///      (which lets an admin silence a model name-detection would enable);
-    ///   2. the spelling the *serving backend* dictates, when it dictates one;
+    ///   2. the spelling the *serving backend* dictates, when it dictates one
+    ///      **and** the model reasons at all;
     ///   3. auto-detection from the model name.
     ///
     /// Step 2 is what makes the effort control work on a server that
@@ -173,7 +174,25 @@ impl ReasoningStyle {
             Some("none") => Self::None,
             // Empty string / "auto" / unknown / missing → the backend, then
             // the model name.
-            _ => dialect.unwrap_or_else(|| Self::detect(model)),
+            //
+            // The backend may only *re-spell* reasoning, never switch it on.
+            // `detect` returns `None` for a model it does not recognise, and
+            // that answer is load-bearing: it is what stops a reasoning
+            // parameter being sent to a model that has no reasoning. Letting
+            // the dialect win outright made every model on an Ollama backend
+            // "thinking" — and Ollama does not ignore that, it refuses it:
+            //
+            //     HTTP 400  "gemma3:270m" does not support thinking
+            //
+            // So an Ollama serving one ordinary model went from "the effort
+            // knob does nothing" to "every request fails". Which half decides
+            // what is exactly the split this module is built on: whether a
+            // model thinks is the model's answer, how to say so is the
+            // server's.
+            _ => match Self::detect(model) {
+                Self::None => Self::None,
+                detected => dialect.unwrap_or(detected),
+            },
         }
     }
 
@@ -570,6 +589,36 @@ mod tests {
         assert_eq!(
             ReasoningStyle::resolve(None, None, "qwen3:8b"),
             ReasoningStyle::Qwen
+        );
+    }
+
+    /// A backend may re-spell reasoning; it may not switch it on.
+    ///
+    /// Ollama refuses a thinking parameter for a model without thinking —
+    /// `HTTP 400 "gemma3:270m" does not support thinking`, verified against
+    /// 0.34.0 — so letting the dialect win for every model turned "the effort
+    /// knob does nothing" into "every request fails".
+    #[test]
+    fn a_dialect_does_not_give_reasoning_to_a_model_that_has_none() {
+        // The model name says nothing about reasoning: stays off, whatever the
+        // server would like to call it.
+        assert_eq!(
+            ReasoningStyle::resolve(None, Some(ReasoningStyle::Ollama), "gemma3:270m"),
+            ReasoningStyle::None
+        );
+        assert_eq!(
+            ReasoningStyle::resolve(None, Some(ReasoningStyle::Ollama), "llama3.2"),
+            ReasoningStyle::None
+        );
+        // A model that does reason still gets the server's spelling.
+        assert_eq!(
+            ReasoningStyle::resolve(None, Some(ReasoningStyle::Ollama), "qwen3:0.6b"),
+            ReasoningStyle::Ollama
+        );
+        // And an admin who knows better is still not overruled.
+        assert_eq!(
+            ReasoningStyle::resolve(Some("ollama"), None, "gemma3:270m"),
+            ReasoningStyle::Ollama
         );
     }
 

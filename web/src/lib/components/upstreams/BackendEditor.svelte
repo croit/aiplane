@@ -225,7 +225,7 @@
 						<span class="badge badge-warning badge-sm">{t('backends-parallel-mismatch', { parallel: parallelWarning })}</span>
 					{/if}
 					<span class="text-base-content/60">
-						{testResult.detected_context ? t('admin-context-detected', { window: n(testResult.detected_context) }) : t('admin-context-unreported')}
+						{testResult.detected_context_window ? t('admin-context-detected', { window: n(testResult.detected_context_window) }) : t('admin-context-unreported')}
 					</span>
 				</div>
 			{/if}

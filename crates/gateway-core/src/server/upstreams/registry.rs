@@ -1536,12 +1536,19 @@ impl UpstreamRegistry {
     /// may land on any of them, so the budget has to fit the tightest.
     /// `None` when no backend reported a window for it.
     pub fn probed_context_window(&self, model: &str) -> Option<i64> {
-        self.data()
-            .pools
-            .values()
-            .flat_map(|p| p.backends.iter())
+        let data = self.data();
+        let backends = || data.pools.values().flat_map(|p| p.backends.iter());
+        // Only the backends a request could actually reach. Draining a box
+        // with a small window is how an operator lifts the ceiling it imposes
+        // on a model its healthier siblings also serve; counting it anyway
+        // made that remedy do nothing.
+        backends()
+            .filter(|b| b.is_available())
             .filter_map(|b| b.context_window(model))
             .min()
+            // With nothing available, the last-known figure still beats the
+            // global assumption — a pool that is down has not become roomier.
+            .or_else(|| backends().filter_map(|b| b.context_window(model)).min())
     }
 
     pub fn pools(&self) -> Vec<Arc<Pool>> {
@@ -1585,7 +1592,12 @@ impl UpstreamRegistry {
             .values()
             .filter(|p| p.kind == kind && access.allows(p))
             .flat_map(|p| p.backends.iter())
-            .filter(|b| b.serves_model(model))
+            // `is_available` for the same reason `Pool::serves_model` uses it:
+            // a drained backend takes no traffic, so it should not decide how
+            // a request that cannot reach it is phrased. Draining the small
+            // llama.cpp box is the operator's obvious remedy, and without this
+            // it changed nothing.
+            .filter(|b| b.is_available() && b.serves_model(model))
         {
             let profile = backend.profile();
             honors_tool_choice &= profile.honors_tool_choice();

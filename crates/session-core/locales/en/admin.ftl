@@ -276,5 +276,5 @@ admin-search-brave-key-clear = Remove the stored key
 # case worth warning about: the prompt is not compacted here, it is truncated
 # there, in silence.
 admin-context-detected = Detected: { $window } tokens
-admin-context-unreported = This backend does not report its context window. Check the server — `ollama ps` shows what was actually allocated.
+admin-context-unreported = This backend does not report a context window for this model. Set it here, or check the server.
 admin-context-exceeds-detected = This backend reports { $window } tokens. Higher values are not compacted — the server truncates them silently.

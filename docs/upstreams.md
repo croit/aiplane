@@ -55,7 +55,7 @@ The OpenAI wire is the right abstraction for *requests* and the wrong one for tw
 - **How much context does this model have?** vLLM reports `max_model_len` per model on `/models`. llama.cpp reports the model's trained context as `meta.n_ctx_train` and the context it was actually started with on `/props`. Ollama reports neither — its context is a server setting (`OLLAMA_CONTEXT_LENGTH`), divided by `OLLAMA_NUM_PARALLEL`, and invisible on the OpenAI surface; its own `/api/ps` does state what the running instance allocated, which on a default install is **4096**. Falling back to the global 32768 guess against that means the server truncates the prompt instead of the gateway compacting it. No error is raised anywhere; the model simply appears to forget the start of the conversation.
 - **How is "think harder" spelled?** Ollama re-encodes every request through its own API, so `chat_template_kwargs` never reaches the template no matter which model is loaded. A model called `qwen3:8b` got Qwen's spelling from its *name*, Ollama discarded the field without a word, and the effort control did nothing.
 
-So the gateway identifies the server. `upstreams::profile::detect` fires a handful of cheap GETs (`/api/version`, `/props`, `/v1/models`, `/get_model_info`) in parallel and resolves one of `vllm` | `ollama` | `llamacpp` | `sglang` | `generic`. **`generic` is not a failure** — it is the honest answer for hosted providers and anything unrecognised, and it reproduces exactly the pre-profile behaviour.
+So the gateway identifies the server. `upstreams::profile::detect` fires five cheap GETs (`/api/version`, `/props`, `/v1/models`, `/get_model_info`, `/api/ps`) in parallel and resolves one of `vllm` | `ollama` | `llamacpp` | `sglang` | `generic`. **`generic` is not a failure** — it is the honest answer for hosted providers and anything unrecognised, and it reproduces exactly the pre-profile behaviour.
 
 The operator never configures a profile and never picks a server name from a list. The profile exists so that "context" and "effort" stay one vocabulary in the UI while meaning different bytes on the wire.
 
@@ -97,7 +97,9 @@ Where nothing was detected there is no ceiling to compare against, so the field 
 
 ### Concurrency
 
-llama.cpp reports its slot count; nothing else does. Where the reported figure is **below** the configured `max_inflight`, the backend card says so. It is worth surfacing because the failure is invisible: Ollama runs one request per model by default (`OLLAMA_NUM_PARALLEL`) and queues up to 512 rather than rejecting, so the picker sees free slots, keeps dispatching, and back-pressure quietly stops applying. Nothing errors — it just gets slower.
+llama.cpp reports its slot count; where that is **below** the configured `max_inflight`, the backend card says so.
+
+Ollama has the more dangerous default — one request per model (`OLLAMA_NUM_PARALLEL`), queueing up to 512 rather than rejecting, so the picker sees free slots, keeps dispatching, and back-pressure quietly stops applying, with nothing erroring and everything getting slower. It reports that number nowhere, so **the badge cannot warn about it**. Set `max_inflight` to match `OLLAMA_NUM_PARALLEL` by hand.
 
 ### Routing rules
 
@@ -295,5 +297,5 @@ We do **not** transcode audio in the gateway — upstreams handle the formats th
 - Add, edit, or remove pools and backends at `/admin/upstreams`, then click **Apply changes** to reload the runtime registry (a sticky bar counts unapplied edits). Topology edits are saved to the database and take effect without a restart.
 - Add a model on a backend → it shows up in `/v1/models` and the chat picker within 5 s.
 - Drop a model → it disappears from routing within 5 s (next probe).
-- Want to verify? Check `tracing` output: every model-set change logs `advertised models updated added=[...] removed=[...] total=N`, and every apply logs one `identified backend profile=… context_windows=N` per backend.
+- Want to verify? Check `tracing` output: every model-set change logs `advertised models updated added=[...] removed=[...] total=N`, and every apply logs one `identified backend profile=… context_windows=N` per *enabled* backend (drained ones keep what they had).
 - Adding an Ollama or llama.cpp backend needs nothing special: point `base_url` at `…/v1`, apply, and the context window and effort spelling are worked out for you. A model shows no window until it has been used once — Ollama loads on demand — and then gets one within five seconds. A detected **4096** is Ollama's small-VRAM default and worth raising with `OLLAMA_CONTEXT_LENGTH`, not working around in the gateway.

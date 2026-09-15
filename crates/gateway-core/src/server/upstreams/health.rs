@@ -41,6 +41,11 @@ const DOWN_PROBE_INTERVAL: Duration = Duration::from_secs(1);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const FAILURE_THRESHOLD: u32 = 3;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+/// How many backends are identified at once. Each round is five concurrent
+/// GETs, so this is really a cap of `5 × N` in-flight requests on a client
+/// that deliberately pools no connections — and the backend count is entirely
+/// operator-controlled.
+const DETECT_CONCURRENCY: usize = 8;
 
 /// reqwest client for health probes: NO idle connection pooling. Probes fire
 /// every [`PROBE_INTERVAL`], so a pooled keep-alive would sit idle between
@@ -61,6 +66,17 @@ fn probe_client() -> reqwest::Client {
 /// model-set update per reachable backend before traffic starts.
 pub async fn spawn(registry: Arc<UpstreamRegistry>, db: Option<Pool>) {
     let http = probe_client();
+    // The generation this call is *for*, read before anything is awaited.
+    //
+    // Reading it afterwards let two overlapping applies both arm loops for the
+    // newest topology: A parks for up to two seconds, B bumps the generation
+    // and arms its loops, then A resumes, reads B's generation and B's pools,
+    // and arms a *second* loop for every backend. Both then pass the
+    // retirement check forever, so each backend is probed twice as often by
+    // two concurrent writers — permanently, and a double-click on Apply is
+    // enough to cause it.
+    let generation = registry.generation();
+    let pools = registry.pools();
     if let Some(db) = db.as_ref() {
         seed_remembered_models(&registry, db).await;
         seed_remembered_detection(&registry, db).await;
@@ -78,7 +94,7 @@ pub async fn spawn(registry: Arc<UpstreamRegistry>, db: Option<Pool>) {
         async move { detect_all(&http, &registry, db.as_ref()).await }
     });
     let mut initial = Vec::new();
-    for pool in registry.pools() {
+    for pool in &pools {
         for backend in &pool.backends {
             let http = http.clone();
             let pool_name = pool.name.clone();
@@ -117,8 +133,21 @@ pub async fn spawn(registry: Arc<UpstreamRegistry>, db: Option<Pool>) {
     // spawned for; a `reload()` bumps the generation and the loop retires
     // itself, so re-spawning here after a reload doesn't leak the previous
     // generation's loops (which hold detached `Backend` Arcs).
-    let generation = registry.generation();
-    for pool in registry.pools() {
+    //
+    // A newer apply landing while this one was awaiting means these loops
+    // would retire on their first tick anyway — and that apply arms its own.
+    // Skipping them keeps a burst of applies from briefly doubling the probe
+    // rate.
+    if registry.generation() != generation {
+        tracing::debug!(
+            generation,
+            current = registry.generation(),
+            "a newer topology was applied while this one was starting up; \
+             leaving its probe loops to it"
+        );
+        return;
+    }
+    for pool in &pools {
         for backend in &pool.backends {
             let backend = Arc::clone(backend);
             let pool_name = pool.name.clone();
@@ -217,18 +246,20 @@ async fn seed_remembered_models(registry: &UpstreamRegistry, db: &Pool) {
 /// Runs here rather than in the 5 s probe loop because this is exactly the
 /// moment the operator means by "save": the admin UI applies a topology by
 /// calling `topology_reload`, which rebuilds the registry and calls [`spawn`].
-/// Re-running it every five seconds would add four requests per backend per
-/// tick to learn something that only changes when a server is reconfigured.
+/// What a server *is* changes when someone reconfigures it, which is to say
+/// almost never — five requests per backend per tick would be five requests to
+/// learn nothing.
 ///
-/// The cost of that choice is honest and known: change a server's context
-/// setting and the gateway keeps the old value until the next apply or a press
-/// of the admin page's test button. It never *invents* one, which is the
-/// failure that mattered.
+/// What a server currently *has loaded* is a different question on a different
+/// clock, and [`probe_once`] reads that every tick. So a context setting
+/// changed on the upstream is picked up within five seconds without anyone
+/// applying anything; it is the *profile* that waits for the next apply.
 ///
-/// Failures are silent by design — `profile::detect` cannot fail; it returns
-/// `Generic` with nothing filled in, which is precisely how the gateway behaved
-/// before profiles existed.
 async fn detect_all(http: &reqwest::Client, registry: &UpstreamRegistry, db: Option<&Pool>) {
+    // Bounded fan-out. Each round is five concurrent GETs and each backend
+    // gets its own round, so an unbounded loop turns a fifty-backend apply
+    // into a ~250-socket burst against a client that pools nothing.
+    let permits = Arc::new(tokio::sync::Semaphore::new(DETECT_CONCURRENCY));
     let mut rounds = Vec::new();
     for pool in registry.pools() {
         for backend in &pool.backends {
@@ -242,9 +273,35 @@ async fn detect_all(http: &reqwest::Client, registry: &UpstreamRegistry, db: Opt
             let http = http.clone();
             let backend = Arc::clone(backend);
             let pool_name = pool.name.clone();
+            let permits = Arc::clone(&permits);
             rounds.push(tokio::spawn(async move {
+                let _permit = permits.acquire().await.ok()?;
                 let detected =
-                    profile::detect(&http, &backend.base_url, backend.api_key.as_deref()).await;
+                    profile::detect(&http, &backend.base_url, backend.api_key.as_deref())
+                        .await
+                        // Stamped here rather than by the database write, so the
+                        // live registry carries the same time the row does — the
+                        // admin page reads the registry, and was showing `null`
+                        // for every backend it had actually identified.
+                        .map(|d| profile::Detected {
+                            detected_at: Some(jiff::Timestamp::now().to_string()),
+                            ..d
+                        });
+
+                // Nothing answered. Keep what we already knew — an unreachable
+                // server is not a plain OpenAI server, and writing that
+                // conclusion would undo `seed_remembered_detection` and the
+                // reload carry-forward milliseconds after they ran, then
+                // persist the loss. A gateway restarted while the Ollama box
+                // was rebooting would forget it was Ollama, permanently.
+                let Some(detected) = detected else {
+                    tracing::info!(
+                        pool = %pool_name, backend = %backend.name,
+                        "backend did not answer identification; keeping the profile it had"
+                    );
+                    return None;
+                };
+
                 tracing::info!(
                     pool = %pool_name, backend = %backend.name,
                     profile = detected.profile.as_str(),
@@ -253,48 +310,44 @@ async fn detect_all(http: &reqwest::Client, registry: &UpstreamRegistry, db: Opt
                     max_parallel = ?detected.max_parallel,
                     "identified backend"
                 );
-
-                // Only a *positive* identification is allowed to overwrite
-                // what we already knew, exactly as `probe_once` replaces the
-                // model set only on a successful parse.
-                //
-                // `detect` cannot fail: an unreachable server comes back as
-                // `Generic` with nothing filled in. Writing that would undo
-                // `seed_remembered_detection` and the reload carry-forward
-                // milliseconds after they ran — and persist the loss, so a
-                // gateway restarted while the Ollama box happened to be
-                // rebooting would forget it was Ollama *permanently*, send
-                // `chat_template_kwargs` at it again, and put every model on
-                // it back on the 32768 guess. The failure this feature exists
-                // to remove, reintroduced by its own bookkeeping.
                 if detected.profile == profile::BackendProfile::Generic {
-                    // Not an error — but worth a line, because "generic" is
-                    // also what an unreachable server looks like, and the two
-                    // have very different fixes.
-                    tracing::debug!(
+                    // Not an error, and — unlike an unanswered round — a real
+                    // answer, so it is allowed to replace a stale profile.
+                    // That is what lets a backend repointed from an Ollama box
+                    // to a hosted API stop being treated as Ollama.
+                    tracing::info!(
                         pool = %pool_name, backend = %backend.name,
-                        "backend was not identified as a known server kind; it will be treated \
+                        "backend answered but is none of the server kinds we know; treating it \
                          as plain OpenAI-compatible (no separate context endpoint, reasoning \
                          spelling guessed from the model name)"
                     );
-                    return None;
                 }
                 backend.set_detected(&detected);
-                Some((backend.name.clone(), detected))
+                Some((backend.name.clone(), backend.base_url.clone(), detected))
             }));
         }
     }
     for round in rounds {
-        let Ok(Some((name, detected))) = round.await else {
-            continue;
-        };
-        if let Some(db) = db
-            && let Err(err) = upstreams_config::save_detected(db, &name, &detected).await
-        {
-            tracing::debug!(
-                backend = %name, error = %err,
-                "could not remember what detection found"
-            );
+        match round.await {
+            Ok(Some((name, base_url, detected))) => {
+                if let Some(db) = db
+                    && let Err(err) =
+                        upstreams_config::save_detected(db, &name, &base_url, &detected).await
+                {
+                    // A failure here means the profile does not survive a
+                    // restart, and every model on that backend drops to the
+                    // assumed window on the next boot. Not debug-level.
+                    tracing::warn!(
+                        backend = %name, error = %err,
+                        "could not remember what identification found; it will have to be \
+                         re-identified after a restart"
+                    );
+                }
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(error = %err, "a backend identification round did not finish");
+            }
         }
     }
 }
@@ -316,6 +369,16 @@ async fn seed_remembered_detection(registry: &UpstreamRegistry, db: &Pool) {
     };
     for pool in registry.pools() {
         for backend in &pool.backends {
+            // Only seed what is still blank, exactly as `seed_remembered_models`
+            // guards on an empty live set. `reload` has just carried a profile
+            // forward for every backend whose name *and* address are unchanged,
+            // and deliberately refused to for the rest — writing the stored row
+            // over the top would reinstate precisely the association it
+            // refused, and replace a `context_cap` the probe refreshes each
+            // tick with a staler one.
+            if backend.detected() != profile::Detected::default() {
+                continue;
+            }
             if let Some(detected) = remembered.get(&backend.name) {
                 backend.set_detected(detected);
             }
@@ -342,12 +405,22 @@ async fn probe_once(
     // state: Ollama loads models on first use, so at apply time `/api/ps`
     // reports nothing and a freshly applied topology would know no window for
     // any model. Now one arrives within five seconds of the model being used.
-    let context = profile::read_context(
-        http,
-        &backend.base_url,
-        backend.api_key.as_deref(),
-        backend.profile(),
-    );
+    //
+    // Skipped when discovery is off: that path returns before the writes
+    // below, so asking would have been one request every five seconds whose
+    // answer is thrown away.
+    let context = async {
+        if !backend.probe_models_enabled() {
+            return None;
+        }
+        profile::read_context(
+            http,
+            &backend.base_url,
+            backend.api_key.as_deref(),
+            backend.profile(),
+        )
+        .await
+    };
     // Send the backend's API key on the probe — same `Authorization:
     // Bearer …` header `proxy.rs` adds to real requests. Without it the
     // upstream's access log fills with anonymous-401s from the gateway
@@ -359,8 +432,7 @@ async fn probe_once(
     if let Some(key) = backend.api_key.as_deref() {
         req = req.bearer_auth(key);
     }
-    let (result, (endpoint_windows, context_cap)) =
-        tokio::join!(tokio::time::timeout(PROBE_TIMEOUT, req.send()), context);
+    let (result, context) = tokio::join!(tokio::time::timeout(PROBE_TIMEOUT, req.send()), context);
 
     let resp = match result {
         Ok(Ok(resp)) => resp,
@@ -489,13 +561,27 @@ async fn probe_once(
     backend.set_models(new_set);
     // `/models` first, then whatever the profile's own endpoint said — the
     // latter is the figure actually allocated, so it wins where both speak.
-    // Replaced wholesale, like the model set beside it: a model that is no
-    // longer loaded has no known window, and keeping the last one would be
-    // asserting something about a state we can no longer see.
-    let mut windows = windows;
-    windows.extend(endpoint_windows);
-    backend.set_context_windows(windows);
-    backend.set_context_cap(context_cap);
+    //
+    // Only written when that endpoint actually answered. A timeout or a 404
+    // after an upstream upgrade is not "this server has no context": clearing
+    // the figure on one bad tick drops every model on the backend onto the
+    // assumed window, which is the silent truncation the reading exists to
+    // prevent. `None` here leaves the last good answer standing, exactly as an
+    // unparseable `/models` body leaves the model set standing.
+    if let Some((endpoint_windows, context_cap)) = context {
+        let mut windows = windows;
+        windows.extend(endpoint_windows);
+        backend.set_context_windows(windows);
+        backend.set_context_cap(context_cap);
+    } else if backend.profile().context_endpoint().is_some() {
+        tracing::debug!(
+            pool = %pool_name, backend = %backend.name,
+            "the context endpoint did not answer; keeping the windows already known"
+        );
+        backend.set_context_windows(windows);
+    } else {
+        backend.set_context_windows(windows);
+    }
     if backend.auth_failed() {
         tracing::info!(
             pool = %pool_name, backend = %backend.name,
@@ -896,6 +982,12 @@ mod detection_wiring {
     /// `loaded` is what `/api/ps` reports: `false` is a model the server knows
     /// of but has not loaded, which is how Ollama behaves before first use.
     async fn ollama_server(loaded: bool) -> MockServer {
+        ollama_serving(loaded, "qwen3:0.6b").await
+    }
+
+    /// As above, but serving a named model — so a test can use one whose name
+    /// carries no reasoning family.
+    async fn ollama_serving(loaded: bool, model: &str) -> MockServer {
         let server = MockServer::start().await;
         route(
             &server,
@@ -905,7 +997,7 @@ mod detection_wiring {
         .await;
         let ps = if loaded {
             serde_json::json!({"models": [
-                {"name": "qwen3:0.6b", "model": "qwen3:0.6b", "context_length": 4096}
+                {"name": model, "model": model, "context_length": 4096}
             ]})
         } else {
             serde_json::json!({"models": []})
@@ -914,7 +1006,7 @@ mod detection_wiring {
         route(
             &server,
             "/v1/models",
-            serde_json::json!({"object": "list", "data": [{"id": "qwen3:0.6b"}]}),
+            serde_json::json!({"object": "list", "data": [{"id": model}]}),
         )
         .await;
         server
@@ -947,6 +1039,64 @@ mod detection_wiring {
         assert!(
             !serving.honors_tool_choice,
             "a final tool round here has to withhold the tools, not trust tool_choice"
+        );
+    }
+
+    /// The request body a turn against each kind of backend actually carries.
+    ///
+    /// Every other test here stops at identification — "the registry learned
+    /// it is Ollama" — and that is how a backend profile came to switch
+    /// reasoning *on* for models that have none. Ollama does not ignore a
+    /// thinking parameter it cannot honour, it refuses the request:
+    /// `HTTP 400 "gemma3:270m" does not support thinking`, verified against a
+    /// live 0.34.0. So the wiring has to be checked where it lands, in the
+    /// body, and not only where it is decided.
+    #[tokio::test]
+    async fn the_request_body_matches_the_backend_a_turn_would_reach() {
+        use crate::server::reasoning::{Effort, ReasoningOverrides, ReasoningStyle, apply_effort};
+
+        // A thinking model on Ollama: the effort control reaches it, spelled
+        // the way that server understands rather than the way its name implies.
+        let thinking = ollama_serving(true, "qwen3:0.6b").await;
+        let registry = registry_for(&thinking);
+        spawn(Arc::clone(&registry), None).await;
+        let dialect = registry
+            .serving_profile("qwen3:0.6b", PoolKind::Chat, &PoolAccess::all())
+            .dialect;
+        let style = ReasoningStyle::resolve(None, dialect, "qwen3:0.6b");
+        let mut body = serde_json::json!({"model": "qwen3:0.6b", "messages": []});
+        apply_effort(
+            style,
+            Effort::Max,
+            &ReasoningOverrides::default(),
+            &mut body,
+        );
+        assert_eq!(body["reasoning_effort"], serde_json::json!("max"));
+        assert!(
+            body.get("chat_template_kwargs").is_none(),
+            "the model name says Qwen, but this server discards that spelling"
+        );
+
+        // An ordinary model on the same kind of backend: nothing is sent, and
+        // that is the whole point — a thinking parameter here is a 400.
+        let plain = ollama_serving(true, "gemma3:270m").await;
+        let registry = registry_for(&plain);
+        spawn(Arc::clone(&registry), None).await;
+        let dialect = registry
+            .serving_profile("gemma3:270m", PoolKind::Chat, &PoolAccess::all())
+            .dialect;
+        let style = ReasoningStyle::resolve(None, dialect, "gemma3:270m");
+        let mut body = serde_json::json!({"model": "gemma3:270m", "messages": []});
+        apply_effort(
+            style,
+            Effort::Max,
+            &ReasoningOverrides::default(),
+            &mut body,
+        );
+        assert_eq!(
+            body,
+            serde_json::json!({"model": "gemma3:270m", "messages": []}),
+            "a model with no reasoning must leave the backend untouched"
         );
     }
 
