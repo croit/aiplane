@@ -16,6 +16,8 @@ This directory holds the design docs for the LLM gateway. The agent-facing entry
 | [`tools-rbac.md`](tools-rbac.md) | Tool registry, role→tool mapping, server-side execution loop |
 | [`tools-inventory.md`](tools-inventory.md) | Every tool id with its registration gate, toggle key, and whether it is chat-only (CI-drift-guarded) |
 | [`file-conversions.md`](file-conversions.md) | How uploads are read and documents produced/converted — tools, formats, expectations, limitations, gaps |
+| [`releases.md`](releases.md) | **Versioning + releases** — the date-based `YYMM.RELEASE.BUILD` scheme (shared with croit ERP), where the number comes from, image/chart tag ownership, and how a release is cut |
+| [`kubernetes.md`](kubernetes.md) | **Running on Kubernetes** — the Helm chart in `deploy/helm/`: step-by-step install, the session key, day-2 operations, backups, MCP sidecars, the sandbox options, and why it is one replica |
 | [`ocr.md`](ocr.md) | Internal document-OCR sidecar contract and Unlimited-OCR deployment requirements |
 | [`fileshare-rag.md`](fileshare-rag.md) | **Fileshare RAG** — indexing a file share (Nextcloud, ownCloud, OpenCloud, WebDAV) into RAG: the provider abstraction, extraction ladder, document profiles, structured queries, incremental sync |
 | [`nextcloud-rag-plan.md`](nextcloud-rag-plan.md) | The design record behind `fileshare-rag.md`: what was decided and why, what is deliberately not built, and the cited external protocol behaviour |

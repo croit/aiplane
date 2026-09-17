@@ -1,0 +1,339 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 croit GmbH
+#
+# Default values for the llm-gateway chart.
+#
+# The gateway has NO config file: pools, backends, models, groups, the OIDC
+# provider and every operator setting live in its database and are edited in
+# the web UI after the setup wizard. So this file is deliberately short — it
+# only describes *where the process runs*, not what it does.
+#
+# A minimal install needs nothing at all:
+#
+#   helm install llm-gateway ./deploy/helm/llm-gateway
+#
+# Everything below the gateway itself is off by default, because the product's
+# own defaults are off: sandbox, OCR, ComfyUI and S3 attachments all ship
+# disabled and are turned on in /admin/settings once their backing service
+# exists. Full walkthrough: docs/kubernetes.md.
+
+# -- Object names. Empty keeps "<release>-llm-gateway".
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Gateway image. Pin a digest or a :<git-sha> tag in production; `latest`
+# moves under you on every node that re-pulls.
+image:
+  repository: ghcr.io/croit/llm-gateway
+  # Empty means "follow the channel" and is what you want in almost every case:
+  #   * with autoUpdate on (the default) → `production`, the moving pointer at
+  #     the newest official release;
+  #   * with autoUpdate off             → `v<appVersion>`, this chart's own
+  #     immutable build;
+  #   * from a git checkout             → `latest`.
+  # Set it to pin something else, e.g. an older `v2609.1.0` to roll back.
+  tag: ""
+  # Empty derives it: `Always` for a moving tag (otherwise a node would keep
+  # serving the digest it happened to cache first), `IfNotPresent` for a pinned
+  # one.
+  pullPolicy: ""
+
+imagePullSecrets: []
+
+# ---------------------------------------------------------------------------
+# The one secret every deployment needs.
+#
+# GATEWAY_SESSION_KEY signs sessions AND derives the key that seals every
+# secret in the database (backend API keys, the OIDC client secret, per-user
+# OAuth tokens). Lose it and the database is unreadable — it is as precious as
+# the volume itself, and the two must be backed up together.
+# ---------------------------------------------------------------------------
+sessionKey:
+  # Preferred: a Secret you created and back up yourself. It must carry the
+  # key under `GATEWAY_SESSION_KEY`. Set this and the chart creates no Secret.
+  #
+  #   kubectl create secret generic llm-gateway-session \
+  #     --from-literal=GATEWAY_SESSION_KEY="$(openssl rand -hex 32)"
+  existingSecret: ""
+  # Or hand the value to Helm directly (it then lives in the release's own
+  # Secret, which is fine — but you still have to back it up). Must be 64 hex
+  # chars: the gateway hex-decodes it into a 32-byte key and refuses to boot on
+  # anything else. `openssl rand -hex 32`.
+  value: ""
+  # Otherwise the chart generates one on first install and re-reads it on every
+  # upgrade, so it stays stable.
+  #
+  # WARNING — GitOps: `helm template` runs without a cluster, so the lookup
+  # that preserves the key finds nothing and a FRESH key is rendered every
+  # time. If you render manifests instead of letting Helm talk to the cluster
+  # (Argo CD in manifest mode, `helm template | kubectl apply`, …), set this to
+  # false and use `existingSecret`.
+  autoGenerate: true
+
+# -- Public URL the browser reaches, e.g. https://gateway.example.com. Used to
+# build the OIDC callback the identity provider redirects to. Leave empty when
+# `ingress.enabled` is true and a host is set — the chart fills it in from the
+# ingress host. The setup wizard also derives it from the request (honouring
+# X-Forwarded-Proto), so this is belt-and-braces for odd proxy setups.
+publicUrl: ""
+
+# -- Comma-separated IdP group names that become gateway admins on first login
+# (GATEWAY_BOOTSTRAP_ADMIN_GROUPS). The setup wizard asks for this too; setting
+# it here is only useful for an unattended re-install against an existing IdP.
+bootstrapAdminGroups: ""
+
+# -- RUST_LOG override. Empty keeps the image's own sensible default.
+logLevel: ""
+
+# -- Extra environment for the gateway container, as a plain list of EnvVar.
+# The escape hatch for anything this chart does not model.
+extraEnv: []
+#  - name: GATEWAY_ENCRYPTION_KEY
+#    valueFrom:
+#      secretKeyRef: { name: llm-gateway-extra, key: GATEWAY_ENCRYPTION_KEY }
+
+# ---------------------------------------------------------------------------
+# Automatic updates.
+#
+# On by default: the images follow the moving `production` tag (the newest
+# official release) and a small CronJob restarts the gateway on a schedule so a
+# new release is actually picked up — Kubernetes does not notice a tag moving on
+# its own.
+#
+# Turning this off pins the images to the exact build this chart was published
+# with, and updating becomes `helm upgrade` when you decide to.
+#
+# Two honest caveats, because this restarts your gateway unattended:
+#
+#   * the deployment is a single replica, so a restart is a brief interruption
+#     (seconds; open chats reconnect and resume) — keep it in a quiet hour;
+#   * a release can carry database migrations, which then apply without anyone
+#     watching. Back the volume up (docs/kubernetes.md → Backups) and, if that
+#     trade is not acceptable for you, set enabled: false and update by hand.
+#
+# Note that this updates the *images*, not the chart. Chart changes (new
+# settings, new templates) arrive with `helm upgrade`, which with no --version
+# takes the newest released chart.
+# ---------------------------------------------------------------------------
+autoUpdate:
+  enabled: true
+  # Nightly at 04:00. Cron syntax, in `timeZone` (UTC if unset).
+  schedule: "0 4 * * *"
+  timeZone: ""
+  # Upstream Kubernetes' own kubectl image. Only used to run
+  # `kubectl rollout restart` against this release's StatefulSet.
+  image:
+    repository: registry.k8s.io/kubectl
+    tag: v1.34.0
+    pullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# Storage. One volume holds everything the gateway writes: the SQLite database
+# (which is also the session store) and the RAG index directory — the image
+# points GATEWAY_DATA_DIR at the mount, so there is only ever this one path.
+#
+# ReadWriteOnce is correct and not a limitation to work around: SQLite runs in
+# WAL mode, which requires every process to be on the same host, so the volume
+# is never shared. See docs/kubernetes.md → "Why one replica".
+# ---------------------------------------------------------------------------
+persistence:
+  size: 20Gi
+  # Empty uses the cluster's default StorageClass.
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  # Kept out of the volumeClaimTemplate on purpose: PVCs created by a
+  # StatefulSet survive `helm uninstall`, which is what you want for a database.
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Ingress. Off by default — plenty of clusters route through a Gateway API
+# resource, a service mesh or a hand-written Ingress, and guessing wrong costs
+# more than it saves.
+#
+# Two things matter for this app whichever way you route to it:
+#   * chat responses stream (SSE) — response buffering must be OFF, and read
+#     timeouts must be long enough for a slow model to think;
+#   * uploads go through the same host — the body-size cap must allow them.
+# The nginx annotations below do exactly that; translate them for your own
+# controller.
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: ""
+  host: gateway.example.com
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+  tls:
+    enabled: true
+    # Empty means "<release>-tls"; point it at the Secret your cert-manager
+    # Issuer (or your own certificate) writes.
+    secretName: ""
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    # No CPU limit on purpose: throttling a request that is streaming tokens
+    # shows up as a stuttering chat. Memory IS capped — a leak should kill the
+    # pod, not the node.
+    memory: 2Gi
+
+# -- Grace period for shutdown. The gateway drains connections for 15s on
+# SIGTERM (CONNECTION_DRAIN), so anything below ~20s cuts live chats off.
+terminationGracePeriodSeconds: 45
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# MCP sidecars.
+#
+# They run as extra containers in the gateway pod rather than as separate
+# Deployments. With a single gateway replica that is simply simpler: the
+# connector URL becomes http://localhost:<port>/mcp, there are no extra
+# Services, no cross-pod DNS, no Host-header allowlists, and one pod restart
+# covers the lot. A crashing sidecar is restarted on its own by the kubelet and
+# does not take the gateway with it.
+#
+# Want one somewhere else instead? Deploy it however you like and paste its URL
+# into /admin/connectors — the gateway only ever knows a URL, so the chart does
+# not need to model that case.
+#
+# After enabling any of these: /admin/connectors → the connector → set the URL
+# → Save → Enable. See docs/connectors.md.
+# ---------------------------------------------------------------------------
+mcp:
+  # Per-user Gmail / Calendar / Drive / Docs. The only sidecar that needs to be
+  # reachable from the browser: the Google OAuth consent redirects through it,
+  # so it gets its own hostname on the ingress.
+  googleWorkspace:
+    enabled: false
+    image:
+      repository: ghcr.io/taylorwilsdon/google_workspace_mcp
+      tag: latest
+      pullPolicy: IfNotPresent
+    port: 8000
+    # Public https URL of THIS sidecar (WORKSPACE_EXTERNAL_URL), e.g.
+    # https://gworkspace-mcp.example.com — the browser and the gateway must
+    # resolve it to the same place.
+    externalUrl: ""
+    # Where the gateway sends the user back after consent. Usually
+    # https://<gateway host>/integrations/callback.
+    allowedClientRedirectUris: ""
+    # core | extended | complete. `extended` adds mail-attachment download.
+    toolTier: core
+    # Secret carrying GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET and
+    # FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY. Required when enabled.
+    existingSecret: ""
+    # Its OAuth store gets a small volume of its own — deleting it disconnects
+    # every user, so it is kept on `helm uninstall`. A few megabytes is plenty;
+    # the minimum most storage classes provision is larger anyway.
+    persistence:
+      size: 1Gi
+      # Empty inherits `persistence.storageClass`.
+      storageClass: ""
+    ingress:
+      enabled: false
+      className: ""
+      host: gworkspace-mcp.example.com
+      annotations: {}
+      tls:
+        enabled: true
+        secretName: ""
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { memory: 1Gi }
+
+  # GitLab self-managed / CE bridge. Each request carries the user's own GitLab
+  # token, so there is nothing to configure per user and no OAuth — hence no
+  # public URL either.
+  gitlab:
+    enabled: false
+    image:
+      repository: zereight050/gitlab-mcp
+      tag: latest
+      pullPolicy: IfNotPresent
+    port: 3002
+    apiUrl: https://gitlab.example.com/api/v4
+    # readonly | modify | full
+    permissionMode: readonly
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { memory: 512Mi }
+
+  # Discord bot bridge (one shared bot for the whole gateway, not per user).
+  # Member search additionally needs the "Server Members Intent" enabled in the
+  # Discord developer portal.
+  discord:
+    enabled: false
+    image:
+      repository: ghcr.io/croit/discord-mcp
+      tag: latest
+      pullPolicy: IfNotPresent
+    port: 8085
+    # Secret carrying DISCORD_TOKEN. Required when enabled.
+    existingSecret: ""
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { memory: 1Gi }
+
+# ---------------------------------------------------------------------------
+# PDF-aware OCR sidecar. Adapts the gateway's internal /ocr contract to a
+# separately deployed Unlimited-OCR vLLM server (which this chart does NOT
+# deploy — it wants a GPU and a lifecycle of its own).
+#
+# Turning it on here is only step one of three — see docs/kubernetes.md → OCR.
+# ---------------------------------------------------------------------------
+ocr:
+  enabled: false
+  image:
+    repository: ghcr.io/croit/llm-gateway-ocr-sidecar
+    # Empty follows the same channel as the gateway image above.
+    tag: ""
+    pullPolicy: ""
+  port: 9100
+  # /v1 URL of the Unlimited-OCR vLLM server.
+  vllmBaseUrl: ""
+  model: baidu/Unlimited-OCR
+  # One inference call per page (false) keeps page numbers and survives a
+  # single page failing. true = one multi-image call per document: cheaper, no
+  # page structure.
+  multiImage: false
+  # Optional Secret carrying VLLM_API_KEY.
+  existingSecret: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
+# ---------------------------------------------------------------------------
+# Code sandbox — deliberately NOT part of this chart.
+#
+# The sandbox runner executes model-written code, so it needs a kernel-level
+# boundary (gVisor / Kata) that a generic cluster does not have by default, and
+# the gateway reaches it over plain HTTP at a URL stored in the database. That
+# makes it a setting, not a Kubernetes object: run the runner wherever it can
+# be isolated properly, then point /admin/settings → Code sandbox →
+# `sandbox.runner_url` at it.
+#
+# docs/kubernetes.md → "Sandbox" walks through the three options and their
+# trade-offs. What you must never do is mount a container socket into a pod to
+# get there.
+# ---------------------------------------------------------------------------

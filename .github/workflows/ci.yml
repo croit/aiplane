@@ -30,7 +30,10 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["*"]
+    # Release tags only: `vYYMM.RELEASE.BUILD` (docs/releases.md). Any other
+    # tag would reach `scripts/derive-version.sh`, which refuses to name a
+    # build after something that is not a version.
+    tags: ["v*"]
   pull_request:
 
 permissions:
@@ -48,6 +51,14 @@ env:
   # Companion images for the code-execution sandbox feature (see docs/sandbox.md).
   IMAGE_SANDBOX: ghcr.io/croit/llm-gateway-sandbox
   IMAGE_RUNNER: ghcr.io/croit/llm-gateway-sandbox-runner
+  # PDF-aware OCR adapter (deploy/ocr-sidecar). Optional at runtime, but it has
+  # to exist as an image: Kubernetes pulls, it cannot build from a context the
+  # way `docker compose` does.
+  IMAGE_OCR: ghcr.io/croit/llm-gateway-ocr-sidecar
+  # The Helm chart is published as an OCI artifact into the same registry as
+  # the images, so `helm install oci://…/llm-gateway --version <v>` needs no
+  # checkout of this repository.
+  CHART_REPO: oci://ghcr.io/croit/charts
   # The workspace compiles 2-3x in one job (clippy debug + test debug +
   # release build) and lumis pulls in ~116 tree-sitter grammars, so the
   # default-runner disk fills up. Dropping debuginfo from the dev/test
@@ -89,6 +100,31 @@ jobs:
 
       - name: mise run secrets
         run: mise run secrets
+
+  # One resolver for the whole pipeline. Every artifact (three images, the OCR
+  # sidecar, the Helm chart) is stamped from this single output, so they can
+  # never disagree about what build they belong to. The scheme and the rules
+  # live in docs/releases.md.
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+    steps:
+      # fetch-depth: 0 is load-bearing: `derive-version.sh` reads the git tags,
+      # and it deliberately FAILS on a shallow clone rather than invent a
+      # number that would mislabel every artifact of this run.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: derive
+        run: |
+          set -e
+          # Assign, then export/emit — `X=$(...)` propagates the script's
+          # failure, whereas embedding it in another command swallows it.
+          V=$(sh scripts/derive-version.sh)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Version: \`$V\`" >> "$GITHUB_STEP_SUMMARY"
 
   ci:
     name: lint + test + build
@@ -161,7 +197,7 @@ jobs:
     # Gated on `secrets` as well as `ci`: a red secret scan must not be able to
     # publish an image to GHCR, or the leak ends up baked into a pulled artifact
     # where rewriting git history no longer reaches it.
-    needs: [secrets, ci]
+    needs: [secrets, ci, version]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -193,11 +229,18 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE }}
+          # `v<derived version>` on EVERY build is what lets a chart pin one
+          # number and find the matching image whether it came from a release
+          # tag or from main. `production` is the moving "latest official
+          # release" pointer and is owned by tag builds alone — `latest` stays
+          # the rolling main build. One owner per moving tag, no races.
           tags: |
             type=ref,event=branch
             type=ref,event=tag
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=v${{ needs.version.outputs.version }}
+            type=raw,value=production,enable=${{ github.ref_type == 'tag' }}
           # metadata-action derives org.opencontainers.image.description from the
           # GitHub repo's description, which is empty here — so the package page on
           # GHCR reads "No description provided". Set the OCI labels explicitly so
@@ -208,6 +251,7 @@ jobs:
             org.opencontainers.image.title=LLM Gateway
             org.opencontainers.image.description=Authenticated, OpenAI-API-compatible LLM gateway — multi-backend routing, OIDC login, per-user API tokens, RBAC-gated server-side tools, RAG, and a built-in chat UI. One Rust binary, SQLite for state.
             org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
 
       # Only authenticate when we're actually going to push (not on PRs).
       - name: Log in to GHCR
@@ -227,6 +271,11 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Becomes GATEWAY_VERSION in the image; the gateway reads it at
+          # runtime (gateway-api/src/build_info.rs) and reports it at
+          # /api/v0/build, which is what the UI's version line shows.
+          build-args: |
+            GATEWAY_VERSION=${{ needs.version.outputs.version }}
 
   # Sandbox companion images. These are large (LibreOffice + Chromium + the
   # data/science stack) and self-contained (no Rust artifact needed for the
@@ -239,7 +288,7 @@ jobs:
     # Gated on `secrets` as well as `ci`: a red secret scan must not be able to
     # publish an image to GHCR, or the leak ends up baked into a pulled artifact
     # where rewriting git history no longer reaches it.
-    needs: [secrets, ci]
+    needs: [secrets, ci, version]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -262,15 +311,23 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE_SANDBOX }}
+          # `v<derived version>` on EVERY build is what lets a chart pin one
+          # number and find the matching image whether it came from a release
+          # tag or from main. `production` is the moving "latest official
+          # release" pointer and is owned by tag builds alone — `latest` stays
+          # the rolling main build. One owner per moving tag, no races.
           tags: |
             type=ref,event=branch
             type=ref,event=tag
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=v${{ needs.version.outputs.version }}
+            type=raw,value=production,enable=${{ github.ref_type == 'tag' }}
           labels: |
             org.opencontainers.image.title=LLM Gateway Sandbox
             org.opencontainers.image.description=Batteries-included workload image for the LLM gateway code-execution sandbox — python + data/science stack, LibreOffice, pandoc, typst, ffmpeg, duckdb, ripgrep/jq, tshark, tesseract OCR, headless Chromium. Runs under gVisor (runsc) / crun.
             org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -293,7 +350,7 @@ jobs:
     # Gated on `secrets` as well as `ci`: a red secret scan must not be able to
     # publish an image to GHCR, or the leak ends up baked into a pulled artifact
     # where rewriting git history no longer reaches it.
-    needs: [secrets, ci]
+    needs: [secrets, ci, version]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -316,15 +373,23 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE_RUNNER }}
+          # `v<derived version>` on EVERY build is what lets a chart pin one
+          # number and find the matching image whether it came from a release
+          # tag or from main. `production` is the moving "latest official
+          # release" pointer and is owned by tag builds alone — `latest` stays
+          # the rolling main build. One owner per moving tag, no races.
           tags: |
             type=ref,event=branch
             type=ref,event=tag
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=v${{ needs.version.outputs.version }}
+            type=raw,value=production,enable=${{ github.ref_type == 'tag' }}
           labels: |
             org.opencontainers.image.title=LLM Gateway Sandbox Runner
             org.opencontainers.image.description=Privileged helper for the LLM gateway sandbox — spawns single-use, gVisor-isolated sandboxes (holds the podman socket); the gateway talks to it over HTTP.
             org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -343,3 +408,129 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  # The OCR sidecar. It exists as a Containerfile that `docker compose` builds
+  # from a context — which Kubernetes cannot do, it only pulls. So it is built
+  # and published here like any other component. amd64 only, matching the other
+  # images; the Containerfile is arch-neutral (python:slim + PyMuPDF) if
+  # multi-arch is ever wanted.
+  ocr-sidecar-image:
+    name: ocr sidecar image
+    needs: [secrets, ci, version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Image tags + labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE_OCR }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=v${{ needs.version.outputs.version }}
+            type=raw,value=production,enable=${{ github.ref_type == 'tag' }}
+          labels: |
+            org.opencontainers.image.title=LLM Gateway OCR Sidecar
+            org.opencontainers.image.description=PDF-aware adapter between the LLM gateway's internal /ocr contract and an Unlimited-OCR vLLM server — converts PDFs page by page with PyMuPDF and calls the model with its request recipe.
+            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # PR: build only (validate the Containerfile). Branch/tag: build + push.
+      - name: Build and push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: deploy/ocr-sidecar
+          file: deploy/ocr-sidecar/Containerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # The Helm chart, validated on every run and published as an OCI artifact on
+  # pushes. Chart.yaml's committed `version`/`appVersion` are placeholders: the
+  # numbers that ship come from the same resolver as the images, so a chart and
+  # the image it defaults to always belong to the same build.
+  chart:
+    name: helm chart
+    needs: [secrets, ci, version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # install_args keeps this to the two tools the chart needs — the full
+      # toolchain (Rust, Node, typst) would cost minutes for a YAML lint. They
+      # are pinned here rather than in mise.toml's [tools] so a developer who
+      # never touches the chart does not download them on every `mise install`;
+      # `mise run helm-lint` pins the same versions.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: helm@3.19.0 kubeconform@0.7.0
+
+      # Renders the default install and the everything-on fixture, then checks
+      # both against the real Kubernetes schemas. This is what catches a
+      # mistyped field that YAML itself is perfectly happy with.
+      - name: mise run helm-lint
+        run: mise run helm-lint
+
+      # Two channels, one registry:
+      #
+      #   * a TAG build publishes the plain version (2609.1.0). `helm install`
+      #     with no --version resolves to the newest such chart, so "install
+      #     the latest release" needs no version lookup by the operator.
+      #   * a MAIN build publishes a SemVer PRERELEASE (2609.1.7-main.abc1234).
+      #     Helm ignores prereleases when it resolves "latest" — verified
+      #     against a registry, not assumed — so these are installable for
+      #     testing (`--devel`, or an exact --version) without ever becoming
+      #     what a normal install picks up.
+      #
+      # `--app-version` stays the plain number in both cases: it is what the
+      # chart derives its image tags from, and the images are tagged
+      # `v<plain version>`.
+      - name: Package + push chart
+        if: github.event_name != 'pull_request'
+        env:
+          V: ${{ needs.version.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            CHART_VERSION="$V"
+          else
+            CHART_VERSION="$V-main.$(git rev-parse --short HEAD)"
+          fi
+          # Helm keeps its own registry credentials (not ~/.docker/config.json),
+          # so docker/login-action would not help it.
+          echo "$GITHUB_TOKEN" | mise x helm@3.19.0 -- helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+          mise x helm@3.19.0 -- helm package deploy/helm/llm-gateway \
+            --version "$CHART_VERSION" --app-version "$V" --destination dist
+          mise x helm@3.19.0 -- helm push "dist/llm-gateway-$CHART_VERSION.tgz" "$CHART_REPO"
+          {
+            echo "### Helm chart published"
+            echo
+            echo '```bash'
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              echo "helm install llm-gateway ${CHART_REPO}/llm-gateway"
+            else
+              echo "helm install llm-gateway ${CHART_REPO}/llm-gateway --version $CHART_VERSION"
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+

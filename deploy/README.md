@@ -7,6 +7,7 @@ deployment methods are provided — pick one:
 |---|---|---|
 | **Docker Compose** | Docker / Docker Desktop hosts | [`compose.example.yml`](compose.example.yml) |
 | **systemd + Podman (Quadlet)** | rootful-podman hosts (RHEL/Debian/…) | [`quadlet/`](quadlet/) (+ its [README](quadlet/README.md)) |
+| **Helm / Kubernetes** | clusters | [`helm/llm-gateway/`](helm/llm-gateway/) (+ the walkthrough in [`docs/kubernetes.md`](../docs/kubernetes.md)) |
 
 ## Components & images
 
@@ -18,7 +19,7 @@ deployment methods are provided — pick one:
 | **discord-mcp** | `ghcr.io/croit/discord-mcp` | Discord bot bridge (channel + DM tools, plus full-roster cache + `fuzz_search_members`) backing the seeded **global** Discord connector (enabled + pointed at this bridge in `/admin/connectors`, see below). Our fork of `SaseQ/discord-mcp`. Optional. |
 | **sandbox-runner** | `ghcr.io/croit/llm-gateway-sandbox-runner` | Code-execution runner (`run_in_sandbox` etc.). Optional; needs gVisor. |
 | **egress-proxy** | `docker.io/ubuntu/squid` | Allowlisting proxy for networked sandbox runs. Optional. |
-| **ocr-sidecar** | local `deploy/ocr-sidecar` image | PDF-aware Unlimited-OCR adapter. Optional; needs an external Unlimited-OCR vLLM service. |
+| **ocr-sidecar** | `ghcr.io/croit/llm-gateway-ocr-sidecar` | PDF-aware Unlimited-OCR adapter. Optional; needs an external Unlimited-OCR vLLM service. (Compose still builds it locally from [`ocr-sidecar/`](ocr-sidecar/); the published image is what Kubernetes pulls.) |
 | sandbox workload | `ghcr.io/croit/llm-gateway-sandbox` | The "gold image" the runner spawns per job (pulled by the runner, not run directly). |
 
 Per-host secrets live in env files; everything an operator would once have put
@@ -85,6 +86,32 @@ browser and a native gateway both reach the MCP at `http://localhost:8000`):
 ```bash
 docker compose -f deploy/compose.example.yml up google-workspace-mcp
 ```
+
+## Quick start — Kubernetes (Helm)
+
+```bash
+kubectl create namespace llm-gateway
+kubectl -n llm-gateway create secret generic llm-gateway-session \
+  --from-literal=GATEWAY_SESSION_KEY="$(openssl rand -hex 32)"
+
+helm install llm-gateway oci://ghcr.io/croit/charts/llm-gateway -n llm-gateway \
+  --version 2609.1.0 \
+  --set sessionKey.existingSecret=llm-gateway-session \
+  --set ingress.enabled=true --set ingress.host=gateway.example.com
+```
+
+The chart is published next to the images and carries the same
+`YYMM.RELEASE.BUILD` number, so `--version 2609.1.0` pins the gateway, the OCR
+sidecar and the chart to one build ([`docs/releases.md`](../docs/releases.md)).
+
+A default install is four objects: StatefulSet (1 replica), PVC, Service,
+ServiceAccount. The MCP sidecars run as extra containers in the same pod and
+are enabled per connector; the code sandbox stays outside the chart, because it
+needs a gVisor/Kata host and the gateway only ever knows its URL.
+
+The full walkthrough — setup wizard, backups, sidecar credentials, the sandbox
+options and why the deployment is single-replica — is in
+[`docs/kubernetes.md`](../docs/kubernetes.md).
 
 ## Quick start — Quadlet (podman)
 

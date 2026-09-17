@@ -381,6 +381,26 @@ run = [
 description = "Advisory: flag panic-prone `.unwrap()`/`.expect()` in library/binary code (warnings only — NOT part of `ci`). The main `lint` gate runs clippy with `-D warnings`, so promoting these workspace-wide would turn every one of the ~2000 existing (mostly test/mutex/infallible) sites into a hard error. This task instead surfaces them as warnings so new panic sites in request-handling paths are visible in review without a mass rewrite. Excludes test targets (`--all-targets` is intentionally omitted)."
 run = "cargo clippy --workspace -- -W clippy::unwrap_used -W clippy::expect_used"
 
+[tasks.version]
+description = "Print the version this commit would build as (YYMM.RELEASE.BUILD). The same resolver CI uses, so `mise run version` and the number on a published image or chart can never disagree. Fails rather than guessing when the tags are not fetched — see docs/releases.md."
+dir = "{{ config_root }}"
+run = "sh scripts/derive-version.sh"
+
+[tasks.helm-lint]
+description = "Render and validate the Kubernetes chart (deploy/helm/llm-gateway): `helm lint`, then `helm template` for both the default install and `ci/full-values.yaml` (every sidecar on), piped through kubeconform against the real Kubernetes API schemas — which is what catches a mistyped field that YAML itself is perfectly happy with. Not part of `ci`: nothing in the chart can break a Rust build, and the two tools are fetched on demand rather than added to [tools] so `mise install` stays lean. Run it after touching anything under deploy/helm/."
+dir = "{{ config_root }}"
+run = '''
+set -eu
+chart=deploy/helm/llm-gateway
+out=$(mktemp -d)
+trap 'rm -rf "$out"' EXIT
+
+mise x helm@3.19.0 -- helm lint "$chart"
+mise x helm@3.19.0 -- helm template gw "$chart" > "$out/default.yaml"
+mise x helm@3.19.0 -- helm template gw "$chart" -f "$chart/ci/full-values.yaml" > "$out/full.yaml"
+mise x kubeconform@0.7.0 -- kubeconform -strict -summary "$out/default.yaml" "$out/full.yaml"
+'''
+
 [tasks.audit]
 description = "Vulnerability audit across every dependency ecosystem: Rust (cargo-audit vs RustSec), npm (npm audit), and the sandbox image's Python lock (pip-audit, in a container). Residual, justified Rust advisories live in .cargo/audit.toml — each with the reason it cannot be fixed by upgrading. Not wired into `ci` on purpose: an advisory published overnight would turn an unrelated PR red, and a supply-chain finding deserves a human reading it rather than a reflexive re-run."
 dir = "{{ config_root }}"

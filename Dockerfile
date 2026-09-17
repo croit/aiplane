@@ -146,8 +146,16 @@ USER gateway
 # GATEWAY_STATIC_DIR serves the SPA copied to /usr/share/gateway/ui above.
 # Unset in dev, where a missing directory only 503s the UI and leaves the
 # API and proxy working; see rama_server::spa.
+# Release identity. Produced by `scripts/derive-version.sh` and passed in by CI
+# as a build argument; empty in a hand-rolled build, where the gateway falls
+# back to the crate version. It is an ENV rather than something compiled into
+# the binary so that stamping a version never means recompiling — see
+# docs/releases.md.
+ARG GATEWAY_VERSION=""
+
 ENV IP=0.0.0.0 \
     PORT=8080 \
+    GATEWAY_VERSION=${GATEWAY_VERSION} \
     GATEWAY_DATA_DIR=/var/lib/gateway \
     RUST_LOG=info,gateway=info,gateway_core=info,gateway_features=info,gateway_runtime=info,gateway_tools=info,gateway_api=info \
     PDFIUM_LIB_PATH=/usr/local/lib/libpdfium.so \

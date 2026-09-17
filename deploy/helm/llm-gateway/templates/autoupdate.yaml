@@ -1,0 +1,113 @@
+{{- /*
+SPDX-License-Identifier: AGPL-3.0-only
+Copyright (C) 2026 croit GmbH
+
+Automatic updates.
+
+Kubernetes does not restart a pod when the tag it was pulled from starts
+pointing somewhere else, so "follow the latest release" needs two halves: a
+moving tag pulled with `Always` (see the imageTag/imagePullPolicy helpers), and
+something that restarts the pod on a schedule. This is that something: a
+CronJob that runs `kubectl rollout restart` against this release's StatefulSet.
+
+Deliberately a restart and not a diff: it is idempotent, has no state to get
+wrong, and needs no registry credentials or webhook. If the tag has not moved,
+the node pulls the same digest back and the pod comes up on the image it was
+already running.
+
+Two things to know before leaving this on — both are covered in
+docs/kubernetes.md:
+
+  * the deployment is a single replica, so a restart is a short interruption
+    (in-flight chats reconnect; the default schedule is a quiet hour), and
+  * a new release may carry database migrations, which then apply unattended.
+
+The ServiceAccount here is separate from the gateway's and holds the narrowest
+grant that does the job: patch this one StatefulSet, by name, in this namespace.
+*/ -}}
+{{- if .Values.autoUpdate.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "llm-gateway.fullname" . }}-autoupdate
+  labels:
+    {{- include "llm-gateway.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "llm-gateway.fullname" . }}-autoupdate
+  labels:
+    {{- include "llm-gateway.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    # `resourceNames` is the point: this token can restart the gateway and
+    # nothing else in the namespace.
+    resourceNames: [{{ include "llm-gateway.fullname" . | quote }}]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "llm-gateway.fullname" . }}-autoupdate
+  labels:
+    {{- include "llm-gateway.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "llm-gateway.fullname" . }}-autoupdate
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "llm-gateway.fullname" . }}-autoupdate
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "llm-gateway.fullname" . }}-autoupdate
+  labels:
+    {{- include "llm-gateway.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.autoUpdate.schedule | quote }}
+  {{- with .Values.autoUpdate.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  # A second restart while the first is still rolling would only fight it.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  # Skip a run that the cluster was too busy (or asleep) to start on time
+  # rather than firing it hours late, in the middle of the working day.
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: {{ include "llm-gateway.fullname" . }}-autoupdate
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: kubectl
+              image: "{{ .Values.autoUpdate.image.repository }}:{{ .Values.autoUpdate.image.tag }}"
+              imagePullPolicy: {{ .Values.autoUpdate.image.pullPolicy }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              args:
+                - rollout
+                - restart
+                - statefulset/{{ include "llm-gateway.fullname" . }}
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+{{- end }}

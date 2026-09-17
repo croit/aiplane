@@ -646,7 +646,20 @@ Operational notes:
 
 For hosts running Docker rather than podman, [`deploy/compose.example.yml`](deploy/compose.example.yml) is the equivalent stack (gateway + self-hosted **Google Workspace** MCP server, plus the sandbox runner and egress proxy under the `sandbox` profile). The optional PDF OCR sidecar starts under the `ocr` profile; it requires `OCR_VLLM_BASE_URL` pointing at an Unlimited-OCR vLLM service.
 
-All deployment-relevant docs — both methods, every component, the full Google Workspace connector setup — live in **[`deploy/README.md`](deploy/README.md)**.
+### Kubernetes
+
+[`deploy/helm/llm-gateway/`](deploy/helm/llm-gateway/) is a Helm chart with the same hardening. A default install is four objects — StatefulSet (one replica), PVC, Service, ServiceAccount — and needs no values at all:
+
+```bash
+kubectl create namespace llm-gateway
+helm install llm-gateway oci://ghcr.io/croit/charts/llm-gateway -n llm-gateway \
+  --version 2609.1.0 \
+  --set ingress.enabled=true --set ingress.host=gateway.example.com
+```
+
+The chart is published as an OCI artifact next to the images and carries the same version, so `--version 2609.1.0` pins chart and images to one build ([`docs/releases.md`](docs/releases.md)). The MCP bridges (Google Workspace, GitLab CE, Discord) and the OCR adapter run as extra containers in the same pod, each behind an `enabled` flag; the code sandbox stays outside the chart, because it needs a gVisor/Kata host and the gateway reaches it through a URL in its settings. [`docs/kubernetes.md`](docs/kubernetes.md) is the step-by-step guide, including backups, the sandbox options and why the deployment is deliberately single-replica.
+
+All deployment-relevant docs — every method, every component, the full Google Workspace connector setup — live in **[`deploy/README.md`](deploy/README.md)**.
 
 ## Documentation
 
