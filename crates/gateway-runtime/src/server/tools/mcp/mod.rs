@@ -291,9 +291,9 @@ fn map_call_result(res: CallToolResult) -> ToolResult {
     let mut texts: Vec<String> = Vec::new();
     let mut images: Vec<Value> = Vec::new();
     for c in &res.content {
-        // Match the content enum directly (via `Content`'s deref to
-        // `RawContent`) rather than serialising every block just to read a
-        // tag. Image data is already base64 (no re-encode).
+        // Match the `ContentBlock` enum directly rather than serialising
+        // every block just to read a tag. Image data is already base64
+        // (no re-encode).
         if let Some(text) = c.as_text() {
             texts.push(text.text.clone());
         } else if let Some(image) = c.as_image() {
@@ -344,9 +344,9 @@ fn map_call_result(res: CallToolResult) -> ToolResult {
 mod tests {
     use super::{map_call_result, sanitize_tool_id};
     use crate::server::tools::{ToolError, extract_content_parts};
-    use rmcp::model::{CallToolResult, Content};
+    use rmcp::model::{CallToolResult, ContentBlock};
 
-    fn result(content: Vec<Content>, is_error: bool) -> CallToolResult {
+    fn result(content: Vec<ContentBlock>, is_error: bool) -> CallToolResult {
         // `CallToolResult` is `#[non_exhaustive]` but derives `Default`, so
         // build via default + field assignment rather than a struct literal.
         let mut r = CallToolResult::default();
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn text_result_lands_as_unquoted_text_part() {
-        let out = map_call_result(result(vec![Content::text("hello world")], false)).unwrap();
+        let out = map_call_result(result(vec![ContentBlock::text("hello world")], false)).unwrap();
         let parts = extract_content_parts(&out).expect("text wrapped as content-parts");
         assert_eq!(parts[0]["type"], "text");
         assert_eq!(parts[0]["text"], "hello world");
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn image_result_becomes_image_url_part() {
         let out = map_call_result(result(
-            vec![Content::image(
+            vec![ContentBlock::image(
                 "BASE64DATA".to_string(),
                 "image/png".to_string(),
             )],
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn error_result_maps_to_tool_error_with_text() {
-        let err = map_call_result(result(vec![Content::text("boom")], true)).unwrap_err();
+        let err = map_call_result(result(vec![ContentBlock::text("boom")], true)).unwrap_err();
         match err {
             ToolError::Failed(msg) => assert!(msg.contains("boom"), "{msg}"),
             other => panic!("expected Failed, got {other:?}"),

@@ -41,7 +41,7 @@
 //! file.
 
 use gateway_features::server::chat_attachments::{self, UploadOutcome};
-use rmcp::model::{CallToolResult, Content, RawContent};
+use rmcp::model::{CallToolResult, ContentBlock};
 use serde_json::Value;
 use session_core::db as chat;
 
@@ -298,10 +298,10 @@ pub(crate) async fn spill_payloads(
     ctx: &ToolContext,
 ) -> CallToolResult {
     let mut budget = MAX_SPILLS_PER_CALL;
-    let mut content: Vec<Content> = Vec::with_capacity(res.content.len());
+    let mut content: Vec<ContentBlock> = Vec::with_capacity(res.content.len());
     for block in std::mem::take(&mut res.content) {
-        match &*block {
-            RawContent::Text(text) => {
+        match &block {
+            ContentBlock::Text(text) => {
                 let chunks = split_base64(&text.text);
                 if chunks.iter().all(|c| matches!(c, Chunk::Text(_))) {
                     content.push(block);
@@ -318,9 +318,9 @@ pub(crate) async fn spill_payloads(
                         }
                     }
                 }
-                content.push(Content::text(rebuilt));
+                content.push(ContentBlock::text(rebuilt));
             }
-            RawContent::Resource(resource) => {
+            ContentBlock::Resource(resource) => {
                 let rmcp::model::ResourceContents::BlobResourceContents {
                     blob,
                     mime_type,
@@ -340,7 +340,7 @@ pub(crate) async fn spill_payloads(
                     filename: filename_from_uri(uri),
                     mime: mime_type.clone(),
                 };
-                content.push(Content::text(
+                content.push(ContentBlock::text(
                     handle(server, tool, payload, ctx, &mut budget).await.line(),
                 ));
             }
@@ -823,7 +823,7 @@ mod tests {
         let ctx = ToolContext::for_test(pool);
         let payload = b64(9000);
         let mut res = CallToolResult::default();
-        res.content = vec![Content::text(format!(
+        res.content = vec![ContentBlock::text(format!(
             "Filename: invoice.pdf\nContent-Type: application/pdf\n\n{payload}\n"
         ))];
 
@@ -860,7 +860,7 @@ mod tests {
             .unwrap();
         let ctx = ToolContext::for_test(pool);
         let mut res = CallToolResult::default();
-        res.content = vec![Content::text("From: a@example.com\nSubject: hi\n")];
+        res.content = vec![ContentBlock::text("From: a@example.com\nSubject: hi\n")];
 
         let out = spill_payloads("s", "t", res, &ctx).await;
         assert_eq!(
