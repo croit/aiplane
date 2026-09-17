@@ -1,14 +1,78 @@
-# LLM Gateway
+# croit LLM Gateway
+
+**Make any LLM agentic.**
+
+croit LLM Gateway is a self-hosted AI infrastructure layer that sits between your applications and your models. It speaks the OpenAI API on both sides, so the client you already have keeps working — and everything that a plain chat-completions call cannot do happens *inside* the gateway: server-side agent execution, MCP connectors and tools, RAG, memory, and the identity, RBAC, quotas and usage accounting an organisation needs before it hands models to everyone.
+
+Point an existing OpenAI SDK at it and the model can search the web, fetch a URL, run code in a throwaway sandbox, render a document or query your own indexed corpora **during** the completion. Your application still makes one ordinary request and receives one ordinary answer. No agent framework, no client rewrite.
+
+**Private inference is the first-class case.** vLLM, SGLang, llama.cpp and Ollama are recognised for what they are, not treated as one generic OpenAI endpoint: the gateway learns each backend's real context window and how that server spells "think harder", so long conversations are compacted here instead of being truncated there in silence. Hosted providers and OpenAI-compatible aggregators plug in exactly the same way.
+
+**Who it is for:** platform and infrastructure teams who run their own GPUs (or plan to), have to give employees and applications governed access to models, and would rather add one layer than rebuild every application around an agent SDK.
+
+It ships as a single self-hosted Rust binary with SQLite for state — no vector database, no message broker, no separate frontend to deploy. AGPL-3.0.
 
 ![Architecture at a glance: internal users reach the gateway through the chat UI, API tokens, or their own software (OIDC-authenticated); the gateway fans out to self-hosted GPUs and cloud providers behind one OpenAI-compatible API, with Atlassian, GitLab, GitHub, Google, scheduled actions, webhooks, skills, RAG, sandbox and RBAC hanging off it.](docs/img/architecture.webp)
 
-**One endpoint for all your LLM backends — that also makes them agentic.** LLM Gateway is an OpenAI-API-compatible reverse proxy: point any OpenAI SDK at it and it routes across your self-hosted and cloud models (health checks, failover, stable aliases), then runs tools **mid-completion** — web search, code sandbox, document rendering, RAG, per-user MCP connectors — so plain clients get tool use with zero agent code of their own. Team-ready with OIDC login, per-user tokens, and RBAC, plus a built-in chat UI for people who don't speak curl. Ships as a single self-hosted binary (Rust, SQLite) — no compose file, no vector DB, no separate frontend.
+## How it fits
 
-![The built-in chat UI answering a question by calling the web-search tool mid-completion — the reasoning step, the tool calls, and the final markdown answer all render inline.](docs/img/chat.png)
+```text
+        Your applications and OpenAI-compatible clients
+    (OpenAI SDKs, Claude Code, OpenCode, Open WebUI, curl)
+                            |
+                     OpenAI / Anthropic wire
+                            |
+                            v
+                   croit LLM Gateway
+   +-------------------------------------------------+
+   |  Agent runtime      tools run mid-completion     |
+   |  MCP connectors     per-user, OAuth or token     |
+   |  RAG + memory       your corpora, durable facts  |
+   |  Auth + RBAC        OIDC login, gwk_… tokens     |
+   |  Routing            pools, aliases, failover     |
+   |  Usage + limits     per user / token / model     |
+   +-------------------------------------------------+
+                            |
+              one OpenAI-compatible client out
+                            |
+       +--------------------+--------------------+
+       |                    |                    |
+     vLLM               SGLang           hosted OpenAI-
+   llama.cpp            Ollama          compatible APIs
+                                     (OpenAI, OpenRouter,
+                                        LiteLLM proxy, …)
+```
+
+Everything in the middle box is the part a reverse proxy does not give you, and the reason to put the gateway in the path at all.
+
+## See it work
+
+An ordinary OpenAI client. The only change is `base_url`:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="https://gateway.example.com/v1", api_key="gwk_…")
+
+answer = client.chat.completions.create(
+    model="qwen",                       # a stable alias; the real model can change underneath
+    messages=[{"role": "user", "content":
+               "What did we ship in the billing service last week? "
+               "Check our repo index and write the release note."}],
+)
+print(answer.choices[0].message.content)
+```
+
+One request in, one finished answer out. In between, the gateway offered the model the tools this token is allowed to use, the model called `rag_search` over your indexed repository and then `search_web` to check an upstream changelog, and the gateway executed each call and fed the result back — several model round-trips the client never saw. Your code has no tool loop, no `tool_calls` branch and no agent framework in it.
+
+The same is true of `POST /v1/messages`, so [Claude Code](#claude-code-against-your-own-models) points at your own models with two environment variables.
 
 ## Contents
 
 - [What it does](#what-it-does)
+- [Use cases](#use-cases)
+- [Works with your stack](#works-with-your-stack)
+- [Try it](#try-it)
 - [Tools the model can call](#tools-the-model-can-call)
 - [The built-in web UI](#the-built-in-web-ui)
 - [Scheduled actions](#scheduled-actions)
@@ -19,7 +83,7 @@
 - [Integrations (per-user MCP connectors)](#integrations-per-user-mcp-connectors)
 - [Claude Code against your own models](#claude-code-against-your-own-models)
 - [OpenCode against your own models](#opencode-against-your-own-models)
-- [Quick start (local development)](#quick-start-local-development)
+- [Quick start (from source)](#quick-start-from-source)
 - [Setup wizard](#setup-wizard)
 - [Configuration](#configuration)
   - [Chat attachments (S3)](#chat-attachments-s3)
@@ -29,28 +93,88 @@
   - [HTTP endpoints](#http-endpoints)
 - [Production deployment (container + systemd)](#production-deployment-container--systemd)
   - [Docker Compose](#docker-compose)
+  - [Kubernetes](#kubernetes)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
 
 ## What it does
 
+Roughly in the order that matters when you are deciding whether to put this in your path.
+
 - **OpenAI-compatible API** — `POST /v1/chat/completions` (streaming + non-streaming), `POST /v1/embeddings`, `POST /v1/images/generations` + `POST /v1/images/edits`, `POST /v1/audio/transcriptions`, `POST /v1/audio/speech` (text-to-speech, when a speech pool is configured), and `GET /v1/models`. Point any OpenAI SDK at it.
 - **Anthropic-compatible API** — `POST /v1/messages` (streaming + non-streaming) and `POST /v1/messages/count_tokens`, so **[Claude Code](#claude-code-against-your-own-models) can be pointed straight at the gateway** and run against whatever models you serve. Same routing, tokens, limits, tools and usage accounting as the OpenAI surface; the gateway translates between the two dialects.
-- **Multi-backend routing** — named upstream pools (`chat` / `transcription` / `embedding` / `image` / `speech` kinds). Each pool load-balances across its backends with per-backend health probes and a per-backend maintenance switch that takes effect on the next request. Models are discovered live from each backend's `/models` endpoint, so loading a model on a backend makes it routable with no config change.
 - **Any OpenAI-compatible server, without per-server settings** — vLLM, **Ollama**, **llama.cpp**, SGLang or a hosted provider. The gateway identifies what each backend is and works out the things the OpenAI wire does not carry: the real context window (so long conversations are compacted here rather than truncated there, in silence) and how that server spells "think harder" (so the effort control actually reaches the model). Detected on apply and on a **Test** button, overridable per model, and warned about when an override exceeds what the server serves. See [`docs/upstreams.md`](docs/upstreams.md#backend-profiles-what-kind-of-server-is-this).
-- **KV-cache-aware routing** — pick `prefix_affinity` and a conversation keeps landing on the replica that already holds its KV prefix, instead of alternating between GPUs and paying a full prefill on every turn. Clients that can name their session (`x-gateway-affinity`, which Claude Code sets per launch via `ANTHROPIC_CUSTOM_HEADERS`) get exact affinity by weighted rendezvous hash; everything else is matched block-wise against an approximate per-pool index of which replica was recently sent which prompt prefix — so a new session can also start warm on the replica already holding the shared system prompt. A two-threshold load valve hands throughput back when a replica is genuinely busier. `least_inflight` and weighted `round_robin` remain available. See [`docs/upstreams.md`](docs/upstreams.md#how-prefix-affinity-decides).
-- **Outages pause instead of failing** — when every replica of a model is down or saturated, the gateway holds the request and retries routing until one returns (`[gateway] upstream_wait_secs`, default 120s) rather than failing it. Nothing has reached the client, so an agent turn survives an upstream restart. A model stays *known* across a gateway restart too, so an outage is always a retryable `529`/`503` with `Retry-After` — never the `404` that tells a client the model doesn't exist. See [`docs/upstreams.md`](docs/upstreams.md#waiting-out-an-outage).
-- **Model aliases + fallback** — give clients a stable name (a per-backend alias like `qwen`) that routes to whatever real model is loaded, so swapping the model needs no client change; the same alias on several backends is a load-balanced group. Optional fallbacks cover an unknown model name or a known model whose backends are all down. All configured per backend/pool at `/admin/upstreams`. See [`docs/upstreams.md`](docs/upstreams.md#model-aliases).
-- **OIDC login** — browser sign-in against your identity provider; the gateway then issues its own `gwk_…` API tokens. Provider secrets come only from the environment.
-- **Per-user tokens + RBAC** — tokens are SHA-256-hashed at rest and revocable. Roles (mapped from OIDC claims) gate which models and server-side tools each user may use.
-- **Usage accounting, rate limits & quotas** — every call is metered per user/token/model (requests, tokens, and — with per-model prices — spend), shown on `/usage` with a per-API-token breakdown and drill-down. Set hard rate limits and quotas at `/admin/limits` (requests / tokens / cost, over a rolling hour / day / week / month), scoped globally, per-role, per-user, or **per API token**; over-budget callers get a `429`. A token can also be **scoped to specific models**, so a key you hand to a third party reaches only what you listed — the owner scopes their own token at `/tokens`, an operator scopes any token at `/admin/tokens`, and the two lists intersect, so each side can only narrow. Self-hosted pools can be marked exempt (a per-pool toggle at `/admin/upstreams`) so their usage is still recorded and shown on `/usage`, but never counts against a limit or quota.
 - **Server-side tools** — the gateway runs tools *mid-completion* (web search, fetch-URL, document rendering, code execution, RAG, network lookups, and more); the client just sees a normal completion. Full list in [Tools the model can call](#tools-the-model-can-call).
-- **Chat UI** — a mobile-friendly chat at `/chat` with persisted multi-conversation history, token-by-token streaming, file attachments, voice dictation, shareable/exportable conversations, and resume-on-reconnect (every turn is written to SQLite as it happens).
+- **Integrations (per-user MCP connectors)** — an admin-curated catalog of [MCP](https://modelcontextprotocol.io/) servers (Google Workspace, GitHub, Atlassian, GitLab, …) that each user connects to with *their own* account at `/integrations`. OAuth (with dynamic client registration where supported) or a user-supplied token; tokens are encrypted at rest and refreshed in the background. The connected servers' tools then become available to the model, scoped to that user's own permissions. See [Integrations](#integrations-per-user-mcp-connectors).
 - **RAG** — operator-managed, indexed codebases that the chat model can search.
 - **Agent Skills** — drop a `SKILL.md` bundle (or `.skill` archive) in and the chat model loads it on demand to follow your house style, brand, or domain playbooks — progressive disclosure, no fine-tuning. Admins upload/view/delete global skills at `/admin/skills` (live, no restart, RBAC-gated per role); every user can also add their **own private skills** at `/skills`, usable only in their own chats. See [Agent Skills](#agent-skills).
+- **OIDC login** — browser sign-in against your identity provider; the gateway then issues its own `gwk_…` API tokens. Provider secrets come only from the environment.
+- **Per-user tokens + RBAC** — tokens are SHA-256-hashed at rest and revocable. Roles (mapped from OIDC claims) gate which models and server-side tools each user may use.
+- **Multi-backend routing** — named upstream pools (`chat` / `transcription` / `embedding` / `image` / `speech` kinds). Each pool load-balances across its backends with per-backend health probes and a per-backend maintenance switch that takes effect on the next request. Models are discovered live from each backend's `/models` endpoint, so loading a model on a backend makes it routable with no config change.
+- **Model aliases + fallback** — give clients a stable name (a per-backend alias like `qwen`) that routes to whatever real model is loaded, so swapping the model needs no client change; the same alias on several backends is a load-balanced group. Optional fallbacks cover an unknown model name or a known model whose backends are all down. All configured per backend/pool at `/admin/upstreams`. See [`docs/upstreams.md`](docs/upstreams.md#model-aliases).
+- **KV-cache-aware routing** — pick `prefix_affinity` and a conversation keeps landing on the replica that already holds its KV prefix, instead of alternating between GPUs and paying a full prefill on every turn. Clients that can name their session (`x-gateway-affinity`, which Claude Code sets per launch via `ANTHROPIC_CUSTOM_HEADERS`) get exact affinity by weighted rendezvous hash; everything else is matched block-wise against an approximate per-pool index of which replica was recently sent which prompt prefix — so a new session can also start warm on the replica already holding the shared system prompt. A two-threshold load valve hands throughput back when a replica is genuinely busier. `least_inflight` and weighted `round_robin` remain available. See [`docs/upstreams.md`](docs/upstreams.md#how-prefix-affinity-decides).
+- **Outages pause instead of failing** — when every replica of a model is down or saturated, the gateway holds the request and retries routing until one returns (`[gateway] upstream_wait_secs`, default 120s) rather than failing it. Nothing has reached the client, so an agent turn survives an upstream restart. A model stays *known* across a gateway restart too, so an outage is always a retryable `529`/`503` with `Retry-After` — never the `404` that tells a client the model doesn't exist. See [`docs/upstreams.md`](docs/upstreams.md#waiting-out-an-outage).
+- **Usage accounting, rate limits & quotas** — every call is metered per user/token/model (requests, tokens, and — with per-model prices — spend), shown on `/usage` with a per-API-token breakdown and drill-down. Set hard rate limits and quotas at `/admin/limits` (requests / tokens / cost, over a rolling hour / day / week / month), scoped globally, per-role, per-user, or **per API token**; over-budget callers get a `429`. A token can also be **scoped to specific models**, so a key you hand to a third party reaches only what you listed — the owner scopes their own token at `/tokens`, an operator scopes any token at `/admin/tokens`, and the two lists intersect, so each side can only narrow. Self-hosted pools can be marked exempt (a per-pool toggle at `/admin/upstreams`) so their usage is still recorded and shown on `/usage`, but never counts against a limit or quota.
+- **Chat UI** — a mobile-friendly chat at `/chat` with persisted multi-conversation history, token-by-token streaming, file attachments, voice dictation, shareable/exportable conversations, and resume-on-reconnect (every turn is written to SQLite as it happens).
 - **Scheduled actions** — per-user prompts that run on a cron schedule (hourly / daily / weekly / monthly, or a raw cron expression), each evaluated in its own timezone. A friendly builder assembles the cron and shows the next run times live; every fire opens a chat you can read back in the UI — a fresh one each time, or (optionally) continuing the previous run's conversation as history. See [Scheduled actions](#scheduled-actions).
-- **Integrations (per-user MCP connectors)** — an admin-curated catalog of [MCP](https://modelcontextprotocol.io/) servers (Google Workspace, GitHub, Atlassian, GitLab, …) that each user connects to with *their own* account at `/integrations`. OAuth (with dynamic client registration where supported) or a user-supplied token; tokens are encrypted at rest and refreshed in the background. The connected servers' tools then become available to the model, scoped to that user's own permissions. See [Integrations](#integrations-per-user-mcp-connectors).
+
+## Use cases
+
+- **Self-hosted company AI.** Put the gateway in front of your vLLM or SGLang boxes and everyone gets one endpoint, one model list and one login — while the GPUs, model names and replica counts change underneath.
+- **Governed access for employees.** OIDC groups map to gateway roles, roles decide which models and which tools a person may use, and every call is metered per user and per token. A department can be given a monthly budget that actually stops at the limit.
+- **Add tools and MCP to an application you are not going to rewrite.** The application keeps issuing plain chat completions; the tools it gains are configured in the gateway, not in its code.
+- **Route between private and external models.** Keep the cheap and confidential traffic on your own hardware and let a hosted model cover what it cannot serve, with fallbacks for the case where a pool is down.
+- **Expose stable model names.** Clients address `qwen` or `fast`; you repoint the alias when the real model changes. No coordinated client release.
+- **Hand a scoped key to a third party.** A token can be limited to specific models, specific tools and its own spending quota, and revoked on its own.
+- **Give engineers their own coding agent.** [Claude Code](#claude-code-against-your-own-models) and [OpenCode](#opencode-against-your-own-models) point at the gateway and run against your own models, with the same accounting as everything else.
+
+## Works with your stack
+
+The gateway is a layer, not a replacement. Bring the inference stack you already run.
+
+| Your stack | How it fits |
+|---|---|
+| **vLLM**, **SGLang**, **llama.cpp**, **Ollama** | Detected as what they are, with the per-server differences the OpenAI wire does not carry (real context window, how "think harder" is spelled) handled for you. See [`docs/upstreams.md`](docs/upstreams.md#backend-profiles-what-kind-of-server-is-this). |
+| **Hosted APIs and aggregators** — OpenAI, an OpenRouter endpoint, a LiteLLM proxy | Any OpenAI-compatible base URL plus a key is a backend; upstream the gateway speaks the OpenAI wire only, so a provider reaches it through its OpenAI-compatible endpoint. Put them in their own pool, or alongside self-hosted backends in one, and let aliases and fallbacks decide what serves what. |
+| **OpenAI SDKs, Open WebUI and other OpenAI-compatible clients** | They keep working unchanged — the gateway is the endpoint they already know how to talk to. |
+| **Claude Code, OpenCode** | Speak the Anthropic Messages API, which the gateway serves at `POST /v1/messages`. |
+| **MCP servers** | The gateway is an MCP *client*: an admin curates the catalog, each user connects with their own account, and those tools join the model's toolbox. |
+
+What the gateway adds on top is the agent runtime, the identity and RBAC story, and the accounting — the parts none of the above provide, and the reason to put it in the path.
+
+## Try it
+
+One container, one environment variable:
+
+```bash
+docker run -d --name llm-gateway -p 8080:8080 \
+  -e GATEWAY_SESSION_KEY="$(openssl rand -hex 32)" \
+  -v llm-gateway-data:/var/lib/gateway \
+  ghcr.io/croit/llm-gateway:production
+```
+
+Open <http://localhost:8080>. A fresh install lands in the **setup wizard**, which
+asks for your identity provider, proves it with a real sign-in, and hands you an
+admin account. Then add a backend at `/admin/upstreams` (base URL of your vLLM /
+SGLang / Ollama server, plus a key if it wants one), mint a token at `/tokens`,
+and you have the endpoint from [See it work](#see-it-work). There is no config
+file at any point — everything else lives in the database and is edited in the UI.
+
+Keep the session key you generated: it signs sessions **and** seals every secret
+in the database, so it belongs in your password manager next to the volume.
+
+> **Honest friction, before you start the clock.** The wizard cannot be completed
+> without a working OIDC provider — it will not write a configuration it has not
+> proven with an actual login, which is right for production and a real obstacle
+> for a ten-minute evaluation. Any provider that publishes a discovery document
+> works, including a throwaway Keycloak or Dex you start alongside it. There is
+> deliberately no local-admin shortcut today; if you are evaluating and have no
+> IdP to hand, that is the barrier you will hit first, and closing it is a known
+> product gap rather than an oversight.
+
+Running it properly afterwards: [Production deployment](#production-deployment-container--systemd),
+[Docker Compose](#docker-compose), [Kubernetes](#kubernetes).
 
 ## Tools the model can call
 
@@ -89,6 +213,9 @@ Every tool is **RBAC-gated per role**, and each user can flip their own grants o
 ![The chat rendering a generated image inline — the model called `generate_image` from a text prompt and the result appears directly in the reply.](docs/img/image-generation.png)
 
 ## The built-in web UI
+
+![The built-in chat UI answering a question by calling the web-search tool mid-completion — the reasoning step, the tool calls, and the final markdown answer all render inline.](docs/img/chat.png)
+
 
 Beyond `/chat`, the gateway ships a small operator and account UI — no separate dashboard to deploy. It is a SvelteKit single-page app the gateway serves as static files from its own root, so there is still only one process and one port. Admin screens are gated to the `admin` role.
 
@@ -322,7 +449,7 @@ curl https://gateway.example.com/v1/models \
   -H "Authorization: Bearer $GATEWAY_API_KEY"
 ```
 
-## Quick start (local development)
+## Quick start (from source)
 
 You need [mise](https://mise.jdx.dev/), which manages the Rust + Node toolchains.
 
@@ -663,7 +790,33 @@ All deployment-relevant docs — every method, every component, the full Google 
 
 ## Documentation
 
-Architecture, auth, the gateway API, tools/RBAC (plus a drift-guarded [tool inventory](docs/tools-inventory.md)), upstreams, and testing are documented in [`docs/`](docs/README.md). [`AGENTS.md`](AGENTS.md) doubles as human onboarding.
+Everything is in [`docs/`](docs/README.md) — start at that index. The ones most people want first:
+
+| | |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | What runs inside the one binary, and how a request flows through it |
+| [`docs/upstreams.md`](docs/upstreams.md) | Pools, backends, model aliases, backend profiles, prefix-affinity routing |
+| [`docs/gateway-api.md`](docs/gateway-api.md) | The OpenAI-compatible surface in detail |
+| [`docs/claude-code.md`](docs/claude-code.md) | Pointing Claude Code at your own models |
+| [`docs/auth.md`](docs/auth.md) | OIDC, sessions, tokens, the setup wizard and recovery |
+| [`docs/tools-rbac.md`](docs/tools-rbac.md) + [`docs/tools-inventory.md`](docs/tools-inventory.md) | How server-side tools are gated, and every tool that exists (drift-guarded) |
+| [`docs/connectors.md`](docs/connectors.md) | Per-user MCP connectors, end to end |
+| [`deploy/README.md`](deploy/README.md) | Deployment: Docker Compose, systemd/Podman, Helm |
+| [`docs/kubernetes.md`](docs/kubernetes.md) | Running on Kubernetes, step by step |
+| [`docs/releases.md`](docs/releases.md) | The `YYMM.RELEASE.BUILD` version scheme and what each published tag means |
+
+[`AGENTS.md`](AGENTS.md) doubles as human onboarding.
+
+**Artifacts.** Container images and the Helm chart are published to GHCR on every build:
+
+| Artifact | Reference |
+|---|---|
+| Gateway | `ghcr.io/croit/llm-gateway` |
+| Helm chart | `oci://ghcr.io/croit/charts/llm-gateway` |
+| Sandbox runner + workload image | `ghcr.io/croit/llm-gateway-sandbox-runner`, `ghcr.io/croit/llm-gateway-sandbox` |
+| OCR sidecar | `ghcr.io/croit/llm-gateway-ocr-sidecar` |
+
+Deploy `:production` (the newest release) or pin a `:vYYMM.RELEASE.BUILD` tag; `:latest` follows `main`. [Releases](https://github.com/croit/llm-gateway/releases) · [packages](https://github.com/orgs/croit/packages?repo_name=llm-gateway).
 
 ## Contributing
 
