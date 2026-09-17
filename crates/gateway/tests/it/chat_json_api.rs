@@ -24,7 +24,7 @@ use gateway_core::server::rbac::Resolver;
 use gateway_core::server::rbac::config::{RbacConfig, RoleConfig};
 use gateway_core::server::upstreams::{
     self,
-    config::{BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
+    config::{AliasSpec, BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
 };
 use gateway_runtime::server::AppState;
 use gateway_runtime::server::tools::ToolRegistry;
@@ -83,6 +83,56 @@ async fn state_with_chat_access(
     let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
     common::seed_pool_models(&registry, "pool", 0, &["model-a"]);
     let app = AppState::new(Config::default(), pool.clone(), registry, tools, rbac);
+    let sessions = SessionStore::new(pool, common::TEST_SECRET);
+    RamaState::new(
+        app,
+        sessions,
+        gateway_core::server::usage::UsageHandle::disabled(),
+    )
+}
+
+/// A chat pool serving exactly one model, reachable under `alias` too — the
+/// shape every real deployment has (`alias = ["default", ...]`).
+async fn state_with_aliased_chat_model(model: &str, alias: &str) -> RamaState {
+    let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+    let mut pools = HashMap::new();
+    pools.insert(
+        "pool".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            compliance: Default::default(),
+            enforce_limits: true,
+            kind: PoolKind::Chat,
+            strategy: PickerStrategy::RoundRobin,
+            models: Vec::new(),
+            backend: vec![BackendConfig {
+                alias: Some(AliasSpec::Names(vec![alias.to_string()])),
+                probe_models: true,
+                supports_edit: false,
+                enabled: true,
+                name: "mock".into(),
+                base_url: "http://unused.invalid".into(),
+                api_key_env: None,
+                api_key: None,
+                weight: 1,
+                max_inflight: 16,
+                health_path: "/models".into(),
+                models: Vec::new(),
+            }],
+        },
+    );
+    let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
+    common::seed_pool_models(&registry, "pool", 0, &[model]);
+    let app = AppState::new(
+        Config::default(),
+        pool.clone(),
+        registry,
+        Arc::new(ToolRegistry::new()),
+        Arc::new(Resolver::empty()),
+    );
     let sessions = SessionStore::new(pool, common::TEST_SECRET);
     RamaState::new(
         app,
@@ -728,6 +778,78 @@ async fn the_models_endpoint_lists_offered_chat_models() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// An alias inherits its target's reasoning support.
+///
+/// The picker lists aliases as models of their own, and `default` — the name
+/// most deployments give theirs — looks like nothing in particular. Resolving
+/// the reasoning style from that name alone returned `none`, so the composer
+/// disabled the effort select with "this model does not reason", while the
+/// turn resolved the very same alias to a Qwen and sent `enable_thinking`
+/// anyway. The UI has to answer the question the wire answers.
+#[tokio::test]
+async fn an_alias_reports_the_reasoning_support_of_the_model_behind_it() {
+    let state = Arc::new(state_with_aliased_chat_model("Qwen/Qwen3-8B", "default").await);
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let app = router(state);
+
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/models".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    let models = body["models"].as_array().unwrap();
+    let reasoning = |id: &str| -> bool {
+        models
+            .iter()
+            .find(|m| m["id"] == id)
+            .unwrap_or_else(|| panic!("`{id}` must be listed: {models:?}"))["reasoning"]
+            .as_bool()
+            .expect("reasoning is a boolean")
+    };
+    assert!(
+        reasoning("Qwen/Qwen3-8B"),
+        "the real id detects as Qwen: {models:?}"
+    );
+    assert!(
+        reasoning("default"),
+        "the alias must answer for its target, not for its own name: {models:?}"
+    );
+}
+
+/// The other half of the same contract: a model nothing recognises still
+/// reports no reasoning, so the disabled select stays honest where it should.
+#[tokio::test]
+async fn a_model_with_no_reasoning_parameter_is_listed_as_such() {
+    let state = Arc::new(state_with_aliased_chat_model("voxtral-small", "default").await);
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let app = router(state);
+
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/models".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    let models = body["models"].as_array().unwrap();
+    for id in ["voxtral-small", "default"] {
+        let m = models
+            .iter()
+            .find(|m| m["id"] == id)
+            .unwrap_or_else(|| panic!("`{id}` must be listed: {models:?}"));
+        assert_eq!(m["reasoning"], serde_json::json!(false), "{models:?}");
+    }
 }
 
 /// The usage endpoint answers with the aggregate envelope, self-scoped for

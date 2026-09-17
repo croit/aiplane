@@ -544,18 +544,34 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
     let listed: Vec<_> = models
         .into_iter()
         .map(|(id, compliance)| {
+            // Aliases are listed as models of their own (`default`, `fast`,
+            // …), and an alias name says nothing about the family behind it.
+            // The turn resolves the alias to its real upstream id *before*
+            // asking about reasoning, so every per-model lookup here has to
+            // key on the same resolved id — otherwise the picker greys itself
+            // out on a name like `default` while the request path happily
+            // sends Qwen's `enable_thinking`, which is the same disagreement
+            // between UI and wire this whole field exists to prevent.
+            let target = state
+                .upstreams
+                .resolve_model_for(
+                    &id,
+                    gateway_core::server::upstreams::PoolKind::Chat,
+                    &access,
+                )
+                .unwrap_or_else(|| id.clone());
             let dialect = state
                 .upstreams
                 .serving_profile(
-                    &id,
+                    &target,
                     gateway_core::server::upstreams::PoolKind::Chat,
                     &access,
                 )
                 .dialect;
             let style = gateway_core::server::reasoning::ReasoningStyle::resolve(
-                stored.get(&id).and_then(Option::as_deref),
+                stored.get(&target).and_then(Option::as_deref),
                 dialect,
-                &id,
+                &target,
             );
             json!({
                 "id": id,
