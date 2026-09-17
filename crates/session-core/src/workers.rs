@@ -66,7 +66,7 @@ pub struct ToolPrompt {
     pub question: String,
     /// Pre-supplied answers for [`ToolPromptKind::AskUser`]; empty when
     /// the model wants free text.
-    pub options: Vec<String>,
+    pub options: Vec<PromptOption>,
     /// Optional short heading above the question — the model uses it to name
     /// what is being decided when the question alone is ambiguous.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -75,6 +75,51 @@ pub struct ToolPrompt {
     /// `options`.
     #[serde(default)]
     pub multi_select: bool,
+}
+
+/// One offered answer: what the button says, and optionally what picking it
+/// means.
+///
+/// The two travel as separate fields rather than one pre-joined string. They
+/// were joined once (`"Postgres — the primary"`), which cost twice: the card
+/// drew a row of buttons whose labels were whole sentences, and that same
+/// sentence is what came back to the model as the user's answer. The label is
+/// the answer; the description is context for the human choosing.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PromptOption {
+    /// Short answer text — the button, and what the tool reports as chosen.
+    pub label: String,
+    /// One line on what choosing this means. Rendered under the label,
+    /// as markdown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional worked example of what this option produces — an ASCII
+    /// layout, a code snippet, a small diagram — shown inside the option.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<PromptPreview>,
+}
+
+/// A block of example content attached to an option.
+///
+/// Typed rather than sniffed. The two kinds render through completely
+/// different paths — verbatim monospace text versus a sanitised SVG document
+/// — and which one the client is looking at decides how much of the content
+/// it is willing to trust. Guessing from the first characters would put that
+/// decision in the hands of whoever wrote the string.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PromptPreview {
+    pub kind: PreviewKind,
+    pub content: String,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewKind {
+    /// Preformatted text: ASCII diagrams, table sketches, code. Rendered
+    /// verbatim in a monospace block, never parsed.
+    Text,
+    /// An inline SVG document, sanitised before it reaches the page.
+    Svg,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

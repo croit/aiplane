@@ -25,6 +25,7 @@ use shared::api::ToolDef;
 
 use gateway_runtime::server::tools::feedback::AskReply;
 use gateway_runtime::server::tools::{ChatFeedback, Tool, ToolContext, ToolError, ToolFuture};
+use session_core::workers::PreviewKind;
 
 /// How long to wait for a human to answer.
 ///
@@ -41,11 +42,15 @@ const MAX_DURATION_SECS: u64 = WAIT_SECS + 15;
 
 /// Bounds on the question itself. A tool call is not the place to render an
 /// essay, and an unbounded option list would be a broken UI.
-const MAX_QUESTION_LEN: usize = 500;
+const MAX_QUESTION_LEN: usize = 1_000;
 const MAX_HEADER_LEN: usize = 40;
 const MAX_OPTIONS: usize = 4;
 const MAX_LABEL_LEN: usize = 80;
-const MAX_DESCRIPTION_LEN: usize = 200;
+const MAX_DESCRIPTION_LEN: usize = 400;
+/// Previews get their own, larger budget: an ASCII layout or a code snippet
+/// needs room that a one-line description does not, and the same ceiling for
+/// both would either starve the diagram or invite an essay in the subtitle.
+const MAX_PREVIEW_LEN: usize = 1_200;
 
 pub struct AskUser;
 
@@ -65,6 +70,15 @@ struct AskOption {
     label: String,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    preview: Option<AskPreview>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+struct AskPreview {
+    #[serde(rename = "type")]
+    kind: String,
+    content: String,
 }
 
 impl Tool for AskUser {
@@ -99,7 +113,9 @@ impl Tool for AskUser {
                         "type": "string",
                         "description": "The question, in the user's language. One question, \
                                         phrased so the options (if any) are obvious answers \
-                                        to it."
+                                        to it. Markdown is rendered, so `code`, **bold** and \
+                                        short lists work; keep it to a question, not a \
+                                        briefing."
                     },
                     "header": {
                         "type": "string",
@@ -127,7 +143,40 @@ impl Tool for AskUser {
                                 "description": {
                                     "type": "string",
                                     "description": "Optional one-line explanation of what \
-                                                    choosing this means."
+                                                    choosing this means. Markdown is rendered."
+                                },
+                                "preview": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": ["type", "content"],
+                                    "description": "Optional worked example of what this \
+                                                    option produces, shown inside the option. \
+                                                    Use it when the choice is easier to see \
+                                                    than to describe — a layout, a diagram, \
+                                                    the shape of some output. Skip it when \
+                                                    the label and description already say it.",
+                                    "properties": {
+                                        "type": {
+                                            "type": "string",
+                                            "enum": ["text", "svg"],
+                                            "description": "`text` for an ASCII diagram, a \
+                                                            table sketch or a code snippet — \
+                                                            shown verbatim in a monospace \
+                                                            block, so line art lines up. \
+                                                            `svg` for a small inline drawing."
+                                        },
+                                        "content": {
+                                            "type": "string",
+                                            "maxLength": MAX_PREVIEW_LEN,
+                                            "description": "The preview body. For `svg`, one \
+                                                            complete <svg> element with a \
+                                                            viewBox and no scripts, links or \
+                                                            external references — those are \
+                                                            stripped before it is shown. Use \
+                                                            currentColor for strokes and fills \
+                                                            so it works on light and dark."
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -225,13 +274,15 @@ pub async fn confirm(
         question: question.to_string(),
         header: Some(header.to_string()),
         options: vec![
-            AskOption {
+            Choice {
                 label: approve_label.to_string(),
                 description: None,
+                preview: None,
             },
-            AskOption {
+            Choice {
                 label: decline_label.to_string(),
                 description: None,
+                preview: None,
             },
         ],
         multi_select: false,
@@ -260,8 +311,64 @@ pub async fn confirm(
 struct Prompt {
     question: String,
     header: Option<String>,
-    options: Vec<AskOption>,
+    options: Vec<Choice>,
     multi_select: bool,
+}
+
+/// One validated option.
+#[derive(Debug, Clone)]
+struct Choice {
+    label: String,
+    description: Option<String>,
+    preview: Option<Preview>,
+}
+
+/// A validated preview block.
+#[derive(Debug, Clone)]
+struct Preview {
+    kind: PreviewKind,
+    content: String,
+}
+
+impl Preview {
+    /// Check what the *server* can check: the kind is one we render, the body
+    /// is non-empty and bounded, and an `svg` really is an SVG element.
+    ///
+    /// Deliberately not a blocklist of dangerous SVG constructs. Pattern-
+    /// matching for `<script` or `onload=` is the kind of filter that looks
+    /// like security and loses to the first novel encoding; the real gate is
+    /// the client's sanitiser, which parses the document rather than reading
+    /// it. What belongs here is what a parser downstream cannot recover from:
+    /// size, and content that is not the shape it claims to be.
+    fn validate(raw: AskPreview) -> Result<Self, ToolError> {
+        let kind = match raw.kind.trim() {
+            "text" => PreviewKind::Text,
+            "svg" => PreviewKind::Svg,
+            other => {
+                return Err(ToolError::InvalidArgs(format!(
+                    "preview type must be `text` or `svg` (got `{other}`)"
+                )));
+            }
+        };
+        // Only the ends are trimmed: interior whitespace is the diagram.
+        let content = raw.content.trim_matches(['\n', '\r']).to_string();
+        if content.trim().is_empty() {
+            return Err(ToolError::InvalidArgs(
+                "a preview must have content, or be left out".into(),
+            ));
+        }
+        if content.chars().count() > MAX_PREVIEW_LEN {
+            return Err(ToolError::InvalidArgs(format!(
+                "preview is too long; keep it under {MAX_PREVIEW_LEN} characters"
+            )));
+        }
+        if kind == PreviewKind::Svg && !content.trim_start().starts_with("<svg") {
+            return Err(ToolError::InvalidArgs(
+                "an `svg` preview must be a single <svg> element".into(),
+            ));
+        }
+        Ok(Self { kind, content })
+    }
 }
 
 impl Prompt {
@@ -315,7 +422,12 @@ impl Prompt {
                      {MAX_DESCRIPTION_LEN} characters"
                 )));
             }
-            options.push(AskOption { label, description });
+            let preview = opt.preview.map(Preview::validate).transpose()?;
+            options.push(Choice {
+                label,
+                description,
+                preview,
+            });
         }
         if options.len() > MAX_OPTIONS {
             return Err(ToolError::InvalidArgs(format!(
@@ -362,7 +474,9 @@ fn unanswered(reason: &str, note: &str) -> Value {
 /// turn. `Hide` is sent whatever the outcome — the client removes its own
 /// prompt on submit, so this covers the timeout and the give-up path.
 async fn request_answer(fb: &ChatFeedback, turn_id: &str, prompt: &Prompt) -> Option<AskReply> {
-    use session_core::workers::{ToolPrompt, ToolPromptEvent, ToolPromptKind, TurnUpdate};
+    use session_core::workers::{
+        PromptOption, PromptPreview, ToolPrompt, ToolPromptEvent, ToolPromptKind, TurnUpdate,
+    };
 
     // Nobody subscribed → nobody can answer. The timeout below is the real
     // backstop if the stream drops right after this check.
@@ -377,14 +491,19 @@ async fn request_answer(fb: &ChatFeedback, turn_id: &str, prompt: &Prompt) -> Op
             turn_id: turn_id.to_string(),
             kind: ToolPromptKind::AskUser,
             question: prompt.question.clone(),
-            // The wire carries the labels; a description is a UI nicety the
-            // client can fetch from nowhere else, so it rides along appended.
+            // Label and description stay separate all the way to the card.
+            // Joining them here made the button read as a sentence and, worse,
+            // made that sentence the answer the model got back.
             options: prompt
                 .options
                 .iter()
-                .map(|o| match &o.description {
-                    Some(d) if !d.is_empty() => format!("{} — {}", o.label, d),
-                    _ => o.label.clone(),
+                .map(|o| PromptOption {
+                    label: o.label.clone(),
+                    description: o.description.clone(),
+                    preview: o.preview.as_ref().map(|p| PromptPreview {
+                        kind: p.kind,
+                        content: p.content.clone(),
+                    }),
                 })
                 .collect(),
             header: prompt.header.clone(),
@@ -526,6 +645,164 @@ mod tests {
             .unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("assumption"), "{msg}");
+    }
+
+    /// The whole wiring in one test: the card the client receives keeps each
+    /// option's label and description apart, and the answer the model gets
+    /// back is the label alone.
+    ///
+    /// They used to be joined into one string before the broadcast, which cost
+    /// on both ends — a row of buttons labelled with whole sentences, and a
+    /// `choices` entry the model had to read as an answer even though half of
+    /// it was the UI's own explanatory text.
+    #[tokio::test]
+    async fn the_card_carries_label_and_description_apart_and_answers_by_label() {
+        use gateway_runtime::server::tools::feedback::FeedbackHub;
+        use session_core::workers::{ToolPromptEvent, TurnUpdate};
+
+        let (broadcast, mut rx) = tokio::sync::broadcast::channel(16);
+        let ask_hub = std::sync::Arc::new(FeedbackHub::<AskReply>::default());
+        let mut ctx = ctx_off_chat().await;
+        ctx.assistant_turn_id = Some("t1".into());
+        ctx.chat_feedback = Some(ChatFeedback {
+            broadcast,
+            hub: std::sync::Arc::new(FeedbackHub::default()),
+            ask_hub: ask_hub.clone(),
+            secure: true,
+        });
+
+        let call = tokio::spawn(async move {
+            AskUser
+                .run(
+                    ctx,
+                    json!({
+                        "question": "Which database?",
+                        "options": [
+                            {"label": "Postgres", "description": "the primary"},
+                            {"label": "SQLite"}
+                        ]
+                    }),
+                )
+                .await
+        });
+
+        let shown = loop {
+            match rx.recv().await.expect("the show event") {
+                TurnUpdate::Prompt(event) => match &*event {
+                    ToolPromptEvent::Show(p) => break p.clone(),
+                    ToolPromptEvent::Hide { .. } => panic!("hidden before it was shown"),
+                },
+                _ => continue,
+            }
+        };
+        assert_eq!(shown.options[0].label, "Postgres");
+        assert_eq!(shown.options[0].description.as_deref(), Some("the primary"));
+        assert_eq!(shown.options[1].label, "SQLite");
+        assert_eq!(shown.options[1].description, None);
+
+        // The client answers with the label it was given, never the prose.
+        while !ask_hub.resolve(
+            "t1",
+            AskReply::Answered {
+                choices: vec![shown.options[0].label.clone()],
+                text: None,
+            },
+        ) {
+            tokio::task::yield_now().await;
+        }
+        let result = call.await.expect("the tool task").expect("answered");
+        assert_eq!(result["answered"], true);
+        assert_eq!(result["choices"], json!(["Postgres"]));
+    }
+
+    #[test]
+    fn a_text_preview_keeps_its_interior_whitespace() {
+        // The columns of an ASCII diagram are made of runs of spaces. Trim the
+        // ends of the block, never the inside.
+        let p = Prompt::validate(args(json!({
+            "question": "Which layout?",
+            "options": [
+                {"label": "Split", "preview": {"type": "text", "content": "\n a | b \n---+---\n c | d \n"}},
+                {"label": "Stacked"}
+            ]
+        })))
+        .unwrap();
+        let preview = p.options[0].preview.as_ref().expect("a preview");
+        assert_eq!(preview.kind, PreviewKind::Text);
+        assert_eq!(preview.content, " a | b \n---+---\n c | d ");
+        assert!(p.options[1].preview.is_none());
+    }
+
+    #[test]
+    fn an_svg_preview_must_actually_be_an_svg() {
+        let err = Prompt::validate(args(json!({
+            "question": "Which shape?",
+            "options": [
+                {"label": "Circle", "preview": {"type": "svg", "content": "<div>nope</div>"}},
+                {"label": "Square"}
+            ]
+        })))
+        .unwrap_err();
+        assert!(matches!(err, ToolError::InvalidArgs(_)), "{err:?}");
+
+        let ok = Prompt::validate(args(json!({
+            "question": "Which shape?",
+            "options": [
+                {"label": "Circle", "preview": {"type": "svg", "content": "  <svg viewBox=\"0 0 8 8\"><circle r=\"3\"/></svg>"}},
+                {"label": "Square"}
+            ]
+        })))
+        .unwrap();
+        assert_eq!(
+            ok.options[0].preview.as_ref().unwrap().kind,
+            PreviewKind::Svg
+        );
+    }
+
+    #[test]
+    fn rejects_an_unknown_preview_type_and_an_oversized_one() {
+        let err = Prompt::validate(args(json!({
+            "question": "Which?",
+            "options": [
+                {"label": "a", "preview": {"type": "html", "content": "<b>x</b>"}},
+                {"label": "b"}
+            ]
+        })))
+        .unwrap_err();
+        assert!(matches!(err, ToolError::InvalidArgs(_)), "{err:?}");
+
+        let huge = "x".repeat(MAX_PREVIEW_LEN + 1);
+        let err = Prompt::validate(args(json!({
+            "question": "Which?",
+            "options": [{"label": "a", "preview": {"type": "text", "content": huge}}, {"label": "b"}]
+        })))
+        .unwrap_err();
+        assert!(matches!(err, ToolError::InvalidArgs(_)), "{err:?}");
+    }
+
+    /// The server does not try to filter dangerous SVG constructs — that is
+    /// the client sanitiser's job, and a regex that thinks it can do it would
+    /// be worse than nothing because it would look like protection. This test
+    /// pins that division so nobody "fixes" it into a blocklist: hostile
+    /// markup is accepted here, bounded and typed, and disarmed downstream.
+    #[test]
+    fn hostile_svg_is_passed_on_for_the_client_sanitiser_not_pattern_matched() {
+        let p = Prompt::validate(args(json!({
+            "question": "Which?",
+            "options": [
+                {"label": "a", "preview": {"type": "svg", "content": "<svg><script>alert(1)</script></svg>"}},
+                {"label": "b"}
+            ]
+        })))
+        .expect("accepted, to be sanitised where a parser is available");
+        assert!(
+            p.options[0]
+                .preview
+                .as_ref()
+                .unwrap()
+                .content
+                .contains("script")
+        );
     }
 
     #[test]

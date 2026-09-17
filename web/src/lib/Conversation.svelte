@@ -11,6 +11,7 @@
 	import { endScrollTop, nextFollow } from '$lib/chat-autoscroll';
 	import type { ChatSession } from '$lib/chat-protocol';
 	import { canonicalAttachments } from '$lib/conversation-assets';
+	import { renderPromptMarkdown, sanitizeSvgPreview } from '$lib/markdown';
 	import { DragDepth, carriesFiles, droppedOnlyDirectories, filesFrom } from '$lib/drop-files';
 	import { me } from '$lib/session.svelte';
 	import { t, time, n } from '$lib/i18n.svelte';
@@ -692,49 +693,6 @@
 	<div class="alert alert-warning mb-4"><span>{notice}</span></div>
 {/if}
 
-{#if prompt?.action === 'show'}
-	{@const shown = prompt}
-	<div class="card border border-warning mb-4">
-		<div class="card-body">
-			<h2 class="card-title text-base">{shown.header ?? t('chat-prompt-heading')}</h2>
-			<p>{shown.question}</p>
-			{#if shown.kind === 'location'}
-				<div class="mt-2 flex flex-wrap gap-2">
-					<button class="btn btn-primary btn-sm" onclick={sharePromptLocation}>{t('tools-location-share-button')}</button>
-					<button class="btn btn-ghost btn-sm" onclick={declinePromptLocation}>{t('chat-prompt-skip')}</button>
-				</div>
-			{:else if shown.options.length > 0}
-				<div class="flex flex-wrap gap-2 mt-1">
-					{#each shown.options as option (option)}
-						<button
-							class="btn btn-sm {shown.multi_select && promptChoices.includes(option) ? 'btn-primary' : 'btn-outline'}"
-							onclick={() => shown.multi_select ? togglePromptChoice(option) : answerPrompt(option)}
-						>
-							{option}
-						</button>
-					{/each}
-				</div>
-			{/if}
-			{#if shown.kind !== 'location'}
-			<div class="join mt-2 w-full">
-				<input
-					class="input input-bordered input-sm join-item w-full"
-					placeholder={t('chat-prompt-placeholder')}
-					bind:value={promptText}
-					onkeydown={(e) => e.key === 'Enter' && submitPrompt()}
-				/>
-				<button class="btn btn-primary btn-sm join-item" onclick={submitPrompt}>
-					{t('chat-prompt-answer')}
-				</button>
-				<button class="btn btn-ghost btn-sm join-item" onclick={() => answerPrompt(null)}>
-					{t('chat-prompt-skip')}
-				</button>
-			</div>
-			{/if}
-		</div>
-	</div>
-{/if}
-
 <div class="mb-4 flex flex-1 flex-col gap-4">
 	{#each turns as entry, index (entry.turn.id)}
 		{#if index > 0 && compactedUpToSeq !== null && turns[index - 1].turn.seq <= compactedUpToSeq && entry.turn.seq > compactedUpToSeq}
@@ -824,6 +782,85 @@
 	</div>
 
 {#if isOwner}
+{#if prompt?.action === 'show'}
+	{@const shown = prompt}
+	<!-- A pending question takes the composer's place rather than sitting at the
+	     top of the transcript.
+	
+	     Up there it was above the very turn that asked it, so on any
+	     conversation longer than a screen the card scrolled out of sight while
+	     the spinner below said "Still working…" — the turn was in fact blocked
+	     on an answer the user could no longer see. The composer slot is where
+	     the eye already is, it is pinned, and it is honest: while the model is
+	     waiting on you, typing an ordinary message is not the thing to do.
+	
+	     Skip hands the composer straight back (the client clears the prompt on
+	     reply), so the stop button is one click away throughout. -->
+	<div data-chat-prompt class="card mt-3 w-full shrink-0 border border-warning bg-base-100/85 backdrop-blur-sm">
+		<div class="flex flex-col gap-2 p-3">
+			<div>
+				<div class="text-xs font-semibold uppercase tracking-wide text-warning">
+					{shown.header ?? t('chat-prompt-heading')}
+				</div>
+				<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in renderPromptMarkdown -->
+				<div class="prose prose-sm mt-0.5 max-w-none">{@html renderPromptMarkdown(shown.question)}</div>
+			</div>
+			{#if shown.kind === 'location'}
+				<div class="flex flex-wrap gap-2">
+					<button class="btn btn-primary btn-sm" onclick={sharePromptLocation}>{t('tools-location-share-button')}</button>
+					<button class="btn btn-ghost btn-sm" onclick={declinePromptLocation}>{t('chat-prompt-skip')}</button>
+				</div>
+			{:else}
+				{#if shown.options.length > 0}
+					<!-- Label above, description beneath, rather than one glued
+					     "Label — description" string: the answer and the reason to
+					     pick it are different things, and the button should read
+					     as the answer. -->
+					<div class="grid gap-2 sm:grid-cols-2">
+						{#each shown.options as option (option.label)}
+							<button
+								class="btn h-auto min-h-0 flex-col items-start gap-0.5 whitespace-normal py-2 text-start {shown.multi_select && promptChoices.includes(option.label) ? 'btn-primary' : 'btn-outline'}"
+								aria-pressed={shown.multi_select ? promptChoices.includes(option.label) : undefined}
+								onclick={() => (shown.multi_select ? togglePromptChoice(option.label) : answerPrompt(option.label))}
+							>
+								<span class="font-semibold">{option.label}</span>
+								{#if option.description}
+									<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in renderPromptMarkdown -->
+									<span class="prose prose-sm max-w-none text-xs font-normal opacity-70">{@html renderPromptMarkdown(option.description)}</span>
+								{/if}
+								{#if option.preview}
+									{#if option.preview.kind === 'svg'}
+										<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in sanitizeSvgPreview -->
+										<span class="mt-1 block w-full [&>svg]:h-auto [&>svg]:max-h-40 [&>svg]:w-full">{@html sanitizeSvgPreview(option.preview.content)}</span>
+									{:else}
+										<!-- `pre` verbatim, not markdown: the whole point of an ASCII
+										     preview is that the columns line up, and any parse step
+										     collapses the runs of spaces that do the lining up. -->
+										<pre class="mt-1 max-h-40 w-full overflow-auto rounded bg-base-300/40 p-2 text-[0.6875rem] font-normal leading-tight">{option.preview.content}</pre>
+									{/if}
+								{/if}
+							</button>
+						{/each}
+					</div>
+				{/if}
+				<div class="join w-full">
+					<input
+						class="input input-bordered input-sm join-item w-full"
+						placeholder={t('chat-prompt-placeholder')}
+						bind:value={promptText}
+						onkeydown={(e) => e.key === 'Enter' && submitPrompt()}
+					/>
+					<button class="btn btn-primary btn-sm join-item" onclick={submitPrompt}>
+						{t('chat-prompt-answer')}
+					</button>
+					<button class="btn btn-ghost btn-sm join-item" onclick={() => answerPrompt(null)}>
+						{t('chat-prompt-skip')}
+					</button>
+				</div>
+			{/if}
+		</div>
+	</div>
+{:else}
 <div data-chat-composer class="card mt-3 w-full shrink-0 border border-base-300 bg-base-100/85 backdrop-blur-sm">
 	<div class="flex flex-col gap-1 p-2">
 		<div class="flex flex-wrap items-center gap-2">
@@ -922,6 +959,7 @@
 		{/if}
 	</div>
 </div>
+{/if}
 {/if}
 
 	{#if dragging}

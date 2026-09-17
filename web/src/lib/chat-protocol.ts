@@ -91,7 +91,7 @@ export type ChatEvent =
 			turn_id: string;
 			kind: 'ask_user' | 'location';
 			question: string;
-			options: string[];
+			options: PromptOption[];
 			/** Optional heading naming what is being decided. */
 			header?: string;
 			/** Whether more than one option may be picked. */
@@ -99,6 +99,30 @@ export type ChatEvent =
 	  }
 	| { type: 'tool_prompt'; action: 'hide'; turn_id: string }
 	| { type: 'idle' };
+
+/**
+ * One answer a `tool_prompt` offers.
+ *
+ * `label` is the answer — it is what the button says and what goes back to the
+ * model. `description` is for the person choosing and never travels back.
+ */
+export interface PromptOption {
+	label: string;
+	description?: string;
+	preview?: PromptPreview;
+}
+
+/**
+ * A worked example attached to an option.
+ *
+ * The kind is carried, never sniffed: `text` renders verbatim in a monospace
+ * block and `svg` goes through a strict sanitiser first, and which of those
+ * the client does must not be decided by the content itself.
+ */
+export interface PromptPreview {
+	kind: 'text' | 'svg';
+	content: string;
+}
 
 /** A turn as the UI holds it: the wire shape plus live-streamed buffers. */
 export interface LiveTurn {

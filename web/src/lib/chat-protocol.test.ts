@@ -128,9 +128,17 @@ test('info banners and tool prompts set and clear', () => {
 		turn_id: 'a1',
 		kind: 'ask_user',
 		question: 'Which region?',
-		options: ['eu', 'us']
+		options: [{ label: 'eu', description: 'Frankfurt' }, { label: 'us' }]
 	});
 	assert.equal(state.prompt?.action === 'show' ? state.prompt.question : null, 'Which region?');
+	// The label is the answer and the description is context for the person
+	// choosing; they reach the card as separate fields so the button can put
+	// one above the other, and so the answer that goes back to the model is
+	// the label alone.
+	assert.deepEqual(
+		state.prompt?.action === 'show' ? state.prompt.options : null,
+		[{ label: 'eu', description: 'Frankfurt' }, { label: 'us' }]
+	);
 	applyEvent(state, { type: 'tool_prompt', action: 'hide', turn_id: 'a1' });
 	assert.equal(state.prompt, null);
 });
