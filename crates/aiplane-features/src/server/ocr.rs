@@ -746,7 +746,7 @@ fn clean_grounding_tokens(mut content: &str) -> String {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    shared::hex::encode_lower(&hasher.finalize())
 }
 
 /// Hex digest of every `[chat.ocr]` setting that changes the recognised text.

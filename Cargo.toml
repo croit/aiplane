@@ -117,8 +117,8 @@ wiremock = "0.6"
 # Persistence + crypto.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
 rand = "0.10"
-sha2 = "0.10"
-hmac = "0.12"
+sha2 = "0.11"
+hmac = "0.13"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
 # Pinned to the `aws_lc_rs` backend: v10 dropped the bundled crypto provider,
@@ -146,16 +146,25 @@ rama = { git = "https://github.com/plabayo/rama", rev = "5ba0ada6b89defec9eb8cbd
 # a regex rewrite of lumis' outer `<pre>`.
 #
 # We deliberately do NOT use lumis' `all-languages` default: it pulls in
-# `lang-caddy` (tree-sitter-caddy), the only GPL-3.0 grammar in the set.
-# Statically linking GPL-3.0 would force the whole binary to GPL-3.0,
-# which is incompatible with this project's AGPL-3.0 license. Instead we enable
-# `all-languages` minus `lang-caddy` explicitly — every other grammar is
-# MIT/Apache-2.0. Only Caddyfile code blocks lose highlighting (they fall
-# back to plain text). On a lumis upgrade, re-sync this list with the
-# crate's `all-languages` feature and confirm no new GPL/AGPL grammars
-# were added (check tree-sitter-* license fields).
+# GPL-3.0 grammars, and statically linking one would force the whole binary to
+# GPL-3.0, which is incompatible with this project's AGPL-3.0 license. Instead
+# we enable `all-languages` minus the GPL ones explicitly — every grammar
+# listed below is MIT/Apache-2.0. Two are excluded:
+#
+#   * `lang-caddy`  — tree-sitter-caddy, GPL-3.0
+#   * `lang-toon`   — tree-sitter-toon, GPL-3.0-or-later (appeared in lumis 0.13)
+#
+# Caddyfile and TOON code blocks lose highlighting and fall back to plain text.
+# That is the whole cost.
+#
+# ON A LUMIS UPGRADE: re-sync this list against the crate's `all-languages`
+# feature and check the license field of every grammar that is new since the
+# last sync — `curl -s https://crates.io/api/v1/crates/<crate> | jq
+# '.versions[0].license'`. The 0.9 → 0.13 bump added exactly this trap: it
+# brought `lang-toon`, a second GPL grammar, which a blind re-sync would have
+# linked in.
 markdown = "1"
-lumis = { version = "0.9", default-features = false, features = [
+lumis = { version = "0.13", default-features = false, features = [
     "lang-arduino",
     "lang-angular",
     "lang-asm",
@@ -219,6 +228,7 @@ lumis = { version = "0.9", default-features = false, features = [
     "lang-luadoc",
     "lang-make",
     "lang-matlab",
+    "lang-mdx",
     "lang-mermaid",
     "lang-markdown",
     "lang-markdown-inline",

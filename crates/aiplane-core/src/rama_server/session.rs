@@ -27,7 +27,7 @@
 
 use std::time::Duration;
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit as _, Mac};
 use jiff::{SignedDuration, Timestamp};
 use rama::http::HeaderMap;
 use rama::http::header::COOKIE;

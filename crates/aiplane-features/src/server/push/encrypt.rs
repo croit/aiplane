@@ -23,7 +23,7 @@
 #![allow(deprecated)]
 
 use aes_gcm::Aes128Gcm;
-use aes_gcm::aead::generic_array::GenericArray;
+use aes_gcm::aead::Nonce;
 use aes_gcm::aead::{Aead, KeyInit};
 use hkdf::Hkdf;
 use p256::PublicKey;
@@ -130,7 +130,7 @@ fn encrypt_with(
 
     let cipher = Aes128Gcm::new_from_slice(&cek).map_err(|_| EncryptError::Aead)?;
     let ciphertext = cipher
-        .encrypt(&GenericArray::from(nonce), record.as_slice())
+        .encrypt(&Nonce::<Aes128Gcm>::from(nonce), record.as_slice())
         .map_err(|_| EncryptError::Aead)?;
 
     // Frame: salt(16) ‖ rs(u32 BE) ‖ idlen(u8) ‖ keyid(as_public) ‖ ciphertext.
@@ -181,7 +181,7 @@ mod tests {
 
         let cipher = Aes128Gcm::new_from_slice(&cek).unwrap();
         let mut plain = cipher
-            .decrypt(&GenericArray::from(nonce), ciphertext)
+            .decrypt(&Nonce::<Aes128Gcm>::from(nonce), ciphertext)
             .unwrap();
         assert_eq!(plain.pop(), Some(0x02), "last-record delimiter");
         plain
@@ -249,7 +249,7 @@ mod tests {
         let cipher = Aes128Gcm::new_from_slice(&cek).unwrap();
         assert!(
             cipher
-                .decrypt(&GenericArray::from(nonce), &body[21 + POINT_LEN..])
+                .decrypt(&Nonce::<Aes128Gcm>::from(nonce), &body[21 + POINT_LEN..])
                 .is_err()
         );
     }

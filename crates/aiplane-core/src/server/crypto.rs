@@ -18,16 +18,8 @@
 //! ephemeral key is used and a warning logged — stored secrets won't decrypt
 //! after a restart (reconnect / re-enter them).
 
-// `aes-gcm` 0.10 pulls `generic-array` 0.14 via `aead`/`crypto-common`, whose
-// `GenericArray` re-export carries an "upgrade to generic-array 1.x"
-// deprecation we can't act on without bumping the whole crypto stack. Scope the
-// allow to this small, self-contained module so `clippy -D warnings` stays
-// clean; revisit when `aes-gcm` moves to generic-array 1.x.
-#![allow(deprecated)]
-
 use aes_gcm::Aes256Gcm;
-use aes_gcm::aead::generic_array::GenericArray;
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, Nonce};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hmac::{Hmac, Mac};
@@ -113,7 +105,7 @@ pub(crate) const RETIRED_LABELS: &[&[u8]] = &[
 /// HKDF-lite: HMAC-SHA256(session_secret, label).
 pub(crate) fn derive(session_secret: &[u8; 32], label: &[u8]) -> [u8; 32] {
     let mut mac =
-        <Hmac<Sha256> as Mac>::new_from_slice(session_secret).expect("HMAC accepts any key length");
+        <Hmac<Sha256>>::new_from_slice(session_secret).expect("HMAC accepts any key length");
     mac.update(label);
     let derived = mac.finalize().into_bytes();
     let mut key = [0u8; 32];
@@ -125,7 +117,7 @@ fn open_with(key: &[u8; 32], nonce: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>,
     let nonce_arr: [u8; 12] = nonce.try_into().map_err(|_| CryptoError::Decrypt)?;
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| CryptoError::Decrypt)?;
     cipher
-        .decrypt(&GenericArray::from(nonce_arr), ciphertext)
+        .decrypt(&Nonce::<Aes256Gcm>::from(nonce_arr), ciphertext)
         .map_err(|_| CryptoError::Decrypt)
 }
 
@@ -207,9 +199,7 @@ impl Crypto {
         rand::rngs::SysRng
             .try_fill_bytes(&mut nonce_bytes)
             .map_err(|e| CryptoError::Nonce(e.to_string()))?;
-        // The nonce GenericArray size is inferred (U12) from `encrypt`'s
-        // expected `&Nonce<Aes256Gcm>` argument, so we never name the alias.
-        let nonce = GenericArray::from(nonce_bytes);
+        let nonce = Nonce::<Aes256Gcm>::from(nonce_bytes);
         let ciphertext = cipher
             .encrypt(&nonce, plaintext)
             .map_err(|_| CryptoError::Encrypt)?;
@@ -549,5 +539,80 @@ mod tests {
         }
         let now = Crypto::from_session(&session);
         assert!(!now.is_legacy_sealed_string("not-even-two-parts"));
+    }
+
+    /// Known-answer tests: the exact bytes an existing database depends on.
+    ///
+    /// Everything else in this module proves the implementation agrees with
+    /// *itself* — seal here, open there. That would stay green if a dependency
+    /// bump changed the output format, and the first symptom would be a
+    /// production deployment whose backend API keys, OIDC client secret and
+    /// per-user OAuth tokens no longer decrypt. These vectors were captured
+    /// from a build that is known to read real databases, so they fail loudly
+    /// instead.
+    ///
+    /// If one of these breaks after a dependency update, the update is not
+    /// safe to ship: it has changed either HMAC-SHA256 key derivation or the
+    /// AES-256-GCM ciphertext layout, and every value sealed by every previous
+    /// release has to be migrated before it can land. Never "re-bless" them.
+    mod known_answers {
+        use super::*;
+
+        /// HMAC-SHA256(session_secret, label) — what turns the session secret
+        /// into the at-rest key. Pinned for the current label and for every
+        /// retired one, because [`Crypto::open`] still tries all of them.
+        #[test]
+        fn key_derivation_is_byte_for_byte_stable() {
+            let secret = [9u8; 32];
+            assert_eq!(
+                derive(&secret, LABEL),
+                [
+                    75, 152, 144, 145, 210, 196, 103, 66, 202, 168, 182, 222, 80, 206, 54, 74, 156,
+                    160, 211, 11, 87, 202, 22, 60, 138, 180, 92, 75, 128, 65, 247, 168
+                ],
+                "the at-rest key derivation changed — every sealed value in every \
+                 existing database is now unreadable"
+            );
+            assert_eq!(
+                derive(&secret, RETIRED_LABELS[0]),
+                [
+                    6, 198, 191, 86, 225, 153, 102, 242, 5, 158, 192, 55, 41, 243, 3, 67, 24, 195,
+                    211, 135, 83, 208, 94, 83, 173, 133, 211, 128, 98, 96, 150, 239
+                ],
+                "the pre-rename key can no longer be derived, so a database \
+                 sealed before the rename can no longer be read or re-sealed"
+            );
+            assert_eq!(
+                derive(&secret, RETIRED_LABELS[1]),
+                [
+                    251, 91, 182, 98, 22, 69, 201, 191, 88, 51, 241, 191, 211, 228, 248, 4, 123,
+                    248, 37, 199, 143, 0, 251, 52, 35, 79, 220, 193, 16, 217, 62, 99
+                ],
+                "the oldest key can no longer be derived"
+            );
+        }
+
+        /// A ciphertext written by an earlier release must still open, byte for
+        /// byte, under the same key and nonce. This is the format itself: a
+        /// 96-bit nonce and AES-256-GCM output with the tag appended.
+        #[test]
+        fn a_ciphertext_from_an_earlier_release_still_opens() {
+            let nonce = [70, 115, 125, 239, 81, 156, 73, 132, 64, 88, 30, 127];
+            let ciphertext = [
+                47, 91, 32, 20, 4, 226, 4, 200, 36, 63, 214, 118, 149, 130, 31, 167, 57, 43, 249,
+                93, 223, 154, 179, 72, 223, 59, 215, 242, 204, 245,
+            ];
+            let crypto = Crypto::from_key([7u8; 32]);
+            assert_eq!(
+                crypto.open(&nonce, &ciphertext).unwrap(),
+                b"at-rest canary",
+                "the at-rest ciphertext format changed — stored secrets from \
+                 every previous release are unreadable"
+            );
+            // And the tag is still checked: one flipped bit must not open.
+            let mut tampered = ciphertext;
+            tampered[0] ^= 1;
+            assert!(crypto.open(&nonce, &tampered).is_err());
+        }
     }
 }
