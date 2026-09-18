@@ -21,7 +21,7 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 | `serde`, `serde_json` | all | Data interchange (OpenAI schema, config). |
 | `thiserror` | all | Library-style error types. |
 | `tracing`, `tracing-subscriber` | `gateway`, `cli` | Structured logging. |
-| `reqwest` (rustls-tls, stream) | `gateway`, `cli` | Outbound HTTP — upstream LLM calls (gateway) + gateway-API calls (cli). ring-backed rustls avoids the aws-lc-sys / cmake dependency that comes with rama's TLS features. See `crates/aiplane/src/rama_server/proxy.rs` for why AIplane keeps reqwest rather than driving rama's client side directly. |
+| `reqwest` (rustls, stream) | `gateway`, `cli` | Outbound HTTP — upstream LLM calls (gateway) + gateway-API calls (cli). TLS is rustls with the aws-lc-rs provider and the OS trust store via `rustls-platform-verifier`; both were already pulled in by `jsonwebtoken` and rama, so reqwest adds no build inputs of its own. See `crates/aiplane/src/rama_server/proxy.rs` for why AIplane keeps reqwest rather than driving rama's client side directly. |
 | `openidconnect` | `gateway` | OIDC discovery + code exchange. The Rust ecosystem's standard. |
 | `sqlx` (sqlite, runtime-tokio-rustls, macros, migrate) | `gateway` | Persistence for users, gateway tokens, sessions, pending_logins, audit log. |
 | `hmac` + `sha2` | `gateway` | HMAC-SHA256 for the signed session cookie; SHA-256 for indexed bearer-token lookup. Tokens are 256-bit OS-random opaque strings, so argon2id would only add CPU cost without security gain. |

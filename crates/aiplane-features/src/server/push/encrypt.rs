@@ -28,7 +28,7 @@ use aes_gcm::aead::{Aead, KeyInit};
 use hkdf::Hkdf;
 use p256::PublicKey;
 use p256::SecretKey;
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
 use rand::rand_core::UnwrapErr;
 use rand::{RngExt, TryRng};
 use sha2::Sha256;
@@ -96,7 +96,7 @@ fn encrypt_with(
     salt: [u8; 16],
 ) -> Result<Vec<u8>, EncryptError> {
     let ua_key = PublicKey::from_sec1_bytes(ua_public).map_err(|_| EncryptError::BadClientKey)?;
-    let as_public_point = ephemeral.public_key().to_encoded_point(false);
+    let as_public_point = ephemeral.public_key().to_sec1_point(false);
     let as_public = as_public_point.as_bytes();
 
     // ECDH → the raw shared X coordinate.
@@ -162,7 +162,7 @@ mod tests {
         let as_key = PublicKey::from_sec1_bytes(as_public).unwrap();
         let shared = p256::ecdh::diffie_hellman(ua_secret.to_nonzero_scalar(), as_key.as_affine());
 
-        let ua_public = ua_secret.public_key().to_encoded_point(false);
+        let ua_public = ua_secret.public_key().to_sec1_point(false);
         let mut key_info = Vec::new();
         key_info.extend_from_slice(b"WebPush: info\0");
         key_info.extend_from_slice(ua_public.as_bytes());
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn round_trips_a_payload() {
         let (ua_secret, auth) = client();
-        let ua_public = ua_secret.public_key().to_encoded_point(false);
+        let ua_public = ua_secret.public_key().to_sec1_point(false);
         let msg = br#"{"title":"Turn complete","body":"Your answer is ready"}"#;
         let body = encrypt(ua_public.as_bytes(), &auth, msg).unwrap();
         // Header is salt(16)+rs(4)+idlen(1)+point(65) = 86 bytes, then a
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn distinct_messages_use_distinct_salts_and_bodies() {
         let (ua_secret, auth) = client();
-        let ua_public = ua_secret.public_key().to_encoded_point(false);
+        let ua_public = ua_secret.public_key().to_sec1_point(false);
         let a = encrypt(ua_public.as_bytes(), &auth, b"same").unwrap();
         let b = encrypt(ua_public.as_bytes(), &auth, b"same").unwrap();
         assert_ne!(&a[0..16], &b[0..16], "fresh random salt per message");
@@ -224,14 +224,14 @@ mod tests {
     #[test]
     fn wrong_client_key_cannot_decrypt() {
         let (ua_secret, auth) = client();
-        let ua_public = ua_secret.public_key().to_encoded_point(false);
+        let ua_public = ua_secret.public_key().to_sec1_point(false);
         let body = encrypt(ua_public.as_bytes(), &auth, b"secret").unwrap();
         // A different receiver key derives a different CEK → GCM tag check fails.
         let other = SecretKey::from_slice(&[9u8; 32]).unwrap();
         let as_public = &body[21..21 + POINT_LEN];
         let as_key = PublicKey::from_sec1_bytes(as_public).unwrap();
         let shared = p256::ecdh::diffie_hellman(other.to_nonzero_scalar(), as_key.as_affine());
-        let ua_pub = other.public_key().to_encoded_point(false);
+        let ua_pub = other.public_key().to_sec1_point(false);
         let mut key_info = Vec::new();
         key_info.extend_from_slice(b"WebPush: info\0");
         key_info.extend_from_slice(ua_pub.as_bytes());

@@ -81,7 +81,7 @@ impl Vapid {
     fn from_private_bytes(priv32: &[u8]) -> anyhow::Result<Self> {
         let signing = SigningKey::from_slice(priv32)
             .map_err(|_| anyhow::anyhow!("VAPID private key is not a valid P-256 scalar"))?;
-        let point = signing.verifying_key().to_encoded_point(false);
+        let point = signing.verifying_key().to_sec1_point(false);
         let public_b64 = URL_SAFE_NO_PAD.encode(point.as_bytes());
         Ok(Self {
             signing,

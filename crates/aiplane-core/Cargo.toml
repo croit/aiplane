@@ -81,7 +81,7 @@ aes-gcm = "0.11"
 # Web Push (`server::push`): VAPID signing (P-256 ECDSA / ES256) + RFC 8291
 # payload encryption (P-256 ECDH → HKDF-SHA256 → AES-128-GCM). p256 supplies
 # both ECDSA and ECDH; hkdf the key schedule; base64 the URL-safe wire coding.
-p256 = { version = "0.13", features = ["ecdh"] }
+p256 = { version = "0.14", features = ["ecdh"] }
 hkdf = "0.13"
 base64 = "0.23"
 # typst compile scratch dirs (one per render) + RAG index staging.

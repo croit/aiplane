@@ -54,7 +54,7 @@ qrcode = { workspace = true }
 # QR *decoder* for the generate_qr_code tests: every rendered code is decoded
 # back and compared to the input, so a rendering regression (colors, logo
 # overlay, quiet zone) that breaks scannability fails the suite.
-rqrr = "0.10"
+rqrr = "0.11"
 # In-process HTTP mock standing in for the upstreams the tools call out to.
 wiremock = { workspace = true }
 

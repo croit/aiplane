@@ -44,13 +44,19 @@ jiff = { version = "0.2", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
+# `rustls` is 0.13's name for what 0.12 called `rustls-tls`. It selects the
+# aws-lc-rs provider and `rustls-platform-verifier` (the OS trust store).
+# Both were already in the tree before this bump — aws-lc-sys via
+# `jsonwebtoken`'s `aws_lc_rs` feature, the platform verifier via rama — so
+# this changes neither the build inputs nor where root certificates come
+# from. The runtime image ships `ca-certificates` for exactly that reason.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "multipart", "form", "query"] }
 
 # TLS handshake helper for the `tls_cert` gateway tool — a raw rustls
 # connect with verification disabled so we can inspect the presented
 # certificate (including expired / self-signed ones).
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-toml = "0.8"
+toml = "1"
 multer = "3"
 # WebDAV PROPFIND multistatus parsing for the RAG remote-source providers.
 # Pull-parser only (no serde-xml layer); already in the tree transitively via
@@ -131,12 +137,12 @@ url = "2"
 # comment here claimed otherwise, which stopped being true once rustls landed.
 # v10.3+ also fixes CVE-2026-25537 (string-typed `nbf`/`exp` claims silently
 # skipping validation).
-jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "aws_lc_rs"] }
+jsonwebtoken = { version = "11", default-features = false, features = ["use_pem", "aws_lc_rs"] }
 
 # HTTP framework + proxying. `http-full` covers server, client, codec, and
 # the SSE response primitives; rustls/tls deliberately omitted so the build
 # doesn't pull aws-lc-sys (cmake-only). TLS is fronted by the reverse
-# proxy in deployments; outbound HTTPS uses reqwest's ring-backed rustls.
+# proxy in deployments; outbound HTTPS uses reqwest's rustls (see above).
 rama = { git = "https://github.com/plabayo/rama", rev = "5ba0ada6b89defec9eb8cbdc645b4080c950651e", default-features = false, features = ["http-full", "tower"] }
 
 # Chat-render pipeline. Pinned at the workspace level so `gateway`
