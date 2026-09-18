@@ -24,21 +24,11 @@ chat-prompt-answer = Répondre
 chat-prompt-skip = Ignorer
 
 # La zone de saisie reste utilisable pendant qu'une réponse s'écrit.
-chat-queue-label = { $count ->
-    [one] { $count } message en attente
-   *[other] { $count } messages en attente
-  }
-chat-queue-move-up = Monter
-chat-queue-move-down = Descendre
-chat-queue-edit = Remettre dans la zone de saisie
-chat-queue-remove = Abandonner
-chat-queue-held-title = La pièce jointe a été perdue au rechargement — rattachez-la ou abandonnez ce message
-chat-queue-held-hint = Un message en attente a perdu sa pièce jointe au rechargement de la page. Il ne partira pas tant que vous ne l'aurez pas remis dans la zone de saisie avec le fichier.
-chat-queue-was-interjection = Saisi pendant la réponse précédente, terminée avant de l'avoir lu
-chat-composer-interject = Ajouter à la réponse en cours
-chat-composer-interject-title = Transmis à la réponse en cours d'écriture (Ctrl/Cmd+Entrée). Arrive à la prochaine étape d'outil ; si la réponse se termine avant, c'est envoyé comme message suivant.
+chat-composer-send-during-turn-title = Envoyer. Pendant qu'une réponse s'écrit, ceci lui est ajouté ; si cela arrive trop tard, c'est envoyé comme message suivant.
 chat-composer-interrupt = Interrompre et réorienter
 chat-composer-interrupt-title = Arrêter la réponse en cours et envoyer ceci à la place. Ce qui a déjà été écrit reste dans la conversation.
+chat-turn-waiting = Envoyé — en attente d'un créneau libre
+chat-turn-waiting-cancel = Reprendre
 chat-steer-pending = Ajouté pendant cette réponse — pas encore lu
 chat-steer-delivered = Ajouté pendant cette réponse — pris en compte
 chat-steer-resent = Ajouté pendant cette réponse — arrivé trop tard, envoyé comme message suivant

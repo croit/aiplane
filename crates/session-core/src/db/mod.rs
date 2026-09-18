@@ -290,6 +290,7 @@ fn map_tool_call(row: &SqliteRow) -> Result<ToolCall, DbError> {
 // Sessions
 
 mod fork;
+mod pending;
 mod search;
 mod sessions;
 mod steers;
@@ -297,6 +298,7 @@ mod tool_calls;
 mod turns;
 
 pub use fork::*;
+pub use pending::*;
 pub use search::*;
 pub use sessions::*;
 pub use steers::*;
@@ -407,6 +409,19 @@ mod tests {
                 FOREIGN KEY (turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE,
                 UNIQUE (turn_id, seq)
             )"#,
+            r#"CREATE TABLE chat_pending_turns (
+                turn_id     TEXT PRIMARY KEY NOT NULL,
+                session_id  TEXT NOT NULL,
+                user_id     TEXT NOT NULL,
+                model       TEXT NOT NULL,
+                voice       INTEGER NOT NULL DEFAULT 0,
+                client_ip   TEXT,
+                secure      INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT NOT NULL,
+                FOREIGN KEY (turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE,
+                FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )"#,
             r#"CREATE TABLE chat_turn_steers (
                 id          TEXT PRIMARY KEY NOT NULL,
                 turn_id     TEXT NOT NULL,
@@ -466,6 +481,128 @@ mod tests {
         .await
         .unwrap();
         pool
+    }
+
+    fn pending(turn_id: &str, session_id: &str) -> PendingTurn {
+        PendingTurn {
+            turn_id: turn_id.into(),
+            session_id: session_id.into(),
+            user_id: "u1".into(),
+            model: "m".into(),
+            voice: false,
+            client_ip: Some("198.51.100.7".into()),
+            secure: true,
+            created_at: Timestamp::now(),
+        }
+    }
+
+    /// A waiting turn is claimed exactly once. Two schedulers can run at the
+    /// same instant — one conversation finishing while another releases a slot
+    /// — and a read-then-delete would let both start the same turn, which is
+    /// two workers writing one transcript.
+    #[tokio::test]
+    async fn a_waiting_turn_is_claimed_exactly_once() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &s.id, "u0", "first").await.unwrap();
+        insert_pending_turn(&pool, &pending("u0", &s.id))
+            .await
+            .unwrap();
+
+        let first = take_next_for_user(&pool, "u1", &[]).await.unwrap();
+        assert_eq!(first.as_ref().map(|p| p.turn_id.as_str()), Some("u0"));
+        assert!(
+            take_next_for_user(&pool, "u1", &[])
+                .await
+                .unwrap()
+                .is_none(),
+            "the second caller finds nothing to start"
+        );
+
+        // The start parameters survive the wait — the request that accepted
+        // the message is long gone by now.
+        let claimed = first.unwrap();
+        assert_eq!(claimed.client_ip.as_deref(), Some("198.51.100.7"));
+        assert!(claimed.secure);
+        assert_eq!(claimed.model, "m");
+    }
+
+    /// Oldest first, and never a conversation that is already being answered:
+    /// one writer per transcript is the invariant the whole design rests on.
+    #[tokio::test]
+    async fn claiming_skips_conversations_that_are_already_busy() {
+        let pool = pool().await;
+        let busy = create_session(&pool, "u1").await.unwrap();
+        let free = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &busy.id, "u0", "older")
+            .await
+            .unwrap();
+        create_user_turn(&pool, &free.id, "u1", "newer")
+            .await
+            .unwrap();
+        let mut older = pending("u0", &busy.id);
+        older.created_at = "2026-01-01T00:00:00Z".parse().unwrap();
+        let mut newer = pending("u1", &free.id);
+        newer.created_at = "2026-01-02T00:00:00Z".parse().unwrap();
+        insert_pending_turn(&pool, &older).await.unwrap();
+        insert_pending_turn(&pool, &newer).await.unwrap();
+
+        let claimed = take_next_for_user(&pool, "u1", std::slice::from_ref(&busy.id))
+            .await
+            .unwrap()
+            .expect("the free conversation's turn is startable");
+        assert_eq!(claimed.turn_id, "u1", "the older one is skipped, not taken");
+
+        // With nothing busy, the older one is next.
+        let claimed = take_next_for_user(&pool, "u1", &[]).await.unwrap().unwrap();
+        assert_eq!(claimed.turn_id, "u0");
+    }
+
+    /// Waiting turns outlive the process that accepted them — the browser that
+    /// sent them may be long closed, so the startup sweep is the only thing
+    /// that will ever start them.
+    #[tokio::test]
+    async fn the_startup_sweep_finds_users_with_work_waiting() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &s.id, "u0", "hi").await.unwrap();
+        assert!(users_with_pending_turns(&pool).await.unwrap().is_empty());
+
+        insert_pending_turn(&pool, &pending("u0", &s.id))
+            .await
+            .unwrap();
+        assert_eq!(users_with_pending_turns(&pool).await.unwrap(), ["u1"]);
+
+        // Cancelled by the user: out of the queue, and out of the sweep.
+        assert!(delete_pending_turn(&pool, "u0").await.unwrap());
+        assert!(!delete_pending_turn(&pool, "u0").await.unwrap());
+        assert!(users_with_pending_turns(&pool).await.unwrap().is_empty());
+    }
+
+    /// Deleting the conversation takes its queue with it — otherwise the
+    /// scheduler would try to start a turn whose transcript no longer exists.
+    #[tokio::test]
+    async fn waiting_turns_die_with_their_conversation() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &s.id, "u0", "hi").await.unwrap();
+        insert_pending_turn(&pool, &pending("u0", &s.id))
+            .await
+            .unwrap();
+
+        delete_session(&pool, "u1", &s.id).await.unwrap();
+        assert!(
+            list_pending_for_session(&pool, &s.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            take_next_for_user(&pool, "u1", &[])
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     /// An interjection against a turn that is still running. Panics if the

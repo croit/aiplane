@@ -242,34 +242,62 @@ mutations include `…/cancel`, `…/fork`, `…/share`, `…/effort`,
 
 ## The composer during a turn
 
-The composer stays usable while an answer streams. Three different things can
-be done with a running turn, and the difference between them is the user's to
-make:
+The composer stays usable while an answer streams, and **Enter always means
+send**. Where the message lands is the server's decision, because it is the
+only party that knows whether a worker is running:
 
-| Action | Keys | What happens |
+| Placement | When | What the user sees |
 |---|---|---|
-| Queue it | `Enter` | The text waits in the composer's outbox and is submitted when the turn ends. Entries are editable, reorderable and survive a reload (`web/src/lib/composer-queue.ts`). Attachments do not survive — a `File` cannot be serialised — so a restored entry that had them is *held*: it keeps its place and its text, is skipped by the drain, and waits for the file to be re-attached rather than sending a message whose answer is guaranteed to be wrong. |
-| Interject | `Ctrl`/`Cmd`+`Enter` | `POST …/steer`. The note is recorded against the running assistant turn and handed to the live worker, which folds it into the prompt **at the next tool round** (`fold_in_steers` in `openai_driver.rs`; the row is only marked delivered once the upstream has accepted that round, so a turn that never reached a backend claims nothing). |
-| Interrupt and re-aim | button | The draft is queued, then the turn is cancelled. The partial answer stays in the transcript *and* in the model's replayed history, marked as interrupted, so the second attempt continues from what the user read. |
+| `started` | nothing was running in this conversation | an ordinary turn |
+| `folded` | a turn was already running here | the text appears inside that answer as an addition, and goes into its prompt at the next tool round — every pending addition at once, not one per round |
+| `queued` | this user's other conversations hold every parallel slot | the message sits in the transcript marked "sent — waiting for a free slot", with a *take back* action |
 
-An interjection has four possible fates and the transcript says which:
-`pending` (recorded, not yet read), `delivered` (folded into the prompt),
-`resent` (the turn ended before a round could carry it, so the client submitted
-it as an ordinary message) and `discarded` (the user threw it away instead —
-`POST …/steer/{steer_id}/discard`, which is what keeps a dismissed note from
-being re-queued by the next finalize).
+`POST …/messages` answers `202` with that `placement`. There is no client-side
+outbox: a waiting message is a **user turn with no answer after it**, which is
+both what the transcript renders and what the scheduler reads. It therefore
+survives a closed tab, shows up on another device, and cannot be sent twice by
+two browsers.
 
-The rows live in `chat_turn_steers`; settling is `WHERE status = 'pending'`,
-which doubles as the claim check that stops two browser tabs from re-sending
-the same note. The claim is a *reservation*: a submit that is then refused
-releases it again, or the note would be marked as dealt with while its sentence
-was never sent. Only `delivered` notes replay in the history a later turn sees —
-a `resent` one is already there as its own user turn — and a turn that does not
-replay at all takes its notes with it.
+Why not a new `chat_turns.status`: that column is read in 66 places (export,
+the FTS triggers, compaction, webhooks, history replay, the startup sweep), and
+a fifth variant would have to be right in all of them. "No answer after it"
+needs no new state. What a waiting turn needs in order to *start* later — the
+model, the voice flag, the caller's IP — lives in `chat_pending_turns`, a work
+queue whose rows are deleted the moment a worker claims one.
 
-Accepting a steer is **not** a promise that the model read it. A turn writing
-its closing answer has no further round to carry one, which is exactly why the
-status exists and why the fallback re-sends rather than pretending.
+The scheduler (`start_pending_turns` in `pages/chat/mod.rs`) runs at every
+moment a turn can become startable: a turn finishing, a conversation being
+cancelled, a message being queued, and the process coming back. No timer, no
+polling. Claiming is `DELETE … RETURNING`, so two schedulers racing cannot
+start the same turn twice — and queueing kicks it, because the slot can free up
+between "at capacity" and the row landing.
+
+A page watching a waiting message is told when it starts: the events stream
+does **not** end at `idle` for a conversation with something queued. It stays
+open, waits for the registry's `WorkerStarted` announcement
+(`stream_until_started`), and hands over to the live turn with a snapshot that
+names it — `live_turn_id` is what tells the client a turn is streaming, so
+without that second snapshot the page would receive deltas while still
+believing it is idle. Bounded at five minutes, after which the stream ends as
+`idle` like any quiet conversation. Which messages are waiting travels in the
+snapshot (`waiting_turn_ids`) rather than being inferred from the transcript's
+shape: a turn whose assistant row failed to insert looks identical and would
+spin forever.
+
+An addition only reaches the model if another round follows. One that arrives
+while the closing answer is being written does not, and at finalize the server
+turns it into the next message itself — in the same place, whether or not a
+browser is open. The transcript says which happened: `pending`, `delivered`,
+`resent`, or `discarded`. Only `delivered` notes replay in the history a later
+turn sees; a `resent` one is already there as its own user turn.
+
+**Interrupt and re-aim** is the deterministic version: send, then stop. Sending
+folds the text into the running turn, stopping guarantees no round will carry
+it, and the finalize path re-queues it as the next message. The cancelled
+partial answer stays in the transcript *and* in the model's replayed history,
+marked as interrupted, so the second attempt continues from what the reader
+saw. Cancelling is cooperative — the worker notices between upstream chunks —
+so a slot frees when the turn actually ends, not when the button is pressed.
 
 ## Parallel conversations
 
@@ -280,12 +308,9 @@ is an operator setting — `chat.turns.max_parallel` under Chat in
 the next message.
 
 The registry (`session-core/src/workers.rs`) keys on `(user id, session id)`.
-Submitting into a conversation that is already streaming is `409
-turn_in_progress`; submitting when the user's *other* conversations fill every
-slot is `409 at_capacity`, a separate code because the remedy is different —
-the composer keeps such a message queued and retries on a timer — this
-conversation is idle, so no turn of its own will ever finish to wake it —
-rather than making the user re-type it.
+Past the ceiling nothing is refused any more: the message is persisted and
+waits. Retry and edit still refuse with `409` — regeneration rewrites history a
+running turn is reading, so there is nothing sensible to queue.
 
 `GET …/sessions/{id}/capabilities` is the conversation's complete capability
 read model. Each built-in tool, connected integration tool, and skill carries

@@ -32,7 +32,8 @@ use gateway_runtime::rama_server::state::RamaState;
 use gateway_core::server::db::users::User;
 
 use super::{
-    ChatSubmit, DocumentPath, RequestCtx, SteerPath, SubmitTurnError, TurnPath, submit_turn,
+    ChatSubmit, DocumentPath, RequestCtx, SteerPath, SubmitOutcome, SubmitTurnError, TurnPath,
+    submit_turn,
 };
 use crate::pages::{bad_request, internal, json_error, json_ok as ok_json, not_found, read_json};
 use session_core::db as chat;
@@ -315,15 +316,6 @@ struct MessageBody {
     message: String,
     #[serde(default)]
     voice: bool,
-    /// Ids of the interjections this submit is the re-send of.
-    ///
-    /// A note the finished turn never reached stays `pending`, and the client
-    /// sends it as an ordinary message. Naming the rows here is what makes
-    /// that safe with two tabs open on the same conversation: settling is
-    /// `WHERE status = 'pending'`, so exactly one submit can claim a note and
-    /// the loser is refused instead of duplicating the message.
-    #[serde(default)]
-    redeem_steers: Vec<String>,
 }
 
 /// POST /api/v0/chat/sessions/{id}/messages — submit a turn as JSON.
@@ -397,7 +389,6 @@ pub async fn message_send(
             attachments: Vec::new(),
             voice: parsed.voice,
             user_turn_id,
-            redeem_steers: parsed.redeem_steers,
         }
     };
 
@@ -406,44 +397,37 @@ pub async fn message_send(
         return bad_request("message must not be empty");
     }
 
-    // Claim the interjections this message stands in for, before the turn is
-    // created. Losing the race means another tab already re-sent them, so the
-    // honest answer is to refuse this submit rather than to say the same
-    // sentence twice.
-    //
-    // The claim is a *reservation*, not a record of what happened: if the
-    // submit below is refused, every id in `claimed` is released again. Leaving
-    // them claimed would mark a note as dealt with while its sentence was never
-    // sent, and the client — told "already settled" on the retry — would drop
-    // its copy. That is a silent loss of something the user typed.
-    let claimed = match chat::claim_steers(&state.db, &active.id, &submit.redeem_steers).await {
-        Ok(claimed) => claimed,
-        Err(err) => return internal(err),
-    };
-    // Every named note or none. A partial claim means somebody else already
-    // re-sent one of them, and going ahead would put that sentence in front of
-    // the model twice — once from the tab that won the claim, once from this
-    // message. The ones this call did take are released on the way out.
-    if claimed.len() != submit.redeem_steers.len() {
-        release_claimed_steers(&state, &claimed).await;
-        return json_error(
-            StatusCode::CONFLICT,
-            "steer_already_settled",
-            "these interjections were already answered for elsewhere",
-        );
-    }
-
     ctx.voice_mode = submit.voice;
-    let outcome = submit_turn(&state, &user, &active, submit, ctx).await;
-    if outcome.is_err() {
-        release_claimed_steers(&state, &claimed).await;
-    }
-    match outcome {
-        Ok(submitted) => ok_json(
+    match submit_turn(&state, &user, &active, submit, ctx).await {
+        // `placement` is the honest half of the answer. The client no longer
+        // decides where a message goes — only the server knows whether a
+        // worker is running — so it has to be told: `started` renders as a
+        // turn, `folded` as an addition to the answer being written, `queued`
+        // as a message waiting for a slot.
+        Ok(SubmitOutcome::Started(submitted)) => ok_json(
             StatusCode::ACCEPTED,
             json!({
+                "placement": "started",
                 "user_turn_id": submitted.user_turn.id,
                 "assistant_turn_id": submitted.assistant_turn.id,
+            }),
+        ),
+        Ok(SubmitOutcome::Folded {
+            assistant_turn_id,
+            steer_id,
+        }) => ok_json(
+            StatusCode::ACCEPTED,
+            json!({
+                "placement": "folded",
+                "assistant_turn_id": assistant_turn_id,
+                "steer_id": steer_id,
+            }),
+        ),
+        Ok(SubmitOutcome::Queued { user_turn_id }) => ok_json(
+            StatusCode::ACCEPTED,
+            json!({
+                "placement": "queued",
+                "user_turn_id": user_turn_id,
             }),
         ),
         Err(err) => submit_refusal(err),
@@ -452,32 +436,15 @@ pub async fn message_send(
 
 /// The one place a refused submit becomes a response.
 ///
-/// Both submit paths — a fresh message and a retry/edit regeneration — refuse
-/// for the same reasons, and the client branches on `error.code`, so these
-/// codes are a wire contract. Written twice, they were free to drift; written
-/// once, a new refusal reaches both callers by construction.
+/// Short, now: a busy conversation and a full set of parallel slots are no
+/// longer refusals — a message sent into either is accepted and answered
+/// later. What is left is the caller having no budget, and storage failing.
 fn submit_refusal(err: SubmitTurnError) -> Response {
     match err {
         SubmitTurnError::RateLimited => json_error(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
             "rate limit or quota exceeded — see /usage",
-        ),
-        SubmitTurnError::Busy => json_error(
-            StatusCode::CONFLICT,
-            "turn_in_progress",
-            "this conversation is still streaming a turn — cancel it first",
-        ),
-        // A distinct code, because the client's remedy is distinct: this
-        // conversation is idle and the message is worth holding in the
-        // composer's queue until one of the user's other chats finishes.
-        SubmitTurnError::AtCapacity { running, limit } => json_error(
-            StatusCode::CONFLICT,
-            "at_capacity",
-            &format!(
-                "{running} of {limit} parallel conversations are already \
-                 streaming for this user"
-            ),
         ),
         SubmitTurnError::Db(msg) => {
             json_error(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", &msg)
@@ -488,37 +455,18 @@ fn submit_refusal(err: SubmitTurnError) -> Response {
 #[derive(Deserialize)]
 struct SteerBody {
     message: String,
-    /// Interjections this one stands in for.
-    ///
-    /// A note the last turn never reached can be taken back into the composer
-    /// and thrown at the *next* turn while that one is still running. It is
-    /// still that note's re-send, so it settles the same way a message does —
-    /// otherwise the row stays `pending` and the client queues the sentence a
-    /// second time when the turn ends.
-    #[serde(default)]
-    redeem_steers: Vec<String>,
 }
 
-/// Ceiling on one interjection, in bytes.
+/// Ceiling on what may be folded into a running turn, in bytes.
 ///
-/// Generous for a sentence or two of correction, which is what this is for,
-/// and far below anything that meaningfully grows the prompt. Longer than this
-/// is a message, and the composer already sends those.
-const MAX_STEER_BYTES: usize = 4 * 1024;
-
-/// Give back interjection claims whose message was refused.
+/// Generous for a sentence or two of correction, which is what an addition is
+/// for, and far below anything that meaningfully grows the prompt — which it
+/// does twice over, since a delivered note also replays in the history of
+/// every later turn.
 ///
-/// Best-effort and deliberately silent: the submit already failed and its own
-/// error is what the caller gets. A release that fails leaves the note marked
-/// `resent` — the one outcome this exists to avoid — so it is logged loudly
-/// enough to find, and no louder.
-async fn release_claimed_steers(state: &Arc<RamaState>, claimed: &[String]) {
-    for id in claimed {
-        if let Err(err) = chat::release_steer(&state.db, id, chat::SteerStatus::Resent).await {
-            tracing::error!(error = %err, steer = %id, "could not release a claimed interjection");
-        }
-    }
-}
+/// Anything longer is not refused: it is a message, and it waits its turn like
+/// one. Only the *folding* is bounded.
+pub(crate) const MAX_STEER_BYTES: usize = 4 * 1024;
 
 /// POST /api/v0/chat/sessions/{id}/steer — say something to the turn that is
 /// already running.
@@ -578,39 +526,19 @@ pub async fn session_steer(
         );
     };
 
-    // Settle whatever this interjection stands in for, before recording it.
-    // Same all-or-nothing rule as the message path, for the same reason.
-    let claimed = match chat::claim_steers(&state.db, &session_id, &parsed.redeem_steers).await {
-        Ok(claimed) => claimed,
-        Err(err) => return internal(err),
-    };
-    if claimed.len() != parsed.redeem_steers.len() {
-        release_claimed_steers(&state, &claimed).await;
-        return json_error(
-            StatusCode::CONFLICT,
-            "steer_already_settled",
-            "these interjections were already answered for elsewhere",
-        );
-    }
-
     // The insert is conditional on the turn still running, so the answer
     // finishing between the lookup above and this write is a `None` rather
     // than a row against a finished turn.
     let steer = match chat::insert_steer(&state.db, &worker.turn_id, &text).await {
         Ok(Some(steer)) => steer,
         Ok(None) => {
-            // Nothing was recorded, so nothing was re-sent either.
-            release_claimed_steers(&state, &claimed).await;
             return json_error(
                 StatusCode::CONFLICT,
                 "no_turn_running",
                 "the answer finished before this reached it — send it as a message instead",
             );
         }
-        Err(err) => {
-            release_claimed_steers(&state, &claimed).await;
-            return internal(err);
-        }
+        Err(err) => return internal(err),
     };
     worker.steers.push(session_core::workers::SteerNote {
         id: steer.id.clone(),
@@ -658,6 +586,24 @@ pub async fn steer_discard(
         Ok(None) => return not_found_conversation(),
         Err(err) => return internal(err),
     };
+    // Take it out of the live worker's inbox *first*, and let that decide.
+    //
+    // A note is only discardable while it is still waiting to be folded in.
+    // Once the driver has drained it into a prompt the row is still `pending`
+    // for a moment — delivery is recorded after the upstream accepts the round
+    // — and settling it here would put "discarded" in the transcript for a
+    // sentence the model is reading right now.
+    if let Some(worker) = state.chats.get(&user.id, &session_id)
+        && worker.turn_id == steer.turn_id
+        && !worker.steers.remove(&steer.id)
+        && steer.status == chat::SteerStatus::Pending
+    {
+        return json_error(
+            StatusCode::CONFLICT,
+            "already_in_flight",
+            "this addition is already on its way to the model",
+        );
+    }
     match chat::settle_steer(&state.db, &steer.id, chat::SteerStatus::Discarded).await {
         // Already settled: delivered, re-sent, or discarded in another tab.
         // Nothing to do and nothing to complain about — the caller wanted it
@@ -681,6 +627,20 @@ pub async fn session_cancel(
     }
     let cancelled = session_core::chat_json::cancel_turn(&state.chats, &user.id, &session_id);
     ok_json(StatusCode::OK, json!({ "cancelled": cancelled }))
+}
+
+/// The conversation's waiting user turns, for a snapshot.
+///
+/// An unreadable queue degrades to "nothing waiting": the transcript is still
+/// right, one message just renders without its spinner until the next
+/// snapshot.
+async fn waiting_turn_ids(state: &Arc<RamaState>, session_id: &str) -> Vec<String> {
+    chat::list_pending_for_session(&state.db, session_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|pending| pending.turn_id)
+        .collect()
 }
 
 /// GET /api/v0/chat/sessions/{id}/events — the JSON-SSE stream.
@@ -709,6 +669,12 @@ pub async fn session_events(
         Err(resp) => return resp,
     }
 
+    // Subscribe to worker starts BEFORE looking for one. The two steps have a
+    // gap, and the worker this viewer is waiting for may be registered inside
+    // it — which is exactly the case that matters here, because a message
+    // waiting for a free slot starts on the scheduler's schedule, not on any
+    // request.
+    let starts = state.chats.subscribe_starts();
     // Owners attach to their own live worker; a shared-session viewer finds
     // none (workers are keyed by owner) and reads the static snapshot —
     // same behaviour as the legacy tail.
@@ -729,9 +695,11 @@ pub async fn session_events(
             let (tx, rx) = rama::futures::channel::mpsc::unbounded::<
                 Result<rama::bytes::Bytes, std::io::Error>,
             >();
+            let waiting_turn_ids = waiting_turn_ids(&state, &session_id).await;
             let initial = vec![session_core::chat_json::ChatEvent::Snapshot {
                 live_turn_id: Some(worker.turn_id.clone()),
                 turns,
+                waiting_turn_ids,
             }];
             tokio::spawn(session_core::chat_json::run_json_turn_stream(
                 state.db.clone(),
@@ -750,13 +718,50 @@ pub async fn session_events(
                     return internal(err);
                 }
             };
-            session_core::chrome::sse_response(&[
-                session_core::chat_json::sse_json(&session_core::chat_json::ChatEvent::Snapshot {
-                    live_turn_id: None,
-                    turns,
-                }),
-                session_core::chat_json::sse_json(&session_core::chat_json::ChatEvent::Idle),
-            ])
+            // Is anything here sent but not started? Ask the work queue, not
+            // the transcript: "ends on a user turn" *looks* like the same
+            // question and is not. A turn whose assistant row failed to insert
+            // leaves that shape with nothing queued, and would pin a task and
+            // a connection for the whole wait on every attach, forever.
+            //
+            // Only for the owner. Workers are keyed by owner, so a viewer of a
+            // shared conversation could never match one — they would wait out
+            // the full deadline and then be told `idle`.
+            let waiting = user_owns(&state, &user.id, &session_id).await
+                && !chat::list_pending_for_session(&state.db, &session_id)
+                    .await
+                    .unwrap_or_default()
+                    .is_empty();
+            if !waiting {
+                return session_core::chrome::sse_response(&[
+                    session_core::chat_json::sse_json(
+                        &session_core::chat_json::ChatEvent::Snapshot {
+                            live_turn_id: None,
+                            turns,
+                            waiting_turn_ids: Vec::new(),
+                        },
+                    ),
+                    session_core::chat_json::sse_json(&session_core::chat_json::ChatEvent::Idle),
+                ]);
+            }
+            // Hold the stream open until the scheduler starts it. Ending at
+            // `idle` here would leave the page showing "waiting" long after
+            // the answer began, with nothing left to tell it otherwise — and
+            // a client that asks again every few seconds is a poll standing in
+            // for an event the server already has.
+            let (tx, rx) = rama::futures::channel::mpsc::unbounded::<
+                Result<rama::bytes::Bytes, std::io::Error>,
+            >();
+            tokio::spawn(session_core::chat_json::stream_until_started(
+                state.db.clone(),
+                state.chats.clone(),
+                user.id.clone(),
+                session_id,
+                turns,
+                starts,
+                tx,
+            ));
+            session_core::chat_json::json_stream_response(rx)
         }
     }
 }
@@ -793,6 +798,74 @@ async fn readable_session(
 #[derive(serde::Deserialize)]
 pub struct RetryBody {
     pub model: String,
+}
+
+/// DELETE /api/v0/chat/sessions/{id}/turns/{turn_id} — take back a message
+/// that has not been answered yet.
+///
+/// Only a user turn with nothing after it: once an answer exists (or is being
+/// written), removing the question alone would leave a reply to a message
+/// nobody can read. Editing and retrying, which rewrite history deliberately,
+/// have their own endpoints.
+pub async fn turn_delete(
+    Path(TurnPath {
+        id: session_id,
+        turn_id,
+    }): Path<TurnPath>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = require_session_json!(state, req);
+    if !user_owns(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
+    let turns = match chat::list_turns(&state.db, &session_id).await {
+        Ok(turns) => turns,
+        Err(err) => return internal(err),
+    };
+    let Some(index) = turns.iter().position(|t| t.turn.id == turn_id) else {
+        return not_found_conversation();
+    };
+    let target = &turns[index];
+    if target.turn.role != chat::TurnRole::User {
+        return bad_request("only a message can be taken back, not an answer");
+    }
+    if turns.len() > index + 1 {
+        return json_error(
+            StatusCode::CONFLICT,
+            "already_answered",
+            "this message is already being answered — cancel the turn instead",
+        );
+    }
+    // Claim it out of the work queue, and treat losing that claim as "too
+    // late". Reading the transcript and then deleting leaves a window in which
+    // the scheduler starts this very turn: the delete would take the freshly
+    // created assistant row with it, and its worker would go on streaming into
+    // a row that no longer exists. This is the same one-shot claim the
+    // scheduler uses, so exactly one of the two wins.
+    match chat::delete_pending_turn(&state.db, &turn_id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return json_error(
+                StatusCode::CONFLICT,
+                "already_answered",
+                "this message just started being answered — cancel the turn instead",
+            );
+        }
+        Err(err) => return internal(err),
+    }
+    // Uploads first, like every other path that truncates a conversation:
+    // after the delete the markers are gone and the objects are unreferenced
+    // forever. See `doomed_attachments`.
+    let doomed = super::doomed_attachments(&state, &session_id, target.turn.seq).await;
+    match chat::delete_turns_from_seq(&state.db, &session_id, target.turn.seq).await {
+        Ok(_) => {
+            super::reclaim_attachments(&state, doomed);
+            let _ = chat::touch_session(&state.db, &session_id).await;
+            ok_json(StatusCode::OK, json!({ "deleted": turn_id }))
+        }
+        Err(err) => internal(err),
+    }
 }
 
 /// POST /api/v0/chat/sessions/{id}/turns/{turn_id}/retry — drop this
@@ -927,14 +1000,25 @@ async fn start_regeneration_json(
         state.config().chat.turns.max_parallel,
     ) {
         session_core::RegisterOutcome::Registered { worker } => worker,
+        // Regeneration is not a message: a retry or an edit rewrites history
+        // that a running turn is reading, so there is nothing sensible to
+        // queue. These stay refusals.
         session_core::RegisterOutcome::Busy { .. } => {
-            return Err(submit_refusal(SubmitTurnError::Busy));
+            return Err(json_error(
+                StatusCode::CONFLICT,
+                "turn_in_progress",
+                "this conversation is still streaming a turn — cancel it first",
+            ));
         }
         session_core::RegisterOutcome::AtCapacity { running, limit } => {
-            return Err(submit_refusal(SubmitTurnError::AtCapacity {
-                running,
-                limit,
-            }));
+            return Err(json_error(
+                StatusCode::CONFLICT,
+                "at_capacity",
+                &format!(
+                    "{running} of {limit} parallel conversations are already \
+                     streaming for this user"
+                ),
+            ));
         }
     };
     let assistant_turn = match chat::create_assistant_turn_in_progress(

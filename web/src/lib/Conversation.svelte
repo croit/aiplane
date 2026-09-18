@@ -13,17 +13,6 @@
 	import { canonicalAttachments } from '$lib/conversation-assets';
 	import { renderPromptMarkdown, sanitizeSvgPreview } from '$lib/markdown';
 	import { DragDepth, carriesFiles, droppedOnlyDirectories, filesFrom } from '$lib/drop-files';
-	import {
-		deserializeQueue,
-		draftEntry,
-		moveEntry,
-		queueStorageKey,
-		removeEntry,
-		nextSendable,
-		serializeQueue,
-		withUndeliveredSteers,
-		type QueuedMessage
-	} from '$lib/composer-queue';
 	import { me } from '$lib/session.svelte';
 	import { t, time, n } from '$lib/i18n.svelte';
 	import ConversationHeader from '$lib/components/chat/ConversationHeader.svelte';
@@ -64,11 +53,9 @@
 	 * The composer's textarea, so the actions that empty it can hand the
 	 * cursor back.
 	 *
-	 * Clicking a button moves focus to that button, and the composer's buttons
-	 * are exactly the ones you press mid-thought: after interjecting or
-	 * queueing by click, the next thing typed went to the button and was
-	 * swallowed — silently, with the text visibly gone. Whatever empties the
-	 * composer puts the cursor back in it.
+	 * Clicking send moves focus to the button, and that is exactly the moment
+	 * the next thought gets typed — into the button, where it is swallowed
+	 * silently with the text visibly gone. Sending puts the cursor back.
 	 */
 	let composerInput = $state<HTMLTextAreaElement | null>(null);
 
@@ -76,72 +63,6 @@
 		composerInput?.focus();
 	}
 
-	/**
-	 * Bring back what was waiting when the page was last closed.
-	 *
-	 * Called where the state is declared, NOT from `onMount`. Restoring it in
-	 * `onMount` looked equivalent and lost every queued message on reload: the
-	 * effect that writes the queue back is created earlier in this file, so it
-	 * ran first, saw the still-empty initial value and cleared the stored
-	 * entry before `onMount` could read it.
-	 *
-	 * Storage is per browser and per conversation, and can throw (private
-	 * windows, blocked site data). An empty queue is a fine outcome then; a
-	 * crashed component is not.
-	 */
-	function restoreQueue(): QueuedMessage[] {
-		try {
-			return deserializeQueue(localStorage.getItem(queueStorageKey(id)));
-		} catch {
-			return [];
-		}
-	}
-
-	/**
-	 * What was typed while a turn was running and has not gone out yet.
-	 *
-	 * The composer stays live during a turn, so this is where a message waits
-	 * — plus any interjection the finished turn never carried (see
-	 * `composer-queue`). Drained oldest-first the moment the turn ends.
-	 */
-	let queue = $state<QueuedMessage[]>(restoreQueue());
-	/**
-	 * What became of one attempt to send a queued entry.
-	 *
-	 * Four outcomes, because "did it leave the queue" and "should we try again"
-	 * are different questions: `settled` leaves the queue without having been
-	 * sent, and `failed` stays without being retried.
-	 */
-	type SendOutcome = 'sent' | 'settled' | 'wait' | 'failed';
-
-	/** True while the queue is being drained, so the drain never re-enters. */
-	let flushing = false;
-	/**
-	 * Interjection claims riding along with whatever is in the composer.
-	 *
-	 * Set when a queued entry is taken back for editing, cleared when the
-	 * composer empties. Without it, editing a returned interjection would drop
-	 * its claim, and the row it stands in for would be re-queued by the next
-	 * finalize — the same sentence sent twice.
-	 */
-	let draftRedeem = $state<string[]>([]);
-
-	// An emptied composer holds no claim. Without this, clearing the text of a
-	// returned interjection and typing something unrelated sent that unrelated
-	// message carrying the old ids: the server marked the note re-sent, and
-	// the sentence it stood for was never sent anywhere.
-	$effect(() => {
-		if (!draft.trim() && files.length === 0 && draftRedeem.length > 0) draftRedeem = [];
-	});
-	/** Pending `at_capacity` retry, if one is armed. See `retryLater`. */
-	let capacityTimer: ReturnType<typeof setTimeout> | null = null;
-	/**
-	 * How long to wait before retrying a submit that was refused because the
-	 * user's other conversations filled every parallel slot. Long enough not
-	 * to hammer the endpoint, short enough that a freed slot is taken while
-	 * the user is still looking at the page.
-	 */
-	const CAPACITY_RETRY_MS = 5_000;
 	let notice = $state<string | null>(null);
 	let compactedUpToSeq = $state<number | null>(null);
 	let assets = $state<ChatAsset[]>([]);
@@ -195,39 +116,6 @@
 		scrollToEnd();
 	}
 
-	// Write the queue back on every change. Cheap (a few short strings) and it
-	// means a crashed tab loses nothing, not just a tab closed politely.
-	$effect(() => {
-		try {
-			if (queue.length === 0) localStorage.removeItem(queueStorageKey(id));
-			else localStorage.setItem(queueStorageKey(id), serializeQueue(queue));
-		} catch {
-			/* storage unavailable: the queue still works for this page's life */
-		}
-	});
-
-	// Drain whenever the conversation is idle and something is waiting.
-	//
-	// `model` is read here on purpose, not just used inside `flushQueue`: on a
-	// reload it is empty until `loadModels()` resolves, and the effect would
-	// otherwise run once against an empty model, fail, and never re-run — an
-	// idle conversation fires no `turn_finalized` to try again, so a restored
-	// queue sat there visible and unsent. Reading it makes the model arriving
-	// the trigger.
-	$effect(() => {
-		if (!streaming && model.trim() && queue.length > 0) void flushQueue();
-	});
-
-	// Interjections the model never read, found on a conversation that is not
-	// streaming. The finalize hook covers the turn that ends while this page
-	// watches; this covers the rest — a tab closed mid-turn, a turn swept to
-	// `errored` at startup — which otherwise left a note reading "not read
-	// yet" forever, with nothing able to re-send or discard it.
-	$effect(() => {
-		if (!controller || streaming) return;
-		queue = withUndeliveredSteers(queue, controller.state.turns);
-	});
-
 	const turns = $derived(controller ? controller.state.turns : []);
 	const streaming = $derived(controller !== null && controller.state.liveTurnId !== null);
 	const prompt = $derived(controller?.state.prompt ?? null);
@@ -253,6 +141,15 @@
 	const isOwner = $derived(
 		session === null || me.value === null || session.user_id === me.value.id
 	);
+	/**
+	 * User turns the server has accepted but not started answering.
+	 *
+	 * Taken from the snapshot rather than inferred from the transcript's
+	 * shape: the server asks its work queue, and a turn whose assistant row
+	 * failed to insert looks identical from here while never being startable.
+	 */
+	const waitingTurnIds = $derived(new Set(controller?.state.waitingTurnIds ?? []));
+
 	let metaRequest = 0;
 
 	$effect(() => {
@@ -360,16 +257,6 @@
 	}
 
 	onMount(() => {
-		// Follow the queue in other tabs of the same conversation. Two tabs
-		// each restore the same stored queue at mount, and both drain when the
-		// conversation goes idle — without this the second one sends a message
-		// the first already sent. A `storage` event fires only in the *other*
-		// tabs, so this is exactly "somebody else changed it; re-read".
-		const onStorage = (event: StorageEvent) => {
-			if (event.key !== queueStorageKey(id)) return;
-			queue = deserializeQueue(event.newValue);
-		};
-		window.addEventListener('storage', onStorage);
 		// `loadModels` was defined and never called, which left `models` empty
 		// and the picker permanently in its free-text fallback.
 		void loadModels();
@@ -388,12 +275,6 @@
 		c.onTurnFinalized = () => {
 			void refreshConversationMeta();
 			void loadDocuments();
-			// An interjection the turn ended before reaching is not lost: it
-			// becomes the next message, carrying its row id so the server can
-			// settle it (and refuse a second tab trying the same).
-			// Assigning `queue` (and `streaming` flipping on the same event)
-			// is what the drain effect watches, so it runs on its own.
-			queue = withUndeliveredSteers(queue, c.state.turns);
 		};
 		c.attach();
 		controller = c;
@@ -414,8 +295,6 @@
 		return () => {
 			observer.disconnect();
 			window.clearInterval(timer);
-			window.removeEventListener('storage', onStorage);
-			if (capacityTimer !== null) clearTimeout(capacityTimer);
 			c.destroy();
 		};
 	});
@@ -485,244 +364,94 @@
 	});
 
 	/**
-	 * What the send button does, which now depends on whether a turn is
-	 * running.
+	 * Send what is in the composer.
 	 *
-	 * Idle: send. Streaming: queue it — the composer no longer refuses input,
-	 * and a message the user typed has to go somewhere they can see.
+	 * One path, whatever is happening in the conversation: the server decides
+	 * where the message lands — folded into the answer being written, started
+	 * as a turn, or queued until a slot frees — and says so in `placement`.
+	 * The client used to make that call with a queue of its own, which meant
+	 * "sent" was a fact only this browser knew.
 	 */
-	function submitComposer() {
-		if (streaming) {
-			enqueueDraft();
-			return;
-		}
-		void send();
-	}
-
-	/** Move the composer's contents into the queue, clearing it for the next one. */
-	function enqueueDraft() {
+	async function send(): Promise<boolean> {
 		const text = draft.trim();
-		if (!text && files.length === 0) return;
-		const entry = draftEntry(text, files);
-		entry.redeemSteers = draftRedeem;
-		queue = [...queue, entry];
-		draft = '';
-		files = [];
-		draftRedeem = [];
-		followEnd();
-		focusComposer();
-	}
-
-	/**
-	 * Say something to the turn that is already running.
-	 *
-	 * Distinct from queueing, and the distinction is the user's to make: this
-	 * one is meant to change the answer being written, the queue is the next
-	 * request. `202` only means the note was recorded — whether the model
-	 * reads it depends on whether another round follows, which the transcript
-	 * reports and this does not pretend to know.
-	 */
-	async function interject() {
-		const text = draft.trim();
-		if (!text || !streaming || sending) return;
-		// The steer endpoint has no attachment path, so a composer holding
-		// files has nothing to interject *with*: the sentence would reach a
-		// model that never sees the file it refers to. The button is disabled
-		// in that state; this is the keyboard's half of the same rule.
-		if (files.length > 0) return;
+		if ((!text && files.length === 0) || !model.trim() || sending) return false;
 		sending = true;
 		notice = null;
-		// Whatever this text stands in for travels with it, and is only
-		// dropped once the server has taken responsibility for it.
-		const redeem = draftRedeem;
+		const sentText = text;
+		const sentFiles = files;
+		// Clear immediately: the message is on its way, and a composer that
+		// still holds it invites sending it twice.
+		draft = '';
+		files = [];
 		try {
-			await api.steerChatTurn(id, text, redeem);
-			draft = '';
-			draftRedeem = [];
+			if (sentFiles.length > 0) {
+				await api.sendChatMessageWithFiles(id, {
+					model: model.trim(),
+					message: sentText,
+					files: sentFiles
+				});
+			} else {
+				await api.sendChatMessage(id, { model: model.trim(), message: sentText });
+			}
 			followEnd();
 			focusComposer();
-		} catch (err) {
-			// The turn finished between the keystroke and the request. The
-			// text is still worth keeping — with its claim — so it queues
-			// instead of vanishing.
-			if (err instanceof ApiError && err.status === 409 && err.code === 'no_turn_running') {
-				const entry = draftEntry(text, []);
-				entry.redeemSteers = redeem;
-				queue = [...queue, entry];
-				draft = '';
-				draftRedeem = [];
-			} else {
-				notice = String(err);
-			}
-		} finally {
-			sending = false;
-		}
-	}
-
-	/**
-	 * Interrupt the running answer and put the composer's text next in line.
-	 *
-	 * The deterministic counterpart to interjecting: it always lands, at the
-	 * price of the answer in flight. The partial reply stays in the
-	 * transcript, and the server keeps replaying it to the model, so the
-	 * second attempt continues from what the user read rather than from
-	 * nothing.
-	 */
-	async function interruptAndReaim() {
-		if (!streaming) return;
-		enqueueDraft();
-		await stop();
-	}
-
-	/**
-	 * Send queued messages, oldest first, until one fails or a turn is live.
-	 *
-	 * Sequential by necessity: the server runs one turn per conversation, so
-	 * the second entry cannot go out until the first turn finishes — which is
-	 * what the finalize hook calls this again for.
-	 */
-	async function flushQueue() {
-		if (flushing || streaming || sending || queue.length === 0) return;
-		flushing = true;
-		try {
-			// One entry per drain. A successful submit starts a turn, and the
-			// next entry cannot go out until it finishes — looping here only
-			// bought a guaranteed `409 turn_in_progress` round trip, because
-			// `streaming` does not become true until the new stream reports
-			// its live turn. The finalize hook calls this again.
-			const entry = nextSendable(queue);
-			if (!entry) return;
-			// `sent` and `settled` both mean "this entry is done"; `wait` and
-			// `failed` leave it where it is, for different reasons.
-			const outcome = await sendQueued(entry);
-			if (outcome === 'sent' || outcome === 'settled') {
-				queue = removeEntry(queue, entry.id);
-			}
-		} finally {
-			flushing = false;
-		}
-	}
-
-	/**
-	 * Take a queued entry back into the composer.
-	 *
-	 * Appends rather than overwrites: the composer may already hold a
-	 * half-typed sentence, and dropping either text on the floor loses
-	 * something the user wrote. Any interjection claim the entry carried comes
-	 * along, so the note it stands in for is still settled when this is sent —
-	 * without that it would be re-queued by the next finalize and sent twice.
-	 */
-	function editQueued(entry: QueuedMessage) {
-		draft = draft.trim() ? `${draft.trimEnd()}\n${entry.text}` : entry.text;
-		draftRedeem = [...draftRedeem, ...entry.redeemSteers];
-		queue = removeEntry(queue, entry.id);
-		focusComposer();
-	}
-
-	/**
-	 * Throw a queued entry away.
-	 *
-	 * An entry standing in for an interjection also has to be settled on the
-	 * server. Forgetting it locally is not enough: the row stays `pending`,
-	 * and the next time any turn here finishes, `withUndeliveredSteers` reads
-	 * it back and queues the dismissed sentence again — which then sends
-	 * itself.
-	 */
-	async function discardQueued(entry: QueuedMessage) {
-		queue = removeEntry(queue, entry.id);
-		for (const steerId of entry.redeemSteers) {
-			try {
-				await api.discardSteer(id, steerId);
-			} catch (err) {
-				notice = String(err);
-			}
-		}
-	}
-
-	/**
-	 * Try again in a while, for the one refusal that no event will lift.
-	 *
-	 * `at_capacity` means another of this user's conversations holds the last
-	 * parallel slot. This one is idle, so its own `turn_finalized` will never
-	 * fire, and the drain's other trigger is the queue changing — without a
-	 * timer the message waits forever.
-	 */
-	function retryLater() {
-		if (capacityTimer !== null) return;
-		capacityTimer = setTimeout(() => {
-			capacityTimer = null;
-			void flushQueue();
-		}, CAPACITY_RETRY_MS);
-	}
-
-	/**
-	 * One queued entry over the wire. Returns whether it left the queue.
-	 *
-	 * A refusal is not always a failure to show: `at_capacity` means another
-	 * of this user's chats holds the last parallel slot, and the right answer
-	 * is to keep waiting rather than to make the user re-type. A note already
-	 * settled elsewhere (another tab re-sent it) is dropped silently for the
-	 * same reason it was claimed atomically in the first place.
-	 */
-	async function sendQueued(entry: QueuedMessage): Promise<SendOutcome> {
-		if (!model.trim()) return 'wait';
-		sending = true;
-		entry.error = undefined;
-		try {
-			const payload = {
-				model: model.trim(),
-				message: entry.text,
-				redeem_steers: entry.redeemSteers.length > 0 ? entry.redeemSteers : undefined
-			};
-			if (entry.files.length > 0) {
-				await api.sendChatMessageWithFiles(id, { ...payload, files: entry.files });
-			} else {
-				await api.sendChatMessage(id, payload);
-			}
-			followEnd();
+			// Re-attach in every case: a started turn streams on a fresh
+			// stream, and a folded or queued message is drawn from the
+			// snapshot the re-attach brings.
 			controller?.attach();
 			void refreshSidebar();
-			return 'sent';
+			return true;
 		} catch (err) {
-			if (err instanceof ApiError && err.status === 409) {
-				const code = err.code ?? '';
-				// Already answered for elsewhere: there is nothing left to
-				// send, and the caller must not put it back.
-				if (code === 'steer_already_settled') return 'settled';
-				// Every other 409 leaves the entry queued, untouched. The
-				// difference is what wakes it up again: `turn_in_progress`
-				// ends with this conversation's own turn, `at_capacity` ends
-				// in somebody else's chat and needs a timer.
-				if (code === 'at_capacity') retryLater();
-				return 'wait';
-			}
-			// A real failure. Hold the entry: the drain reacts to the queue
-			// changing, so retrying on its own would hammer the endpoint — and
-			// a request that failed client-side may well have been accepted,
-			// which is how the same message gets sent twice.
-			entry.error = String(err);
-			entry.held = true;
+			// Nothing was accepted, so the text comes back. It is *prepended*
+			// rather than assigned: the composer stays live during a submit,
+			// so the user may well have started the next message already, and
+			// overwriting that would lose what they typed while waiting.
+			draft = draft.trim() ? `${sentText}\n${draft}` : sentText;
+			files = [...sentFiles, ...files];
 			notice = String(err);
-			return 'failed';
+			return false;
 		} finally {
 			sending = false;
 		}
 	}
 
-	async function send() {
-		const text = draft.trim();
-		if ((!text && files.length === 0) || !model.trim() || sending) return;
-		notice = null;
-		const entry = draftEntry(text, files);
-		entry.redeemSteers = draftRedeem;
-		draft = '';
-		files = [];
-		draftRedeem = [];
-		// `settled` means the server already accounted for this text elsewhere,
-		// so there is nothing to put back — queueing it would spin: send,
-		// refuse, remove, re-add.
-		const outcome = await sendQueued(entry);
-		if (outcome === 'wait' || outcome === 'failed') queue = [entry, ...queue];
+	/**
+	 * Take back a message that was sent but has not started yet.
+	 *
+	 * Deleting the turn is the whole of it: the work queue rows hang off the
+	 * turn and go with it, so there is no second place to clean up and no way
+	 * for the two to disagree.
+	 */
+	async function cancelWaitingTurn(turnId: string) {
+		try {
+			await api.deleteChatTurn(id, turnId);
+			controller?.attach();
+			void refreshSidebar();
+		} catch (err) {
+			notice = String(err);
+		}
+	}
+
+	/**
+	 * Send this, and stop waiting for the answer that is being written.
+	 *
+	 * The deterministic counterpart to an ordinary send: sending alone folds
+	 * the text into the running turn, which only reaches the model if another
+	 * round follows. Stopping straight afterwards makes that impossible on
+	 * purpose — and the server, finalising the cancelled turn, turns the
+	 * undelivered addition into the next message and starts it. So the text
+	 * always lands, at the price of the answer in flight.
+	 *
+	 * Two calls, no special case: `send` and `stop` already do exactly this
+	 * between them.
+	 */
+	async function interruptAndReaim() {
+		if (!streaming || !draft.trim()) return;
+		// Only stop if the text actually went out. `send` swallows its errors
+		// (it hands the draft back and shows a notice), so stopping
+		// unconditionally would throw away the answer in flight *and* send
+		// nothing — the worst of both.
+		if (await send()) await stop();
 	}
 
 	function addFiles(list: FileList | File[] | null) {
@@ -985,14 +714,9 @@
 	function onKeydown(event: KeyboardEvent) {
 		if (event.key !== 'Enter' || event.shiftKey) return;
 		event.preventDefault();
-		// Ctrl/Cmd+Enter during a turn is the interjection: same keystroke the
-		// user already knows, with the modifier meaning "to the answer being
-		// written" rather than "to the next one".
-		if (streaming && (event.metaKey || event.ctrlKey)) {
-			void interject();
-			return;
-		}
-		submitComposer();
+		// One meaning again: send. Where it lands is the server's call, and
+		// the transcript reports it — the user no longer picks a mode.
+		void send();
 	}
 </script>
 
@@ -1066,7 +790,20 @@
 						<div class="whitespace-pre-wrap">{parsed.text}</div>
 					{/if}
 				</div>
-				{#if isOwner && !streaming}
+				{#if waitingTurnIds.has(entry.turn.id)}
+					<!-- Sent, not started: another of this user's conversations
+					     is using the slot. It starts on its own when one frees
+					     up, so the only thing to offer is a way out. -->
+					<div class="chat-footer flex items-center gap-2 opacity-70" data-waiting-turn>
+						<span class="loading loading-dots loading-xs"></span>
+						<span>{t('chat-turn-waiting')}</span>
+						{#if isOwner}
+							<button class="btn btn-ghost btn-xs" onclick={() => void cancelWaitingTurn(entry.turn.id)}>
+								{t('chat-turn-waiting-cancel')}
+							</button>
+						{/if}
+					</div>
+				{:else if isOwner && !streaming}
 					<div class="chat-footer opacity-60">
 						<button class="btn btn-ghost btn-xs" onclick={() => editTurn(entry.turn.id, entry.turn.user_content ?? '')}>
 							{t('render-edit-button')}
@@ -1312,24 +1049,23 @@
 				</button>
 			{/if}
 			{#if streaming}
-				<!-- Three things to do with a running turn, in the order they
-				     escalate: add to what it is writing, cut it short and
-				     re-aim, or just stop it. -->
+				<!-- Sending during a turn is an ordinary send: the server puts
+				     the message where it belongs. Stopping is still its own
+				     decision, so it keeps its own button. -->
 				<button
-					class="btn btn-sm btn-circle btn-warning"
-					data-composer-interject
-					onclick={interject}
-					disabled={!draft.trim() || files.length > 0 || sending}
-					aria-label={t('chat-composer-interject')}
-					title={t('chat-composer-interject-title')}
+					class="btn btn-sm btn-circle btn-primary"
+					onclick={send}
+					disabled={(!draft.trim() && files.length === 0) || !model.trim() || sending}
+					aria-label={t('render-composer-send')}
+					title={t('chat-composer-send-during-turn-title')}
 				>
-					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v5"/></svg>
+					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5m0 0-6 6m6-6 6 6" /></svg>
 				</button>
 				<button
 					class="btn btn-sm btn-circle btn-ghost"
 					data-composer-interrupt
 					onclick={interruptAndReaim}
-					disabled={!draft.trim() && files.length === 0}
+					disabled={!draft.trim() || sending}
 					aria-label={t('chat-composer-interrupt')}
 					title={t('chat-composer-interrupt-title')}
 				>
@@ -1339,44 +1075,11 @@
 					<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
 				</button>
 			{:else}
-				<button class="btn btn-sm btn-circle btn-primary" onclick={submitComposer} disabled={(!draft.trim() && files.length === 0) || !model.trim() || sending} aria-label={t('render-composer-send')} title={t('render-composer-send')}>
+				<button class="btn btn-sm btn-circle btn-primary" onclick={send} disabled={(!draft.trim() && files.length === 0) || !model.trim() || sending} aria-label={t('render-composer-send')} title={t('render-composer-send')}>
 					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5m0 0-6 6m6-6 6 6" /></svg>
 				</button>
 			{/if}
 		</div>
-		{#if queue.length > 0}
-			<!-- Everything typed while the turn runs, in the order it will go
-			     out. Editable and reorderable because a queue of instructions
-			     whose order cannot be corrected is a queue of guesses. -->
-			<div class="flex flex-col gap-1" data-composer-queue>
-				<div class="text-xs opacity-60">{t('chat-queue-label', { count: n(queue.length) })}</div>
-				{#if queue.some((entry) => entry.held)}
-					<div class="text-xs text-warning/90">{t('chat-queue-held-hint')}</div>
-				{/if}
-				{#each queue as entry, index (entry.id)}
-					<div class="flex items-center gap-1 rounded-box border border-base-300/60 bg-base-200/40 px-2 py-1 text-sm" data-queue-entry>
-						<span class="opacity-50 tabular-nums text-xs">{n(index + 1)}</span>
-						<span class="min-w-0 flex-1 truncate" title={entry.text}>{entry.text}</span>
-						{#if entry.redeemSteers.length > 0}
-							<span class="badge badge-ghost badge-xs" title={t('chat-queue-was-interjection')}>↪</span>
-						{/if}
-						{#if entry.files.length > 0}
-							<span class="badge badge-ghost badge-xs">{n(entry.files.length)} 📎</span>
-						{/if}
-						{#if entry.held}
-							<span class="badge badge-warning badge-xs" data-queue-held title={t('chat-queue-held-title')}>📎!</span>
-						{/if}
-						{#if entry.error}
-							<span class="badge badge-error badge-xs" title={entry.error}>!</span>
-						{/if}
-						<button class="btn btn-ghost btn-xs" disabled={index === 0} onclick={() => (queue = moveEntry(queue, entry.id, -1))} aria-label={t('chat-queue-move-up')} title={t('chat-queue-move-up')}>↑</button>
-						<button class="btn btn-ghost btn-xs" disabled={index === queue.length - 1} onclick={() => (queue = moveEntry(queue, entry.id, 1))} aria-label={t('chat-queue-move-down')} title={t('chat-queue-move-down')}>↓</button>
-						<button class="btn btn-ghost btn-xs" onclick={() => editQueued(entry)} aria-label={t('chat-queue-edit')} title={t('chat-queue-edit')}>✎</button>
-						<button class="btn btn-ghost btn-xs" onclick={() => void discardQueued(entry)} aria-label={t('chat-queue-remove')} title={t('chat-queue-remove')}>×</button>
-					</div>
-				{/each}
-			</div>
-		{/if}
 		{#if files.length > 0}
 			<div class="flex flex-wrap gap-1">
 				{#each files as file, index (`${file.name}-${file.size}-${file.lastModified}`)}

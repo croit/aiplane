@@ -39,6 +39,7 @@ const EVENT_NAMES = [
 	'tool_call_started',
 	'tool_call_done',
 	'turn_finalized',
+	'steer',
 	'sidebar_changed',
 	'info',
 	'tool_prompt',

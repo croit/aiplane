@@ -549,6 +549,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             "/api/v0/chat/sessions/{id}/turns/{turn_id}/attachments/{filename}",
             pages::chat::json_api::attachment_remove,
         )
+        .with_delete(
+            "/api/v0/chat/sessions/{id}/turns/{turn_id}",
+            pages::chat::json_api::turn_delete,
+        )
         .with_post(
             "/api/v0/chat/sessions/{id}/turns/{turn_id}/retry",
             pages::chat::json_api::turn_retry,

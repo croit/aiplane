@@ -24,20 +24,11 @@ chat-prompt-answer = 回答
 chat-prompt-skip = 跳过
 
 # 回答生成期间输入框依然可用。
-chat-queue-label = { $count ->
-   *[other] { $count } 条消息排队中
-  }
-chat-queue-move-up = 上移
-chat-queue-move-down = 下移
-chat-queue-edit = 放回输入框
-chat-queue-remove = 丢弃
-chat-queue-held-title = 附件在页面重新加载时丢失 — 请重新添加附件或丢弃该消息
-chat-queue-held-hint = 有一条排队消息在页面重新加载时丢失了附件。在你把它放回输入框并重新添加文件之前，它不会被发送。
-chat-queue-was-interjection = 在上一条回答生成时输入，但该回答先结束了
-chat-composer-interject = 补充到正在生成的回答
-chat-composer-interject-title = 交给正在生成的回答（Ctrl/Cmd+Enter）。会在下一个工具步骤送达；若回答先结束，则作为下一条消息发送。
+chat-composer-send-during-turn-title = 发送。回答生成期间，这条会补充进去；若送达太晚，则作为下一条消息发送。
 chat-composer-interrupt = 中断并重新提问
 chat-composer-interrupt-title = 停止当前回答，改为发送这条。已经写出的内容仍保留在会话中。
+chat-turn-waiting = 已发送 — 正在等待空闲名额
+chat-turn-waiting-cancel = 撤回
 chat-steer-pending = 在本条回答期间补充 — 尚未读取
 chat-steer-delivered = 在本条回答期间补充 — 已采纳
 chat-steer-resent = 在本条回答期间补充 — 送达太晚，已作为下一条消息发送

@@ -53,6 +53,15 @@ pub enum ChatEvent {
         live_turn_id: Option<String>,
         /// Every turn of the session in `seq` order, newest last.
         turns: Vec<TurnWithTools>,
+        /// User turns that have been sent but not started yet.
+        ///
+        /// Carried rather than derived: "a trailing user turn with no answer"
+        /// looks like the same thing and is not — a turn whose assistant row
+        /// failed to insert has that shape with nothing queued, and a client
+        /// guessing from it renders a spinner on a message that will never
+        /// start. The server asks its work queue; this is the answer.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        waiting_turn_ids: Vec<String>,
     },
     /// Text appended to the assistant turn's `content` since the last event.
     /// `full: true` marks a cursor reset — the row was rewritten and
@@ -474,6 +483,170 @@ async fn flush(
     for event in feed.diff(&current) {
         if tx.send(Ok(sse_json(&event))).await.is_err() {
             return;
+        }
+    }
+}
+
+/// Serve a conversation whose message is waiting for a free slot: snapshot
+/// first, then hold the stream open until its turn actually starts, and hand
+/// over to [`run_json_turn_stream`] when it does.
+///
+/// Without this the stream would end at `idle` — there is no worker to tail —
+/// and the page would sit on "waiting" long after the answer began, because
+/// the worker that eventually starts belongs to a conversation nothing is
+/// attached to. The alternative, a client asking again every few seconds, is a
+/// poll standing in for an event the server already has.
+///
+/// Bounded by [`WAIT_FOR_START`]: an unbounded wait would pin a connection and
+/// a task for as long as the queue stays congested. On expiry the stream ends
+/// with `idle`, exactly as a quiet conversation does.
+pub async fn stream_until_started(
+    pool: db::Pool,
+    workers: std::sync::Arc<crate::workers::SessionWorkers>,
+    user_id: String,
+    session_id: String,
+    turns: Vec<TurnWithTools>,
+    mut starts: broadcast::Receiver<crate::workers::WorkerStarted>,
+    tx: SseTx,
+) {
+    use rama::futures::sink::SinkExt;
+
+    let mut tx = tx;
+    let waiting_turn_ids = waiting_ids(&pool, &session_id).await;
+    let snapshot = ChatEvent::Snapshot {
+        live_turn_id: None,
+        turns,
+        waiting_turn_ids,
+    };
+    if tx.send(Ok(sse_json(&snapshot))).await.is_err() {
+        return;
+    }
+
+    // The worker may have been registered between the caller's lookup and its
+    // subscribe; check once more before waiting on the channel.
+    let worker = match workers.get(&user_id, &session_id) {
+        Some(worker) => Some(worker),
+        None => {
+            wait_for_start(&workers, &mut starts, &user_id, &session_id, || {
+                tx.is_closed()
+            })
+            .await
+        }
+    };
+    let Some(worker) = worker else {
+        // Either the wait expired, or the turn started *and finished* inside
+        // it. A fresh snapshot covers the second case; `idle` closes the
+        // stream for both, and the client re-attaches on its next interaction.
+        match db::list_turns(&pool, &session_id).await {
+            Ok(turns) => {
+                let waiting_turn_ids = waiting_ids(&pool, &session_id).await;
+                let _ = tx
+                    .send(Ok(sse_json(&ChatEvent::Snapshot {
+                        live_turn_id: None,
+                        turns,
+                        waiting_turn_ids,
+                    })))
+                    .await;
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, %session_id, "re-reading a conversation after the wait");
+            }
+        }
+        let _ = tx.send(Ok(sse_json(&ChatEvent::Idle))).await;
+        return;
+    };
+    // A second snapshot, and it is load-bearing: `live_turn_id` is the only
+    // thing that tells the client a turn is streaming, and the snapshot it
+    // already has says `null`. Without this the deltas arrive into a page that
+    // still believes it is idle — no stop button, no interrupt, and no
+    // reconnect if the stream drops.
+    let initial = match db::list_turns(&pool, &session_id).await {
+        Ok(turns) => vec![ChatEvent::Snapshot {
+            live_turn_id: Some(worker.turn_id.clone()),
+            turns,
+            // Nothing is waiting any more: this turn is the one that was.
+            waiting_turn_ids: Vec::new(),
+        }],
+        Err(err) => {
+            tracing::warn!(error = %err, %session_id, "re-reading a conversation as its turn starts");
+            let _ = tx.send(Ok(sse_json(&ChatEvent::Idle))).await;
+            return;
+        }
+    };
+    run_json_turn_stream(
+        pool,
+        session_id,
+        worker.turn_id.clone(),
+        worker.broadcast.subscribe(),
+        initial,
+        tx,
+    )
+    .await;
+}
+
+/// The conversation's waiting user turns, for a snapshot. An unreadable queue
+/// degrades to "nothing waiting": the transcript is still correct, one message
+/// just renders without its spinner until the next snapshot.
+async fn waiting_ids(pool: &db::Pool, session_id: &str) -> Vec<String> {
+    db::list_pending_for_session(pool, session_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|pending| pending.turn_id)
+        .collect()
+}
+
+/// How long a stream waits for a waiting turn to start before ending as idle.
+///
+/// Long enough to cover an ordinary queue (the turn ahead of it finishing),
+/// short enough that a congested gateway is not holding connections open for
+/// hours.
+const WAIT_FOR_START: Duration = Duration::from_secs(300);
+
+/// How often the wait looks up to see whether the reader is still there.
+const DISCONNECT_CHECK: Duration = Duration::from_secs(5);
+
+/// Wait for a worker to be registered for this conversation.
+///
+/// The frame is only a wake-up: what it carries may already be stale by the
+/// time it is read, so the registry is asked for the live handle — the one
+/// with the broadcast channel this stream then tails. `None` means the wait
+/// expired, or the turn was over before the handle could be taken.
+async fn wait_for_start(
+    workers: &crate::workers::SessionWorkers,
+    starts: &mut broadcast::Receiver<crate::workers::WorkerStarted>,
+    user_id: &str,
+    session_id: &str,
+    is_gone: impl Fn() -> bool,
+) -> Option<crate::workers::ActiveWorker> {
+    let deadline = tokio::time::Instant::now() + WAIT_FOR_START;
+    loop {
+        // Wake up regularly even when nothing is happening, so a viewer who
+        // closed the tab is not held for the whole deadline.
+        let next = (tokio::time::Instant::now() + DISCONNECT_CHECK).min(deadline);
+        match tokio::time::timeout_at(next, starts.recv()).await {
+            Ok(Ok(started)) => {
+                if started.user_id == user_id && started.session_id == session_id {
+                    return workers.get(user_id, session_id);
+                }
+            }
+            // Lagged: starts were missed while this subscriber was slow, and
+            // one of them may have been ours. Ask the registry rather than
+            // waiting for the next frame.
+            Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
+                if let Some(worker) = workers.get(user_id, session_id) {
+                    return Some(worker);
+                }
+            }
+            // The registry is gone: nothing will ever start.
+            Ok(Err(broadcast::error::RecvError::Closed)) => return None,
+            // Nothing happened in this slice. Give up at the deadline, or when
+            // the reader has gone away.
+            Err(_) => {
+                if tokio::time::Instant::now() >= deadline || is_gone() {
+                    return None;
+                }
+            }
         }
     }
 }

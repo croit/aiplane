@@ -79,7 +79,13 @@ export interface ChatSession {
 }
 
 export type ChatEvent =
-	| { type: 'snapshot'; live_turn_id?: string; turns: TurnWithTools[] }
+	| {
+			type: 'snapshot';
+			live_turn_id?: string;
+			turns: TurnWithTools[];
+			/** User turns sent but not started yet; absent means none. */
+			waiting_turn_ids?: string[];
+	  }
 	| { type: 'turn_delta'; turn_id: string; text_delta: string; full?: boolean }
 	| { type: 'reasoning_delta'; turn_id: string; text_delta: string; full?: boolean }
 	| {
@@ -173,10 +179,19 @@ export interface ConversationState {
 	info: string | null;
 	/** The human-in-loop prompt, when one is showing. */
 	prompt: Extract<ChatEvent, { type: 'tool_prompt' }> | null;
+	/**
+	 * User turns the server has accepted but not started answering.
+	 *
+	 * Taken from the snapshot, never derived from the turn list: "a trailing
+	 * user turn with no answer" looks like the same thing and is not — a turn
+	 * whose assistant row failed to insert has exactly that shape with nothing
+	 * queued, and a spinner on it would never stop.
+	 */
+	waitingTurnIds: string[];
 }
 
 export function newConversationState(): ConversationState {
-	return { turns: [], liveTurnId: null, idle: false, info: null, prompt: null };
+	return { turns: [], liveTurnId: null, idle: false, info: null, prompt: null, waitingTurnIds: [] };
 }
 
 function ensureTurn(state: ConversationState, id: string): LiveTurn {
@@ -232,6 +247,7 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 			}));
 			state.liveTurnId = event.live_turn_id ?? null;
 			state.idle = !event.live_turn_id;
+			state.waitingTurnIds = event.waiting_turn_ids ?? [];
 			return;
 		}
 		case 'turn_delta': {
@@ -272,6 +288,8 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 		}
 		case 'turn_finalized': {
 			const live = ensureTurn(state, event.turn_id);
+			// Whatever this turn was answering is no longer waiting.
+			state.waitingTurnIds = [];
 			live.turn.status = event.status as Turn['status'];
 			live.turn.error_message = event.error_message ?? live.turn.error_message;
 			if (event.model) live.turn.model = event.model;

@@ -162,6 +162,20 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 	return (await res.json()) as T;
 }
 
+/**
+ * What the server did with an accepted message.
+ *
+ * `placement` is the honest half: the client no longer decides where a message
+ * goes, so it is told. `started` carries both turn ids, `folded` the turn it
+ * was added to, `queued` the user turn now waiting for a slot.
+ */
+export interface ChatSubmitAck {
+	placement: 'started' | 'folded' | 'queued';
+	user_turn_id?: string;
+	assistant_turn_id?: string;
+	steer_id?: string;
+}
+
 export const api = {
 	// --- Chat (issue #22 phase 2; wire shapes in chat-protocol.ts) --------
 
@@ -208,18 +222,19 @@ export const api = {
 		}),
 
 	/**
-	 * POST /api/v0/chat/sessions/{id}/messages — 202, reply on the events stream.
+	 * POST /api/v0/chat/sessions/{id}/messages — `202`, reply on the events
+	 * stream.
 	 *
-	 * `redeem_steers` names the interjections this message stands in for, when
-	 * it is the re-send of notes a finished turn never reached. The server
-	 * claims them atomically, so a second tab attempting the same re-send is
-	 * refused rather than sending the sentence twice.
+	 * The response's `placement` says what the server did with it: `started` a
+	 * turn, `folded` it into the answer already being written, or `queued` it
+	 * until one of this user's conversations frees a slot. The client does not
+	 * choose — only the server knows whether a worker is running.
 	 */
 	sendChatMessage: (
 		id: string,
-		body: { model: string; message: string; voice?: boolean; redeem_steers?: string[] }
+		body: { model: string; message: string; voice?: boolean }
 	) =>
-		request<{ user_turn_id: string; assistant_turn_id: string }>(
+		request<ChatSubmitAck>(
 			`/api/v0/chat/sessions/${encodeURIComponent(id)}/messages`,
 			{
 				method: 'POST',
@@ -240,52 +255,29 @@ export const api = {
 	 */
 	sendChatMessageWithFiles: (
 		id: string,
-		body: { model: string; message: string; files: File[]; redeem_steers?: string[] }
+		body: { model: string; message: string; files: File[] }
 	) => {
 		const fd = new FormData();
 		fd.append('model', body.model);
 		fd.append('message', body.message);
 		for (const file of body.files) fd.append('attachment', file);
-		// One part per id, the ordinary multipart spelling of a list.
-		for (const steerId of body.redeem_steers ?? []) fd.append('redeem_steer', steerId);
-		return request<{ user_turn_id: string; assistant_turn_id: string }>(
+		return request<ChatSubmitAck>(
 			`/api/v0/chat/sessions/${encodeURIComponent(id)}/messages`,
 			{ method: 'POST', body: fd }
 		);
 	},
 
 	/**
-	 * POST /api/v0/chat/sessions/{id}/steer — say something to the turn that is
-	 * already running.
+	 * DELETE /api/v0/chat/sessions/{id}/turns/{turn_id} — take back a message
+	 * that has been sent but not answered yet.
 	 *
-	 * `202` means recorded and handed to the worker, NOT that the model read
-	 * it: the returned `status` starts at `pending` and the transcript reports
-	 * the outcome. `409 no_turn_running` when nothing is streaming.
+	 * Refused with `409 already_answered` once an answer exists or is being
+	 * written; that is what cancelling the turn is for.
 	 */
-	steerChatTurn: (id: string, message: string, redeemSteers: string[] = []) =>
-		request<{ id: string; turn_id: string; status: string }>(
-			`/api/v0/chat/sessions/${encodeURIComponent(id)}/steer`,
-			{
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					message,
-					...(redeemSteers.length > 0 ? { redeem_steers: redeemSteers } : {})
-				})
-			}
-		),
-
-	/**
-	 * POST /api/v0/chat/sessions/{id}/steer/{steer_id}/discard — the user threw
-	 * the interjection away instead of re-sending it.
-	 *
-	 * Idempotent, and deliberately so: a note settled elsewhere is already in
-	 * the state the caller wanted.
-	 */
-	discardSteer: (id: string, steerId: string) =>
-		request<{ id: string }>(
-			`/api/v0/chat/sessions/${encodeURIComponent(id)}/steer/${encodeURIComponent(steerId)}/discard`,
-			{ method: 'POST' }
+	deleteChatTurn: (id: string, turnId: string) =>
+		request<{ deleted: string }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}`,
+			{ method: 'DELETE' }
 		),
 
 	/** POST /api/v0/chat/sessions/{id}/cancel — idempotent stop request. */

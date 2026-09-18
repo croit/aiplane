@@ -183,6 +183,20 @@ impl SteerInbox {
     pub fn take(&self) -> Vec<SteerNote> {
         std::mem::take(&mut *self.inner.lock().unwrap())
     }
+
+    /// Drop one interjection before it is folded in — the user discarded it.
+    /// Reports whether it was still here to drop.
+    ///
+    /// The answer is the whole point: a note that is no longer in the queue
+    /// has already been drained into a prompt, and calling that "discarded"
+    /// would label as thrown-away a sentence the model demonstrably read.
+    /// Settling the row without asking is what produced exactly that.
+    pub fn remove(&self, id: &str) -> bool {
+        let mut notes = self.inner.lock().unwrap();
+        let before = notes.len();
+        notes.retain(|note| note.id != id);
+        notes.len() != before
+    }
 }
 
 /// One live session worker, indexed by `(user id, session id)` in
@@ -246,15 +260,43 @@ const BROADCAST_CAPACITY: usize = 256;
 /// lets the operator decide how many conversations may run at once.
 type WorkerKey = (String, String);
 
+/// A worker has just been registered for this conversation.
+///
+/// The one thing the per-turn broadcast cannot carry: it belongs to a worker
+/// that did not exist yet. A viewer attached to a conversation whose answer
+/// has not started — a message waiting for a free slot — has nothing to listen
+/// to until this fires.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkerStarted {
+    pub user_id: String,
+    pub session_id: String,
+    pub turn_id: String,
+}
+
+/// Capacity of the registry-wide start channel. Starts are rare compared to
+/// deltas (one per turn), and a lagged subscriber only means one viewer
+/// re-reads a moment later, so a small buffer is plenty.
+const STARTS_CAPACITY: usize = 64;
+
 /// (user id, session id) → ActiveWorker. Wrapped in a Mutex (not RwLock)
 /// because every access is short and we want strict order between the
 /// capacity check and the insert in `register`.
 ///
 /// Single-tenant callers can pass a constant per-process id for
 /// `user_id` — the registry doesn't care what the string contains.
-#[derive(Default)]
 pub struct SessionWorkers {
     inner: Mutex<HashMap<WorkerKey, ActiveWorker>>,
+    /// Announces every worker this registry creates. See [`WorkerStarted`].
+    starts: broadcast::Sender<WorkerStarted>,
+}
+
+impl Default for SessionWorkers {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(HashMap::new()),
+            starts: broadcast::channel(STARTS_CAPACITY).0,
+        }
+    }
 }
 
 impl SessionWorkers {
@@ -308,6 +350,14 @@ impl SessionWorkers {
             steers: SteerInbox::default(),
         };
         g.insert(key, worker.clone());
+        // Announced while the lock is held, so a subscriber that has already
+        // looked and found nothing cannot miss the start that happened in
+        // between: it sees either the worker in the map or this frame.
+        let _ = self.starts.send(WorkerStarted {
+            user_id: user_id.to_string(),
+            session_id: session_id.to_string(),
+            turn_id: turn_id.to_string(),
+        });
         RegisterOutcome::Registered { worker }
     }
 
@@ -343,6 +393,15 @@ impl SessionWorkers {
             .cloned()
     }
 
+    /// Listen for workers being registered.
+    ///
+    /// Subscribe *before* checking whether a conversation has one: the two
+    /// steps have a gap between them, and a worker that starts inside it would
+    /// otherwise be missed by exactly the viewer waiting for it.
+    pub fn subscribe_starts(&self) -> broadcast::Receiver<WorkerStarted> {
+        self.starts.subscribe()
+    }
+
     /// How many of this user's conversations are streaming right now.
     ///
     /// The ceiling check in [`Self::register`] is the reason this exists; it
@@ -354,6 +413,23 @@ impl SessionWorkers {
             .keys()
             .filter(|(uid, _)| uid == user_id)
             .count()
+    }
+
+    /// Which of this user's conversations are being answered right now.
+    ///
+    /// The scheduler's other half: `running_for_user` says whether there is
+    /// room, this says where not to look. Returned as a list rather than
+    /// checked one conversation at a time because the claim query takes it as
+    /// an exclusion set — the whole point is to pick a startable turn in one
+    /// statement, not to ask per candidate.
+    pub fn sessions_for_user(&self, user_id: &str) -> Vec<String> {
+        self.inner
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|(uid, _)| uid == user_id)
+            .map(|(_, session_id)| session_id.clone())
+            .collect()
     }
 
     /// Flip the cancel flag on this conversation's worker (if any).
@@ -523,6 +599,49 @@ mod tests {
         ));
     }
 
+    /// A viewer attached to a conversation with nothing running has no
+    /// per-turn channel to listen to — the worker does not exist yet. This is
+    /// what tells them it now does, instead of them asking again every few
+    /// seconds.
+    #[test]
+    fn registering_a_worker_announces_it() {
+        let r = SessionWorkers::default();
+        let mut starts = r.subscribe_starts();
+        registered(&r, "u1", "t1", "s1");
+
+        assert_eq!(
+            starts.try_recv().unwrap(),
+            WorkerStarted {
+                user_id: "u1".into(),
+                session_id: "s1".into(),
+                turn_id: "t1".into(),
+            }
+        );
+        // A refused registration is not a start.
+        r.register("u1", "t2", "s1", SERIAL);
+        assert!(starts.try_recv().is_err());
+    }
+
+    /// What the scheduler asks before claiming a waiting turn: where a worker
+    /// already is, so it does not put a second one on the same transcript.
+    #[test]
+    fn sessions_for_user_lists_only_that_users_busy_conversations() {
+        let r = SessionWorkers::default();
+        registered(&r, "u1", "t1", "s1");
+        let RegisterOutcome::Registered { worker } = r.register("u1", "t2", "s2", 2) else {
+            unreachable!()
+        };
+        registered(&r, "u2", "t3", "s3");
+
+        let mut mine = r.sessions_for_user("u1");
+        mine.sort();
+        assert_eq!(mine, ["s1", "s2"]);
+        assert!(r.sessions_for_user("nobody").is_empty());
+
+        r.clear("u1", &worker);
+        assert_eq!(r.sessions_for_user("u1"), ["s1"]);
+    }
+
     #[test]
     fn cancel_flips_the_flag() {
         let r = SessionWorkers::default();
@@ -611,6 +730,22 @@ mod tests {
             ["n1", "n2"]
         );
         assert!(worker.steers.take().is_empty(), "drained exactly once");
+    }
+
+    /// Removing reports whether the note was still there — the caller needs
+    /// that to know whether "discarded" is the truth.
+    #[test]
+    fn removing_a_steer_says_whether_it_was_still_queued() {
+        let r = SessionWorkers::default();
+        let worker = registered(&r, "u1", "t", "s");
+        worker.steers.push(SteerNote {
+            id: "n1".into(),
+            text: "never mind".into(),
+        });
+
+        assert!(worker.steers.remove("n1"), "it was queued");
+        assert!(!worker.steers.remove("n1"), "and now it is not");
+        assert!(!worker.steers.remove("never-existed"));
     }
 
     /// The queue rides on the handle's clone, not on a copy of it — the HTTP
