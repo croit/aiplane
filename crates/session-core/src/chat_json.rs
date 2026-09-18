@@ -33,7 +33,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 
 use crate::db::{self, TurnStatus, TurnWithTools};
-use crate::workers::{ToolPromptEvent, TurnUpdate};
+use crate::workers::{BrowserRequest, ToolPromptEvent, TurnUpdate};
 
 /// Cap the event rate without visibly changing liveness — the trailing flush
 /// guarantees the final state always lands.
@@ -134,6 +134,11 @@ pub enum ChatEvent {
     Info { message: String },
     /// A human-in-loop tool prompt (see [`ToolPromptEvent`]).
     ToolPrompt(Box<ToolPromptEvent>),
+    /// Work for the paired browser extension (see [`BrowserRequest`]). The
+    /// client relays it and renders nothing; a client without an extension
+    /// answers the feedback endpoint saying so, rather than staying silent and
+    /// letting the tool hang until its timeout.
+    BrowserAction(Box<BrowserRequest>),
     /// No live worker for this session; nothing more will arrive. Sent
     /// instead of hanging an open stream on a quiet session — the client
     /// treats the stream close after this event as "idle", not "error", and
@@ -155,6 +160,7 @@ impl ChatEvent {
             Self::SidebarChanged => "sidebar_changed",
             Self::Info { .. } => "info",
             Self::ToolPrompt(_) => "tool_prompt",
+            Self::BrowserAction(_) => "browser_action",
             Self::Idle => "idle",
         }
     }
@@ -432,6 +438,11 @@ pub async fn run_json_turn_stream(
                 }
                 Ok(TurnUpdate::Prompt(event)) => {
                     if tx.send(Ok(sse_json(&ChatEvent::ToolPrompt(Box::new((*event).clone()))))).await.is_err() {
+                        return;
+                    }
+                }
+                Ok(TurnUpdate::Browser(request)) => {
+                    if tx.send(Ok(sse_json(&ChatEvent::BrowserAction(Box::new((*request).clone()))))).await.is_err() {
                         return;
                     }
                 }

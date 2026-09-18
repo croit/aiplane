@@ -462,5 +462,14 @@ export const api = {
 		request<{ ok: boolean; tools_enabled: boolean; disabled_tools: string[] }>(
 			`/api/v0/tokens/${encodeURIComponent(id)}/tools`,
 			{ method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
-		)
+		),
+
+	/** POST /api/v0/me/browser/feedback/{turn_id} — what the paired browser
+	 * extension did with a `browser_control` batch. See browser-bridge.ts. */
+	browserFeedback: (turnId: string, body: import('./chat-protocol.js').BrowserFeedbackBody) =>
+		request<{ ok: boolean }>(`/api/v0/me/browser/feedback/${encodeURIComponent(turnId)}`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		})
 };

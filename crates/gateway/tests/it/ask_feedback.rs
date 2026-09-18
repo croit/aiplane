@@ -23,30 +23,8 @@ use common::Service as _;
 use gateway::rama_server::router::router;
 use gateway_runtime::server::tools::feedback::AskReply;
 use rama::http::{Body, Method, Request, StatusCode};
-use session_core::db as chat;
 
-fn post_json(uri: &str, cookie: &str, body: &str) -> Request {
-    Request::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("cookie", format!("id={cookie}"))
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap()
-}
-
-/// Seed a chat session for `user` with one in-progress assistant turn, and
-/// return that turn's id — the unit `ask_user` and this endpoint key on.
-async fn seed_turn(state: &gateway::rama_server::RamaState, user: &str, turn_id: &str) -> String {
-    let session = chat::create_session(&state.db, user).await.unwrap();
-    chat::create_user_turn(&state.db, &session.id, &format!("{turn_id}-u"), "question")
-        .await
-        .unwrap();
-    chat::create_assistant_turn_in_progress(&state.db, &session.id, turn_id, "model-a")
-        .await
-        .unwrap();
-    turn_id.to_string()
-}
+use common::{post_json, seed_turn};
 
 fn url(turn_id: &str) -> String {
     format!("/api/v0/me/ask/feedback/{turn_id}")

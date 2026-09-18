@@ -10,6 +10,7 @@
 mod admin_json_api;
 mod anthropic_messages;
 mod ask_feedback;
+mod browser_feedback;
 mod chat_json_api;
 mod comfyui_integration;
 mod common;

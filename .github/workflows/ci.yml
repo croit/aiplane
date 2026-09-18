@@ -460,6 +460,81 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+  # The Chrome extension. Built on every run so a change that breaks packaging
+  # is caught by a pull request, uploaded to the Web Store only on a release
+  # tag — the store rejects a version that is not greater than the published
+  # one, so there is no such thing as a "main build" of an extension.
+  extension:
+    name: chrome extension
+    needs: [secrets, ci, version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # `mise run package-extension` stamps the version from the tags.
+          fetch-depth: 0
+
+      # Node alone: packaging is a copy, a JSON edit and a zip.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: node@24
+
+      - name: mise run package-extension
+        id: package
+        run: echo "zip=$(mise run package-extension | tail -1)" >> "$GITHUB_OUTPUT"
+
+      # Kept whatever happens, so a release always has the exact artefact that
+      # was submitted — the store shows you what is live, not what you sent.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chrome-extension
+          path: ${{ steps.package.outputs.zip }}
+
+      # `secrets` cannot be read from a step's `if`, so the presence of the
+      # credentials becomes an output first.
+      - name: Are we able to publish?
+        id: creds
+        env:
+          CWS_SERVICE_ACCOUNT: ${{ secrets.CWS_SERVICE_ACCOUNT }}
+        run: |
+          if [ -n "$CWS_SERVICE_ACCOUNT" ]; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Skipped rather than failed when the credentials are absent: a fork, and
+      # this repository before somebody sets the secrets up, should still get a
+      # green build and the artefact above.
+      - name: Publish to the Chrome Web Store
+        if: github.ref_type == 'tag' && steps.creds.outputs.have == 'true'
+        env:
+          CWS_SERVICE_ACCOUNT: ${{ secrets.CWS_SERVICE_ACCOUNT }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+        run: node scripts/publish-extension.mjs "${{ steps.package.outputs.zip }}"
+
+      - name: Summary
+        env:
+          V: ${{ needs.version.outputs.version }}
+          HAVE_CREDENTIALS: ${{ steps.creds.outputs.have }}
+        run: |
+          {
+            echo "### Chrome extension $V"
+            echo
+            if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+              echo "Built only — extensions are published from release tags."
+            elif [ "$HAVE_CREDENTIALS" = "true" ]; then
+              echo "Submitted to the Chrome Web Store. It is now **in review**;"
+              echo "for this extension that takes days, not minutes."
+            else
+              echo "Not submitted: no \`CWS_SERVICE_ACCOUNT\` secret configured."
+              echo "The packaged zip is attached to this run."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # The Helm chart, validated on every run and published as an OCI artifact on
   # pushes. Chart.yaml's committed `version`/`appVersion` are placeholders: the
   # numbers that ship come from the same resolver as the images, so a chart and

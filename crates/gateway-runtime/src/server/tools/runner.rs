@@ -484,11 +484,21 @@ pub async fn execute_tool_calls(
             // search_web against the brave API) hangs — the
             // `started`/`completed`/`timed out` triplet bounds the
             // wall-clock cost server-side.
+            //
+            // A tool may withhold its arguments (`sensitive_args`): the line
+            // still records that it ran, for how long, and for whom, which is
+            // what the timing story needs — without putting the text someone
+            // typed into their own browser into the journal.
             let started = std::time::Instant::now();
+            let logged_args = if tool.sensitive_args() {
+                "[redacted]".to_string()
+            } else {
+                truncate_for_log(&call.arguments_raw)
+            };
             tracing::info!(
                 tool = %call.name,
                 user = %ctx.user_id,
-                args = %truncate_for_log(&call.arguments_raw),
+                args = %logged_args,
                 "tool call started"
             );
             // Most tools finish well within TOOL_TIMEOUT; a few (the sandbox

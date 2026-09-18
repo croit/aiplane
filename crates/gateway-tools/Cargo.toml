@@ -29,6 +29,9 @@ reqwest = { workspace = true }
 sqlx = { workspace = true }
 toml = { workspace = true }
 url = { workspace = true }
+# `browser_control` mints a per-batch request id: the rendezvous cannot be keyed
+# by turn, because a round's tool calls run concurrently.
+uuid = { workspace = true }
 # typst compile scratch dirs (one per render) + sandbox staging dirs.
 tempfile = { workspace = true }
 

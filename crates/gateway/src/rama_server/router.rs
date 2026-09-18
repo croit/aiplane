@@ -136,6 +136,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             api::location_feedback,
         )
         .with_post("/api/v0/me/ask/feedback/{turn_id}", api::ask_feedback)
+        .with_post(
+            "/api/v0/me/browser/feedback/{turn_id}",
+            api::browser_feedback,
+        )
         // Chat attachment bytes. Under /api/v0 like everything else the SPA
         // calls; the filename keeps its case (the handler reads the raw URI).
         .with_get(

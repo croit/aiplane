@@ -126,7 +126,58 @@ export type ChatEvent =
 			multi_select?: boolean;
 	  }
 	| { type: 'tool_prompt'; action: 'hide'; turn_id: string }
+	| { type: 'browser_action'; turn_id: string; request_id: string; actions: BrowserAction[] }
 	| { type: 'idle' };
+
+/**
+ * One batch of browser work, as it arrives on the stream.
+ *
+ * Extracted from the union rather than re-declared in `browser-bridge.ts`: the
+ * two would be structurally compatible, so TypeScript would never report the
+ * day they drift.
+ */
+export type BrowserActionEvent = Extract<ChatEvent, { type: 'browser_action' }>;
+
+/**
+ * What the browser reports back for one batch, posted to
+ * `/api/v0/me/browser/feedback/{turn_id}`.
+ *
+ * Lives here with the request shape so the two halves of the wire contract are
+ * declared together, and so `api.ts` and `browser-bridge.ts` share one
+ * definition instead of each describing the body their own way.
+ */
+export interface BrowserFeedbackBody {
+	request_id: string;
+	results?: unknown[];
+	error?: string;
+	refused?: string;
+	no_extension?: boolean;
+}
+
+/**
+ * One step `browser_control` wants performed in the user's browser.
+ *
+ * Relayed to the paired extension untouched — the page is a courier, not a
+ * participant. It deliberately does not interpret, reorder or filter these:
+ * anything the page decided here would be a rule the extension still has to
+ * enforce itself, since the page is the part an attacker on our own origin
+ * would already own.
+ */
+export type BrowserAction =
+	| { action: 'navigate'; url: string }
+	| { action: 'go_back' }
+	| { action: 'read_page'; max_chars?: number }
+	| { action: 'find'; text: string }
+	| { action: 'click'; ref: string; button?: 'left' | 'right' | 'middle'; click_count?: number }
+	| { action: 'hover'; ref: string }
+	| { action: 'drag'; from: string; to: string }
+	| { action: 'type_text'; ref: string; text: string; replace?: boolean; submit?: boolean }
+	| { action: 'press_key'; key: string; modifiers?: ('ctrl' | 'shift' | 'alt' | 'meta')[] }
+	| { action: 'scroll'; direction?: 'up' | 'down'; ref?: string }
+	| { action: 'screenshot'; full_page?: boolean }
+	| { action: 'set_viewport'; width: number; height: number; mobile?: boolean }
+	| { action: 'wait_for'; text?: string; timeout_ms?: number }
+	| { action: 'list_tabs' };
 
 /**
  * One answer a `tool_prompt` offers.
@@ -330,6 +381,13 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 			return;
 		case 'tool_prompt':
 			state.prompt = event.action === 'show' ? event : null;
+			return;
+		case 'browser_action':
+			// Deliberately no state: a browser action is work for the extension,
+			// not something the conversation renders. The subscriber in
+			// `Conversation.svelte` hands it to `browser-bridge.ts`; folding it
+			// into `ConversationState` would put page-controlled content into
+			// the transcript model, which is exactly where it must not be.
 			return;
 		case 'idle':
 			state.liveTurnId = null;

@@ -612,10 +612,8 @@ mod tests {
             assistant_turn_id: Some("t1".into()),
             session_id: Some("s1".into()),
             chat_feedback: Some(ChatFeedback {
-                broadcast,
-                hub: std::sync::Arc::new(FeedbackHub::default()),
                 ask_hub: ask_hub.clone(),
-                secure: true,
+                ..ChatFeedback::for_test(broadcast)
             }),
             ..ToolContext::for_test(pool.clone())
         };

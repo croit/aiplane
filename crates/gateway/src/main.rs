@@ -234,6 +234,12 @@ async fn main() -> anyhow::Result<()> {
         // `chat_feedback` being present, so it errors cleanly off the chat path
         // (and `requires_chat_session` keeps it out of the /v1 tool list).
         .with(gateway_tools::ask_user::AskUser)
+        // Act in the user's own logged-in browser, through the extension paired
+        // with the open conversation. Configuration-free like `ask_user`: the
+        // runtime gate is `chat_feedback` plus a relay that answers, so a
+        // deployment where nobody installed the extension gets a clean "no
+        // extension" rather than a hang.
+        .with(gateway_tools::browser_control::BrowserControl)
         // Reach the user when they aren't watching: a finished long job, or a
         // scheduled action that found something. Runtime-gated on `[push]`
         // being configured plus a subscribed device, so it stays registered

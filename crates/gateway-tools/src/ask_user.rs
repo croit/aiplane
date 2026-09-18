@@ -665,10 +665,8 @@ mod tests {
         let mut ctx = ctx_off_chat().await;
         ctx.assistant_turn_id = Some("t1".into());
         ctx.chat_feedback = Some(ChatFeedback {
-            broadcast,
-            hub: std::sync::Arc::new(FeedbackHub::default()),
             ask_hub: ask_hub.clone(),
-            secure: true,
+            ..ChatFeedback::for_test(broadcast)
         });
 
         let call = tokio::spawn(async move {

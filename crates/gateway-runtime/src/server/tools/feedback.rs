@@ -15,6 +15,11 @@
 //!   position, answered by `POST /api/v0/me/location/feedback/{turn_id}`.
 //! - `FeedbackHub<AskReply>` — `ask_user` asking a question, answered by
 //!   `POST /api/v0/me/ask/feedback/{turn_id}`.
+//! - `FeedbackHub<BrowserReply>` — `browser_control` handing a batch of
+//!   actions to the paired browser extension, answered by
+//!   `POST /api/v0/me/browser/feedback/{turn_id}`. The only one of the three
+//!   whose reply comes from a program rather than a person, which is why its
+//!   wait is short and its "nobody there" case is explicit.
 //!
 //! The hub is generic over its payload rather than carrying one enum with a
 //! variant per use case: the parking/resolving logic never inspects the value,
@@ -63,6 +68,29 @@ pub enum AskReply {
     Dismissed,
 }
 
+/// What the browser sent back for a pending [`browser_control`] batch.
+///
+/// [`browser_control`]: https://docs.rs/gateway-tools
+#[derive(Clone, Debug, PartialEq)]
+pub enum BrowserReply {
+    /// Every action ran. One result value per action, in order.
+    Done { results: Vec<serde_json::Value> },
+    /// A step ran into something the extension could not do (no such element,
+    /// navigation blocked, the page went away). `results` holds whatever
+    /// completed before it, so the model keeps the work that did succeed.
+    Failed {
+        error: String,
+        results: Vec<serde_json::Value>,
+    },
+    /// The user said no in the extension's own confirmation, or the site is
+    /// not one they granted. Distinct from [`Self::Failed`] because the model
+    /// must not retry it — the answer was "no", not "it broke".
+    Refused { reason: String },
+    /// The page relayed the request but no extension is paired/armed. Told
+    /// apart from a timeout so the tool can say *why* nothing happened.
+    NoExtension,
+}
+
 /// Turn-id → the channel a waiting tool is parked on. Plain `Mutex`:
 /// every critical section is a single map op with no `.await` held.
 pub struct FeedbackHub<T> {
@@ -80,11 +108,16 @@ impl<T> Default for FeedbackHub<T> {
 }
 
 impl<T> FeedbackHub<T> {
-    /// Register interest in a reply for `turn_id`, returning the receiver
-    /// to await. A second registration for the same turn supersedes the
-    /// first (its sender drops → the earlier awaiter sees `Canceled` and
-    /// falls back), which is the right behaviour for a retry on the same
-    /// turn id.
+    /// Register interest in a reply for `key`, returning the receiver to await.
+    ///
+    /// A second registration for the same key supersedes the first: its sender
+    /// drops, so the earlier awaiter sees `Canceled` and falls back. That is
+    /// right for a *retry*, and wrong for anything that can legitimately have
+    /// two waits outstanding at once — the runner executes a round's tool calls
+    /// concurrently, so a key of "the turn id" silently un-parks the first
+    /// caller while its work is still in flight. `browser_control` therefore
+    /// keys on a per-request id; `ask_user` and `get_user_location` still key on
+    /// the turn and carry that hazard.
     pub fn register(&self, turn_id: &str) -> oneshot::Receiver<T> {
         let (tx, rx) = oneshot::channel();
         self.lock().insert(turn_id.to_string(), tx);

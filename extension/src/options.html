@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Browser control settings</title>
+		<style>
+			:root {
+				color-scheme: light dark;
+				font-family: system-ui, sans-serif;
+			}
+			body {
+				margin: 0 auto;
+				padding: 28px 22px 60px;
+				max-width: 640px;
+				line-height: 1.5;
+			}
+			h1 {
+				font-size: 1.2rem;
+			}
+			h2 {
+				font-size: 0.95rem;
+				margin-top: 30px;
+			}
+			p {
+				font-size: 0.86rem;
+				opacity: 0.85;
+			}
+			input[type='url'] {
+				width: 100%;
+				padding: 8px;
+				border-radius: 6px;
+				border: 1px solid rgba(127, 127, 127, 0.5);
+				background: transparent;
+				color: inherit;
+				font: inherit;
+			}
+			button {
+				padding: 8px 14px;
+				border-radius: 6px;
+				border: 1px solid rgba(127, 127, 127, 0.5);
+				background: transparent;
+				font: inherit;
+				cursor: pointer;
+				margin-top: 8px;
+			}
+			ul {
+				padding-left: 0;
+				list-style: none;
+			}
+			li {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				gap: 10px;
+				padding: 7px 0;
+				border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+				font-size: 0.88rem;
+				word-break: break-all;
+			}
+			li button {
+				margin: 0;
+				font-size: 0.8rem;
+			}
+			fieldset {
+				border: 1px solid rgba(127, 127, 127, 0.35);
+				border-radius: 8px;
+				padding: 12px 14px;
+			}
+			label.choice {
+				display: block;
+				margin: 8px 0;
+				font-size: 0.88rem;
+			}
+			label.choice span {
+				display: block;
+				font-size: 0.8rem;
+				opacity: 0.75;
+				margin-left: 22px;
+			}
+			.status {
+				font-size: 0.85rem;
+				min-height: 1.4em;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Browser control</h1>
+		<p>
+			This extension lets a conversation on your LLM Gateway act in this browser — with your
+			logins. It does nothing until you pair a gateway here and switch it on from the toolbar
+			icon.
+		</p>
+
+		<h2>Your gateway</h2>
+		<p>
+			Only these origins may drive the extension. Chrome asks for permission per origin; that
+			dialog is the pairing, and it is the one part a web page cannot fake.
+		</p>
+		<ul id="gateways"></ul>
+		<input type="url" id="gateway-url" placeholder="https://gateway.example.com" />
+		<button id="add-gateway">Pair this gateway</button>
+		<p class="status" id="pair-status"></p>
+
+		<h2>Site access</h2>
+		<p>
+			A site you grant is a site the assistant may <strong>work on</strong> — read it, and
+			click, type and submit on it. There is no second dialog per action: a prompt for
+			every click is one nobody reads by the third, and a consent clicked away reflexively
+			protects no one.
+		</p>
+		<fieldset>
+			<label class="choice">
+				<input type="radio" name="site-access" value="all_sites" /> Any site
+				<span>
+					One permission, asked the first time you switch the extension on.
+					Recommended.
+				</span>
+			</label>
+			<label class="choice">
+				<input type="radio" name="site-access" value="approved_sites" /> Only sites I approve
+				<span>
+					Nothing runs on a site until you have approved it below. Fewer surprises, more
+					setup.
+				</span>
+			</label>
+		</fieldset>
+
+		<div id="approved-block" hidden>
+			<h2>Approved sites</h2>
+			<p>
+				Approve a site before asking the assistant to work there. Chrome must ask you from
+				this page — a permission cannot be granted while a conversation is waiting.
+			</p>
+			<ul id="approved"></ul>
+			<input type="url" id="site-url" placeholder="https://intranet.example.com" />
+			<button id="add-site">Approve this site</button>
+			<p class="status" id="site-status"></p>
+		</div>
+
+		<h2>What keeps this in check</h2>
+		<p>
+			The extension does nothing until you switch it on from the toolbar, and that switch
+			is a click no web page can produce. While it is on the icon is green, Chrome shows
+			its own bar over the assistant's window, and every step is listed in the popup and
+			recorded in the gateway's audit trail. Switching it off releases everything at once.
+		</p>
+		<p>
+			Worth knowing: a page the assistant reads can contain instructions aimed at it
+			("open … and click …"). With a site granted, those are carried out without asking.
+			Grant what you would let an assistant work in, and switch it off when you are done.
+		</p>
+
+		<script type="module" src="options.js"></script>
+	</body>
+</html>

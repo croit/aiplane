@@ -46,6 +46,10 @@ pub enum TurnUpdate {
     /// A human-in-loop tool prompt (`ask_user`, `get_user_location`) that the
     /// client renders itself. See [`ToolPromptEvent`].
     Prompt(Arc<ToolPromptEvent>),
+    /// Work for the browser extension paired with this chat session. Unlike
+    /// [`TurnUpdate::Prompt`] this is *not* human-in-the-loop: the page relays
+    /// it to the extension and draws nothing. See [`BrowserRequest`].
+    Browser(Arc<BrowserRequest>),
 }
 
 /// A human-in-loop tool prompt for JSON subscribers: render a prompt,
@@ -138,6 +142,189 @@ pub enum ToolPromptEvent {
     Hide {
         turn_id: String,
     },
+}
+
+/// A batch of browser actions for the extension paired with this chat session.
+///
+/// Travels on the same broadcast channel as [`ToolPromptEvent`] but stays a
+/// separate variant on purpose: a prompt is a card a human answers, this is
+/// work a program performs. Folding them together would force every client that
+/// renders prompts to know which "prompts" it must *not* draw.
+///
+/// Carries **both** ids, and they do different jobs. `turn_id` is what the
+/// reply endpoint authorises against (the turn must belong to the caller).
+/// `request_id` is what the parked tool is keyed on, because a turn is not
+/// unique enough: the runner executes a round's tool calls concurrently, so one
+/// turn can legitimately have two `browser_control` batches in flight. Keyed by
+/// turn alone, the second registration would drop the first — the first call
+/// would report "nothing came back" while its actions were being carried out.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BrowserRequest {
+    pub turn_id: String,
+    pub request_id: String,
+    /// Run in order, stopping at the first failure. A batch rather than one
+    /// action per call because `navigate → read` is a single intention, and
+    /// paying a model round trip per step turns every page visit into three.
+    pub actions: Vec<BrowserAction>,
+}
+
+/// One step the extension performs in the user's browser.
+///
+/// Typed, not free-form JSON: the extension has to decide what a step *is* —
+/// specifically whether it writes — without parsing prose, and a step it does
+/// not recognise must be refusable rather than approximated.
+///
+/// The interaction steps are carried out through the Chrome DevTools Protocol,
+/// not by calling `element.click()`. Synthetic DOM events are invisible to
+/// anything that checks `isTrusted`, never produce the pointer events a canvas
+/// or a drag handler needs, and cannot type into an editor that owns its own
+/// input (Docs, CodeMirror). Real input at the browser level is what makes the
+/// difference between "works on a login form" and "works on the web".
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum BrowserAction {
+    /// Open a URL in the assistant's working tab (created on first use).
+    Navigate { url: String },
+    /// Back one entry in that tab's history.
+    GoBack,
+    /// Structured snapshot of the current page: title, url, readable text and
+    /// the interactive elements, each with the `ref` later actions target.
+    ReadPage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_chars: Option<u32>,
+    },
+    /// Locate text on the page and report the refs around it.
+    Find { text: String },
+    /// A real mouse click on the element carrying `ref`.
+    Click {
+        r#ref: String,
+        #[serde(default)]
+        button: MouseButton,
+        /// 2 for a double click. Anything above 3 is rejected.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        click_count: Option<u8>,
+    },
+    /// Move the pointer onto an element — menus and tooltips that open on
+    /// hover cannot be reached any other way.
+    Hover { r#ref: String },
+    /// Press at one element, move, release at another.
+    Drag { from: String, to: String },
+    /// Type into the element carrying `ref`, as a keyboard would.
+    TypeText {
+        r#ref: String,
+        text: String,
+        /// Clear what is there first.
+        #[serde(default)]
+        replace: bool,
+        /// Press Enter afterwards.
+        #[serde(default)]
+        submit: bool,
+    },
+    /// One key to the focused element, with optional modifiers
+    /// (`ctrl`, `shift`, `alt`, `meta`) — `Enter`, `Escape`, `Tab`, `a`, …
+    PressKey {
+        key: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        modifiers: Vec<String>,
+    },
+    /// Scroll the page by one viewport, or bring one element into view.
+    Scroll {
+        #[serde(default)]
+        direction: ScrollDirection,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        r#ref: Option<String>,
+    },
+    /// Capture the page. `full_page` goes beyond the viewport.
+    Screenshot {
+        #[serde(default)]
+        full_page: bool,
+    },
+    /// Resize the assistant's viewport, optionally emulating a phone (touch
+    /// events, mobile user agent, device pixel ratio).
+    SetViewport {
+        width: u32,
+        height: u32,
+        #[serde(default)]
+        mobile: bool,
+    },
+    /// Wait for text to appear, or simply wait. Needed because a real page
+    /// finishes loading after `navigate` returns.
+    WaitFor {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// List the tabs the extension may see, so the model can pick one.
+    ListTabs,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MouseButton {
+    #[default]
+    Left,
+    Right,
+    Middle,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollDirection {
+    Up,
+    #[default]
+    Down,
+}
+
+impl BrowserAction {
+    /// Whether this step changes something rather than observing it.
+    ///
+    /// Drives the gateway's audit trail and the tool's own summary of what it
+    /// is about to do. Deliberately **not** the enforcement point: the
+    /// extension classifies every step again on its own side, because a
+    /// gateway that has been talked into mislabelling a step is precisely the
+    /// case the extension-side confirmation exists for.
+    pub fn is_write(&self) -> bool {
+        match self {
+            // Observing, or affecting only the assistant's own view of the
+            // page. `set_viewport` resizes our window, not the user's.
+            Self::ReadPage { .. }
+            | Self::Find { .. }
+            | Self::Screenshot { .. }
+            | Self::ListTabs
+            | Self::Scroll { .. }
+            | Self::WaitFor { .. }
+            | Self::SetViewport { .. }
+            | Self::Hover { .. } => false,
+            Self::Navigate { .. }
+            | Self::GoBack
+            | Self::Click { .. }
+            | Self::Drag { .. }
+            | Self::TypeText { .. }
+            | Self::PressKey { .. } => true,
+        }
+    }
+
+    /// Short label for logs and the audit row — never the payload, which can
+    /// hold whatever the model typed.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Navigate { .. } => "navigate",
+            Self::GoBack => "go_back",
+            Self::ReadPage { .. } => "read_page",
+            Self::Find { .. } => "find",
+            Self::Click { .. } => "click",
+            Self::Hover { .. } => "hover",
+            Self::Drag { .. } => "drag",
+            Self::TypeText { .. } => "type_text",
+            Self::PressKey { .. } => "press_key",
+            Self::Scroll { .. } => "scroll",
+            Self::Screenshot { .. } => "screenshot",
+            Self::SetViewport { .. } => "set_viewport",
+            Self::WaitFor { .. } => "wait_for",
+            Self::ListTabs => "list_tabs",
+        }
+    }
 }
 
 /// A mid-turn interjection: something the user typed while the turn was
