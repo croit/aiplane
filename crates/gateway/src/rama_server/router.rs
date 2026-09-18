@@ -233,6 +233,18 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         )
         .with_get("/api/v0/admin/models", pages::json_admin::models_list)
         .with_put("/api/v0/admin/models", pages::json_admin::models_save)
+        .with_get(
+            "/api/v0/admin/automatic-routes",
+            pages::json_admin::automatic_routes_list,
+        )
+        .with_put(
+            "/api/v0/admin/automatic-routes",
+            pages::json_admin::automatic_routes_save,
+        )
+        .with_delete(
+            "/api/v0/admin/automatic-routes/{*alias}",
+            pages::json_admin::automatic_routes_delete,
+        )
         .with_delete(
             "/api/v0/admin/models/{name}",
             pages::json_admin::models_delete,

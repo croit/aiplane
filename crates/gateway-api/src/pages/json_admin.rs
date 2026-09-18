@@ -25,6 +25,7 @@ use gateway_core::server::db::limits;
 use gateway_core::server::settings;
 use gateway_core::server::upstreams::{self, PoolKind};
 use gateway_runtime::rama_server::state::RamaState;
+use session_core::i18n::{Lang, t};
 
 use super::{bad_request, internal, json_error, json_ok, raw_path_segment};
 
@@ -574,6 +575,110 @@ pub async fn models_delete(State(state): State<Arc<RamaState>>, req: Request) ->
             .body(rama::http::Body::empty())
             .expect("static empty response"),
         Err(err) => internal(err),
+    }
+}
+
+pub async fn automatic_routes_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let lang = Lang::from_request(req.headers());
+    let routes = match db::automatic_routes::all(&state.db).await {
+        Ok(routes) => routes,
+        Err(error) => {
+            tracing::error!(error = %error, "listing automatic routes failed");
+            return internal(t(lang, "auto-route-error-internal"));
+        }
+    };
+    let decisions = match db::automatic_routes::recent_decisions(&state.db, 100).await {
+        Ok(decisions) => decisions,
+        Err(error) => {
+            tracing::error!(error = %error, "listing automatic route decisions failed");
+            return internal(t(lang, "auto-route-error-internal"));
+        }
+    };
+    json_ok(
+        StatusCode::OK,
+        serde_json::json!({
+            "routes": routes,
+            "candidate_models": state.upstreams.models_for_kind(PoolKind::Chat),
+            "selector_models": state.upstreams.models_for_kind(PoolKind::SystemOne),
+            "decisions": decisions,
+        }),
+    )
+}
+
+pub async fn automatic_routes_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let (parts, body) = req.into_parts();
+    let lang = Lang::from_request(&parts.headers);
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(bytes) => bytes,
+        Err(_) => return bad_request(t(lang, "auto-route-error-invalid-body")),
+    };
+    let route: db::automatic_routes::AutomaticRoute = match serde_json::from_slice(&bytes) {
+        Ok(route) => route,
+        Err(_) => return bad_request(t(lang, "auto-route-error-invalid-body")),
+    };
+    if route.validate().is_err() {
+        return bad_request(t(lang, "auto-route-error-invalid-config"));
+    }
+    for candidate in &route.candidates {
+        match db::automatic_routes::get(&state.db, &candidate.target).await {
+            Ok(Some(_)) => {
+                return bad_request(t(lang, "auto-route-error-nested"));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::error!(error = %error, "validating automatic route candidates failed");
+                return internal(t(lang, "auto-route-error-internal"));
+            }
+        }
+    }
+    match db::automatic_routes::upsert(&state.db, &route).await {
+        Ok(version) => {
+            state.automatic_router.invalidate_alias(&route.alias);
+            json_ok(
+                StatusCode::OK,
+                serde_json::json!({"alias": route.alias, "version": version}),
+            )
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "saving automatic route failed");
+            let key = if error.to_string().contains("nested automatic routes") {
+                "auto-route-error-nested"
+            } else {
+                "auto-route-error-internal"
+            };
+            if key == "auto-route-error-nested" {
+                bad_request(t(lang, key))
+            } else {
+                internal(t(lang, key))
+            }
+        }
+    }
+}
+
+pub async fn automatic_routes_delete(
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let lang = Lang::from_request(req.headers());
+    let Some(alias) = raw_path_segment(&req, 0) else {
+        return bad_request(t(lang, "auto-route-error-missing-alias"));
+    };
+    match db::automatic_routes::delete(&state.db, &alias).await {
+        Ok(true) => {
+            state.automatic_router.invalidate_alias(&alias);
+            Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .body(rama::http::Body::empty())
+                .expect("static empty response")
+        }
+        Ok(false) => bad_request(t(lang, "auto-route-error-not-found")),
+        Err(error) => {
+            tracing::error!(error = %error, "deleting automatic route failed");
+            internal(t(lang, "auto-route-error-internal"))
+        }
     }
 }
 

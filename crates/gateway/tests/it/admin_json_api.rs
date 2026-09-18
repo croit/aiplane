@@ -87,6 +87,8 @@ async fn admin_routes_gate_with_json_envelopes() {
         (Method::GET, "/api/v0/admin/users"),
         (Method::GET, "/api/v0/admin/models"),
         (Method::PUT, "/api/v0/admin/models"),
+        (Method::GET, "/api/v0/admin/automatic-routes"),
+        (Method::PUT, "/api/v0/admin/automatic-routes"),
         (Method::PUT, "/api/v0/admin/model-defaults"),
         (Method::PUT, "/api/v0/admin/search-settings"),
         (Method::GET, "/api/v0/admin/skills/example/archive"),
@@ -117,6 +119,67 @@ async fn admin_routes_gate_with_json_envelopes() {
         assert_eq!(pleb.status(), StatusCode::FORBIDDEN, "{} {uri}", method);
     }
     let _ = admin_cookie;
+}
+
+#[tokio::test]
+async fn automatic_routes_round_trip_through_the_admin_api() {
+    let (state, cookie) = setup().await;
+    assert!(!state.automatic_router.is_route("default").await.unwrap());
+    let app = common::app((*state).clone());
+    let value = serde_json::json!({
+        "alias": "default",
+        "selector_model": "jev-model",
+        "objective": "balanced",
+        "instructions": "Prefer expert for difficult coding tasks.",
+        "minimum_confidence": 0.7,
+        "selector_timeout_ms": 1000,
+        "fallback_target": "fast-model",
+        "session_affinity": true,
+        "session_ttl_seconds": 3600,
+        "rollout": "shadow",
+        "candidates": [
+            {"key": "fast", "target": "fast-model", "description": "Fast model"},
+            {"key": "expert", "target": "expert-model", "description": "Expert model"}
+        ]
+    });
+    let saved = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/automatic-routes",
+            &cookie,
+            Some(value.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), StatusCode::OK, "{}", body(saved).await);
+    assert!(state.automatic_router.is_route("default").await.unwrap());
+
+    let listed = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/admin/automatic-routes",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+    assert_eq!(listed["routes"][0]["alias"], "default");
+    assert_eq!(listed["routes"][0]["version"], 1);
+    assert!(listed["candidate_models"].is_array());
+
+    let deleted = app
+        .serve(req(
+            Method::DELETE,
+            "/api/v0/admin/automatic-routes/default",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    assert!(!state.automatic_router.is_route("default").await.unwrap());
 }
 
 #[tokio::test]

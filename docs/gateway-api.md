@@ -1,5 +1,12 @@
 # Gateway HTTP API
 
+Automatic routing aliases remain wire-compatible with standard clients: send
+the alias in the existing `model` field on `/v1/chat/completions` or
+`/v1/messages`. The response reports the effective decision in
+`X-Gateway-Resolved-Model` and the `X-Gateway-Route-*` headers documented in
+[`automatic-routing.md`](automatic-routing.md). No gateway-specific request
+field is required.
+
 The gateway exposes OpenAI-, Anthropic-, and TypeSafe System One-compatible APIs. Every `/v1/*` endpoint requires a valid gateway bearer token (see [`auth.md`](auth.md)). The two health probes are unauthenticated.
 
 The routes are wired in `crates/gateway/src/rama_server/router.rs`; the `/v1/*` handlers live in `crates/gateway/src/rama_server/proxy.rs`.

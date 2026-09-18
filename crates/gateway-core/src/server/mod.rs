@@ -9,6 +9,7 @@
 
 pub mod anthropic;
 pub mod auth;
+pub mod automatic_routing;
 pub mod capabilities;
 pub mod config;
 pub mod crypto;

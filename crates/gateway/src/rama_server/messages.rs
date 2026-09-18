@@ -109,6 +109,28 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
     // what makes `claude-sonnet-4-6` (a name no self-hosted backend serves)
     // route to whatever the operator aliased it to.
     let access = state.pool_access_for_token(&user);
+    let (routing_model, automatic_decision) = match proxy::resolve_automatic_chat_route(
+        &state,
+        &user,
+        &requested_model,
+        &translated.body,
+        &access,
+        &parts.headers,
+        !allowed_tools.is_empty(),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let access = if automatic_decision.is_some() {
+        gateway_core::server::upstreams::PoolAccess {
+            allowed_models: None,
+            ..access
+        }
+    } else {
+        access
+    };
     // `route_or_wait`, not `route_access`: when the pool is momentarily down
     // (a restarting GPU box, a model being swapped) this parks the request until
     // a backend answers its probe again instead of failing it. Nothing has been
@@ -120,7 +142,7 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
     // unused — holding capacity the request never spends and counting as a
     // dispatch it never made. Waiting still happens, because a pool with no
     // available replica should park the request rather than fail it.
-    let real_model = match proxy::resolve_or_wait(&state, &requested_model, &access).await {
+    let real_model = match proxy::resolve_or_wait(&state, &routing_model, &access).await {
         Ok(id) => id,
         Err(e) => return route_error_response(e),
     };
@@ -177,7 +199,8 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
         )
         .await
     };
-    proxy::with_resolved_model_header(resp, &requested_model, &real_model)
+    let response = proxy::with_resolved_model_header(resp, &requested_model, &real_model);
+    proxy::with_automatic_route_headers(response, automatic_decision.as_ref())
 }
 
 /// Read, parse and translate a request body — the identical prologue both
@@ -216,21 +239,50 @@ pub async fn count_tokens(State(state): State<Arc<RamaState>>, req: Request) -> 
         Ok(u) => u,
         Err(refusal) => return error_response(refusal.status, &refusal.message),
     };
-    // No limit check: counting tokens costs a tokenizer pass, not inference,
-    // and a client blocked from counting would fall back to guessing at its
-    // own context usage — worse for everyone than answering.
     let translated = match translated_request(body).await {
         Ok(t) => t,
         Err(resp) => return resp,
     };
+    if matches!(
+        state.automatic_router.is_route(&translated.model).await,
+        Ok(true)
+    ) && let Some(exceeded) = proxy::limit_exceeded(&state, &user).await
+    {
+        return rate_limited(&exceeded);
+    }
+    let requested_model = translated.model.clone();
 
     let access = state.pool_access_for_token(&user);
+    let (routing_model, automatic_decision) = match proxy::resolve_automatic_chat_route(
+        &state,
+        &user,
+        &translated.model,
+        &translated.body,
+        &access,
+        &parts.headers,
+        false,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let access = if automatic_decision.is_some() {
+        gateway_core::server::upstreams::PoolAccess {
+            allowed_models: None,
+            ..access
+        }
+    } else {
+        access
+    };
+    let with_route =
+        |response| proxy::with_automatic_route_headers(response, automatic_decision.as_ref());
     let acquired = match state
         .upstreams
-        .route_access(&translated.model, PoolKind::Chat, &access)
+        .route_access(&routing_model, PoolKind::Chat, &access)
     {
         Ok(a) => a,
-        Err(e) => return route_error_response(e),
+        Err(e) => return with_route(route_error_response(e)),
     };
     let real_model = acquired.resolved_model().to_string();
     let backend = acquired.backend().name.clone();
@@ -241,7 +293,7 @@ pub async fn count_tokens(State(state): State<Arc<RamaState>>, req: Request) -> 
     drop(acquired);
 
     if tokenize_unsupported(&url) {
-        return tokenize_unavailable();
+        return with_route(tokenize_unavailable());
     }
 
     // Built field by field rather than by stripping the inference body: the
@@ -266,7 +318,7 @@ pub async fn count_tokens(State(state): State<Arc<RamaState>>, req: Request) -> 
         Ok(r) => r,
         Err(err) => {
             tracing::debug!(error = %err, %backend, "count_tokens: tokenize call failed");
-            return tokenize_unavailable();
+            return with_route(tokenize_unavailable());
         }
     };
     if !resp.status().is_success() {
@@ -278,20 +330,22 @@ pub async fn count_tokens(State(state): State<Arc<RamaState>>, req: Request) -> 
             remember_tokenize_unsupported(&url);
         }
         tracing::debug!(%status, %backend, "count_tokens: tokenize unavailable");
-        return tokenize_unavailable();
+        return with_route(tokenize_unavailable());
     }
     let counted = resp
         .json::<Value>()
         .await
         .ok()
         .and_then(|v| v.get("count").and_then(Value::as_i64));
-    match counted {
+    let response = match counted {
         Some(count) => json_response(StatusCode::OK, &json!({"input_tokens": count})),
         None => {
             tracing::debug!(%backend, "count_tokens: tokenize response carried no count");
             tokenize_unavailable()
         }
-    }
+    };
+    let response = proxy::with_resolved_model_header(response, &requested_model, &real_model);
+    with_route(response)
 }
 
 /// The backend's tokenizer endpoint. vLLM serves `/tokenize` at the server

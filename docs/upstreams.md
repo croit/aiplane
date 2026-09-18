@@ -44,6 +44,12 @@ There is no static model table: each backend's `/models` response is the source 
 
 For aliases and the two fallback mechanisms, see [Model aliases](#model-aliases) and [Fallback models](#fallback-models) below.
 
+Semantic model selection is a separate layer. A centrally configured automatic
+route presents a normal model alias to clients, filters its candidate targets
+through the caller's pool access, and uses a `system_one` model to pick one
+before this registry performs ordinary static-alias, pool, replica, and fallback
+routing. See [`automatic-routing.md`](automatic-routing.md).
+
 ## Model discovery
 
 Every 5 s, each backend gets a `GET <base_url>/models` probe (with the backend's bearer token, if configured). On 200 + parseable OpenAI envelope (`{"data": [{"id": ...}, ...]}`), the backend's advertised-model set is **replaced wholesale** with the names in `data[].id`. On 401 or non-parseable 200, the backend is marked alive but its model set is left as-is (so a previously-populated set survives a transient parser failure). On network error, timeout, or 5xx, the probe counts toward the unhealthy threshold.

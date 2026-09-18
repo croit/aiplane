@@ -20,6 +20,7 @@ use common::Service as _;
 use gateway::rama_server::{RamaState, SessionStore, router::router};
 use gateway_core::server::config::Config;
 use gateway_core::server::db;
+use gateway_core::server::db::automatic_routes::{AutomaticRoute, AutomaticRouteCandidate};
 use gateway_core::server::rbac::Resolver;
 use gateway_core::server::rbac::config::{RbacConfig, RoleConfig};
 use gateway_core::server::upstreams::{
@@ -1726,6 +1727,71 @@ async fn the_models_endpoint_lists_offered_chat_models() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn automatic_route_stays_in_model_picker_while_selector_is_unavailable() {
+    let state = common::state_with_automatic_route_pools("http://unused.invalid").await;
+    gateway_core::server::db::automatic_routes::upsert(
+        &state.db,
+        &AutomaticRoute {
+            alias: "default".into(),
+            selector_model: "jev-model".into(),
+            objective: "balanced".into(),
+            instructions: String::new(),
+            minimum_confidence: 0.7,
+            selector_timeout_ms: 1_000,
+            fallback_target: "fast-model".into(),
+            session_affinity: false,
+            session_ttl_seconds: 3_600,
+            rollout: "active".into(),
+            version: 0,
+            candidates: vec![
+                AutomaticRouteCandidate {
+                    key: "fast".into(),
+                    target: "fast-model".into(),
+                    description: "Fast model".into(),
+                },
+                AutomaticRouteCandidate {
+                    key: "expert".into(),
+                    target: "expert-model".into(),
+                    description: "Expert model".into(),
+                },
+            ],
+        },
+    )
+    .await
+    .unwrap();
+    for pool in state.upstreams.pools() {
+        for backend in &pool.backends {
+            if pool.kind == PoolKind::SystemOne {
+                backend.set_healthy(false);
+            } else if pool.kind == PoolKind::Chat {
+                backend.set_models(std::collections::HashSet::from(["fast-model".into()]));
+            }
+        }
+    }
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let app = router(Arc::new(state));
+
+    let response = app
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/models".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_string(response).await).unwrap();
+    assert!(
+        body["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["id"] == "default"),
+        "fallback availability keeps the route usable"
+    );
 }
 
 /// An alias inherits its target's reasoning support.

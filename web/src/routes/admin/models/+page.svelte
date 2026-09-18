@@ -7,6 +7,7 @@
 	import AdminModelRow from '$lib/components/admin/AdminModelRow.svelte';
 	import DefaultModelsCard from '$lib/components/admin/DefaultModelsCard.svelte';
 	import SearchSettingsCard from '$lib/components/admin/SearchSettingsCard.svelte';
+	import AutomaticRoutesCard from '$lib/components/admin/AutomaticRoutesCard.svelte';
 	import { t } from '$lib/i18n.svelte';
 
 	let data = $state<AdminModelsData | null>(null);
@@ -61,6 +62,7 @@
 	{#if notice}<div class="alert alert-success"><span>{notice}</span></div>{/if}
 	{#if data}
 		<DefaultModelsCard defaults={data.feature_defaults} onsave={saveDefault} />
+		<AutomaticRoutesCard />
 		{#key `${data.search.provider}:${data.search.searxng_url}:${data.search.brave_key_set}`}
 			<SearchSettingsCard search={data.search} onsave={saveSearch} />
 		{/key}
