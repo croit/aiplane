@@ -1,0 +1,33 @@
+# Prove the Chrome Web Store credentials work, on demand.
+#
+# Separate from ci.yml on purpose: this needs no Rust, no tests and no version
+# resolution, and waiting twenty minutes to learn that a pasted key lost its
+# newlines is how people stop checking. It runs in seconds.
+#
+# Manual only. There is nothing to check on a push, and a scheduled run would
+# authenticate against Google for no reason.
+name: web store credentials
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: can we talk to the store?
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: node@24
+
+      # Authenticates and stops — nothing is uploaded and nothing is published,
+      # so this is safe to run at any time, including while a review is pending.
+      - name: Check credentials
+        env:
+          CWS_SERVICE_ACCOUNT: ${{ secrets.CWS_SERVICE_ACCOUNT }}
+        run: node scripts/publish-extension.mjs --check

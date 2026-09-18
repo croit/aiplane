@@ -5,6 +5,13 @@
 // Upload and publish the Chrome extension to the Chrome Web Store.
 //
 //   node scripts/publish-extension.mjs <path-to-zip>
+//   node scripts/publish-extension.mjs --check    (credentials only)
+//
+// `--check` authenticates and stops. It exists because "the secret is set" and
+// "the secret works" are different statements, and only the first one can be
+// read off GitHub: a service-account key pasted by hand loses the newlines in
+// its private key often enough that discovering it during a release is a
+// question of when. This answers it in three seconds, at any time.
 //
 // Authenticates as a **service account**, which is the reason this is written
 // out rather than pulled from an action off the shelf: the widely used ones
@@ -95,15 +102,37 @@ async function call(url, token, init = {}) {
 
 async function main() {
 	const zip = process.argv[2];
-	if (!zip) throw new Error('usage: publish-extension.mjs <path-to-zip>');
+	if (!zip) throw new Error('usage: publish-extension.mjs <path-to-zip> | --check');
+	const checkOnly = zip === '--check';
 
 	const { CWS_SERVICE_ACCOUNT, CWS_PUBLISHER_ID, CWS_EXTENSION_ID } = process.env;
-	const missing = ['CWS_SERVICE_ACCOUNT', 'CWS_PUBLISHER_ID', 'CWS_EXTENSION_ID'].filter(
-		(name) => !process.env[name]
-	);
+	// The item id is not needed to prove the key works, and it does not exist
+	// until the first upload has been made by hand.
+	const required = checkOnly
+		? ['CWS_SERVICE_ACCOUNT']
+		: ['CWS_SERVICE_ACCOUNT', 'CWS_PUBLISHER_ID', 'CWS_EXTENSION_ID'];
+	const missing = required.filter((name) => !process.env[name]);
 	if (missing.length > 0) throw new Error(`missing ${missing.join(', ')}`);
 
-	const token = await accessToken(JSON.parse(CWS_SERVICE_ACCOUNT));
+	let key;
+	try {
+		key = JSON.parse(CWS_SERVICE_ACCOUNT);
+	} catch (err) {
+		// By far the most likely failure, and the least obvious one downstream.
+		throw new Error(
+			`CWS_SERVICE_ACCOUNT is not valid JSON (${err.message}). It must be the ` +
+				`whole downloaded key file, unedited.`
+		);
+	}
+	if (!key.private_key?.includes('BEGIN PRIVATE KEY')) {
+		throw new Error('CWS_SERVICE_ACCOUNT has no usable private_key — was it pasted whole?');
+	}
+
+	const token = await accessToken(key);
+	if (checkOnly) {
+		console.log(`credentials work: ${key.client_email} authenticated against the store API`);
+		return;
+	}
 	const item = `publishers/${CWS_PUBLISHER_ID}/items/${CWS_EXTENSION_ID}`;
 
 	// The store rejects a version that is not greater than the published one,
