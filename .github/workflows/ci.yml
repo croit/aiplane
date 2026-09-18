@@ -512,8 +512,8 @@ jobs:
         if: github.ref_type == 'tag' && steps.creds.outputs.have == 'true'
         env:
           CWS_SERVICE_ACCOUNT: ${{ secrets.CWS_SERVICE_ACCOUNT }}
-          CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
-          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
         run: node scripts/publish-extension.mjs "${{ steps.package.outputs.zip }}"
 
       - name: Summary

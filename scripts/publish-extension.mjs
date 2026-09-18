@@ -17,9 +17,12 @@
 // service accounts exist at all.
 //
 // Environment:
-//   CWS_SERVICE_ACCOUNT  the service-account JSON key, verbatim
-//   CWS_PUBLISHER_ID     from the dashboard, Publisher → Settings
-//   CWS_EXTENSION_ID     the 32-character item id
+//   CWS_SERVICE_ACCOUNT  the service-account JSON key, verbatim (a secret)
+//   CWS_PUBLISHER_ID     from the dashboard, Publisher → Settings (a variable:
+//                        it is an identifier, and masking it in the log turns a
+//                        wrong one into an unreadable 404)
+//   CWS_EXTENSION_ID     the 32-character item id, which is in the extension's
+//                        public store URL (also a variable)
 //
 // No dependencies: Node signs the JWT with its own crypto and `fetch` is
 // built in. Adding a package here would mean an npm install in a job that
