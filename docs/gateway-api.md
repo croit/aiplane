@@ -1,6 +1,6 @@
 # Gateway HTTP API
 
-The gateway exposes an OpenAI-compatible API so any standard SDK works against it unmodified. Every `/v1/*` endpoint requires a valid gateway bearer token (see [`auth.md`](auth.md)). The two health probes are unauthenticated.
+The gateway exposes OpenAI-, Anthropic-, and TypeSafe System One-compatible APIs. Every `/v1/*` endpoint requires a valid gateway bearer token (see [`auth.md`](auth.md)). The two health probes are unauthenticated.
 
 The routes are wired in `crates/gateway/src/rama_server/router.rs`; the `/v1/*` handlers live in `crates/gateway/src/rama_server/proxy.rs`.
 
@@ -9,18 +9,42 @@ The routes are wired in `crates/gateway/src/rama_server/router.rs`; the `/v1/*` 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | POST | `/v1/chat/completions`     | Bearer | Streaming + non-streaming. Server-side tool execution when the caller's token has tool grants (see [`tools-rbac.md`](tools-rbac.md)); otherwise a byte-for-byte passthrough. Routes to the `chat` pool. |
+| POST | `/v1/systemone`            | Bearer | TypeSafe System One-compatible typed decisions. Byte-dumb relay to the `system_one` pool; non-streaming. |
 | POST | `/v1/embeddings`           | Bearer | Single + batch. Byte-dumb relay to the `embedding` pool; non-streaming. |
 | POST | `/v1/images/generations`   | Bearer | JSON (`{model, prompt, size, …}`) in, OpenAI images envelope (`data[].b64_json` or `.url`) out. Byte-dumb relay to the `image` pool. |
 | POST | `/v1/images/edits`         | Bearer | `multipart/form-data` (`image` + `prompt` + `model`). Byte-dumb relay to the `image` pool. |
 | POST | `/v1/audio/transcriptions` | Bearer | `multipart/form-data`, Whisper-compatible. Silence-trimmed and re-framed before forwarding to the `transcription` pool. |
 | POST | `/v1/audio/speech`         | Bearer | Text-to-speech (OpenAI-shaped: `{model, input, voice, response_format}`). Byte-dumb relay to the `speech` pool; audio bytes out. Returns a routing error if no `speech` backend serves the model (i.e. no `speech` pool configured). |
-| GET  | `/v1/models`               | Bearer | Lists every model served by any healthy backend across all pools (chat, transcription, embedding, image, speech), de-duplicated by id. Synthesised from the registry's cached model sets — no upstream round-trip. |
+| GET  | `/v1/models`               | Bearer | Lists every model served by any healthy backend across public pools (chat, transcription, embedding, image, speech, system_one), de-duplicated by id. Synthesised from the registry's cached model sets — no upstream round-trip. |
 | GET  | `/v1/models/{id}`          | Bearer | Retrieve a single model object, or `404 model_not_found` if no backend serves the id. `{id}` is a catch-all because model ids contain `/`. |
 | GET  | `/v1/sandbox/files/{run}/{filename}` | Bearer | Downloads a file a sandbox run produced for the caller, scoped to the caller's user (see `sandbox_api`). |
 | GET  | `/healthz`                 | none | Liveness. Returns `{"status":"ok"}`. |
 | GET  | `/readyz`                  | none | Readiness. Returns `{"status":"ok"}`. |
 
 `POST /v1/audio/translations` is **not** implemented — no route is registered.
+
+## System One compatibility
+
+`POST /v1/systemone` preserves TypeSafe's request and response contract. The gateway reads only the `model` field for routing, rewrites it when an alias resolves, and forwards every other field without translation. That keeps `noul`, `choice`, `score`, `instructions`, `criteria`, probabilities, confidence, and future protocol additions under the upstream contract rather than a gateway-owned schema.
+
+The official TypeSafe JavaScript SDK accepts a custom base URL, so an application can use its normal client against the gateway:
+
+```ts
+import { TypeSafeClient, noul } from "@typesafe-ai/sdk";
+
+const client = new TypeSafeClient({
+  apiKey: process.env.GATEWAY_TOKEN,
+  baseURL: "https://gateway.example.com",
+  defaultModel: "jev-latest",
+});
+
+const result = await client.systemOne({
+  state: { ticket: "My card was charged twice." },
+  questions: { urgent: noul("Does this need an immediate response?") },
+});
+```
+
+The gateway's existing `GET /v1/models` remains OpenAI-shaped. The SDK's `systemOne()` method is compatible; its separate `models.list()` method expects TypeSafe's different model-list envelope and is not currently supported.
 
 > The web UI is a SvelteKit SPA served from `/`; its client routes (`/chat`, `/tokens`, `/admin/*`, …) and the session-scoped `/api/v0/*` and `/auth/*` routes are separate surfaces, not part of the OpenAI-compatible API. See [`ui.md`](ui.md).
 

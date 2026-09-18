@@ -1199,6 +1199,62 @@ pub async fn embeddings(State(state): State<Arc<RamaState>>, req: Request) -> Re
     with_resolved_model_header(resp, &model, &real_model)
 }
 
+/// `POST /v1/systemone` — TypeSafe System One compatible typed decisions.
+/// The body is relayed without interpreting the question schema; only the
+/// model field is read for routing and rewritten when an alias resolves.
+pub async fn system_one(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (parts, body) = req.into_parts();
+    let user = match require_bearer(&state, &parts.headers).await {
+        Ok(user) => user,
+        Err(refusal) => return refusal.into_response(),
+    };
+    if let Some(resp) = limit_check(&state, &user).await {
+        return resp;
+    }
+    let body = match read_body_to_bytes(body).await {
+        Ok(body) => body,
+        Err(message) => {
+            return error_response(StatusCode::BAD_REQUEST, "invalid_request", &message);
+        }
+    };
+    let Some(model) = parse_model_field(&body) else {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "request body is missing a string `model` field",
+        );
+    };
+    let access = state.pool_access_for_token(&user);
+    let acquired = match state
+        .upstreams
+        .route_access(&model, PoolKind::SystemOne, &access)
+    {
+        Ok(acquired) => acquired,
+        Err(error) => return route_error_response(error),
+    };
+    let real_model = acquired.resolved_model().to_string();
+    let body = rewrite_model_in_bytes(body, &real_model);
+    let record = RecordParams::v1(
+        &user,
+        UsageKind::SystemOne,
+        real_model.clone(),
+        state
+            .upstreams
+            .enforce_limits_for_model(&real_model, PoolKind::SystemOne),
+    );
+    let response = forward(
+        &state,
+        acquired,
+        Method::POST,
+        "systemone",
+        parts.headers,
+        body,
+        record,
+    )
+    .await;
+    with_resolved_model_header(response, &model, &real_model)
+}
+
 /// `POST /v1/images/generations` — OpenAI-compatible image generation.
 /// Byte-dumb proxy, exactly like [`embeddings`]: authenticate, read the
 /// `model`, pick a healthy backend from the **Image** pool, and relay the

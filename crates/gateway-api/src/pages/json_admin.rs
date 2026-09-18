@@ -365,6 +365,7 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
         (PoolKind::Transcription, "transcription"),
         (PoolKind::Ocr, "ocr"),
         (PoolKind::Rerank, "rerank"),
+        (PoolKind::SystemOne, "system_one"),
     ] {
         for (name, alias_target) in state.upstreams.models_with_alias_target(kind) {
             if !seen.insert(name.clone()) {

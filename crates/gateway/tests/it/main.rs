@@ -37,6 +37,7 @@ mod session_routes;
 mod setup_wizard;
 mod spa_routes;
 mod speech_voice;
+mod system_one;
 mod token_scope;
 mod tool_loop;
 mod tools_inventory;

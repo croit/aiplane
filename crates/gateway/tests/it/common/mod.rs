@@ -190,6 +190,15 @@ pub async fn state_with_two_chat_backends(first_url: &str, second_url: &str) -> 
 /// ids a client sends (`claude-sonnet-4-6`) are names no self-hosted backend
 /// serves.
 pub async fn state_with_alias(upstream_url: &str, alias: &str, real_model: &str) -> RamaState {
+    state_with_alias_for_kind(upstream_url, PoolKind::Chat, alias, real_model).await
+}
+
+pub async fn state_with_alias_for_kind(
+    upstream_url: &str,
+    kind: PoolKind,
+    alias: &str,
+    real_model: &str,
+) -> RamaState {
     let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let mut backend = mock_backend("mock", upstream_url);
     backend.alias = Some(upstreams::config::AliasSpec::Targets(HashMap::from([(
@@ -206,7 +215,7 @@ pub async fn state_with_alias(upstream_url: &str, alias: &str, real_model: &str)
             fallback_offline: None,
             compliance: Default::default(),
             enforce_limits: true,
-            kind: PoolKind::Chat,
+            kind,
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![backend],

@@ -10,7 +10,7 @@ request.model ──► [walk pools matching kind] ──► [pool whose backend
 ```
 
 - A **`Backend`** is a single addressable upstream: base URL, optional API key, weight, `max_inflight`, plus a runtime-populated set of advertised model IDs.
-- A **`Pool`** is an ordered set of backends sharing a `kind` (`chat` | `transcription` | `embedding` | `image` | `speech` | `ocr`) and a picker strategy. Pools own:
+- A **`Pool`** is an ordered set of backends sharing a `kind` (`chat` | `transcription` | `embedding` | `image` | `speech` | `system_one` | `ocr` | `rerank`) and a picker strategy. Pools own:
     - A health-check loop per backend.
     - A picker strategy (`prefix_affinity`, `least_inflight`, `round_robin`). Default: `least_inflight`; prefer `prefix_affinity` for chat pools with several self-hosted replicas — see [Picking strategies](#picking-strategies).
     - Implicit "what we serve" — the union of all backends' advertised-model sets.
@@ -21,7 +21,7 @@ request.model ──► [walk pools matching kind] ──► [pool whose backend
 
 Pools, backends, and per-model settings are configured **in the admin UI at `/admin/upstreams`** — the only supported path; there is no config-file topology. This section describes the fields you set there and how they behave; the [operator workflow](#operator-workflow) below has the click-path.
 
-A **pool** has a name, a `kind` (`chat` | `transcription` | `embedding` | `image` | `speech` | `ocr`), a picker `strategy` (`prefix_affinity` — recommended for multi-replica chat pools — `least_inflight`, or `round_robin`), optional GDPR/NDA compliance flags, a rate-limit-exemption toggle, and an optional offline-fallback model. An `ocr` pool is reserved for internal document parsing and is not a general-purpose chat endpoint.
+A **pool** has a name, a `kind` (`chat` | `transcription` | `embedding` | `image` | `speech` | `system_one` | `ocr` | `rerank`), a picker `strategy` (`prefix_affinity` — recommended for multi-replica chat pools — `least_inflight`, or `round_robin`), optional GDPR/NDA compliance flags, a rate-limit-exemption toggle, and an optional offline-fallback model. `ocr` and `rerank` are internal capability pools rather than public model endpoints.
 
 A **backend** belongs to one pool and carries a name, base URL, an API key (entered once, stored encrypted; an env-var name can be given as a fallback), weight, max in-flight, health path, client-facing aliases, and two capability flags:
 
@@ -37,6 +37,8 @@ the public chat model list. Its backend is an internal document-aware OCR
 sidecar, not the raw vLLM OpenAI endpoint. The sidecar may use the official
 `infer.py --pdf` wrapper; it owns PDF rasterization and sends the model's
 required image requests and `vllm_xargs` values itself.
+
+A **system_one** pool serves the TypeSafe-compatible `POST /v1/systemone` endpoint. The gateway does not translate its question or answer schema. For a multi-capability catalog such as OpenRouter, configure a separate logical backend with the same base URL and key reference, list only the System One models, and turn model discovery off; otherwise the provider's full chat catalog would be registered in the `system_one` pool. For example, use `~typesafe/jev-latest` as the configured OpenRouter model and `jev-latest=~typesafe/jev-latest` as an alias when clients should use the TypeSafe SDK's default name. A pinned deployment can instead target a versioned id such as `typesafe/jev-1.13`.
 
 There is no static model table: each backend's `/models` response is the source of truth for what it serves. API keys are stored encrypted at rest; the optional env-var fallback is the only place key material comes from the environment.
 

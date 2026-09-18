@@ -33,10 +33,11 @@ pub fn snapshot_to_configs(
         // pool (it becomes unroutable, surfacing as a clean model_not_found) and
         // log loudly so the misconfiguration is visible rather than mis-serving.
         let Some(kind) = parse_kind(&pool.kind) else {
+            let expected = PoolKind::ALL.map(PoolKind::as_str);
             tracing::error!(
                 pool = %pool.name, kind = %pool.kind,
-                "unknown pool kind — skipping this pool (expected one of \
-                 chat/transcription/embedding/image/speech)"
+                ?expected,
+                "unknown pool kind — skipping this pool"
             );
             continue;
         };
@@ -140,6 +141,7 @@ fn parse_kind(s: &str) -> Option<PoolKind> {
         "speech" => Some(PoolKind::Speech),
         "ocr" => Some(PoolKind::Ocr),
         "rerank" => Some(PoolKind::Rerank),
+        "system_one" => Some(PoolKind::SystemOne),
         _ => None,
     }
 }
@@ -301,6 +303,11 @@ mod tests {
         let map = alias.into_map();
         assert_eq!(map.get("a1"), Some(&None));
         assert_eq!(map.get("a2"), Some(&None));
+    }
+
+    #[test]
+    fn parses_system_one_pool_kind() {
+        assert_eq!(parse_kind("system_one"), Some(PoolKind::SystemOne));
     }
 
     fn snap_with_backend(kind: &str, aliases: Vec<AliasRow>) -> UpstreamConfigSnapshot {

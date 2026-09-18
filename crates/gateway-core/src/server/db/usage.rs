@@ -74,6 +74,7 @@ pub enum UsageKind {
     /// carried in `input_units` so an operator can see how much document work
     /// a user's uploads caused.
     Ocr,
+    SystemOne,
 }
 
 impl UsageKind {
@@ -85,6 +86,7 @@ impl UsageKind {
             UsageKind::Image => "image",
             UsageKind::Speech => "speech",
             UsageKind::Ocr => "ocr",
+            UsageKind::SystemOne => "system_one",
         }
     }
 }

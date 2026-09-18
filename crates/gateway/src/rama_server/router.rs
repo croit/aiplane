@@ -8,7 +8,7 @@
 //!   - **Non-UI survivors**: the two public `/hooks` triggers (the URL is the
 //!     credential) and the OAuth round-trips, whose redirect URIs are
 //!     registered with external providers and so cannot move.
-//!   - **OpenAI-compatible proxy**: `/v1/models`, `/v1/chat/completions`,
+//!   - **Model API proxy**: `/v1/models`, `/v1/chat/completions`, `/v1/systemone`,
 //!     `/v1/audio/*`, `/v1/embeddings`, `/v1/images/*` — bearer-authenticated,
 //!     forwarded to the upstream pool selected by model.
 //!   - **Anthropic-compatible proxy**: `/v1/messages` — the same pipeline
@@ -92,6 +92,7 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
         // `mistralai/Voxtral-Mini-4B-Realtime-2602`).
         .with_get("/v1/models/{*id}", proxy::retrieve_model)
         .with_post("/v1/chat/completions", proxy::chat_completions)
+        .with_post("/v1/systemone", proxy::system_one)
         // Anthropic Messages format — what Claude Code speaks. Same pipeline
         // as `/v1/chat/completions` (routing, limits, tool loop, usage); only
         // the wire format differs. See `rama_server::messages`.

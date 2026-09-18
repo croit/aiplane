@@ -1,4 +1,4 @@
-export type ModelKind = 'chat' | 'embedding' | 'image' | 'speech' | 'transcription' | 'ocr' | 'rerank';
+export type ModelKind = 'chat' | 'embedding' | 'image' | 'speech' | 'transcription' | 'ocr' | 'rerank' | 'system_one';
 export type ModelFilter = 'all' | 'chat' | 'other' | 'alias' | 'configured';
 export type PricingUnit = 'tokens' | 'images' | 'characters' | 'seconds';
 

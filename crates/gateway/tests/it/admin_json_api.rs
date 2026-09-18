@@ -799,7 +799,7 @@ async fn topology_save_apply_and_stream() {
             Method::PUT,
             "/api/v0/admin/pools",
             &cookie,
-            Some(r#"{"name":"p1","kind":"chat","backends":["b1"],"models":["m"]}"#.into()),
+            Some(r#"{"name":"p1","kind":"system_one","backends":["b1"],"models":["m"]}"#.into()),
         ))
         .await
         .unwrap();
@@ -870,6 +870,12 @@ async fn topology_save_apply_and_stream() {
             .any(|b| b["name"] == "b1" && b["has_stored_key"] == serde_json::json!(true))
     );
     assert_eq!(listed["pools"][0]["backends"], serde_json::json!(["b1"]));
+    assert_eq!(listed["pools"][0]["kind"], "system_one");
+    assert!(
+        listed["pool_kinds"]
+            .as_array()
+            .is_some_and(|kinds| kinds.iter().any(|kind| kind == "system_one"))
+    );
 
     let resp = app
         .serve(req(
