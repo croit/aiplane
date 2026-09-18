@@ -305,6 +305,45 @@ it writes leaves out `*.test.js` and `icons/render.py`.
 arrived. On anything older the extension would install and then never be able
 to ask to be switched on, which is worse than refusing to install.
 
+**The store is the only real channel.** Chrome has allowed no off-store install
+on Windows since 33 and on macOS since 44; a self-hosted `.crx` plus
+`update_url` works for Linux users and for managed fleets (where
+`ExtensionInstallForcelist` needs AD/Azure AD/MDM/Chrome Enterprise Core), and
+for nobody else. `YYMM.RELEASE.BUILD` satisfies the store's version rules —
+one to four integers, each 0–65535, strictly increasing — which a date like
+`20260918` would not.
+
+**Updating is Chrome's job, with one catch worth knowing.** A store-hosted
+extension is checked at startup and roughly every five hours, and an update is
+installed **only while the extension is idle**: no service worker running, no
+extension page open. This one is woken by every batch and holds a debugger
+session for as long as it is armed, so on a browser in daily use it can go a
+long time without being idle, and the update would wait for a browser restart.
+`onUpdateAvailable` therefore reloads immediately when nothing is in flight,
+and otherwise remembers the version and reloads on disarm.
+
+**Two review risks specific to this design**, neither hypothetical:
+
+- The **remote-code policy** forbids "building an interpreter to run complex
+  commands fetched from a remote source", which is a fair description of the
+  shape of this extension from the outside. The honest answer — and the one the
+  remote-code declaration has to make — is that the gateway sends *data*, not
+  code: a fixed set of fourteen named actions, validated against
+  `KNOWN_ACTIONS` in `policy.js`, where anything unrecognised is refused as a
+  write. No string from the gateway is ever evaluated.
+- The **`debugger` permission** is permitted (the MV3 remote-code rules name it
+  as one of two explicit exemptions) but counts as a dangerous permission, so
+  it guarantees a slower manual review and needs a per-permission justification
+  saying why `chrome.scripting` and friends cannot do the job: they cannot
+  dispatch real input events.
+
+**On a managed browser it may simply not work.** From Chrome 155 an enterprise
+policy that sets `runtime_blocked_hosts` for this extension disables
+`chrome.debugger.attach()` on *every* target, including origins the same policy
+allows. `explainAttachFailure` in `cdp.js` turns that into something a user can
+read, because the raw "Host access is restricted by policy." reads like our bug
+rather than their IT department's decision.
+
 ## Verifying it by hand
 
 Not covered by automated tests, and it needs a real browser:

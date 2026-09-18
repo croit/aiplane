@@ -115,6 +115,30 @@ function drawIcon(size, armed) {
 chrome.runtime.onStartup.addListener(() => revive());
 chrome.runtime.onInstalled.addListener(() => revive());
 
+/**
+ * Take an update the moment it is safe to, rather than whenever Chrome
+ * happens to find us idle.
+ *
+ * Chrome only installs an extension update while the extension is idle: no
+ * service worker running, no extension page open. This one is woken by every
+ * batch and holds a debugger session open the whole time it is armed, so on a
+ * browser somebody actually uses it can go a long time without being idle —
+ * and the update then waits for a browser restart. A fix nobody receives is
+ * not a fix.
+ *
+ * So: reload at once when nothing is in flight, and otherwise remember it and
+ * reload on disarm, which is the user saying they are done.
+ */
+chrome.runtime.onUpdateAvailable.addListener(async ({ version }) => {
+	const { armed } = await session();
+	if (!armed) {
+		chrome.runtime.reload();
+		return;
+	}
+	await chrome.storage.session.set({ pendingUpdate: version });
+	await note({ event: 'update waiting', reason: `version ${version}, until you switch off` });
+});
+
 async function revive() {
 	const { armed } = await session();
 	await showState(armed);
@@ -448,6 +472,10 @@ async function handleMessage(message, sender) {
 		await showState(null);
 		await note({ event: 'disarmed' });
 		if (armed) await broadcastState(armed.origin, false);
+		// The moment an update was waiting for. Last thing done here, so the
+		// page has already been told and the debugger already released.
+		const { pendingUpdate } = await chrome.storage.session.get(['pendingUpdate']);
+		if (pendingUpdate) chrome.runtime.reload();
 		return { ok: true };
 	}
 	if (message?.type === 'activity') {

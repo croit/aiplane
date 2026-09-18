@@ -31,12 +31,45 @@ chrome.tabs.onRemoved.addListener((tabId) => attached.delete(tabId));
 
 export async function attach(tabId) {
 	if (attached.has(tabId)) return;
-	await chrome.debugger.attach({ tabId }, PROTOCOL);
+	try {
+		await chrome.debugger.attach({ tabId }, PROTOCOL);
+	} catch (err) {
+		throw new Error(explainAttachFailure(err));
+	}
 	attached.add(tabId);
 	// Page for navigation + screenshots, DOM/Runtime for element geometry.
 	await send(tabId, 'Page.enable');
 	await send(tabId, 'DOM.enable');
 	await send(tabId, 'Runtime.enable');
+}
+
+/**
+ * Turn Chrome's debugger refusals into something a user can act on.
+ *
+ * From Chrome 155 (stable 2026-10-06) a managed browser enforces extension
+ * policy on `chrome.debugger` up front and all-or-nothing: with
+ * `ExtensionSettings.runtime_blocked_hosts` set for this extension,
+ * `attach()` fails on **every** target — including origins the same policy
+ * allows. On a corporate fleet that means the feature is simply unavailable,
+ * and the raw message ("Host access is restricted by policy.") reads like a
+ * bug in us rather than a decision by their IT department.
+ *
+ * Anything else is passed through unchanged; inventing friendlier wording for
+ * errors we have not seen would hide the ones worth reading.
+ */
+function explainAttachFailure(err) {
+	const message = String(err?.message ?? err);
+	if (message.includes('restricted by policy')) {
+		return (
+			`${message} This browser is managed, and its policy blocks the ` +
+			`debugger this extension drives pages with. Nothing here can lift ` +
+			`that — it has to be changed by whoever manages the browser.`
+		);
+	}
+	if (message.includes('Cannot access') || message.includes('cannot be debugged')) {
+		return `${message} Chrome will not let an extension drive this kind of page.`;
+	}
+	return message;
 }
 
 export async function detach(tabId) {
