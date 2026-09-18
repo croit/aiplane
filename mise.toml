@@ -384,7 +384,9 @@ VERSION=$(sh scripts/derive-version.sh)
 OUT="target/llm-gateway-browser-control-$VERSION.zip"
 STAGE="target/extension-package"
 
-rm -rf "$STAGE" "$OUT"
+# Every previous build, not just this one: three versions side by side in
+# target/ is how the wrong zip gets uploaded to the store.
+rm -rf "$STAGE" target/llm-gateway-browser-control-*.zip
 mkdir -p "$STAGE/src" "$STAGE/icons" target
 
 # Named, not swept. `cp -R extension/.` followed by deletions ships whatever
