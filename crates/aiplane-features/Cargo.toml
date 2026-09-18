@@ -72,3 +72,9 @@ tempfile = { workspace = true }
 
 [lints]
 workspace = true
+
+# cargo-machete scans for the *crate* name; `rust-s3`'s library is `s3`
+# (`use s3::Bucket`), so it reads as unused. Verified by removal: dropping it
+# fails the build.
+[package.metadata.cargo-machete]
+ignored = ["rust-s3"]

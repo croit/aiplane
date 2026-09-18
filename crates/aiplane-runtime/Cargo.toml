@@ -28,30 +28,27 @@ tracing = { workspace = true }
 tokio = { workspace = true, features = ["net"] }
 reqwest = { workspace = true }
 sqlx = { workspace = true }
-toml = { workspace = true }
-url = { workspace = true }
 uuid = { workspace = true }
-rand = { workspace = true }
 base64 = "0.23"
 tempfile = { workspace = true }
 regex = { workspace = true }
 # Rama wire types used by the driver and tool surface.
 rama = { workspace = true }
-# MCP client: stdio + streamable-HTTP transports. `reqwest` feature is required
-# because rmcp pulls its own reqwest, which Cargo does not feature-unify with
-# the workspace one, so it would otherwise have no TLS backend.
+# MCP client: stdio + streamable-HTTP transports.
+#
+# The `reqwest` feature stays enabled even though rmcp now shares the
+# workspace's reqwest: it wanted 0.13 while the workspace was on 0.12, so
+# Cargo resolved two of them and rmcp's copy had no TLS backend — every remote
+# MCP connection failed with hyper's "invalid URL, scheme is not http". Since
+# the workspace moved to 0.13 the two unify and the feature is probably
+# redundant, but the failure it prevents is runtime-only and no test would
+# catch a regression, so it is left on deliberately.
 rmcp = { version = "3.4", default-features = false, features = [
     "client",
     "transport-child-process",
     "transport-streamable-http-client-reqwest",
     "reqwest",
 ] }
-# `tls_cert`: a raw rustls handshake with verification off so the tool can
-# inspect the presented certificate, plus x509 parsing.
-tokio-rustls = { workspace = true }
-x509-parser = "0.18"
-image = { workspace = true }
-zip = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }

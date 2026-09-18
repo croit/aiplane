@@ -47,7 +47,6 @@ multer = { workspace = true }
 
 tokio = { workspace = true }
 sqlx = { workspace = true }
-rand = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

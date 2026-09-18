@@ -16,7 +16,6 @@ publish.workspace = true
 # Shared HTTP client type: the /rag source form builds a provider from the
 # submitted credentials to validate them, and the "Test connection" button
 # drives a live probe through the gateway's own client pool.
-reqwest = { workspace = true }
 aiplane-core = { path = "../aiplane-core" }
 aiplane-features = { path = "../aiplane-features" }
 aiplane-runtime = { path = "../aiplane-runtime" }
@@ -34,7 +33,6 @@ serde_urlencoded = { workspace = true }
 # attachments, RAG document drops).
 multer = { workspace = true }
 tokio = { workspace = true }
-sqlx = { workspace = true }
 uuid = { workspace = true }
 
 [lints]

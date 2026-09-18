@@ -23,7 +23,6 @@ async-trait = { workspace = true }
 # time (117 tree-sitter grammars via build.rs) but baked into one
 # place rather than each bin.
 markdown = { workspace = true }
-lumis = { workspace = true }
 regex = { workspace = true }
 
 # UI language selection (Lang cookie/Accept-Language resolution + the
@@ -38,7 +37,6 @@ fluent-bundle = { workspace = true }
 # produce) and the SSE-streamer's channel/sink (`rama::futures`).
 # `sha2` is for the cache-busting hash on asset URLs.
 rama = { workspace = true }
-sha2 = { workspace = true }
 tracing = { workspace = true }
 
 # Persistence. Pool type + macros pulled in; the gateway's worker
@@ -49,7 +47,6 @@ tracing = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_urlencoded = { workspace = true }
 jiff = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }
