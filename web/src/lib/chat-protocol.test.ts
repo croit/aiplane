@@ -37,7 +37,8 @@ function turn(id: string, role: 'user' | 'assistant', extra: Partial<TurnWithToo
 			completed_at: null,
 			...extra
 		},
-		tool_calls: []
+		tool_calls: [],
+		steers: []
 	};
 }
 
@@ -152,7 +153,7 @@ test('an SSE block parses into its event', () => {
 test('session titles fall back to the first user line, truncated', () => {
 	const long = 'a very long first line that goes past the sixty character limit for sure yes';
 	const turns = [
-		{ turn: { role: 'user', user_content: long } as never, tool_calls: [] }
+		{ turn: { role: 'user', user_content: long } as never, tool_calls: [], steers: [] }
 	];
 	assert.equal(
 		sessionTitle({ title: null } as never, turns as never).endsWith('…'),
@@ -160,7 +161,11 @@ test('session titles fall back to the first user line, truncated', () => {
 	);
 	assert.equal(
 		sessionTitle({ title: '  ' } as never, [
-			{ turn: { role: 'user', user_content: 'first line\nsecond' } as never, tool_calls: [] }
+			{
+				turn: { role: 'user', user_content: 'first line\nsecond' } as never,
+				tool_calls: [],
+				steers: []
+			}
 		] as never),
 		'first line'
 	);

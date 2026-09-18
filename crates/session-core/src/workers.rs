@@ -140,9 +140,55 @@ pub enum ToolPromptEvent {
     },
 }
 
-/// One live session worker, indexed by user id in `SessionWorkers`.
-/// Holds the cancel flag the worker polls between upstream chunks
-/// plus the broadcast channel subscribers attach to.
+/// A mid-turn interjection: something the user typed while the turn was
+/// already running, meant for *this* turn rather than the next one.
+///
+/// Carries its DB id because the outcome is recorded on the row — the
+/// transcript has to be able to say whether the running turn actually saw the
+/// note or whether it arrived too late and was re-sent as an ordinary message.
+/// A note the model acted on but that the history cannot account for is the
+/// same class of bug as a dropped parameter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SteerNote {
+    /// `chat_turn_steers.id`.
+    pub id: String,
+    /// What the user typed.
+    pub text: String,
+}
+
+/// The queue of interjections one running turn has been handed but not yet
+/// folded into its prompt.
+///
+/// A handle rather than a field so the driver can hold it without holding the
+/// whole worker entry: `SessionContext` carries a clone, the HTTP handler
+/// pushes through the registry's clone, and both see the same queue.
+#[derive(Clone, Default)]
+pub struct SteerInbox {
+    inner: Arc<Mutex<Vec<SteerNote>>>,
+}
+
+impl SteerInbox {
+    /// Queue an interjection for the running turn.
+    ///
+    /// Whether it is ever *delivered* is not decided here: the driver drains
+    /// the queue at the top of each tool round, so a note that arrives while
+    /// the model is writing its closing answer stays queued and is never
+    /// taken. The caller is responsible for telling the user which happened.
+    pub fn push(&self, note: SteerNote) {
+        self.inner.lock().unwrap().push(note);
+    }
+
+    /// Take every queued interjection, leaving the queue empty. Called at a
+    /// round boundary, where they go into the prompt.
+    pub fn take(&self) -> Vec<SteerNote> {
+        std::mem::take(&mut *self.inner.lock().unwrap())
+    }
+}
+
+/// One live session worker, indexed by `(user id, session id)` in
+/// `SessionWorkers`. Holds the cancel flag the worker polls between upstream
+/// chunks, the queue of mid-turn interjections it drains between rounds, and
+/// the broadcast channel subscribers attach to.
 #[derive(Clone)]
 pub struct ActiveWorker {
     /// DB id of the assistant turn this worker is filling in. Used by
@@ -160,16 +206,29 @@ pub struct ActiveWorker {
     /// generous — bursts of deltas land in tight loops and we don't
     /// want lagged subscribers (a slow phone over LTE) to miss frames.
     pub broadcast: broadcast::Sender<TurnUpdate>,
+    /// Interjections waiting to be folded into the running turn, oldest
+    /// first. The HTTP handler pushes; the driver drains at a round boundary.
+    pub steers: SteerInbox,
 }
 
 /// Result of trying to register a fresh worker.
 pub enum RegisterOutcome {
-    /// No worker was running — caller may spawn one with `worker`.
+    /// Nothing was running in this conversation and the user was under
+    /// their ceiling — caller may spawn one with `worker`.
     Registered { worker: ActiveWorker },
-    /// A worker was already running. Caller should refuse the new
-    /// submit (return 409 / toast). The existing worker is returned so
-    /// the caller can decide whether to subscribe to it instead.
+    /// A worker was already running *in this conversation*. Caller should
+    /// refuse the new submit (return 409 / toast). The existing worker is
+    /// returned so the caller can decide whether to subscribe to it instead.
+    ///
+    /// This one is not configurable and never will be: two workers filling
+    /// the same transcript would interleave their writes into it.
     Busy { existing: ActiveWorker },
+    /// Other conversations of this user are already using every parallel
+    /// slot the operator allowed. Distinct from `Busy` because the remedy is
+    /// different — wait for *another* chat, or raise the limit — and the
+    /// message the user gets should say so rather than claim this
+    /// conversation is busy when it is idle.
+    AtCapacity { running: usize, limit: usize },
 }
 
 /// Capacity of the per-worker broadcast channel. ~256 frames buffered
@@ -177,35 +236,68 @@ pub enum RegisterOutcome {
 /// frame is `TurnUpdate` (16-byte enum) so the buffer is < 4 KB total.
 const BROADCAST_CAPACITY: usize = 256;
 
-/// User-id → ActiveWorker. Wrapped in a Mutex (not RwLock) because
-/// every access is short and we want strict order with `register`'s
-/// "fire previous + insert new" sequence.
+/// How a worker is addressed: one user's one conversation.
+///
+/// The registry used to key on the user alone, which made "one turn at a
+/// time" a property of the *person* rather than of the conversation — so
+/// asking something in a second chat while the first was still thinking was
+/// refused, with nothing technical behind the refusal. Keying on the pair
+/// keeps the invariant that actually matters (one writer per transcript) and
+/// lets the operator decide how many conversations may run at once.
+type WorkerKey = (String, String);
+
+/// (user id, session id) → ActiveWorker. Wrapped in a Mutex (not RwLock)
+/// because every access is short and we want strict order between the
+/// capacity check and the insert in `register`.
 ///
 /// Single-tenant callers can pass a constant per-process id for
 /// `user_id` — the registry doesn't care what the string contains.
 #[derive(Default)]
 pub struct SessionWorkers {
-    inner: Mutex<HashMap<String, ActiveWorker>>,
+    inner: Mutex<HashMap<WorkerKey, ActiveWorker>>,
 }
 
 impl SessionWorkers {
-    /// Try to register a new worker for `user_id`. If one's already
-    /// active, return `Busy` with a clone of its handle and leave the
-    /// existing entry untouched — callers refuse the submit, they
-    /// don't quietly cancel.
+    /// Try to register a new worker for this user's conversation.
     ///
-    /// Differs from the old `CancelRegistry::register` which *always*
-    /// cancelled the prior worker and inserted the new one. That
-    /// behaviour caused the duplication-on-retry bug: a client
-    /// retry after a network blip would race a brand-new
-    /// worker against the still-finishing previous one. We want the
-    /// strict "one worker per user" invariant now.
-    pub fn register(&self, user_id: &str, turn_id: &str, session_id: &str) -> RegisterOutcome {
+    /// Three outcomes, three different situations:
+    ///
+    /// * the conversation already has a worker → `Busy`, always, whatever
+    ///   the limit says. Callers refuse the submit; they don't quietly
+    ///   cancel. (The old `CancelRegistry::register` *always* cancelled the
+    ///   prior worker and inserted the new one, which is what caused the
+    ///   duplication-on-retry bug: a client retry after a network blip raced
+    ///   a brand-new worker against the still-finishing previous one.)
+    /// * the user's other conversations already fill `max_parallel` slots →
+    ///   `AtCapacity`, reporting both numbers so the message can name the
+    ///   limit.
+    /// * otherwise a fresh worker, registered and returned.
+    ///
+    /// `max_parallel` is passed per call rather than held on the registry so
+    /// that session-core stays free of the gateway's config: the operator's
+    /// current setting is read at submit time, which also means raising the
+    /// limit takes effect on the next submit rather than on restart. Values
+    /// below 1 are treated as 1 — a ceiling of zero would refuse every turn,
+    /// and silently doing nothing is a better failure than a gateway that
+    /// cannot chat.
+    pub fn register(
+        &self,
+        user_id: &str,
+        turn_id: &str,
+        session_id: &str,
+        max_parallel: usize,
+    ) -> RegisterOutcome {
         let mut g = self.inner.lock().unwrap();
-        if let Some(existing) = g.get(user_id) {
+        let key = (user_id.to_string(), session_id.to_string());
+        if let Some(existing) = g.get(&key) {
             return RegisterOutcome::Busy {
                 existing: existing.clone(),
             };
+        }
+        let limit = max_parallel.max(1);
+        let running = g.keys().filter(|(uid, _)| uid == user_id).count();
+        if running >= limit {
+            return RegisterOutcome::AtCapacity { running, limit };
         }
         let (broadcast, _) = broadcast::channel(BROADCAST_CAPACITY);
         let worker = ActiveWorker {
@@ -213,8 +305,9 @@ impl SessionWorkers {
             session_id: session_id.to_string(),
             cancel: Arc::new(AtomicBool::new(false)),
             broadcast,
+            steers: SteerInbox::default(),
         };
-        g.insert(user_id.to_string(), worker.clone());
+        g.insert(key, worker.clone());
         RegisterOutcome::Registered { worker }
     }
 
@@ -240,17 +333,39 @@ impl SessionWorkers {
         g.len()
     }
 
-    /// Hand out the current worker (if any) — used by the tail handler
-    /// to attach to a still-running stream.
-    pub fn get(&self, user_id: &str) -> Option<ActiveWorker> {
-        self.inner.lock().unwrap().get(user_id).cloned()
+    /// Hand out this conversation's worker (if any) — used by the tail
+    /// handler to attach to a still-running stream.
+    pub fn get(&self, user_id: &str, session_id: &str) -> Option<ActiveWorker> {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(&(user_id.to_string(), session_id.to_string()))
+            .cloned()
     }
 
-    /// Flip the cancel flag on the user's current worker (if any).
+    /// How many of this user's conversations are streaming right now.
+    ///
+    /// The ceiling check in [`Self::register`] is the reason this exists; it
+    /// is also what a test waits on to know a worker has cleared.
+    pub fn running_for_user(&self, user_id: &str) -> usize {
+        self.inner
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|(uid, _)| uid == user_id)
+            .count()
+    }
+
+    /// Flip the cancel flag on this conversation's worker (if any).
     /// Used by `POST /chat/{id}/cancel`. No-op when no worker is
     /// active.
-    pub fn cancel(&self, user_id: &str) {
-        if let Some(w) = self.inner.lock().unwrap().get(user_id) {
+    pub fn cancel(&self, user_id: &str, session_id: &str) {
+        if let Some(w) = self
+            .inner
+            .lock()
+            .unwrap()
+            .get(&(user_id.to_string(), session_id.to_string()))
+        {
             w.cancel.store(true, Ordering::SeqCst);
         }
     }
@@ -262,10 +377,11 @@ impl SessionWorkers {
     /// worker exists.
     pub fn clear(&self, user_id: &str, worker: &ActiveWorker) {
         let mut g = self.inner.lock().unwrap();
-        if let Some(current) = g.get(user_id)
+        let key = (user_id.to_string(), worker.session_id.clone());
+        if let Some(current) = g.get(&key)
             && Arc::ptr_eq(&current.cancel, &worker.cancel)
         {
-            g.remove(user_id);
+            g.remove(&key);
         }
     }
 }
@@ -273,6 +389,16 @@ impl SessionWorkers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Today's default: one turn at a time per user, across every chat.
+    const SERIAL: usize = 1;
+
+    fn registered(r: &SessionWorkers, user: &str, turn: &str, session: &str) -> ActiveWorker {
+        match r.register(user, turn, session, SERIAL) {
+            RegisterOutcome::Registered { worker } => worker,
+            _ => panic!("expected a fresh registration"),
+        }
+    }
 
     /// What a shutdown waits on. A turn outlives its HTTP connection, so
     /// draining connections proves nothing about work in flight — this count
@@ -282,10 +408,8 @@ mod tests {
         let r = SessionWorkers::default();
         assert_eq!(r.active_count(), 0);
 
-        let RegisterOutcome::Registered { worker: w1 } = r.register("u1", "t1", "s1") else {
-            panic!("expected a fresh registration");
-        };
-        r.register("u2", "t2", "s2");
+        let w1 = registered(&r, "u1", "t1", "s1");
+        registered(&r, "u2", "t2", "s2");
         assert_eq!(r.active_count(), 2);
 
         r.clear("u1", &w1);
@@ -298,12 +422,8 @@ mod tests {
     #[test]
     fn cancel_all_flags_every_running_turn() {
         let r = SessionWorkers::default();
-        let RegisterOutcome::Registered { worker: a } = r.register("u1", "t1", "s1") else {
-            panic!("registered");
-        };
-        let RegisterOutcome::Registered { worker: b } = r.register("u2", "t2", "s2") else {
-            panic!("registered");
-        };
+        let a = registered(&r, "u1", "t1", "s1");
+        let b = registered(&r, "u2", "t2", "s2");
         assert!(!a.cancel.load(Ordering::SeqCst));
         assert!(!b.cancel.load(Ordering::SeqCst));
 
@@ -324,68 +444,187 @@ mod tests {
     #[test]
     fn register_returns_registered_when_empty() {
         let r = SessionWorkers::default();
-        let outcome = r.register("u1", "turn-1", "sess-1");
+        let outcome = r.register("u1", "turn-1", "sess-1", SERIAL);
         assert!(matches!(outcome, RegisterOutcome::Registered { .. }));
     }
 
+    /// Two workers on one transcript would interleave their writes into it,
+    /// so this refusal holds no matter how generous the parallel limit is.
     #[test]
-    fn register_returns_busy_when_user_has_active_worker() {
+    fn register_returns_busy_for_the_same_conversation_even_with_slots_free() {
         let r = SessionWorkers::default();
-        let _first = r.register("u1", "turn-1", "sess-1");
-        let outcome = r.register("u1", "turn-2", "sess-1");
+        let _first = r.register("u1", "turn-1", "sess-1", 8);
+        let outcome = r.register("u1", "turn-2", "sess-1", 8);
         match outcome {
             RegisterOutcome::Busy { existing } => assert_eq!(existing.turn_id, "turn-1"),
             _ => panic!("expected Busy"),
         }
     }
 
+    /// The point of the re-key: a second conversation is not the first one.
+    #[test]
+    fn a_second_conversation_runs_in_parallel_when_the_limit_allows() {
+        let r = SessionWorkers::default();
+        let _first = r.register("u1", "t1", "s1", 2);
+        let outcome = r.register("u1", "t2", "s2", 2);
+        assert!(
+            matches!(outcome, RegisterOutcome::Registered { .. }),
+            "a different chat gets its own worker"
+        );
+        assert_eq!(r.running_for_user("u1"), 2);
+        assert_eq!(r.running_for_user("nobody"), 0);
+    }
+
+    /// Over the ceiling the refusal must be distinguishable from `Busy`: this
+    /// conversation is idle, somebody else's slot is the problem, and the
+    /// message the user reads should say which.
+    #[test]
+    fn register_reports_capacity_with_both_numbers() {
+        let r = SessionWorkers::default();
+        r.register("u1", "t1", "s1", 2);
+        r.register("u1", "t2", "s2", 2);
+        match r.register("u1", "t3", "s3", 2) {
+            RegisterOutcome::AtCapacity { running, limit } => {
+                assert_eq!((running, limit), (2, 2));
+            }
+            _ => panic!("expected AtCapacity"),
+        }
+    }
+
+    /// The default keeps today's behaviour exactly: a second chat waits.
+    #[test]
+    fn a_limit_of_one_keeps_the_old_serial_behaviour() {
+        let r = SessionWorkers::default();
+        r.register("u1", "t1", "s1", SERIAL);
+        assert!(matches!(
+            r.register("u1", "t2", "s2", SERIAL),
+            RegisterOutcome::AtCapacity { limit: 1, .. }
+        ));
+    }
+
+    /// A misconfigured zero must not brick chat; it reads as "one".
+    #[test]
+    fn a_ceiling_of_zero_is_read_as_one() {
+        let r = SessionWorkers::default();
+        assert!(matches!(
+            r.register("u1", "t1", "s1", 0),
+            RegisterOutcome::Registered { .. }
+        ));
+    }
+
+    /// One user's ceiling is their own — a busy colleague must not block you.
+    #[test]
+    fn the_ceiling_is_per_user() {
+        let r = SessionWorkers::default();
+        r.register("u1", "t1", "s1", 1);
+        assert!(matches!(
+            r.register("u2", "t2", "s2", 1),
+            RegisterOutcome::Registered { .. }
+        ));
+    }
+
     #[test]
     fn cancel_flips_the_flag() {
         let r = SessionWorkers::default();
-        let RegisterOutcome::Registered { worker } = r.register("u1", "t", "s") else {
+        let worker = registered(&r, "u1", "t", "s");
+        assert!(!worker.cancel.load(Ordering::SeqCst));
+        r.cancel("u1", "s");
+        assert!(worker.cancel.load(Ordering::SeqCst));
+    }
+
+    /// Cancelling names a conversation, so the user's *other* running chat
+    /// keeps going — that is the whole point of running two.
+    #[test]
+    fn cancel_only_touches_the_named_conversation() {
+        let r = SessionWorkers::default();
+        let a = registered(&r, "u1", "t1", "s1");
+        let RegisterOutcome::Registered { worker: b } = r.register("u1", "t2", "s2", 2) else {
             unreachable!()
         };
-        assert!(!worker.cancel.load(Ordering::SeqCst));
-        r.cancel("u1");
-        assert!(worker.cancel.load(Ordering::SeqCst));
+        r.cancel("u1", "s1");
+        assert!(a.cancel.load(Ordering::SeqCst));
+        assert!(!b.cancel.load(Ordering::SeqCst), "s2 keeps streaming");
     }
 
     #[test]
     fn cancel_on_unknown_user_is_a_noop() {
         let r = SessionWorkers::default();
-        r.cancel("nobody"); // must not panic
+        r.cancel("nobody", "nowhere"); // must not panic
+    }
+
+    #[test]
+    fn get_is_scoped_to_the_conversation() {
+        let r = SessionWorkers::default();
+        registered(&r, "u1", "t1", "s1");
+        assert!(r.get("u1", "s1").is_some());
+        assert!(
+            r.get("u1", "s2").is_none(),
+            "a worker in another chat is not this chat's worker"
+        );
     }
 
     #[test]
     fn clear_removes_only_matching_worker() {
         let r = SessionWorkers::default();
-        let RegisterOutcome::Registered { worker: first } = r.register("u1", "t1", "s") else {
-            unreachable!()
-        };
+        let first = registered(&r, "u1", "t1", "s");
         // Pretend a second register raced through (it wouldn't, given
         // `Busy`, but exercise the ptr_eq guard anyway).
         r.clear("u1", &first);
-        assert!(r.get("u1").is_none());
+        assert!(r.get("u1", "s").is_none());
 
-        let RegisterOutcome::Registered { worker: second } = r.register("u1", "t2", "s") else {
-            unreachable!()
-        };
+        let second = registered(&r, "u1", "t2", "s");
         r.clear("u1", &first); // wrong token: must not remove second
-        assert!(r.get("u1").is_some());
+        assert!(r.get("u1", "s").is_some());
         r.clear("u1", &second);
-        assert!(r.get("u1").is_none());
+        assert!(r.get("u1", "s").is_none());
     }
 
     #[test]
     fn broadcast_round_trips_tick_then_finalized() {
         let r = SessionWorkers::default();
-        let RegisterOutcome::Registered { worker } = r.register("u1", "t", "s") else {
-            unreachable!()
-        };
+        let worker = registered(&r, "u1", "t", "s");
         let mut rx = worker.broadcast.subscribe();
         worker.broadcast.send(TurnUpdate::Tick).unwrap();
         worker.broadcast.send(TurnUpdate::Finalized).unwrap();
         assert_eq!(rx.try_recv().unwrap(), TurnUpdate::Tick);
         assert_eq!(rx.try_recv().unwrap(), TurnUpdate::Finalized);
+    }
+
+    /// Interjections queue in arrival order and are handed over exactly once:
+    /// a note delivered twice would read to the model as the user repeating
+    /// themselves, which is its own kind of wrong answer.
+    #[test]
+    fn steers_drain_in_order_and_only_once() {
+        let r = SessionWorkers::default();
+        let worker = registered(&r, "u1", "t", "s");
+        worker.steers.push(SteerNote {
+            id: "n1".into(),
+            text: "use metric units".into(),
+        });
+        worker.steers.push(SteerNote {
+            id: "n2".into(),
+            text: "and keep it short".into(),
+        });
+        let taken = worker.steers.take();
+        assert_eq!(
+            taken.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            ["n1", "n2"]
+        );
+        assert!(worker.steers.take().is_empty(), "drained exactly once");
+    }
+
+    /// The queue rides on the handle's clone, not on a copy of it — the HTTP
+    /// handler pushes through one clone and the driver drains through
+    /// another.
+    #[test]
+    fn steers_are_shared_across_handle_clones() {
+        let r = SessionWorkers::default();
+        let worker = registered(&r, "u1", "t", "s");
+        let from_registry = r.get("u1", "s").expect("registered");
+        from_registry.steers.push(SteerNote {
+            id: "n1".into(),
+            text: "context".into(),
+        });
+        assert_eq!(worker.steers.take().len(), 1);
     }
 }

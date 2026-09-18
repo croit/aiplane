@@ -210,6 +210,7 @@ Each frame is `event: <name>` plus one JSON `data:` line carrying `{type, …}`.
 | `tool_call_started` | `turn_id`, `tool_call_id`, `name`, `arguments` | The model invoked a tool. `arguments` is the model's raw JSON string. |
 | `tool_call_done` | `turn_id`, `tool_call_id`, `status`, `output?` | A tool call reached a terminal status. The output is the **full** payload — truncating is a display decision and belongs to the client. |
 | `turn_finalized` | `turn_id`, `status`, `error_message?`, `model?`, `duration_ms` | Terminal: no further deltas for this turn. |
+| `steer` | `turn_id`, `id`, `text`, `status` | A mid-turn interjection appeared or reached its outcome. One event for both, merged on `id`, so a client attaching late ends up in the same state as one that watched from the start. |
 | `sidebar_changed` | — | Session metadata changed (title generated, pin toggled). Deliberately payload-free: the list endpoint is the source of truth, so the client refetches. |
 | `info` | `message` | Transient notice, rendered as a dismissible banner (e.g. a vision fallback). |
 | `tool_prompt` | a `ToolPromptEvent` | Human-in-the-loop prompt — `ask_user`, a location request, or a tool confirmation — plus its `Hide` counterpart when it is answered, times out, or the turn ends. |
@@ -238,6 +239,53 @@ shape so editing does not lose the composer's attachment support. The other
 mutations include `…/cancel`, `…/fork`, `…/share`, `…/effort`,
 `…/documents/*` (canvas and version history), `…/export.md`,
 `…/export.pdf`, and `…/turns/{turn_id}/retry`.
+
+## The composer during a turn
+
+The composer stays usable while an answer streams. Three different things can
+be done with a running turn, and the difference between them is the user's to
+make:
+
+| Action | Keys | What happens |
+|---|---|---|
+| Queue it | `Enter` | The text waits in the composer's outbox and is submitted when the turn ends. Entries are editable, reorderable and survive a reload (`web/src/lib/composer-queue.ts`). Attachments do not survive — a `File` cannot be serialised — so a restored entry that had them is *held*: it keeps its place and its text, is skipped by the drain, and waits for the file to be re-attached rather than sending a message whose answer is guaranteed to be wrong. |
+| Interject | `Ctrl`/`Cmd`+`Enter` | `POST …/steer`. The note is recorded against the running assistant turn and handed to the live worker, which folds it into the prompt **at the next tool round** (`fold_in_steers` in `openai_driver.rs`; the row is only marked delivered once the upstream has accepted that round, so a turn that never reached a backend claims nothing). |
+| Interrupt and re-aim | button | The draft is queued, then the turn is cancelled. The partial answer stays in the transcript *and* in the model's replayed history, marked as interrupted, so the second attempt continues from what the user read. |
+
+An interjection has four possible fates and the transcript says which:
+`pending` (recorded, not yet read), `delivered` (folded into the prompt),
+`resent` (the turn ended before a round could carry it, so the client submitted
+it as an ordinary message) and `discarded` (the user threw it away instead —
+`POST …/steer/{steer_id}/discard`, which is what keeps a dismissed note from
+being re-queued by the next finalize).
+
+The rows live in `chat_turn_steers`; settling is `WHERE status = 'pending'`,
+which doubles as the claim check that stops two browser tabs from re-sending
+the same note. The claim is a *reservation*: a submit that is then refused
+releases it again, or the note would be marked as dealt with while its sentence
+was never sent. Only `delivered` notes replay in the history a later turn sees —
+a `resent` one is already there as its own user turn — and a turn that does not
+replay at all takes its notes with it.
+
+Accepting a steer is **not** a promise that the model read it. A turn writing
+its closing answer has no further round to carry one, which is exactly why the
+status exists and why the fallback re-sends rather than pretending.
+
+## Parallel conversations
+
+One worker per conversation is a hard invariant: two would interleave writes
+into the same transcript. How many *conversations* one user may stream at once
+is an operator setting — `chat.turns.max_parallel` under Chat in
+`/admin/settings`, default `1`, read at submit time so a change takes effect on
+the next message.
+
+The registry (`session-core/src/workers.rs`) keys on `(user id, session id)`.
+Submitting into a conversation that is already streaming is `409
+turn_in_progress`; submitting when the user's *other* conversations fill every
+slot is `409 at_capacity`, a separate code because the remedy is different —
+the composer keeps such a message queued and retries on a timer — this
+conversation is idle, so no turn of its own will ever finish to wake it —
+rather than making the user re-type it.
 
 `GET …/sessions/{id}/capabilities` is the conversation's complete capability
 read model. Each built-in tool, connected integration tool, and skill carries

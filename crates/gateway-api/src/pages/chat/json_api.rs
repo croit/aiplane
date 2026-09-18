@@ -31,7 +31,9 @@ use gateway_runtime::rama_server::state::RamaState;
 
 use gateway_core::server::db::users::User;
 
-use super::{ChatSubmit, DocumentPath, RequestCtx, SubmitTurnError, TurnPath, submit_turn};
+use super::{
+    ChatSubmit, DocumentPath, RequestCtx, SteerPath, SubmitTurnError, TurnPath, submit_turn,
+};
 use crate::pages::{bad_request, internal, json_error, json_ok as ok_json, not_found, read_json};
 use session_core::db as chat;
 
@@ -313,6 +315,15 @@ struct MessageBody {
     message: String,
     #[serde(default)]
     voice: bool,
+    /// Ids of the interjections this submit is the re-send of.
+    ///
+    /// A note the finished turn never reached stays `pending`, and the client
+    /// sends it as an ordinary message. Naming the rows here is what makes
+    /// that safe with two tabs open on the same conversation: settling is
+    /// `WHERE status = 'pending'`, so exactly one submit can claim a note and
+    /// the loser is refused instead of duplicating the message.
+    #[serde(default)]
+    redeem_steers: Vec<String>,
 }
 
 /// POST /api/v0/chat/sessions/{id}/messages — submit a turn as JSON.
@@ -386,15 +397,48 @@ pub async fn message_send(
             attachments: Vec::new(),
             voice: parsed.voice,
             user_turn_id,
+            redeem_steers: parsed.redeem_steers,
         }
     };
+
     let has_attachments = !submit.attachments.is_empty();
     if submit.user_text.is_empty() && !has_attachments {
         return bad_request("message must not be empty");
     }
 
+    // Claim the interjections this message stands in for, before the turn is
+    // created. Losing the race means another tab already re-sent them, so the
+    // honest answer is to refuse this submit rather than to say the same
+    // sentence twice.
+    //
+    // The claim is a *reservation*, not a record of what happened: if the
+    // submit below is refused, every id in `claimed` is released again. Leaving
+    // them claimed would mark a note as dealt with while its sentence was never
+    // sent, and the client — told "already settled" on the retry — would drop
+    // its copy. That is a silent loss of something the user typed.
+    let claimed = match chat::claim_steers(&state.db, &active.id, &submit.redeem_steers).await {
+        Ok(claimed) => claimed,
+        Err(err) => return internal(err),
+    };
+    // Every named note or none. A partial claim means somebody else already
+    // re-sent one of them, and going ahead would put that sentence in front of
+    // the model twice — once from the tab that won the claim, once from this
+    // message. The ones this call did take are released on the way out.
+    if claimed.len() != submit.redeem_steers.len() {
+        release_claimed_steers(&state, &claimed).await;
+        return json_error(
+            StatusCode::CONFLICT,
+            "steer_already_settled",
+            "these interjections were already answered for elsewhere",
+        );
+    }
+
     ctx.voice_mode = submit.voice;
-    match submit_turn(&state, &user, &active, submit, ctx).await {
+    let outcome = submit_turn(&state, &user, &active, submit, ctx).await;
+    if outcome.is_err() {
+        release_claimed_steers(&state, &claimed).await;
+    }
+    match outcome {
         Ok(submitted) => ok_json(
             StatusCode::ACCEPTED,
             json!({
@@ -402,19 +446,224 @@ pub async fn message_send(
                 "assistant_turn_id": submitted.assistant_turn.id,
             }),
         ),
-        Err(SubmitTurnError::RateLimited) => json_error(
+        Err(err) => submit_refusal(err),
+    }
+}
+
+/// The one place a refused submit becomes a response.
+///
+/// Both submit paths — a fresh message and a retry/edit regeneration — refuse
+/// for the same reasons, and the client branches on `error.code`, so these
+/// codes are a wire contract. Written twice, they were free to drift; written
+/// once, a new refusal reaches both callers by construction.
+fn submit_refusal(err: SubmitTurnError) -> Response {
+    match err {
+        SubmitTurnError::RateLimited => json_error(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
             "rate limit or quota exceeded — see /usage",
         ),
-        Err(SubmitTurnError::Busy) => json_error(
+        SubmitTurnError::Busy => json_error(
             StatusCode::CONFLICT,
             "turn_in_progress",
-            "this user's previous turn is still streaming — cancel it first",
+            "this conversation is still streaming a turn — cancel it first",
         ),
-        Err(SubmitTurnError::Db(msg)) => {
+        // A distinct code, because the client's remedy is distinct: this
+        // conversation is idle and the message is worth holding in the
+        // composer's queue until one of the user's other chats finishes.
+        SubmitTurnError::AtCapacity { running, limit } => json_error(
+            StatusCode::CONFLICT,
+            "at_capacity",
+            &format!(
+                "{running} of {limit} parallel conversations are already \
+                 streaming for this user"
+            ),
+        ),
+        SubmitTurnError::Db(msg) => {
             json_error(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", &msg)
         }
+    }
+}
+
+#[derive(Deserialize)]
+struct SteerBody {
+    message: String,
+    /// Interjections this one stands in for.
+    ///
+    /// A note the last turn never reached can be taken back into the composer
+    /// and thrown at the *next* turn while that one is still running. It is
+    /// still that note's re-send, so it settles the same way a message does —
+    /// otherwise the row stays `pending` and the client queues the sentence a
+    /// second time when the turn ends.
+    #[serde(default)]
+    redeem_steers: Vec<String>,
+}
+
+/// Ceiling on one interjection, in bytes.
+///
+/// Generous for a sentence or two of correction, which is what this is for,
+/// and far below anything that meaningfully grows the prompt. Longer than this
+/// is a message, and the composer already sends those.
+const MAX_STEER_BYTES: usize = 4 * 1024;
+
+/// Give back interjection claims whose message was refused.
+///
+/// Best-effort and deliberately silent: the submit already failed and its own
+/// error is what the caller gets. A release that fails leaves the note marked
+/// `resent` — the one outcome this exists to avoid — so it is logged loudly
+/// enough to find, and no louder.
+async fn release_claimed_steers(state: &Arc<RamaState>, claimed: &[String]) {
+    for id in claimed {
+        if let Err(err) = chat::release_steer(&state.db, id, chat::SteerStatus::Resent).await {
+            tracing::error!(error = %err, steer = %id, "could not release a claimed interjection");
+        }
+    }
+}
+
+/// POST /api/v0/chat/sessions/{id}/steer — say something to the turn that is
+/// already running.
+///
+/// Accepted (`202`) means the note was recorded and handed to the live
+/// worker, NOT that the model has seen it: it is folded into the prompt at the
+/// next round boundary, and a turn that ends before reaching one never carries
+/// it. The reply therefore reports the note's id and its status, and the
+/// client watches the transcript for the outcome rather than assuming one.
+///
+/// With nothing running, this is a `409` and not a silent promotion to an
+/// ordinary message — the client has a composer for that, and quietly turning
+/// an interjection into a new turn would start work the user did not ask for.
+pub async fn session_steer(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = require_session_json!(state, req);
+    if !user_owns(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
+    // Same gate a message goes through, and the same response. An interjection
+    // is not free: it is a row, and it is one more user message folded into
+    // every remaining round of the prompt, so an unbounded stream of them
+    // inflates the upstream request at nobody's expense but the operator's.
+    {
+        let role_ids = state.role_ids_for(&user.roles);
+        if state.enforcer.check(&user.id, &role_ids).await.is_err() {
+            return submit_refusal(SubmitTurnError::RateLimited);
+        }
+    }
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return json_error(StatusCode::BAD_REQUEST, "invalid_request", &msg),
+    };
+    let parsed: SteerBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => return bad_request(format!("parsing the steer body: {err}")),
+    };
+    let text = parsed.message.trim().to_string();
+    if text.is_empty() {
+        return bad_request("message must not be empty");
+    }
+    if text.len() > MAX_STEER_BYTES {
+        return bad_request(format!(
+            "an interjection is at most {MAX_STEER_BYTES} bytes; send a message instead"
+        ));
+    }
+
+    let Some(worker) = state.chats.get(&user.id, &session_id) else {
+        return json_error(
+            StatusCode::CONFLICT,
+            "no_turn_running",
+            "nothing is streaming in this conversation — send it as a message instead",
+        );
+    };
+
+    // Settle whatever this interjection stands in for, before recording it.
+    // Same all-or-nothing rule as the message path, for the same reason.
+    let claimed = match chat::claim_steers(&state.db, &session_id, &parsed.redeem_steers).await {
+        Ok(claimed) => claimed,
+        Err(err) => return internal(err),
+    };
+    if claimed.len() != parsed.redeem_steers.len() {
+        release_claimed_steers(&state, &claimed).await;
+        return json_error(
+            StatusCode::CONFLICT,
+            "steer_already_settled",
+            "these interjections were already answered for elsewhere",
+        );
+    }
+
+    // The insert is conditional on the turn still running, so the answer
+    // finishing between the lookup above and this write is a `None` rather
+    // than a row against a finished turn.
+    let steer = match chat::insert_steer(&state.db, &worker.turn_id, &text).await {
+        Ok(Some(steer)) => steer,
+        Ok(None) => {
+            // Nothing was recorded, so nothing was re-sent either.
+            release_claimed_steers(&state, &claimed).await;
+            return json_error(
+                StatusCode::CONFLICT,
+                "no_turn_running",
+                "the answer finished before this reached it — send it as a message instead",
+            );
+        }
+        Err(err) => {
+            release_claimed_steers(&state, &claimed).await;
+            return internal(err);
+        }
+    };
+    worker.steers.push(session_core::workers::SteerNote {
+        id: steer.id.clone(),
+        text,
+    });
+
+    // Tick so every attached viewer re-reads the turn and draws the note
+    // straight away — it is part of the conversation from the moment it is
+    // typed, not from the moment the model happens to read it.
+    let _ = worker
+        .broadcast
+        .send(session_core::workers::TurnUpdate::Tick);
+
+    ok_json(
+        StatusCode::ACCEPTED,
+        json!({
+            "id": steer.id,
+            "turn_id": steer.turn_id,
+            "status": steer.status.as_str(),
+        }),
+    )
+}
+
+/// POST /api/v0/chat/sessions/{id}/steer/{steer_id}/discard — the user threw
+/// away an interjection the turn never reached, rather than re-sending it.
+///
+/// Without this the client could only forget it locally, and the next time any
+/// turn in the conversation finished, the still-`pending` row would be read
+/// back and queued again — a dismissed sentence returning, and then sending
+/// itself.
+pub async fn steer_discard(
+    Path(SteerPath {
+        id: session_id,
+        steer_id,
+    }): Path<SteerPath>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = require_session_json!(state, req);
+    if !user_owns(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
+    let steer = match chat::get_steer(&state.db, &session_id, &steer_id).await {
+        Ok(Some(steer)) => steer,
+        Ok(None) => return not_found_conversation(),
+        Err(err) => return internal(err),
+    };
+    match chat::settle_steer(&state.db, &steer.id, chat::SteerStatus::Discarded).await {
+        // Already settled: delivered, re-sent, or discarded in another tab.
+        // Nothing to do and nothing to complain about — the caller wanted it
+        // gone and it is.
+        Ok(_) => ok_json(StatusCode::OK, json!({ "id": steer.id })),
+        Err(err) => internal(err),
     }
 }
 
@@ -463,10 +712,7 @@ pub async fn session_events(
     // Owners attach to their own live worker; a shared-session viewer finds
     // none (workers are keyed by owner) and reads the static snapshot —
     // same behaviour as the legacy tail.
-    let live = state
-        .chats
-        .get(&user.id)
-        .filter(|w| w.session_id == session_id);
+    let live = state.chats.get(&user.id, &session_id);
 
     match live {
         Some(worker) => {
@@ -674,17 +920,21 @@ async fn start_regeneration_json(
     ctx: super::RequestCtx,
 ) -> Result<serde_json::Value, Response> {
     let assistant_turn_id = uuid::Uuid::new_v4().to_string();
-    let worker = match state
-        .chats
-        .register(&user.id, &assistant_turn_id, session_id)
-    {
+    let worker = match state.chats.register(
+        &user.id,
+        &assistant_turn_id,
+        session_id,
+        state.config().chat.turns.max_parallel,
+    ) {
         session_core::RegisterOutcome::Registered { worker } => worker,
         session_core::RegisterOutcome::Busy { .. } => {
-            return Err(json_error(
-                StatusCode::CONFLICT,
-                "turn_in_progress",
-                "this user's previous turn is still streaming — cancel it first",
-            ));
+            return Err(submit_refusal(SubmitTurnError::Busy));
+        }
+        session_core::RegisterOutcome::AtCapacity { running, limit } => {
+            return Err(submit_refusal(SubmitTurnError::AtCapacity {
+                running,
+                limit,
+            }));
         }
     };
     let assistant_turn = match chat::create_assistant_turn_in_progress(

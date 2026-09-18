@@ -470,6 +470,14 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>> {
             pages::chat::json_api::message_send,
         )
         .with_post(
+            "/api/v0/chat/sessions/{id}/steer",
+            pages::chat::json_api::session_steer,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{id}/steer/{steer_id}/discard",
+            pages::chat::json_api::steer_discard,
+        )
+        .with_post(
             "/api/v0/chat/sessions/{id}/cancel",
             pages::chat::json_api::session_cancel,
         )
@@ -773,7 +781,7 @@ mod shutdown_tests {
     #[tokio::test]
     async fn a_finishing_turn_releases_the_drain_early() {
         let chats = std::sync::Arc::new(SessionWorkers::default());
-        let RegisterOutcome::Registered { worker } = chats.register("u1", "t1", "s1") else {
+        let RegisterOutcome::Registered { worker } = chats.register("u1", "t1", "s1", 1) else {
             panic!("registered");
         };
         let bg = chats.clone();
@@ -828,7 +836,7 @@ mod shutdown_tests {
     #[tokio::test]
     async fn an_overrunning_turn_is_cancelled_at_the_deadline() {
         let chats = SessionWorkers::default();
-        let RegisterOutcome::Registered { worker } = chats.register("u1", "t1", "s1") else {
+        let RegisterOutcome::Registered { worker } = chats.register("u1", "t1", "s1", 1) else {
             panic!("registered");
         };
         assert!(!worker.cancel.load(std::sync::atomic::Ordering::SeqCst));

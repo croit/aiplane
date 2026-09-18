@@ -25,6 +25,8 @@ settings-s-chat-ocr = OCR документов
 settings-s-chat-ocr-blurb = Превращение загруженных PDF и изображений в текст, который может прочитать модель.
 settings-s-chat-compaction = Сжатие переписки
 settings-s-chat-compaction-blurb = Пересказ более старой половины длинного разговора, чтобы он и дальше помещался в контекстное окно модели.
+settings-s-chat-turns = Параллельные разговоры
+settings-s-chat-turns-blurb = Сколько чатов одного пользователя могут отвечать одновременно.
 settings-s-chat-s3 = Хранилище вложений (S3)
 settings-s-chat-s3-blurb = Объектное хранилище для вложений чата. Без него загрузка файлов отклоняется.
 settings-s-sandbox = Песочница для кода
@@ -87,6 +89,9 @@ settings-f-chat-compaction-min_turns_to_compact = Минимальная дли�
 settings-f-chat-compaction-min_turns_to_compact-help = Разговоры короче этого числа реплик не сжимаются никогда.
 settings-f-chat-compaction-summary_max_tokens = Бюджет токенов пересказа
 settings-f-chat-compaction-summary_max_tokens-help = Бюджет токенов для пересказа, который заменяет сжатые реплики.
+
+settings-f-chat-turns-max_parallel = Разговоров одновременно
+settings-f-chat-turns-max_parallel-help = Сколько ответов пользователь может получать параллельно, в разных разговорах. 1 сохраняет прежнее поведение: второй чат ждёт.
 
 settings-f-chat-s3-enabled = Хранить вложения в S3
 settings-f-chat-s3-enabled-help = Выключено — вложения в чате недоступны.

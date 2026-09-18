@@ -42,9 +42,30 @@ export interface Turn {
 	completed_at: string | null;
 }
 
+/** What became of a mid-turn interjection. Mirrors `SteerStatus` on the server. */
+export type SteerStatus = 'pending' | 'delivered' | 'resent' | 'discarded';
+
+/**
+ * Something the user typed while this turn was already running.
+ *
+ * `status` is the honest part: `delivered` means the model was handed it
+ * mid-turn, `resent` means the turn ended first and it was submitted as an
+ * ordinary message, `pending` means neither has happened yet.
+ */
+export interface TurnSteer {
+	id: string;
+	turn_id: string;
+	seq: number;
+	text: string;
+	status: SteerStatus;
+	created_at: string;
+	settled_at: string | null;
+}
+
 export interface TurnWithTools {
 	turn: Turn;
 	tool_calls: ToolCall[];
+	steers: TurnSteer[];
 }
 
 export interface ChatSession {
@@ -83,6 +104,7 @@ export type ChatEvent =
 			model?: string;
 			duration_ms?: number;
 	  }
+	| { type: 'steer'; turn_id: string; id: string; text: string; status: SteerStatus }
 	| { type: 'sidebar_changed' }
 	| { type: 'info'; message: string }
 	| {
@@ -128,6 +150,7 @@ export interface PromptPreview {
 export interface LiveTurn {
 	turn: Turn;
 	tool_calls: ToolCall[];
+	steers: TurnSteer[];
 }
 
 /**
@@ -180,7 +203,8 @@ function ensureTurn(state: ConversationState, id: string): LiveTurn {
 				created_at: '',
 				completed_at: null
 			},
-			tool_calls: []
+			tool_calls: [],
+			steers: []
 		};
 		state.turns.push(existing);
 	}
@@ -203,7 +227,8 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 		case 'snapshot': {
 			state.turns = event.turns.map((row) => ({
 				turn: row.turn,
-				tool_calls: [...row.tool_calls]
+				tool_calls: [...row.tool_calls],
+				steers: [...row.steers]
 			}));
 			state.liveTurnId = event.live_turn_id ?? null;
 			state.idle = !event.live_turn_id;
@@ -255,6 +280,29 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 				state.liveTurnId = null;
 				state.idle = true;
 			}
+			return;
+		}
+		case 'steer': {
+			// One event covers both "typed" and "settled" — merge on id so a
+			// client that attached late, and first learns of a note when it is
+			// already `resent`, ends up with the same state as one that
+			// watched it from `pending`.
+			const live = ensureTurn(state, event.turn_id);
+			const existing = live.steers.find((s) => s.id === event.id);
+			if (existing) {
+				existing.status = event.status;
+				existing.text = event.text;
+				return;
+			}
+			live.steers.push({
+				id: event.id,
+				turn_id: event.turn_id,
+				seq: live.steers.length,
+				text: event.text,
+				status: event.status,
+				created_at: new Date().toISOString(),
+				settled_at: null
+			});
 			return;
 		}
 		case 'sidebar_changed':

@@ -619,6 +619,34 @@ pub struct ChatConfig {
     /// once its replayed context grows past a fraction of the model's window.
     #[serde(default)]
     pub compaction: CompactionConfig,
+    /// How turns may overlap: parallel conversations per user.
+    #[serde(default)]
+    pub turns: TurnsConfig,
+}
+
+/// How many turns one user may have in flight at once.
+///
+/// The gateway ran one turn per *user* for its whole life, which meant a
+/// question asked in a second conversation was refused while the first was
+/// still thinking — a limit with nothing technical behind it, since the two
+/// write to different transcripts. One writer per conversation is the
+/// invariant that matters and is not configurable; this is the rest.
+///
+/// The default stays at 1 so an upgrade changes nothing until an operator
+/// decides otherwise. Raising it multiplies what a single user can ask of the
+/// upstream backends at once, so it is their call, not ours.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TurnsConfig {
+    /// Conversations one user may stream in at the same time. Values below 1
+    /// are read as 1 — a ceiling of zero would refuse every turn.
+    pub max_parallel: usize,
+}
+
+impl Default for TurnsConfig {
+    fn default() -> Self {
+        Self { max_parallel: 1 }
+    }
 }
 
 /// Automatic document OCR. Off by default; even switched on, nothing happens

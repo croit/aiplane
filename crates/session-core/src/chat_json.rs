@@ -103,6 +103,20 @@ pub enum ChatEvent {
         /// `None` while the driver never stamped a completion.
         duration_ms: Option<i64>,
     },
+    /// A mid-turn interjection appeared, or the one already on screen
+    /// reached its outcome.
+    ///
+    /// One event for both because the client merges on `id`: a note is drawn
+    /// the moment it is typed (`pending`) and then re-labelled when it is
+    /// either handed to the model (`delivered`) or re-sent as its own message
+    /// (`resent`). Splitting it would make the client handle an "added" it
+    /// may never have seen, on a stream it attached to late.
+    Steer {
+        turn_id: String,
+        id: String,
+        text: String,
+        status: String,
+    },
     /// Session metadata changed (title generated, pin toggled, …). The
     /// client refetches the session list; the event carries no payload by
     /// design — the list endpoint is the source of truth.
@@ -128,6 +142,7 @@ impl ChatEvent {
             Self::ToolCallStarted { .. } => "tool_call_started",
             Self::ToolCallDone { .. } => "tool_call_done",
             Self::TurnFinalized { .. } => "turn_finalized",
+            Self::Steer { .. } => "steer",
             Self::SidebarChanged => "sidebar_changed",
             Self::Info { .. } => "info",
             Self::ToolPrompt(_) => "tool_prompt",
@@ -171,6 +186,9 @@ pub struct JsonTurnFeed {
     /// order matches the row order (seq), so `started` events replay in the
     /// order the model issued them.
     tools_sent: Vec<(String, String)>,
+    /// Interjections already announced, with the status last sent — same
+    /// shape and same reason as `tools_sent`.
+    steers_sent: Vec<(String, String)>,
     /// Whether [`ChatEvent::TurnFinalized`] has been emitted. The feed is
     /// done afterwards; the stream loop closes on it.
     finalized: bool,
@@ -183,6 +201,7 @@ impl JsonTurnFeed {
             content_sent: String::new(),
             reasoning_sent: String::new(),
             tools_sent: Vec::new(),
+            steers_sent: Vec::new(),
             finalized: false,
         }
     }
@@ -264,6 +283,26 @@ impl JsonTurnFeed {
                     }
                 }
             }
+        }
+
+        for steer in &current.steers {
+            // Compare before allocating: on a quiet flush — the common case —
+            // nothing has changed and the `to_string` would be thrown away.
+            let status = steer.status.as_str();
+            match self.steers_sent.iter_mut().find(|(id, _)| *id == steer.id) {
+                Some(entry) if entry.1 == status => continue,
+                Some(entry) => entry.1 = status.to_string(),
+                None => self
+                    .steers_sent
+                    .push((steer.id.clone(), status.to_string())),
+            }
+            let status = status.to_string();
+            events.push(ChatEvent::Steer {
+                turn_id: turn.id.clone(),
+                id: steer.id.clone(),
+                text: steer.text.clone(),
+                status,
+            });
         }
 
         if !self.finalized && turn.status != TurnStatus::InProgress {
@@ -468,12 +507,9 @@ pub fn cancel_turn(
     user_id: &str,
     session_id: &str,
 ) -> bool {
-    let Some(worker) = workers.get(user_id) else {
+    let Some(worker) = workers.get(user_id, session_id) else {
         return false;
     };
-    if worker.session_id != session_id {
-        return false;
-    }
     worker
         .cancel
         .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -509,6 +545,7 @@ mod tests {
                 completed_at: None,
             },
             tool_calls: Vec::new(),
+            steers: Vec::new(),
         }
     }
 
@@ -524,6 +561,74 @@ mod tests {
             created_at: Timestamp::now(),
             completed_at: None,
         }
+    }
+
+    fn steer_row(id: &str, text: &str, status: crate::db::SteerStatus) -> crate::db::TurnSteer {
+        crate::db::TurnSteer {
+            id: id.into(),
+            turn_id: "t1".into(),
+            seq: 0,
+            text: text.into(),
+            status,
+            created_at: Timestamp::now(),
+            settled_at: None,
+        }
+    }
+
+    /// An interjection is part of the conversation from the moment it is
+    /// typed, so it goes out while still `pending` — waiting for the model to
+    /// read it would leave the user staring at a composer that swallowed
+    /// their sentence. The outcome then arrives as a second event on the same
+    /// id, and nothing is re-sent in between.
+    #[test]
+    fn a_steer_is_announced_when_typed_and_again_when_it_settles() {
+        use crate::db::SteerStatus;
+        let mut feed = JsonTurnFeed::new("t1");
+        let mut row = turn(TurnStatus::InProgress, "Hello", "");
+        feed.diff(&row); // drain the content delta
+
+        row.steers = vec![steer_row("n1", "in euros", SteerStatus::Pending)];
+        assert_eq!(
+            feed.diff(&row),
+            vec![ChatEvent::Steer {
+                turn_id: "t1".into(),
+                id: "n1".into(),
+                text: "in euros".into(),
+                status: "pending".into(),
+            }]
+        );
+
+        // Unchanged row: nothing repeats.
+        assert!(feed.diff(&row).is_empty());
+
+        row.steers = vec![steer_row("n1", "in euros", SteerStatus::Delivered)];
+        assert_eq!(
+            feed.diff(&row),
+            vec![ChatEvent::Steer {
+                turn_id: "t1".into(),
+                id: "n1".into(),
+                text: "in euros".into(),
+                status: "delivered".into(),
+            }]
+        );
+    }
+
+    /// A client attaching after the fact gets the note from the snapshot, so
+    /// a feed that starts mid-turn must still announce what it finds rather
+    /// than assuming the client saw it.
+    #[test]
+    fn a_steer_already_settled_at_attach_is_announced_once() {
+        use crate::db::SteerStatus;
+        let mut feed = JsonTurnFeed::new("t1");
+        let mut row = turn(TurnStatus::InProgress, "", "");
+        row.steers = vec![steer_row("n1", "in euros", SteerStatus::Resent)];
+        let first = feed.diff(&row);
+        assert_eq!(first.len(), 1);
+        assert!(matches!(
+            &first[0],
+            ChatEvent::Steer { status, .. } if status == "resent"
+        ));
+        assert!(feed.diff(&row).is_empty());
     }
 
     #[test]

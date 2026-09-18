@@ -81,8 +81,17 @@ mod title;
 #[derive(Debug)]
 pub(crate) enum SubmitTurnError {
     RateLimited,
-    /// This user's previous turn is still streaming — the registry refused.
+    /// This conversation is already streaming a turn — the registry refused.
+    /// Not configurable: two workers would interleave writes into one
+    /// transcript.
     Busy,
+    /// Every parallel slot the operator granted this user is in use by their
+    /// *other* conversations. Separate from `Busy` because the remedy is
+    /// different and the message has to say which chat is in the way.
+    AtCapacity {
+        running: usize,
+        limit: usize,
+    },
     /// A DB write failed after the worker slot was reserved; the message is
     /// the human-readable cause. The slot has been released by the time this
     /// travels to the caller.
@@ -140,12 +149,21 @@ pub(crate) async fn submit_turn(
     // turn we'll insert immediately below, so the worker entry's
     // `turn_id` always matches the row that exists.
     let assistant_turn_id = uuid::Uuid::new_v4().to_string();
-    let outcome = state
-        .chats
-        .register(&user.id, &assistant_turn_id, &active.id);
+    let outcome = state.chats.register(
+        &user.id,
+        &assistant_turn_id,
+        &active.id,
+        // Read per submit, not cached: raising the ceiling in /admin/settings
+        // then takes effect on the next message rather than on the next
+        // restart.
+        state.config().chat.turns.max_parallel,
+    );
     let worker = match outcome {
         RegisterOutcome::Registered { worker } => worker,
         RegisterOutcome::Busy { .. } => return Err(SubmitTurnError::Busy),
+        RegisterOutcome::AtCapacity { running, limit } => {
+            return Err(SubmitTurnError::AtCapacity { running, limit });
+        }
     };
 
     // Slot held. Any early-return from here must `state.chats.clear`
@@ -303,6 +321,14 @@ pub struct TurnPath {
     pub turn_id: String,
 }
 
+/// `{id}/steer/{steer_id}/…`. A struct for the reason spelled out on
+/// [`DocumentPath`]: a two-param tuple binds by map order, not path order.
+#[derive(serde::Deserialize)]
+pub struct SteerPath {
+    pub id: String,
+    pub steer_id: String,
+}
+
 /// The attachments a pending `delete_turns_from_seq` is about to
 /// orphan. Read *before* the delete — afterwards the markers are gone
 /// and the bucket objects are unreferenced forever. Empty when
@@ -414,6 +440,7 @@ async fn spawn_assistant_worker(
         model: model.to_string(),
         cancel: worker.cancel.clone(),
         broadcast: worker.broadcast.clone(),
+        steers: worker.steers.clone(),
     };
     let worker_state = state.clone();
     let worker_for_task = worker.clone();
@@ -589,6 +616,14 @@ pub(crate) struct ChatSubmit {
     /// lands later), so whoever parses the submit mints it and it travels
     /// with the payload into [`submit_turn`].
     pub(crate) user_turn_id: String,
+    /// Ids of the mid-turn interjections this message is the re-send of.
+    ///
+    /// Carried on both submit shapes, not just the JSON one: a returned
+    /// interjection can be taken back into the composer and sent with a file
+    /// attached, and a multipart path that could not express the claim would
+    /// leave the row `pending` — so the next finished turn would queue the
+    /// same sentence again.
+    pub(crate) redeem_steers: Vec<String>,
 }
 
 pub(crate) struct UploadedAttachment {
@@ -617,6 +652,7 @@ async fn parse_chat_submit(
     let mut user_text = String::new();
     let mut attachments: Vec<UploadedAttachment> = Vec::new();
     let mut voice = false;
+    let mut redeem_steers: Vec<String> = Vec::new();
     let user_turn_id = turn_id.to_string();
 
     // Track the filenames already claimed under this turn so each upload
@@ -646,6 +682,13 @@ async fn parse_chat_submit(
             "voice" => {
                 let v = field.text().await.map_err(|e| e.to_string())?;
                 voice = matches!(v.trim(), "true" | "1" | "on");
+            }
+            // One part per id, the ordinary multipart spelling of a list.
+            "redeem_steer" => {
+                let id = field.text().await.map_err(|e| e.to_string())?;
+                if !id.trim().is_empty() {
+                    redeem_steers.push(id.trim().to_string());
+                }
             }
             "attachment" => {
                 // Browsers always emit the `attachment` part for the
@@ -706,6 +749,7 @@ async fn parse_chat_submit(
         attachments,
         voice,
         user_turn_id,
+        redeem_steers,
     })
 }
 

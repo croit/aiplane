@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use rama::futures::StreamExt;
 use session_core::db::{self as chat, ToolCallStatus, Turn, TurnRole, TurnStatus};
 use session_core::driver::{SessionContext, SessionDriver, TurnError, TurnOutcome};
-use session_core::workers::TurnUpdate;
+use session_core::workers::{SteerNote, TurnUpdate};
 
 use crate::rama_server::state::RamaState;
 use crate::server::tools::{ToolContext, runner};
@@ -972,6 +972,10 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
     // the right summary.
     let mut max_prompt_tokens: i64 = 0;
 
+    // Interjections folded into the prompt whose delivery is not yet a fact,
+    // because the round carrying them has not been accepted by a backend.
+    let mut unsettled_steers: Vec<SteerNote> = Vec::new();
+
     // Every `tool_call_id` persisted this turn, so `ensure_unique_tool_call_ids`
     // can spot cross-round collisions (a backend that recycles ids per round).
     let mut seen_tool_call_ids: std::collections::HashSet<String> =
@@ -1005,6 +1009,19 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
         if ctx.cancel.load(Ordering::SeqCst) {
             return Ok(TurnOutcome::default());
         }
+
+        // Anything the user typed since the last round goes into the prompt
+        // before this one is built. A round boundary is the only place an
+        // interjection can land: the request for a round already in flight has
+        // been sent, and the model is mid-sentence in its reply. That is also
+        // why a note arriving during the closing round is never delivered —
+        // there is no next request to carry it, and it stays `pending` for the
+        // client to re-send as an ordinary message.
+        // Held until the upstream accepts this round — see `fold_in_steers`.
+        // Notes from a round that never reached a backend stay in this vec and
+        // are settled by whichever later round does, so a retryable failure
+        // does not cost the user their interjection.
+        unsettled_steers.extend(fold_in_steers(&ctx, &mut messages));
 
         // On the final allowed round, withhold tools so the model is forced
         // to answer from what it already gathered. Without this, a model that
@@ -1178,6 +1195,10 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
             return Err(TurnError::Upstream { message });
         }
         let status_code = upstream.status().as_u16();
+        // The backend has the request, interjections and all. Now — and not
+        // one line earlier — the transcript may say they were delivered.
+        settle_delivered_steers(d, &unsettled_steers, &ctx).await;
+        unsettled_steers.clear();
 
         let mut round_content = String::new();
         let mut tool_acc: std::collections::BTreeMap<usize, ToolCallAcc> =
@@ -2488,9 +2509,37 @@ fn build_history_messages(
         Some(n) => &prior[prior.len().saturating_sub(n)..],
         None => &prior[..],
     };
-    kept.iter()
-        .filter_map(|t| message_for_history(&t.turn))
-        .collect()
+    kept.iter().flat_map(|t| messages_for_history(t)).collect()
+}
+
+/// One past turn as the messages that replay it: the interjections the model
+/// was handed while writing it, then the turn itself.
+///
+/// The interjections come first because that is the order the model saw them
+/// in — they were in its prompt before it wrote the rest of its answer — and
+/// because an answer shaped by a constraint that appears nowhere in the
+/// history reads, on the next turn, as a constraint the model invented.
+///
+/// Only `Delivered` notes replay. A `Resent` one was submitted as an ordinary
+/// user turn of its own and is already in the history under that row; a
+/// `Pending` one never reached the model at all.
+fn messages_for_history(turn: &session_core::db::TurnWithTools) -> Vec<serde_json::Value> {
+    // No turn, no interjections. A turn that does not replay — errored, or
+    // cancelled before the model wrote anything — would otherwise leave its
+    // notes standing as bare user messages with no answer behind them, so the
+    // prompt would read as the user having said two things in a row and the
+    // model having ignored the first.
+    let Some(answer) = message_for_history(&turn.turn) else {
+        return Vec::new();
+    };
+    let mut out: Vec<serde_json::Value> = turn
+        .steers
+        .iter()
+        .filter(|s| s.status == chat::SteerStatus::Delivered)
+        .map(|s| serde_json::json!({"role": "user", "content": s.text.clone()}))
+        .collect();
+    out.push(answer);
+    out
 }
 
 /// The one behavioural rule every turn carries: work happens *inside* the turn
@@ -2585,6 +2634,61 @@ fn leading_system_message(
     })
 }
 
+/// How an interjection is introduced to the model.
+///
+/// Labelled rather than passed as a bare user message on purpose: without the
+/// prefix, a note like "actually, in euros" arriving between two tool calls
+/// reads as a fresh question to answer from scratch, and a model that had just
+/// called a search tool would abandon the search. Saying where the message
+/// came from is what makes it a correction to the work in progress.
+const STEER_PREFIX: &str = "[The user added this while you were working — take it into account for the rest \
+     of this turn.]";
+
+/// Fold everything the user typed since the last round into the prompt.
+///
+/// Returns the notes it added, still unsettled. Marking them delivered here
+/// would be a lie the transcript then tells forever: the round that carries
+/// them has not been sent yet, and a round that fails before reaching the
+/// backend — no healthy upstream, a dropped connection — delivered nothing.
+/// The caller settles them once the upstream has accepted the request; until
+/// then they stay `pending`, which is what makes the client re-send them.
+///
+/// The note goes in as a user message *after* the prior round's tool results,
+/// which is where it belongs chronologically.
+fn fold_in_steers(ctx: &SessionContext, messages: &mut Vec<serde_json::Value>) -> Vec<SteerNote> {
+    let notes = ctx.steers.take();
+    for note in &notes {
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": format!("{STEER_PREFIX}\n\n{}", note.text),
+        }));
+    }
+    if !notes.is_empty() {
+        let _ = ctx.broadcast.send(TurnUpdate::Tick);
+    }
+    notes
+}
+
+/// Record that the model was handed these interjections.
+///
+/// Called after the upstream accepted the round that carries them. Failures
+/// are logged, not propagated: a note left `pending` is re-sent as an ordinary
+/// message, which says the same thing twice at worst — while a delivery
+/// claimed and never made is a transcript that cannot be corrected.
+async fn settle_delivered_steers(d: &OpenAiDriver, notes: &[SteerNote], ctx: &SessionContext) {
+    if notes.is_empty() {
+        return;
+    }
+    for note in notes {
+        if let Err(err) =
+            chat::settle_steer(&d.state.db, &note.id, chat::SteerStatus::Delivered).await
+        {
+            tracing::warn!(error = %err, steer = %note.id, "could not record steer delivery");
+        }
+    }
+    let _ = ctx.broadcast.send(TurnUpdate::Tick);
+}
+
 fn message_for_history(turn: &Turn) -> Option<serde_json::Value> {
     match turn.role {
         TurnRole::User => {
@@ -2598,7 +2702,19 @@ fn message_for_history(turn: &Turn) -> Option<serde_json::Value> {
             }))
         }
         TurnRole::Assistant => {
-            if turn.status != TurnStatus::Completed {
+            // `Errored` turns are dropped: there is no answer in them, only a
+            // failure the user can see and the model cannot act on.
+            //
+            // `Cancelled` ones are not. Interrupting an answer to re-aim it is
+            // a deliberate move — the user read the first two paragraphs,
+            // decided they were going the wrong way, and said so. Dropping the
+            // partial from the history would leave the model unable to see
+            // what it had just written, so its second attempt would start from
+            // nothing and often repeat the very passage the user cut off.
+            // It replays with a line saying it was cut short, because a
+            // fragment ending mid-sentence otherwise reads as an answer the
+            // model decided was complete.
+            if !matches!(turn.status, TurnStatus::Completed | TurnStatus::Cancelled) {
                 return None;
             }
             let content = turn.content.clone()?;
@@ -2627,6 +2743,10 @@ fn message_for_history(turn: &Turn) -> Option<serde_json::Value> {
             let content = gateway_features::server::chat_attachments::strip_markers_for_replay(
                 &content, &turn.id,
             );
+            let content = match turn.status {
+                TurnStatus::Cancelled => format!("{content}\n\n{INTERRUPTED_SUFFIX}"),
+                _ => content,
+            };
             Some(serde_json::json!({
                 "role": "assistant",
                 "content": content,
@@ -2634,6 +2754,13 @@ fn message_for_history(turn: &Turn) -> Option<serde_json::Value> {
         }
     }
 }
+
+/// Appended when an interrupted answer replays, so the model can tell its own
+/// unfinished fragment from something it chose to end.
+///
+/// Added at replay time only — it is never written to the turn row, so the
+/// transcript the user reads stays exactly what the model wrote.
+const INTERRUPTED_SUFFIX: &str = "[This answer was interrupted by the user before it finished.]";
 
 /// Emit one usage row for an upstream round on the chat/scheduler path.
 /// Fire-and-forget; never affects the turn. Token counts come from the
@@ -2736,8 +2863,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        THINK_TAGS, ToolCallAcc, ToolCallStatus, announce_final_round, configure_final_tool_round,
-        ensure_unique_tool_call_ids, inject_ocr_blocks, message_for_history, ocr_activity_result,
+        STEER_PREFIX, SessionContext, THINK_TAGS, ToolCallAcc, ToolCallStatus,
+        announce_final_round, configure_final_tool_round, ensure_unique_tool_call_ids,
+        fold_in_steers, inject_ocr_blocks, message_for_history, ocr_activity_result,
         ocr_context_block, render_active_skills, render_skill_listing, take_safe_content,
         truncated_output,
     };
@@ -3062,14 +3190,81 @@ mod tests {
         assert!(content.contains("Unzip it"), "{content}");
     }
 
-    /// The invariant the truncation guard's status choice rests on: history
-    /// replay drops any assistant turn that is not `Completed`, however much
-    /// content it holds. That is why a reply cut off at the token ceiling
-    /// finishes as a completed turn carrying a notice rather than an errored
-    /// one — erroring it would leave the user reading an answer the model can
-    /// no longer see, and "continue" would restart from nothing.
+    /// Folding an interjection into the prompt settles nothing.
+    ///
+    /// This is the whole correction a live run forced: the fold used to mark
+    /// the row `delivered` on the spot, at the top of the round — before the
+    /// request was built, before a backend was picked, before anything was
+    /// sent. A turn that then failed (no healthy upstream, a dropped
+    /// connection) left the transcript claiming the model had read a note it
+    /// never saw, and the client, seeing no `pending` note, had nothing left
+    /// to re-send. The delivery is now recorded by the caller, after the
+    /// upstream accepts the round — so this function must only ever return
+    /// the notes, unsettled.
     #[test]
-    fn only_a_completed_assistant_turn_is_replayed_to_the_model() {
+    fn folding_an_interjection_into_the_prompt_does_not_claim_delivery() {
+        use session_core::workers::{SteerInbox, SteerNote};
+
+        let steers = SteerInbox::default();
+        steers.push(SteerNote {
+            id: "n1".into(),
+            text: "in euros, please".into(),
+        });
+        steers.push(SteerNote {
+            id: "n2".into(),
+            text: "and keep it short".into(),
+        });
+        let (broadcast, _rx) = tokio::sync::broadcast::channel(8);
+        let ctx = SessionContext {
+            user_id: Some("u1".into()),
+            session_id: "s1".into(),
+            assistant_turn_id: "a1".into(),
+            model: "m".into(),
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            broadcast,
+            steers: steers.clone(),
+        };
+
+        let mut messages = vec![serde_json::json!({"role": "user", "content": "how much"})];
+        let folded = fold_in_steers(&ctx, &mut messages);
+
+        // Returned for the caller to settle later — that is the only way the
+        // delivery can be recorded, and it happens after the send.
+        assert_eq!(
+            folded.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            ["n1", "n2"]
+        );
+        assert!(
+            steers.take().is_empty(),
+            "the queue is drained exactly once"
+        );
+
+        // In the prompt, in order, after what came before, each labelled so
+        // the model reads it as a correction rather than a fresh question.
+        assert_eq!(messages.len(), 3);
+        for (message, text) in messages[1..]
+            .iter()
+            .zip(["in euros, please", "and keep it short"])
+        {
+            assert_eq!(message["role"], "user");
+            let content = message["content"].as_str().unwrap();
+            assert!(content.starts_with(STEER_PREFIX), "{content}");
+            assert!(content.ends_with(text), "{content}");
+        }
+
+        // Nothing left to fold: a second round must not repeat them.
+        assert!(fold_in_steers(&ctx, &mut messages).is_empty());
+        assert_eq!(messages.len(), 3);
+    }
+
+    /// The invariant the truncation guard's status choice rests on: history
+    /// replay drops an `Errored` assistant turn, however much content it
+    /// holds. That is why a reply cut off at the token ceiling finishes as a
+    /// completed turn carrying a notice rather than an errored one — erroring
+    /// it would leave the user reading an answer the model can no longer see,
+    /// and "continue" would restart from nothing.
+    #[test]
+    fn an_errored_assistant_turn_is_not_replayed_to_the_model() {
         let mut turn = Turn {
             id: "a1".into(),
             session_id: "s1".into(),
@@ -3096,9 +3291,65 @@ mod tests {
         turn.status = TurnStatus::Errored;
         assert!(
             message_for_history(&turn).is_none(),
-            "a non-completed assistant turn is not replayed — which is exactly \
+            "an errored assistant turn is not replayed — which is exactly \
              what a truncated turn must not be"
         );
+    }
+
+    /// Interrupting to re-aim is deliberate, so the fragment the user read
+    /// stays in the model's history: without it the second attempt starts
+    /// from nothing and tends to rewrite the very passage that was cut off.
+    /// It carries a line saying it was cut short, because a fragment ending
+    /// mid-sentence otherwise reads as an answer the model chose to end.
+    #[test]
+    fn an_interrupted_answer_replays_marked_as_interrupted() {
+        let turn = Turn {
+            id: "a1".into(),
+            session_id: "s1".into(),
+            seq: 1,
+            role: TurnRole::Assistant,
+            user_content: None,
+            model: None,
+            content: Some("Here is the plan: first I will".into()),
+            reasoning: None,
+            reasoning_elapsed_ms: None,
+            reasoning_started_at: None,
+            status: TurnStatus::Cancelled,
+            error_message: None,
+            created_at: jiff::Timestamp::UNIX_EPOCH,
+            completed_at: None,
+        };
+        let msg = message_for_history(&turn).expect("a cancelled turn with content replays");
+        let content = msg["content"].as_str().unwrap();
+        assert!(
+            content.starts_with("Here is the plan: first I will"),
+            "{content}"
+        );
+        assert!(content.contains("interrupted by the user"), "{content}");
+    }
+
+    /// A turn cancelled before the model wrote anything is nothing to replay
+    /// — an empty assistant message plus a "was interrupted" note is noise
+    /// the next turn has to reason about for no gain.
+    #[test]
+    fn an_interrupted_answer_with_no_content_is_dropped() {
+        let turn = Turn {
+            id: "a1".into(),
+            session_id: "s1".into(),
+            seq: 1,
+            role: TurnRole::Assistant,
+            user_content: None,
+            model: None,
+            content: Some(String::new()),
+            reasoning: None,
+            reasoning_elapsed_ms: None,
+            reasoning_started_at: None,
+            status: TurnStatus::Cancelled,
+            error_message: None,
+            created_at: jiff::Timestamp::UNIX_EPOCH,
+            completed_at: None,
+        };
+        assert!(message_for_history(&turn).is_none());
     }
 
     #[test]
@@ -3227,10 +3478,10 @@ mod tests {
     }
 
     mod history_fold {
-        use crate::openai_driver::{build_history_messages, leading_system_message};
+        use crate::openai_driver::{STEER_PREFIX, build_history_messages, leading_system_message};
         use gateway_core::server::db::chat_compactions::Compaction;
         use jiff::Timestamp;
-        use session_core::db::{Turn, TurnRole, TurnStatus, TurnWithTools};
+        use session_core::db::{SteerStatus, Turn, TurnRole, TurnStatus, TurnWithTools};
 
         fn turn(seq: i64, role: TurnRole, id: &str, text: &str) -> TurnWithTools {
             let now: Timestamp = "2026-01-01T00:00:00Z".parse().unwrap();
@@ -3256,6 +3507,7 @@ mod tests {
                     completed_at: Some(now),
                 },
                 tool_calls: vec![],
+                steers: vec![],
             }
         }
 
@@ -3298,6 +3550,115 @@ mod tests {
             assert!(a1.contains("here is your deck"), "{a1}");
             assert!(a1.contains(r#"id="t1/deck.pdf""#), "{a1}");
             assert!(a1.contains("fetch_attachment"), "{a1}");
+        }
+
+        fn steer(id: &str, text: &str, status: SteerStatus) -> session_core::db::TurnSteer {
+            let now: jiff::Timestamp = "2026-06-19T08:00:00Z".parse().unwrap();
+            session_core::db::TurnSteer {
+                id: id.into(),
+                turn_id: "t1".into(),
+                seq: 0,
+                text: text.into(),
+                status,
+                created_at: now,
+                settled_at: (status != SteerStatus::Pending).then_some(now),
+            }
+        }
+
+        /// An interjection the model was handed has to be in the history the
+        /// *next* turn replays. Without it the earlier answer reads as if the
+        /// model had invented the constraint it followed, and the next turn
+        /// drops the constraint entirely.
+        ///
+        /// It replays ahead of the answer it shaped, which is the order the
+        /// model saw: the note was in its prompt before it wrote the rest.
+        #[test]
+        fn a_delivered_interjection_replays_before_the_answer_it_shaped() {
+            let mut turns = convo();
+            turns[1].steers = vec![steer("n1", "in euros, please", SteerStatus::Delivered)];
+
+            let msgs = build_history_messages(&turns, "t5", None, None);
+            let texts: Vec<&str> = msgs
+                .iter()
+                .map(|m| m["content"].as_str().unwrap())
+                .collect();
+            assert_eq!(texts, ["q1", "in euros, please", "a1", "q2", "a2", "q3"]);
+            assert_eq!(msgs[1]["role"], "user");
+        }
+
+        /// A turn that does not replay takes its interjections with it.
+        ///
+        /// Otherwise an errored turn — or one cancelled before the model wrote
+        /// anything — leaves its notes standing as bare user messages with no
+        /// answer behind them, and the prompt reads as the user having said
+        /// two things in a row that were never answered.
+        #[test]
+        fn a_dropped_turn_takes_its_interjections_with_it() {
+            let mut turns = convo();
+            turns[1].steers = vec![steer("n1", "in euros, please", SteerStatus::Delivered)];
+            turns[1].turn.status = TurnStatus::Errored;
+
+            let msgs = build_history_messages(&turns, "t5", None, None);
+            let texts: Vec<&str> = msgs
+                .iter()
+                .map(|m| m["content"].as_str().unwrap())
+                .collect();
+            assert_eq!(texts, ["q1", "q2", "a2", "q3"]);
+        }
+
+        /// The two fates that must NOT replay here: a note that never reached
+        /// the model, and one that was re-sent as an ordinary user turn (and
+        /// is therefore already in the history under its own row — replaying
+        /// it again would show the model the same sentence twice and read as
+        /// the user insisting).
+        #[test]
+        fn pending_and_resent_interjections_stay_out_of_the_history() {
+            let mut turns = convo();
+            turns[1].steers = vec![
+                steer("n1", "never seen", SteerStatus::Pending),
+                steer("n2", "sent again as its own turn", SteerStatus::Resent),
+            ];
+
+            let msgs = build_history_messages(&turns, "t5", None, None);
+            let texts: Vec<&str> = msgs
+                .iter()
+                .map(|m| m["content"].as_str().unwrap())
+                .collect();
+            assert_eq!(texts, ["q1", "a1", "q2", "a2", "q3"]);
+        }
+
+        /// Interjections ride with their turn through compaction: fold the
+        /// turn away and its notes go with it, rather than surfacing as
+        /// orphaned user messages in front of a summary that already covers
+        /// them.
+        #[test]
+        fn compaction_folds_out_a_turns_interjections_too() {
+            let mut turns = convo();
+            turns[1].steers = vec![steer("n1", "in euros, please", SteerStatus::Delivered)];
+            let compaction = Compaction {
+                up_to_seq: 3,
+                summary: "the gist so far".into(),
+                tokens_before: None,
+                tokens_after: None,
+            };
+
+            let msgs = build_history_messages(&turns, "t5", Some(&compaction), None);
+            let texts: Vec<&str> = msgs
+                .iter()
+                .map(|m| m["content"].as_str().unwrap())
+                .collect();
+            assert_eq!(texts, ["q3"]);
+        }
+
+        /// The label is what makes a mid-turn note read as a correction to
+        /// work in progress rather than as a brand-new question — a model
+        /// that reads "actually, in euros" as a fresh prompt abandons the
+        /// tool call it was in the middle of.
+        #[test]
+        fn a_steer_reaches_the_model_labelled_as_mid_turn() {
+            assert!(STEER_PREFIX.contains("while you were working"));
+            let rendered = format!("{STEER_PREFIX}\n\nin euros");
+            assert!(rendered.ends_with("in euros"));
         }
 
         /// Without a compaction row every completed turn replays verbatim and

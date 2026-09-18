@@ -685,6 +685,746 @@ async fn a_second_submit_while_streaming_is_a_409() {
     assert!(body_string(cancel).await.contains("\"cancelled\":true"));
 }
 
+/// Wait until this user has no turn in flight, or fail the test.
+///
+/// A turn outlives the request that started it, so a test that cancels or
+/// submits and then asserts on the *next* submit has to wait for the worker to
+/// clear. Three hand-rolled poll loops with three different budgets and no
+/// timeout behaviour is three ways to get a flake that reads as a logic error.
+async fn wait_for_idle(state: &Arc<RamaState>, user_id: &str) {
+    for _ in 0..200 {
+        if state.chats.running_for_user(user_id) == 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("a turn was still running for {user_id} after 5s");
+}
+
+/// Raise the operator's parallel-turn ceiling the way the admin UI does —
+/// through the settings row and a live reload — so these tests exercise the
+/// same path an operator takes rather than reaching into the config struct.
+async fn grant_parallel_turns(state: &Arc<RamaState>, limit: usize) {
+    gateway_core::server::db::app_settings::set(
+        &state.db,
+        "settings.chat.turns.max_parallel",
+        &limit.to_string(),
+    )
+    .await
+    .unwrap();
+    state.reload_settings().await;
+    assert_eq!(state.config().chat.turns.max_parallel, limit);
+}
+
+/// The refusal that used to apply to the whole person now applies to the
+/// conversation, and only to it: with two slots granted, a second chat runs
+/// at the same time.
+#[tokio::test]
+async fn a_second_conversation_streams_in_parallel_when_the_operator_allows_it() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["slow"], 5_000).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    grant_parallel_turns(&state, 2).await;
+    let app = router(state.clone());
+    let first_session = chat::create_session(&state.db, "alice").await.unwrap();
+    let second_session = chat::create_session(&state.db, "alice").await.unwrap();
+    let third_session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let send = |session_id: String| {
+        app.serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{session_id}/messages"),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"go"}"#.into()),
+        ))
+    };
+
+    assert_eq!(
+        send(first_session.id.clone()).await.unwrap().status(),
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        send(second_session.id.clone()).await.unwrap().status(),
+        StatusCode::ACCEPTED,
+        "a different conversation gets its own worker"
+    );
+
+    // The third one is over the ceiling — and says so with its own code, not
+    // by claiming this idle conversation is busy.
+    let third = send(third_session.id.clone()).await.unwrap();
+    assert_eq!(third.status(), StatusCode::CONFLICT);
+    let body = body_string(third).await;
+    assert!(body.contains("at_capacity"), "{body}");
+
+    // Asking the same conversation twice stays a plain busy, whatever the
+    // ceiling says — two workers on one transcript is never allowed.
+    let same_again = send(first_session.id.clone()).await.unwrap();
+    assert_eq!(same_again.status(), StatusCode::CONFLICT);
+    assert!(body_string(same_again).await.contains("turn_in_progress"));
+
+    for session_id in [&first_session.id, &second_session.id] {
+        let _ = app
+            .serve(json_req(
+                Method::POST,
+                format!("/api/v0/chat/sessions/{session_id}/cancel"),
+                &cookie,
+                None,
+            ))
+            .await;
+    }
+}
+
+/// Cancelling names one conversation. The user's other running chat must not
+/// notice — which is the difference between parallel chats and a shared
+/// stop button.
+#[tokio::test]
+async fn cancelling_one_conversation_leaves_the_other_running() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["slow"], 5_000).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    grant_parallel_turns(&state, 2).await;
+    let app = router(state.clone());
+    let a = chat::create_session(&state.db, "alice").await.unwrap();
+    let b = chat::create_session(&state.db, "alice").await.unwrap();
+
+    for session in [&a, &b] {
+        let resp = app
+            .serve(json_req(
+                Method::POST,
+                format!("/api/v0/chat/sessions/{}/messages", session.id),
+                &cookie,
+                Some(r#"{"model":"model-a","message":"go"}"#.into()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    }
+
+    let cancel = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/cancel", a.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert!(body_string(cancel).await.contains("\"cancelled\":true"));
+
+    // Assert on the flag rather than on a worker count: the cancelled worker
+    // only notices between upstream chunks, so it is still registered for as
+    // long as the mock takes to answer. What must be true immediately is that
+    // exactly one of the two was asked to stop.
+    let flagged = |session_id: &str| {
+        state
+            .chats
+            .get("alice", session_id)
+            .expect("worker still registered")
+            .cancel
+            .load(std::sync::atomic::Ordering::SeqCst)
+    };
+    assert!(flagged(&a.id), "the named conversation was asked to stop");
+    assert!(!flagged(&b.id), "the other conversation keeps streaming");
+
+    let _ = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/cancel", b.id),
+            &cookie,
+            None,
+        ))
+        .await;
+}
+
+/// The interjection round trip: accepted while a turn runs, recorded against
+/// that turn, and visible to anyone reading the conversation — all before the
+/// model has had a chance to read it.
+#[tokio::test]
+async fn an_interjection_is_recorded_against_the_running_turn() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["slow"], 5_000).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let submitted = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"one"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(submitted.status(), StatusCode::ACCEPTED);
+    let ids: serde_json::Value = serde_json::from_str(&body_string(submitted).await).unwrap();
+    let assistant_turn_id = ids["assistant_turn_id"].as_str().unwrap().to_string();
+
+    let steered = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/steer", session.id),
+            &cookie,
+            Some(r#"{"message":"in euros, please"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(steered.status(), StatusCode::ACCEPTED);
+    let note: serde_json::Value = serde_json::from_str(&body_string(steered).await).unwrap();
+    assert_eq!(note["turn_id"].as_str(), Some(assistant_turn_id.as_str()));
+    // Accepted is not "the model read it" — the status says exactly that.
+    assert_eq!(note["status"].as_str(), Some("pending"));
+
+    let rows = chat::list_steers(&state.db, &assistant_turn_id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].text, "in euros, please");
+
+    // And it is part of the conversation as read back, not only in memory.
+    let snapshot = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert!(body_string(snapshot).await.contains("in euros, please"));
+
+    let _ = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/cancel", session.id),
+            &cookie,
+            None,
+        ))
+        .await;
+}
+
+/// Discarding a returned interjection settles its row.
+///
+/// Forgetting it in the browser is not enough: the row stays `pending`, and
+/// the next time any turn in this conversation finishes the client reads it
+/// back and queues the dismissed sentence again — which then sends itself.
+#[tokio::test]
+async fn a_discarded_interjection_stops_coming_back() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let turn = chat::create_assistant_turn_in_progress(&state.db, &session.id, "a1", "model-a")
+        .await
+        .unwrap();
+    let note = chat::insert_steer(&state.db, &turn.id, "never mind")
+        .await
+        .unwrap()
+        .expect("the turn is running");
+
+    let discarded = app
+        .serve(json_req(
+            Method::POST,
+            format!(
+                "/api/v0/chat/sessions/{}/steer/{}/discard",
+                session.id, note.id
+            ),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(discarded.status(), StatusCode::OK);
+    let rows = chat::list_steers(&state.db, &turn.id).await.unwrap();
+    assert_eq!(rows[0].status, chat::SteerStatus::Discarded);
+
+    // Idempotent: a second tab doing the same is not an error, and a note
+    // already discarded stays discarded.
+    let again = app
+        .serve(json_req(
+            Method::POST,
+            format!(
+                "/api/v0/chat/sessions/{}/steer/{}/discard",
+                session.id, note.id
+            ),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(again.status(), StatusCode::OK);
+    let rows = chat::list_steers(&state.db, &turn.id).await.unwrap();
+    assert_eq!(rows[0].status, chat::SteerStatus::Discarded);
+}
+
+/// A note belonging to someone else's conversation is not discardable through
+/// this one — the id travels from the client and is not evidence of anything.
+#[tokio::test]
+async fn a_steer_from_another_conversation_cannot_be_discarded() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let app = router(state.clone());
+    let mine = chat::create_session(&state.db, "alice").await.unwrap();
+    let other = chat::create_session(&state.db, "alice").await.unwrap();
+    let turn = chat::create_assistant_turn_in_progress(&state.db, &other.id, "a1", "model-a")
+        .await
+        .unwrap();
+    let note = chat::insert_steer(&state.db, &turn.id, "elsewhere")
+        .await
+        .unwrap()
+        .expect("the turn is running");
+
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!(
+                "/api/v0/chat/sessions/{}/steer/{}/discard",
+                mine.id, note.id
+            ),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let rows = chat::list_steers(&state.db, &turn.id).await.unwrap();
+    assert_eq!(rows[0].status, chat::SteerStatus::Pending);
+}
+
+/// An empty message is refused before anything is claimed, so the note it
+/// named stays exactly as it was. (The release path for a refusal that lands
+/// *after* the claim is pinned by
+/// `a_refused_resend_gives_the_interjection_back`.)
+#[tokio::test]
+async fn an_invalid_resend_does_not_consume_the_interjection() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let turn = chat::create_assistant_turn_in_progress(&state.db, &session.id, "a1", "model-a")
+        .await
+        .unwrap();
+    let note = chat::insert_steer(&state.db, &turn.id, "too late")
+        .await
+        .unwrap()
+        .expect("the turn is running");
+
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(format!(
+                r#"{{"model":"model-a","message":"   ","redeem_steers":["{}"]}}"#,
+                note.id
+            )),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let rows = chat::list_steers(&state.db, &turn.id).await.unwrap();
+    assert_eq!(
+        rows[0].status,
+        chat::SteerStatus::Pending,
+        "a refused submit must leave the note re-sendable"
+    );
+}
+
+/// An interjection is one more user message in every remaining round of the
+/// prompt, so its size is bounded. Longer than that is a message, and the
+/// composer already sends those.
+#[tokio::test]
+async fn an_oversized_interjection_is_refused() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["slow"], 5_000).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let submitted = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"one"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(submitted.status(), StatusCode::ACCEPTED);
+
+    let huge = "x".repeat(8 * 1024);
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/steer", session.id),
+            &cookie,
+            Some(format!(r#"{{"message":"{huge}"}}"#)),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let _ = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/cancel", session.id),
+            &cookie,
+            None,
+        ))
+        .await;
+}
+
+/// Every named interjection or none.
+///
+/// A partial claim used to count as success: with two ids, one of which
+/// another tab had already re-sent, the submit went ahead — and that sentence
+/// reached the model twice, once from each tab. The ones this call did take
+/// have to go back.
+#[tokio::test]
+async fn a_partial_claim_is_refused_and_released() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let turn = chat::create_assistant_turn_in_progress(&state.db, &session.id, "a1", "model-a")
+        .await
+        .unwrap();
+    let mine = chat::insert_steer(&state.db, &turn.id, "still mine")
+        .await
+        .unwrap()
+        .expect("the turn is running");
+    let taken = chat::insert_steer(&state.db, &turn.id, "taken by another tab")
+        .await
+        .unwrap()
+        .expect("the turn is running");
+    // Somebody else got there first with one of the two.
+    assert!(
+        chat::settle_steer(&state.db, &taken.id, chat::SteerStatus::Resent)
+            .await
+            .unwrap()
+    );
+
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(format!(
+                r#"{{"model":"model-a","message":"both","redeem_steers":["{}","{}"]}}"#,
+                mine.id, taken.id
+            )),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert!(body_string(resp).await.contains("steer_already_settled"));
+
+    let rows = chat::list_steers(&state.db, &turn.id).await.unwrap();
+    let mine_row = rows.iter().find(|r| r.id == mine.id).unwrap();
+    assert_eq!(
+        mine_row.status,
+        chat::SteerStatus::Pending,
+        "the claim this call took must be handed back with the refusal"
+    );
+}
+
+/// An interjection can stand in for an earlier one: a note the last turn never
+/// reached, taken back into the composer and thrown at the turn that is
+/// running now. It settles the same way a message does, or the client queues
+/// the same sentence again when this turn ends.
+#[tokio::test]
+async fn an_interjection_can_redeem_an_earlier_one() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["slow"], 5_000).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    // A finished turn with a note the model never read.
+    let past = chat::create_assistant_turn_in_progress(&state.db, &session.id, "a1", "model-a")
+        .await
+        .unwrap();
+    let stranded = chat::insert_steer(&state.db, &past.id, "in euros")
+        .await
+        .unwrap()
+        .expect("the turn is running");
+    chat::finalize_turn(&state.db, &past.id, chat::TurnStatus::Completed, None)
+        .await
+        .unwrap();
+
+    // A new turn is running; the stranded note is thrown at it.
+    let submitted = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"next question"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(submitted.status(), StatusCode::ACCEPTED);
+
+    let steered = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/steer", session.id),
+            &cookie,
+            Some(format!(
+                r#"{{"message":"in euros","redeem_steers":["{}"]}}"#,
+                stranded.id
+            )),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(steered.status(), StatusCode::ACCEPTED);
+    let rows = chat::list_steers(&state.db, &past.id).await.unwrap();
+    assert_eq!(rows[0].status, chat::SteerStatus::Resent);
+
+    let _ = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/cancel", session.id),
+            &cookie,
+            None,
+        ))
+        .await;
+}
+
+/// A refused submit gives the interjection back.
+///
+/// Found live, and it cost the user two typed messages. The re-send path
+/// claims the note *before* submitting, so two tabs cannot both send it — but
+/// the claim used to stand even when the submit was then refused (this
+/// conversation busy, the user at their ceiling). The note was marked dealt
+/// with while its sentence was never sent, and the client, told "already
+/// settled" on the retry, dropped its copy. The claim is a reservation; a
+/// refusal has to release it.
+#[tokio::test]
+async fn a_refused_resend_gives_the_interjection_back() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["slow"], 5_000).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    // A finished turn carrying a note the model never read.
+    let past = chat::create_assistant_turn_in_progress(&state.db, &session.id, "a1", "model-a")
+        .await
+        .unwrap();
+    let note = chat::insert_steer(&state.db, &past.id, "too late")
+        .await
+        .unwrap()
+        .expect("the turn is running");
+    chat::finalize_turn(&state.db, &past.id, chat::TurnStatus::Completed, None)
+        .await
+        .unwrap();
+
+    // Something else is streaming in this conversation, so the re-send is
+    // refused after the claim has already been taken.
+    let busy = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"occupying the slot"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(busy.status(), StatusCode::ACCEPTED);
+
+    let refused = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(format!(
+                r#"{{"model":"model-a","message":"too late","redeem_steers":["{}"]}}"#,
+                note.id
+            )),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    assert!(body_string(refused).await.contains("turn_in_progress"));
+
+    let rows = chat::list_steers(&state.db, &past.id).await.unwrap();
+    assert_eq!(
+        rows[0].status,
+        chat::SteerStatus::Pending,
+        "a refused submit must hand the claim back, or the note is lost"
+    );
+
+    // And the retry, once the slot frees up, still works.
+    let _ = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/cancel", session.id),
+            &cookie,
+            None,
+        ))
+        .await;
+    wait_for_idle(&state, "alice").await;
+    let retried = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(format!(
+                r#"{{"model":"model-a","message":"too late","redeem_steers":["{}"]}}"#,
+                note.id
+            )),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(retried.status(), StatusCode::ACCEPTED);
+    let rows = chat::list_steers(&state.db, &past.id).await.unwrap();
+    assert_eq!(rows[0].status, chat::SteerStatus::Resent);
+
+    let _ = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/cancel", session.id),
+            &cookie,
+            None,
+        ))
+        .await;
+}
+
+/// A turn that never reaches a backend delivered nothing, and the transcript
+/// has to say so.
+///
+/// Found live: the fold into the prompt used to settle the row as `delivered`
+/// at the top of the round, before the request was built or sent. A turn that
+/// then failed — no healthy upstream, a dropped connection — left the note
+/// marked as read by a model that never saw it, and the client had nothing
+/// left to re-send. `pending` is the honest state, and it is also the
+/// recoverable one.
+#[tokio::test]
+async fn an_interjection_stays_pending_when_the_turn_never_reaches_a_backend() {
+    // An upstream that advertises a model and then refuses every completion,
+    // so the turn fails after the worker is registered and the steer is in.
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(503).set_delay(Duration::from_millis(1_500)))
+        .mount(&upstream)
+        .await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let submitted = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"one"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(submitted.status(), StatusCode::ACCEPTED);
+    let ids: serde_json::Value = serde_json::from_str(&body_string(submitted).await).unwrap();
+    let assistant_turn_id = ids["assistant_turn_id"].as_str().unwrap().to_string();
+
+    let steered = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/steer", session.id),
+            &cookie,
+            Some(r#"{"message":"in euros, please"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(steered.status(), StatusCode::ACCEPTED);
+
+    wait_for_idle(&state, "alice").await;
+
+    let rows = chat::list_steers(&state.db, &assistant_turn_id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].status,
+        chat::SteerStatus::Pending,
+        "a failed turn must not claim it handed the note to the model"
+    );
+}
+
+/// With nothing running there is nothing to steer. Quietly promoting the note
+/// to a new turn would start work the user did not ask for, so it is refused
+/// and the client sends it as an ordinary message instead.
+#[tokio::test]
+async fn steering_an_idle_conversation_is_refused() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/steer", session.id),
+            &cookie,
+            Some(r#"{"message":"hello?"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert!(body_string(resp).await.contains("no_turn_running"));
+}
+
+/// Re-sending an interjection the turn never carried settles its row exactly
+/// once. The second attempt — a second browser tab on the same finished turn
+/// — is refused rather than saying the same sentence twice.
+#[tokio::test]
+async fn an_undelivered_interjection_can_be_redeemed_only_once() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["done"], 0).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    // A finished turn with an interjection that never reached the model.
+    let assistant =
+        chat::create_assistant_turn_in_progress(&state.db, &session.id, "a1", "model-a")
+            .await
+            .unwrap();
+    let note = chat::insert_steer(&state.db, &assistant.id, "too late")
+        .await
+        .unwrap()
+        .expect("the turn is running");
+    chat::finalize_turn(&state.db, &assistant.id, chat::TurnStatus::Completed, None)
+        .await
+        .unwrap();
+
+    let body = format!(
+        r#"{{"model":"model-a","message":"too late","redeem_steers":["{}"]}}"#,
+        note.id
+    );
+    let first = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(body.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::ACCEPTED);
+    let rows = chat::list_steers(&state.db, &assistant.id).await.unwrap();
+    assert_eq!(rows[0].status, chat::SteerStatus::Resent);
+
+    // Wait for the turn to finish so the second attempt is refused for the
+    // right reason (the claim), not because a worker is still running.
+    wait_for_idle(&state, "alice").await;
+
+    let second = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(body),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::CONFLICT);
+    assert!(body_string(second).await.contains("steer_already_settled"));
+}
+
 /// A finished turn replays from the DB: attach after the fact and the
 /// snapshot alone tells the whole story.
 #[tokio::test]

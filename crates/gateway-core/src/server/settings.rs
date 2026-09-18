@@ -51,7 +51,7 @@ use std::path::PathBuf;
 use crate::server::config::{
     ChatConfig, ComfyuiConfig, CompactionConfig, Config, FeedbackConfig, GatewayConfig,
     GeoipConfig, LimitsConfig, OcrConfig, PushConfig, RagConfig, S3Config, SandboxConfig,
-    SkillsConfig, TypstConfig, UsageConfig,
+    SkillsConfig, TurnsConfig, TypstConfig, UsageConfig,
 };
 use crate::server::crypto::Crypto;
 use crate::server::db::{DbError, Pool, app_settings};
@@ -366,6 +366,11 @@ pub static SECTIONS: &[SectionSpec] = &[
             f("chat.compaction.min_turns_to_compact", Kind::Int),
             f("chat.compaction.summary_max_tokens", Kind::Int),
         ],
+    },
+    SectionSpec {
+        name: "chat.turns",
+        category: Category::Chat,
+        fields: &[f("chat.turns.max_parallel", Kind::Int)],
     },
     SectionSpec {
         name: "chat.s3",
@@ -781,6 +786,7 @@ pub fn apply(settings: &Settings, config: &mut Config) {
     config.chat = ChatConfig {
         ocr: ocr(settings),
         compaction: compaction(settings),
+        turns: turns(settings),
         s3: settings
             .bool("chat.s3.enabled", false)
             .then(|| s3(settings)),
@@ -848,6 +854,13 @@ fn ocr(s: &Settings) -> OcrConfig {
             "chat.ocr.auto_min_text_chars_per_page",
             d.auto_min_text_chars_per_page,
         ),
+    }
+}
+
+fn turns(s: &Settings) -> TurnsConfig {
+    let d = TurnsConfig::default();
+    TurnsConfig {
+        max_parallel: s.int("chat.turns.max_parallel", d.max_parallel),
     }
 }
 
@@ -1118,6 +1131,11 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
     put(
         "chat.compaction.summary_max_tokens",
         comp.summary_max_tokens.to_string(),
+    );
+
+    put(
+        "chat.turns.max_parallel",
+        c.chat.turns.max_parallel.to_string(),
     );
 
     put("chat.s3.enabled", s3.is_some().to_string());

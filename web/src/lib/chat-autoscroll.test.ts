@@ -97,7 +97,10 @@ test('the transcript is wired to follow its own content', () => {
 test('sending re-arms following so the new message is on screen', () => {
 	const view = read('src/lib/Conversation.svelte');
 	for (const [name, body] of functionBodies(view)) {
-		if (name !== 'send' && name !== 'submitVoiceTurn') continue;
+		// `sendQueued` is where a typed message actually goes out — `send()`
+		// builds the entry and hands it over, so pinning `send` here stopped
+		// meaning anything.
+		if (name !== 'sendQueued' && name !== 'submitVoiceTurn') continue;
 		assert.match(body, /followEnd\(\)/, `${name} must put the sent message on screen`);
 	}
 });
