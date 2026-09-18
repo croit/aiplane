@@ -1,7 +1,7 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 # Paramètres opérateur (/admin/settings). Les titres de cartes (settings-s-*),
 # les libellés de champs (settings-f-*) et leur aide (settings-f-*-help) sont
-# dérivés des entrées de gateway_core::server::settings::SECTIONS :
+# dérivés des entrées de aiplane_core::server::settings::SECTIONS :
 # `sandbox.runner_url` -> `settings-f-sandbox-runner_url`.
 # Voir locales/en/settings.ftl pour la source.
 

@@ -121,7 +121,7 @@ admin-comfyui-refresh = Refresh
 admin-clear-overrides-confirm = Drop all stored overrides for { $model }?
 admin-cap-no-fallback = (none)
 
-admin-page-title = Models — LLM Gateway
+admin-page-title = Models — AIplane
 
 admin-intro-prefix = Per-model settings — pricing, context window, reasoning, capabilities and sampling defaults — applied to
 

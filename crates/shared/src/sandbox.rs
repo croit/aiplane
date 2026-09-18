@@ -12,7 +12,7 @@
 //!
 //! File bytes ride the wire as standard base64 (RFC 4648, padded) in the
 //! `*_b64` fields; both sides own a small codec rather than pulling a
-//! `base64` dependency (see `gateway::server::chat_attachments` and
+//! `base64` dependency (see `aiplane::server::chat_attachments` and
 //! `sandbox_runner::b64`).
 
 use serde::{Deserialize, Serialize};

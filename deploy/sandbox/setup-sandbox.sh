@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 croit GmbH
 #
-# One-shot installer for the LLM-gateway code-execution sandbox on a Linux
+# One-shot installer for the croit AIplane code-execution sandbox on a Linux
 # host (rootful podman). Run as root from a repo checkout:
 #
 #   sudo deploy/sandbox/setup-sandbox.sh            # sandbox only (no network)
@@ -45,7 +45,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUADLET_DIR="$SCRIPT_DIR/../quadlet"
 SYSTEMD_DIR=/etc/containers/systemd          # Quadlet units (network, egress proxy)
 UNIT_DIR=/etc/systemd/system                 # native units (the host runner)
-CONF_DIR=/etc/gateway/sandbox
+CONF_DIR=/etc/aiplane/sandbox
 # Host-backed sandbox scratch. The image is SPARSE (thin provisioned): it only
 # occupies what is actually stored, while its ext4 size is the hard ceiling a
 # runaway job can reach — which is the whole point, since a bind mount has no
@@ -54,8 +54,8 @@ CONF_DIR=/etc/gateway/sandbox
 # (it is thin, but its ceiling must fit): SANDBOX_WORK_IMAGE=/data/sandbox.img
 WORK_IMAGE="${SANDBOX_WORK_IMAGE:-/var/lib/sandbox-work.img}"
 WORK_ROOT="${SANDBOX_WORK_ROOT_DIR:-/var/lib/sandbox-work}"
-RUNNER_IMAGE=ghcr.io/croit/llm-gateway-sandbox-runner:latest
-SANDBOX_IMAGE=ghcr.io/croit/llm-gateway-sandbox:latest
+RUNNER_IMAGE=ghcr.io/croit/aiplane-sandbox-runner:latest
+SANDBOX_IMAGE=ghcr.io/croit/aiplane-sandbox:latest
 
 command -v podman >/dev/null || { echo "error: podman not installed" >&2; exit 1; }
 # The runner runs each job under gVisor (runsc). On rootful podman, runsc's
@@ -127,8 +127,8 @@ if [ -n "$WORK_IMAGE_SIZE" ]; then
 # SPDX-License-Identifier: AGPL-3.0-only
 # Written by deploy/sandbox/setup-sandbox.sh — sandbox scratch filesystem.
 [Unit]
-Description=LLM Gateway sandbox scratch (thin-provisioned loop image)
-Documentation=https://github.com/croit/llm-gateway/blob/main/docs/sandbox.md
+Description=croit AIplane sandbox scratch (thin-provisioned loop image)
+Documentation=https://github.com/croit/aiplane/blob/main/docs/sandbox.md
 
 [Mount]
 What=$WORK_IMAGE

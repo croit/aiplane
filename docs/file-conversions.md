@@ -1,6 +1,6 @@
 # File conversions
 
-How the gateway reads uploaded files and produces documents in other formats,
+How AIplane reads uploaded files and produces documents in other formats,
 which tool/engine does each job, and — importantly — what each path can and
 **cannot** do. Written for operators and for reasoning about feature gaps.
 

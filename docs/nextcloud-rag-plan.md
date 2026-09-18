@@ -1,7 +1,7 @@
 # Remote document sources for RAG — implementation plan
 
 **Status: all four phases are implemented**, except ACL-faithful per-user filtering and provider delta feeds — see the end of [`fileshare-rag.md`](fileshare-rag.md). Both of the questions this feature exists to answer now work end to end. This document is the
-design agreement for indexing a customer's file host into the gateway's
+design agreement for indexing a customer's file host into AIplane's
 existing RAG subsystem. It started as "index a Nextcloud" and was widened, on
 purpose, to *any* file host: Nextcloud, ownCloud, OpenCloud, OneDrive/SharePoint,
 Dropbox, plain WebDAV. Once phase 3 lands it collapses into an operator-facing
@@ -11,20 +11,20 @@ Dropbox, plain WebDAV. Once phase 3 lands it collapses into an operator-facing
 
 | Piece | Where |
 | --- | --- |
-| `FileProvider` trait, capability model, provider registry, config-field descriptors | `gateway-features/src/server/rag/source/mod.rs` |
+| `FileProvider` trait, capability model, provider registry, config-field descriptors | `aiplane-features/src/server/rag/source/mod.rs` |
 | WebDAV provider (Nextcloud / ownCloud / OpenCloud / generic), PROPFIND parsing, extension detection | `…/source/webdav.rs` |
 | Provider-agnostic concurrent tree walker with subtree pruning, cycle and size bounds | `…/source/tree.rs` |
 | `source_kind` / `source_config_json` / sealed `source_secrets`, per-ref `dir_versions_json` + `delta_cursor` | migration `0058_fileshare_rag.sql`, `db/rag.rs` |
 | Worker branch: enumerate → fetch → chunk → embed, sharing the whole indexing path with git | `…/rag/worker.rs` (`gather_remote`, `index_items`, `read_item`) |
-| Admin surface: source picker + credential form rendered from each provider's declared fields, secret sealing, **Test connection** | `gateway-api/src/pages/rag_source.rs`, `pages/rag.rs`, `POST /rag/test-source` |
+| Admin surface: source picker + credential form rendered from each provider's declared fields, secret sealing, **Test connection** | `aiplane-api/src/pages/rag_source.rs`, `pages/rag.rs`, `POST /rag/test-source` |
 | JSON API: `source_kind` + `source_config` on create and PATCH, `GET /api/v0/rag/providers` for field discovery | `gateway/src/rama_server/rag_api.rs` |
 | **Extraction ladder**: text → PDF text layer → OCR → office, with page-accurate provenance | `…/rag/extract.rs`, `…/rag/chunk.rs`, migration-free store DDL change (`loc_kind`/`loc_from`/`loc_to`) |
-| Office reading shared with `fetch_attachment` — one python extractor, two consumers | `gateway-runtime/…/sandbox/office.rs` |
+| Office reading shared with `fetch_attachment` — one python extractor, two consumers | `aiplane-runtime/…/sandbox/office.rs` |
 | **Document profiles**: operator-defined extraction schema, seeded `invoice` + `project_document` | migration `0058_fileshare_rag.sql`, `db/rag_documents.rs` |
 | **Extraction pass**: one LLM call per document → normalised fields + summary, cached by content hash | `…/rag/profile.rs`, `rag_extractions` |
 | **Structured query layer**: filter / sort / aggregate over extracted fields, with `total_matches` and ambiguity reporting | `db/rag_documents.rs` |
 | **Contextual chunk headers** — document identity prepended to each chunk *before embedding* | `…/rag/worker.rs` |
-| `rag_query_documents`, `rag_list_documents`, `rag_fetch_document` | `gateway-tools/src/rag_documents.rs` |
+| `rag_query_documents`, `rag_list_documents`, `rag_fetch_document` | `aiplane-tools/src/rag_documents.rs` |
 | Profile picker on `/rag`, `GET /api/v0/rag/profiles`, `profile` on create/PATCH | `pages/rag.rs`, `rag_api.rs` |
 | Links back to the original file on every hit | `rag_files.web_url`, `FileProvider::web_url` |
 | ~130 tests, including the customer's question answered end to end through WebDAV → OCR → extraction → query | `tests/it/rag_profile.rs`, `tests/it/rag_extract.rs`, `tests/it/rag_webdav.rs`, `tests/it/rag_api.rs`, and the module unit tests |
@@ -80,7 +80,7 @@ from scans, images and Office files; retrieval that can answer questions about
 
 **Out of scope, explicitly:**
 
-- Writing to Nextcloud. The gateway reads; it never modifies the customer's files.
+- Writing to Nextcloud. AIplane reads; it never modifies the customer's files.
 - Payment reconciliation. The archive answers *what invoices we received*. Whether
   and when an invoice was paid lives in an ERP/banking system and is a separate
   data source (reachable later through an MCP connector).
@@ -93,19 +93,19 @@ from scans, images and Office files; retrieval that can answer questions about
 
 ## 2. What already exists
 
-The gateway is roughly 80% of the way there. Nothing in this table gets rebuilt.
+AIplane is roughly 80% of the way there. Nothing in this table gets rebuilt.
 
 | Capability | Where | Relevance |
 |---|---|---|
-| Hybrid retrieval (dense kNN ⊕ FTS5/BM25 via RRF) | `gateway-features/src/server/rag/worker.rs::search_chunks` | Exact identifiers (invoice numbers, project codes) survive alongside paraphrase. |
+| Hybrid retrieval (dense kNN ⊕ FTS5/BM25 via RRF) | `aiplane-features/src/server/rag/worker.rs::search_chunks` | Exact identifiers (invoice numbers, project codes) survive alongside paraphrase. |
 | Per-collection store (`rag.sqlite` + `index.usearch`) | `db/mod.rs::open_collection_store`, `rag/index.rs` | Heavy, regenerable state already lives off the backup-critical DB. |
 | Multi-source collections | migration `0017_rag_multi_source.sql` | A collection already aggregates several sources into one unified index. A Nextcloud folder set is just another source shape. |
 | Vector delete | `rag/index.rs::remove` (implemented + tested) | Makes incremental sync possible instead of rebuild-only. |
 | Zero-downtime index swap | `rag/worker.rs::index_ref_inner` | A long rebuild never takes search offline. |
-| OCR with a content-hash cache | `gateway-features/src/server/ocr.rs`, migration `0054_ocr_derivatives.sql` | Keyed by `doc_sha256` — **a full re-index never re-OCRs a file it has already read.** This is the single biggest cost saver in the whole plan. |
+| OCR with a content-hash cache | `aiplane-features/src/server/ocr.rs`, migration `0054_ocr_derivatives.sql` | Keyed by `doc_sha256` — **a full re-index never re-OCRs a file it has already read.** This is the single biggest cost saver in the whole plan. |
 | Scan detection without word lists | `ocr.rs::pdf_needs_ocr` | Character-count based, so it behaves identically for German and English. Born-digital PDFs never touch the GPU. |
-| PDF text layer, per page | `gateway-features/src/server/pdf.rs::extract_text_pages` | Tier 1 of the extraction ladder, in-process, no sandbox. |
-| Office extraction (docx/pptx/xlsx → structured JSON) | `gateway-tools/src/fetch_attachment.rs::extract_office` | Tier 3. Runs in the sandbox; see §6 for the layering problem this creates. |
+| PDF text layer, per page | `aiplane-features/src/server/pdf.rs::extract_text_pages` | Tier 1 of the extraction ladder, in-process, no sandbox. |
+| Office extraction (docx/pptx/xlsx → structured JSON) | `aiplane-tools/src/fetch_attachment.rs::extract_office` | Tier 3. Runs in the sandbox; see §6 for the layering problem this creates. |
 | Per-collection group ACL | migration `0046_rag_allowed_groups.sql`, `rbac::Resolver::resource_allowed` | Enforced on *both* list and search, so a hidden collection cannot be reached by naming it. |
 | Index log + status timeline | migration `0026_rag_index_log.sql`, `/rag` page | A multi-hour ingest is already observable. |
 | Deck + document production | `typst_presentation`, `generate_document`, canvas documents, Web Push on turn completion | Use case 2's output half needs no new code. |
@@ -283,7 +283,7 @@ waste. Below `Indexer::read_item` the two are identical.
 
 ### 4.2 WebDAV client
 
-New module `gateway-features/src/server/rag/webdav.rs`. Plain `reqwest` +
+New module `aiplane-features/src/server/rag/webdav.rs`. Plain `reqwest` +
 `quick-xml`; no WebDAV crate (see §11).
 
 **Enumeration.** `PROPFIND` with `Depth: 1`, recursing directory by directory.
@@ -337,7 +337,7 @@ part-way must not be treated as authoritative, or a transient 503 deletes half t
 corpus. Only a walk that completed every branch may drive deletions.
 
 **Auth.** Nextcloud app password over HTTPS Basic. Stored **sealed** with
-`server::crypto` under `GATEWAY_ENCRYPTION_KEY`, unlike the existing git `pat`
+`server::crypto` under `AIPLANE_ENCRYPTION_KEY`, unlike the existing git `pat`
 column (plaintext, a decision made when the only secret was a repo token). A
 Nextcloud app password grants read access to a company's entire shared document
 store; it does not belong in the clear.
@@ -352,7 +352,7 @@ store; it does not belong in the clear.
 
 ### 5.1 The ladder — **implemented**
 
-New module `gateway-features/src/server/rag/extract.rs`. Dispatch on MIME +
+New module `aiplane-features/src/server/rag/extract.rs`. Dispatch on MIME +
 extension, never on content sniffing:
 
 | Class | Path | Notes |
@@ -537,18 +537,18 @@ The profile pass sits *before* chunking because §5.3's headers depend on it.
 
 ## 6. The layering problem — **resolved as planned**
 
-`gateway-features` sits **below** `gateway-runtime`, and `SandboxClient` lives in
-`gateway-runtime/src/server/tools/sandbox/mod.rs`. The indexer therefore cannot
+`aiplane-features` sits **below** `aiplane-runtime`, and `SandboxClient` lives in
+`aiplane-runtime/src/server/tools/sandbox/mod.rs`. The indexer therefore cannot
 call the sandbox for Office extraction without violating AGENTS.md's "never
 reference upward" rule, which is load-bearing for build times.
 
 **Recommendation: invert the dependency.** Declare the capability in
-`gateway-features` and implement it in `gateway-runtime`, injected at boot from
+`aiplane-features` and implement it in `aiplane-runtime`, injected at boot from
 `gateway/src/main.rs`. Use the manual boxed-future shape the codebase already uses
-for `ToolFuture` rather than adding `async-trait` to `gateway-features`:
+for `ToolFuture` rather than adding `async-trait` to `aiplane-features`:
 
 ```rust
-// gateway-features/src/server/rag/extract.rs
+// aiplane-features/src/server/rag/extract.rs
 pub trait OfficeExtractor: Send + Sync {
     fn extract<'a>(
         &'a self,
@@ -560,19 +560,19 @@ pub trait OfficeExtractor: Send + Sync {
 
 `Indexer` holds an `Option<Arc<dyn OfficeExtractor>>`; `None` means Office files
 are skipped with a logged reason, exactly as OCR degrades when no `ocr` pool
-exists. `gateway-runtime` gets a thin impl wrapping `SandboxClient` and reusing
+exists. `aiplane-runtime` gets a thin impl wrapping `SandboxClient` and reusing
 `fetch_attachment.rs`'s `EXTRACT_PY` — which should move to a shared const so the
 extractor script exists in exactly one place (DRY).
 
-Rejected alternative: moving `SandboxClient` down into `gateway-features`. It is
+Rejected alternative: moving `SandboxClient` down into `aiplane-features`. It is
 reachable — the type depends only on `SandboxConfig`, `reqwest` and
 `shared::sandbox` — but it is used by a dozen tools and moving it churns the layer
 that churns least.
 
 **What building it actually required.** The python extractor lived in
-`gateway-tools/src/fetch_attachment.rs`, which sits *above* `gateway-runtime`,
+`aiplane-tools/src/fetch_attachment.rs`, which sits *above* `aiplane-runtime`,
 so the office implementation could not reach it. Rather than copy the script,
-it moved down to `gateway-runtime/…/sandbox/office.rs` and both consumers now
+it moved down to `aiplane-runtime/…/sandbox/office.rs` and both consumers now
 share it: `fetch_attachment` takes the structured JSON plus re-attached images,
 the indexer takes flattened text. Two copies of office-parsing logic would have
 drifted, and the copy used for indexing would have been the one nobody noticed
@@ -817,8 +817,8 @@ One addition, per the `docs/dependencies.md` process:
 
 | Crate | Used in | Why |
 |---|---|---|
-| `quick-xml` | `gateway-features` | Parsing WebDAV `PROPFIND` multistatus responses. Already in the tree transitively (via `rust-s3`/`aws-creds`), so this does not grow the dependency graph — it makes an existing one direct. Pull-parser only; no serde-xml layer. |
-| `async-trait` | `gateway-features` | Object safety for `Arc<dyn FileProvider>`: the indexer dispatches over pluggable sources and tests swap in an in-memory fake, exactly as `sandbox-runner` does for `dyn ContainerBackend`. Already a workspace dependency used by `session-core`, `gateway-runtime` and `sandbox-runner`. |
+| `quick-xml` | `aiplane-features` | Parsing WebDAV `PROPFIND` multistatus responses. Already in the tree transitively (via `rust-s3`/`aws-creds`), so this does not grow the dependency graph — it makes an existing one direct. Pull-parser only; no serde-xml layer. |
+| `async-trait` | `aiplane-features` | Object safety for `Arc<dyn FileProvider>`: the indexer dispatches over pluggable sources and tests swap in an in-memory fake, exactly as `sandbox-runner` does for `dyn ContainerBackend`. Already a workspace dependency used by `session-core`, `aiplane-runtime` and `sandbox-runner`. |
 
 One API note worth recording, because it cost a debugging cycle and would
 silently corrupt data otherwise: **quick-xml 0.40 does not unescape inside

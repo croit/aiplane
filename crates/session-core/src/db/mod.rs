@@ -22,7 +22,7 @@
 //! what's there, and tails the broadcast for the remainder.
 //!
 //! Migrations live in the binary that owns the SQLite file (today
-//! that's the gateway's `crates/gateway/migrations/`); session-core
+//! that's the gateway's `crates/aiplane-core/migrations/`); session-core
 //! does not manage schema. Call `sweep_in_progress_at_startup` once
 //! after migrations to evict orphaned `in_progress` assistant rows
 //! left by a crash.
@@ -346,7 +346,7 @@ mod tests {
     /// just enough schema here: a stub `users` table (because
     /// `chat_sessions.user_id` foreign-keys into it) plus the three
     /// tables this module actually manages. Kept in lock-step with
-    /// `crates/gateway/migrations/0005_chat_persistence.sql`; if that
+    /// `crates/aiplane-core/migrations/0005_chat_persistence.sql`; if that
     /// file changes shape, mirror the change here.
     async fn pool() -> Pool {
         let opts = SqliteConnectOptions::from_str("sqlite::memory:")

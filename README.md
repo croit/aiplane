@@ -1,34 +1,42 @@
-# croit LLM Gateway
+# croit AIplane
 
-**Make any LLM agentic.**
+**One plane for all your AI.**
 
-croit LLM Gateway is a self-hosted AI infrastructure layer that sits between your applications and your models. It speaks the OpenAI API on both sides, so the client you already have keeps working — and everything that a plain chat-completions call cannot do happens *inside* the gateway: server-side agent execution, MCP connectors and tools, RAG, memory, and the identity, RBAC, quotas and usage accounting an organisation needs before it hands models to everyone.
+croit AIplane is a self-hosted AI infrastructure layer connecting your applications and users to private and public models, agents, tools and enterprise data.
 
-Point an existing OpenAI SDK at it and the model can search the web, fetch a URL, run code in a throwaway sandbox, render a document or query your own indexed corpora **during** the completion. Your application still makes one ordinary request and receives one ordinary answer. No agent framework, no client rewrite.
+Keep the OpenAI-compatible clients you have and the inference stack you run. Add server-side agent execution, MCP, RAG, memory, tools, identity, policy, routing and usage controls in one place — the things a plain chat-completions call cannot do, done *inside* AIplane rather than rebuilt in every application.
 
-**Private inference is the first-class case.** vLLM, SGLang, llama.cpp and Ollama are recognised for what they are, not treated as one generic OpenAI endpoint: the gateway learns each backend's real context window and how that server spells "think harder", so long conversations are compacted here instead of being truncated there in silence. Hosted providers and OpenAI-compatible aggregators plug in exactly the same way.
+**Models. Agents. Tools. Your control.**
 
-**Who it is for:** platform and infrastructure teams who run their own GPUs (or plan to), have to give employees and applications governed access to models, and would rather add one layer than rebuild every application around an agent SDK.
+Point an existing OpenAI SDK at it and the model can search the web, fetch a URL, run code in a throwaway sandbox, render a document or query your own indexed corpora **during** the completion. Your application still makes one ordinary request and receives one ordinary answer. No agent framework, no client rewrite. That is what *make any LLM agentic* means here.
+
+> AIplane was previously called **croit LLM Gateway**. The OpenAI-compatible LLM gateway is still in here — it is one subsystem of the platform, not the whole product. Existing deployments keep working: see [`docs/renaming.md`](docs/renaming.md).
+
+**Private inference is the first-class case.** vLLM, SGLang, llama.cpp and Ollama are recognised for what they are, not treated as one generic OpenAI endpoint: AIplane learns each backend's real context window and how that server spells "think harder", so long conversations are compacted here instead of being truncated there in silence. Hosted providers and OpenAI-compatible aggregators plug in exactly the same way. **Any model. Any tool. Your infrastructure.**
+
+**Who it is for:** platform and infrastructure teams who run their own GPUs (or plan to), have to give employees and applications governed access to models, and would rather add one plane than rebuild every application around an agent SDK.
 
 It ships as a single self-hosted Rust binary with SQLite for state — no vector database, no message broker, no separate frontend to deploy. AGPL-3.0.
 
-![Architecture at a glance: internal users reach the gateway through the chat UI, API tokens, or their own software (OIDC-authenticated); the gateway fans out to self-hosted GPUs and cloud providers behind one OpenAI-compatible API, with Atlassian, GitLab, GitHub, Google, scheduled actions, webhooks, skills, RAG, sandbox and RBAC hanging off it.](docs/img/architecture.webp)
+![croit AIplane architecture: internal users, the chat UI, API tokens and custom software reach AIplane through one OIDC + RBAC gate; AIplane serves an OpenAI-compatible API and routes to self-hosted GPUs running vLLM, SGLang, Ollama or llama.cpp and to OpenAI-compatible cloud providers; below it sit skills, MCP, sandbox, scheduled actions, RAG and webhooks, with MCP reaching Atlassian, GitHub, GitLab, Google and more, and RAG reaching git repositories, WebDAV, Google Drive, Nextcloud and more.](docs/img/architecture.svg)
 
 ## How it fits
 
 ```text
-        Your applications and OpenAI-compatible clients
-    (OpenAI SDKs, Claude Code, OpenCode, Open WebUI, curl)
+        Applications  ·  Agents  ·  Users
+    (OpenAI SDKs, Claude Code, OpenCode, Open WebUI,
+     curl, the built-in chat UI)
                             |
                      OpenAI / Anthropic wire
                             |
                             v
-                   croit LLM Gateway
+                     croit AIplane
    +-------------------------------------------------+
    |  Agent runtime      tools run mid-completion     |
    |  MCP connectors     per-user, OAuth or token     |
+   |  Tools + sandbox    web, documents, code         |
    |  RAG + memory       your corpora, durable facts  |
-   |  Auth + RBAC        OIDC login, gwk_… tokens     |
+   |  Identity + policy  OIDC login, RBAC, gwk_… keys |
    |  Routing            pools, aliases, failover     |
    |  Usage + limits     per user / token / model     |
    +-------------------------------------------------+
@@ -43,7 +51,7 @@ It ships as a single self-hosted Rust binary with SQLite for state — no vector
                                         LiteLLM proxy, …)
 ```
 
-Everything in the middle box is the part a reverse proxy does not give you, and the reason to put the gateway in the path at all.
+Everything in the middle box is the part a reverse proxy does not give you, and the reason to put AIplane in the path at all.
 
 ## See it work
 
@@ -52,7 +60,7 @@ An ordinary OpenAI client. The only change is `base_url`:
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="https://gateway.example.com/v1", api_key="gwk_…")
+client = OpenAI(base_url="https://aiplane.example.com/v1", api_key="gwk_…")
 
 answer = client.chat.completions.create(
     model="qwen",                       # a stable alias; the real model can change underneath
@@ -63,7 +71,7 @@ answer = client.chat.completions.create(
 print(answer.choices[0].message.content)
 ```
 
-One request in, one finished answer out. In between, the gateway offered the model the tools this token is allowed to use, the model called `rag_search` over your indexed repository and then `search_web` to check an upstream changelog, and the gateway executed each call and fed the result back — several model round-trips the client never saw. Your code has no tool loop, no `tool_calls` branch and no agent framework in it.
+One request in, one finished answer out. In between, AIplane offered the model the tools this token is allowed to use, the model called `rag_search` over your indexed repository and then `search_web` to check an upstream changelog, and AIplane executed each call and fed the result back — several model round-trips the client never saw. Your code has no tool loop, no `tool_calls` branch and no agent framework in it.
 
 The same is true of `POST /v1/messages`, so [Claude Code](#claude-code-against-your-own-models) points at your own models with two environment variables.
 
@@ -89,7 +97,7 @@ The same is true of `POST /v1/messages`, so [Claude Code](#claude-code-against-y
   - [Chat attachments (S3)](#chat-attachments-s3)
   - [RAG (codebase search)](#rag-codebase-search)
   - [Agent Skills](#agent-skills)
-- [Using the gateway](#using-the-gateway)
+- [Using AIplane](#using-aiplane)
   - [HTTP endpoints](#http-endpoints)
 - [Production deployment (container + systemd)](#production-deployment-container--systemd)
   - [Docker Compose](#docker-compose)
@@ -103,55 +111,55 @@ The same is true of `POST /v1/messages`, so [Claude Code](#claude-code-against-y
 Roughly in the order that matters when you are deciding whether to put this in your path.
 
 - **OpenAI-compatible API** — `POST /v1/chat/completions` (streaming + non-streaming), `POST /v1/embeddings`, `POST /v1/images/generations` + `POST /v1/images/edits`, `POST /v1/audio/transcriptions`, `POST /v1/audio/speech` (text-to-speech, when a speech pool is configured), and `GET /v1/models`. Point any OpenAI SDK at it.
-- **Anthropic-compatible API** — `POST /v1/messages` (streaming + non-streaming) and `POST /v1/messages/count_tokens`, so **[Claude Code](#claude-code-against-your-own-models) can be pointed straight at the gateway** and run against whatever models you serve. Same routing, tokens, limits, tools and usage accounting as the OpenAI surface; the gateway translates between the two dialects.
-- **Any OpenAI-compatible server, without per-server settings** — vLLM, **Ollama**, **llama.cpp**, SGLang or a hosted provider. The gateway identifies what each backend is and works out the things the OpenAI wire does not carry: the real context window (so long conversations are compacted here rather than truncated there, in silence) and how that server spells "think harder" (so the effort control actually reaches the model). Detected on apply and on a **Test** button, overridable per model, and warned about when an override exceeds what the server serves. See [`docs/upstreams.md`](docs/upstreams.md#backend-profiles-what-kind-of-server-is-this).
-- **Server-side tools** — the gateway runs tools *mid-completion* (web search, fetch-URL, document rendering, code execution, RAG, network lookups, and more); the client just sees a normal completion. Full list in [Tools the model can call](#tools-the-model-can-call).
+- **Anthropic-compatible API** — `POST /v1/messages` (streaming + non-streaming) and `POST /v1/messages/count_tokens`, so **[Claude Code](#claude-code-against-your-own-models) can be pointed straight at AIplane** and run against whatever models you serve. Same routing, tokens, limits, tools and usage accounting as the OpenAI surface; AIplane translates between the two dialects.
+- **Any OpenAI-compatible server, without per-server settings** — vLLM, **Ollama**, **llama.cpp**, SGLang or a hosted provider. AIplane identifies what each backend is and works out the things the OpenAI wire does not carry: the real context window (so long conversations are compacted here rather than truncated there, in silence) and how that server spells "think harder" (so the effort control actually reaches the model). Detected on apply and on a **Test** button, overridable per model, and warned about when an override exceeds what the server serves. See [`docs/upstreams.md`](docs/upstreams.md#backend-profiles-what-kind-of-server-is-this).
+- **Server-side tools** — AIplane runs tools *mid-completion* (web search, fetch-URL, document rendering, code execution, RAG, network lookups, and more); the client just sees a normal completion. Full list in [Tools the model can call](#tools-the-model-can-call).
 - **Integrations (per-user MCP connectors)** — an admin-curated catalog of [MCP](https://modelcontextprotocol.io/) servers (Google Workspace, GitHub, Atlassian, GitLab, …) that each user connects to with *their own* account at `/integrations`. OAuth (with dynamic client registration where supported) or a user-supplied token; tokens are encrypted at rest and refreshed in the background. The connected servers' tools then become available to the model, scoped to that user's own permissions. See [Integrations](#integrations-per-user-mcp-connectors).
 - **RAG** — operator-managed, indexed codebases that the chat model can search.
 - **Agent Skills** — drop a `SKILL.md` bundle (or `.skill` archive) in and the chat model loads it on demand to follow your house style, brand, or domain playbooks — progressive disclosure, no fine-tuning. Admins upload/view/delete global skills at `/admin/skills` (live, no restart, RBAC-gated per role); every user can also add their **own private skills** at `/skills`, usable only in their own chats. See [Agent Skills](#agent-skills).
-- **OIDC login** — browser sign-in against your identity provider; the gateway then issues its own `gwk_…` API tokens. Provider secrets come only from the environment.
+- **OIDC login** — browser sign-in against your identity provider; AIplane then issues its own `gwk_…` API tokens. Provider secrets come only from the environment.
 - **Per-user tokens + RBAC** — tokens are SHA-256-hashed at rest and revocable. Roles (mapped from OIDC claims) gate which models and server-side tools each user may use.
 - **Multi-backend routing** — named upstream pools (`chat` / `transcription` / `embedding` / `image` / `speech` kinds). Each pool load-balances across its backends with per-backend health probes and a per-backend maintenance switch that takes effect on the next request. Models are discovered live from each backend's `/models` endpoint, so loading a model on a backend makes it routable with no config change.
 - **Model aliases + fallback** — give clients a stable name (a per-backend alias like `qwen`) that routes to whatever real model is loaded, so swapping the model needs no client change; the same alias on several backends is a load-balanced group. Optional fallbacks cover an unknown model name or a known model whose backends are all down. All configured per backend/pool at `/admin/upstreams`. See [`docs/upstreams.md`](docs/upstreams.md#model-aliases).
-- **KV-cache-aware routing** — pick `prefix_affinity` and a conversation keeps landing on the replica that already holds its KV prefix, instead of alternating between GPUs and paying a full prefill on every turn. Clients that can name their session (`x-gateway-affinity`, which Claude Code sets per launch via `ANTHROPIC_CUSTOM_HEADERS`) get exact affinity by weighted rendezvous hash; everything else is matched block-wise against an approximate per-pool index of which replica was recently sent which prompt prefix — so a new session can also start warm on the replica already holding the shared system prompt. A two-threshold load valve hands throughput back when a replica is genuinely busier. `least_inflight` and weighted `round_robin` remain available. See [`docs/upstreams.md`](docs/upstreams.md#how-prefix-affinity-decides).
-- **Outages pause instead of failing** — when every replica of a model is down or saturated, the gateway holds the request and retries routing until one returns (`[gateway] upstream_wait_secs`, default 120s) rather than failing it. Nothing has reached the client, so an agent turn survives an upstream restart. A model stays *known* across a gateway restart too, so an outage is always a retryable `529`/`503` with `Retry-After` — never the `404` that tells a client the model doesn't exist. See [`docs/upstreams.md`](docs/upstreams.md#waiting-out-an-outage).
+- **KV-cache-aware routing** — pick `prefix_affinity` and a conversation keeps landing on the replica that already holds its KV prefix, instead of alternating between GPUs and paying a full prefill on every turn. Clients that can name their session (`x-aiplane-affinity`, which Claude Code sets per launch via `ANTHROPIC_CUSTOM_HEADERS`) get exact affinity by weighted rendezvous hash; everything else is matched block-wise against an approximate per-pool index of which replica was recently sent which prompt prefix — so a new session can also start warm on the replica already holding the shared system prompt. A two-threshold load valve hands throughput back when a replica is genuinely busier. `least_inflight` and weighted `round_robin` remain available. See [`docs/upstreams.md`](docs/upstreams.md#how-prefix-affinity-decides).
+- **Outages pause instead of failing** — when every replica of a model is down or saturated, AIplane holds the request and retries routing until one returns (`[gateway] upstream_wait_secs`, default 120s) rather than failing it. Nothing has reached the client, so an agent turn survives an upstream restart. A model stays *known* across a gateway restart too, so an outage is always a retryable `529`/`503` with `Retry-After` — never the `404` that tells a client the model doesn't exist. See [`docs/upstreams.md`](docs/upstreams.md#waiting-out-an-outage).
 - **Usage accounting, rate limits & quotas** — every call is metered per user/token/model (requests, tokens, and — with per-model prices — spend), shown on `/usage` with a per-API-token breakdown and drill-down. Set hard rate limits and quotas at `/admin/limits` (requests / tokens / cost, over a rolling hour / day / week / month), scoped globally, per-role, per-user, or **per API token**; over-budget callers get a `429`. A token can also be **scoped to specific models**, so a key you hand to a third party reaches only what you listed — the owner scopes their own token at `/tokens`, an operator scopes any token at `/admin/tokens`, and the two lists intersect, so each side can only narrow. Self-hosted pools can be marked exempt (a per-pool toggle at `/admin/upstreams`) so their usage is still recorded and shown on `/usage`, but never counts against a limit or quota.
 - **Chat UI** — a mobile-friendly chat at `/chat` with persisted multi-conversation history, token-by-token streaming, file attachments, voice dictation, shareable/exportable conversations, and resume-on-reconnect (every turn is written to SQLite as it happens).
 - **Scheduled actions** — per-user prompts that run on a cron schedule (hourly / daily / weekly / monthly, or a raw cron expression), each evaluated in its own timezone. A friendly builder assembles the cron and shows the next run times live; every fire opens a chat you can read back in the UI — a fresh one each time, or (optionally) continuing the previous run's conversation as history. See [Scheduled actions](#scheduled-actions).
 
 ## Use cases
 
-- **Self-hosted company AI.** Put the gateway in front of your vLLM or SGLang boxes and everyone gets one endpoint, one model list and one login — while the GPUs, model names and replica counts change underneath.
+- **Self-hosted company AI.** Put AIplane in front of your vLLM or SGLang boxes and everyone gets one endpoint, one model list and one login — while the GPUs, model names and replica counts change underneath.
 - **Governed access for employees.** OIDC groups map to gateway roles, roles decide which models and which tools a person may use, and every call is metered per user and per token. A department can be given a monthly budget that actually stops at the limit.
-- **Add tools and MCP to an application you are not going to rewrite.** The application keeps issuing plain chat completions; the tools it gains are configured in the gateway, not in its code.
+- **Add tools and MCP to an application you are not going to rewrite.** The application keeps issuing plain chat completions; the tools it gains are configured in AIplane, not in its code.
 - **Route between private and external models.** Keep the cheap and confidential traffic on your own hardware and let a hosted model cover what it cannot serve, with fallbacks for the case where a pool is down.
 - **Expose stable model names.** Clients address `qwen` or `fast`; you repoint the alias when the real model changes. No coordinated client release.
 - **Hand a scoped key to a third party.** A token can be limited to specific models, specific tools and its own spending quota, and revoked on its own.
-- **Give engineers their own coding agent.** [Claude Code](#claude-code-against-your-own-models) and [OpenCode](#opencode-against-your-own-models) point at the gateway and run against your own models, with the same accounting as everything else.
+- **Give engineers their own coding agent.** [Claude Code](#claude-code-against-your-own-models) and [OpenCode](#opencode-against-your-own-models) point at AIplane and run against your own models, with the same accounting as everything else.
 
 ## Works with your stack
 
-The gateway is a layer, not a replacement. Bring the inference stack you already run.
+AIplane is a layer, not a replacement. Bring the inference stack you already run.
 
 | Your stack | How it fits |
 |---|---|
 | **vLLM**, **SGLang**, **llama.cpp**, **Ollama** | Detected as what they are, with the per-server differences the OpenAI wire does not carry (real context window, how "think harder" is spelled) handled for you. See [`docs/upstreams.md`](docs/upstreams.md#backend-profiles-what-kind-of-server-is-this). |
-| **Hosted APIs and aggregators** — OpenAI, an OpenRouter endpoint, a LiteLLM proxy | Any OpenAI-compatible base URL plus a key is a backend; upstream the gateway speaks the OpenAI wire only, so a provider reaches it through its OpenAI-compatible endpoint. Put them in their own pool, or alongside self-hosted backends in one, and let aliases and fallbacks decide what serves what. |
-| **OpenAI SDKs, Open WebUI and other OpenAI-compatible clients** | They keep working unchanged — the gateway is the endpoint they already know how to talk to. |
-| **Claude Code, OpenCode** | Speak the Anthropic Messages API, which the gateway serves at `POST /v1/messages`. |
-| **MCP servers** | The gateway is an MCP *client*: an admin curates the catalog, each user connects with their own account, and those tools join the model's toolbox. |
+| **Hosted APIs and aggregators** — OpenAI, an OpenRouter endpoint, a LiteLLM proxy | Any OpenAI-compatible base URL plus a key is a backend; upstream AIplane speaks the OpenAI wire only, so a provider reaches it through its OpenAI-compatible endpoint. Put them in their own pool, or alongside self-hosted backends in one, and let aliases and fallbacks decide what serves what. |
+| **OpenAI SDKs, Open WebUI and other OpenAI-compatible clients** | They keep working unchanged — AIplane is the endpoint they already know how to talk to. |
+| **Claude Code, OpenCode** | Speak the Anthropic Messages API, which AIplane serves at `POST /v1/messages`. |
+| **MCP servers** | AIplane is an MCP *client*: an admin curates the catalog, each user connects with their own account, and those tools join the model's toolbox. |
 
-What the gateway adds on top is the agent runtime, the identity and RBAC story, and the accounting — the parts none of the above provide, and the reason to put it in the path.
+What AIplane adds on top is the agent runtime, the identity and RBAC story, and the accounting — the parts none of the above provide, and the reason to put it in the path.
 
 ## Try it
 
 One container, one environment variable:
 
 ```bash
-docker run -d --name llm-gateway -p 8080:8080 \
-  -e GATEWAY_SESSION_KEY="$(openssl rand -hex 32)" \
-  -v llm-gateway-data:/var/lib/gateway \
-  ghcr.io/croit/llm-gateway:production
+docker run -d --name aiplane -p 8080:8080 \
+  -e AIPLANE_SESSION_KEY="$(openssl rand -hex 32)" \
+  -v aiplane-data:/var/lib/gateway \
+  ghcr.io/croit/aiplane:production
 ```
 
 Open <http://localhost:8080>. A fresh install lands in the **setup wizard**, which
@@ -178,7 +186,7 @@ Running it properly afterwards: [Production deployment](#production-deployment-c
 
 ## Tools the model can call
 
-This is the part most "OpenAI-compatible proxy" projects don't have. The gateway can execute tools **server-side, in the middle of a completion**: the model asks to search the web, read a PDF you attached, render a branded PDF, run code in a throwaway sandbox, or query an indexed codebase — the gateway runs it, feeds the result back, and the client just receives one ordinary completion with the finished answer. It works identically through the raw `/v1/chat/completions` API and the built-in chat UI.
+This is the part most "OpenAI-compatible proxy" projects don't have. AIplane can execute tools **server-side, in the middle of a completion**: the model asks to search the web, read a PDF you attached, render a branded PDF, run code in a throwaway sandbox, or query an indexed codebase — AIplane runs it, feeds the result back, and the client just receives one ordinary completion with the finished answer. It works identically through the raw `/v1/chat/completions` API and the built-in chat UI.
 
 Every tool is **RBAC-gated per role**, and each user can flip their own grants on and off on the `/tools` page:
 
@@ -191,8 +199,8 @@ Every tool is **RBAC-gated per role**, and each user can flip their own grants o
 | **Automatic document OCR** *(opt-in)* | `baidu/Unlimited-OCR` via the internal `ocr` pool | Send uploaded images, and PDFs without a usable text layer, to the PDF-aware OCR sidecar and add the result as untrusted document context — cached by document hash, page-ordered, metered, with per-document status in the chat UI. The feature is inactive until you enable OCR at `/admin/settings` → Chat *and* a healthy `ocr` backend is configured. See [`docs/ocr.md`](docs/ocr.md). |
 | **Document canvas** | `create_document`, `edit_document`, `delete_document`, … | Build up a long document (report, spec, article) across turns and edit it section-by-section in a live side panel, then export it to PDF/DOCX/PPTX — instead of regenerating the whole thing every reply. Every change is a new version; the model can list the history and roll back (`list_document_versions`, `restore_document_version`), and several documents can coexist per conversation. **You can edit any document by hand** in the panel — your save is a version of its own, labelled as yours, and the assistant is told the document moved under it (with the id to re-read) so its next edit builds on your wording instead of reverting it. Abandoned drafts can be **cleared away without losing anything**: `delete_document` is a soft delete — the document leaves the canvas and the model's listing but keeps its history, and `undelete_document` brings it back. Formats: markdown, text, html, json, toml, **typst** (draft the source in the canvas, render via `render_typst`/`export_document` — sections anchor on `=` headings), and yaml (text-edited so comments survive). See [`docs/file-conversions.md`](docs/file-conversions.md). |
 | **Images** | `generate_image`, `edit_image` | Generate an image from a text prompt (diagrams, mockups, marketing visuals) and, where the backend supports it, edit an existing image (image-to-image) — rendered inline in the reply. Routes to an `image`-kind upstream pool (any OpenAI `/images/*`-compatible backend: a hosted provider or a self-hosted model). `edit_image` appears only when a backend advertises edit support, and is refused against non-GDPR-compliant backends. |
-| **QR codes** | `generate_qr_code` | Generate a QR code natively in the gateway (no sandbox, no backend) — URLs, WiFi access, vCard/MeCard contacts, `mailto:`/`tel:`/`geo:`, SEPA GiroCode payments — as PNG or SVG, with custom colors and an optional centered logo from a chat attachment (error correction auto-raised to H). Attached inline in the reply. |
-| **Code & sandbox** *(opt-in)* | `run_in_sandbox`, `generate_document`, `export_document`, `convert_document`, `edit_presentation`, `capture_webpage`, `browse_page`, `render_typst`, `render_excalidraw`, `read_sandbox_output` | Run Python/shell in an isolated gVisor VM (data crunching, format conversion, plotting; `run_in_sandbox` persists its workdir across a conversation turn so the model can iterate), turn Markdown into PDF/DOCX/PPTX, convert between office/PDF/image formats, edit an uploaded `.pptx` in place, screenshot a web page, **drive a browser across several steps** (`browse_page` — click, fill a form, get past a consent banner, then read the result: the session stays open for the whole turn), render Typst or Excalidraw, and page through a large sandbox result without pulling it all into context. The web tools appear **only when the sandbox runner is configured for network egress** — the gateway asks it at startup, so on an offline runner the model is never offered a browser it cannot use, and `run_in_sandbox` doesn't even show a `network` option. Enabled at `/admin/settings` → Tools — see [`docs/sandbox.md`](docs/sandbox.md) and [`docs/file-conversions.md`](docs/file-conversions.md). |
+| **QR codes** | `generate_qr_code` | Generate a QR code natively in AIplane (no sandbox, no backend) — URLs, WiFi access, vCard/MeCard contacts, `mailto:`/`tel:`/`geo:`, SEPA GiroCode payments — as PNG or SVG, with custom colors and an optional centered logo from a chat attachment (error correction auto-raised to H). Attached inline in the reply. |
+| **Code & sandbox** *(opt-in)* | `run_in_sandbox`, `generate_document`, `export_document`, `convert_document`, `edit_presentation`, `capture_webpage`, `browse_page`, `render_typst`, `render_excalidraw`, `read_sandbox_output` | Run Python/shell in an isolated gVisor VM (data crunching, format conversion, plotting; `run_in_sandbox` persists its workdir across a conversation turn so the model can iterate), turn Markdown into PDF/DOCX/PPTX, convert between office/PDF/image formats, edit an uploaded `.pptx` in place, screenshot a web page, **drive a browser across several steps** (`browse_page` — click, fill a form, get past a consent banner, then read the result: the session stays open for the whole turn), render Typst or Excalidraw, and page through a large sandbox result without pulling it all into context. The web tools appear **only when the sandbox runner is configured for network egress** — AIplane asks it at startup, so on an offline runner the model is never offered a browser it cannot use, and `run_in_sandbox` doesn't even show a `network` option. Enabled at `/admin/settings` → Tools — see [`docs/sandbox.md`](docs/sandbox.md) and [`docs/file-conversions.md`](docs/file-conversions.md). |
 | **Memory** | `remember`, `recall`, `update_memory`, `forget` | Persist durable facts about the user (preferences, projects) and recall them in later conversations — and **correct or drop** one when it changes, so a changed fact replaces the old one instead of leaving two contradicting memories behind. Anything filed as a **preference** is different in kind: it says how an answer should be shaped, so it rides in the system context of *every* conversation from the first token, rather than waiting for the model to think of calling `recall`. Project context and facts stay behind `recall` and are advertised there as a count, so the model knows there is more to ask for. Turning the Memory switch off on `/tools` stops the injection too — the switch means "don't use this", not "hide the tools". |
 | **Scheduled actions** | `schedule_action`, `list_scheduled_actions`, `delete_scheduled_action` | Set up recurring prompts from inside a conversation — "every Monday, summarise last week's tickets" — reaching the same cron scheduler the [`/scheduled`](#scheduled-actions) page drives. Each run opens a conversation you can read afterwards, on the model you were talking to. Creating or deleting one **needs your confirmation** (via `ask_user`) and an action created this way always runs **without tools**: a scheduled prompt later runs *as you*, unattended, so it is not something a model should be able to plant on its own. |
 | **Notifications** | `notify_user` | Reach you when you're not watching the conversation — long sandbox work finished, or a scheduled action found something worth knowing — as a Web Push notification on your phone or desktop. Hard-limited to one per reply, and only where you enabled notifications. |
@@ -217,7 +225,7 @@ Every tool is **RBAC-gated per role**, and each user can flip their own grants o
 ![The built-in chat UI answering a question by calling the web-search tool mid-completion — the reasoning step, the tool calls, and the final markdown answer all render inline.](docs/img/chat.png)
 
 
-Beyond `/chat`, the gateway ships a small operator and account UI — no separate dashboard to deploy. It is a SvelteKit single-page app the gateway serves as static files from its own root, so there is still only one process and one port. Admin screens are gated to the `admin` role.
+Beyond `/chat`, AIplane ships a small operator and account UI — no separate dashboard to deploy. It is a SvelteKit single-page app AIplane serves as static files from its own root, so there is still only one process and one port. Admin screens are gated to the `admin` role.
 
 UI text is currently English. The gateway's server-side strings still ship in six languages (English, German, French, Spanish, Russian, Chinese) and the translation gate that keeps them in sync is still enforced at build time, but the in-app language switcher has not been carried over to the SPA yet.
 
@@ -250,7 +258,7 @@ A **per-token** rule is different in kind: it is an *additional* ceiling checked
 
 The `/chat` page itself does more than stream replies: **fork** a conversation, **share** it via a public link, **pin** favourites, **export** to Markdown or PDF, **edit-and-retry** a turn, **dictate** with the voice button, and set **per-conversation reasoning effort**. See [`docs/ui.md`](docs/ui.md).
 
-**Mobile.** The whole UI is responsive — on a phone the sidebar collapses into a hamburger drawer and the chat, composer, and admin pages reflow to a single column, so the gateway is fully usable from a browser on the go.
+**Mobile.** The whole UI is responsive — on a phone the sidebar collapses into a hamburger drawer and the chat, composer, and admin pages reflow to a single column, so AIplane is fully usable from a browser on the go.
 
 | | |
 |---|---|
@@ -258,17 +266,17 @@ The `/chat` page itself does more than stream replies: **fork** a conversation, 
 
 ## Scheduled actions
 
-Every signed-in user can have prompts run **automatically on a schedule** at `/scheduled` — a daily standup digest, a weekly repo summary, an hourly health check. Each scheduled action is just a saved prompt plus a model, a schedule, and a timezone; when it fires, the gateway opens a chat session driven by the same engine as the interactive `/chat` page, so the result lands as an ordinary conversation you can open and read afterward. By default each run starts a **fresh** conversation; turn on **reuse** and each run instead continues the previous run's chat — replaying the last few rounds as history — so the model builds on what it said last time. Schedules are per-user and private (scoped by user, behind the normal session login — no admin role needed).
+Every signed-in user can have prompts run **automatically on a schedule** at `/scheduled` — a daily standup digest, a weekly repo summary, an hourly health check. Each scheduled action is just a saved prompt plus a model, a schedule, and a timezone; when it fires, AIplane opens a chat session driven by the same engine as the interactive `/chat` page, so the result lands as an ordinary conversation you can open and read afterward. By default each run starts a **fresh** conversation; turn on **reuse** and each run instead continues the previous run's chat — replaying the last few rounds as history — so the model builds on what it said last time. Schedules are per-user and private (scoped by user, behind the normal session login — no admin role needed).
 
 ![The /scheduled page: a builder form (name, model, prompt) with a Hourly/Daily/Weekly/Monthly/Advanced schedule selector, time and timezone fields, a live human-readable summary with the next three run times, and a tools toggle — above the list of your existing scheduled actions.](docs/img/scheduled.png)
 
-**The schedule builder.** Pick **Hourly**, **Daily**, **Weekly**, **Monthly**, or **Advanced**. The friendly modes expose just the fields they need (a minute; a time; weekday checkboxes; a day-of-month) and the gateway assembles a standard 5-field cron expression from them — non-technical users never have to see cron. **Advanced** takes a raw `minute hour day-of-month month day-of-week` expression for anything the presets can't express. Either way the expression is evaluated in the **IANA timezone** you choose (e.g. `Europe/Berlin`), and a live preview — computed server-side via `POST /scheduled/preview` so it can't drift from what the scheduler actually does — shows a plain-English summary plus the **next three run times**. Each action also has a tools toggle (web search, RAG, attachments — same set as in chat).
+**The schedule builder.** Pick **Hourly**, **Daily**, **Weekly**, **Monthly**, or **Advanced**. The friendly modes expose just the fields they need (a minute; a time; weekday checkboxes; a day-of-month) and AIplane assembles a standard 5-field cron expression from them — non-technical users never have to see cron. **Advanced** takes a raw `minute hour day-of-month month day-of-week` expression for anything the presets can't express. Either way the expression is evaluated in the **IANA timezone** you choose (e.g. `Europe/Berlin`), and a live preview — computed server-side via `POST /scheduled/preview` so it can't drift from what the scheduler actually does — shows a plain-English summary plus the **next three run times**. Each action also has a tools toggle (web search, RAG, attachments — same set as in chat).
 
-**How runs fire.** A background worker polls every 30 seconds and runs every action whose next occurrence is due, claiming each one atomically first so a slow run or a restart can't double-fire. If the gateway was down across one or more scheduled slots, the missed occurrences **collapse into a single catch-up run** on the first poll after startup rather than replaying as a backlog. Actions can be **paused** (the worker skips them) and resumed, edited, or deleted from the same page.
+**How runs fire.** A background worker polls every 30 seconds and runs every action whose next occurrence is due, claiming each one atomically first so a slow run or a restart can't double-fire. If AIplane was down across one or more scheduled slots, the missed occurrences **collapse into a single catch-up run** on the first poll after startup rather than replaying as a backlog. Actions can be **paused** (the worker skips them) and resumed, edited, or deleted from the same page.
 
 ## Webhooks
 
-The event-driven twin of scheduled actions: instead of a clock, an **inbound HTTP call** fires the run. At `/webhooks` a signed-in user saves a prompt plus a model, gets back a secret trigger URL (`/hooks/gwh_…`), and points any external service at it — a CI pipeline, a GitHub or Discord webhook, a monitoring alert, a form handler, or a quick `curl`. When something calls the URL, the gateway appends **whatever the caller sends in the request body** (JSON or plain text) to the saved prompt as a clearly delimited *untrusted* block, then runs it through the same engine as `/chat`, so the result lands as an ordinary conversation you can open afterward.
+The event-driven twin of scheduled actions: instead of a clock, an **inbound HTTP call** fires the run. At `/webhooks` a signed-in user saves a prompt plus a model, gets back a secret trigger URL (`/hooks/gwh_…`), and points any external service at it — a CI pipeline, a GitHub or Discord webhook, a monitoring alert, a form handler, or a quick `curl`. When something calls the URL, AIplane appends **whatever the caller sends in the request body** (JSON or plain text) to the saved prompt as a clearly delimited *untrusted* block, then runs it through the same engine as `/chat`, so the result lands as an ordinary conversation you can open afterward.
 
 **Sync or async.** A per-webhook checkbox picks the behaviour: an **async** webhook returns `202 Accepted` immediately and runs in the background; a **synchronous** webhook makes the caller wait and returns the model's answer as a JSON envelope (`{"status","session_id","output"}`) — handy for integrations that want the reply inline.
 
@@ -280,7 +288,7 @@ The event-driven twin of scheduled actions: instead of a clock, an **inbound HTT
 
 ## Conversation compaction
 
-A chat replays its whole history to the model on every turn, so a long conversation's prompt grows until it crowds the model's context window. The gateway **compacts automatically**: once a turn's measured prompt size (the upstream's own `prompt_tokens`) crosses a fraction of the model's context window, a background task — off the turn's critical path, like title generation — summarises the oldest turns into a single dense summary. The next turn then replays `[request context] + [summary] + [most recent turns verbatim]` instead of the full history. As the conversation keeps growing it's **re-compacted**: the previous summary plus the newly-aged turns fold into a fresh summary, so context stays bounded across an arbitrarily long chat.
+A chat replays its whole history to the model on every turn, so a long conversation's prompt grows until it crowds the model's context window. AIplane **compacts automatically**: once a turn's measured prompt size (the upstream's own `prompt_tokens`) crosses a fraction of the model's context window, a background task — off the turn's critical path, like title generation — summarises the oldest turns into a single dense summary. The next turn then replays `[request context] + [summary] + [most recent turns verbatim]` instead of the full history. As the conversation keeps growing it's **re-compacted**: the previous summary plus the newly-aged turns fold into a fresh summary, so context stays bounded across an arbitrarily long chat.
 
 Nothing is lost from the UI — the summarised turns stay in the transcript, scrollable above an "earlier messages condensed" divider; they're just not sent upstream. Tool results from the folded turns are fed into the summariser (they're never replayed as normal history, yet are often the load-bearing context).
 
@@ -288,7 +296,7 @@ Tuning lives at `/admin/settings` → Chat (all optional): `enabled` (default `t
 
 ## Voice conversation
 
-Talk to the assistant and hear it answer. Voice mode is a **pipeline** — the gateway is not the AI, it wires access to one: your speech is transcribed (Voxtral, the existing transcription pool), sent to the normal chat model with a *voice directive* that keeps replies to a spoken sentence or two, and the reply is spoken back through a **text-to-speech pool** you configure. Every exchange persists as an ordinary chat turn in plain text, so you can scroll back and read (or continue in text) any time.
+Talk to the assistant and hear it answer. Voice mode is a **pipeline** — AIplane is not the AI, it wires access to one: your speech is transcribed (Voxtral, the existing transcription pool), sent to the normal chat model with a *voice directive* that keeps replies to a spoken sentence or two, and the reply is spoken back through a **text-to-speech pool** you configure. Every exchange persists as an ordinary chat turn in plain text, so you can scroll back and read (or continue in text) any time.
 
 It appears in the chat composer **only when a `speech` upstream pool is configured** *and* a transcription model is available — otherwise the toggle is simply absent (like transcription, it degrades away). Same access layer as everything else: TTS is also exposed to API callers at `POST /v1/audio/speech`.
 
@@ -302,13 +310,13 @@ It appears in the chat composer **only when a `speech` upstream pool is configur
 
 ## Built with
 
-- **Rust** (edition 2024, toolchain pinned to 1.95 via [mise](https://mise.jdx.dev/)) — a workspace of nine crates: `gateway` (the binary and its `/v1` proxy), `gateway-core`, `gateway-runtime`, `gateway-features`, `gateway-tools`, `gateway-api`, `session-core`, `shared`, and `sandbox-runner`.
+- **Rust** (edition 2024, toolchain pinned to 1.95 via [mise](https://mise.jdx.dev/)) — a workspace of nine crates: `gateway` (the binary and its `/v1` proxy), `aiplane-core`, `aiplane-runtime`, `aiplane-features`, `aiplane-tools`, `aiplane-api`, `session-core`, `shared`, and `sandbox-runner`.
 - **[rama 0.3.0-rc1](https://ramaproxy.org/)** — HTTP server, router, middleware, and proxying.
 - **[SvelteKit](https://svelte.dev/docs/kit) 2 / Svelte 5** (`web/`) — the web UI, built with `adapter-static` into plain files. Chat streams over a JSON event protocol on SSE; every other action is a typed call against the `/api/v0` OpenAPI contract.
 - **[daisyUI v5](https://daisyui.com/) + Tailwind v4** — design system, compiled to a single content-hashed CSS bundle at build time.
 - **sqlx + SQLite** — persistent state (users, tokens, sessions, chat history, RAG collection registry). Bulk RAG content — chunk text, lexical index, vectors — lives in per-collection stores under the RAG data directory, not in the main DB.
 
-The UI is compiled ahead of time and shipped as static files the binary serves from `GATEWAY_STATIC_DIR`, so **no Node runs in production** — it is still one container, one process, one port.
+The UI is compiled ahead of time and shipped as static files the binary serves from `AIPLANE_STATIC_DIR`, so **no Node runs in production** — it is still one container, one process, one port.
 
 ## Integrations (per-user MCP connectors)
 
@@ -323,14 +331,14 @@ An admin curates which servers the catalog offers at `/admin/connectors`; users 
 - **User-supplied token** — each user pastes their own API token / PAT (e.g. self-managed GitLab CE).
 - **None** — a public, unauthenticated server (e.g. Kiwi.com flight search); users still connect individually to opt its tools into their own chats.
 
-Per-user OAuth tokens are **encrypted at rest** (AES-256-GCM) and **refreshed in the background** so connections don't silently expire. Each connected server's tools are namespaced (`mcp__<server>__*`) and obey the same per-tool always/ask/off controls as the built-in tools. Files a connector hands back — a mail attachment, a Drive export — never reach the model as base64: the gateway decodes them into ordinary conversation attachments and gives the model the id, so the file is readable, sandbox-stageable and downloadable at a few dozen tokens instead of a megabyte of context. Provider and deployment setup — including the self-hosted Google Workspace and GitLab CE bridges — is in [`deploy/README.md`](deploy/README.md) and [`docs/connectors.md`](docs/connectors.md).
+Per-user OAuth tokens are **encrypted at rest** (AES-256-GCM) and **refreshed in the background** so connections don't silently expire. Each connected server's tools are namespaced (`mcp__<server>__*`) and obey the same per-tool always/ask/off controls as the built-in tools. Files a connector hands back — a mail attachment, a Drive export — never reach the model as base64: AIplane decodes them into ordinary conversation attachments and gives the model the id, so the file is readable, sandbox-stageable and downloadable at a few dozen tokens instead of a megabyte of context. Provider and deployment setup — including the self-hosted Google Workspace and GitLab CE bridges — is in [`deploy/README.md`](deploy/README.md) and [`docs/connectors.md`](docs/connectors.md).
 
 ## Claude Code against your own models
 
-Claude Code speaks the Anthropic Messages API, and the gateway serves it at `POST /v1/messages`. Point it here and it runs on the models *you* host — with your auth, your rate limits, your usage tracking and your server-side tools in front of them. Nothing about Claude Code is patched or wrapped; it is configured through the environment variables it already supports:
+Claude Code speaks the Anthropic Messages API, and AIplane serves it at `POST /v1/messages`. Point it here and it runs on the models *you* host — with your auth, your rate limits, your usage tracking and your server-side tools in front of them. Nothing about Claude Code is patched or wrapped; it is configured through the environment variables it already supports:
 
 ```bash
-export ANTHROPIC_BASE_URL=https://gateway.example.com
+export ANTHROPIC_BASE_URL=https://aiplane.example.com
 export ANTHROPIC_AUTH_TOKEN=gwk_…            # a token from /tokens
 export ANTHROPIC_MODEL=default                # an alias you defined on /admin/upstreams
 export ANTHROPIC_DEFAULT_HAIKU_MODEL=default  # background tasks go here too
@@ -340,14 +348,14 @@ export CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144  # match what your model serves
 # Recommended when the pool has several replicas and uses `prefix_affinity`:
 # one value per shell is one value per session, so every turn of this session
 # goes back to the GPU that already holds its KV cache.
-export ANTHROPIC_CUSTOM_HEADERS="x-gateway-affinity: $$-$(date +%s)"
+export ANTHROPIC_CUSTOM_HEADERS="x-aiplane-affinity: $$-$(date +%s)"
 
 claude
 ```
 
 `ANTHROPIC_DEFAULT_HAIKU_MODEL` matters more than it looks: Claude Code sends
 background work (summaries, titles) to its `haiku` alias, which otherwise
-arrives as an Anthropic model id your gateway has never heard of and only
+arrives as an Anthropic model id your AIplane has never heard of and only
 survives because of the unknown-model fallback. Point it somewhere real — a
 small model if you have one.
 
@@ -360,14 +368,14 @@ context meter.
 
 ### Keeping a session on one GPU
 
-`x-gateway-affinity` is the exact-affinity hook for a `prefix_affinity` pool
+`x-aiplane-affinity` is the exact-affinity hook for a `prefix_affinity` pool
 (see [`docs/upstreams.md`](docs/upstreams.md#how-prefix-affinity-decides)).
 Claude Code reads `ANTHROPIC_CUSTOM_HEADERS` **once at launch**, so one value
 per terminal is precisely one value per session. Any value works — it is hashed,
 not interpreted — as long as it differs between concurrent sessions; `$$` (the
 shell's pid) plus a timestamp is enough.
 
-It is optional: without it the gateway matches the request's prompt prefix
+It is optional: without it AIplane matches the request's prompt prefix
 against an index of what each replica was recently sent, which pins a
 conversation just as well and additionally lets a *new* session start warm on a
 replica that already holds the shared system prompt. Measured on two replicas,
@@ -377,7 +385,7 @@ seven interleaved conversations, four turns each:
 |---|---|---|
 | `least_inflight` | **0 / 7** — every turn bounced to the cold replica | 4 / 3 |
 | `prefix_affinity`, no header | **7 / 7** | 3 / 4 |
-| `prefix_affinity` + `x-gateway-affinity` | **7 / 7** | 4 / 3 |
+| `prefix_affinity` + `x-aiplane-affinity` | **7 / 7** | 4 / 3 |
 
 Set the header when you want the guarantee rather than the inference — for
 example when sessions are launched from a script that always opens with the same
@@ -387,7 +395,7 @@ prompt, where the prefix alone cannot tell them apart.
 can check any of this from the client:
 
 ```bash
-curl -sD- -o /dev/null https://gateway.example.com/v1/messages \
+curl -sD- -o /dev/null https://aiplane.example.com/v1/messages \
   -H "authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
   -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' \
   -d '{"model":"default","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}' \
@@ -396,27 +404,27 @@ curl -sD- -o /dev/null https://gateway.example.com/v1/messages \
 
 Then alias the model ids Claude Code asks for (`claude-sonnet-4-6`, `claude-haiku-4-5`, …) onto the models you actually serve, on `/admin/upstreams` — the same alias also makes them discoverable in Claude Code's `/model` picker. Any id you don't alias falls through to the pool's configured unknown-model fallback, so a working setup can be one alias or none.
 
-Everything the normal workflow needs works: streaming, tool calls (including several per turn), multi-turn context, model selection, and errors surfaced with the backend's own wording so Claude Code's built-in retries still fire. Token counting is answered from the serving model's own tokenizer, not an estimate. The gateway's server-side tools are available to it too — web search, RAG, the sandbox, your MCP connectors — when the token has tool use enabled, in which case the gateway runs its own tools invisibly and hands Claude Code's back for it to execute.
+Everything the normal workflow needs works: streaming, tool calls (including several per turn), multi-turn context, model selection, and errors surfaced with the backend's own wording so Claude Code's built-in retries still fire. Token counting is answered from the serving model's own tokenizer, not an estimate. The gateway's server-side tools are available to it too — web search, RAG, the sandbox, your MCP connectors — when the token has tool use enabled, in which case AIplane runs its own tools invisibly and hands Claude Code's back for it to execute.
 
 Setup, the full translation table, and the known limits are in [`docs/claude-code.md`](docs/claude-code.md).
 
 ## OpenCode against your own models
 
-[OpenCode](https://opencode.ai/) can use the gateway's OpenAI-compatible API. The
-configuration below registers a gateway deployment as a custom provider and
-makes the gateway alias `qwen` (served as Qwen3.8) available in the model picker:
+[OpenCode](https://opencode.ai/) can use AIplane's OpenAI-compatible API. The
+configuration below registers an AIplane deployment as a custom provider and
+makes the model alias `qwen` (served as Qwen3.8) available in the model picker:
 
 ```jsonc
 // ~/.config/opencode/opencode.jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "gateway/qwen",
+  "model": "aiplane/qwen",
   "provider": {
-    "gateway": {
+    "aiplane": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "LLM Gateway",
+      "name": "croit AIplane",
       "options": {
-        "baseURL": "https://gateway.example.com/v1"
+        "baseURL": "https://aiplane.example.com/v1"
       },
       "models": {
         "qwen": {
@@ -428,25 +436,25 @@ makes the gateway alias `qwen` (served as Qwen3.8) available in the model picker
 }
 ```
 
-Store the gateway token with OpenCode's provider credentials (or use an
+Store the AIplane API token with OpenCode's provider credentials (or use an
 environment substitution in `options.apiKey`); never commit a token to a
-project file. Start OpenCode and choose `gateway/qwen` with `/models`, or pass it
+project file. Start OpenCode and choose `aiplane/qwen` with `/models`, or pass it
 directly:
 
 ```bash
-opencode --model gateway/qwen
+opencode --model aiplane/qwen
 ```
 
-The gateway already exposes `GET /v1/models`, but OpenCode's custom
+AIplane already exposes `GET /v1/models`, but OpenCode's custom
 `@ai-sdk/openai-compatible` provider requires model entries in its configuration
 for the picker and does not populate that map from the endpoint. Add further
-gateway model aliases under `provider.gateway.models` as needed; each key is the
-model id sent to the gateway. The gateway's model list remains available for
+model aliases under `provider.aiplane.models` as needed; each key is the
+model id sent to AIplane. AIplane's model list remains available for
 inspection with:
 
 ```bash
-curl https://gateway.example.com/v1/models \
-  -H "Authorization: Bearer $GATEWAY_API_KEY"
+curl https://aiplane.example.com/v1/models \
+  -H "Authorization: Bearer $AIPLANE_API_KEY"
 ```
 
 ## Quick start (from source)
@@ -478,17 +486,17 @@ artifact instead, run:
 mise run dev-served               # production-shaped static SPA, no HMR
 ```
 
-**UI-only shortcut (no OIDC):** `mise run dev-ui` boots a real server with mock backends and a pre-seeded session, and prints a session cookie you can paste into a browser or Playwright. Pass `GATEWAY_STATIC_DIR=target/frontend/build` if you want it to serve the UI too.
+**UI-only shortcut (no OIDC):** `mise run dev-ui` boots a real server with mock backends and a pre-seeded session, and prints a session cookie you can paste into a browser or Playwright. Pass `AIPLANE_STATIC_DIR=target/frontend/build` if you want it to serve the UI too.
 
 Full developer workflow: [`docs/dev-workflow.md`](docs/dev-workflow.md).
 
 ## Setup wizard
 
-A fresh deployment needs **one** environment variable (`GATEWAY_SESSION_KEY`) and a writable volume. Everything else is configured in the browser.
+A fresh deployment needs **one** environment variable (`AIPLANE_SESSION_KEY`) and a writable volume. Everything else is configured in the browser.
 
 Until setup finishes, every page redirects to `/setup`, which asks two questions:
 
-1. **Your identity provider** — the gateway's public URL (pre-filled from the request that reached it) plus issuer, client id and client secret. It also shows the exact redirect URI to whitelist. Submitting starts a *real* authorization-code login against what you just typed; nothing is saved yet.
+1. **Your identity provider** — AIplane's public URL (pre-filled from the request that reached it) plus issuer, client id and client secret. It also shows the exact redirect URI to whitelist. Submitting starts a *real* authorization-code login against what you just typed; nothing is saved yet.
 2. **Who administers it** — you come back from your provider with a verified ID token, and the wizard shows you every claim it actually carried. Pick the claim value that should grant admin. This is why the wizard insists on a real sign-in first: the name of your groups claim and the shape of its values are not guessable, and getting them wrong is the classic way to end up locked out of your own gateway.
 
 Finishing writes the provider (client secret sealed with the at-rest key), creates an `admins` group mapped to the value you chose plus a default `users` group, and swaps the live OIDC client in — `/login` works on the very next request, with no restart.
@@ -498,15 +506,15 @@ Finishing writes the provider (client secret sealed with the at-rest key), creat
 Locked out — the IdP moved, or no group maps to admin? Reopen the wizard from the host:
 
 ```bash
-docker compose exec gateway restore-setup     # compose
-podman exec gateway restore-setup             # quadlet
+docker compose exec aiplane restore-setup     # compose
+podman exec aiplane restore-setup             # quadlet
 ```
 
-It prints a one-time link valid for 30 minutes. **The gateway keeps serving while that window is open**: chats, `/v1`, and existing sessions are untouched, and only `/setup` becomes reachable again — so fixing one admin's access never means an outage for everyone else. The link carries a token because, unlike a first run, there is now a live deployment worth protecting; you are already at a terminal reading the output, so copying it costs nothing.
+It prints a one-time link valid for 30 minutes. **AIplane keeps serving while that window is open**: chats, `/v1`, and existing sessions are untouched, and only `/setup` becomes reachable again — so fixing one admin's access never means an outage for everyone else. The link carries a token because, unlike a first run, there is now a live deployment worth protecting; you are already at a terminal reading the output, so copying it costs nothing.
 
 Recovery deletes nothing. Users, chats, pools and the current provider all survive, and the wizard comes up pre-filled with what is configured today.
 
-The one case it cannot fix is a provider that is gone entirely — the wizard proves a provider by signing in through it. Keep at least one group in `$GATEWAY_BOOTSTRAP_ADMIN_GROUPS` if you want a break-glass admin that does not depend on the group tables.
+The one case it cannot fix is a provider that is gone entirely — the wizard proves a provider by signing in through it. Keep at least one group in `$AIPLANE_BOOTSTRAP_ADMIN_GROUPS` if you want a break-glass admin that does not depend on the group tables.
 
 ## Configuration
 
@@ -514,13 +522,13 @@ There is **no required configuration file**. Everything an operator configures l
 
 **Changes apply immediately.** A save re-derives the affected clients, stores and tool registrations and swaps them in, so the new value is in force on the next request — no restart, and no config file. Five fields are the exception, badged `restart` in the editor: `rag.enabled`, `rag.data_dir`, `rag.clone_concurrency`, `comfyui.base_url` and `comfyui.content_dir`. Each of those owns a long-running background worker (the indexer, the ComfyUI job scheduler), and replacing one means stopping work that is in flight — an aborted ComfyUI poll can leave a job row pending whose asset is never fetched. A restart is the clean way to quiesce that. Saving one leaves a banner until the process comes back, so the person who restarts the container sees what is waiting on them. Secrets entered there are sealed at rest.
 
-**Is there a config file?** No. The gateway reads none, from anywhere. Every
+**Is there a config file?** No. AIplane reads none, from anywhere. Every
 block that used to live in one is a database row now, edited in the admin UI,
 and the table below says where each one went.
 
 Two things never moved into the database, because both have to be resolved
-*before* it can be read: where the database is (`$GATEWAY_DB_PATH`) and the
-break-glass admin list (`$GATEWAY_BOOTSTRAP_ADMIN_GROUPS`). Both are
+*before* it can be read: where the database is (`$AIPLANE_DB_PATH`) and the
+break-glass admin list (`$AIPLANE_BOOTSTRAP_ADMIN_GROUPS`). Both are
 environment variables, so a deployment still needs no file. The listen socket
 was never in the file either — that is `$IP` / `$PORT`.
 
@@ -532,7 +540,7 @@ go on doing that.
 
 **How you configure upstreams and models: in the browser.** Pools, backends, and per-model settings live in the database and are managed entirely at `/admin/*` — there has never been TOML for them. A fresh install boots with no upstreams; the setup path for a new operator is:
 
-1. Start the gateway and open it. With nothing configured it sends you to `/setup`, where you enter your OIDC provider, prove it with a real sign-in, and pick the claim value that grants admin — no file involved.
+1. Start AIplane and open it. With nothing configured it sends you to `/setup`, where you enter your OIDC provider, prove it with a real sign-in, and pick the claim value that grants admin — no file involved.
 2. Sign in. Your account now reaches the admin UI.
 3. At [`/admin/upstreams`](#the-built-in-web-ui), add a pool (chat / transcription / embedding / image / speech) and its backends — base URL, API key (stored encrypted), weight, max in-flight, aliases, per-pool compliance and rate-limit flags, and unknown-model / all-offline fallbacks. Click **Apply changes** and it goes live — no restart.
 4. At `/admin/models`, set per-model prices, reasoning budgets, context windows, capabilities, sampling defaults, the per-feature default model, and the web-search backend (SearXNG URL or Brave API key) that powers `search_web`.
@@ -542,31 +550,33 @@ Routing then needs no static table: the health probe reads each backend's `/mode
 The environment variables a deployment can set:
 
 ```bash
-export GATEWAY_SESSION_KEY=$(openssl rand -hex 32)    # REQUIRED: 32 random bytes, hex-encoded
-export GATEWAY_DATA_DIR=/var/lib/gateway              # optional: where the DB + RAG store are written
+export AIPLANE_SESSION_KEY=$(openssl rand -hex 32)    # REQUIRED: 32 random bytes, hex-encoded
+export AIPLANE_DATA_DIR=/var/lib/gateway              # optional: where the DB + RAG store are written
                                                       # (the container image already sets this)
 export IP=0.0.0.0                                     # optional: listen address, default 127.0.0.1
 export PORT=8080                                      # optional: listen port, default 8080
                                                       # (the container image already sets both)
-export GATEWAY_DB_PATH=/var/lib/gateway/gateway.sqlite # optional: overrides the path derived from
-                                                      # GATEWAY_DATA_DIR
-export GATEWAY_BOOTSTRAP_ADMIN_GROUPS=platform-admins # optional: break-glass admin claim values,
+export AIPLANE_DB_PATH=/var/lib/gateway/gateway.sqlite # optional: overrides the path derived from
+                                                      # AIPLANE_DATA_DIR
+export AIPLANE_BOOTSTRAP_ADMIN_GROUPS=platform-admins # optional: break-glass admin claim values,
                                                       # comma-separated
-export GATEWAY_OIDC_CLIENT_SECRET=…                   # only for an upgrade: resolves the legacy
+export AIPLANE_OIDC_CLIENT_SECRET=…                   # only for an upgrade: resolves the legacy
                                                       # [oidc] block's client_secret_env on import.
                                                       # A new install enters the secret at /setup
-export GATEWAY_ENCRYPTION_KEY=$(openssl rand -hex 32) # optional: 32-byte key encrypting the DB's at-rest secrets
+export AIPLANE_ENCRYPTION_KEY=$(openssl rand -hex 32) # optional: 32-byte key encrypting the DB's at-rest secrets
 ```
 
-`GATEWAY_SESSION_KEY` is **required — the gateway refuses to boot without it** — and must be **stable across restarts**. It is the HMAC key the session cookie is signed with, so a new key means every open cookie fails verification and every user is silently logged out. It also derives the at-rest key (below), so a lost key means lost secrets. Generate it once, keep it for the life of the deployment, and back it up alongside the database.
+Every one of these is also read under its old `GATEWAY_*` spelling — the project was called croit LLM Gateway, and a running deployment must not stop at boot because a variable was renamed. The old names log a deprecation warning and go away in a future breaking release; the one case that needs care is a `GATEWAY_DATA_DIR` override, which the container image's own `AIPLANE_DATA_DIR` would outrank (AIplane refuses to start rather than pick one). See [`docs/renaming.md`](docs/renaming.md).
 
-Earlier releases fell back to an ephemeral per-process key and only logged an error. That produced a gateway that looked healthy while logging everyone out on every restart and losing every sealed secret — invisible until it had already cost data. If you are upgrading and see the new startup error, the variable never made it into the service environment; add it to the unit's `EnvironmentFile` and restart.
+`AIPLANE_SESSION_KEY` is **required — AIplane refuses to boot without it** — and must be **stable across restarts**. It is the HMAC key the session cookie is signed with, so a new key means every open cookie fails verification and every user is silently logged out. It also derives the at-rest key (below), so a lost key means lost secrets. Generate it once, keep it for the life of the deployment, and back it up alongside the database.
 
-`GATEWAY_ENCRYPTION_KEY` is optional: it's the AES-256-GCM key under which the gateway's database-stored secrets are encrypted — each user's MCP-connector OAuth tokens, admin-stored connector client secrets, and **upstream backend API keys entered through the admin UI**. If unset, the gateway derives a stable key from `GATEWAY_SESSION_KEY` — which is itself mandatory, so the derived key is always stable. Set it explicitly if you want at-rest encryption decoupled from session-cookie signing (that way the session key can be rotated without destroying stored secrets). **Rotating this key invalidates already-stored ciphertext** — re-enter backend keys at `/admin/upstreams` after a change. *(Formerly `GATEWAY_MCP_KEY`. If you set it explicitly, rename the env var to the same value and nothing else changes. If you rely on the key derived from `GATEWAY_SESSION_KEY` (env unset), the derivation label was renamed once, when at-rest sealing grew beyond MCP tokens — and that shipped without a migration, so an earlier release did lose access to secrets sealed before it. That is fixed: the gateway now reads values sealed under the old key and rewrites them under the current one on the first boot, logging how many it moved. Nothing to re-enter.)*
+Earlier releases fell back to an ephemeral per-process key and only logged an error. That produced a deployment that looked healthy while logging everyone out on every restart and losing every sealed secret — invisible until it had already cost data. If you are upgrading and see the new startup error, the variable never made it into the service environment; add it to the unit's `EnvironmentFile` and restart.
+
+`AIPLANE_ENCRYPTION_KEY` is optional: it's the AES-256-GCM key under which AIplane's database-stored secrets are encrypted — each user's MCP-connector OAuth tokens, admin-stored connector client secrets, and **upstream backend API keys entered through the admin UI**. If unset, AIplane derives a stable key from `AIPLANE_SESSION_KEY` — which is itself mandatory, so the derived key is always stable. Set it explicitly if you want at-rest encryption decoupled from session-cookie signing (that way the session key can be rotated without destroying stored secrets). **Rotating this key invalidates already-stored ciphertext** — re-enter backend keys at `/admin/upstreams` after a change. *(Formerly `GATEWAY_MCP_KEY`. If you set it explicitly, rename the env var to the same value and nothing else changes. If you rely on the key derived from `AIPLANE_SESSION_KEY` (env unset), the derivation label was renamed once, when at-rest sealing grew beyond MCP tokens — and that shipped without a migration, so an earlier release did lose access to secrets sealed before it. That is fixed: AIplane now reads values sealed under the old key and rewrites them under the current one on the first boot, logging how many it moved. Nothing to re-enter.)*
 
 Where each block of the old config file went. Kept as a lookup table for
 anyone who remembers a TOML key and wants to know which screen owns it now —
-the gateway itself no longer reads any of them.
+AIplane itself no longer reads any of them.
 
 | Former block | Feature | Now configured at |
 |---|---|---|
@@ -585,9 +595,9 @@ the gateway itself no longer reads any of them.
 | `[feedback]` | The in-UI feedback widget that files GitHub **or** GitLab issues | `/admin/settings` → Notifications |
 | `[push]` | Web Push turn-complete notifications | `/admin/settings` → Notifications |
 | `[gateway]` | Session + API-token lifetimes, and whether admins may impersonate | `/admin/settings` → Access & usage |
-| `[gateway].public_url` | The gateway's own base URL | `/setup` |
-| `[gateway].bootstrap_admin_groups` | Break-glass admin claim values | `$GATEWAY_BOOTSTRAP_ADMIN_GROUPS` — deliberately **not** in the DB, so a broken group table cannot lock everyone out |
-| `[db].path` | Where the SQLite database lives | `$GATEWAY_DB_PATH` — it has to be found before anything can be read *out* of the database |
+| `[gateway].public_url` | AIplane's own base URL | `/setup` |
+| `[gateway].bootstrap_admin_groups` | Break-glass admin claim values | `$AIPLANE_BOOTSTRAP_ADMIN_GROUPS` — deliberately **not** in the DB, so a broken group table cannot lock everyone out |
+| `[db].path` | Where the SQLite database lives | `$AIPLANE_DB_PATH` — it has to be found before anything can be read *out* of the database |
 | `[oidc]` | The identity provider | `/setup` |
 | `[bind]` | The listen socket | **Removed** — use `$IP` / `$PORT` |
 
@@ -602,8 +612,8 @@ under the at-rest key, so there is nothing to export into the environment and
 nothing to keep in a file.
 
 Notes:
-- The bucket can stay **fully private** (no public-read ACL, no presign capability needed on the credentials): the gateway fetches every byte **server-side** and hands it to the upstream LLM inline — images as a `data:` URI in the request, other files as text. So `endpoint` only needs to be reachable from the **gateway**, not from the upstream LLM's network. Path-style requests are always used, so DNS-style bucket subdomains aren't required; the same shape works for MinIO, Backblaze B2, and R2.
-- Capability gating isn't done at the gateway — wire only multi-modal chat models into the pools. A mismatch surfaces as the upstream's own error in the chat bubble.
+- The bucket can stay **fully private** (no public-read ACL, no presign capability needed on the credentials): AIplane fetches every byte **server-side** and hands it to the upstream LLM inline — images as a `data:` URI in the request, other files as text. So `endpoint` only needs to be reachable from the **gateway**, not from the upstream LLM's network. Path-style requests are always used, so DNS-style bucket subdomains aren't required; the same shape works for MinIO, Backblaze B2, and R2.
+- Capability gating isn't done at AIplane — wire only multi-modal chat models into the pools. A mismatch surfaces as the upstream's own error in the chat bubble.
 - Past-turn attachments are stripped from the replayed history (kept as `[attached: name.ext (omitted)]` stubs) so the context window stays bounded.
 
 When automatic OCR is enabled, the current turn's image attachments — and any
@@ -615,18 +625,18 @@ untrusted document data, and the original upload stays available through
 cached by document hash, so the same document is recognised once and reused on
 later turns and across restarts, and each run shows up as a `document_ocr` row
 in the turn's activity list with queued/running/completed/failed status. If no
-healthy `ocr` backend is configured, the gateway does not fetch the attachment
+healthy `ocr` backend is configured, AIplane does not fetch the attachment
 for OCR and does not expose an OCR capability to the model. See
 [`docs/ocr.md`](docs/ocr.md).
 
 ### RAG (codebase search)
 
-Point the gateway at a body of documents; it fetches, chunks, and embeds it, and exposes it to the chat model through the `rag_search` tool (plus `rag_list_collections`, so the model can discover what's available). It's for "answer from *our* code and docs" without stuffing everything into the context window.
+Point AIplane at a body of documents; it fetches, chunks, and embeds it, and exposes it to the chat model through the `rag_search` tool (plus `rag_list_collections`, so the model can discover what's available). It's for "answer from *our* code and docs" without stuffing everything into the context window.
 
 **Where the documents come from** is a per-collection choice:
 
 - **`git`** — clone a repository and index its working tree. Needs `git` on the host PATH (the container image ships it).
-- **`webdav`** — index a folder tree on a WebDAV server: Nextcloud, ownCloud, OpenCloud, or a plain RFC 4918 server. Give it a server URL, an account, and an **app password** (stored encrypted at rest), plus optionally the folder to index. It indexes exactly what that account can see, so scope the account's shares to what you want indexed. On the ownCloud lineage the gateway detects the `oc:fileid` / propagating-etag extensions automatically and uses them for move-proof file identity; a plain server works too, just without those.
+- **`webdav`** — index a folder tree on a WebDAV server: Nextcloud, ownCloud, OpenCloud, or a plain RFC 4918 server. Give it a server URL, an account, and an **app password** (stored encrypted at rest), plus optionally the folder to index. It indexes exactly what that account can see, so scope the account's shares to what you want indexed. On the ownCloud lineage AIplane detects the `oc:fileid` / propagating-etag extensions automatically and uses them for move-proof file identity; a plain server works too, just without those.
 - **`gdrive`** — index a Google Drive folder tree (including shared drives), authorised per collection. Same walk and the same per-document extraction as the other two; Google's own file ids give move-proof identity.
 - **`hyperkitty`** — index a public mailing-list archive (Mailman 3's web archiver). Paste the list's page URL, e.g. `https://lists.example.com/hyperkitty/list/users@example.com/`; no credentials, since only public archives can be read. One **thread** is one document, with quoted reply chains, signatures and list footers stripped and every message keeping its author, date and permalink — so the model retrieves the conversation that contains the answer, and can cite the message it came from. The whole export is downloaded once and kept under `<data_dir>/source-cache/`; later syncs fetch only the days since the last one (`?start=…&end=…`) and append them, so a daily refresh costs kilobytes rather than tens of megabytes of somebody else's bandwidth. The local copy is refilled from scratch every 30 days, which is also how a message deleted from the archive leaves the index. Turn **Keep a local copy** off to download the whole export every time instead. Either way only threads that actually changed are re-embedded. One list per collection — add a second collection for the devel list — and set **Auto re-sync** to daily, since a mailing list has no webhook to ring.
 
@@ -679,7 +689,7 @@ As an admin, open `/admin/skills` to **upload** a `.skill` archive (a zip of a `
 
 Because the UI is an installable PWA, it can push a notification when an assistant turn a user started finishes **while the app isn't focused** — useful on a phone where you fire off a long turn and lock the screen. Turns run server-side in a background worker regardless of whether a tab is attached, so the "done" ping fires even after you've closed the app.
 
-This is **on by default and needs no setup or third-party account** — the gateway generates its own [VAPID](https://datatracker.ietf.org/doc/html/rfc8292) keypair on first boot (persisted in the DB, private half sealed under the at-rest key) and encrypts each payload end-to-end for the subscription ([RFC 8291](https://datatracker.ietf.org/doc/html/rfc8291)). The only hard requirement is that the gateway is served over **HTTPS** (localhost is exempt for dev): service workers and the Push API only run on secure origins. A user opts in per device from the **Notifications** card on `/tokens`; whether a notification is actually shown is decided in the service worker (suppressed when a focused tab already has that conversation open).
+This is **on by default and needs no setup or third-party account** — AIplane generates its own [VAPID](https://datatracker.ietf.org/doc/html/rfc8292) keypair on first boot (persisted in the DB, private half sealed under the at-rest key) and encrypts each payload end-to-end for the subscription ([RFC 8291](https://datatracker.ietf.org/doc/html/rfc8291)). The only hard requirement is that AIplane is served over **HTTPS** (localhost is exempt for dev): service workers and the Push API only run on secure origins. A user opts in per device from the **Notifications** card on `/tokens`; whether a notification is actually shown is decided in the service worker (suppressed when a focused tab already has that conversation open).
 
 ```toml
 [push]
@@ -689,7 +699,7 @@ contact = "mailto:ops@example.com"   # VAPID `sub`: a contact the push service m
 
 Platform support: **Android/Chrome** works directly; on **iOS** Web Push requires the PWA to be *installed* to the home screen (iOS 16.4+), not just open in Safari.
 
-## Using the gateway
+## Using AIplane
 
 **1 — Get an API token.** Sign in at `/login`, then create a `gwk_…` token on the `/tokens` page.
 
@@ -697,11 +707,11 @@ Platform support: **Android/Chrome** works directly; on **iOS** Web Push require
 
 ```bash
 export OPENAI_API_KEY=gwk_…
-export OPENAI_BASE_URL=https://gateway.example.com/v1
+export OPENAI_BASE_URL=https://aiplane.example.com/v1
 openai api chat_completions.create -m <model-id> -g user "Hello"
 ```
 
-`GET /v1/models` lists every model the gateway has discovered across all pools — pick a `model` id from there.
+`GET /v1/models` lists every model AIplane has discovered across all pools — pick a `model` id from there.
 
 **2b — Or point Claude Code at it** by setting `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` — see [Claude Code against your own models](#claude-code-against-your-own-models).
 
@@ -723,7 +733,7 @@ openai api chat_completions.create -m <model-id> -g user "Hello"
 | `GET /v1/sandbox/files/{run}/{filename}` | Bearer token | Download a file a sandbox run produced for the caller (scoped to your user). |
 | `HEAD /api/hello` | none | Connection-warming probe an Anthropic-format client sends at startup. |
 | `GET /healthz`, `GET /readyz` | none | Liveness / readiness probes. |
-| `/`, `/{*name}` | public (shell) / session cookie (its API calls) | The **web UI**: a SvelteKit SPA served as static files from `GATEWAY_STATIC_DIR`. Any path that is not a real file falls back to `index.html`, so `/login`, `/chat`, `/tokens`, `/usage`, `/skills`, `/memory`, `/scheduled`, `/webhooks`, `/integrations`, `/tools`, `/setup` and the `/admin/*` screens are **client** routes — the server has no handler for them and every action behind them is an `/api/v0/*` call. `503` (not `404`) when no SPA build was deployed. |
+| `/`, `/{*name}` | public (shell) / session cookie (its API calls) | The **web UI**: a SvelteKit SPA served as static files from `AIPLANE_STATIC_DIR`. Any path that is not a real file falls back to `index.html`, so `/login`, `/chat`, `/tokens`, `/usage`, `/skills`, `/memory`, `/scheduled`, `/webhooks`, `/integrations`, `/tools`, `/setup` and the `/admin/*` screens are **client** routes — the server has no handler for them and every action behind them is an `/api/v0/*` call. `503` (not `404`) when no SPA build was deployed. |
 | `/hooks/{secret}` | secret in URL | Fire a webhook: runs the owner's saved prompt with the request body appended as an untrusted block. Accepts GET and POST; sync webhooks return the model output as a JSON envelope, async ones return `202`. |
 | `/hooks/rag/{token}` | token in URL | Re-sync one RAG collection. Point a file host's webhook (Nextcloud's `webhook_listeners`, ownCloud's equivalent, or a cron line) at it so a changed folder is searchable in minutes rather than at the next poll. The body is ignored — this is a doorbell, not a change feed; the walk that follows establishes what actually changed. Returns `202` with the number of refs queued. |
 | `GET /rag/{id}/connect`, `GET /rag/oauth/callback` | admin session cookie | OAuth round trip for a RAG source that needs one (Google Drive, …). Outside `/api/v0` because the callback URI is registered with the external provider, so the path is not ours to move. |
@@ -732,7 +742,7 @@ openai api chat_completions.create -m <model-id> -g user "Hello"
 | `/api/v0/push/config`, `/api/v0/push/subscribe`, `/api/v0/push/unsubscribe` | session cookie | Web Push (turn-complete notifications): fetch the VAPID public key + enabled flag, register a browser subscription, and forget one. Governed by the Web Push settings at `/admin/settings` → Notifications. |
 | `POST /api/v0/me/browser/feedback/{turn_id}` | session cookie | Result of a `browser_control` batch, posted by the chat page after the paired browser extension ran it (or refused it, or reported that it isn't installed). The turn must belong to the caller: this reply becomes the model's picture of a page in someone's browser, so answering a stranger's turn would be prompt injection with a return address. See [`docs/browser-control.md`](docs/browser-control.md). |
 | `/api/v0/admin/*` | admin role | Everything behind the admin screens: users (list + start impersonation, and `POST /api/v0/admin/impersonate/stop` to end it), the deployment-wide API-token register (every token with its owner, month-to-date spend, model allowlist and quota; the secret itself is unrecoverable — only a SHA-256 is stored — and the one thing editable is an operator model restriction, which intersects with the owner's own so neither side can widen the other), groups (maps OIDC claims onto gateway groups and sets per-group tool/skill grants; pools, RAG collections and MCP connectors then restrict access by group), upstreams (edits the pool/backend topology in the DB and hot-reloads it), connectors ([`docs/connectors.md`](docs/connectors.md)), ComfyUI's workflow catalog ([`docs/comfyui.md`](docs/comfyui.md)), skills, limits, and the operator settings — OCR, compaction, attachment storage, sandbox, ComfyUI, RAG, skills, Typst, GeoIP, usage, limits, feedback, push and session/token lifetimes, with secrets sealed at rest. Almost everything takes effect on the next request; fields that own a background worker are badged `restart`. |
-| `GET /openapi.json` | none | OpenAPI 3.1 for the session API, generated by the gateway from its compiled `/api/v0/*` route declarations. No separate spec file is shipped or maintained. |
+| `GET /openapi.json` | none | OpenAPI 3.1 for the session API, generated by AIplane from its compiled `/api/v0/*` route declarations. No separate spec file is shipped or maintained. |
 | `GET /api/v0/build` | none | Runtime source URL and exact version/git label used by the public login card and persistent AGPL source offer. |
 | `/api/v0/*` | session cookie unless documented above | The JSON API backing the UI — identity, tokens, chat (including `GET /api/v0/chat/sessions/{id}/events`), memories, scheduled actions, webhooks, skills, integrations, usage, RAG, transcription and speech. |
 
@@ -744,10 +754,10 @@ When Web Push is enabled (the default), the PWA can also deliver **Web Push** no
 
 ## Production deployment (container + systemd)
 
-CI builds `target/release/gateway` and publishes a runtime container image (`debian:trixie-slim` plus `git` + `ca-certificates`, which the RAG indexer needs). The binary is built outside the Dockerfile and COPYed in. To build locally:
+CI builds `target/release/aiplane` and publishes a runtime container image (`debian:trixie-slim` plus `git` + `ca-certificates`, which the RAG indexer needs). The binary is built outside the Dockerfile and COPYed in. To build locally:
 
 ```bash
-mise run build                    # produces target/release/gateway (and fetches the typst CLI)
+mise run build                    # produces target/release/aiplane (and fetches the typst CLI)
 mise run build-web                # produces target/frontend/build (the SvelteKit SPA)
 docker build -t gateway:dev .     # Dockerfile COPYs the release binary + SPA into the image
 ```
@@ -755,19 +765,19 @@ docker build -t gateway:dev .     # Dockerfile COPYs the release binary + SPA in
 [`deploy/quadlet/`](deploy/quadlet/) ships a hardened systemd-podman Quadlet (read-only rootfs, all capabilities dropped, runs as an unprivileged uid). Its [README](deploy/quadlet/README.md) is the full walkthrough; in short:
 
 ```bash
-sudo install -d -m 0750 /etc/gateway
+sudo install -d -m 0750 /etc/aiplane
 sudo install -m 0644 deploy/quadlet/gateway.container   /etc/containers/systemd/
 sudo install -m 0644 deploy/quadlet/gateway.volume      /etc/containers/systemd/
-sudo install -m 0600 deploy/quadlet/gateway.example.env /etc/gateway/gateway.env
-sudo $EDITOR /etc/gateway/gateway.env     # GATEWAY_SESSION_KEY — the only required variable
-# No config.toml: open the gateway's URL and the setup wizard takes it from there.
+sudo install -m 0600 deploy/quadlet/gateway.example.env /etc/aiplane/gateway.env
+sudo $EDITOR /etc/aiplane/gateway.env     # AIPLANE_SESSION_KEY — the only required variable
+# No config.toml: open AIplane's URL and the setup wizard takes it from there.
 sudo systemctl daemon-reload
 sudo systemctl enable --now gateway.service
 ```
 
 Operational notes:
-- **TLS:** the unit binds `127.0.0.1:8080` — terminate HTTPS with a reverse proxy (Caddy / Traefik / nginx) in front. Set the gateway's public URL to the external HTTPS URL at `/setup` so the OIDC callback is correct, and register `<public_url>/auth/callback` as a redirect URI on your OIDC client.
-- **State:** the SQLite DB + session store live in a Podman-managed named volume and survive image swaps. Point `$GATEWAY_DB_PATH` (and, if you use RAG, its `data_dir` at `/admin/settings`) at that volume.
+- **TLS:** the unit binds `127.0.0.1:8080` — terminate HTTPS with a reverse proxy (Caddy / Traefik / nginx) in front. Set AIplane's public URL to the external HTTPS URL at `/setup` so the OIDC callback is correct, and register `<public_url>/auth/callback` as a redirect URI on your OIDC client.
+- **State:** the SQLite DB + session store live in a Podman-managed named volume and survive image swaps. Point `$AIPLANE_DB_PATH` (and, if you use RAG, its `data_dir` at `/admin/settings`) at that volume.
 - **Updates:** Quadlet treats `Image=` as the source of truth and won't re-pull `:latest` on restart — pin a digest or a `:<git-sha>` tag in production.
 
 ### Docker Compose
@@ -776,16 +786,16 @@ For hosts running Docker rather than podman, [`deploy/compose.example.yml`](depl
 
 ### Kubernetes
 
-[`deploy/helm/llm-gateway/`](deploy/helm/llm-gateway/) is a Helm chart with the same hardening. A default install is four objects — StatefulSet (one replica), PVC, Service, ServiceAccount — and needs no values at all:
+[`deploy/helm/aiplane/`](deploy/helm/aiplane/) is a Helm chart with the same hardening. A default install is four objects — StatefulSet (one replica), PVC, Service, ServiceAccount — and needs no values at all:
 
 ```bash
-kubectl create namespace llm-gateway
-helm install llm-gateway oci://ghcr.io/croit/charts/llm-gateway -n llm-gateway \
+kubectl create namespace aiplane
+helm install aiplane oci://ghcr.io/croit/charts/aiplane -n aiplane \
   --version 2609.1.0 \
-  --set ingress.enabled=true --set ingress.host=gateway.example.com
+  --set ingress.enabled=true --set ingress.host=aiplane.example.com
 ```
 
-The chart is published as an OCI artifact next to the images and carries the same version, so `--version 2609.1.0` pins chart and images to one build ([`docs/releases.md`](docs/releases.md)). The MCP bridges (Google Workspace, GitLab CE, Discord) and the OCR adapter run as extra containers in the same pod, each behind an `enabled` flag; the code sandbox stays outside the chart, because it needs a gVisor/Kata host and the gateway reaches it through a URL in its settings. [`docs/kubernetes.md`](docs/kubernetes.md) is the step-by-step guide, including backups, the sandbox options and why the deployment is deliberately single-replica.
+The chart is published as an OCI artifact next to the images and carries the same version, so `--version 2609.1.0` pins chart and images to one build ([`docs/releases.md`](docs/releases.md)). The MCP bridges (Google Workspace, GitLab CE, Discord) and the OCR adapter run as extra containers in the same pod, each behind an `enabled` flag; the code sandbox stays outside the chart, because it needs a gVisor/Kata host and AIplane reaches it through a URL in its settings. [`docs/kubernetes.md`](docs/kubernetes.md) is the step-by-step guide, including backups, the sandbox options and why the deployment is deliberately single-replica.
 
 All deployment-relevant docs — every method, every component, the full Google Workspace connector setup — live in **[`deploy/README.md`](deploy/README.md)**.
 
@@ -805,6 +815,7 @@ Everything is in [`docs/`](docs/README.md) — start at that index. The ones mos
 | [`deploy/README.md`](deploy/README.md) | Deployment: Docker Compose, systemd/Podman, Helm |
 | [`docs/kubernetes.md`](docs/kubernetes.md) | Running on Kubernetes, step by step |
 | [`docs/releases.md`](docs/releases.md) | The `YYMM.RELEASE.BUILD` version scheme and what each published tag means |
+| [`docs/renaming.md`](docs/renaming.md) | **Upgrading from croit LLM Gateway** — what the rename changed, what kept its old name, and the one place it wants a decision |
 
 [`AGENTS.md`](AGENTS.md) doubles as human onboarding.
 
@@ -812,12 +823,12 @@ Everything is in [`docs/`](docs/README.md) — start at that index. The ones mos
 
 | Artifact | Reference |
 |---|---|
-| Gateway | `ghcr.io/croit/llm-gateway` |
-| Helm chart | `oci://ghcr.io/croit/charts/llm-gateway` |
-| Sandbox runner + workload image | `ghcr.io/croit/llm-gateway-sandbox-runner`, `ghcr.io/croit/llm-gateway-sandbox` |
-| OCR sidecar | `ghcr.io/croit/llm-gateway-ocr-sidecar` |
+| AIplane | `ghcr.io/croit/aiplane` |
+| Helm chart | `oci://ghcr.io/croit/charts/aiplane` |
+| Sandbox runner + workload image | `ghcr.io/croit/aiplane-sandbox-runner`, `ghcr.io/croit/aiplane-sandbox` |
+| OCR sidecar | `ghcr.io/croit/aiplane-ocr-sidecar` |
 
-Deploy `:production` (the newest release) or pin a `:vYYMM.RELEASE.BUILD` tag; `:latest` follows `main`. [Releases](https://github.com/croit/llm-gateway/releases) · [packages](https://github.com/orgs/croit/packages?repo_name=llm-gateway).
+Deploy `:production` (the newest release) or pin a `:vYYMM.RELEASE.BUILD` tag; `:latest` follows `main`. [Releases](https://github.com/croit/aiplane/releases) · [packages](https://github.com/orgs/croit/packages?repo_name=aiplane).
 
 ## Contributing
 
@@ -827,7 +838,7 @@ Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the w
 
 Licensed under the **GNU Affero General Public License v3.0** (`AGPL-3.0-only`) — see [`LICENSE`](LICENSE).
 
-You are free to use, study, modify, and redistribute this software, including in a commercial setting. Because it is AGPL, one obligation stands out: if you run a **modified** version to provide a network service, you must offer the complete corresponding source — including your modifications — to the users of that service (AGPL §13). The UI carries a persistent "Source" link for this; operators of a modified deployment should point it at their own source via the `GATEWAY_SOURCE_URL` environment variable.
+You are free to use, study, modify, and redistribute this software, including in a commercial setting. Because it is AGPL, one obligation stands out: if you run a **modified** version to provide a network service, you must offer the complete corresponding source — including your modifications — to the users of that service (AGPL §13). The UI carries a persistent "Source" link for this; operators of a modified deployment should point it at their own source via the `AIPLANE_SOURCE_URL` environment variable.
 
 **Commercial licensing.** If the AGPL's terms don't fit your use case, a separate commercial license is available — contact croit GmbH (<info@croit.io>).
 

@@ -1,18 +1,19 @@
 # Docs
 
-This directory holds the design docs for the LLM gateway. The agent-facing entry point lives at [`/AGENTS.md`](../AGENTS.md); start there. These files go deeper on specific subsystems.
+This directory holds the design docs for **croit AIplane**. The agent-facing entry point lives at [`/AGENTS.md`](../AGENTS.md); start there. These files go deeper on specific subsystems — the OpenAI-compatible LLM gateway is one of them, not the product.
 
 ## Index
 
 | Doc | What it covers |
 |---|---|
+| [`renaming.md`](renaming.md) | **croit LLM Gateway → croit AIplane** — what the rename changed, what kept its old name and why, and what an upgrade needs from you (images, environment variables, Helm, the at-rest key) |
 | [`architecture.md`](architecture.md) | High-level system diagram, request flow, crate boundaries |
 | [`dev-workflow.md`](dev-workflow.md) | mise tasks, two-terminal dev loop (cargo + tailwind --watch), and the traps that have cost us time (git-env leaks through hooks, pushing at a sibling worktree, daisyUI 4 classes) |
 | [`dependencies.md`](dependencies.md) | Dep policy + the current allowed list and rationale |
 | [`auth.md`](auth.md) | OIDC discovery, gateway-minted tokens, sessions |
 | [`gateway-api.md`](gateway-api.md) | OpenAI-compatible HTTP API, streaming, transcription |
 | [`upstreams.md`](upstreams.md) | Provider config, model→backend routing, load balancing, health |
-| [`claude-code.md`](claude-code.md) | **Claude Code through the gateway** — the Anthropic Messages compatibility layer at `/v1/messages`: setup, model aliasing, what is translated, and the known limits |
+| [`claude-code.md`](claude-code.md) | **Claude Code through AIplane** — the Anthropic Messages compatibility layer at `/v1/messages`: setup, model aliasing, what is translated, and the known limits |
 | [`tools-rbac.md`](tools-rbac.md) | Tool registry, role→tool mapping, server-side execution loop |
 | [`tools-inventory.md`](tools-inventory.md) | Every tool id with its registration gate, toggle key, and whether it is chat-only (CI-drift-guarded) |
 | [`file-conversions.md`](file-conversions.md) | How uploads are read and documents produced/converted — tools, formats, expectations, limitations, gaps |

@@ -30,7 +30,7 @@ skills-description-heading = Описание
 skills-grant-dialog-heading = Кто может использовать этот скилл?
 skills-grant-dialog-desc-part1 = Выберите группы, которым разрешено загружать этот скилл:
 skills-grant-dialog-desc-part2 = . Доступ получит каждый участник выбранной группы.
-skills-grant-dialog-no-roles-part1 = Группы шлюза не определены. Добавьте записи
+skills-grant-dialog-no-roles-part1 = Группы AIplane не определены. Добавьте записи
 skills-grant-dialog-no-roles-part2 = прежде чем предоставлять доступ.
 
 skills-cancel-button = Отмена

@@ -2,8 +2,8 @@
 # per-user `/usage` usage-statistics page and its admin-only "all
 # users" scope toggle.
 
-usage-title-all = Использование — все пользователи — LLM Gateway
-usage-title-mine = Ваше использование — LLM Gateway
+usage-title-all = Использование — все пользователи — AIplane
+usage-title-mine = Ваше использование — AIplane
 usage-heading-all = Использование — все пользователи
 usage-heading-mine = Ваше использование
 usage-blurb-all = Объём запросов и использование токенов по пользователям и по бэкендам для всех способов доступа. «Запросы» считает обращения к бэкенду, поэтому обмен с использованием инструментов (несколько раундов) засчитывается как более одного.

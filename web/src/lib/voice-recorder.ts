@@ -4,7 +4,7 @@
  * resampled to 16 kHz mono, encoded as a canonical 44-byte WAV. PCM rather
  * than MediaRecorder/Opus because the `/api/v0/transcriptions` handler runs
  * the upload through a neural VAD (earshot) that needs raw PCM16 — see
- * `crates/gateway/src/rama_server/vad.rs`.
+ * `crates/aiplane/src/rama_server/vad.rs`.
  *
  * Differences from the legacy module: the worklet URL is an explicit
  * parameter (the SPA serves it at `${base}/pcm-recorder.js`) and the

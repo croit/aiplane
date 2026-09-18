@@ -3,13 +3,13 @@
 // conversation, submit a turn, and watch the reply arrive live over the
 // JSON-SSE event stream.
 //
-// Needs a gateway that (a) serves the SPA (`GATEWAY_STATIC_DIR=…`) and
+// Needs a gateway that (a) serves the SPA (`AIPLANE_STATIC_DIR=…`) and
 // (b) has a chat upstream. `mise run dev` satisfies (a) but has no pools,
 // so a submit there finalises as `errored` — this file detects that and
 // skips with a pointer at the right server instead of failing. The full
 // flow runs against the dev-ui stub:
 //
-//     GATEWAY_STATIC_DIR=target/frontend/build mise run dev-ui
+//     AIPLANE_STATIC_DIR=target/frontend/build mise run dev-ui
 //     mise run e2e
 
 import { test, before, after } from "node:test";
@@ -52,7 +52,7 @@ before(async () => {
     assert.equal(
         probe.status,
         200,
-        `the SPA is not served at ${BASE} (got ${probe.status}) — run the server with GATEWAY_STATIC_DIR=target/frontend/build.`,
+        `the SPA is not served at ${BASE} (got ${probe.status}) — run the server with AIPLANE_STATIC_DIR=target/frontend/build.`,
     );
     browser = await launchBrowser();
 });
@@ -124,7 +124,7 @@ test("a turn streams into the SPA over the JSON event protocol", async (t) => {
     if (!upstream.ok) {
         t.skip(
             "no chat upstream configured — run the gateway as " +
-                "`GATEWAY_STATIC_DIR=target/frontend/build mise run dev-ui` for the full flow",
+                "`AIPLANE_STATIC_DIR=target/frontend/build mise run dev-ui` for the full flow",
         );
         return;
     }
@@ -135,7 +135,7 @@ test("a turn streams into the SPA over the JSON event protocol", async (t) => {
 
     await page.goto(`${BASE}/chat`, { waitUntil: "domcontentloaded" });
     await page.waitForURL((u) => /\/chat\/.+/.test(u.pathname), { timeout: 5000 });
-    assert.equal(await page.title(), "Chat — LLM Gateway");
+    assert.equal(await page.title(), "Chat — AIplane");
     const landing = page.url();
     await page.getByRole("button", { name: "Start a new conversation", exact: true }).click();
     await page.waitForURL((url) => /\/chat\/.+/.test(url.pathname) && url.href !== landing, { timeout: 5000 });
@@ -162,8 +162,8 @@ test("a turn streams into the SPA over the JSON event protocol", async (t) => {
     // unlocks again once the turn finalises.
     await page.waitForSelector("text=How can I help?", { timeout: 10_000 });
     await page.getByRole("button", { name: "Send", exact: true }).waitFor({ state: "visible", timeout: 10_000 });
-    await page.waitForFunction(() => document.title !== "Chat — LLM Gateway", undefined, { timeout: 5000 });
-    assert.equal(await page.title(), "Hi! How can I help — LLM Gateway");
+    await page.waitForFunction(() => document.title !== "Chat — AIplane", undefined, { timeout: 5000 });
+    assert.equal(await page.title(), "Hi! How can I help — AIplane");
     await ctx.close();
 });
 
@@ -250,8 +250,8 @@ test("conversation tools use a responsive full-screen selector", async () => {
 // version through the same store), and the end of a turn stands in for the
 // mid-turn `sidebar_changed` — both cues run the same client refresh.
 test("a document version written behind the panel's back shows up without a reload", async () => {
-    const cookie = process.env.GATEWAY_SESSION_COOKIE;
-    assert.ok(cookie, "set GATEWAY_SESSION_COOKIE to the dev-ui seed cookie");
+    const cookie = process.env.AIPLANE_SESSION_COOKIE;
+    assert.ok(cookie, "set AIPLANE_SESSION_COOKIE to the dev-ui seed cookie");
     const cookieValue = cookie.startsWith("id=") ? cookie.slice("id=".length) : cookie;
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 950 } });
     await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
@@ -305,8 +305,8 @@ test("a document version written behind the panel's back shows up without a relo
 // the end, because the other half of the bug would be dragging the page away
 // from someone in the middle of reading.
 test("the transcript follows the end, and stops the moment the reader scrolls back", async () => {
-    const cookie = process.env.GATEWAY_SESSION_COOKIE;
-    assert.ok(cookie, "set GATEWAY_SESSION_COOKIE to the dev-ui seed cookie");
+    const cookie = process.env.AIPLANE_SESSION_COOKIE;
+    assert.ok(cookie, "set AIPLANE_SESSION_COOKIE to the dev-ui seed cookie");
     const cookieValue = cookie.startsWith("id=") ? cookie.slice("id=".length) : cookie;
     // Short on purpose: the seeded conversation has to overflow the window,
     // or every assertion below passes without meaning anything.
@@ -367,8 +367,8 @@ test("the transcript follows the end, and stops the moment the reader scrolls ba
 // screen. On its own conversation, because sending leaves a turn behind and
 // the seeded fixtures are read by the tests around this one.
 test("a sent message is put on screen however far back the reader had scrolled", async () => {
-    const cookie = process.env.GATEWAY_SESSION_COOKIE;
-    assert.ok(cookie, "set GATEWAY_SESSION_COOKIE to the dev-ui seed cookie");
+    const cookie = process.env.AIPLANE_SESSION_COOKIE;
+    assert.ok(cookie, "set AIPLANE_SESSION_COOKIE to the dev-ui seed cookie");
     const cookieValue = cookie.startsWith("id=") ? cookie.slice("id=".length) : cookie;
     const sessionId = await seededConversation(`id=${cookieValue}`, 6);
 
@@ -436,8 +436,8 @@ async function seededConversation(cookie, turns) {
 test("the transcript keeps edit, retry, code, tool-detail, and canvas workflows", async () => {
     // Every other suite reads this variable as the bare cookie value; accept
     // either spelling so one export drives the whole run.
-    const cookie = process.env.GATEWAY_SESSION_COOKIE;
-    assert.ok(cookie, "set GATEWAY_SESSION_COOKIE to the dev-ui seed cookie");
+    const cookie = process.env.AIPLANE_SESSION_COOKIE;
+    assert.ok(cookie, "set AIPLANE_SESSION_COOKIE to the dev-ui seed cookie");
     const cookieValue = cookie.startsWith("id=") ? cookie.slice("id=".length) : cookie;
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 950 } });
     await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);

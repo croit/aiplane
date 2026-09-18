@@ -4,7 +4,7 @@
 // spa_routes integration) and `build-web` in CI. What a *browser* can catch
 // that those can't is the client side: that the shell actually boots and
 // that the signed-out redirect into the OIDC login fires. So these tests
-// need a running gateway with GATEWAY_STATIC_DIR pointing at the built SPA
+// need a running gateway with AIPLANE_STATIC_DIR pointing at the built SPA
 // (`mise run dev` sets that for you) — they run via `mise run e2e`.
 //
 // The signed-in test logs in through the debug-only, delete-free
@@ -24,14 +24,14 @@ before(async () => {
         await gatewayIsUp(),
         `gateway is not reachable at ${BASE}; run \`mise run dev\` in another terminal`,
     );
-    // Pre-flight: the SPA must be deployed (GATEWAY_STATIC_DIR set). An undeployed
+    // Pre-flight: the SPA must be deployed (AIPLANE_STATIC_DIR set). An undeployed
     // SPA answers 503 (rama_server::spa) — distinguish that from a dead server.
     const probe = await fetch(`${BASE}/`);
     assert.equal(
         probe.status,
         200,
         `the SPA is not served at ${BASE} (got ${probe.status}). ` +
-            "Run \`mise run build-web\` and restart the gateway with GATEWAY_STATIC_DIR=target/frontend/build.",
+            "Run \`mise run build-web\` and restart the gateway with AIPLANE_STATIC_DIR=target/frontend/build.",
     );
     browser = await launchBrowser();
 });
@@ -52,7 +52,7 @@ test("the SPA shell loads at the root (client bundle boots, not the 404/503 fall
 
     // The app header is only in the DOM once Svelte has mounted and hydrated —
     // a 503 "not deployed" or the router's 404 would have no such markup.
-    await page.waitForSelector("text=LLM Gateway", { timeout: 5000 });
+    await page.waitForSelector("text=AIplane", { timeout: 5000 });
     await ctx.close();
 });
 
@@ -72,7 +72,7 @@ test("a signed-out visitor reaches the sign-in entry with return-to intact", asy
         await ctx.close();
         return;
     }
-    await page.getByRole("heading", { name: "Sign in to LLM Gateway", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Sign in to AIplane", exact: true }).waitFor();
     assert.equal(await page.locator('input[name="return_to"]').getAttribute("value"), "/");
     await ctx.close();
 });
@@ -107,7 +107,7 @@ test("login preserves the production sign-in entry and safe deep link", async ()
     const page = await ctx.newPage();
     await page.goto(`${BASE}/login?return_to=${encodeURIComponent('/admin/settings?tab=tools')}`, { waitUntil: "networkidle" });
 
-    await page.getByRole("heading", { name: "Sign in to LLM Gateway", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Sign in to AIplane", exact: true }).waitFor();
     assert.equal(await page.locator("aside").count(), 0);
     const form = page.locator('form[action="/auth/login"]');
     assert.equal(await form.locator('input[name="return_to"]').getAttribute("value"), "/admin/settings?tab=tools");

@@ -10,8 +10,8 @@
 #
 # Install:
 #   sudo cp deploy/quadlet/gitlab-mcp.container /etc/containers/systemd/
-#   sudo install -m 0644 deploy/quadlet/gitlab-mcp.example.env /etc/gateway/gitlab-mcp.env
-#   sudo $EDITOR /etc/gateway/gitlab-mcp.env          # set GITLAB_API_URL
+#   sudo install -m 0644 deploy/quadlet/gitlab-mcp.example.env /etc/aiplane/gitlab-mcp.env
+#   sudo $EDITOR /etc/aiplane/gitlab-mcp.env          # set GITLAB_API_URL
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now gitlab-mcp.service
 #
@@ -33,7 +33,7 @@ Image=docker.io/zereight050/gitlab-mcp:latest
 Network=llm.network
 
 # GITLAB_API_URL=https://<your-gitlab>/api/v4
-EnvironmentFile=/etc/gateway/gitlab-mcp.env
+EnvironmentFile=/etc/aiplane/gitlab-mcp.env
 
 Environment=HOST=0.0.0.0
 # Streamable-HTTP at /mcp; required for remote-authorization (per-request token).

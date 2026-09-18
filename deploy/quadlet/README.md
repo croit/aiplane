@@ -1,6 +1,6 @@
 # Quadlet deployment
 
-systemd-podman unit files for running the LLM gateway as a system service on any host with podman ≥ 4.4 (RHEL 9 / Fedora 38 / Debian 13 / Ubuntu 24.04+).
+systemd-podman unit files for running croit AIplane as a system service on any host with podman ≥ 4.4 (RHEL 9 / Fedora 38 / Debian 13 / Ubuntu 24.04+).
 
 Quadlet is the systemd-native way to manage Podman containers — you ship `.container` files that systemd's generator turns into `.service` units at boot.
 
@@ -8,9 +8,9 @@ Quadlet is the systemd-native way to manage Podman containers — you ship `.con
 
 ```
 deploy/quadlet/
-├── gateway.container                  # the gateway unit definition
-├── gateway.volume                     # named volume for /var/lib/gateway
-├── gateway.example.env                # template for gateway secrets
+├── aiplane.container                  # the AIplane unit definition
+├── aiplane.volume                     # named volume for /var/lib/gateway
+├── aiplane.example.env                # template for AIplane secrets
 ├── google-workspace-mcp.container     # optional: Google Workspace MCP sidecar
 ├── gworkspace-mcp-oauth.volume        #   its OAuth store (must persist!)
 ├── google-workspace-mcp.example.env
@@ -24,53 +24,53 @@ deploy/quadlet/
 └── README.md                          # this file
 ```
 
-The runtime config + secrets stay on the host at `/etc/gateway/`; the SQLite DB (which also holds the session store) lives in a Podman-managed named volume.
+The runtime config + secrets stay on the host at `/etc/aiplane/`; the SQLite DB (which also holds the session store) lives in a Podman-managed named volume.
 
 ## Quick start
 
 ```bash
 # As root on the target host:
-sudo install -d -m 0750 -o root -g root /etc/gateway
-sudo install -m 0644 deploy/quadlet/gateway.container /etc/containers/systemd/
-sudo install -m 0644 deploy/quadlet/gateway.volume    /etc/containers/systemd/
-sudo install -m 0600 deploy/quadlet/gateway.example.env /etc/gateway/gateway.env
+sudo install -d -m 0750 -o root -g root /etc/aiplane
+sudo install -m 0644 deploy/quadlet/aiplane.container /etc/containers/systemd/
+sudo install -m 0644 deploy/quadlet/aiplane.volume    /etc/containers/systemd/
+sudo install -m 0600 deploy/quadlet/aiplane.example.env /etc/aiplane/aiplane.env
 
 # Fill in secrets + upstreams:
-sudo $EDITOR /etc/gateway/gateway.env
+sudo $EDITOR /etc/aiplane/aiplane.env
 ```
 
 Two environment variables are mandatory when deploying via this Quadlet, plus
 one more if you use the RAG feature. There is no config file — everything else
 is configured in the admin UI and stored in the database.
 
-- `GATEWAY_DB_PATH=/var/lib/gateway/gateway.sqlite` — the default is the
+- `AIPLANE_DB_PATH=/var/lib/gateway/gateway.sqlite` — the default is the
   relative path `gateway.sqlite`, which would land in `/app` (the container's
   WORKDIR) and be lost on the next image swap. Point it at the named volume.
-- `GATEWAY_PUBLIC_URL=https://gateway.example.com` — used to build the OIDC
+- `AIPLANE_PUBLIC_URL=https://aiplane.example.com` — used to build the OIDC
   callback URL the IdP redirects to. Set it to whatever your reverse proxy
   exposes externally.
-- `GATEWAY_DATA_DIR` — if you use RAG, put its index directory on the volume
+- `AIPLANE_DATA_DIR` — if you use RAG, put its index directory on the volume
   too.
 
 Generate the service unit, then start it:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now gateway.service
+sudo systemctl enable --now aiplane.service
 
 # Logs + status:
-journalctl -u gateway.service -f
-systemctl status gateway.service
+journalctl -u aiplane.service -f
+systemctl status aiplane.service
 ```
 
-The first start pulls the image from the container registry (`ghcr.io/croit/llm-gateway`). After that, `systemctl restart gateway.service` is a fast restart against the cached image.
+The first start pulls the image from the container registry (`ghcr.io/croit/aiplane`). After that, `systemctl restart aiplane.service` is a fast restart against the cached image.
 
 ## Upgrading
 
 Quadlet treats `Image=` as the source of truth — `:latest` will *not* be re-pulled on restart. Two choices:
 
 - **Pin a digest** (production): edit the `Image=` line to `…@sha256:<digest>` or a content-tagged value like `…:<git-sha>`. CI publishes both `:<sha>` and `:latest`.
-- **Force a pull**: `sudo podman pull <image>` then `sudo systemctl restart gateway.service`. Less hygienic; useful for staging.
+- **Force a pull**: `sudo podman pull <image>` then `sudo systemctl restart aiplane.service`. Less hygienic; useful for staging.
 
 The SQLite DB + session store live in the named volume, so they survive image swaps.
 
@@ -78,7 +78,7 @@ The SQLite DB + session store live in the named volume, so they survive image sw
 
 The default `PublishPort=127.0.0.1:8080:8080` only binds loopback — put a TLS-terminating reverse proxy in front (Caddy/Traefik/nginx). To expose 8080 publicly anyway, change to `PublishPort=8080:8080`, but you'll lose HTTPS + structured access logs.
 
-The OIDC callback URL the gateway advertises is `<public_url>/auth/callback` from `$GATEWAY_PUBLIC_URL`. That URL must be reachable from your IdP and registered as an allowed redirect URI on the OIDC client.
+The OIDC callback URL AIplane advertises is `<public_url>/auth/callback` from `$AIPLANE_PUBLIC_URL`. That URL must be reachable from your IdP and registered as an allowed redirect URI on the OIDC client.
 
 ## Google Workspace MCP server (optional sidecar)
 
@@ -86,20 +86,20 @@ The single **Google Workspace** connector (Gmail, Calendar, Drive, Docs, …) is
 backed by a self-hosted [`taylorwilsdon/google_workspace_mcp`](https://github.com/taylorwilsdon/google_workspace_mcp)
 server — Google's *hosted* MCP endpoints are gated behind a developer preview
 and don't scale to per-user use (see [`docs/connectors.md`](../../docs/connectors.md)).
-Ship it as a second Quadlet next to the gateway:
+Ship it as a second Quadlet next to AIplane:
 
 ```bash
 sudo cp deploy/quadlet/google-workspace-mcp.container \
         deploy/quadlet/gworkspace-mcp-oauth.volume /etc/containers/systemd/
 sudo install -m 0600 deploy/quadlet/google-workspace-mcp.example.env \
-     /etc/gateway/google-workspace-mcp.env
-sudo $EDITOR /etc/gateway/google-workspace-mcp.env     # OAuth client + URLs + signing key
+     /etc/aiplane/google-workspace-mcp.env
+sudo $EDITOR /etc/aiplane/google-workspace-mcp.env     # OAuth client + URLs + signing key
 sudo systemctl daemon-reload
 sudo systemctl enable --now google-workspace-mcp.service
 ```
 
 **Don't drop the `.volume` unit.** This server is the authorization server for
-the connector, and its OAuth proxy keeps the gateway's registered client, the
+the connector, and its OAuth proxy keeps AIplane's registered client, the
 refresh tokens it issues and the upstream Google tokens in one on-disk store.
 Without the volume that store lives in the container's writable layer, which
 Quadlet discards on every `systemctl restart` — and then every user is
@@ -109,7 +109,7 @@ the Google client secret). Details: [`../README.md`](../README.md#oauth-state-mu
 
 **This is not a purely internal sidecar.** The OAuth consent runs in the user's
 browser (gateway → this server's `/authorize` → Google → this server's
-`/oauth2callback` → back to the gateway), so the server's HTTP endpoint must be
+`/oauth2callback` → back to AIplane), so the server's HTTP endpoint must be
 **publicly reachable over TLS**. Give it its own vhost on the same reverse proxy,
 e.g. Caddy:
 
@@ -121,9 +121,9 @@ gworkspace-mcp.example.com {
 
 Then set `WORKSPACE_EXTERNAL_URL=https://gworkspace-mcp.example.com` in the env
 file, add `https://gworkspace-mcp.example.com/oauth2callback` as the redirect URI
-on the Google OAuth client, and in the gateway's `/admin/connectors` point the
+on the Google OAuth client, and in AIplane's `/admin/connectors` point the
 **Google Workspace** connector's URL at `https://gworkspace-mcp.example.com/mcp/`
-(DCR — no client id/secret in the gateway). The gateway reaches it over the same
+(DCR — no client id/secret in AIplane). AIplane reaches it over the same
 public hostname, so no extra internal networking is needed.
 
 ## GitLab MCP bridge (self-managed / CE, optional sidecar)
@@ -134,23 +134,23 @@ Edition and other self-managed instances instead need the community bridge
 the **GitLab (self-managed / CE)** connector. It runs in streamable-HTTP +
 remote-authorization mode — each MCP request carries the caller's own GitLab
 token, forwarded to GitLab as that user's permissions — so it needs **no
-public URL and no OAuth**; the gateway reaches it internally.
+public URL and no OAuth**; AIplane reaches it internally.
 
 ```bash
 sudo cp deploy/quadlet/gitlab-mcp.container /etc/containers/systemd/
-sudo install -m 0644 deploy/quadlet/gitlab-mcp.example.env /etc/gateway/gitlab-mcp.env
-sudo $EDITOR /etc/gateway/gitlab-mcp.env               # GITLAB_API_URL=https://<your-gitlab>/api/v4
+sudo install -m 0644 deploy/quadlet/gitlab-mcp.example.env /etc/aiplane/gitlab-mcp.env
+sudo $EDITOR /etc/aiplane/gitlab-mcp.env               # GITLAB_API_URL=https://<your-gitlab>/api/v4
 sudo systemctl daemon-reload
 sudo systemctl enable --now gitlab-mcp.service
 ```
 
-The unit joins `llm.network` (same as the gateway + other MCP sidecars) with no
-published host port, so the gateway resolves it by name. It sets
+The unit joins `llm.network` (same as AIplane + other MCP sidecars) with no
+published host port, so AIplane resolves it by name. It sets
 `MCP_ALLOWED_HOSTS=gitlab-mcp:3002` — without it the bridge's DNS-rebinding guard
 403s (`Host header is not allowed`) on any non-loopback host, and that network
 name is non-loopback.
 
-Then in the gateway's `/admin/connectors`, point **GitLab (self-managed / CE)**
+Then in AIplane's `/admin/connectors`, point **GitLab (self-managed / CE)**
 at `http://gitlab-mcp:3002/mcp` → Save → Enable. Each user connects at
 `/integrations` and pastes their own GitLab personal access token (scope
 `api`, or `read_api` for read-only). Full details, including the compose
@@ -166,12 +166,12 @@ disabled) in the catalog; an admin enables it and points it at this bridge in
 `fuzz_search_members`), is a published GHCR image — no local build needed.
 Member lookup needs the **Server Members Intent** enabled in the Discord
 Developer Portal. The unit sets `SPRING_PROFILES_ACTIVE=http` (streamable HTTP on
-:8085) and joins the gateway's `llm` network so it's reachable by name:
+:8085) and joins AIplane's `llm` network so it's reachable by name:
 
 ```bash
 sudo cp deploy/quadlet/discord-mcp.container /etc/containers/systemd/
-sudo install -m 0600 deploy/quadlet/discord-mcp.example.env /etc/gateway/discord-mcp.env
-sudo $EDITOR /etc/gateway/discord-mcp.env              # DISCORD_TOKEN=... (Developer Portal → Bot)
+sudo install -m 0600 deploy/quadlet/discord-mcp.example.env /etc/aiplane/discord-mcp.env
+sudo $EDITOR /etc/aiplane/discord-mcp.env              # DISCORD_TOKEN=... (Developer Portal → Bot)
 sudo systemctl daemon-reload
 sudo systemctl enable --now discord-mcp.service
 ```
@@ -190,6 +190,6 @@ The unit already runs read-only, drops every capability, and sets `NoNewPrivileg
 
 ## Troubleshooting
 
-- **`systemctl daemon-reload` then nothing happens**: Quadlet only regenerates units on `daemon-reload`. Check `systemctl list-unit-files | grep gateway` to confirm the service appeared. If not, look for syntax errors with `/usr/libexec/podman/quadlet -dryrun`.
-- **Container immediately exits**: `journalctl -u gateway.service` — most common cause is a missing `GATEWAY_SESSION_KEY` (sessions can't initialise).
+- **`systemctl daemon-reload` then nothing happens**: Quadlet only regenerates units on `daemon-reload`. Check `systemctl list-unit-files | grep aiplane` to confirm the service appeared. If not, look for syntax errors with `/usr/libexec/podman/quadlet -dryrun`.
+- **Container immediately exits**: `journalctl -u aiplane.service` — most common cause is a missing `AIPLANE_SESSION_KEY` (sessions can't initialise).
 - **No in-container `HealthCmd`**: the runtime image is curl-free, so the unit relies on `Restart=on-failure` for crashes. Configure HTTP-level health probes on your reverse proxy (it can hit `/healthz` from outside).

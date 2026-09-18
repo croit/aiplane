@@ -1,4 +1,4 @@
-groups-heading = Gateway groups
+groups-heading = AIplane groups
 groups-intro = Map OIDC claim values onto clean, IdP-independent group names, and choose what each group grants. Pools, RAG collections, and MCP connectors reference these groups by name to restrict who may use them.
 groups-new-heading = New group
 groups-existing-heading = Groups

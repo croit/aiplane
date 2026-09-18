@@ -1,19 +1,19 @@
 # ComfyUI integration
 
-The gateway talks to **ComfyUI** as a headless inference engine for image, video, and audio workflows. Users never see ComfyUI; the gateway exposes curated workflows as tools the model can call, each with a typed, described parameter surface.
+AIplane talks to **ComfyUI** as a headless inference engine for image, video, and audio workflows. Users never see ComfyUI; AIplane exposes curated workflows as tools the model can call, each with a typed, described parameter surface.
 
 This doc captures the design and operator model. For the chat/UI side of tool calls see [`tools-rbac.md`](tools-rbac.md); for the broader server layout see [`architecture.md`](architecture.md).
 
 ## Why headless ComfyUI
 
-ComfyUI already solves the hard part of GPU inference: model loading, VRAM accounting, a node ecosystem that supports FLUX, WAN, LTX, LatentSync, MuseTalk, Whisper, and friends. Reimplementing that in the gateway would be a waste.
+ComfyUI already solves the hard part of GPU inference: model loading, VRAM accounting, a node ecosystem that supports FLUX, WAN, LTX, LatentSync, MuseTalk, Whisper, and friends. Reimplementing that in AIplane would be a waste.
 
-The cost is that ComfyUI is a workflow engine, not a product API. So the gateway:
+The cost is that ComfyUI is a workflow engine, not a product API. So AIplane:
 
 - owns the **curated workflow catalog** (versioned JSON + manifests),
 - exposes a **small typed parameter surface per workflow** to the model,
 - hides everything else (model paths, sampler internals, weight dtype, VRAM strategy) as operator config,
-- validates inputs, runs the workflow via ComfyUI's HTTP API, fetches the result, re-hosts it in the gateway's attachment store, and returns a concise metadata blob to the model.
+- validates inputs, runs the workflow via ComfyUI's HTTP API, fetches the result, re-hosts it in AIplane's attachment store, and returns a concise metadata blob to the model.
 
 ## Topology
 
@@ -25,18 +25,17 @@ browser → gateway (OpenAI-compatible API + chat UI + RBAC + tools)
               GPU + models (mounted read-only)
 ```
 
-ComfyUI is **not** exposed publicly. The gateway reaches it at the configured base URL. Multiple gateway replicas can share one ComfyUI worker, but the worker itself serialises per GPU.
+ComfyUI is **not** exposed publicly. AIplane reaches it at the configured base URL. Multiple gateway replicas can share one ComfyUI worker, but the worker itself serialises per GPU.
 
 ## Operator config
 
 Configured at **`/admin/settings` → Tools → ComfyUI image & video**, not in a
-file. Off by default: with the switch off, no ComfyUI tools register and the
-gateway boots fine.
+file. Off by default: with the switch off, no ComfyUI tools register and AIplane boots fine.
 
 | Field | Meaning |
 |---|---|
 | `comfyui.enabled` | Register the `comfyui_*` tools |
-| `comfyui.base_url` | e.g. `http://comfyui-worker:8188`. No authentication, so it must be reachable only from the gateway. **Restart-only** — the job scheduler polling it is a running task |
+| `comfyui.base_url` | e.g. `http://comfyui-worker:8188`. No authentication, so it must be reachable only from AIplane. **Restart-only** — the job scheduler polling it is a running task |
 | `comfyui.content_dir` | Workflows + manifests, e.g. `/opt/llm-content`. **Restart-only**, but `/admin/comfyui` has a reload button for the common case of adding a workflow |
 | `comfyui.timeout_secs` | Deadline per workflow execution |
 | `comfyui.queue_poll_interval_ms` | `/history` poll cadence |
@@ -45,7 +44,7 @@ gateway boots fine.
 The field names are the TOML paths these settings had before they moved into
 the database; `/admin/settings` prints each one under its label.
 
-The `content_dir` is **not** part of the public repo. It is a private, operator-managed directory holding workflows, manifests, and — at the operator's discretion — model files (or symlinks to a shared model volume). The gateway reads from it at startup; nothing in `content_dir` is ever written by the gateway or shipped to the browser.
+The `content_dir` is **not** part of the public repo. It is a private, operator-managed directory holding workflows, manifests, and — at the operator's discretion — model files (or symlinks to a shared model volume). AIplane reads from it at startup; nothing in `content_dir` is ever written by AIplane or shipped to the browser.
 
 ## `content_dir` layout
 
@@ -79,7 +78,7 @@ output_node_id = "9"                 # ComfyUI node id holding the result
 output_filename_prefix = "comfyui-t2i"
 
 # Each [[params]] entry becomes one property in the OpenAI tool schema.
-# The gateway validates type, range, enum before dispatching to ComfyUI.
+# AIplane validates type, range, enum before dispatching to ComfyUI.
 
 [[params]]
 key = "prompt"                       # also the placeholder name in workflow.json
@@ -126,13 +125,13 @@ type = "integer"
 min = -1
 # Replace a resolved value of -1 with a fresh random seed before dispatch
 # (the conventional ComfyUI "seed = -1 → randomize" contract). Opt-in per
-# param — the gateway never infers this from the parameter's name.
+# param — AIplane never infers this from the parameter's name.
 randomize_on_sentinel = true
 ```
 
 ### Parameter description rules
 
-Every parameter carries a `description`. The model reads this verbatim; the gateway does not embellish. Descriptions must:
+Every parameter carries a `description`. The model reads this verbatim; AIplane does not embellish. Descriptions must:
 
 - explain **what changing this value does**, in plain English
 - call out tradeoffs the model can't infer (VRAM cost, time cost, quality tradeoff)
@@ -144,7 +143,7 @@ A bad description: `"The width."`. A good description: `"Image width in pixels. 
 
 ## `workflow.json`
 
-Plain ComfyUI prompt-API JSON. The operator exports it from ComfyUI's UI once, then parameterises it by replacing concrete input values with `{{param_name}}` placeholders. The gateway substitutes placeholders before sending.
+Plain ComfyUI prompt-API JSON. The operator exports it from ComfyUI's UI once, then parameterises it by replacing concrete input values with `{{param_name}}` placeholders. AIplane substitutes placeholders before sending.
 
 Example (FLUX.2 Klein, abridged):
 
@@ -168,7 +167,7 @@ Example (FLUX.2 Klein, abridged):
 }
 ```
 
-For inputs that don't map cleanly to a placeholder (e.g. node-id routing), `manifest.toml`'s `node_id` + `input_key` form takes precedence — the gateway writes the value directly into `workflow.json[<node_id>].inputs[<input_key>]` before dispatch.
+For inputs that don't map cleanly to a placeholder (e.g. node-id routing), `manifest.toml`'s `node_id` + `input_key` form takes precedence — AIplane writes the value directly into `workflow.json[<node_id>].inputs[<input_key>]` before dispatch.
 
 ## Execution flow
 
@@ -205,7 +204,7 @@ ComfyUI tools register like any other tool: per-role `tools = ["comfyui_text_to_
 
 | Case | Behaviour |
 |---|---|
-| `[comfyui]` not configured, tool invoked | `ToolError::Failed("ComfyUI is not configured on this gateway")` |
+| `[comfyui]` not configured, tool invoked | `ToolError::Failed("ComfyUI is not configured on this AIplane")` |
 | `content_dir` missing at startup | Gateway boots; no comfyui tools register; logged at WARN |
 | Manifest parse error | That workflow is skipped; logged at ERROR; others register |
 | ComfyUI HTTP error | `ToolError::Failed` with backend's status + body excerpt |
@@ -250,9 +249,9 @@ TTS service.
 | Workflow JSON (model paths, samplers, nodes) | `content_dir/<workflow>/workflow.json` |
 | Tool surface (id, params, descriptions) | `content_dir/<workflow>/manifest.toml` |
 | Example catalog + the custom node (the operator's copy source) | `examples/comfyui-workflows/`, `examples/comfyui-nodes/` |
-| Catalog drift guard (manifest ↔ graph agreement) | `crates/gateway-features/tests/comfyui_catalog.rs` |
-| HTTP client + execution loop | `crates/gateway-features/src/server/comfyui/` |
-| Tool registration | `crates/gateway-runtime/src/server/tools/comfyui_workflow.rs` (one tool impl, parameterised by manifest) |
+| Catalog drift guard (manifest ↔ graph agreement) | `crates/aiplane-features/tests/comfyui_catalog.rs` |
+| HTTP client + execution loop | `crates/aiplane-features/src/server/comfyui/` |
+| Tool registration | `crates/aiplane-runtime/src/server/tools/comfyui_workflow.rs` (one tool impl, parameterised by manifest) |
 
 ## Roadmap
 

@@ -1,6 +1,6 @@
 # MCP Connectors (integrations)
 
-The gateway ships a **connector catalog**: an admin curates a list of MCP
+AIplane ships a **connector catalog**: an admin curates a list of MCP
 servers (Gmail, GitHub, Atlassian, Discord, …) at `/admin/connectors`. Each
 connector has a **scope**:
 
@@ -19,7 +19,7 @@ the user, but getting a provider's OAuth app into a state where that click
 works is fiddly and provider-specific. The painful parts (Google especially)
 are documented here so you don't have to rediscover them.
 
-> Tokens are encrypted with `GATEWAY_ENCRYPTION_KEY` (AES-256-GCM). See the main
+> Tokens are encrypted with `AIPLANE_ENCRYPTION_KEY` (AES-256-GCM). See the main
 > [`README`](../README.md) for how the key is derived if unset. In dev with no
 > key, connections don't survive a restart — users just reconnect.
 
@@ -29,14 +29,13 @@ A catalog entry (`auth` column + `use_dcr` flag) is one of:
 
 | Model | What the admin must do | Examples |
 |---|---|---|
-| **OAuth2 + DCR** (`use_dcr=true`) | **Nothing** beyond pointing it at a URL. The gateway registers itself dynamically (RFC 7591) the first time a user connects. Zero credentials to manage. | Atlassian, GitLab.com, Google Workspace (self-hosted server) |
+| **OAuth2 + DCR** (`use_dcr=true`) | **Nothing** beyond pointing it at a URL. AIplane registers itself dynamically (RFC 7591) the first time a user connects. Zero credentials to manage. | Atlassian, GitLab.com, Google Workspace (self-hosted server) |
 | **OAuth2, manual client** (`use_dcr=false`) | Create an OAuth app in the provider's console, paste its **client ID + secret** into the connector. The app identity is the *gateway's*, shared by all users; each user still authorizes with their own account. | GitHub, Slack |
 | **Static bearer** (`auth=static_bearer`) | Nothing in the console; the **user** pastes a personal access token when connecting. | self-hosted / on-prem MCP servers, GitLab CE |
 | **None** (`auth=none`) | Nothing — just the server URL. There's no credential of any kind; each user still clicks Connect once, purely so they control whether the tools show up in their chats. | Kiwi.com flight search |
 
 DCR is the nicest experience but most providers don't support it. Where a
-provider requires a manual OAuth client, **the client ID/secret is the
-gateway's app identity, not a user secret** — you set it once as admin. This is
+provider requires a manual OAuth client, **the client ID/secret is AIplane's app identity, not a user secret** — you set it once as admin. This is
 why Claude Desktop "just works" for Google without asking you for a client ID:
 Anthropic ships a pre-registered app. A self-hosted gateway has to register its
 own.
@@ -84,8 +83,8 @@ sidecar bridge, then enable + point the connector at it — and is documented in
 full (bot creation, intents, invite URL, running the bridge, and the connector
 URL to enter) in [`deploy/README.md`](../deploy/README.md#discord).
 
-The connector's auth is **None** (the gateway sends no credential — the bot
-token lives in the bridge container, reached only over the gateway's private
+The connector's auth is **None** (AIplane sends no credential — the bot
+token lives in the bridge container, reached only over AIplane's private
 network) and its scope is **Global**. Its tools surface as `mcp__discord__*`,
 including DMs (`send_private_message`) and fuzzy member lookup
 (`fuzz_search_members`, matching nickname/username/display name) since the bridge
@@ -113,13 +112,13 @@ every service.
 > Preview Program**: every tool call returns an opaque
 > `The caller does not have permission` until the org's project is enrolled — a
 > multi-day, manual approval that doesn't scale to per-user, multi-tenant use.
-> So the gateway does **not** use them. Instead you run a **self-hosted Google
+> So AIplane does **not** use them. Instead you run a **self-hosted Google
 > Workspace MCP server** that talks to the **GA** Gmail/Calendar/Drive REST
 > APIs. No preview, works today.
 
 The connector is wired for **Dynamic Client Registration** — the self-hosted
 server is its own OAuth 2.1 provider and holds the Google OAuth client, so the
-admin only sets the server's URL in the gateway (no client id/secret to paste).
+admin only sets the server's URL in AIplane (no client id/secret to paste).
 It's the same zero-credential flow as Atlassian.
 
 **Full server setup** — the OAuth client, the exact (validated) container env,
@@ -131,7 +130,7 @@ Workspace connector*. Two things worth flagging here:
 - **The connector requests a default scope set** (Gmail read + compose,
   Calendar, Drive, Docs/Sheets/Slides read, Tasks). This is required: the server
   does a base-only login (`openid`+`email`) and rejects every tool call with
-  *"lack required scopes"* unless the gateway asks for the service scopes up
+  *"lack required scopes"* unless AIplane asks for the service scopes up
   front. Trim the scopes on the connector for a narrower consent — changing them
   means users must disconnect + reconnect.
 
@@ -141,14 +140,14 @@ once with their own Google account — no per-user setup, no preview.
 ### The server's OAuth state must be persisted
 
 The self-hosted server is the authorization server here, and its FastMCP OAuth
-proxy keeps **all** of the state in one store: the client the gateway registered
-via DCR, the authorization codes, the refresh tokens it issues to the gateway,
+proxy keeps **all** of the state in one store: the client AIplane registered
+via DCR, the authorization codes, the refresh tokens it issues to AIplane,
 and the upstream Google tokens. Unconfigured, that store lands under `$HOME`
 **inside the container**, i.e. in the writable layer that a `systemctl restart`
 (Quadlet recreates the container), a `--force-recreate`, or an image update
 throws away.
 
-When it's gone, the gateway's stored `client_id` no longer exists server-side,
+When it's gone, AIplane's stored `client_id` no longer exists server-side,
 `POST /token` answers `401 invalid_client: Invalid client_id`, and every user's
 card flips to **Needs reconnect** — within one access-token lifetime (~30 min)
 of the restart, because that's how long the server's access tokens live. It
@@ -183,7 +182,7 @@ context — paid for on every subsequent round of the turn, crowding out the
 work, and useless besides: a model can do nothing with base64 except copy it
 out again at the same cost.
 
-So the gateway takes it out. Any base64 payload of 4 KiB or more in a tool
+So AIplane takes it out. Any base64 payload of 4 KiB or more in a tool
 result is decoded, stored as an ordinary chat attachment (same bucket, same
 `<turn_id>/<filename>` id, same chip in the reply as a user upload), and
 replaced in the result by a single line naming the id. The model then works
@@ -207,12 +206,12 @@ Related, and deliberate:
 
 - **A server's "return the bytes" switch defaults to on here.** Servers gate
   file bytes behind a boolean (`return_base64`) whose default is off precisely
-  because the bytes would flood a normal client's context. On this gateway
+  because the bytes would flood a normal client's context. On this AIplane
   they never reach the context, so the switch is filled in as `true` when the
   model didn't set it, and the tool's description says why. An explicit
   `false` from the model still stands.
 - **Nothing is silently dropped.** If there is nowhere to store the file (a
-  `/v1` proxy request has no conversation; a gateway without `[chat.s3]`) or
+  `/v1` proxy request has no conversation; an installation without `[chat.s3]`) or
   it is over the 25 MB ceiling, the base64 is *still* removed and the
   replacement line says what happened, so the model tells the user instead of
   pretending it has the file.
@@ -231,7 +230,7 @@ Related, and deliberate:
 ## GitHub
 
 GitHub's MCP server (`https://api.githubcopilot.com/mcp/`) does **not** support
-dynamic registration and publishes no RFC 8414 metadata, so the gateway pins
+dynamic registration and publishes no RFC 8414 metadata, so AIplane pins
 its OAuth endpoints and you must create an app manually.
 
 1. **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
@@ -270,7 +269,7 @@ speaks streamable HTTP only — the legacy `/sse` transport isn't offered here.
 **Zero admin config** — Atlassian supports dynamic client registration. Just
 enable the connector in `/admin/connectors`; users connect and authorize their
 Atlassian site. The endpoint is the streamable-HTTP one (`/v1/mcp`); the legacy
-`/v1/sse` transport is **not** supported by the gateway's MCP client.
+`/v1/sse` transport is **not** supported by AIplane's MCP client.
 
 ---
 
@@ -290,7 +289,7 @@ connectors:
   **static-bearer** connector — each user pastes their own PAT (scope `api`, or
   `read_api` for read-only). Deployment recipe (compose + Quadlet) in
   [`../deploy/README.md`](../deploy/README.md). Unlike the Google MCP this bridge
-  needs **no public URL and no OAuth** — the gateway reaches it internally.
+  needs **no public URL and no OAuth** — AIplane reaches it internally.
 
 ---
 
@@ -315,7 +314,7 @@ internal ERP, the GitLab CE bridge above):
 
 The server must actually have its MCP endpoint enabled. A `404` with a body
 like `MCP integrations are not enabled on this installation` means the *server*
-needs a toggle flipped — it's not a gateway problem.
+needs a toggle flipped — it's not an AIplane problem.
 
 ---
 
@@ -324,12 +323,12 @@ needs a toggle flipped — it's not a gateway problem.
 | Symptom | Likely cause |
 |---|---|
 | `The caller does not have permission` (Google) — connects fine, tool *call* fails | You're hitting Google's **hosted** MCP endpoints (`*mcp.googleapis.com`), which are gated behind the Workspace Developer Preview Program. Don't use them — point the connector at a **self-hosted** Google Workspace MCP server instead (see the Google Workspace section). On the self-hosted server, this 403 instead means the user's account lacks access to that GA API, or the API isn't enabled in the server's project. |
-| `Couldn't load tools` right after connecting | Wrong endpoint transport (e.g. an `/sse` URL where the gateway needs streamable-HTTP `/mcp`), TLS/URL error, or the server rejected the token. The connector card shows the real error; check the gateway log too. |
-| OAuth `missing field access_token` / token-exchange errors | The provider returned an OAuth error body instead of a token (bad client secret, wrong redirect URI, unsupported grant). The gateway surfaces the provider's `error_description`. |
+| `Couldn't load tools` right after connecting | Wrong endpoint transport (e.g. an `/sse` URL where AIplane needs streamable-HTTP `/mcp`), TLS/URL error, or the server rejected the token. The connector card shows the real error; check the gateway log too. |
+| OAuth `missing field access_token` / token-exchange errors | The provider returned an OAuth error body instead of a token (bad client secret, wrong redirect URI, unsupported grant). AIplane surfaces the provider's `error_description`. |
 | Refresh tokens die after ~7 days (Google) | App is **External + Testing**. Publish to production or switch the audience to **Internal**. |
-| `invalid_client: Invalid client_id` on refresh, everyone "Needs reconnect" at once, recurring | The MCP server lost the OAuth store that holds the gateway's registered client — an ephemeral container filesystem (no volume), or a changed `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` / `GOOGLE_OAUTH_CLIENT_SECRET`. See *The server's OAuth state must be persisted*. Users must reconnect once after fixing it; the old grants are unrecoverable. |
-| A tool returned a file and the model says it can't use it | Look at the replacement line in the tool result: the gateway removes file bytes from every result and stores them as an attachment instead (see *Files a connector returns become conversation artifacts*). If it says the file was **not** stored, the cause is named there — no conversation to attach to (a `/v1` proxy call), `[chat.s3]` unconfigured, or over the 25 MB ceiling. |
-| `MCP integrations are not enabled on this installation` (404) | Server-side: the target MCP server hasn't enabled its MCP endpoint. Not a gateway issue. |
+| `invalid_client: Invalid client_id` on refresh, everyone "Needs reconnect" at once, recurring | The MCP server lost the OAuth store that holds AIplane's registered client — an ephemeral container filesystem (no volume), or a changed `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` / `GOOGLE_OAUTH_CLIENT_SECRET`. See *The server's OAuth state must be persisted*. Users must reconnect once after fixing it; the old grants are unrecoverable. |
+| A tool returned a file and the model says it can't use it | Look at the replacement line in the tool result: AIplane removes file bytes from every result and stores them as an attachment instead (see *Files a connector returns become conversation artifacts*). If it says the file was **not** stored, the cause is named there — no conversation to attach to (a `/v1` proxy call), `[chat.s3]` unconfigured, or over the 25 MB ceiling. |
+| `MCP integrations are not enabled on this installation` (404) | Server-side: the target MCP server hasn't enabled its MCP endpoint. Not an AIplane issue. |
 
 The gateway logs each failed tool call as `tool failed tool=mcp__… error=…`
 and shows the provider's error on the connector card. When a provider returns a

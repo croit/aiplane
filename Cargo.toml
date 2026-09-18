@@ -3,12 +3,12 @@ resolver = "2"
 members = [
     "crates/shared",
     "crates/session-core",
-    "crates/gateway-core",
-    "crates/gateway-features",
-    "crates/gateway-runtime",
-    "crates/gateway-tools",
-    "crates/gateway-api",
-    "crates/gateway",
+    "crates/aiplane-core",
+    "crates/aiplane-features",
+    "crates/aiplane-runtime",
+    "crates/aiplane-tools",
+    "crates/aiplane-api",
+    "crates/aiplane",
     "crates/sandbox-runner",
 ]
 
@@ -104,13 +104,13 @@ async-trait = "0.1"
 # Only for O_NOFOLLOW when reading files a sandbox produced (see sandbox-runner).
 libc = "0.2"
 
-# Scratch directories. `gateway-core` uses them for typst compile scratch dirs
+# Scratch directories. `aiplane-core` uses them for typst compile scratch dirs
 # (one per render) and the RAG index staging; the `gateway` integration suite
 # uses them for throwaway skill/RAG roots. Pinned here now that more than one
 # crate needs it. Tiny, no native deps.
 tempfile = "3"
 # In-process HTTP mock standing in for upstream LLM backends. Used by
-# `gateway-core`'s unit tests (tool runner, upstream registry) and the
+# `aiplane-core`'s unit tests (tool runner, upstream registry) and the
 # `gateway` integration suite, so the proxy path is exercised offline.
 wiremock = "0.6"
 

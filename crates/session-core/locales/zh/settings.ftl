@@ -1,7 +1,7 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 # 运维设置（/admin/settings）。卡片标题（settings-s-*）、字段标签
 # （settings-f-*）及其说明（settings-f-*-help）都由
-# gateway_core::server::settings::SECTIONS 中的条目推导而来：
+# aiplane_core::server::settings::SECTIONS 中的条目推导而来：
 # `sandbox.runner_url` -> `settings-f-sandbox-runner_url`。
 # 源文本见 locales/en/settings.ftl。
 

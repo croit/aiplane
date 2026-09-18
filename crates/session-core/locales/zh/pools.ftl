@@ -24,8 +24,8 @@ pools-field-strategy-hint = prefix_affinity 让同一会话继续落在已持有
 pools-field-fallback-offline = 离线回退模型
 pools-field-fallback-offline-placeholder = 当所有后端都离线时提供服务
 pools-field-models-hint = 设置后，对于启用 /models 探测的后端仅提供这些 id，其余以划线显示。留空 = 提供后端报告的所有模型。
-pools-field-allowed-groups = åè®¸çç»
-pools-field-allowed-groups-hint = åè®¸æ¥çåä½¿ç¨æ­¤æ± æ¨¡åçç½å³ç»ï¼ç¨éå·åéï¼ãçç©º = ææäººãç®¡çåå§ç»ææéãå¨ ç®¡ç â ç» ä¸­ç®¡çç»ã
+pools-field-allowed-groups = 允许的组
+pools-field-allowed-groups-hint = 允许查看和使用此池模型的 AIplane 组（用逗号分隔）。留空 = 所有人。管理员始终有权限。在 管理 → 组 中管理组。
 pools-field-voices = 语音（每行 lang=voice）
 pools-field-offer-voices = 可选语音（每行一个，供用户选择）
 pools-no-backends = 尚未定义任何后端。请先在“后端”页面添加一个。

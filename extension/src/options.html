@@ -86,19 +86,19 @@
 	<body>
 		<h1>Browser control</h1>
 		<p>
-			This extension lets a conversation on your LLM Gateway act in this browser — with your
-			logins. It does nothing until you pair a gateway here and switch it on from the toolbar
+			This extension lets a conversation on your AIplane act in this browser — with your
+			logins. It does nothing until you pair an AIplane here and switch it on from the toolbar
 			icon.
 		</p>
 
-		<h2>Your gateway</h2>
+		<h2>Your AIplane</h2>
 		<p>
 			Only these origins may drive the extension. Chrome asks for permission per origin; that
 			dialog is the pairing, and it is the one part a web page cannot fake.
 		</p>
-		<ul id="gateways"></ul>
-		<input type="url" id="gateway-url" placeholder="https://gateway.example.com" />
-		<button id="add-gateway">Pair this gateway</button>
+		<ul id="aiplanes"></ul>
+		<input type="url" id="aiplane-url" placeholder="https://aiplane.example.com" />
+		<button id="add-aiplane">Pair this AIplane</button>
 		<p class="status" id="pair-status"></p>
 
 		<h2>Site access</h2>
@@ -142,7 +142,7 @@
 			The extension does nothing until you switch it on from the toolbar, and that switch
 			is a click no web page can produce. While it is on the icon is green, Chrome shows
 			its own bar over the assistant's window, and every step is listed in the popup and
-			recorded in the gateway's audit trail. Switching it off releases everything at once.
+			recorded in AIplane's audit trail. Switching it off releases everything at once.
 		</p>
 		<p>
 			Worth knowing: a page the assistant reads can contain instructions aimed at it

@@ -2,7 +2,7 @@
 	import { t } from '$lib/i18n.svelte';
 
 	let { login = false } = $props<{ login?: boolean }>();
-	let sourceUrl = $state('https://github.com/croit/llm-gateway');
+	let sourceUrl = $state('https://github.com/croit/aiplane');
 	let version = $state('v0.1.0');
 
 	$effect(() => {

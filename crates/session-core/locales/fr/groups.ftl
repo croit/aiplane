@@ -1,4 +1,4 @@
-groups-heading = Groupes du gateway
+groups-heading = Groupes AIplane
 groups-intro = Associez les valeurs de claims OIDC à des noms de groupes clairs et indépendants de l'IdP, puis définissez ce que chaque groupe accorde. Les pools, les collections RAG et les connecteurs MCP référencent ces groupes par leur nom pour restreindre qui peut les utiliser.
 groups-new-heading = Nouveau groupe
 groups-existing-heading = Groupes

@@ -9,11 +9,11 @@ import { gatewayDevProxy } from './src/lib/dev-proxy.ts';
  *
  * Built as a pure static shell: `adapter-static` emits `build/` (content-hashed
  * assets + an `index.html` fallback), which the gateway binary serves from
- * `GATEWAY_STATIC_DIR` — no Node at runtime, one container.
+ * `AIPLANE_STATIC_DIR` — no Node at runtime, one container.
  *
  * The app is served from the root — it is the whole UI — so no `paths.base`
  * is set. History fallback is `index.html`: the Rust SPA handler
- * (`crates/gateway/src/rama_server/spa.rs`) serves it for any path that is not
+ * (`crates/aiplane/src/rama_server/spa.rs`) serves it for any path that is not
  * a real file, which is what the client router needs.
  *
  * Dev loop: `mise run dev` exposes Vite on :8080 with the complete dynamic
@@ -42,8 +42,8 @@ export default defineConfig({
 	})],
 	server: {
 		host: '127.0.0.1',
-		port: Number(process.env.GATEWAY_DEV_PUBLIC_PORT ?? 8080),
+		port: Number(process.env.AIPLANE_DEV_PUBLIC_PORT ?? 8080),
 		strictPort: true,
-		proxy: gatewayDevProxy(process.env.GATEWAY_DEV_BACKEND_ORIGIN ?? 'http://127.0.0.1:8081')
+		proxy: gatewayDevProxy(process.env.AIPLANE_DEV_BACKEND_ORIGIN ?? 'http://127.0.0.1:8081')
 	}
 });

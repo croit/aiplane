@@ -3,7 +3,7 @@
 #
 # Card titles (settings-s-*), field labels (settings-f-*) and their one-line
 # help (settings-f-*-help) are keyed off the spec entries in
-# gateway_core::server::settings::SECTIONS, which derives each key from the
+# aiplane_core::server::settings::SECTIONS, which derives each key from the
 # TOML path: `sandbox.runner_url` -> `settings-f-sandbox-runner_url`. Dots
 # become dashes because Fluent identifiers reject `.`; underscores stay.
 #

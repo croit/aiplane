@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 croit GmbH
+apiVersion: v2
+name: aiplane
+description: >-
+  croit AIplane — self-hosted AI infrastructure for models, agents, tools and
+  enterprise data. An OpenAI-compatible LLM gateway with server-side agent
+  execution, MCP connectors, RAG, memory, a code sandbox, OIDC login, RBAC,
+  quotas and usage accounting. One Rust binary, SQLite for state.
+type: application
+
+# Both numbers below are PLACEHOLDERS for a working tree. CI packages the chart
+# with `--version <derived> --app-version <derived>` from
+# `scripts/derive-version.sh`, so a published chart carries the same
+# `YYMM.RELEASE.BUILD` number as the images built from that commit and pins
+# them exactly (see docs/releases.md). Do not spend a commit bumping these.
+version: 0.0.0
+
+# `latest` rather than a fake version number on purpose: installing the chart
+# straight from a git checkout then follows the `:latest` images, which exist.
+# A released chart has this replaced by the real version, and the image tag
+# becomes `v<that version>`.
+appVersion: "latest"
+
+home: https://github.com/croit/aiplane
+sources:
+  - https://github.com/croit/aiplane
+maintainers:
+  - name: croit GmbH
+    url: https://github.com/croit
+
+# `startupProbe` (used by the gateway container) is GA from 1.20; `subPath` on a
+# volumeClaimTemplate and the `ingressClassName` field need 1.19+. 1.25 is the
+# floor because the chart assumes Pod Security *Admission* labels rather than
+# the removed PodSecurityPolicy.
+kubeVersion: ">=1.25.0-0"
+
+keywords:
+  - ai
+  - ai-infrastructure
+  - llm
+  - openai
+  - gateway
+  - agents
+  - rag
+  - mcp
+  - self-hosted

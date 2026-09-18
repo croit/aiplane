@@ -10,7 +10,7 @@ conversation is open in a tab.
 
 ## Why it is built this way
 
-The gateway runs on a server; a user's browser sits behind NAT with no reachable
+AIplane runs on a server; a user's browser sits behind NAT with no reachable
 address. Users are not necessarily the operator's own staff, so "set up a
 tunnel" is not an answer, and the obvious off-the-shelf pieces do not fit
 either: every local browser-MCP bridge binds to `127.0.0.1` by design, and the
@@ -45,7 +45,7 @@ the browser so an embedded frame cannot pose as the page, and the service worker
 checks the sender's origin against the paired list rather than believing the
 message.
 
-**Script running on the gateway's own origin** — an XSS in the SPA, a malicious
+**Script running on AIplane's own origin** — an XSS in the SPA, a malicious
 dependency, a compromised gateway — is *not* solvable. Such an attacker is
 indistinguishable from the real page: same origin, same session, and it can read
 any nonce we hand out. The honest statement is that the extension trusts exactly
@@ -275,7 +275,7 @@ extension rather than the page:
   Note what "browser session" means here, because it cost an evening:
   `chrome.storage.session` is cleared when the **browser** closes, not when the
   extension reloads. An offer spent before a reload therefore survived it, and
-  a freshly reloaded extension stayed silent on a gateway it was paired with —
+  a freshly reloaded extension stayed silent on an AIplane it was paired with —
   looking, from the outside, exactly like a broken bridge. `revive()` clears
   `offered` for that reason: a reload gets to ask again.
 
@@ -295,7 +295,7 @@ origin, so the page reflects the click that caused it rather than polling.
 
 ## Shipping it
 
-The extension is versioned with the gateway, not separately:
+The extension is versioned with AIplane, not separately:
 `extension/manifest.json` commits `0.0.0` and `mise run package-extension`
 stamps the real number from `scripts/derive-version.sh` — the same resolver
 behind the container images and the Helm chart (see docs/releases.md). The zip
@@ -327,10 +327,10 @@ and otherwise remembers the version and reloads on disarm.
 - The **remote-code policy** forbids "building an interpreter to run complex
   commands fetched from a remote source", which is a fair description of the
   shape of this extension from the outside. The honest answer — and the one the
-  remote-code declaration has to make — is that the gateway sends *data*, not
+  remote-code declaration has to make — is that AIplane sends *data*, not
   code: a fixed set of fourteen named actions, validated against
   `KNOWN_ACTIONS` in `policy.js`, where anything unrecognised is refused as a
-  write. No string from the gateway is ever evaluated.
+  write. No string from AIplane is ever evaluated.
 - The **`debugger` permission** is permitted (the MV3 remote-code rules name it
   as one of two explicit exemptions) but counts as a dangerous permission, so
   it guarantees a slower manual review and needs a per-permission justification
@@ -350,7 +350,7 @@ Not covered by automated tests, and it needs a real browser:
 
 1. `chrome://extensions` → Developer mode → *Load unpacked* → `extension/`.
 2. Extension *Settings* → pair the gateway URL → accept Chrome's dialog.
-3. Open the gateway, click the extension icon, *Switch on*.
+3. Open AIplane, click the extension icon, *Switch on*.
 4. Ask for something that reads a page: the batch should run with no dialog.
 5. Ask for something that clicks: the confirmation window must appear, naming
    the site, and *No* must come back to the model as a refusal it does not

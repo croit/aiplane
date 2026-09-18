@@ -25,7 +25,7 @@ For every page:
         dedicated scrolling conversation region.
   - [x] The runtime source offer and exact build version are again linked from
         the footer; the public build metadata route preserves the deploy-time
-        `GATEWAY_SOURCE_URL` override.
+        `AIPLANE_SOURCE_URL` override.
 - [x] Signed-out redirect and return-to behavior.
 - [x] Loading, forbidden, and API-error surfaces.
 

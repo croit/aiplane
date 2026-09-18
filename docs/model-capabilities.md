@@ -5,7 +5,7 @@
 ## What changed
 
 The upstream pool/backend topology moved from `config.toml` to the database, managed through
-the admin UI. On top of that, a per-model **capability system** lets the gateway know whether
+the admin UI. On top of that, a per-model **capability system** lets AIplane know whether
 a model supports vision, tool calling, structured output, etc. — and **auto-learns** from
 upstream errors when it doesn't.
 
@@ -21,11 +21,11 @@ The admin sets capabilities per model via `/admin/models` → expandable "Capabi
 
 ### 2. Auto-learning (safety net)
 
-When the gateway forwards a request and the upstream returns a 400 that matches a known
+When AIplane forwards a request and the upstream returns a 400 that matches a known
 capability-rejection pattern (e.g. GLM's `"messages.content.type is invalid"`), the
-[`error_classify`](../crates/gateway-core/src/server/upstreams/error_classify.rs) module
+[`error_classify`](../crates/aiplane-core/src/server/upstreams/error_classify.rs) module
 identifies which capability was rejected and records it in the DB via
-[`mark_unsupported`](../crates/gateway-core/src/server/db/model_defaults.rs).
+[`mark_unsupported`](../crates/aiplane-core/src/server/db/model_defaults.rs).
 
 Key property: **auto-learning never overwrites an admin-set `Enabled`** — the SQL uses
 `CASE WHEN col = 1 THEN 1 ELSE 0 END` to preserve explicit `Some(true)` values. Only
@@ -34,7 +34,7 @@ Key property: **auto-learning never overwrites an admin-set `Enabled`** — the 
 ### 3. Vision fallback (transparent describe-and-inject)
 
 When a tool result contains image content and the primary model's `vision = false` with a
-`fallback_vision` model configured, the gateway:
+`fallback_vision` model configured, AIplane:
 
 1. Sends the image to the fallback model: *"Describe this image in detail"*
 2. Replaces the `image_url` content part with a text part containing the description

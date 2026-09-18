@@ -1,0 +1,486 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 croit GmbH
+
+//! Full OIDC browser flow against a mock IdP.
+//!
+//! The test stands up a wiremock-backed IdP that:
+//!   - serves a `/.well-known/openid-configuration` discovery doc whose
+//!     issuer / authorization_endpoint / token_endpoint / jwks_uri
+//!     point back at the mock,
+//!   - publishes a JWKS containing the public half of a fresh RSA key,
+//!   - exchanges `?code=…` for an RSA-signed ID token whose `iss`/`aud`
+//!     match what the gateway expects and whose `groups` claim drives
+//!     the `roles_claim` mapping.
+//!
+//! Drive `/auth/login` → confirm the pending_logins row is in the DB →
+//! call `/auth/callback?code=…&state=…` → assert a session cookie comes
+//! back set, the `users` row is upserted with the claimed roles, and
+//! the next `/api/v0/me` request with that cookie is authenticated.
+
+use crate::common;
+
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use aiplane::rama_server::{RamaState, SessionStore, router::router};
+use aiplane_core::server::auth::oidc::OidcClient;
+use aiplane_core::server::config::{Config, OidcConfig};
+use aiplane_core::server::db;
+use aiplane_core::server::rbac::Resolver;
+use aiplane_core::server::upstreams::{
+    self,
+    config::{PoolKind, UpstreamPoolConfig},
+};
+use aiplane_runtime::server::AppState;
+use aiplane_runtime::server::tools::ToolRegistry;
+use common::Service as _;
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use rama::http::{Body, Method, Request, StatusCode};
+use rsa::pkcs1::EncodeRsaPrivateKey;
+use rsa::traits::PublicKeyParts;
+use rsa::{RsaPrivateKey, RsaPublicKey};
+use serde_json::json;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+pub(crate) const KEY_ID: &str = "test-key";
+const CLIENT_ID: &str = "gateway-test-client";
+const CLIENT_SECRET: &str = "test-client-secret";
+const CLIENT_SECRET_ENV: &str = "AIPLANE_OIDC_TEST_SECRET";
+pub(crate) const SUBJECT: &str = "alice-sub";
+pub(crate) const EMAIL: &str = "alice@example.com";
+const NAME: &str = "Alice";
+/// A deep-link target (e.g. a shared chat) handed to `/auth/login`; the dance
+/// must carry it all the way to the post-callback redirect.
+const RETURN_TO: &str = "/chat/shared-deadbeef-1111";
+
+pub(crate) fn base64url_nopad(bytes: &[u8]) -> String {
+    // Hand-rolled to avoid pulling base64 in as a dev-dep — same alphabet
+    // as `rama_server::session::base64url_nopad`.
+    const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let (chunks, rem) = bytes.as_chunks::<3>();
+    for c in chunks {
+        let n = (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32;
+        out.push(ALPHA[((n >> 18) & 0x3f) as usize] as char);
+        out.push(ALPHA[((n >> 12) & 0x3f) as usize] as char);
+        out.push(ALPHA[((n >> 6) & 0x3f) as usize] as char);
+        out.push(ALPHA[(n & 0x3f) as usize] as char);
+    }
+    match rem.len() {
+        0 => {}
+        1 => {
+            let n = (rem[0] as u32) << 16;
+            out.push(ALPHA[((n >> 18) & 0x3f) as usize] as char);
+            out.push(ALPHA[((n >> 12) & 0x3f) as usize] as char);
+        }
+        2 => {
+            let n = (rem[0] as u32) << 16 | (rem[1] as u32) << 8;
+            out.push(ALPHA[((n >> 18) & 0x3f) as usize] as char);
+            out.push(ALPHA[((n >> 12) & 0x3f) as usize] as char);
+            out.push(ALPHA[((n >> 6) & 0x3f) as usize] as char);
+        }
+        _ => unreachable!(),
+    }
+    out
+}
+
+/// Build a JWK (RFC 7517) describing the public half of `key`.
+pub(crate) fn jwk_for(key: &RsaPublicKey) -> serde_json::Value {
+    json!({
+        "kty": "RSA",
+        "alg": "RS256",
+        "use": "sig",
+        "kid": KEY_ID,
+        "n": base64url_nopad(&key.n().to_bytes_be()),
+        "e": base64url_nopad(&key.e().to_bytes_be()),
+    })
+}
+
+/// Sign an RS256 ID token with the test private key. The pkcs8 → pkcs1
+/// detour is because jsonwebtoken's `EncodingKey::from_rsa_pem` wants
+/// PKCS#1, but the rsa crate emits PKCS#8 by default.
+pub(crate) fn sign_id_token(
+    private_key: &RsaPrivateKey,
+    issuer: &str,
+    audience: &str,
+    nonce: &str,
+) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = json!({
+        "iss": issuer,
+        "sub": SUBJECT,
+        "aud": audience,
+        "exp": now + 3600,
+        "iat": now,
+        "nonce": nonce,
+        "email": EMAIL,
+        "name": NAME,
+        "groups": ["engineering", "admin"],
+    });
+
+    let pkcs1 = private_key
+        .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
+        .unwrap();
+    let encoding_key = EncodingKey::from_rsa_pem(pkcs1.as_bytes()).unwrap();
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(KEY_ID.into());
+    encode(&header, &claims, &encoding_key).unwrap()
+}
+
+/// Build a `RamaState` with the OIDC client pointed at `idp_uri`.
+async fn state_with_oidc(idp_uri: &str, roles_claim: Option<&str>) -> RamaState {
+    // Set the client-secret env var the OidcConfig points at. The OIDC
+    // build path reads it via `std::env::var`, so we have to plant it
+    // before constructing the client.
+    //
+    // SAFETY: integration tests run in the same process. Concurrent
+    // tests that set this env to different values would race; we're
+    // the only caller, so the value is stable for the test's lifetime.
+    unsafe { std::env::set_var(CLIENT_SECRET_ENV, CLIENT_SECRET) };
+
+    let oidc_config = OidcConfig {
+        issuer: idp_uri.to_string(),
+        client_id: CLIENT_ID.into(),
+        client_secret_env: CLIENT_SECRET_ENV.into(),
+        scopes: vec!["email".into(), "profile".into()],
+        roles_claim: roles_claim.map(String::from),
+    };
+    // The provider is a database row now; the test builds its client straight
+    // from `oidc_config` below, which is the only thing it was ever kept for.
+    let mut config = Config::default();
+    config.gateway.public_url_import_only = "http://gateway.test".into();
+
+    let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+    let registry = upstreams::UpstreamRegistry::new(&Default::default()).unwrap();
+    let _: PoolKind = PoolKind::Chat; // keep the import live; UpstreamRegistry::new ate ours
+    let tools = Arc::new(ToolRegistry::new());
+    let rbac = Arc::new(Resolver::empty());
+    let _: UpstreamPoolConfig = UpstreamPoolConfig {
+        fallback_offline: None,
+        compliance: Default::default(),
+        enforce_limits: true,
+        voices: Default::default(),
+        offer_voices: Vec::new(),
+        allowed_groups: Vec::new(),
+        kind: PoolKind::Chat,
+        strategy: upstreams::config::PickerStrategy::RoundRobin,
+        models: Vec::new(),
+        backend: vec![],
+    };
+
+    let params = oidc_config
+        .to_params()
+        .expect("client secret env var was planted above");
+    let public_url = config.public_url_fallback().to_string();
+    let oidc = OidcClient::build(&params, &public_url)
+        .await
+        .expect("build OidcClient against mock IdP");
+
+    let app = AppState::new(config, pool.clone(), registry, tools, rbac);
+    app.set_runtime(aiplane_runtime::server::state::RuntimeSettings {
+        public_url: public_url.clone(),
+        oidc: Some(oidc),
+        setup_completed: true,
+    });
+    let sessions = SessionStore::new(pool, common::TEST_SECRET);
+    RamaState::new(
+        app,
+        sessions,
+        aiplane_core::server::usage::UsageHandle::disabled(),
+    )
+}
+
+#[tokio::test]
+async fn full_oidc_dance_completes_and_stamps_the_session() {
+    // 1. Stand up the mock IdP.
+    let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
+    let public_key = RsaPublicKey::from(&private_key);
+
+    // The token endpoint stays unmocked at first — we plug in the matching
+    // response *after* observing the nonce the gateway generates, so the ID
+    // token's `nonce` claim matches.
+    let idp = crate::setup_wizard::mock_idp(&public_key).await;
+    let issuer = idp.uri();
+
+    let state = state_with_oidc(&issuer, Some("groups")).await;
+    let app = router(Arc::new(state.clone()));
+
+    // 2. Drive /auth/login. The redirect Location must carry the
+    // gateway's state + nonce; we read those back from the pending_logins
+    // row so we can plug them into the upcoming token-endpoint mock.
+    // Drive login *with* a deep-link target — it must be stashed in the
+    // pending row and survive to the post-callback redirect.
+    let resp = app
+        .serve(common::req(
+            Method::GET,
+            &format!("/auth/login?return_to={RETURN_TO}"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location = resp
+        .headers()
+        .get(rama::http::header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        location.starts_with(&format!("{issuer}/auth?")),
+        "unexpected redirect: {location}"
+    );
+
+    let pending: (String, String, String, Option<String>) =
+        sqlx::query_as("SELECT state, pkce_verifier, nonce, return_to FROM pending_logins LIMIT 1")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let (csrf, _pkce_verifier, nonce, return_to) = pending;
+    assert_eq!(
+        return_to.as_deref(),
+        Some(RETURN_TO),
+        "/auth/login must persist the return_to it was handed",
+    );
+
+    // 3. Mount the token endpoint NOW that we know the nonce. The
+    // OidcClient POSTs `application/x-www-form-urlencoded` with code +
+    // redirect_uri + client_id + client_secret + grant_type +
+    // code_verifier; for the test we only care that the response is
+    // shape-correct.
+    let id_token = sign_id_token(&private_key, &issuer, CLIENT_ID, &nonce);
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "test-access",
+            "id_token": id_token,
+            "token_type": "Bearer",
+            "expires_in": 3600,
+        })))
+        .mount(&idp)
+        .await;
+
+    // 4. Hit /auth/callback with the matching code + state, carrying the
+    // browser-binding cookie that /auth/login set (value == state). The
+    // callback now rejects any request whose `gw_oidc` cookie doesn't
+    // match `state`, so the flow must echo it back.
+    let callback_uri = format!("/auth/callback?code=test-code&state={csrf}");
+    let resp = app
+        .serve(
+            Request::builder()
+                .method(Method::GET)
+                .uri(&callback_uri)
+                .header("cookie", format!("gw_oidc={csrf}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let location = resp
+        .headers()
+        .get(rama::http::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    // The session cookie must be *persistent*: without Max-Age the browser
+    // drops it on quit, which is what forced a re-login after every laptop
+    // restart. `public_url` is http:// here, so no `Secure` — a Secure
+    // cookie over plain HTTP would be dropped outright.
+    let session_cookie = resp
+        .headers()
+        .get_all(rama::http::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|c| c.starts_with("id="))
+        .map(str::to_string)
+        .expect("callback must set the session cookie");
+    for attr in ["Path=/", "HttpOnly", "SameSite=Lax", "Max-Age="] {
+        assert!(
+            session_cookie.contains(attr),
+            "session cookie missing {attr}: {session_cookie}"
+        );
+    }
+    assert!(
+        !session_cookie.contains("Secure"),
+        "http:// deployment must not mark the cookie Secure: {session_cookie}"
+    );
+    let body = String::from_utf8_lossy(&common::read_body(resp).await).into_owned();
+    assert_eq!(
+        status,
+        StatusCode::SEE_OTHER,
+        "callback should redirect on success; body = {body}"
+    );
+    // The whole point of the deep-link fix: the user lands back on the page
+    // they requested, not the default `/chat` surface.
+    assert_eq!(
+        location.as_deref(),
+        Some(RETURN_TO),
+        "callback must honour the stored return_to; body = {body}"
+    );
+
+    // 5. Replay the *same* state + binding cookie. The pending row is
+    // single-use, so the first callback deleted it and this must now 400
+    // — confirms the row is consumed (not merely that a bad state fails).
+    let resp = app
+        .serve(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/auth/callback?code=test-code-2&state={csrf}"))
+                .header("cookie", format!("gw_oidc={csrf}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // 6. Confirm the user landed in the DB with the right claims.
+    let users: Vec<(String, String, Option<String>, String)> =
+        sqlx::query_as("SELECT id, email, name, roles_json FROM users")
+            .fetch_all(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0].0, SUBJECT);
+    assert_eq!(users[0].1, EMAIL);
+    assert_eq!(users[0].2.as_deref(), Some(NAME));
+    // roles_json should be ["engineering", "admin"]
+    let roles: Vec<String> = serde_json::from_str(&users[0].3).unwrap();
+    assert_eq!(roles, vec!["engineering", "admin"]);
+
+    // 7. Confirm a session row was minted.
+    let session_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(session_count, 1);
+}
+
+#[tokio::test]
+async fn callback_without_pending_state_is_400() {
+    let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
+    let public_key = RsaPublicKey::from(&private_key);
+    let idp = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/.well-known/openid-configuration"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "issuer": idp.uri(),
+            "authorization_endpoint": format!("{}/auth", idp.uri()),
+            "token_endpoint": format!("{}/token", idp.uri()),
+            "jwks_uri": format!("{}/jwks", idp.uri()),
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+        })))
+        .mount(&idp)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/jwks"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "keys": [jwk_for(&public_key)]
+        })))
+        .mount(&idp)
+        .await;
+
+    let state = state_with_oidc(&idp.uri(), Some("groups")).await;
+    let app = router(Arc::new(state));
+
+    // No /auth/login first — the pending_logins table is empty. Send a
+    // matching binding cookie so we exercise the pending-absence path
+    // (not the browser-binding check, which is covered separately).
+    let resp = app
+        .serve(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/auth/callback?code=x&state=does-not-exist")
+                .header("cookie", "gw_oidc=does-not-exist")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn callback_without_matching_binding_cookie_is_rejected() {
+    // Regression for login-CSRF / session fixation: even with a valid,
+    // in-flight `state`, a callback arriving in a *different* browser
+    // (no binding cookie, or a mismatched one) must be rejected before
+    // any token exchange, and must NOT consume the legit pending row.
+    let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
+    let public_key = RsaPublicKey::from(&private_key);
+    let idp = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/.well-known/openid-configuration"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "issuer": idp.uri(),
+            "authorization_endpoint": format!("{}/auth", idp.uri()),
+            "token_endpoint": format!("{}/token", idp.uri()),
+            "jwks_uri": format!("{}/jwks", idp.uri()),
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+        })))
+        .mount(&idp)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/jwks"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "keys": [jwk_for(&public_key)]
+        })))
+        .mount(&idp)
+        .await;
+
+    let state = state_with_oidc(&idp.uri(), Some("groups")).await;
+    let app = router(Arc::new(state.clone()));
+
+    // Start a real login so a valid pending row exists.
+    let resp = app
+        .serve(common::req(Method::GET, "/auth/login"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let csrf: String = sqlx::query_scalar("SELECT state FROM pending_logins LIMIT 1")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+
+    // Valid state, but NO binding cookie (attacker feeds it to a victim
+    // browser that never started this login) → rejected.
+    let resp = app
+        .serve(common::req(
+            Method::GET,
+            &format!("/auth/callback?code=test-code&state={csrf}"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Valid state, but a *mismatched* binding cookie → also rejected.
+    let resp = app
+        .serve(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/auth/callback?code=test-code&state={csrf}"))
+                .header("cookie", "gw_oidc=some-other-browser")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // The rejected attempts must not have consumed the legit pending row.
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pending_logins")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining, 1,
+        "a rejected CSRF callback must not burn the user's in-flight login"
+    );
+}

@@ -10,7 +10,7 @@
 # `" "` in the Rust call site, not part of the translated string —
 # translators should not add leading/trailing spaces to these values.
 
-connectors-page-title = Connectors — LLM Gateway
+connectors-page-title = Connectors — AIplane
 connectors-audit-page-title = { $name } — audit log
 connectors-heading = Connectors
 connectors-restore-defaults-button = Restore defaults
@@ -107,7 +107,7 @@ connectors-badge-needs-setup = Needs client id
 connectors-field-scope-label = Scope
 connectors-scope-per-user = Per-user (each user connects their own account)
 connectors-scope-global = Global (one shared identity for everyone)
-connectors-field-scope-help = Global connectors are shared by everyone allowed by their gateway groups. They must use no authentication or a shared bearer token, not per-user OAuth.
+connectors-field-scope-help = Global connectors are shared by everyone allowed by their AIplane groups. They must use no authentication or a shared bearer token, not per-user OAuth.
 connectors-token-help-global = This shared connector sends one encrypted bearer token for every allowed user.
 connectors-token-help-user = Each user supplies their own API token under Integrations. No OAuth client is needed.
 connectors-field-shared-token-label = Bearer token (shared)

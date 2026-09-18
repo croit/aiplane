@@ -11,9 +11,9 @@ import { BASE, devSessionCookie, gatewayIsUp, launchBrowser } from "./helpers.mj
 let browser;
 // The admin views need an admin session. The /__dev fixture user is a plain
 // user on gateways whose RBAC doesn't map it to admin, so an operator-level
-// cookie can be supplied via GATEWAY_SESSION_COOKIE; without it the admin
+// cookie can be supplied via AIPLANE_SESSION_COOKIE; without it the admin
 // page tests SKIP instead of failing (a 403 there is the gateway working).
-let adminCookie = process.env.GATEWAY_SESSION_COOKIE?.trim().replace(/^id=/, "") ?? null;
+let adminCookie = process.env.AIPLANE_SESSION_COOKIE?.trim().replace(/^id=/, "") ?? null;
 let adminOk = false;
 
 before(async () => {
@@ -31,29 +31,29 @@ after(async () => {
 });
 
 const PAGES = [
-    ["/memory", "Preferences", "Memory — LLM Gateway"],
-    ["/scheduled", "Your scheduled actions", "Scheduled actions — LLM Gateway"],
+    ["/memory", "Preferences", "Memory — AIplane"],
+    ["/scheduled", "Your scheduled actions", "Scheduled actions — AIplane"],
     ["/scheduled/new", "Create scheduled action", "New scheduled action"],
-    ["/webhooks", "Your webhooks", "Webhooks — LLM Gateway"],
+    ["/webhooks", "Your webhooks", "Webhooks — AIplane"],
     ["/webhooks/new", "Create webhook", "New webhook"],
-    ["/skills", "Skills", "My Skills — LLM Gateway"],
-    ["/integrations", "Integrations", "Integrations — LLM Gateway"],
-    ["/tokens", "Create token", "API tokens — LLM Gateway"],
-    ["/usage", "Requests", "Your usage — LLM Gateway"],
-    ["/tools", "Tools", "Tools — LLM Gateway"],
+    ["/skills", "Skills", "My Skills — AIplane"],
+    ["/integrations", "Integrations", "Integrations — AIplane"],
+    ["/tokens", "Create token", "API tokens — AIplane"],
+    ["/usage", "Requests", "Your usage — AIplane"],
+    ["/tools", "Tools", "Tools — AIplane"],
     ["/admin/groups", "New group", "Gateway groups"],
-    ["/admin/users", "Users", "Users — LLM Gateway"],
-    ["/admin/models", "Default models", "Models — LLM Gateway"],
+    ["/admin/users", "Users", "Users — AIplane"],
+    ["/admin/models", "Default models", "Models — AIplane"],
     ["/admin/limits", "Add or update a limit", "Rate limits & quotas"],
     ["/admin/settings", "Save section", "Settings"],
     ["/admin/tokens", "API tokens", "API tokens"],
-    ["/admin/upstreams", "Pools", "Upstreams — LLM Gateway"],
-    ["/admin/skills", "Upload .skill", "Skills — LLM Gateway"],
-    ["/admin/connectors", "Connectors", "Connectors — LLM Gateway"],
+    ["/admin/upstreams", "Pools", "Upstreams — AIplane"],
+    ["/admin/skills", "Upload .skill", "Skills — AIplane"],
+    ["/admin/connectors", "Connectors", "Connectors — AIplane"],
     ["/admin/comfyui", "Reload catalog", "ComfyUI — Workflow catalog"],
-    ["/rag", "Index a new collection", "RAG collections — LLM Gateway", true],
+    ["/rag", "Index a new collection", "RAG collections — AIplane", true],
     ["/rag/new", "Queue indexing", "Index a new collection", true],
-    ["/rag/profiles", "New profile", "Extraction profiles — LLM Gateway", true],
+    ["/rag/profiles", "New profile", "Extraction profiles — AIplane", true],
 ];
 
 for (const [path, label, expectedTitle, explicitlyAdmin = false] of PAGES) {
@@ -63,7 +63,7 @@ for (const [path, label, expectedTitle, explicitlyAdmin = false] of PAGES) {
         // before before(), so `adminOk` was still false at declaration time
         // and every admin page skipped even with a working admin session.
         if (isAdminPage && !adminOk) {
-            t.skip("no admin session — set GATEWAY_SESSION_COOKIE");
+            t.skip("no admin session — set AIPLANE_SESSION_COOKIE");
             return;
         }
         const ctx = await browser.newContext({ colorScheme: "dark" });
@@ -85,7 +85,7 @@ for (const [path, label, expectedTitle, explicitlyAdmin = false] of PAGES) {
 
 test("RAG controls fit a mobile viewport", async (t) => {
     if (!adminOk || !adminCookie) {
-        t.skip("no admin session — set GATEWAY_SESSION_COOKIE");
+        t.skip("no admin session — set AIPLANE_SESSION_COOKIE");
         return;
     }
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
@@ -129,7 +129,7 @@ test("memory keeps its three semantic sections and direct editing", async () => 
 
 test("integrations preserve token connection, health feedback, and mobile layout", async (t) => {
     if (!adminOk || !adminCookie) {
-        t.skip("no admin session — set GATEWAY_SESSION_COOKIE");
+        t.skip("no admin session — set AIPLANE_SESSION_COOKIE");
         return;
     }
     const connectorKey = `mobile_probe_${Date.now()}`;
@@ -279,7 +279,7 @@ test("webhooks preserve security, reuse, reveal, and edit workflows on mobile", 
     await row.getByText(/Waits for response/).waitFor();
     await row.getByRole("link", { name: "Edit", exact: true }).click();
     await page.getByRole("heading", { name: `Edit ${hookName}`, exact: true }).waitFor();
-    assert.equal(await page.title(), "Edit webhook — LLM Gateway");
+    assert.equal(await page.title(), "Edit webhook — AIplane");
     assert.equal(await page.getByRole("checkbox", { name: /Wait for the response/ }).isChecked(), true);
     assert.equal(await page.getByRole("checkbox", { name: /Allow tools/ }).isChecked(), true);
     assert.equal(await page.getByRole("checkbox", { name: /Reuse the conversation/ }).isChecked(), true);

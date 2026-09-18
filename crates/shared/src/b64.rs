@@ -6,8 +6,8 @@
 //! Self-contained, matching the convention the gateway-side codecs already
 //! follow: this repo carries small hand-rolled base64 rather than taking a
 //! dependency for it. It lives in `shared` so both the gateway and the
-//! sandbox-runner can use one copy; the older copies under `gateway-runtime`
-//! and `gateway-tools` can migrate here whenever they are next touched.
+//! sandbox-runner can use one copy; the older copies under `aiplane-runtime`
+//! and `aiplane-tools` can migrate here whenever they are next touched.
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 

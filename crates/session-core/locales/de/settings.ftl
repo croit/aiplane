@@ -1,7 +1,7 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 # Betreiber-Einstellungen (/admin/settings). Kartentitel (settings-s-*),
 # Feldbeschriftungen (settings-f-*) und deren Hilfetexte (settings-f-*-help)
-# werden aus den Spec-Einträgen in gateway_core::server::settings::SECTIONS
+# werden aus den Spec-Einträgen in aiplane_core::server::settings::SECTIONS
 # abgeleitet: `sandbox.runner_url` -> `settings-f-sandbox-runner_url`.
 # Siehe locales/en/settings.ftl für die Quelle.
 

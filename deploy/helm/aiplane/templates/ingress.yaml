@@ -1,0 +1,75 @@
+{{- /*
+SPDX-License-Identifier: AGPL-3.0-only
+Copyright (C) 2026 croit GmbH
+
+Two separate Ingress objects rather than one with two hosts: the Google
+Workspace MCP usually wants its own certificate, and possibly its own class,
+and keeping them apart means enabling one does not re-render the other.
+*/ -}}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "aiplane.fullname" . }}
+  labels:
+    {{- include "aiplane.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-tls" (include "aiplane.fullname" .)) }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "aiplane.fullname" . }}
+                port:
+                  name: http
+{{- end }}
+{{- if and .Values.mcp.googleWorkspace.enabled .Values.mcp.googleWorkspace.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "aiplane.fullname" . }}-gworkspace-mcp
+  labels:
+    {{- include "aiplane.labels" . | nindent 4 }}
+  {{- with .Values.mcp.googleWorkspace.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.mcp.googleWorkspace.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.mcp.googleWorkspace.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.mcp.googleWorkspace.ingress.host | quote }}
+      secretName: {{ .Values.mcp.googleWorkspace.ingress.tls.secretName | default (printf "%s-gworkspace-tls" (include "aiplane.fullname" .)) }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.mcp.googleWorkspace.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "aiplane.fullname" . }}
+                port:
+                  name: gworkspace-mcp
+{{- end }}

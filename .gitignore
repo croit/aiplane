@@ -11,9 +11,8 @@ Cargo.lock.bak
 .env.*
 !.env.example
 
-# Real deployment secrets/config (only the *.example.* templates are committed)
+# Real deployment secrets (only the *.example.* templates are committed)
 deploy/*.env
-deploy/gateway.toml
 
 # Editor/OS
 .idea
@@ -24,13 +23,14 @@ deploy/gateway.toml
 # mise installs its tools project-locally if asked; tracked separately
 .mise.toml.local
 
-# Dev-mode SQLite (created by `mise run dev` when no $GATEWAY_CONFIG is set)
+# Dev-mode SQLite. Still named `gateway.sqlite`: the filename is a persistent
+# path, and renaming it would orphan every existing database (docs/renaming.md).
 gateway.sqlite*
 
 # Persistent dev session key, generated on first `mise run dev`. It is a real
 # secret (it derives the at-rest key that seals the local DB's stored
 # credentials) — never commit it.
-.gateway-dev-session-key
+.aiplane-dev-session-key
 /.playwright-cli/
 
 # Local dev RAG storage: the `[rag] data_dir` tree (default ./data/rag).
@@ -38,19 +38,12 @@ gateway.sqlite*
 # all regenerable and potentially many GB. Never commit.
 /data/
 
-# JS bundle source maps — emitted alongside crates/session-core/assets/*.js
-# by the esbuild step. The bundles themselves are committed (matching the
-# CSS bundle convention), but the maps are dev-only and large.
-crates/session-core/assets/*.js.map
-
 # GeoIP database
 IP2LOCATION-LITE-DB11.BIN
 
 # Python bytecode cache (e.g. from running/importing sandbox-image/sandbox-agent)
 __pycache__/
 *.pyc
-
-gateway.toml
 
 # Local agent/tool configs — hold personal MCP endpoints and API tokens.
 # A token from .codex/config.toml once leaked into the public history; keep

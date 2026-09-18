@@ -1,6 +1,6 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
-nav-brand = LLM Gateway
+nav-brand = AIplane
 nav-memory = Память
 nav-scheduled = Запланировано
 nav-webhooks = Вебхуки
@@ -51,15 +51,15 @@ nav-search-close-aria = Закрыть поиск
 # live session, which on a shared machine is the worst outcome.
 nav-sign-out-failed = Не удалось выйти, вы всё ещё в системе: { $error }
 
-nav-flow-error-title = Ошибка подключения — LLM Gateway
+nav-flow-error-title = Ошибка подключения — AIplane
 nav-flow-error-heading = Подключение не было завершено
 nav-flow-error-back = Вернуться в приложение
 nav-admin-required = Требуется роль администратора
 nav-source-title = Исходный код (AGPL-3.0)
 nav-source-line = Исходный код · AGPL-3.0 · { $version }
-login-heading = Вход в LLM Gateway
+login-heading = Вход в AIplane
 login-description = Войдите через OIDC-провайдера вашей компании, чтобы создавать API-токены и направлять запросы к LLM.
 login-continue-button = Продолжить через OIDC →
 login-source-link = Исходный код · AGPL-3.0
-login-page-title = Sign in — LLM Gateway
-page-title-branded = { $title } — LLM Gateway
+login-page-title = Sign in — AIplane
+page-title-branded = { $title } — AIplane

@@ -1,4 +1,4 @@
-# CI for the rama-based LLM gateway (GitHub Actions).
+# CI for croit AIplane (GitHub Actions).
 #
 # Pipeline shape (mirrors the previous GitLab pipeline):
 #   1. ci        — one job runs lint + tests + release build via `mise run ci`,
@@ -47,18 +47,34 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
-  IMAGE: ghcr.io/croit/llm-gateway
+  IMAGE: ghcr.io/croit/aiplane
   # Companion images for the code-execution sandbox feature (see docs/sandbox.md).
-  IMAGE_SANDBOX: ghcr.io/croit/llm-gateway-sandbox
-  IMAGE_RUNNER: ghcr.io/croit/llm-gateway-sandbox-runner
+  IMAGE_SANDBOX: ghcr.io/croit/aiplane-sandbox
+  IMAGE_RUNNER: ghcr.io/croit/aiplane-sandbox-runner
   # PDF-aware OCR adapter (deploy/ocr-sidecar). Optional at runtime, but it has
   # to exist as an image: Kubernetes pulls, it cannot build from a context the
   # way `docker compose` does.
-  IMAGE_OCR: ghcr.io/croit/llm-gateway-ocr-sidecar
+  IMAGE_OCR: ghcr.io/croit/aiplane-ocr-sidecar
+  # DEPRECATED mirrors under the project's former name (croit LLM Gateway).
+  # metadata-action takes a newline-separated list of images and emits the same
+  # tag set for each, so every push writes both names from one build — an
+  # install that still says `ghcr.io/croit/llm-gateway:production` keeps
+  # updating instead of silently freezing on the last pre-rename digest. They
+  # are published for compatibility only; nothing in this repository refers to
+  # them, and they go away in a future intentional breaking release. See
+  # docs/renaming.md.
+  IMAGE_LEGACY: ghcr.io/croit/llm-gateway
+  IMAGE_SANDBOX_LEGACY: ghcr.io/croit/llm-gateway-sandbox
+  IMAGE_RUNNER_LEGACY: ghcr.io/croit/llm-gateway-sandbox-runner
+  IMAGE_OCR_LEGACY: ghcr.io/croit/llm-gateway-ocr-sidecar
   # The Helm chart is published as an OCI artifact into the same registry as
-  # the images, so `helm install oci://…/llm-gateway --version <v>` needs no
-  # checkout of this repository.
+  # the images, so `helm install oci://…/aiplane --version <v>` needs no
+  # checkout of this repository. `CHART_NAME_LEGACY` is the pre-rename chart,
+  # republished from the same source so an existing `helm upgrade` against it
+  # does not 404 (see docs/renaming.md).
   CHART_REPO: oci://ghcr.io/croit/charts
+  CHART_NAME: aiplane
+  CHART_NAME_LEGACY: llm-gateway
   # The workspace compiles 2-3x in one job (clippy debug + test debug +
   # release build) and lumis pulls in ~116 tree-sitter grammars, so the
   # default-runner disk fills up. Dropping debuginfo from the dev/test
@@ -154,7 +170,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # `mise run ci` fans out lint (fmt + clippy -D warnings + tsc) + tests +
       # release build through mise's DAG (each transitively builds the CSS/JS
-      # bundles). Produces target/release/gateway.
+      # bundles). Produces target/release/aiplane.
       - name: mise run ci
         env:
           # build.rs embeds this as the §13 "Source" commit in the UI. Without
@@ -168,13 +184,13 @@ jobs:
       - name: Build sandbox-runner binary
         run: mise exec -- cargo build --release -p sandbox-runner
 
-      - run: ls -lh target/release/gateway target/release/sandbox-runner
+      - run: ls -lh target/release/aiplane target/release/sandbox-runner
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gateway-binaries
           path: |
-            target/release/gateway
+            target/release/aiplane
             target/release/sandbox-runner
             target/release/typst
             target/release/libpdfium.so
@@ -219,16 +235,18 @@ jobs:
           path: target/frontend/build
 
       # upload-artifact does not preserve the executable bit; restore it so the
-      # COPYed /app/gateway is runnable.
+      # COPYed /app/aiplane is runnable.
       - name: Restore executable bits
-        run: chmod +x target/release/gateway target/release/typst
+        run: chmod +x target/release/aiplane target/release/typst
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Image tags + labels
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.IMAGE }}
+          images: |
+            ${{ env.IMAGE }}
+            ${{ env.IMAGE_LEGACY }}
           # `v<derived version>` on EVERY build is what lets a chart pin one
           # number and find the matching image whether it came from a release
           # tag or from main. `production` is the moving "latest official
@@ -248,8 +266,8 @@ jobs:
           # regardless of the repo's About field. `source`/`url`/`revision` are
           # still filled in automatically by metadata-action.
           labels: |
-            org.opencontainers.image.title=LLM Gateway
-            org.opencontainers.image.description=Authenticated, OpenAI-API-compatible LLM gateway — multi-backend routing, OIDC login, per-user API tokens, RBAC-gated server-side tools, RAG, and a built-in chat UI. One Rust binary, SQLite for state.
+            org.opencontainers.image.title=croit AIplane
+            org.opencontainers.image.description=Self-hosted AI infrastructure for models, agents, tools and enterprise data — an OpenAI-compatible LLM gateway with server-side agent execution, MCP connectors, RAG, memory, a code sandbox, OIDC login, RBAC, quotas and usage accounting, and a built-in chat UI. One Rust binary, SQLite for state.
             org.opencontainers.image.licenses=AGPL-3.0-only
             org.opencontainers.image.version=${{ needs.version.outputs.version }}
 
@@ -271,11 +289,11 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Becomes GATEWAY_VERSION in the image; the gateway reads it at
-          # runtime (gateway-api/src/build_info.rs) and reports it at
+          # Becomes AIPLANE_VERSION in the image; the gateway reads it at
+          # runtime (aiplane-api/src/build_info.rs) and reports it at
           # /api/v0/build, which is what the UI's version line shows.
           build-args: |
-            GATEWAY_VERSION=${{ needs.version.outputs.version }}
+            AIPLANE_VERSION=${{ needs.version.outputs.version }}
 
   # Sandbox companion images. These are large (LibreOffice + Chromium + the
   # data/science stack) and self-contained (no Rust artifact needed for the
@@ -310,7 +328,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.IMAGE_SANDBOX }}
+          images: |
+            ${{ env.IMAGE_SANDBOX }}
+            ${{ env.IMAGE_SANDBOX_LEGACY }}
           # `v<derived version>` on EVERY build is what lets a chart pin one
           # number and find the matching image whether it came from a release
           # tag or from main. `production` is the moving "latest official
@@ -324,8 +344,8 @@ jobs:
             type=raw,value=v${{ needs.version.outputs.version }}
             type=raw,value=production,enable=${{ github.ref_type == 'tag' }}
           labels: |
-            org.opencontainers.image.title=LLM Gateway Sandbox
-            org.opencontainers.image.description=Batteries-included workload image for the LLM gateway code-execution sandbox — python + data/science stack, LibreOffice, pandoc, typst, ffmpeg, duckdb, ripgrep/jq, tshark, tesseract OCR, headless Chromium. Runs under gVisor (runsc) / crun.
+            org.opencontainers.image.title=croit AIplane Sandbox
+            org.opencontainers.image.description=Batteries-included workload image for the croit AIplane code-execution sandbox — python + data/science stack, LibreOffice, pandoc, typst, ffmpeg, duckdb, ripgrep/jq, tshark, tesseract OCR, headless Chromium. Runs under gVisor (runsc) / crun.
             org.opencontainers.image.licenses=AGPL-3.0-only
             org.opencontainers.image.version=${{ needs.version.outputs.version }}
 
@@ -372,7 +392,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.IMAGE_RUNNER }}
+          images: |
+            ${{ env.IMAGE_RUNNER }}
+            ${{ env.IMAGE_RUNNER_LEGACY }}
           # `v<derived version>` on EVERY build is what lets a chart pin one
           # number and find the matching image whether it came from a release
           # tag or from main. `production` is the moving "latest official
@@ -386,8 +408,8 @@ jobs:
             type=raw,value=v${{ needs.version.outputs.version }}
             type=raw,value=production,enable=${{ github.ref_type == 'tag' }}
           labels: |
-            org.opencontainers.image.title=LLM Gateway Sandbox Runner
-            org.opencontainers.image.description=Privileged helper for the LLM gateway sandbox — spawns single-use, gVisor-isolated sandboxes (holds the podman socket); the gateway talks to it over HTTP.
+            org.opencontainers.image.title=croit AIplane Sandbox Runner
+            org.opencontainers.image.description=Privileged helper for the croit AIplane code-execution sandbox — spawns single-use, gVisor-isolated sandboxes (holds the podman socket); AIplane talks to it over HTTP.
             org.opencontainers.image.licenses=AGPL-3.0-only
             org.opencontainers.image.version=${{ needs.version.outputs.version }}
 
@@ -428,7 +450,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.IMAGE_OCR }}
+          images: |
+            ${{ env.IMAGE_OCR }}
+            ${{ env.IMAGE_OCR_LEGACY }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -437,8 +461,8 @@ jobs:
             type=raw,value=v${{ needs.version.outputs.version }}
             type=raw,value=production,enable=${{ github.ref_type == 'tag' }}
           labels: |
-            org.opencontainers.image.title=LLM Gateway OCR Sidecar
-            org.opencontainers.image.description=PDF-aware adapter between the LLM gateway's internal /ocr contract and an Unlimited-OCR vLLM server — converts PDFs page by page with PyMuPDF and calls the model with its request recipe.
+            org.opencontainers.image.title=croit AIplane OCR Sidecar
+            org.opencontainers.image.description=PDF-aware adapter between croit AIplane's internal /ocr contract and an Unlimited-OCR vLLM server — converts PDFs page by page with PyMuPDF and calls the model with its request recipe.
             org.opencontainers.image.licenses=AGPL-3.0-only
             org.opencontainers.image.version=${{ needs.version.outputs.version }}
 
@@ -594,17 +618,28 @@ jobs:
           # so docker/login-action would not help it.
           echo "$GITHUB_TOKEN" | mise x helm@3.19.0 -- helm registry login ghcr.io \
             --username "${{ github.actor }}" --password-stdin
-          mise x helm@3.19.0 -- helm package deploy/helm/llm-gateway \
+          mise x helm@3.19.0 -- helm package "deploy/helm/$CHART_NAME" \
             --version "$CHART_VERSION" --app-version "$V" --destination dist
-          mise x helm@3.19.0 -- helm push "dist/llm-gateway-$CHART_VERSION.tgz" "$CHART_REPO"
+          mise x helm@3.19.0 -- helm push "dist/$CHART_NAME-$CHART_VERSION.tgz" "$CHART_REPO"
+
+          # The same chart republished under the project's former name, so an
+          # existing `helm upgrade <release> oci://…/charts/llm-gateway` keeps
+          # resolving. Only Chart.yaml's name differs, which is also what keeps
+          # that release's object names (and its PVC) unchanged. Deprecated —
+          # it goes away in a future breaking release. See docs/renaming.md.
+          rm -rf dist/legacy && cp -r "deploy/helm/$CHART_NAME" "dist/legacy"
+          sed -i "s|^name: $CHART_NAME$|name: $CHART_NAME_LEGACY|" dist/legacy/Chart.yaml
+          mise x helm@3.19.0 -- helm package dist/legacy \
+            --version "$CHART_VERSION" --app-version "$V" --destination dist
+          mise x helm@3.19.0 -- helm push "dist/$CHART_NAME_LEGACY-$CHART_VERSION.tgz" "$CHART_REPO"
           {
             echo "### Helm chart published"
             echo
             echo '```bash'
             if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-              echo "helm install llm-gateway ${CHART_REPO}/llm-gateway"
+              echo "helm install aiplane ${CHART_REPO}/${CHART_NAME}"
             else
-              echo "helm install llm-gateway ${CHART_REPO}/llm-gateway --version $CHART_VERSION"
+              echo "helm install aiplane ${CHART_REPO}/${CHART_NAME} --version $CHART_VERSION"
             fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

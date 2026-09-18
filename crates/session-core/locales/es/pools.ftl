@@ -25,7 +25,7 @@ pools-field-fallback-offline = Modelo alternativo fuera de línea
 pools-field-fallback-offline-placeholder = servido cuando todos los backends están caídos
 pools-field-models-hint = Si se define, solo se sirven estos ids de un backend con sondeo /models; el resto se muestra tachado. En blanco = servir todo lo que informa el backend.
 pools-field-allowed-groups = Grupos permitidos
-pools-field-allowed-groups-hint = Grupos del gateway (separados por comas) autorizados a ver y usar los modelos de este pool. VacÃ­o = todos. Los admins siempre tienen acceso. Gestiona los grupos en Admin â Grupos.
+pools-field-allowed-groups-hint = Grupos de AIplane (separados por comas) autorizados a ver y usar los modelos de este pool. Vacío = todos. Los admins siempre tienen acceso. Gestiona los grupos en Admin → Grupos.
 pools-field-voices = Voces (lang=voice por línea)
 pools-field-offer-voices = Voces seleccionables (una por línea, elige el usuario)
 pools-no-backends = Aún no hay backends definidos. Añada uno primero en la página de Backends.

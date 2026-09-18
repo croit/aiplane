@@ -4,7 +4,7 @@
 // master tool toggle.
 //
 // Runs against any debug gateway serving the SPA (`mise run dev` or the
-// dev-ui stub with GATEWAY_STATIC_DIR set).
+// dev-ui stub with AIPLANE_STATIC_DIR set).
 
 import { test, before, after } from "node:test";
 import assert from "node:assert";
@@ -149,7 +149,7 @@ test("the usage and tools views render their data", async (t) => {
         geolocation: { latitude: 48.137, longitude: 11.575 },
         permissions: ["geolocation"],
     });
-    const usageCookie = process.env.GATEWAY_SESSION_COOKIE?.trim().replace(/^id=/, "") ?? await devSessionCookie();
+    const usageCookie = process.env.AIPLANE_SESSION_COOKIE?.trim().replace(/^id=/, "") ?? await devSessionCookie();
     await ctx.addCookies([{ name: "id", value: usageCookie, url: BASE }]);
     const page = await ctx.newPage();
 

@@ -1,15 +1,15 @@
 # Web UI
 
-The UI is a **SvelteKit SPA** (Svelte 5 runes, `adapter-static`) that lives in `web/`, is compiled ahead of time by Vite into plain static files, and is served **from the root `/`** by the Rust binary. It talks to the gateway exclusively over the session-authenticated JSON API at `/api/v0/*`, and streams chat over a JSON-SSE event protocol. Styling is [daisyUI v5](https://daisyui.com/) on Tailwind v4.
+The UI is a **SvelteKit SPA** (Svelte 5 runes, `adapter-static`) that lives in `web/`, is compiled ahead of time by Vite into plain static files, and is served **from the root `/`** by the Rust binary. It talks to AIplane exclusively over the session-authenticated JSON API at `/api/v0/*`, and streams chat over a JSON-SSE event protocol. Styling is [daisyUI v5](https://daisyui.com/) on Tailwind v4.
 
-There is **no Node at runtime**: still one container, one process, one port. The container image contains the gateway binary plus the built `build/` directory; `GATEWAY_STATIC_DIR` points the binary at it.
+There is **no Node at runtime**: still one container, one process, one port. The container image contains the gateway binary plus the built `build/` directory; `AIPLANE_STATIC_DIR` points the binary at it.
 
 The whole stack:
 
 | Layer | Tech | Lives in |
 |---|---|---|
-| HTTP server / router | rama 0.3 | `crates/gateway/src/rama_server/router.rs` |
-| Static SPA hosting | hand-rolled rama handler over `tokio::fs` | `crates/gateway/src/rama_server/spa.rs` |
+| HTTP server / router | rama 0.3 | `crates/aiplane/src/rama_server/router.rs` |
+| Static SPA hosting | hand-rolled rama handler over `tokio::fs` | `crates/aiplane/src/rama_server/spa.rs` |
 | UI framework | SvelteKit 2 / Svelte 5 (runes), Vite | `web/` |
 | API contract | OpenAPI 3.1, generated from backend route declarations | `GET /openapi.json` |
 | API client | one `fetch` helper + hand-declared shapes | `web/src/lib/api.ts` |
@@ -19,7 +19,7 @@ The whole stack:
 
 ## How it is served
 
-`crates/gateway/src/rama_server/spa.rs` serves the build directory named by the `GATEWAY_STATIC_DIR` environment variable. It is deliberately hand-rolled rather than a `tower-http::ServeDir`, because the dependency policy keeps the server stack rama-only (see [`dependencies.md`](dependencies.md)); the logic is small and unit-tested end to end.
+`crates/aiplane/src/rama_server/spa.rs` serves the build directory named by the `AIPLANE_STATIC_DIR` environment variable. It is deliberately hand-rolled rather than a `tower-http::ServeDir`, because the dependency policy keeps the server stack rama-only (see [`dependencies.md`](dependencies.md)); the logic is small and unit-tested end to end.
 
 What it does, and why:
 
@@ -27,10 +27,10 @@ What it does, and why:
 - **History fallback.** A client route like `/tokens` has no file on disk. Anything that is not an existing file falls back to `index.html` so the client router can resolve it. This is the standard contract an SPA needs from a static host.
 - **Cache policy by kind.** SvelteKit emits content-hashed asset filenames, whose bytes never change at a given URL — those get `public, max-age=31536000, immutable`. `index.html` and `sw.js` get `no-cache`, or an update would never reach a browser; the manifest gets a short revalidating max-age.
 - **Traversal guard.** The relative path is normalised *on its own* before being joined to the root, so a leading `..` with nothing to consume is refused. Normalising after the join would let the root's own components absorb the `..` — safe, but it would silently turn the guard into a no-op.
-- **Case is preserved.** rama lowercases only the *matched* path for route lookup; the `Request` handed to the handler keeps the original URI, so `req.uri().path()` still carries the case of a content-hashed filename. (Same precedent as `retrieve_model` — see [the note in `router.rs`](../crates/gateway/src/rama_server/router.rs).)
-- **503, not 404, when undeployed.** No `GATEWAY_STATIC_DIR` (or a missing directory) answers `503` with a message naming the variable. That is deliberately distinct from the router's 404 so an operator can tell "the SPA build was never copied in" from "that path does not exist". The rest of the gateway is unaffected.
+- **Case is preserved.** rama lowercases only the *matched* path for route lookup; the `Request` handed to the handler keeps the original URI, so `req.uri().path()` still carries the case of a content-hashed filename. (Same precedent as `retrieve_model` — see [the note in `router.rs`](../crates/aiplane/src/rama_server/router.rs).)
+- **503, not 404, when undeployed.** No `AIPLANE_STATIC_DIR` (or a missing directory) answers `503` with a message naming the variable. That is deliberately distinct from the router's 404 so an operator can tell "the SPA build was never copied in" from "that path does not exist". The rest of AIplane is unaffected.
 
-`crates/gateway/tests/it/spa_routes.rs` pins the *wiring* (the catch-all really reaches this handler, proven by the 503); `spa.rs`'s own unit tests pin the serve behaviour against a temp directory.
+`crates/aiplane/tests/it/spa_routes.rs` pins the *wiring* (the catch-all really reaches this handler, proven by the 503); `spa.rs`'s own unit tests pin the serve behaviour against a temp directory.
 
 ### The first-run gate
 
@@ -123,7 +123,7 @@ stale.
 
 Every dynamic thing the SPA does is a `/api/v0/*` call — about 140 operations
 across more than 100 paths. `GET /openapi.json` generates an OpenAPI 3.1
-document from the route declarations compiled into the gateway. There is no
+document from the route declarations compiled into AIplane. There is no
 detached contract file to copy into the container or synchronize after a route
 change. Path parameters and request methods are inferred from the declarations;
 explicit backend wire types remain the authority for request and response
@@ -137,7 +137,7 @@ A 401 means "signed out": `+layout.svelte` turns "`me` is null after load" into 
 
 `GET /api/v0/build` is public because both `/login` and the authenticated
 sidebar must offer the corresponding source before or after a session exists.
-It returns the runtime `GATEWAY_SOURCE_URL` and the binary's exact version/git
+It returns the runtime `AIPLANE_SOURCE_URL` and the binary's exact version/git
 label; the reusable `SourceLink` component renders that metadata in both places.
 
 The model administration read model lives at `GET /api/v0/admin/models`; model
@@ -175,7 +175,7 @@ complete model-facing workflow/parameter schemas, and the newest 20 persisted
 jobs. Job rows retain terminal output filenames or failure details so the page
 is useful for diagnosis rather than only catalog reloads. A successful
 `POST /api/v0/comfyui/reload` atomically swaps the workflow snapshot and the SPA
-refreshes this read model without restarting the gateway.
+refreshes this read model without restarting AIplane.
 
 ### Routes that are not `/api/v0`
 
@@ -343,7 +343,7 @@ columns. `POST /api/v0/admin/limits` upserts the selected rule and `DELETE
 `GET /api/v0/admin/settings` carries the declarative settings specification
 into the SPA: category and section membership, effective values, field kinds
 and spans, feature enablement, valid models for model fields, secret-presence
-flags, restart-pending keys, and whether the gateway still needs its first
+flags, restart-pending keys, and whether AIplane still needs its first
 backend. The category is a bookmarkable `?tab=` value. Disabled feature cards
 keep their master toggle visible and fold the remaining fields; each section
 saves independently through `POST /api/v0/admin/settings`, while write-only
@@ -386,7 +386,7 @@ The app is an installable PWA. Both halves ship with the SPA in `web/static/` an
 
 The service worker is served **verbatim** — it is not a Vite entry point, so it gets no bundling or type-checking. Keep it hand-valid browser JS. Because the SPA's assets are content-hashed and carry `immutable` server cache headers, the worker carries **no fetch cache at all**: installability and push are its whole job, and every request passes straight through to the network.
 
-Turn-complete **Web Push** rides on top. `sw.js` carries the `push` and `notificationclick` handlers, `lib/push.svelte.ts` drives the opt-in and subscription through `/api/v0/push/{config,subscribe,unsubscribe}`, and the server half is [`gateway_features::server::push`](../crates/gateway-features/src/server/push/) (self-generated VAPID keypair, RFC 8291 payload encryption) fired from the assistant worker. Whether a notification is actually *shown* is decided in the worker via `clients.matchAll` — suppressed when a focused tab already has that conversation open. See the README's *Notifications* section for the operator-facing view.
+Turn-complete **Web Push** rides on top. `sw.js` carries the `push` and `notificationclick` handlers, `lib/push.svelte.ts` drives the opt-in and subscription through `/api/v0/push/{config,subscribe,unsubscribe}`, and the server half is [`aiplane_features::server::push`](../crates/aiplane-features/src/server/push/) (self-generated VAPID keypair, RFC 8291 payload encryption) fired from the assistant worker. Whether a notification is actually *shown* is decided in the worker via `clients.matchAll` — suppressed when a focused tab already has that conversation open. See the README's *Notifications* section for the operator-facing view.
 
 Installability requires HTTPS (localhost exempt for dev), and on iOS Web Push needs the PWA installed to the home screen (16.4+).
 
@@ -427,13 +427,13 @@ mise run dev       # public Vite/HMR on :8080, private Rust gateway on :8081
 
 Open `http://localhost:8080`. Vite proxies the complete dynamic surface to :8081 (`web/vite.config.ts`), including attachments and OAuth callback routes, so there is only one browser origin. A Svelte save re-renders in well under a second with **no Rust rebuild**.
 
-`mise run dev-served` builds `target/frontend/build` and serves the compiled SPA directly from the gateway. Use that to check the production-shaped artifact, cache headers and history fallback.
+`mise run dev-served` builds `target/frontend/build` and serves the compiled SPA directly from AIplane. Use that to check the production-shaped artifact, cache headers and history fallback.
 
 | Task | What it does |
 |---|---|
 | `mise run web-install` | `npm ci` in `web/`. Re-runs only when `package.json`/lock change. |
 | `mise run dev` | Complete HMR stack on :8080; Vite proxies to the private gateway. |
-| `mise run dev-served` | Compiled SPA served directly by the gateway, without HMR. |
+| `mise run dev-served` | Compiled SPA served directly by AIplane, without HMR. |
 | `mise run build-web` | `vite build` → `target/frontend/build/` (what the Dockerfile COPYs). |
 | `mise run check-web` | `svelte-check` — TypeScript, a11y and Svelte diagnostics. |
 | `mise run test-web` | `node --test` over `web/src/lib/**/*.test.ts` (the pure, framework-free halves). |
@@ -445,7 +445,7 @@ Open `http://localhost:8080`. Vite proxies the complete dynamic surface to :8081
 Every authed surface is gated by OIDC, which makes ad-hoc browser debugging annoying. **Don't fabricate a hand-rolled `test.html`** — it won't boot the real bundle and will miss real bugs.
 
 ```bash
-GATEWAY_STATIC_DIR=target/frontend/build mise run dev-ui
+AIPLANE_STATIC_DIR=target/frontend/build mise run dev-ui
 ```
 
 Boots the full rama gateway on `127.0.0.1:8080` against an in-memory SQLite, wiremock chat + transcription backends, and a pre-seeded admin session with demo data. It prints the signed cookie on startup; paste it via `document.cookie` after a `goto`, then drive any page with Playwright. Full recipe in [`dev-workflow.md`](dev-workflow.md#debugging-the-ui).

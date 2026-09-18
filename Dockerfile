@@ -41,7 +41,7 @@
 #   docker build -t gateway:dev .
 #
 # CI build: the `container` job in .github/workflows/ci.yml builds this
-# file with docker/build-push-action, with `target/release/gateway`
+# file with docker/build-push-action, with `target/release/aiplane`
 # arriving from the `ci` job's artifact.
 
 # Base image is pinned by digest, not just by tag. `debian:trixie-slim` is a
@@ -70,7 +70,12 @@ RUN groupadd --system --gid 1000 gateway \
  && useradd  --system --uid 1000 --gid gateway --home /app gateway
 
 WORKDIR /app
-COPY --chown=gateway:gateway target/release/gateway /app/gateway
+COPY --chown=gateway:gateway target/release/aiplane /app/aiplane
+# The executable was called `gateway` before the project was renamed to
+# croit AIplane. A hardlink keeps `docker exec <container> /app/gateway …`
+# and any hand-written unit that names it working. Deprecated; it goes
+# away in a future breaking release (docs/renaming.md).
+RUN ln /app/aiplane /app/gateway
 # `typst` CLI for the `typst_<template>` tools. Downloaded by the
 # `fetch-typst-cli` mise task (which runs as a dep of `mise run
 # build` — see mise.toml) so it arrives in the same artifacts/
@@ -108,11 +113,11 @@ COPY --chown=root:root --chmod=0644 target/release/libpdfium.so /usr/local/lib/l
 # rides the same artifact pipeline as the binaries (CI's `container` job
 # downloads it alongside gateway/typst/sandbox-runner). No Node in the
 # runtime image — the Rust binary serves these files from the root at
-# `GATEWAY_STATIC_DIR` (rama_server::spa). Read-only layer: the handler
+# `AIPLANE_STATIC_DIR` (rama_server::spa). Read-only layer: the handler
 # only reads.
 COPY --chown=gateway:gateway target/frontend/build /usr/share/gateway/ui
 
-# The data directory GATEWAY_DATA_DIR points at, owned by the runtime user.
+# The data directory AIPLANE_DATA_DIR points at, owned by the runtime user.
 # Without this the "one env var and a volume" quickstart fails on Docker: a
 # missing mountpoint is created root:root 0755, and SQLite then gets EACCES
 # opening the database, so the container never boots. (The Quadlet path is
@@ -124,10 +129,10 @@ RUN mkdir -p /var/lib/gateway && chown gateway:gateway /var/lib/gateway
 # Break-glass: `docker compose exec gateway restore-setup` / `podman exec
 # gateway restore-setup` reopens the setup wizard for 30 minutes and prints a
 # one-time link. A one-line wrapper rather than asking operators to remember
-# `/app/gateway restore-setup` — this is the command someone reaches for when
+# `/app/aiplane restore-setup` — this is the command someone reaches for when
 # they are locked out and stressed. The binary opens the same SQLite database
 # the server is using, so nothing has to be stopped.
-RUN printf '#!/bin/sh\nexec /app/gateway restore-setup "$@"\n' > /usr/local/bin/restore-setup \
+RUN printf '#!/bin/sh\nexec /app/aiplane restore-setup "$@"\n' > /usr/local/bin/restore-setup \
     && chmod 0755 /usr/local/bin/restore-setup
 
 USER gateway
@@ -135,7 +140,7 @@ USER gateway
 # Rama listens on the address resolved from the IP/PORT env vars; binding
 # 0.0.0.0 inside a container is what makes the published port reachable.
 #
-# GATEWAY_DATA_DIR is the one path knob: every writable path the gateway needs
+# AIPLANE_DATA_DIR is the one path knob: every writable path the gateway needs
 # (the SQLite database, the RAG index store) is derived from it, so mounting a
 # volume at /var/lib/gateway is all a deployment has to do to persist state —
 # no config file, and no per-path environment variable each. It is deliberately
@@ -143,7 +148,7 @@ USER gateway
 # volume and nothing else already does the right thing.
 #
 # PDFIUM_LIB_PATH points the PDF reader at the bundled pdfium above.
-# GATEWAY_STATIC_DIR serves the SPA copied to /usr/share/gateway/ui above.
+# AIPLANE_STATIC_DIR serves the SPA copied to /usr/share/gateway/ui above.
 # Unset in dev, where a missing directory only 503s the UI and leaves the
 # API and proxy working; see rama_server::spa.
 # Release identity. Produced by `scripts/derive-version.sh` and passed in by CI
@@ -151,16 +156,16 @@ USER gateway
 # back to the crate version. It is an ENV rather than something compiled into
 # the binary so that stamping a version never means recompiling — see
 # docs/releases.md.
-ARG GATEWAY_VERSION=""
+ARG AIPLANE_VERSION=""
 
 ENV IP=0.0.0.0 \
     PORT=8080 \
-    GATEWAY_VERSION=${GATEWAY_VERSION} \
-    GATEWAY_DATA_DIR=/var/lib/gateway \
-    RUST_LOG=info,gateway=info,gateway_core=info,gateway_features=info,gateway_runtime=info,gateway_tools=info,gateway_api=info \
+    AIPLANE_VERSION=${AIPLANE_VERSION} \
+    AIPLANE_DATA_DIR=/var/lib/gateway \
+    RUST_LOG=info,aiplane=info,aiplane_core=info,aiplane_features=info,aiplane_runtime=info,aiplane_tools=info,aiplane_api=info \
     PDFIUM_LIB_PATH=/usr/local/lib/libpdfium.so \
-    GATEWAY_STATIC_DIR=/usr/share/gateway/ui
+    AIPLANE_STATIC_DIR=/usr/share/gateway/ui
 
 EXPOSE 8080
 
-CMD ["/app/gateway"]
+CMD ["/app/aiplane"]

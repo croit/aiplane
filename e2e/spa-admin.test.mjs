@@ -15,10 +15,10 @@ before(async () => {
     const probe = await fetch(`${BASE}/`);
     assert.equal(probe.status, 200, "the SPA is not served at the root");
     browser = await launchBrowser();
-    // The admin views need an ADMIN session. Prefer GATEWAY_SESSION_COOKIE
+    // The admin views need an ADMIN session. Prefer AIPLANE_SESSION_COOKIE
     // (an operator cookie); fall back to the dev fixture user, which is only
     // admin on gateways whose RBAC maps it so.
-    cookie = process.env.GATEWAY_SESSION_COOKIE?.trim().replace(/^id=/, "") ?? null;
+    cookie = process.env.AIPLANE_SESSION_COOKIE?.trim().replace(/^id=/, "") ?? null;
     if (!cookie) {
         const r = await fetch(`${BASE}/__dev/session`, { redirect: "manual" });
         cookie = (r.headers.getSetCookie().find((c) => c.startsWith("id=")) ?? "").split(";")[0].slice(3);
@@ -26,7 +26,7 @@ before(async () => {
     if (
         !(await fetch(`${BASE}/api/v0/admin/groups`, { headers: { cookie: `id=${cookie}` } })).ok
     ) {
-        console.log("skipping: no admin session (set GATEWAY_SESSION_COOKIE)");
+        console.log("skipping: no admin session (set AIPLANE_SESSION_COOKIE)");
         process.exit(0); // no admin session → nothing to assert here
     }
 });
@@ -262,7 +262,7 @@ test("connectors preserve the complete catalog, lifecycle, and audit workflow", 
     await page.goto(`${BASE}/admin/connectors`, { waitUntil: "domcontentloaded" });
 
     await page.getByRole("heading", { name: "Connectors", exact: true }).waitFor();
-    assert.equal(await page.title(), "Connectors — LLM Gateway");
+    assert.equal(await page.title(), "Connectors — AIplane");
     await page.getByText("Curate the MCP servers", { exact: false }).waitFor();
     // Add and Edit are routes now, not disclosures inside the list.
     await page.getByRole("link", { name: "Add a connector", exact: true }).click();

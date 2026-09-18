@@ -2,8 +2,8 @@
 # per-user `/usage` usage-statistics page and its admin-only "all
 # users" scope toggle.
 
-usage-title-all = 用量 — 所有用户 — LLM Gateway
-usage-title-mine = 我的用量 — LLM Gateway
+usage-title-all = 用量 — 所有用户 — AIplane
+usage-title-mine = 我的用量 — AIplane
 usage-heading-all = 用量 — 所有用户
 usage-heading-mine = 我的用量
 usage-blurb-all = 按用户和按后端统计的所有访问方式的请求量与令牌用量。“请求”统计的是对上游后端的调用次数，因此一次使用工具的对话轮次（会产生多次往返）计为不止一次请求。

@@ -51,8 +51,8 @@ still monotonic, still collision-free against every real release.
 |---|---|
 | [`scripts/derive-version.sh`](../scripts/derive-version.sh) | The single resolver. Prints the version for any build. |
 | `.github/workflows/ci.yml` → `version` job | Runs it once per pipeline and hands the result to every other job, so no two artifacts can disagree. |
-| `Dockerfile` (`ARG`/`ENV GATEWAY_VERSION`) | Stamps it into the gateway image as an environment variable — not compiled in. |
-| `crates/gateway-api/src/build_info.rs` | Reads `$GATEWAY_VERSION` at runtime, falls back to the crate version. |
+| `Dockerfile` (`ARG`/`ENV AIPLANE_VERSION`) | Stamps it into the gateway image as an environment variable — not compiled in. |
+| `crates/aiplane-api/src/build_info.rs` | Reads `$AIPLANE_VERSION` at runtime, falls back to the crate version. |
 | `GET /api/v0/build` → `version` | What the UI's source/version line shows. |
 | Image tags | Every build publishes `:v<version>`; see the tag table below. |
 | Helm chart (`--version` / `--app-version`) | A published chart carries the same number and therefore pins `image.tag: v<version>` by default. |
@@ -97,11 +97,11 @@ all stamped with the same number:
 
 | Artifact | Image / reference |
 |---|---|
-| Gateway | `ghcr.io/croit/llm-gateway` |
-| Sandbox gold image | `ghcr.io/croit/llm-gateway-sandbox` |
-| Sandbox runner | `ghcr.io/croit/llm-gateway-sandbox-runner` |
-| OCR sidecar | `ghcr.io/croit/llm-gateway-ocr-sidecar` |
-| Helm chart | `oci://ghcr.io/croit/charts/llm-gateway` |
+| Gateway | `ghcr.io/croit/aiplane` |
+| Sandbox gold image | `ghcr.io/croit/aiplane-sandbox` |
+| Sandbox runner | `ghcr.io/croit/aiplane-sandbox-runner` |
+| OCR sidecar | `ghcr.io/croit/aiplane-ocr-sidecar` |
+| Helm chart | `oci://ghcr.io/croit/charts/aiplane` |
 
 ### Tag ownership
 
@@ -198,7 +198,7 @@ that the chart resolves — with no `--version`, which is what every installatio
 and every auto-update follows:
 
 ```bash
-helm show chart oci://ghcr.io/croit/charts/llm-gateway
+helm show chart oci://ghcr.io/croit/charts/aiplane
 ```
 
 Note what step 3 implies for users: publishing a release **moves
@@ -218,8 +218,8 @@ with no further action.
 - **Why does a fresh tag build show `2609.1.0` and not `2609.1.something`?** On
   the tagged commit, commits-since-tag is 0 anyway, and the tag short-circuits
   the resolver.
-- **`cargo run` locally shows `v0.1.0`.** `GATEWAY_VERSION` is unset outside a
-  CI-built image, so the gateway falls back to the crate version. Expected.
+- **`cargo run` locally shows `v0.1.0`.** `AIPLANE_VERSION` is unset outside a
+  CI-built image, so AIplane falls back to the crate version. Expected.
 - **A tag that is not `vX.Y.Z`** does not start a build at all: the workflow
   only triggers on `v*`, and the resolver rejects anything else.
 - **Never hand-edit a version** in `Chart.yaml`, the Dockerfile or a CI job. The

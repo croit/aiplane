@@ -21,7 +21,7 @@
 #   MODELS=/path/to/ComfyUI/models ./fetch-missing-models.sh
 #   MODELS=... ./fetch-missing-models.sh --dry-run              # just report
 #   MODELS=... ./fetch-missing-models.sh llmgw-merge-images     # one bundle
-#   MODELS=... CATALOG=/etc/gateway/comfyui-workflows ./fetch-missing-models.sh
+#   MODELS=... CATALOG=/etc/aiplane/comfyui-workflows ./fetch-missing-models.sh
 #
 # Environment:
 #   MODELS    ComfyUI models/ directory (required, must exist)

@@ -4,7 +4,7 @@
 # chrome.ftl per the shared-translation-source architecture (both
 # binaries render the same chrome).
 
-nav-brand = LLM Gateway
+nav-brand = AIplane
 nav-memory = Memory
 nav-scheduled = Scheduled
 nav-webhooks = Webhooks
@@ -54,15 +54,15 @@ nav-search-close-aria = Close search
 # live session, which on a shared machine is the worst outcome.
 nav-sign-out-failed = Signing out failed, so you are still signed in: { $error }
 
-nav-flow-error-title = Connection failed — LLM Gateway
+nav-flow-error-title = Connection failed — AIplane
 nav-flow-error-heading = That connection did not complete
 nav-flow-error-back = Back to the app
 nav-admin-required = Admin role required
 nav-source-title = Source code (AGPL-3.0)
 nav-source-line = Source · AGPL-3.0 · { $version }
-login-heading = Sign in to LLM Gateway
+login-heading = Sign in to AIplane
 login-description = Authenticate with your company's OIDC provider to mint API tokens and route LLM requests.
 login-continue-button = Continue with OIDC →
 login-source-link = Source code · AGPL-3.0
-login-page-title = Sign in — LLM Gateway
-page-title-branded = { $title } — LLM Gateway
+login-page-title = Sign in — AIplane
+page-title-branded = { $title } — AIplane

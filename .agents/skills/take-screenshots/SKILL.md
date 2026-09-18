@@ -1,6 +1,6 @@
 ---
 name: take-screenshots
-description: Take clean PNG screenshots of the LLM Gateway web UI (for README / docs) without rediscovering the tooling. Use whenever asked to screenshot a gateway page (/, /chat, /tokens, /admin/*, /rag, /admin/skills, login), refresh a docs/img/*.png, or capture an authed/admin page. Covers the Playwright + dev-ui-seed-cookie flow, the exact resolution that matches existing images, and the gotchas (cached-Chromium path, macOS file-input locale, stale dev-ui port).
+description: Take clean PNG screenshots of the croit AIplane web UI (for README / docs) without rediscovering the tooling. Use whenever asked to screenshot a gateway page (/, /chat, /tokens, /admin/*, /rag, /admin/skills, login), refresh a docs/img/*.png, or capture an authed/admin page. Covers the Playwright + dev-ui-seed-cookie flow, the exact resolution that matches existing images, and the gotchas (cached-Chromium path, macOS file-input locale, stale dev-ui port).
 ---
 
 # Take screenshots of the gateway UI

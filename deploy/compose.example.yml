@@ -1,11 +1,11 @@
-# Docker Compose for the LLM gateway stack.
+# Docker Compose for the croit AIplane stack.
 #
 # A Docker-native alternative to the systemd-podman Quadlets in
 # `deploy/quadlet/` — same images, same config, for hosts that run Docker /
 # Docker Desktop rather than rootful podman.
 #
 # Services:
-#   gateway               the gateway itself (OpenAI-compatible proxy + UI)
+#   aiplane               AIplane itself (OpenAI-compatible proxy + agent runtime + UI)
 #   google-workspace-mcp  per-user Gmail/Calendar/Drive/… (backs the "Google
 #                         Workspace" connector); see docs/connectors.md
 #   sandbox-runner        code-execution runner (profile: sandbox)
@@ -26,15 +26,15 @@
 # this file's directory (deploy/), so env/config files live in deploy/.
 #
 # ── Setup (from the repo root) ──────────────────────────────────────────────
-#   printf 'GATEWAY_SESSION_KEY=%s\n' "$(openssl rand -hex 32)" > deploy/gateway.env
-#   docker compose -f deploy/compose.example.yml up -d gateway
+#   printf 'AIPLANE_SESSION_KEY=%s\n' "$(openssl rand -hex 32)" > deploy/aiplane.env
+#   docker compose -f deploy/compose.example.yml up -d aiplane
 #
 # Then open http://localhost:8080 — the setup wizard asks for your OIDC provider,
 # tests the login for real, and hands you an admin account. No config file.
 #
 # Locked out later (IdP moved, no group maps to admin)? Reopen the wizard
 # without disturbing anyone still using the gateway:
-#   docker compose -f deploy/compose.example.yml exec gateway restore-setup
+#   docker compose -f deploy/compose.example.yml exec aiplane restore-setup
 # It prints a one-time URL, valid for 30 minutes. See docs/auth.md.
 #
 # For the Google Workspace connector, additionally:
@@ -62,24 +62,24 @@
 #   docker compose -f deploy/compose.example.yml up -d                  # gateway + mcp
 #   docker compose -f deploy/compose.example.yml --profile sandbox up -d  # + egress proxy
 
-name: llm-gateway
+name: aiplane
 
 services:
-  gateway:
-    image: ghcr.io/croit/llm-gateway:latest
+  aiplane:
+    image: ghcr.io/croit/aiplane:latest
     restart: unless-stopped
     # Loopback only — front with a TLS-terminating reverse proxy in production.
     ports:
       - "127.0.0.1:8080:8080"
-    # Holds GATEWAY_SESSION_KEY — the one variable a deployment must set.
+    # Holds AIPLANE_SESSION_KEY — the one variable a deployment must set.
     # Everything else (pools, models, groups, OIDC) is configured in the browser
     # and stored in the database.
     env_file:
-      - gateway.env
+      - aiplane.env
     environment:
-      RUST_LOG: info,gateway=info,gateway_core=info,gateway_features=info,gateway_runtime=info,gateway_tools=info,gateway_api=info
+      RUST_LOG: info,aiplane=info,aiplane_core=info,aiplane_features=info,aiplane_runtime=info,aiplane_tools=info,aiplane_api=info
     volumes:
-      # The image's GATEWAY_DATA_DIR=/var/lib/gateway already puts the SQLite
+      # The image's AIPLANE_DATA_DIR=/var/lib/gateway already puts the SQLite
       # database and the RAG index store on this volume — mounting it is all
       # that persistence needs.
       #
@@ -91,7 +91,7 @@ services:
       # and every operator setting live in the database and are edited in the
       # web UI. Everything below is a property of where the process runs.
       # host.docker.internal.
-      - gateway-data:/var/lib/gateway
+      - aiplane-data:/var/lib/gateway
     read_only: true
     tmpfs:
       - /tmp
@@ -188,7 +188,7 @@ services:
       - gitlab
     restart: unless-stopped
     # Loopback publish is only for a native (mise run dev) gateway to reach it at
-    # http://localhost:3333/mcp; the full-stack gateway uses http://gitlab-mcp:3002/mcp.
+    # http://localhost:3333/mcp; the full-stack AIplane uses http://gitlab-mcp:3002/mcp.
     ports:
       - "127.0.0.1:3333:3002"
     # GITLAB_API_URL=https://<your-gitlab>/api/v4   (deployment-specific)
@@ -227,7 +227,7 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: http
     # Loopback publish is only for a native (mise run dev) gateway to reach it
-    # at http://localhost:3334/mcp; the full-stack gateway reaches it by service
+    # at http://localhost:3334/mcp; the full-stack AIplane reaches it by service
     # name at http://discord-mcp:8085/mcp. Never expose this port publicly — the
     # bot token grants full bot access, not scoped per caller.
     ports:
@@ -248,7 +248,7 @@ services:
   # runs arbitrary model-generated code — keep it on an internal network, never
   # expose port 9000, and only grant the sandbox tools deliberately (RBAC).
   sandbox-runner:
-    image: ghcr.io/croit/llm-gateway-sandbox-runner:latest
+    image: ghcr.io/croit/aiplane-sandbox-runner:latest
     profiles:
       - sandbox
     restart: unless-stopped
@@ -266,12 +266,12 @@ services:
       SANDBOX_BIND: "0.0.0.0:9000"
       SANDBOX_PODMAN: docker # drive the Docker CLI (image ships it), not podman
       SANDBOX_RUNTIME: runsc # gVisor; must be a registered Docker runtime on the host
-      SANDBOX_IMAGE: ghcr.io/croit/llm-gateway-sandbox:latest
+      SANDBOX_IMAGE: ghcr.io/croit/aiplane-sandbox:latest
       RUST_LOG: info,sandbox_runner=info
       # Egress for networked runs (pip / capture_webpage). The runner attaches
       # sandboxes to this network — use the *Docker* network name, which compose
       # prefixes with the project: "<project>_sandbox-egress" (project = name:).
-      SANDBOX_EGRESS_NETWORK: llm-gateway_sandbox-egress
+      SANDBOX_EGRESS_NETWORK: aiplane_sandbox-egress
       SANDBOX_EGRESS_PROXY: http://egress-proxy:3128
     networks:
       - default # to pull images / be reached by the gateway
@@ -301,7 +301,7 @@ networks:
     internal: true
 
 volumes:
-  gateway-data:
+  aiplane-data:
   # Google Workspace MCP OAuth state — encrypted at rest by the server, but it
   # holds live Google refresh tokens. Deleting it forces every user to reconnect.
   gworkspace-mcp-oauth:

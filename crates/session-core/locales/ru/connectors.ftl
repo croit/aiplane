@@ -1,6 +1,6 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
-connectors-page-title = Коннекторы — LLM Gateway
+connectors-page-title = Коннекторы — AIplane
 connectors-audit-page-title = { $name } — Журнал аудита
 connectors-heading = Коннекторы
 connectors-restore-defaults-button = Восстановить значения по умолчанию
@@ -97,7 +97,7 @@ connectors-badge-needs-setup = Нужен идентификатор клиен�
 connectors-field-scope-label = Область действия
 connectors-scope-per-user = Для каждого пользователя (каждый подключает свой аккаунт)
 connectors-scope-global = Глобальный (одна общая учётная запись для всех)
-connectors-field-scope-help = Глобальные коннекторы общие для всех, кому разрешают группы шлюза. Они должны работать без аутентификации или с общим Bearer-токеном, а не с OAuth каждого пользователя.
+connectors-field-scope-help = Глобальные коннекторы общие для всех, кому разрешают группы AIplane. Они должны работать без аутентификации или с общим Bearer-токеном, а не с OAuth каждого пользователя.
 connectors-token-help-global = Этот общий коннектор отправляет зашифрованный Bearer-токен для каждого разрешённого пользователя.
 connectors-token-help-user = Каждый пользователь вводит собственный API-токен в разделе интеграций. OAuth-клиент не нужен.
 connectors-field-shared-token-label = Bearer-токен (общий)

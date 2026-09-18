@@ -10,13 +10,13 @@ it lives today.
 
 ## What a tool is
 
-A **tool** is a Rust handler the gateway runs on behalf of an LLM during a chat
+A **tool** is a Rust handler AIplane runs on behalf of an LLM during a chat
 completion. From the model's side it's an ordinary OpenAI function-calling
-tool: it has a JSON schema, the model emits `tool_calls`, the gateway executes
+tool: it has a JSON schema, the model emits `tool_calls`, AIplane executes
 them, and the result feeds the next round. The model doesn't know the tool ran
-on the gateway.
+on AIplane.
 
-This is **not** a passthrough and not an MCP broker. The gateway *is* the tool
+This is **not** a passthrough and not an MCP broker. AIplane *is* the tool
 runtime. (It *also* bridges MCP servers — see "Tool sources" — but that is one
 source of tools among several, not the architecture.)
 
@@ -360,7 +360,7 @@ success/failure.
 
 - **User-defined tools.** All tools are code-defined and reviewed.
 - **Tool result caching.** Tools run every time they are called.
-- **Sub-agent delegation / multi-agent orchestration.** The gateway is a tool
+- **Sub-agent delegation / multi-agent orchestration.** AIplane is a tool
   runtime behind an OpenAI-compatible API; a client that needs agent
   orchestration builds it on its own side. Adding it here would complicate
   round bounding, cost attribution, RBAC scoping, and usage accounting, with no

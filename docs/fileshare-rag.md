@@ -1,6 +1,6 @@
 # Fileshare RAG
 
-How the gateway indexes a company's file share — Nextcloud, ownCloud,
+How AIplane indexes a company's file share — Nextcloud, ownCloud,
 OpenCloud, plain WebDAV, and whatever provider is registered next — and
 answers questions about it.
 
@@ -65,15 +65,15 @@ behaves accordingly.
 
 ## Crate placement
 
-The indexer lives in `gateway-features`, which sits **below**
-`gateway-runtime` and must never name it (see
+The indexer lives in `aiplane-features`, which sits **below**
+`aiplane-runtime` and must never name it (see
 [`architecture.md`](architecture.md#crate-boundaries)). Two capabilities it
 needs live above it, so both are inverted — declared as a port down here,
 implemented up there, injected at boot from `gateway/src/main.rs`:
 
 | Capability | Port | Implementation |
 | --- | --- | --- |
-| Office extraction (needs the sandbox) | `rag::extract::OfficeExtractor` | `gateway-runtime/…/sandbox/office.rs` |
+| Office extraction (needs the sandbox) | `rag::extract::OfficeExtractor` | `aiplane-runtime/…/sandbox/office.rs` |
 | OCR | `OcrService`, constructed in `main.rs` | shared with the chat path |
 
 The OCR service is built **once** in `main.rs` and handed to both the
@@ -83,16 +83,16 @@ allow twice the configured concurrency.
 
 | Where | What |
 | --- | --- |
-| `gateway-features/src/server/rag/source/` | provider trait, registry, WebDAV provider, tree walker |
-| `gateway-features/src/server/rag/extract.rs` | bytes → text ladder |
-| `gateway-features/src/server/rag/profile.rs` | the per-document LLM extraction pass |
-| `gateway-features/src/server/rag/sync.rs` | what changed since last time (pure) |
-| `gateway-features/src/server/rag/rerank.rs` | optional cross-encoder second opinion |
-| `gateway-features/src/server/rag/worker.rs` | the build loop that ties it together |
-| `gateway-core/src/server/db/rag.rs` | collections, refs, files, chunks |
-| `gateway-core/src/server/db/rag_documents.rs` | profiles, documents, fields, the structured query |
-| `gateway-tools/src/rag*.rs` | the six model-facing tools |
-| `gateway-api/src/pages/rag*.rs` | `/rag`, the source form, the profile editor |
+| `aiplane-features/src/server/rag/source/` | provider trait, registry, WebDAV provider, tree walker |
+| `aiplane-features/src/server/rag/extract.rs` | bytes → text ladder |
+| `aiplane-features/src/server/rag/profile.rs` | the per-document LLM extraction pass |
+| `aiplane-features/src/server/rag/sync.rs` | what changed since last time (pure) |
+| `aiplane-features/src/server/rag/rerank.rs` | optional cross-encoder second opinion |
+| `aiplane-features/src/server/rag/worker.rs` | the build loop that ties it together |
+| `aiplane-core/src/server/db/rag.rs` | collections, refs, files, chunks |
+| `aiplane-core/src/server/db/rag_documents.rs` | profiles, documents, fields, the structured query |
+| `aiplane-tools/src/rag*.rs` | the six model-facing tools |
+| `aiplane-api/src/pages/rag*.rs` | `/rag`, the source form, the profile editor |
 
 ## Providers: the extension point
 
@@ -524,7 +524,7 @@ Three ways a collection gets re-synced, cheapest first:
 | **Re-index** on `/rag` | an operator decides |
 
 The refresh interval exists because the doorbell does not ring for every kind
-of source. A file host with a webhook app tells the gateway when to look; a
+of source. A file host with a webhook app tells AIplane when to look; a
 mailing-list archive tells nobody anything, and before this a "daily" index
 meant an external cron line hitting the sync hook. `0` is never — every
 collection that predates the column has it, so nothing started re-indexing on
@@ -553,7 +553,7 @@ left alone, so a burst of file events does not pile up builds.
 
 ## Storage layout
 
-**Central DB** (`$GATEWAY_DB_PATH` — small, backed up):
+**Central DB** (`$AIPLANE_DB_PATH` — small, backed up):
 
 | Table | Holds |
 | --- | --- |
@@ -574,7 +574,7 @@ Because store folders now persist across builds, the store carries a
 existing one; without the version marker the first schema change would
 silently do nothing and surface later as a baffling `ColumnNotFound`.
 
-Provider secrets are sealed with `GATEWAY_ENCRYPTION_KEY` (AES-256-GCM). A
+Provider secrets are sealed with `AIPLANE_ENCRYPTION_KEY` (AES-256-GCM). A
 file-host app password grants read access to a company's whole shared document
 store, so it does not get the plaintext treatment the older git `pat` column
 has.
@@ -643,7 +643,7 @@ For an OAuth source (Google Drive) there is one extra step, and it comes
    *connected*.
 
 If Google returns no refresh token, it is almost always because that account
-had already granted access: revoke the gateway under the account's third-party
+had already granted access: revoke AIplane under the account's third-party
 access settings and connect again. Reconnecting at any time is safe — it
 replaces the stored token and re-queues a build.
 
@@ -725,7 +725,7 @@ to build, not a footnote: Google's refresh tokens are long-lived and do not
 rotate, so the Drive provider refreshes in memory and never writes a
 credential back. Microsoft Graph rotates on every redemption and would
 re-auth-fail after the first restart. The shape to copy already exists —
-`McpConnectionManager::refresh` (`gateway-runtime/.../mcp/manager.rs`)
+`McpConnectionManager::refresh` (`aiplane-runtime/.../mcp/manager.rs`)
 reseals and stores — but a provider built by `ProviderFactory::build` has no
 channel back to the sealed source secrets. Settle that before starting
 OneDrive, not after.

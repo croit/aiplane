@@ -1,6 +1,6 @@
 # Upstreams (multi-provider routing + load balancing)
 
-The gateway routes each request to one of several upstream LLM backends based on the requested model name. **Routes are not declared statically** — the health probe parses each backend's `/models` response and the registry routes by what each upstream reports it serves. Load a model on a backend in the right kind of pool and it becomes routable automatically.
+AIplane routes each request to one of several upstream LLM backends based on the requested model name. **Routes are not declared statically** — the health probe parses each backend's `/models` response and the registry routes by what each upstream reports it serves. Load a model on a backend in the right kind of pool and it becomes routable automatically.
 
 ## Core abstraction
 
@@ -15,7 +15,7 @@ request.model ──► [walk pools matching kind] ──► [pool whose backend
     - A picker strategy (`prefix_affinity`, `least_inflight`, `round_robin`). Default: `least_inflight`; prefer `prefix_affinity` for chat pools with several self-hosted replicas — see [Picking strategies](#picking-strategies).
     - Implicit "what we serve" — the union of all backends' advertised-model sets.
 
-`crates/gateway-core/src/server/upstreams/` owns the runtime: the topology is loaded from the database (edited in the UI at `/admin/upstreams`), `registry.rs` walks pools per request, and `health.rs` runs the probe loop.
+`crates/aiplane-core/src/server/upstreams/` owns the runtime: the topology is loaded from the database (edited in the UI at `/admin/upstreams`), `registry.rs` walks pools per request, and `health.rs` runs the probe loop.
 
 ## Configuring pools & backends
 
@@ -46,16 +46,16 @@ For aliases and the two fallback mechanisms, see [Model aliases](#model-aliases)
 
 Every 5 s, each backend gets a `GET <base_url>/models` probe (with the backend's bearer token, if configured). On 200 + parseable OpenAI envelope (`{"data": [{"id": ...}, ...]}`), the backend's advertised-model set is **replaced wholesale** with the names in `data[].id`. On 401 or non-parseable 200, the backend is marked alive but its model set is left as-is (so a previously-populated set survives a transient parser failure). On network error, timeout, or 5xx, the probe counts toward the unhealthy threshold.
 
-At startup, `health::spawn` runs an initial parallel probe round and awaits it before returning, so the first request lands on a registry that already knows what each backend serves. Worst case (every backend unreachable): the gateway waits the 2 s probe timeout and starts serving with empty model sets, returning `400 invalid_request` until the looping probe populates them. [Backend identification](#backend-profiles-what-kind-of-server-is-this) runs concurrently with that round, on the same 2 s budget, so it costs no extra startup time.
+At startup, `health::spawn` runs an initial parallel probe round and awaits it before returning, so the first request lands on a registry that already knows what each backend serves. Worst case (every backend unreachable): AIplane waits the 2 s probe timeout and starts serving with empty model sets, returning `400 invalid_request` until the looping probe populates them. [Backend identification](#backend-profiles-what-kind-of-server-is-this) runs concurrently with that round, on the same 2 s budget, so it costs no extra startup time.
 
 ## Backend profiles (what kind of server is this?)
 
 The OpenAI wire is the right abstraction for *requests* and the wrong one for two facts a request depends on. Both were answered for years by assuming vLLM, and both failed in silence against anything else:
 
-- **How much context does this model have?** vLLM reports `max_model_len` per model on `/models`. llama.cpp reports the model's trained context as `meta.n_ctx_train` and the context it was actually started with on `/props`. Ollama reports neither — its context is a server setting (`OLLAMA_CONTEXT_LENGTH`), divided by `OLLAMA_NUM_PARALLEL`, and invisible on the OpenAI surface; its own `/api/ps` does state what the running instance allocated, which on a default install is **4096**. Falling back to the global 32768 guess against that means the server truncates the prompt instead of the gateway compacting it. No error is raised anywhere; the model simply appears to forget the start of the conversation.
+- **How much context does this model have?** vLLM reports `max_model_len` per model on `/models`. llama.cpp reports the model's trained context as `meta.n_ctx_train` and the context it was actually started with on `/props`. Ollama reports neither — its context is a server setting (`OLLAMA_CONTEXT_LENGTH`), divided by `OLLAMA_NUM_PARALLEL`, and invisible on the OpenAI surface; its own `/api/ps` does state what the running instance allocated, which on a default install is **4096**. Falling back to the global 32768 guess against that means the server truncates the prompt instead of AIplane compacting it. No error is raised anywhere; the model simply appears to forget the start of the conversation.
 - **How is "think harder" spelled?** Ollama re-encodes every request through its own API, so `chat_template_kwargs` never reaches the template no matter which model is loaded. A model called `qwen3:8b` got Qwen's spelling from its *name*, Ollama discarded the field without a word, and the effort control did nothing.
 
-So the gateway identifies the server. `upstreams::profile::detect` fires five cheap GETs (`/api/version`, `/props`, `/v1/models`, `/get_model_info`, `/api/ps`) in parallel and resolves one of `vllm` | `ollama` | `llamacpp` | `sglang` | `generic`. **`generic` is not a failure** — it is the honest answer for hosted providers and anything unrecognised, and it reproduces exactly the pre-profile behaviour.
+So AIplane identifies the server. `upstreams::profile::detect` fires five cheap GETs (`/api/version`, `/props`, `/v1/models`, `/get_model_info`, `/api/ps`) in parallel and resolves one of `vllm` | `ollama` | `llamacpp` | `sglang` | `generic`. **`generic` is not a failure** — it is the honest answer for hosted providers and anything unrecognised, and it reproduces exactly the pre-profile behaviour.
 
 The operator never configures a profile and never picks a server name from a list. The profile exists so that "context" and "effort" stay one vocabulary in the UI while meaning different bytes on the wire.
 
@@ -75,11 +75,11 @@ Ollama gets its own style rather than reusing OpenAI's for one reason that shows
 
 ### Two cadences, because two different things are being learned
 
-**What a server *is*** — its profile, version, slot count — changes only when someone reconfigures it. That is read on topology **apply** (the admin UI's *Apply changes* → `topology_reload` → `health::spawn`), and previewed by the backend editor's **Test** button. Results are persisted (`backend_detected`, migration 0067) and re-seeded at boot, so a gateway that starts while a backend is down still knows what that backend is rather than reading back as `generic`.
+**What a server *is*** — its profile, version, slot count — changes only when someone reconfigures it. That is read on topology **apply** (the admin UI's *Apply changes* → `topology_reload` → `health::spawn`), and previewed by the backend editor's **Test** button. Results are persisted (`backend_detected`, migration 0067) and re-seeded at boot, so an instance that starts while a backend is down still knows what that backend is rather than reading back as `generic`.
 
 **What a server currently *has loaded*** is runtime state, and is read by the existing 5 s health probe, on the same tick and concurrently with `/models` (`BackendProfile::context_endpoint` says where). This is not a refinement: Ollama loads models on first use, so at apply time `/api/ps` reports nothing at all. Reading the context only at identification would leave every model with no window and drop it onto the 32768 guess against a 4096 allocation — the failure this feature exists to remove, arriving through its own refresh policy. A model used for the first time now has its real window within five seconds.
 
-Because the probe keeps the readings current, nothing needs applying after a server is reconfigured: raise `OLLAMA_CONTEXT_LENGTH`, restart, and the gateway follows within a tick. The **Test** button is a preview against the address being *typed*, which is the one thing the probe cannot offer — it only knows about backends that are already saved.
+Because the probe keeps the readings current, nothing needs applying after a server is reconfigured: raise `OLLAMA_CONTEXT_LENGTH`, restart, and AIplane follows within a tick. The **Test** button is a preview against the address being *typed*, which is the one thing the probe cannot offer — it only knows about backends that are already saved.
 
 A profile is only ever overwritten by a *positive* identification. `detect` cannot fail — an unreachable server comes back as `generic` — so writing that result would undo the boot seed milliseconds after it ran, and persist the loss.
 
@@ -124,7 +124,7 @@ There are two forms, and you pick **one per backend**:
 
 Both forms combine freely *across* backends into one group — a bare `qwen` on a GPU box and `qwen=glm-4.6` on a cloud box share the same `qwen` group. A real model id always wins over an alias of the same spelling.
 
-When a request routes through an alias the gateway **rewrites the outgoing request body's `model` field to the resolved real id** — upstreams only know their own model ids, never the alias. The response therefore reports the real model that ran, and an `X-Gateway-Resolved-Model` response header records what the alias resolved to (only when it differs from what the client sent). Admin sampling/reasoning defaults key on the **real id**, so aliases inherit them automatically — configure defaults once, under the real model name.
+When a request routes through an alias AIplane **rewrites the outgoing request body's `model` field to the resolved real id** — upstreams only know their own model ids, never the alias. The response therefore reports the real model that ran, and an `X-Gateway-Resolved-Model` response header records what the alias resolved to (only when it differs from what the client sent). Admin sampling/reasoning defaults key on the **real id**, so aliases inherit them automatically — configure defaults once, under the real model name.
 
 ### Alias validation
 
@@ -147,7 +147,7 @@ Two independent safety nets for two different failures. Both are optional; leavi
 
 For example: an unknown chat model routes to `qwen` and an unknown embedding model to `text-embedding-3-small` (leave a kind's picker empty to keep returning `404`); a chat pool whose replicas all go down spills to `glm-4.6`.
 
-A fallback target is **re-resolved through the normal path**, so it may itself be an alias/group and lands on whatever healthy pool serves it. Fallback is a **single hop**: if the fallback target is *also* unavailable, the gateway returns the original `404`/`503` rather than chaining — no loops. Saturation (a healthy model whose backends are all at `max_inflight`) is **not** a fallback trigger — that stays a `503`, so a request never silently downgrades to a weaker model under mere load. Note the RAG embedding path deliberately does **not** apply `fallback_offline`: embeddings from a different model aren't comparable and would corrupt the index.
+A fallback target is **re-resolved through the normal path**, so it may itself be an alias/group and lands on whatever healthy pool serves it. Fallback is a **single hop**: if the fallback target is *also* unavailable, AIplane returns the original `404`/`503` rather than chaining — no loops. Saturation (a healthy model whose backends are all at `max_inflight`) is **not** a fallback trigger — that stays a `503`, so a request never silently downgrades to a weaker model under mere load. Note the RAG embedding path deliberately does **not** apply `fallback_offline`: embeddings from a different model aren't comparable and would corrupt the index.
 
 ### Resolution order
 
@@ -187,17 +187,17 @@ Two mechanisms, in priority order, because they answer different questions and t
 
 **1. An exact conversation key, when something can supply one.**
 
-- `x-gateway-affinity: <anything>` on the request. Any value works — a uuid, a pid, a branch name — it is hashed, not interpreted. Claude Code reads `ANTHROPIC_CUSTOM_HEADERS` once at launch, so one value per terminal is exactly one value per session:
+- `x-aiplane-affinity: <anything>` on the request (the former spelling `x-gateway-affinity` is still read). Any value works — a uuid, a pid, a branch name — it is hashed, not interpreted. Claude Code reads `ANTHROPIC_CUSTOM_HEADERS` once at launch, so one value per terminal is exactly one value per session:
 
   ```bash
-  ANTHROPIC_CUSTOM_HEADERS="x-gateway-affinity: $$-$(date +%s)" claude
+  ANTHROPIC_CUSTOM_HEADERS="x-aiplane-affinity: $$-$(date +%s)" claude
   ```
 
-- The gateway's own chat UI needs no header: it keys on the conversation's session id, which it already owns.
+- AIplane's own chat UI needs no header: it keys on the conversation's session id, which it already owns.
 
 Keys map onto backends by **weighted rendezvous hash**. Rendezvous rather than a modulo or a hash-ring position because draining one replica must move only *its* share — anything else reshuffles the whole pool and cold-starts every conversation at once.
 
-**2. Otherwise, block-wise prefix matching.** The prefill (system prompt plus every message, in order) is split into 64-character blocks, chained into a rolling hash, and each replica is scored by how many *leading* blocks it was recently sent. Longest match wins, provided at least 30% of the prompt matches; below that there is little cache to preserve and the request is load-balanced instead. The index is per pool, approximate, TTL'd at 10 minutes and capped — it records what the gateway *sent*, not what a replica still holds, because a real KV cache evicts without telling anyone. Being wrong costs one ordinary prefill, which is what load-only routing pays every time anyway.
+**2. Otherwise, block-wise prefix matching.** The prefill (system prompt plus every message, in order) is split into 64-character blocks, chained into a rolling hash, and each replica is scored by how many *leading* blocks it was recently sent. Longest match wins, provided at least 30% of the prompt matches; below that there is little cache to preserve and the request is load-balanced instead. The index is per pool, approximate, TTL'd at 10 minutes and capped — it records what AIplane *sent*, not what a replica still holds, because a real KV cache evicts without telling anyone. Being wrong costs one ordinary prefill, which is what load-only routing pays every time anyway.
 
 Deriving the key from the request rather than from a client id is not a shortcut — nothing in either wire format identifies a conversation. `metadata.user_id` exists but is per *user*, the wrong granularity exactly when it matters: several parallel agent sessions from one person would collapse onto one replica.
 
@@ -208,9 +208,9 @@ Prefix matching gets two things an exact key cannot:
 
 **The load valve.** Cache locality is overridden only when the imbalance is real: a replica must be both **≥ 4 in-flight requests per unit of weight** above the least-loaded one **and** more than **1.5×** its load. Both tests are needed. The absolute one alone spills on noise once every replica is busy; the relative one alone spills far too eagerly when the pool is nearly idle, where 0 vs 1 in flight is a ratio of infinity and means nothing. The thresholds and the 30% match ratio follow SGLang's `balance_abs_threshold` / `balance_rel_threshold` / `cache_threshold`, whose defaults are the same shape.
 
-**Prior art.** This is the design inference routers converged on: [SGLang's cache-aware policy](https://docs.sglang.io/advanced_features/sgl_model_gateway.html) keeps an approximate radix tree per worker and switches to shortest-queue on imbalance; [llm-d's `approx-prefix-cache-producer`](https://llm-d.ai/docs/architecture/advanced/kv-management/prefix-cache-aware-routing) splits the prompt into fixed-size blocks, chains a rolling hash and keeps an LRU index of prefix hash → pod; [vLLM's production-stack](https://docs.vllm.ai/projects/production-stack/en/latest/use_cases/prefix-aware-routing.html) calls it prefix-aware routing and offers session stickiness alongside it. This gateway takes the llm-d shape, which needs neither a tokenizer nor model-server cooperation. Two findings from that work shaped the details above: SGLang measured **69% → 96% cache hits and 678 → ~1080 output tokens/s** on a multi-turn coding-agent benchmark once conversation affinity was explicit rather than derived ([sgl-project/sglang#26263](https://github.com/sgl-project/sglang/issues/26263)) — which is why the header exists and is preferred; and the same issue records the failure mode of keying on the first message only, where decisions end up dominated by the system-prompt overlap every session shares instead of the multi-turn prefix that actually drives reuse — which is why the chain covers the whole prefill.
+**Prior art.** This is the design inference routers converged on: [SGLang's cache-aware policy](https://docs.sglang.io/advanced_features/sgl_model_gateway.html) keeps an approximate radix tree per worker and switches to shortest-queue on imbalance; [llm-d's `approx-prefix-cache-producer`](https://llm-d.ai/docs/architecture/advanced/kv-management/prefix-cache-aware-routing) splits the prompt into fixed-size blocks, chains a rolling hash and keeps an LRU index of prefix hash → pod; [vLLM's production-stack](https://docs.vllm.ai/projects/production-stack/en/latest/use_cases/prefix-aware-routing.html) calls it prefix-aware routing and offers session stickiness alongside it. This AIplane takes the llm-d shape, which needs neither a tokenizer nor model-server cooperation. Two findings from that work shaped the details above: SGLang measured **69% → 96% cache hits and 678 → ~1080 output tokens/s** on a multi-turn coding-agent benchmark once conversation affinity was explicit rather than derived ([sgl-project/sglang#26263](https://github.com/sgl-project/sglang/issues/26263)) — which is why the header exists and is preferred; and the same issue records the failure mode of keying on the first message only, where decisions end up dominated by the system-prompt overlap every session shares instead of the multi-turn prefix that actually drives reuse — which is why the chain covers the whole prefill.
 
-**Seeing what it decided.** Every response carries `X-Gateway-Backend` naming the replica that served it — except on the streamed tool-loop path (`/v1/messages` with `stream: true`), where the routing decision happens inside the already-started stream and there is no header left to set; read those from the usage table or the per-backend counters on `/admin/upstreams`. Turning on `RUST_LOG=gateway_core::server::upstreams::registry=debug` logs each decision and its inputs:
+**Seeing what it decided.** Every response carries `X-Gateway-Backend` naming the replica that served it — except on the streamed tool-loop path (`/v1/messages` with `stream: true`), where the routing decision happens inside the already-started stream and there is no header left to set; read those from the usage table or the per-backend counters on `/admin/upstreams`. Turning on `RUST_LOG=aiplane_core::server::upstreams::registry=debug` logs each decision and its inputs:
 
 ```text
 prefix-affinity: too little of this prompt is cached anywhere — balancing  blocks=102 best=0
@@ -222,19 +222,19 @@ The triples are `(replica, total matched blocks, conversation-specific blocks)`.
 
 **One transient to expect.** The second conversation ever seen follows the first onto the same replica. A prefix only becomes recognisable as shared once two conversations have extended it differently, and the second one *is* that divergence — so it is routed before the evidence exists. From the third onwards, new conversations balance. Verified live: five conversations, two on one replica and three on the other, each stable across its turns.
 
-**What is not implemented.** Token-exact matching (llm-d's "precise" mode reads vLLM's KV-cache events over ZMQ) and prefill/decode disaggregation. Both need model-server cooperation this gateway deliberately does not require.
+**What is not implemented.** Token-exact matching (llm-d's "precise" mode reads vLLM's KV-cache events over ZMQ) and prefill/decode disaggregation. Both need model-server cooperation this AIplane deliberately does not require.
 
 Note that a **broken alias silently removes a backend from every strategy's candidate set**: `serves_model` is false for it, so the picker never considers it. A pool of two replicas where one backend's alias points at a model it does not serve keeps answering every request, on half the hardware. The `/admin/upstreams` page reports this per advertised name as `1/2` under "What clients see".
 
 ## In-flight accounting + back-pressure
 
-A backend's `max_inflight` is a hard cap. When every backend in a pool that advertises the requested model is at cap, or none is available, the gateway **holds the request** and retries routing until one frees up — see [Waiting out an outage](#waiting-out-an-outage).
+A backend's `max_inflight` is a hard cap. When every backend in a pool that advertises the requested model is at cap, or none is available, AIplane **holds the request** and retries routing until one frees up — see [Waiting out an outage](#waiting-out-an-outage).
 
 ## Waiting out an outage
 
 A GPU box restarting, a model being swapped, an upstream that OOMs and comes back: these are seconds-to-minutes outages, and the request that arrives during one is almost always still worth serving thirty seconds later. Failing it immediately pushes the whole problem onto the client, and for an agent client that is expensive — an interactive turn that loses its request loses the tool loop it was in the middle of.
 
-So the gateway parks it. `upstreams::wait::route_or_wait` retries the normal routing decision every 250 ms until a backend is available or the budget runs out. Nothing has been written to the client at that point — not a byte, not a status line — so a request that waits and then succeeds is indistinguishable from a slow one and the client's stream starts normally.
+So AIplane parks it. `upstreams::wait::route_or_wait` retries the normal routing decision every 250 ms until a backend is available or the budget runs out. Nothing has been written to the client at that point — not a byte, not a status line — so a request that waits and then succeeds is indistinguishable from a slow one and the client's stream starts normally.
 
 - **Budget**: `[gateway] upstream_wait_secs`, default `120`. `0` restores fail-immediately behaviour. Keep it well below the client's own request timeout; the point is to absorb outages the client would otherwise see, not to out-wait the client.
 - **Only capacity failures wait.** An unknown model name is a typo or a misconfiguration, and waiting for it would turn a clear `404` into a long hang.
@@ -242,12 +242,12 @@ So the gateway parks it. `upstreams::wait::route_or_wait` retries the normal rou
 - **Recovery latency is the probe's, not the poll's.** A backend that is known down is re-probed every second instead of every five, because that interval is what every parked request pays.
 - **A replica that fails to answer costs a retry, not the request.** A dispatch
   that dies at the socket, or an upstream that answers `502`/`503`/`504`, has
-  produced nothing — so the gateway takes that replica out of rotation and asks
+  produced nothing — so AIplane takes that replica out of rotation and asks
   another, up to twice. This holds on the **streamed** path too, where the
   response headers left long ago: a `send()` that fails has emitted no frames,
   so there is nothing to duplicate. Only a failure *after* frames have been
   forwarded is unrecoverable.
-- **Past the budget the answer is still retryable**: `/v1/messages` returns `529 overloaded_error` with `Retry-After`, `/v1/chat/completions` a `503` with `Retry-After`, so the client's own backoff continues where the gateway left off. Never a `4xx` — a `404` is the one thing no SDK retries.
+- **Past the budget the answer is still retryable**: `/v1/messages` returns `529 overloaded_error` with `Retry-After`, `/v1/chat/completions` a `503` with `Retry-After`, so the client's own backoff continues where AIplane left off. Never a `4xx` — a `404` is the one thing no SDK retries.
 
 ### Verified against two live replicas
 
@@ -268,13 +268,13 @@ nothing to fall back to.
 
 ### An outage must never look like a missing model
 
-Model discovery is per-process, so a gateway that *started* while a backend was down used to know of no models at all: the request then got `404 model_not_found` ("that model does not exist or you do not have access to it"), which clients do not retry and which sends the user to check their configuration instead of the GPU. The model also vanished from `GET /v1/models`.
+Model discovery is per-process, so an instance that *started* while a backend was down used to know of no models at all: the request then got `404 model_not_found` ("that model does not exist or you do not have access to it"), which clients do not retry and which sends the user to check their configuration instead of the GPU. The model also vanished from `GET /v1/models`.
 
-The last model set each backend was seen serving is therefore persisted (`backend_probed_models`, migration 0062) and seeded into the registry on boot. That restores exactly the in-process behaviour: the model stays **known** (listed, and `503` while down) without being **routable** — health is still granted only by a live probe. A backend whose loadout changed while the gateway was down self-corrects on its first successful probe, which replaces the remembered set wholesale.
+The last model set each backend was seen serving is therefore persisted (`backend_probed_models`, migration 0062) and seeded into the registry on boot. That restores exactly the in-process behaviour: the model stays **known** (listed, and `503` while down) without being **routable** — health is still granted only by a live probe. A backend whose loadout changed while AIplane was down self-corrects on its first successful probe, which replaces the remembered set wholesale.
 
 ## Maintenance switch
 
-Each backend has a **Serving traffic** toggle on `/admin/upstreams`. Off means "do not route here", and nothing else: the row keeps every setting, the health probe keeps running (so the page still shows whether the box is back), and the models it serves stay *known* to the gateway. A request for one therefore lands on a sibling backend, or — if this was the last one — waits out the drain as a temporary outage rather than a missing model.
+Each backend has a **Serving traffic** toggle on `/admin/upstreams`. Off means "do not route here", and nothing else: the row keeps every setting, the health probe keeps running (so the page still shows whether the box is back), and the models it serves stay *known* to AIplane. A request for one therefore lands on a sibling backend, or — if this was the last one — waits out the drain as a temporary outage rather than a missing model.
 
 It takes effect on the **next request**, not on "Apply changes": a maintenance switch that needs a second confirmation step is not a maintenance switch. The flip is written to the database as well, so it survives a restart (`backends.enabled`, migration 0063).
 
@@ -284,13 +284,13 @@ For streaming requests, "in-flight" lasts until the response body is fully drain
 
 ## Transcription (Whisper-style)
 
-`POST /v1/audio/transcriptions` accepts `multipart/form-data` with `file`, `model`, optional `language`, `prompt`, `response_format`, `temperature`. The gateway:
+`POST /v1/audio/transcriptions` accepts `multipart/form-data` with `file`, `model`, optional `language`, `prompt`, `response_format`, `temperature`. AIplane:
 - Verifies auth + RBAC against the `model` field.
 - Routes via `acquire_for(model, PoolKind::Transcription)` — same routing layer, same discovery path as chat.
 - VAD-trims the audio and forwards the multipart body to the upstream.
 - Returns the upstream response as-is.
 
-We do **not** transcode audio in the gateway — upstreams handle the formats they support.
+We do **not** transcode audio in AIplane — upstreams handle the formats they support.
 
 ## Operator workflow
 
@@ -298,4 +298,4 @@ We do **not** transcode audio in the gateway — upstreams handle the formats th
 - Add a model on a backend → it shows up in `/v1/models` and the chat picker within 5 s.
 - Drop a model → it disappears from routing within 5 s (next probe).
 - Want to verify? Check `tracing` output: every model-set change logs `advertised models updated added=[...] removed=[...] total=N`, and every apply logs one `identified backend profile=… context_windows=N` per *enabled* backend (drained ones keep what they had).
-- Adding an Ollama or llama.cpp backend needs nothing special: point `base_url` at `…/v1`, apply, and the context window and effort spelling are worked out for you. A model shows no window until it has been used once — Ollama loads on demand — and then gets one within five seconds. A detected **4096** is Ollama's small-VRAM default and worth raising with `OLLAMA_CONTEXT_LENGTH`, not working around in the gateway.
+- Adding an Ollama or llama.cpp backend needs nothing special: point `base_url` at `…/v1`, apply, and the context window and effort spelling are worked out for you. A model shows no window until it has been used once — Ollama loads on demand — and then gets one within five seconds. A detected **4096** is Ollama's small-VRAM default and worth raising with `OLLAMA_CONTEXT_LENGTH`, not working around in AIplane.

@@ -111,7 +111,7 @@ admin-comfyui-refresh = 刷新
 admin-clear-overrides-confirm = 要删除 { $model } 的全部已保存覆盖设置吗？
 admin-cap-no-fallback = （无）
 
-admin-page-title = 模型 — LLM Gateway
+admin-page-title = 模型 — AIplane
 
 admin-intro-prefix = 按模型的设置 —— 定价、上下文窗口、推理、能力和采样默认值 —— 适用于
 

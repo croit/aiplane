@@ -7,9 +7,9 @@
 | Layer | Lives in | What it covers |
 |---|---|---|
 | **Unit** | `#[cfg(test)] mod tests` next to the code | Pure functions, parsers, picker strategies, config validation |
-| **Integration (in-process)** | `crates/gateway/tests/` | Build a `RamaState` against an in-memory SQLite + wiremock upstreams, then call `router(state).serve(req)` directly — no socket binding, since `rama`'s service is a plain async function. Shared setup lives in `tests/common/mod.rs`. |
-| **Integration (mocked upstreams)** | `crates/gateway/tests/` | `wiremock` instances stand in for LLM backends; verify routing, the tool-call loop, streaming, the full OIDC login flow (`oidc_integration.rs`), and the JSON-SSE chat event wire (`chat_json_api.rs`). |
-| **Contract generation** | `crates/gateway/tests/it/` | `openapi_drift.rs` proves the backend serves generated OpenAPI for representative routes and that no detached spec exists; `readme_routes.rs` checks the README's HTTP-endpoints table against `router.rs`; `spa_routes.rs` checks that the SPA catch-all is registered and reaches the SPA handler. |
+| **Integration (in-process)** | `crates/aiplane/tests/` | Build a `RamaState` against an in-memory SQLite + wiremock upstreams, then call `router(state).serve(req)` directly — no socket binding, since `rama`'s service is a plain async function. Shared setup lives in `tests/common/mod.rs`. |
+| **Integration (mocked upstreams)** | `crates/aiplane/tests/` | `wiremock` instances stand in for LLM backends; verify routing, the tool-call loop, streaming, the full OIDC login flow (`oidc_integration.rs`), and the JSON-SSE chat event wire (`chat_json_api.rs`). |
+| **Contract generation** | `crates/aiplane/tests/it/` | `openapi_drift.rs` proves the backend serves generated OpenAPI for representative routes and that no detached spec exists; `readme_routes.rs` checks the README's HTTP-endpoints table against `router.rs`; `spa_routes.rs` checks that the SPA catch-all is registered and reaches the SPA handler. |
 | **SPA unit** | `web/src/lib/*.test.ts` | `mise run test-web` — Node's own `node --test` with type stripping, no jsdom. Covers the framework-free halves of the SPA (the chat event fold in `chat-protocol.ts`, markdown rendering), which is what pins client-side wire behaviour. |
 | **E2E (browser ↔ gateway)** | `e2e/*.test.mjs` | Playwright + Node's `node:test` against a running `mise run dev`. The SPA suites are `e2e/spa*.test.mjs` (shell boot, signed-out OIDC redirect, signed-in identity, tokens, admin, a full chat turn streaming in); the rest cover the anonymous sign-in funnel and plain-`fetch` checks of the public HTTP surface. See `e2e/README.md`. |
 
@@ -20,7 +20,7 @@ Write the test before the code — red, green, refactor (**TDD**). Tests are **s
 ## Mocking philosophy
 
 - **Upstream LLMs are always mocked in tests.** Real upstream calls in tests are forbidden. `wiremock` runs in-process.
-- **OIDC is mocked end-to-end.** `crates/gateway/tests/oidc_integration.rs` builds the IdP out of wiremock: a discovery document, a JWKS carrying the public half of a freshly minted RSA dev keypair, and a token endpoint that returns an RS256-signed ID token whose `nonce` matches whatever the gateway just generated.
+- **OIDC is mocked end-to-end.** `crates/aiplane/tests/oidc_integration.rs` builds the IdP out of wiremock: a discovery document, a JWKS carrying the public half of a freshly minted RSA dev keypair, and a token endpoint that returns an RS256-signed ID token whose `nonce` matches whatever AIplane just generated.
 - **DB is real-but-ephemeral.** Integration tests open SQLite via `db::open(":memory:")`. The schema migrations run exactly as in prod; the in-memory backing just means we don't leak files. One pool per test.
 
 ## What every PR must include
@@ -62,8 +62,8 @@ The version-controlled pre-push git hook (`.githooks/pre-push`, enabled with `mi
 
 - Driver: Node's built-in `node:test` + Playwright. No project-level `node_modules` — the tests import `playwright` directly out of the mise-installed `npm:@playwright/cli` tool, with the path overridable via `$PLAYWRIGHT_DIR`.
 - Run with `mise run e2e` against a live `mise run dev` in another terminal. The public `:8080` origin is Vite/HMR and proxies the complete gateway surface to private `:8081`, so the browser suites exercise the everyday development topology. Use `mise run dev-served` when the compiled SPA itself is under test. The task points `PLAYWRIGHT_DIR` at the mise-installed `npm:@playwright/cli` automatically. See `e2e/README.md` for first-time setup (shared libs + a one-time Chromium download).
-- `e2e/spa-chat.test.mjs` needs a gateway with a chat upstream, so it targets `dev-ui` (`GATEWAY_STATIC_DIR=target/frontend/build mise run dev-ui`) and skips with a pointer at that command when no pool is configured.
-- `GATEWAY_URL` (default `http://localhost:8080`) targets a specific gateway; `CHROMIUM_HEADED=1` shows the browser instead of running headless.
+- `e2e/spa-chat.test.mjs` needs a running AIplane with a chat upstream, so it targets `dev-ui` (`AIPLANE_STATIC_DIR=target/frontend/build mise run dev-ui`) and skips with a pointer at that command when no pool is configured.
+- `AIPLANE_URL` (default `http://localhost:8080`) targets a specific gateway; `CHROMIUM_HEADED=1` shows the browser instead of running headless.
 - **Not part of the CI default** — the browser suite needs a running gateway and Chromium, so it stays a local/opt-in loop.
 - Authenticated flows (`e2e/authed.test.mjs`, the `spa*` signed-in tests) don't need OIDC: they sign in through the debug-only `/__dev/*` seeding endpoints (`rama_server::dev_seed`), compiled in under `cfg(debug_assertions)` and never present in a release build. `/__dev/seed-session` resets the canonical fixture (user `alice@example.com` + her three tokens) and is reserved for the one file that asserts those counts; everything else uses the delete-free `/__dev/session`. Completing setup is also how the suite makes `/readyz` deterministic on a fresh dev database.
 

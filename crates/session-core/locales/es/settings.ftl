@@ -2,7 +2,7 @@
 # Ajustes del operador (/admin/settings). Los títulos de tarjeta
 # (settings-s-*), las etiquetas de campo (settings-f-*) y su ayuda
 # (settings-f-*-help) se derivan de las entradas de
-# gateway_core::server::settings::SECTIONS:
+# aiplane_core::server::settings::SECTIONS:
 # `sandbox.runner_url` -> `settings-f-sandbox-runner_url`.
 # Véase locales/en/settings.ftl para la fuente.
 

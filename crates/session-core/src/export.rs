@@ -31,7 +31,7 @@ use crate::db::{Session, TurnRole, TurnWithTools};
 /// themselves.
 pub struct ExportOpts<'a> {
     /// Public URL the gateway is reachable at (e.g.
-    /// `https://gateway.example.com`). Used to turn relative attachment
+    /// `https://aiplane.example.com`). Used to turn relative attachment
     /// URLs (`/chat/attachment/…`) into absolute links that still
     /// resolve once the document leaves the browser. Trailing slash
     /// optional.

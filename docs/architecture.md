@@ -2,7 +2,7 @@
 
 ## One-paragraph summary
 
-The gateway is a single Rust binary built on **rama 0.3**, which is a proxy-native HTTP framework. The same process serves the OpenAI-compatible API (`/v1/*`), the OIDC browser flow (`/auth/*`), the session-authed JSON API (`/api/v0/*`), and — from the root `/` — the static files of a **SvelteKit SPA** (Svelte 5, `adapter-static`, built from `web/`). The SPA is compiled ahead of time and served out of `GATEWAY_STATIC_DIR`, so there is still no Node at runtime: one container, one process, one port. Chat streams over a JSON-SSE event protocol (`session_core::chat_json`) rather than server-rendered diffs; styling is **daisyUI v5 + Tailwind v4** with a shadcn-flavoured neutral palette. See [`ui.md`](ui.md).
+AIplane is a single Rust binary built on **rama 0.3**, which is a proxy-native HTTP framework. The same process serves the OpenAI-compatible API (`/v1/*`), the OIDC browser flow (`/auth/*`), the session-authed JSON API (`/api/v0/*`), and — from the root `/` — the static files of a **SvelteKit SPA** (Svelte 5, `adapter-static`, built from `web/`). The SPA is compiled ahead of time and served out of `AIPLANE_STATIC_DIR`, so there is still no Node at runtime: one container, one process, one port. Chat streams over a JSON-SSE event protocol (`session_core::chat_json`) rather than server-rendered diffs; styling is **daisyUI v5 + Tailwind v4** with a shadcn-flavoured neutral palette. See [`ui.md`](ui.md).
 
 > Indexing an external file share (Nextcloud / WebDAV / …) into RAG is its
 > own subsystem with its own extension point — see
@@ -34,7 +34,7 @@ The gateway is a single Rust binary built on **rama 0.3**, which is a proxy-nati
 
 ## Crate boundaries
 
-The gateway is one binary assembled from a layered stack of crates under
+AIplane is one binary assembled from a layered stack of crates under
 `crates/`. The layering is load-bearing for dev-build speed, not just tidiness:
 the `gateway` crate used to be ~108k lines in a single compilation unit, so
 editing *any* file re-ran the whole frontend + codegen. Each crate below depends
@@ -43,11 +43,11 @@ it — never what sits below.
 
 ```
 gateway            bin + router/proxy/api/oidc      6.5k  ← thinnest, most-edited glue
-   ├── gateway-api     the /api/v0 JSON handlers   25.5k  ← siblings: neither
-   └── gateway-tools   the tool implementations    14.5k  ←   depends on the other
-          └── gateway-runtime  tool API + AppState/RamaState + chat driver   14.7k
-                 ├── gateway-features  RAG, skills, ComfyUI, push, geoip, …  13.9k
-                 └── gateway-core      db, config, crypto, rbac, upstreams   22.1k
+   ├── aiplane-api     the /api/v0 JSON handlers   25.5k  ← siblings: neither
+   └── aiplane-tools   the tool implementations    14.5k  ←   depends on the other
+          └── aiplane-runtime  tool API + AppState/RamaState + chat driver   14.7k
+                 ├── aiplane-features  RAG, skills, ComfyUI, push, geoip, …  13.9k
+                 └── aiplane-core      db, config, crypto, rbac, upstreams   22.1k
                         ├── session-core   chat-UI substrate
                         └── shared         OpenAI wire types
 ```
@@ -58,23 +58,23 @@ What that buys, in lines that must recompile after a one-line edit:
 |---|---|
 | pre-split monolith | **97,310** (one unit) |
 | `gateway` | 6,510 |
-| `gateway-tools` | 21,041 |
-| `gateway-api` | 32,017 |
-| `gateway-runtime` | 61,266 |
-| `gateway-features` | 75,124 |
-| `gateway-core` | 97,189 |
+| `aiplane-tools` | 21,041 |
+| `aiplane-api` | 32,017 |
+| `aiplane-runtime` | 61,266 |
+| `aiplane-features` | 75,124 |
+| `aiplane-core` | 97,189 |
 
 The gains are front-loaded deliberately: the layers that churn most (handlers, tools,
 glue — about 60% of file touches over six months) are the cheapest to rebuild, and
-`gateway-core` — the one that still costs a full rebuild — is the least-edited.
+`aiplane-core` — the one that still costs a full rebuild — is the least-edited.
 
 Those counts are the measurement that motivated the split, taken before the SPA
-migration deleted the server-rendered page stack; `gateway-api` is roughly a third
+migration deleted the server-rendered page stack; `aiplane-api` is roughly a third
 of the size quoted above now. The ordering — and therefore the rule below — is
 unchanged, and UI work no longer recompiles Rust at all.
 
 **Rule of thumb when adding code:** put it as high in the stack as it will go.
-Something only belongs in `gateway-core` if code below the feature layer genuinely
+Something only belongs in `aiplane-core` if code below the feature layer genuinely
 needs it. Pushing a module downward for convenience is what makes builds slow
 again.
 
@@ -86,7 +86,7 @@ Pure data types, no I/O:
 
 Depends only on `serde`, `serde_json`, `thiserror`.
 
-### `crates/gateway-core`
+### `crates/aiplane-core`
 The base layer — the things everything else stands on, and the least-edited code
 in the tree. No routing, no `AppState`, no tool registry:
 - `auth/oidc.rs` — hand-rolled OIDC client (discovery + JWKS-verified ID tokens, on reqwest).
@@ -101,7 +101,7 @@ in the tree. No routing, no `AppState`, no tool registry:
 - `usage/`, `limits/` — the metrics sink and the rate-limit/quota enforcer.
 - `rama_server/session.rs` — signed-cookie + sqlite session store, plus the `is_safe_return_to` redirect guard the OIDC callback needs to bounce a signed-in user back to the SPA route they asked for; `rama_server/cors.rs` — the CORS layer. Neither needs `AppState`, so both stay here.
 
-### `crates/gateway-features`
+### `crates/aiplane-features`
 The optional subsystems — what a deployment switches on at `/admin/settings`
 and can run entirely without: `rag/`, `skills.rs`, `comfyui/` (client, store, manifest,
 runner, scheduler), `push/`, `github/`, `geoip/`, `typst.rs`, `image_gen.rs`,
@@ -109,41 +109,41 @@ runner, scheduler), `push/`, `github/`, `geoip/`, `typst.rs`, `image_gen.rs`,
 `search_settings.rs`, and `document_canvas.rs` (the chat canvas store, shared
 by the chat document endpoints and the document tools above).
 
-Each stands on `gateway-core` and knows nothing about `AppState`, the tool
+Each stands on `aiplane-core` and knows nothing about `AppState`, the tool
 registry, or routing. That ignorance is the whole point — it's what lets this
-layer sit below the runtime. A reference from here up into `gateway-runtime`
+layer sit below the runtime. A reference from here up into `aiplane-runtime`
 collapses the split.
 
-### `crates/gateway-runtime`
+### `crates/aiplane-runtime`
 Where the world gets tied together:
-- `server/tools/` — the tool *machinery*: the `Tool` trait and `ToolContext`, the `ToolRegistry`, the round-loop `runner`, the `catalog` (tool id → group → toggle key), the MCP connection manager, and the sandbox client. Implementations live in `gateway-tools`, above; `echo` and `get_current_timestamp` stay here as the canonical trivial tools that the registry/runner tests build registries out of.
+- `server/tools/` — the tool *machinery*: the `Tool` trait and `ToolContext`, the `ToolRegistry`, the round-loop `runner`, the `catalog` (tool id → group → toggle key), the MCP connection manager, and the sandbox client. Implementations live in `aiplane-tools`, above; `echo` and `get_current_timestamp` stay here as the canonical trivial tools that the registry/runner tests build registries out of.
 - `server/state.rs` — `AppState`: the db pool, config, `Arc<UpstreamRegistry>`, `Arc<ToolRegistry>`, `Arc<Resolver>`, and the optional feature handles (RAG indexer, skills, ComfyUI, push, geoip, sandbox client, MCP manager).
 - `rama_server/state.rs` — `RamaState` wraps `AppState` (via `Deref`) and adds the session store, worker registry, usage sink and rate-limit enforcer; `rama_server/auth.rs` — `require_bearer` for `/v1/*`.
 - `openai_driver.rs` — the `session_core::SessionDriver` impl that streams a chat completion, plus `loop_guard.rs`.
 - `server/{scheduled,webhooks,compaction,headless}` — the background workers that need state.
-- `server/comfyui_tool.rs` — the ComfyUI `Tool`/`ToolSource` impls and the `ComfyuiHandle` that `AppState` holds. Split out of `gateway-features`' `comfyui/` because it needs the tool API.
+- `server/comfyui_tool.rs` — the ComfyUI `Tool`/`ToolSource` impls and the `ComfyuiHandle` that `AppState` holds. Split out of `aiplane-features`' `comfyui/` because it needs the tool API.
 
-`gateway-tools` and `gateway-api` both sit on this and neither depends on the
+`aiplane-tools` and `aiplane-api` both sit on this and neither depends on the
 other, so a tool edit and a page edit stay independent.
 
-### `crates/gateway-tools`
+### `crates/aiplane-tools`
 The tool implementations — one module per tool family (`fetch_url`,
 `fetch_attachment`, `search_web`, `typst_render`, `document`, `rag`, `memory`,
 `qr`, `netcheck`, …). Each holds `Tool` impls; they plug into the machinery in
-`gateway-runtime` and are registered into the `ToolRegistry` that `gateway`'s
+`aiplane-runtime` and are registered into the `ToolRegistry` that `gateway`'s
 `main.rs` builds.
 
-A pure sink like `gateway-api`, and a sibling of it. Two tests live in
+A pure sink like `aiplane-api`, and a sibling of it. Two tests live in
 `tests/` rather than beside their code because they span both layers — the
 catalog-grouping and `AppState`-authorization tests need the machinery from
-`gateway-runtime` *and* the real concrete tools from here. A unit test inside
-`gateway-runtime` can't reach them: a `cfg(test)` build of a crate is a separate
+`aiplane-runtime` *and* the real concrete tools from here. A unit test inside
+`aiplane-runtime` can't reach them: a `cfg(test)` build of a crate is a separate
 crate instance, so its types don't unify with a dependent crate's. That same
 constraint is why a handful of test-support helpers (`ToolContext::for_test`,
 `pdf::test_support`, `comfyui::Client::with_http`) are plain `pub` rather than
 `#[cfg(test)]`.
 
-### `crates/gateway-api`
+### `crates/aiplane-api`
 The `/api/v0` JSON handlers the SPA calls — everything the deleted page stack used
 to render server-side, now answering JSON instead. `pages/mod.rs` carries the
 shared helpers every handler uses — `require_session_json` / `require_admin_json`
@@ -156,20 +156,20 @@ memory/scheduled/webhook surfaces; `rag*.rs`, `integrations.rs`, `tools.rs`,
 `webhooks.rs` and `feedback.rs` own the rest, including the handful of non-`/api/v0`
 OAuth and webhook-trigger routes that outlived the pages.
 
-This crate is a **pure sink** — nothing in `gateway-core` references it, and only
-the router mounts it. Keep it that way: a back-edge from `gateway-core` into a
+This crate is a **pure sink** — nothing in `aiplane-core` references it, and only
+the router mounts it. Keep it that way: a back-edge from `aiplane-core` into a
 handler would collapse the split. `build_info.rs` (and the `build.rs` that stamps
 the git SHA into it) lives here too, because it keeps a new commit from
-invalidating `gateway-core`.
+invalidating `aiplane-core`.
 
 ### `crates/gateway`
 The binary and its routing glue — deliberately thin:
-- `router.rs` — builds the `rama::http::service::web::Router`, mounting handlers from `gateway-api` and this crate.
+- `router.rs` — builds the `rama::http::service::web::Router`, mounting handlers from `aiplane-api` and this crate.
 - `proxy.rs` — `/v1/{models,chat/completions,audio/transcriptions,audio/speech,embeddings,images/generations,images/edits}` handlers. The chat path branches between a streaming fast-path (no tool grants) and the buffered tool-call loop; embeddings, images, and speech are byte-dumb relays to their pool kind.
 - `api.rs` — session-authed JSON at `/api/v0/*`.
 - `oidc_handlers.rs` — `/auth/{login,callback,logout}`, backed by a `pending_logins` row keyed by the OIDC `state` parameter.
-- `rag_api.rs`, `sandbox_api.rs`, `comfyui_api.rs`, `setup_api.rs` — the remaining JSON surfaces. (`setup_api.rs` lives here rather than in `gateway-api` so the first-run wizard's API survived the removal of the page stack.)
-- `spa.rs` — serves the built SvelteKit SPA from `GATEWAY_STATIC_DIR`: content-type map, cache policy, traversal guard, and the `index.html` history fallback. Its `GET /` + `GET /{*name}` catch-all is registered **last**, because rama matches in registration order.
+- `rag_api.rs`, `sandbox_api.rs`, `comfyui_api.rs`, `setup_api.rs` — the remaining JSON surfaces. (`setup_api.rs` lives here rather than in `aiplane-api` so the first-run wizard's API survived the removal of the page stack.)
+- `spa.rs` — serves the built SvelteKit SPA from `AIPLANE_STATIC_DIR`: content-type map, cache policy, traversal guard, and the `index.html` history fallback. Its `GET /` + `GET /{*name}` catch-all is registered **last**, because rama matches in registration order.
 - `first_run.rs` — the layer that redirects everything to `/setup` until setup completes, with an allowlist for the SPA's static shell.
 - `vad.rs` — neural voice-activity detection, trimming silence off uploaded voice notes before Whisper sees them.
 
@@ -180,7 +180,7 @@ without binding a socket.
 
 The UI's assets are **not** baked into the binary. `mise run build-web` compiles
 `web/` into `target/frontend/build/`, the container image COPYs that directory in,
-and `rama_server::spa` serves it from `GATEWAY_STATIC_DIR` — content-hashed bundles
+and `rama_server::spa` serves it from `AIPLANE_STATIC_DIR` — content-hashed bundles
 `immutable`, `index.html` and `sw.js` `no-cache`. With the variable unset the UI
 answers 503 and nothing else changes, which is what makes a headless deployment
 (API + proxy only) a supported configuration rather than an accident.
@@ -219,7 +219,7 @@ variable to read its key from.
 stored rows over its defaults on boot, so the hundred call sites that say
 `state.config().chat.ocr.dpi` never had to change. What is left outside the
 database is what has to be resolved *before* it can be opened:
-`$GATEWAY_SESSION_KEY`, `$GATEWAY_DB_PATH`, `$GATEWAY_DATA_DIR`,
-`$GATEWAY_PUBLIC_URL`, `$GATEWAY_BOOTSTRAP_ADMIN_GROUPS`, and `$IP` / `$PORT`.
+`$AIPLANE_SESSION_KEY`, `$AIPLANE_DB_PATH`, `$AIPLANE_DATA_DIR`,
+`$AIPLANE_PUBLIC_URL`, `$AIPLANE_BOOTSTRAP_ADMIN_GROUPS`, and `$IP` / `$PORT`.
 
 See the per-subsystem docs for what each screen controls.

@@ -22,7 +22,7 @@ The Rust binary and the UI build separately: `cargo build` needs no Node, and th
 | Run the production-shaped compiled SPA on :8080 | `mise run dev-served` |
 | Run only the Rust gateway | `mise run dev-gateway` |
 | Run a stub gateway for UI debugging (seeded session, mock LLM) | `mise run dev-ui` |
-| Build the gateway debug binary (no run) | `mise run dev-build` |
+| Build the AIplane debug binary (no run) | `mise run dev-build` |
 | Install `web/node_modules` (only when the lockfile changed) | `mise run web-install` |
 | Build the SvelteKit SPA into `target/frontend/build/` | `mise run build-web` |
 | svelte-check (TS + a11y diagnostics) on the SPA | `mise run check-web` |
@@ -54,21 +54,21 @@ The Rust binary and the UI build separately: `cargo build` needs no Node, and th
 
 CI runs the same scan in a dedicated `secret scan` job with `fetch-depth: 0`, which is the backstop for pushes made with `--no-verify` or from a clone where `setup-hooks` was never run.
 
-Credentials belong in `mise.local.toml` or the DB (sealed under `GATEWAY_ENCRYPTION_KEY`) — all gitignored or outside the tree. Tool configs that carry tokens (`.codex/`, editor/agent configs) should live in `$HOME`, not in the repo.
+Credentials belong in `mise.local.toml` or the DB (sealed under `AIPLANE_ENCRYPTION_KEY`) — all gitignored or outside the tree. Tool configs that carry tokens (`.codex/`, editor/agent configs) should live in `$HOME`, not in the repo.
 
 Anything not covered: add a task to `mise.toml` rather than typing the raw command into a script. Discoverability matters.
 
 ## The feedback ladder — don't run the full gate to check one change
 
-Measured on an M-series laptop, editing `gateway-core` (the root of the crate
+Measured on an M-series laptop, editing `aiplane-core` (the root of the crate
 graph — everything above it rebuilds), before and after the `target/` cleanup
 and profile trim described below:
 
 | Operation | Before | After |
 |---|---|---|
 | `ls -f target/debug/deps` | **66 s** | **0.065 s** |
-| touch `gateway-core` → `gateway` test binaries linked | **414 s** | **14–18 s** |
-| touch `gateway-core` → `mise run test` (all 2365 tests) | **~20 min** | **40 s** |
+| touch `aiplane-core` → `gateway` test binaries linked | **414 s** | **14–18 s** |
+| touch `aiplane-core` → `mise run test` (all 2365 tests) | **~20 min** | **40 s** |
 | `target/` on disk | 327 GB, 1.16M files in `deps` | ~30 GB, ~12 k files |
 
 The shape to internalise: **compiling and linking dominates; running tests is
@@ -81,8 +81,8 @@ So climb the ladder, and only step up when the rung below is green:
 
 ```bash
 mise run check                      # ~seconds — does it type-check at all?
-mise run test-crate gateway-api     # the crate you're editing (+ optional filter)
-mise run lint-crate gateway-api     # clippy for that crate
+mise run test-crate aiplane-api     # the crate you're editing (+ optional filter)
+mise run lint-crate aiplane-api     # clippy for that crate
 mise run verify                     # ONCE, before pushing: lint + all tests
 ```
 
@@ -181,7 +181,7 @@ Not in the repo, because it's a machine-level choice: a user-global
 and `test` profiles. They do **not** conflict — cargo compiles only *workspace*
 crates incrementally and never registry dependencies, so incremental owns the
 edit loop while sccache owns the dependency graph across cold builds, branch
-switches and profile changes. Measured here, one-line edit in `gateway-api`
+switches and profile changes. Measured here, one-line edit in `aiplane-api`
 then `cargo nextest run --workspace`: **102 s → 59 s**. Give sccache a cache
 big enough for this dependency graph (100 GiB in its own config file); at the
 10 GiB default it evicted as fast as it wrote and measured a 0% hit rate.
@@ -194,7 +194,7 @@ and `target/` there instead.
 `mise run dev` starts Vite on public `127.0.0.1:8080` and `cargo run --package gateway` on private `127.0.0.1:8081`. Vite owns the browser origin and proxies every gateway-owned route, including `/chat/attachment/*`, OAuth callbacks, liveness endpoints, `/api`, `/v1`, and `/auth`. On startup the binary:
 
 - binds the private address supplied by the task (`127.0.0.1:8081`);
-- opens the SQLite database at `$GATEWAY_DB_PATH` (default `gateway.sqlite`) and runs migrations;
+- opens the SQLite database at `$AIPLANE_DB_PATH` (default `gateway.sqlite`) and runs migrations;
 - applies the stored operator settings over the built-in defaults;
 - builds the upstream registry from the database and spawns the health probes;
 - builds the OIDC client if a provider is configured, otherwise starts without login.
@@ -215,56 +215,56 @@ a stub gateway with mock backends and a pre-seeded session instead.
 
 Env config is layered through mise, not a `.env` file:
 
-- **`mise.toml` `[env]`** holds the non-secret defaults committed to the repo (`RUST_BACKTRACE=1`, `RUST_LOG=info,gateway=debug,gateway_core=debug,gateway_features=debug,gateway_runtime=debug,gateway_tools=debug,gateway_api=debug`).
-- **`mise.local.toml` `[env]`** holds secrets and machine-local overrides — it is **gitignored**. This is where local dev keys go: `GATEWAY_SESSION_KEY`, `GATEWAY_OIDC_CLIENT_SECRET`, `GATEWAY_ENCRYPTION_KEY`, provider keys (`OPENAI_API_KEY`, `ZAI_API_KEY`, …), etc.
+- **`mise.toml` `[env]`** holds the non-secret defaults committed to the repo (`RUST_BACKTRACE=1`, `RUST_LOG=info,gateway=debug,aiplane_core=debug,aiplane_features=debug,aiplane_runtime=debug,aiplane_tools=debug,aiplane_api=debug`).
+- **`mise.local.toml` `[env]`** holds secrets and machine-local overrides — it is **gitignored**. This is where local dev keys go: `AIPLANE_SESSION_KEY`, `AIPLANE_OIDC_CLIENT_SECRET`, `AIPLANE_ENCRYPTION_KEY`, provider keys (`OPENAI_API_KEY`, `ZAI_API_KEY`, …), etc.
 
 Web-search settings are **not** environment variables any more. Provider, SearXNG URL, and Brave API key live in the database and are set under **Web search** on `/admin/models` (the key sealed at rest like every other gateway secret). `SEARCH_PROVIDER`, `SEARXNG_URL`, and `BRAVE_SEARCH_API_KEY` are still read **once**, at first boot, to fill settings that are still empty — after that they're ignored and the gateway logs that it ignored them.
 
-Secrets live in the database, sealed at rest, and are entered in the admin UI. A backend may instead name an environment variable to read its key from (`api_key_env = "GPU01_KEY"`), which is why provider keys still belong in `mise.local.toml`. `$GATEWAY_SESSION_KEY` is read directly and is mandatory.
+Secrets live in the database, sealed at rest, and are entered in the admin UI. A backend may instead name an environment variable to read its key from (`api_key_env = "GPU01_KEY"`), which is why provider keys still belong in `mise.local.toml`. `$AIPLANE_SESSION_KEY` is read directly and is mandatory.
 
 Which env vars each subsystem needs is documented in `docs/auth.md` (OIDC) and `docs/upstreams.md` (provider keys).
 
 ### `RUST_LOG` and the crate split
 
-A tracing target is the *crate* a span or event was emitted from, so the gateway
+A tracing target is the *crate* a span or event was emitted from, so AIplane
 now emits under six targets rather than one:
 
 | target | covers |
 |---|---|
 | `gateway` | router, `/v1` proxy, `/api/v0`, OIDC handlers, `main` |
-| `gateway_core` | config, DB, crypto, RBAC, upstreams, auth, sessions |
-| `gateway_features` | RAG, skills, ComfyUI, push, geoip, typst discovery, attachments, PDF/OCR/speech |
-| `gateway_runtime` | the tool registry/catalog/runner, `AppState`, the chat driver, scheduler, webhooks |
-| `gateway_tools` | the tool implementations (`fetch_url`, `search_web`, typst, document, …) |
-| `gateway_api` | the `/api/v0` JSON handlers, including the chat event stream |
+| `aiplane_core` | config, DB, crypto, RBAC, upstreams, auth, sessions |
+| `aiplane_features` | RAG, skills, ComfyUI, push, geoip, typst discovery, attachments, PDF/OCR/speech |
+| `aiplane_runtime` | the tool registry/catalog/runner, `AppState`, the chat driver, scheduler, webhooks |
+| `aiplane_tools` | the tool implementations (`fetch_url`, `search_web`, typst, document, …) |
+| `aiplane_api` | the `/api/v0` JSON handlers, including the chat event stream |
 
 A bare `RUST_LOG=info,gateway=debug` therefore only raises the level for the
 routing glue — page and tool logs stay at `info`. The committed defaults in
 `mise.toml`, `Dockerfile`, `deploy/compose.example.yml`, and
 `deploy/quadlet/gateway.container` all name the six targets explicitly.
 
-**If you run the gateway from your own env or unit file, update `RUST_LOG` when
+**If you run AIplane from your own env or unit file, update `RUST_LOG` when
 you deploy this change** — an unchanged filter silently drops page and tool logs
 to whatever the global default is. Note the underscores: crate names are
-normalised, so it's `gateway_core`, not `gateway-core`.
+normalised, so it's `aiplane_core`, not `aiplane-core`.
 
-`GATEWAY_SESSION_KEY` — 64 hex chars (32 bytes) for the session-cookie HMAC. **The gateway refuses to boot without it.** It used to fall back to an ephemeral per-process key, which quietly logged every user out on each restart *and* left every sealed secret in the DB unreadable; that failure was invisible until it had already cost data, so it is now a hard startup error carrying the `openssl rand -hex 32` line to fix it.
+`AIPLANE_SESSION_KEY` — 64 hex chars (32 bytes) for the session-cookie HMAC. **AIplane refuses to boot without it.** It used to fall back to an ephemeral per-process key, which quietly logged every user out on each restart *and* left every sealed secret in the DB unreadable; that failure was invisible until it had already cost data, so it is now a hard startup error carrying the `openssl rand -hex 32` line to fix it.
 
-`mise run dev` handles this for you: it generates `.gateway-dev-session-key` (gitignored, 0600) on first run and reuses it forever after. That is also a fix for local development — with the old ephemeral key, backend API keys and connector secrets stored in your local `gateway.sqlite` were silently unreadable after every restart.
+`mise run dev` handles this for you: it generates `.aiplane-dev-session-key` (gitignored, 0600) on first run and reuses it forever after. That is also a fix for local development — with the old ephemeral key, backend API keys and connector secrets stored in your local `gateway.sqlite` were silently unreadable after every restart.
 
-`GATEWAY_DATA_DIR` — root for everything the gateway *writes*: the SQLite database (`<data_dir>/gateway.sqlite`) and the RAG store (`<data_dir>/data/rag`). Unset it stays empty, so a `cargo run` in a checkout writes `./gateway.sqlite` and `./data/rag` exactly as before; the container image sets it to the mounted volume, which is what lets a deployment persist state with no config file. Read-only paths (typst templates, skills bundles) deliberately do *not* hang off it — they ship in the image's read-only layers.
+`AIPLANE_DATA_DIR` — root for everything AIplane *writes*: the SQLite database (`<data_dir>/gateway.sqlite`) and the RAG store (`<data_dir>/data/rag`). Unset it stays empty, so a `cargo run` in a checkout writes `./gateway.sqlite` and `./data/rag` exactly as before; the container image sets it to the mounted volume, which is what lets a deployment persist state with no config file. Read-only paths (typst templates, skills bundles) deliberately do *not* hang off it — they ship in the image's read-only layers.
 
 ## Debugging the UI
 
 Every authed surface — the SPA's screens and the `/api/v0/*` JSON routes behind them — is gated by OIDC, which makes ad-hoc browser debugging (browser automation, devtools, screenshotting bugs) annoying: you'd otherwise need a full OIDC provider wired up just to *see* a page. The `dev-ui` mise task short-circuits that:
 
 ```bash
-GATEWAY_STATIC_DIR=target/frontend/build mise run dev-ui
+AIPLANE_STATIC_DIR=target/frontend/build mise run dev-ui
 ```
 
 (`dev-ui` does not build or point at the SPA itself, so pass the variable if you want the UI and not just the API. Run `mise run build-web` once first.)
 
-This runs the `dev_ui` example (`crates/gateway/examples/dev_ui.rs`), which boots the real rama gateway on `127.0.0.1:8080` against:
+This runs the `dev_ui` example (`crates/aiplane/examples/dev_ui.rs`), which boots the real rama gateway on `127.0.0.1:8080` against:
 
 - an **in-memory SQLite**;
 - an in-process **`wiremock` chat pool** that serves `GET /models` (advertising `demo-model` + `demo-model-pro`) and `POST /chat/completions` (a streaming variant emitting two SSE deltas + `[DONE]`, plus non-streaming and feedback-extraction variants);
@@ -326,11 +326,11 @@ The UI has **two** development modes.
 mise run dev       # public Vite/HMR on :8080, private Rust gateway on :8081
 ```
 
-Open `http://localhost:8080`. Vite proxies the complete dynamic surface to the gateway on :8081 (`web/vite.config.ts`), so sessions, OIDC callbacks, attachments, downloads, SSE, and API calls share the production-shaped browser origin. A Svelte-file save re-renders in well under a second with **no Rust rebuild**.
+Open `http://localhost:8080`. Vite proxies the complete dynamic surface to AIplane on :8081 (`web/vite.config.ts`), so sessions, OIDC callbacks, attachments, downloads, SSE, and API calls share the production-shaped browser origin. A Svelte-file save re-renders in well under a second with **no Rust rebuild**.
 
-**Served mode — what production looks like.** `mise run dev-served` builds the SPA and lets the gateway serve it directly at `http://localhost:8080`. Use this to check the built artefact, cache headers and history fallback. No Node runs in production: the container image `COPY`s the built `target/frontend/build/` directory in and the Rust binary serves it (`crates/gateway/src/rama_server/spa.rs`).
+**Served mode — what production looks like.** `mise run dev-served` builds the SPA and lets AIplane serve it directly at `http://localhost:8080`. Use this to check the built artefact, cache headers and history fallback. No Node runs in production: the container image `COPY`s the built `target/frontend/build/` directory in and the Rust binary serves it (`crates/aiplane/src/rama_server/spa.rs`).
 
-The gateway serves its OpenAPI 3.1 contract at `GET /openapi.json`. It is generated from the `/api/v0/*` declarations in `router.rs`, so route changes require no second contract-file edit and the production container carries no detached spec. The client in `web/src/lib/api.ts` remains hand-written against the backend wire types.
+AIplane serves its OpenAPI 3.1 contract at `GET /openapi.json`. It is generated from the `/api/v0/*` declarations in `router.rs`, so route changes require no second contract-file edit and the production container carries no detached spec. The client in `web/src/lib/api.ts` remains hand-written against the backend wire types.
 
 Chat streams over the JSON-SSE event protocol (`session_core::chat_json` ↔ `web/src/lib/chat-protocol.ts`): the composer posts `POST /api/v0/chat/sessions/{id}/messages` and the reply arrives on `GET …/events` as `snapshot` / `turn_delta` / `tool_call_done` / `turn_finalized` … events, with the DB snapshot on every attach acting as the reconnect replay. `mise run test-web` unit-tests the client's event fold (`web/src/lib/chat-protocol.test.ts`); `e2e/spa-chat.test.mjs` drives the full round trip against `dev-ui`.
 
@@ -341,9 +341,9 @@ Everything else about the UI — the layout of `web/`, the event table, theming,
 GitHub Actions is wired up in `.github/workflows/ci.yml`. It triggers on pushes to `main`, on tags, and on pull requests. The toolchain comes from `mise.toml` via `jdx/mise-action`; `Swatinem/rust-cache` caches the cargo registry + `target/` across runs (CI does **not** use sccache). There are four jobs:
 
 1. **ci** — runs `mise run ci`, which fans out via mise's DAG to lint + test + release-build + SPA-build. It then builds the `sandbox-runner` binary and uploads two artifacts: `gateway-binaries` (`target/release/{gateway, sandbox-runner, typst, libpdfium.so}`) and `gateway-spa` (`target/frontend/build/`) (7-day retention). Debuginfo is dropped from the dev/test profiles (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`) so the multi-profile compile doesn't run the runner out of disk.
-2. **container** (needs `ci`) — downloads the artifacts and builds the production image from `/Dockerfile` with `docker/build-push-action`. On pull requests it builds with `push: false` (validation only). On the default branch and on tags it pushes to GHCR (`ghcr.io/croit/llm-gateway`) with tags from `docker/metadata-action` (branch, tag, `sha-<short>`, and `latest` on the default branch).
-3. **sandbox-image** (needs `ci`, `push` events only) — builds and pushes the code-execution sandbox gold image (`ghcr.io/croit/llm-gateway-sandbox`) from `sandbox-image/Containerfile`.
-4. **sandbox-runner-image** (needs `ci`, `push` events only) — builds and pushes the sandbox runner image (`ghcr.io/croit/llm-gateway-sandbox-runner`) from `deploy/sandbox-runner/Containerfile`.
+2. **container** (needs `ci`) — downloads the artifacts and builds the production image from `/Dockerfile` with `docker/build-push-action`. On pull requests it builds with `push: false` (validation only). On the default branch and on tags it pushes to GHCR (`ghcr.io/croit/aiplane`) with tags from `docker/metadata-action` (branch, tag, `sha-<short>`, and `latest` on the default branch).
+3. **sandbox-image** (needs `ci`, `push` events only) — builds and pushes the code-execution sandbox gold image (`ghcr.io/croit/aiplane-sandbox`) from `sandbox-image/Containerfile`.
+4. **sandbox-runner-image** (needs `ci`, `push` events only) — builds and pushes the sandbox runner image (`ghcr.io/croit/aiplane-sandbox-runner`) from `deploy/sandbox-runner/Containerfile`.
 
 The two sandbox images are large and slow to build, so they only run on `push` (main/tags), never on PRs. See `docs/sandbox.md`.
 
@@ -351,7 +351,7 @@ The production `Dockerfile` is **runtime-only** — it compiles nothing. Startin
 
 - `apt-get install`s `git` + `ca-certificates` (the RAG indexer shells out to `git clone`, which validates TLS via the OS trust store, not the Rust binary's baked-in `webpki-roots`);
 - `COPY`s the prebuilt `gateway` binary, plus `typst` (→ `/usr/local/bin/typst`), `libpdfium.so` (→ `/usr/local/lib/`), and the sample `examples/typst-templates` (→ `/opt/typst-templates`);
-- `COPY`s the built SPA (`target/frontend/build` → `/usr/share/gateway/ui`) and sets `GATEWAY_STATIC_DIR` to it — a read-only layer the SPA handler only reads;
+- `COPY`s the built SPA (`target/frontend/build` → `/usr/share/gateway/ui`) and sets `AIPLANE_STATIC_DIR` to it — a read-only layer the SPA handler only reads;
 - runs as a non-root `gateway` user and exposes `8080`.
 
 The UI is the one thing the image carries outside the binary, and it is plain static files: **no Node runtime**. No `cargo`, `npm` or `vite` runs in the image build — those all happen in the `ci` job, and the outputs arrive as artifacts.
@@ -406,7 +406,7 @@ touched**, so a wiped index is repaired with plain `git reset` (never
 `--hard`), which rebuilds it from `HEAD`.
 
 **Prevention.** `INHERITED_GIT_VARS` in
-`crates/gateway-features/src/server/rag/git.rs` lists the variables; every
+`crates/aiplane-features/src/server/rag/git.rs` lists the variables; every
 `git` spawn clears them. `every_git_spawn_scrubs_the_inherited_context` (same
 file) scans `crates/` and fails if a file naming `Command::new("git")` does
 not also name `INHERITED_GIT_VARS` or `env_remove`. It cannot prove the scrub
@@ -414,16 +414,15 @@ reaches the right command, but the failure mode that actually bit was a silent
 omission in a new fixture, and that is now impossible to add unnoticed.
 
 Build scripts need the same treatment and cannot import from the workspace —
-`crates/gateway-api/build.rs` repeats the list. A build run from inside a hook
+`crates/aiplane-api/build.rs` repeats the list. A build run from inside a hook
 would otherwise resolve `HEAD` in the calling repository and stamp a foreign
-SHA into `GATEWAY_GIT_SHA`, defeating the AGPL §13 source link it exists for.
+SHA into `AIPLANE_GIT_SHA`, defeating the AGPL §13 source link it exists for.
 
 ### A seed/import marker may only be burned once the decision is final
 
 **Symptom.** An upgraded deployment comes up missing something it had in its
 config file — no upstream pools, no groups, or no OIDC provider at all — and no
-amount of restarting brings it back. With OIDC it is worse than missing: the
-gateway marks itself configured because the database has users, so `/setup`
+amount of restarting brings it back. With OIDC it is worse than missing: AIplane marks itself configured because the database has users, so `/setup`
 404s and the only way in is `restore-setup` on the host.
 
 **Cause.** Four `app_settings` rows gate one-time work: `topology.seeded`,
@@ -434,7 +433,7 @@ config file at all** — a volume mounted late, a bind mount not ready, a binary
 started from the wrong directory. That boot seeds nothing, records "done", and
 the file is never read again.
 
-All three had shipped. It was found by starting the gateway once in a checkout
+All three had shipped. It was found by starting AIplane once in a checkout
 whose config lived under a different filename, which is exactly how an operator
 would hit it.
 

@@ -8,10 +8,10 @@ import {
 } from './page-title.ts';
 
 test('a page can publish and clear its data-driven browser title', () => {
-	setPageTitleOverride('/chat/one', 'Conversation one — LLM Gateway');
+	setPageTitleOverride('/chat/one', 'Conversation one — AIplane');
 	assert.deepEqual(get(pageTitleOverride), {
 		pathname: '/chat/one',
-		title: 'Conversation one — LLM Gateway'
+		title: 'Conversation one — AIplane'
 	});
 
 	clearPageTitleOverride('/chat/one');
@@ -19,7 +19,7 @@ test('a page can publish and clear its data-driven browser title', () => {
 });
 
 test('a departing page cannot clear the next route title', () => {
-	setPageTitleOverride('/chat/two', 'Conversation two — LLM Gateway');
+	setPageTitleOverride('/chat/two', 'Conversation two — AIplane');
 	clearPageTitleOverride('/chat/one');
 	assert.equal(get(pageTitleOverride).pathname, '/chat/two');
 });

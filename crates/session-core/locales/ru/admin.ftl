@@ -113,7 +113,7 @@ admin-comfyui-refresh = Обновить
 admin-clear-overrides-confirm = Удалить все сохранённые переопределения для { $model }?
 admin-cap-no-fallback = (нет)
 
-admin-page-title = Модели — LLM Gateway
+admin-page-title = Модели — AIplane
 
 admin-intro-prefix = Настройки по каждой модели — цены, окно контекста, рассуждения, возможности и значения сэмплирования — применяются к
 

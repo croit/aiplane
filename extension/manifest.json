@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "LLM Gateway Browser Control",
+  "name": "croit AIplane Browser Control",
   "version": "0.0.0",
-  "description": "Lets an LLM Gateway conversation act in this browser — with your logins, and only after you switch it on.",
+  "description": "Lets an AIplane conversation act in this browser — with your logins, and only after you switch it on.",
   "minimum_chrome_version": "127",
   "background": {
     "service_worker": "src/background.js",

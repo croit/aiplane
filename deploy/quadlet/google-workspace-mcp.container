@@ -11,8 +11,8 @@
 #   sudo cp deploy/quadlet/google-workspace-mcp.container \
 #           deploy/quadlet/gworkspace-mcp-oauth.volume /etc/containers/systemd/
 #   sudo install -m 0600 deploy/quadlet/google-workspace-mcp.example.env \
-#        /etc/gateway/google-workspace-mcp.env
-#   sudo $EDITOR /etc/gateway/google-workspace-mcp.env   # client id/secret + URLs
+#        /etc/aiplane/google-workspace-mcp.env
+#   sudo $EDITOR /etc/aiplane/google-workspace-mcp.env   # client id/secret + URLs
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now google-workspace-mcp.service
 #
@@ -41,7 +41,7 @@ PublishPort=127.0.0.1:8000:8000
 # Secrets + deployment URLs: GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET,
 # WORKSPACE_EXTERNAL_URL, WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS,
 # FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY.
-EnvironmentFile=/etc/gateway/google-workspace-mcp.env
+EnvironmentFile=/etc/aiplane/google-workspace-mcp.env
 
 # OAuth state MUST outlive the container. This server's FastMCP OAuth proxy keeps
 # *everything* in one store: the gateway's dynamically-registered client, the

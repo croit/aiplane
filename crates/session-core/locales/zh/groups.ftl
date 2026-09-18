@@ -1,4 +1,4 @@
-groups-heading = 网关组
+groups-heading = AIplane 组
 groups-intro = 将 OIDC 声明值映射为清晰、与 IdP 无关的组名，并决定每个组授予的权限。池、RAG 集合和 MCP 连接器通过组名引用这些组，以限制谁可以使用它们。
 groups-new-heading = 新建组
 groups-existing-heading = 组

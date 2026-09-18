@@ -1,16 +1,16 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
 admin-users-heading = Usuarios
-admin-users-desc-allowed-prefix = Todas las personas que alguna vez iniciaron sesión en esta pasarela, con sus grupos del proveedor de identidad y los roles de la pasarela a los que se asignan.
+admin-users-desc-allowed-prefix = Todas las personas que alguna vez iniciaron sesión en esta pasarela, con sus grupos del proveedor de identidad y los roles de AIplane a los que se asignan.
 admin-users-desc-allowed-suffix = inicia una sesión que se comporta exactamente como ese usuario — útil para reproducir lo que ve. Cada suplantación queda registrada abajo.
-admin-users-desc-disabled-prefix = Todas las personas que alguna vez iniciaron sesión en esta pasarela, con sus grupos del proveedor de identidad y los roles de la pasarela a los que se asignan. La suplantación está
+admin-users-desc-disabled-prefix = Todas las personas que alguna vez iniciaron sesión en esta pasarela, con sus grupos del proveedor de identidad y los roles de AIplane a los que se asignan. La suplantación está
 admin-users-desc-disabled-suffix = en esta pasarela (`allow_impersonation = false`).
 admin-users-disabled-label = deshabilitada
 admin-users-impersonate-button = Suplantar
 
 admin-users-col-user = Usuario
 admin-users-col-oidc-groups = Grupos OIDC
-admin-users-col-gateway-roles = Roles de la pasarela
+admin-users-col-gateway-roles = Roles de AIplane
 admin-users-col-joined = Registrado
 admin-users-col-action = Acción
 

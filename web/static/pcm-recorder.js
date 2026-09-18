@@ -1,4 +1,4 @@
-// croit LLM Gateway — AudioWorklet PCM recorder processor (SPA copy).
+// croit AIplane — AudioWorklet PCM recorder processor (SPA copy).
 //
 // Served at /app/pcm-recorder.js (web/static is copied verbatim by the
 // SvelteKit build) and loaded via `audioWorklet.addModule()` from

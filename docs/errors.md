@@ -45,7 +45,7 @@ let upstream = pool
 
 ## Mapping to the OpenAI error shape
 
-The HTTP boundary in the gateway converts the internal error tree to:
+The HTTP boundary in AIplane converts the internal error tree to:
 
 ```json
 { "error": { "message": "...", "type": "...", "code": "..." } }

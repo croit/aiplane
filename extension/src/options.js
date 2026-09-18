@@ -13,12 +13,12 @@ import {
 	withDefaults
 } from './policy.js';
 
-const listEl = document.getElementById('gateways');
+const listEl = document.getElementById('aiplanes');
 const approvedEl = document.getElementById('approved');
 const approvedBlock = document.getElementById('approved-block');
 const siteInput = document.getElementById('site-url');
 const siteStatus = document.getElementById('site-status');
-const inputEl = document.getElementById('gateway-url');
+const inputEl = document.getElementById('aiplane-url');
 const statusEl = document.getElementById('pair-status');
 
 async function load() {
@@ -177,7 +177,7 @@ function row(label, onRemove) {
 	return li;
 }
 
-document.getElementById('add-gateway').addEventListener('click', () => pair(inputEl.value.trim()));
+document.getElementById('add-aiplane').addEventListener('click', () => pair(inputEl.value.trim()));
 document.getElementById('add-site').addEventListener('click', () => approveSite(siteInput.value.trim()));
 
 render();

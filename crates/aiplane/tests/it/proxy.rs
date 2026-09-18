@@ -1,0 +1,1091 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 croit GmbH
+
+//! Bearer-gated /v1/* proxy routes. Covers the auth boundary, header
+//! policy, model resolution, and response relay against a wiremock
+//! upstream.
+
+use crate::common;
+
+use aiplane_core::server::upstreams::PoolKind;
+use common::Service as _;
+use rama::http::{Body, Method, Request, StatusCode};
+use serde_json::json;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+#[tokio::test]
+async fn v1_models_without_bearer_is_401() {
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let app = common::app(state);
+    let resp = app
+        .serve(common::req(Method::GET, "/v1/models"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let www = resp
+        .headers()
+        .get("www-authenticate")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        www.contains("Bearer"),
+        "missing WWW-Authenticate header: got `{www}`"
+    );
+}
+
+#[tokio::test]
+async fn v1_models_relays_upstream_list() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [{"id": "model-a", "object": "model"}]
+        })))
+        .mount(&upstream)
+        .await;
+
+    let state = common::state_with_chat_pool(&upstream.uri()).await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/models")
+        .header("authorization", format!("Bearer {bearer}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = common::read_body(resp).await;
+    let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(parsed["data"][0]["id"], "model-a");
+}
+
+#[tokio::test]
+async fn v1_chat_completions_relays_through_upstream() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"role": "assistant", "content": "hi from upstream"}}]
+        })))
+        .mount(&upstream)
+        .await;
+
+    let state = common::state_with_chat_pool(&upstream.uri()).await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "model-a", "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = common::read_body(resp).await;
+    // Streaming relay → bytes are upstream-shaped JSON, byte-for-byte.
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        parsed["choices"][0]["message"]["content"],
+        "hi from upstream"
+    );
+}
+
+#[tokio::test]
+async fn v1_chat_blocked_by_quota_returns_429() {
+    use aiplane_core::server::db::limits::{self, Dimension, SubjectType, Window};
+
+    let upstream = MockServer::start().await;
+    // The backend never needs to answer — enforcement fires before routing.
+    let state = common::state_with_chat_pool(&upstream.uri()).await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    // A global 0-requests/hour rule puts every caller over budget immediately.
+    limits::upsert(
+        &state.db,
+        SubjectType::Global,
+        "",
+        None,
+        Dimension::Requests,
+        Window::Hour,
+        0.0,
+    )
+    .await
+    .unwrap();
+    let app = common::app(state);
+
+    let body = json!({"model": "model-a", "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        resp.headers().get("retry-after").is_some(),
+        "429 must carry a Retry-After header"
+    );
+    let bytes = common::read_body(resp).await;
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(parsed["error"]["type"], "rate_limit_exceeded");
+}
+
+#[tokio::test]
+async fn v1_chat_completion_records_a_usage_row() {
+    use aiplane_core::server::db::usage::{Filter, Period, aggregate, period_bounds};
+    use jiff::Timestamp;
+
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+        })))
+        .mount(&upstream)
+        .await;
+
+    // Opt into a live metered usage sink (the harness default is disabled).
+    let state = common::state_with_chat_pool(&upstream.uri()).await;
+    let metered = aiplane_core::server::usage::spawn(state.db.clone(), 90);
+    let state = state.with_usage(metered);
+    let db = state.db.clone();
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "model-a", "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    // Drain the response so the streaming relay task runs to completion and
+    // emits its usage record.
+    let _ = common::read_body(resp).await;
+
+    // The batched writer flushes within ~500ms; poll a little past that.
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    let now = Timestamp::now();
+    let bounds = period_bounds(Period::Today, "UTC", now);
+    let agg = aggregate(&db, bounds, &Filter::default(), 90, now, true)
+        .await
+        .unwrap();
+    assert_eq!(agg.summary.requests, 1, "one upstream call recorded");
+    assert_eq!(agg.summary.total_tokens, 18, "usage block parsed from body");
+    assert_eq!(agg.by_source[0].key, "v1_api");
+    assert_eq!(agg.by_backend[0].key, "mock");
+    assert_eq!(agg.by_model[0].key, "model-a");
+    assert_eq!(agg.by_user[0].key, "alice");
+    assert_eq!(agg.by_user[0].label, "alice@example.com");
+}
+
+#[tokio::test]
+async fn v1_embeddings_relays_through_upstream() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/embeddings"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "model": "embed-model",
+            "data": [{"object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3]}],
+        })))
+        .mount(&upstream)
+        .await;
+
+    let state = common::state_with_pool(&upstream.uri(), PoolKind::Embedding, "embed-model").await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "embed-model", "input": ["Schreibe einen Brief", "Write a letter"]})
+        .to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/embeddings")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = common::read_body(resp).await;
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(parsed["data"][0]["embedding"][0], 0.1);
+}
+
+#[tokio::test]
+async fn v1_images_generations_relays_through_upstream() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/images/generations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "created": 0,
+            "data": [{"url": "https://cdn.example/img.png"}],
+        })))
+        .mount(&upstream)
+        .await;
+
+    let state = common::state_with_pool(&upstream.uri(), PoolKind::Image, "glm-image").await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "glm-image", "prompt": "a blue cloud"}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/images/generations")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    // Byte-dumb relay: the provider's exact response reaches the client.
+    let bytes = common::read_body(resp).await;
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(parsed["data"][0]["url"], "https://cdn.example/img.png");
+}
+
+#[tokio::test]
+async fn v1_images_generations_without_bearer_is_401() {
+    let state =
+        common::state_with_pool("http://unused.invalid", PoolKind::Image, "glm-image").await;
+    let app = common::app(state);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/images/generations")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"model":"glm-image","prompt":"x"}"#))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn v1_images_generations_records_image_usage_row() {
+    use aiplane_core::server::db::usage::{Filter, Period, aggregate, period_bounds};
+    use jiff::Timestamp;
+
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/images/generations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{"url": "https://cdn.example/img.png"}],
+        })))
+        .mount(&upstream)
+        .await;
+
+    let state = common::state_with_pool(&upstream.uri(), PoolKind::Image, "glm-image").await;
+    aiplane_core::server::db::model_defaults::set_pricing_with_unit(
+        &state.db,
+        "glm-image",
+        None,
+        Some(0.75),
+        aiplane_core::server::db::model_defaults::PricingUnit::Images,
+    )
+    .await
+    .unwrap();
+    let metered = aiplane_core::server::usage::spawn(state.db.clone(), 90);
+    let state = state.with_usage(metered);
+    let db = state.db.clone();
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "glm-image", "prompt": "a blue cloud"}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/images/generations")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let _ = common::read_body(resp).await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    let now = Timestamp::now();
+    let bounds = period_bounds(Period::Today, "UTC", now);
+    let agg = aggregate(&db, bounds, &Filter::default(), 90, now, true)
+        .await
+        .unwrap();
+    assert_eq!(agg.summary.requests, 1, "one image call recorded");
+    assert_eq!(agg.by_model[0].key, "glm-image");
+    assert!((agg.summary.total_cost - 0.75).abs() < 1e-9);
+    // Images carry no token counts.
+    assert_eq!(agg.summary.total_tokens, 0);
+}
+
+#[tokio::test]
+async fn v1_image_edits_count_all_input_images() {
+    use aiplane_core::server::db::model_defaults::{self, PricingUnit};
+    use aiplane_core::server::db::usage::{Filter, Period, aggregate, period_bounds};
+    use jiff::Timestamp;
+
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/images/edits"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{"url": "https://cdn.example/img.png"}],
+        })))
+        .mount(&upstream)
+        .await;
+    let state = common::state_with_pool(&upstream.uri(), PoolKind::Image, "image-edit").await;
+    model_defaults::set_pricing_with_unit(
+        &state.db,
+        "image-edit",
+        Some(2.0),
+        Some(3.0),
+        PricingUnit::Images,
+    )
+    .await
+    .unwrap();
+    let metered = aiplane_core::server::usage::spawn(state.db.clone(), 90);
+    let state = state.with_usage(metered);
+    let db = state.db.clone();
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+    let boundary = "edit-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nimage-edit\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"a.png\"\r\nContent-Type: image/png\r\n\r\nA\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"b.png\"\r\nContent-Type: image/png\r\n\r\nB\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\ncombine\r\n--{boundary}--\r\n"
+    );
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/images/edits")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let _ = common::read_body(resp).await;
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    let now = Timestamp::now();
+    let agg = aggregate(
+        &db,
+        period_bounds(Period::Today, "UTC", now),
+        &Filter::default(),
+        90,
+        now,
+        true,
+    )
+    .await
+    .unwrap();
+    assert!((agg.summary.total_cost - 7.0).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn v1_speech_records_character_usage_for_costs() {
+    use aiplane_core::server::db::model_defaults::{self, PricingUnit};
+    use aiplane_core::server::db::usage::{Filter, Period, aggregate, period_bounds};
+    use jiff::Timestamp;
+
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/audio/speech"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"audio".to_vec()))
+        .mount(&upstream)
+        .await;
+
+    let state = common::state_with_pool(&upstream.uri(), PoolKind::Speech, "tts-model").await;
+    model_defaults::set_pricing_with_unit(
+        &state.db,
+        "tts-model",
+        Some(0.01),
+        None,
+        PricingUnit::Characters,
+    )
+    .await
+    .unwrap();
+    let metered = aiplane_core::server::usage::spawn(state.db.clone(), 90);
+    let state = state.with_usage(metered);
+    let db = state.db.clone();
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/audio/speech")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"model": "tts-model", "input": "hello"}).to_string(),
+        ))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let _ = common::read_body(resp).await;
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    let now = Timestamp::now();
+    let bounds = period_bounds(Period::Today, "UTC", now);
+    let agg = aggregate(&db, bounds, &Filter::default(), 90, now, true)
+        .await
+        .unwrap();
+    assert!((agg.summary.total_cost - 0.05).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn v1_images_edits_without_bearer_is_401() {
+    let state =
+        common::state_with_pool("http://unused.invalid", PoolKind::Image, "glm-image").await;
+    let app = common::app(state);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/images/edits")
+        .header("content-type", "multipart/form-data; boundary=x")
+        .body(Body::from("--x--\r\n"))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn v1_embeddings_without_bearer_is_401() {
+    let state =
+        common::state_with_pool("http://unused.invalid", PoolKind::Embedding, "embed-model").await;
+    let app = common::app(state);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/embeddings")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"model":"embed-model","input":["x"]}"#))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn v1_embeddings_missing_model_field_is_400() {
+    let state =
+        common::state_with_pool("http://unused.invalid", PoolKind::Embedding, "embed-model").await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/embeddings")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"input":["x"]}"#))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn v1_embeddings_unknown_model_is_404_model_not_found() {
+    let state =
+        common::state_with_pool("http://unused.invalid", PoolKind::Embedding, "embed-model").await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/embeddings")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"model":"no-such-model","input":["x"]}"#))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+// --- pool-kind routing isolation -------------------------------------------
+// A model is reachable ONLY through its own pool kind's endpoint. These pin
+// that `acquire_for(model, kind)` filters by kind, so an embedding model can't
+// be driven through /v1/chat/completions and vice-versa — even though both
+// models are advertised in /v1/models.
+
+#[tokio::test]
+async fn chat_endpoint_rejects_embedding_model_with_404() {
+    let state = common::state_with_chat_and_embed("chat-model", "embed-model").await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    // The embedding model IS known to the gateway (listed in /v1/models)…
+    let list = app
+        .serve(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/models")
+                .header("authorization", format!("Bearer {bearer}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let models: serde_json::Value = serde_json::from_slice(&common::read_body(list).await).unwrap();
+    let ids: Vec<&str> = models["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"embed-model") && ids.contains(&"chat-model"));
+
+    // …but it must NOT be routable as a chat model.
+    let resp = app
+        .serve(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {bearer}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"model":"embed-model","messages":[{"role":"user","content":"hi"}]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "embedding model must not be usable on /v1/chat/completions"
+    );
+}
+
+#[tokio::test]
+async fn embeddings_endpoint_rejects_chat_model_with_404() {
+    let state = common::state_with_chat_and_embed("chat-model", "embed-model").await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let resp = app
+        .serve(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/embeddings")
+                .header("authorization", format!("Bearer {bearer}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"model":"chat-model","input":["hi"]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "chat model must not be usable on /v1/embeddings"
+    );
+}
+
+#[tokio::test]
+async fn v1_chat_completions_with_missing_model_field_is_400() {
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"messages":[]}"#))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn v1_chat_completions_with_unknown_model_is_404_model_not_found() {
+    // OpenAI parity: a model no backend serves is a client error (404
+    // `model_not_found`), not a transient 503 — so clients surface a config
+    // problem instead of silently retrying.
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "not-routed", "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let parsed: serde_json::Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(parsed["error"]["code"], "model_not_found");
+    assert_eq!(parsed["error"]["type"], "invalid_request_error");
+    assert_eq!(parsed["error"]["param"], "model");
+    assert!(
+        parsed["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not-routed"),
+        "expected error to name the unknown model: {parsed}"
+    );
+}
+
+#[tokio::test]
+async fn v1_chat_completions_known_model_all_replicas_down_is_503() {
+    // The model IS known, but every replica is unhealthy → transient 503,
+    // NOT 404. This is the distinction the OpenAI contract draws.
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    for pool in state.upstreams.pools() {
+        for backend in &pool.backends {
+            backend.set_healthy(false);
+        }
+    }
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "model-a", "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let parsed: serde_json::Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(parsed["error"]["code"], "upstream_unreachable");
+}
+
+/// The graceful-pause contract, end to end: a request that arrives while every
+/// replica is down is **held**, and served normally the moment one returns.
+///
+/// This is what keeps an agent session alive across an upstream restart. The
+/// client has received nothing at that point — no status line, no byte — so a
+/// request that waits 300 ms and then succeeds is indistinguishable from a slow
+/// one, and the turn continues instead of dying on a 503 the client may not
+/// retry.
+#[tokio::test]
+async fn v1_chat_completions_waits_for_a_backend_to_come_back() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "c1",
+            "object": "chat.completion",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "waited-for-you"}}],
+        })))
+        .mount(&upstream)
+        .await;
+    let mut state = common::state_with_chat_pool(&upstream.uri()).await;
+    // A real (short) wait budget: the harness disables parking by default so
+    // failure assertions don't sit through two minutes.
+    state = state.with_upstream_wait(std::time::Duration::from_secs(10));
+    for pool in state.upstreams.pools() {
+        for backend in &pool.backends {
+            backend.set_healthy(false);
+        }
+    }
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+
+    // Bring the pool back shortly after the request is parked.
+    let recover = state.upstreams.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        for pool in recover.pools() {
+            for backend in &pool.backends {
+                backend.set_healthy(true);
+            }
+        }
+    });
+
+    let app = common::app(state);
+    let body = json!({"model": "model-a", "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let started = std::time::Instant::now();
+    let resp = app.serve(req).await.unwrap();
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "a request parked through a short outage must still be served"
+    );
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(250),
+        "it answered before the backend recovered, so it cannot have waited"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(parsed["choices"][0]["message"]["content"], "waited-for-you");
+}
+
+/// The streamed path must survive a replica failing mid-turn, because that is
+/// the path an agent client actually uses.
+///
+/// The response headers left long before the upstream was contacted, so this
+/// cannot be answered with a status code — it has to be answered by asking a
+/// different replica. A `send()` that fails has produced no frames, so there is
+/// nothing to duplicate.
+#[tokio::test]
+async fn a_streamed_turn_survives_a_replica_that_fails_before_any_frame() {
+    // Two replicas: one that refuses connections, one that streams a real
+    // answer. Which one the picker tries first is not the point — either
+    // ordering must end with the client getting the answer.
+    let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead_addr = dead.local_addr().unwrap();
+    drop(dead);
+
+    let alive = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            concat!(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"survived\"}}]}\n\n",
+                "data: [DONE]\n\n",
+            ),
+            "text/event-stream",
+        ))
+        .mount(&alive)
+        .await;
+
+    let state =
+        common::state_with_two_chat_backends(&format!("http://{dead_addr}/v1"), &alive.uri()).await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "model-a", "stream": true, "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let text = String::from_utf8_lossy(&common::read_body(resp).await).to_string();
+    assert!(
+        text.contains("survived"),
+        "the turn should have been re-dispatched to the working replica: {text}"
+    );
+}
+
+#[tokio::test]
+async fn v1_models_lists_all_pools_deduped_with_full_objects() {
+    // Lists EVERY pool/kind, de-duplicated by id, even when a backend (the
+    // transcription one) never reported a `/models` probe — its id comes
+    // from the pool's config fallback.
+    let state = common::state_with_chat_and_config_transcription(
+        "Qwen/Qwen3.6-35B-A3B-FP8",
+        "mistralai/Voxtral-Mini-4B-Realtime-2602",
+    )
+    .await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/models")
+        .header("authorization", format!("Bearer {bearer}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let parsed: serde_json::Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(parsed["object"], "list");
+    let data = parsed["data"].as_array().expect("data array");
+    let ids: Vec<&str> = data
+        .iter()
+        .map(|m| m["id"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        ids.contains(&"Qwen/Qwen3.6-35B-A3B-FP8"),
+        "chat model missing: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"mistralai/Voxtral-Mini-4B-Realtime-2602"),
+        "transcription (config-fallback) model missing: {ids:?}"
+    );
+    // Two chat replicas serve the same id → exactly two distinct models.
+    assert_eq!(data.len(), 2, "expected de-duped list of 2: {ids:?}");
+    // Each entry is a full OpenAI model object incl. `created`.
+    for m in data {
+        assert_eq!(m["object"], "model");
+        assert_eq!(m["owned_by"], "aiplane");
+        assert!(
+            m["created"].as_u64().is_some(),
+            "created must be a unix-seconds integer: {m}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn v1_models_retrieve_returns_model_object_for_id_with_slash() {
+    let state = common::state_with_chat_and_config_transcription(
+        "Qwen/Qwen3.6-35B-A3B-FP8",
+        "mistralai/Voxtral-Mini-4B-Realtime-2602",
+    )
+    .await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    // The id contains `/` — exercises the `{*id}` catch-all route.
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/models/mistralai/Voxtral-Mini-4B-Realtime-2602")
+        .header("authorization", format!("Bearer {bearer}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let parsed: serde_json::Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(parsed["id"], "mistralai/Voxtral-Mini-4B-Realtime-2602");
+    assert_eq!(parsed["object"], "model");
+    assert!(parsed["created"].as_u64().is_some());
+}
+
+#[tokio::test]
+async fn v1_models_retrieve_unknown_id_is_404() {
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/models/does-not-exist")
+        .header("authorization", format!("Bearer {bearer}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let parsed: serde_json::Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(parsed["error"]["code"], "model_not_found");
+    assert_eq!(parsed["error"]["type"], "invalid_request_error");
+}
+
+#[tokio::test]
+async fn v1_models_retrieve_without_bearer_is_401() {
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let app = common::app(state);
+    let resp = app
+        .serve(common::req(Method::GET, "/v1/models/model-a"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn v1_chat_completions_drops_client_authorization_and_injects_upstream_key() {
+    // Mount that asserts the upstream Authorization header is exactly
+    // what we configured on the BackendConfig, NOT the gateway-token
+    // bearer the client sent.
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer SK-UPSTREAM",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"choices":[]})))
+        .mount(&upstream)
+        .await;
+
+    let upstream_uri = upstream.uri();
+    let state = state_with_backend_api_key(&upstream_uri, "SK-UPSTREAM").await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "model-a", "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "wiremock would 404 if the assertion failed"
+    );
+}
+
+/// Variant of `state_with_chat_pool` that configures an `api_key_env`
+/// pointing at a test-scoped env var. The integration test sets/clears
+/// the env around the lookup so we don't leak state between tests.
+async fn state_with_backend_api_key(
+    upstream_url: &str,
+    key: &str,
+) -> aiplane::rama_server::RamaState {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use aiplane::rama_server::{RamaState, SessionStore};
+    use aiplane_core::server::rbac::Resolver;
+    use aiplane_core::server::upstreams::{
+        self,
+        config::{BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
+    };
+    use aiplane_core::server::{Config, db};
+    use aiplane_runtime::server::AppState;
+    use aiplane_runtime::server::tools::ToolRegistry;
+
+    const ENV_KEY: &str = "TEST_UPSTREAM_KEY";
+    // SAFETY: integration tests run in the same process — this set
+    // races with itself in parallel runs but the value we set is the
+    // same across all callers so the race is benign.
+    unsafe { std::env::set_var(ENV_KEY, key) };
+
+    let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+    let mut pools = HashMap::new();
+    pools.insert(
+        "pool".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            compliance: Default::default(),
+            enforce_limits: true,
+            kind: PoolKind::Chat,
+            strategy: PickerStrategy::RoundRobin,
+            models: Vec::new(),
+            backend: vec![BackendConfig {
+                alias: None,
+                probe_models: true,
+                supports_edit: false,
+                enabled: true,
+                name: "mock".into(),
+                base_url: upstream_url.into(),
+                api_key_env: Some(ENV_KEY.into()),
+                api_key: None,
+                weight: 1,
+                max_inflight: 16,
+                health_path: "/models".into(),
+                models: Vec::new(),
+            }],
+        },
+    );
+    let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
+    common::seed_pool_models(&registry, "pool", 0, &["model-a"]);
+    let tools = Arc::new(ToolRegistry::new());
+    let rbac = Arc::new(Resolver::empty());
+    let app = AppState::new(Config::default(), pool.clone(), registry, tools, rbac);
+    let sessions = SessionStore::new(pool, common::TEST_SECRET);
+    RamaState::new(
+        app,
+        sessions,
+        aiplane_core::server::usage::UsageHandle::disabled(),
+    )
+}
+
+/// A chat pool whose single backend answers to the bare alias `qwen` and
+/// serves the real id `model-a`.
+async fn state_with_alias_pool(upstream_url: &str) -> aiplane::rama_server::RamaState {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use aiplane::rama_server::{RamaState, SessionStore};
+    use aiplane_core::server::rbac::Resolver;
+    use aiplane_core::server::upstreams::{
+        self,
+        config::{AliasSpec, BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
+    };
+    use aiplane_core::server::{Config, db};
+    use aiplane_runtime::server::AppState;
+    use aiplane_runtime::server::tools::ToolRegistry;
+
+    let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+    let mut pools = HashMap::new();
+    pools.insert(
+        "pool".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            compliance: Default::default(),
+            enforce_limits: true,
+            kind: PoolKind::Chat,
+            strategy: PickerStrategy::RoundRobin,
+            models: Vec::new(),
+            backend: vec![BackendConfig {
+                alias: Some(AliasSpec::Names(vec!["qwen".into()])),
+                probe_models: true,
+                supports_edit: false,
+                enabled: true,
+                name: "mock".into(),
+                base_url: upstream_url.into(),
+                api_key_env: None,
+                api_key: None,
+                weight: 1,
+                max_inflight: 16,
+                health_path: "/models".into(),
+                models: Vec::new(),
+            }],
+        },
+    );
+    let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
+    common::seed_pool_models(&registry, "pool", 0, &["model-a"]);
+    let tools = Arc::new(ToolRegistry::new());
+    let rbac = Arc::new(Resolver::empty());
+    let app = AppState::new(Config::default(), pool.clone(), registry, tools, rbac);
+    let sessions = SessionStore::new(pool, common::TEST_SECRET);
+    RamaState::new(
+        app,
+        sessions,
+        aiplane_core::server::usage::UsageHandle::disabled(),
+    )
+}
+
+#[tokio::test]
+async fn v1_chat_alias_rewrites_model_and_sets_resolved_header() {
+    let upstream = MockServer::start().await;
+    // Matches ONLY when the forwarded body carries the real id. If the gateway
+    // forwarded the alias `qwen` unchanged, this mock wouldn't match and the
+    // request would 404 — so the 200 assertion below proves the body rewrite.
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(wiremock::matchers::body_partial_json(
+            json!({"model": "model-a"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"role": "assistant", "content": "ok"}}]
+        })))
+        .mount(&upstream)
+        .await;
+
+    let state = state_with_alias_pool(&upstream.uri()).await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "qwen", "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "alias must rewrite model→model-a so the upstream mock matches"
+    );
+    assert_eq!(
+        resp.headers()
+            .get("x-gateway-resolved-model")
+            .and_then(|v| v.to_str().ok()),
+        Some("model-a"),
+        "response must advertise the resolved real model id"
+    );
+}

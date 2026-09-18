@@ -4,12 +4,14 @@ This file is the canonical entry point for any AI agent (or new human contributo
 
 ## What this project is
 
-A single Rust binary plus the supporting crates it lives on:
+**croit AIplane** — a self-hosted AI infrastructure layer: one plane connecting applications and users to models, agents, tools and enterprise data. (It was called croit LLM Gateway until the rename; see [`docs/renaming.md`](docs/renaming.md). "The gateway" below still means the OpenAI-compatible proxy layer, which is one subsystem.)
+
+A single Rust binary (`aiplane`, built from the `gateway` crate) plus the supporting crates it lives on:
 
 - **`gateway`** — authenticated, OpenAI-compatible LLM proxy. Speaks `/v1/chat/completions`, `/v1/audio/transcriptions`, `/v1/models` so any OpenAI SDK talks to it, and `/v1/messages` in the Anthropic dialect so Claude Code can be pointed at it. OIDC browser login + gateway-minted bearer tokens. Routes across **multiple upstream LLM backends** with health checks + RAII in-flight accounting. Injects **company-specific tools** gated by **RBAC**. Serves a SvelteKit single-page app (dashboard / tokens / persisted multi-conversation chat) over a JSON `/api/v0` API.
 
 Shared crates:
-- **`session-core`** — chat substrate (DB schema + worker registry + the JSON-SSE event protocol in `chat_json` + `SessionDriver` trait). The gateway plugs in an `OpenAiDriver`; the trait keeps the substrate driver-agnostic so a future second consumer can drive the same chat surface without forking.
+- **`session-core`** — chat substrate (DB schema + worker registry + the JSON-SSE event protocol in `chat_json` + `SessionDriver` trait). AIplane plugs in an `OpenAiDriver`; the trait keeps the substrate driver-agnostic so a future second consumer can drive the same chat surface without forking.
 - **`shared`** — OpenAI wire types shared across the workspace.
 
 Built on **rama 0.3** (HTTP server + router + middleware) on the server, and **SvelteKit 2 + Svelte 5** with **daisyUI v5 + Tailwind v4** in `web/`. The browser talks to `/api/v0` over JSON and receives live turn updates as JSON frames on an SSE stream.
@@ -32,52 +34,52 @@ Built on **rama 0.3** (HTTP server + router + middleware) on the server, and **S
     │   │                            tables), Plait renderers (markdown + lumis-highlighted
     │   │                            code), SSE primitives, icons
     │   └── ui/ts/                   composer + scroll TS
-    ├── gateway-core/            # base: db, config, crypto, rbac, upstreams
-    ├── gateway-features/        # optional subsystems: rag, skills, comfyui, push, …
-    ├── gateway-runtime/         # tool API + AppState/RamaState + chat driver
-    ├── gateway-tools/           # the tool implementations
-    ├── gateway-api/             # the server-rendered HTML pages
+    ├── aiplane-core/            # base: db, config, crypto, rbac, upstreams
+    ├── aiplane-features/        # optional subsystems: rag, skills, comfyui, push, …
+    ├── aiplane-runtime/         # tool API + AppState/RamaState + chat driver
+    ├── aiplane-tools/           # the tool implementations
+    ├── aiplane-api/             # the server-rendered HTML pages
     ├── gateway/                 # the binary: router, proxy, api, main
     └── sandbox-runner/          # the sandboxed-tool execution service
 ```
 
 ### The gateway crate stack
 
-The gateway is one binary assembled from three layered crates. This is **load
+AIplane is one binary assembled from three layered crates. This is **load
 bearing for build speed**, not cosmetic: it used to be ~108k lines in one
 compilation unit, so editing any file re-ran the whole frontend + codegen. Each
 crate depends only on the ones beneath it.
 
 ```
 gateway            bin + router/proxy/api/oidc      6.5k  ← thinnest, most-edited
-   ├── gateway-api     server-rendered HTML pages  25.5k  ← siblings: neither
-   └── gateway-tools   the tool implementations    14.5k  ←   depends on the other
-          └── gateway-runtime  tool API + AppState/RamaState + chat driver  14.7k
-                 ├── gateway-features  RAG, skills, ComfyUI, push, geoip, …  13.9k
-                 └── gateway-core      db, config, crypto, rbac, upstreams   22.1k
+   ├── aiplane-api     server-rendered HTML pages  25.5k  ← siblings: neither
+   └── aiplane-tools   the tool implementations    14.5k  ←   depends on the other
+          └── aiplane-runtime  tool API + AppState/RamaState + chat driver  14.7k
+                 ├── aiplane-features  RAG, skills, ComfyUI, push, geoip, …  13.9k
+                 └── aiplane-core      db, config, crypto, rbac, upstreams   22.1k
 ```
 
-Lines that must recompile after a one-line edit: `gateway` 6.5k, `gateway-tools`
-21k, `gateway-api` 32k, `gateway-runtime` 61k, `gateway-features` 75k,
-`gateway-core` 97k — against **97k for any edit** before the split. The gains are
+Lines that must recompile after a one-line edit: `gateway` 6.5k, `aiplane-tools`
+21k, `aiplane-api` 32k, `aiplane-runtime` 61k, `aiplane-features` 75k,
+`aiplane-core` 97k — against **97k for any edit** before the split. The gains are
 front-loaded on purpose: the layers that churn most are the cheapest to rebuild.
 
-`gateway-api` and `gateway-tools` are siblings: neither depends on the other, so
+`aiplane-api` and `aiplane-tools` are siblings: neither depends on the other, so
 editing a page doesn't rebuild the tools and vice versa.
 
 Two rules keep it that way, and both are easy to break by accident:
 1. **Put new code as high in the stack as it will go.** Something belongs in
-   `gateway-core` only if code below the feature layer genuinely needs it.
-2. **Never reference upward.** `gateway-features` must not name `AppState` or the
-   tool registry; `gateway-core` must not name a feature. One such reference
+   `aiplane-core` only if code below the feature layer genuinely needs it.
+2. **Never reference upward.** `aiplane-features` must not name `AppState` or the
+   tool registry; `aiplane-core` must not name a feature. One such reference
    collapses a layer.
 
 **When adding code, put it as high in the stack as it will go.** Something only
-belongs in `gateway-core` if code below the page layer actually needs it. Adding a
-reference from `gateway-core` to a page — or pushing a module downward for
+belongs in `aiplane-core` if code below the page layer actually needs it. Adding a
+reference from `aiplane-core` to a page — or pushing a module downward for
 convenience — makes every build slow again. See [`docs/architecture.md`](docs/architecture.md#crate-boundaries).
 
-Inside `crates/gateway-core/src/` (base layer):
+Inside `crates/aiplane-core/src/` (base layer):
 
 ```
 migrations/               # (crate root) sqlx migration set, embedded by db/mod.rs
@@ -99,20 +101,20 @@ rama_server/
     cors.rs                   the CORS layer
 ```
 
-Inside `crates/gateway-features/src/server/`: the optional subsystems — `rag/`,
+Inside `crates/aiplane-features/src/server/`: the optional subsystems — `rag/`,
 `skills.rs`, `comfyui/`, `push/`, `github/`, `geoip/`, `typst.rs`, `image_gen.rs`,
 `chat_attachments.rs`, `embeddings.rs`, `speech.rs`, `pdf.rs`, `ocr.rs`,
 `search_settings.rs`, `document_canvas.rs`. None of them may name `AppState` or the
 tool registry.
 
-Inside `crates/gateway-runtime/src/`:
+Inside `crates/aiplane-runtime/src/`:
 
 ```
 openai_driver.rs          # SessionDriver impl: OpenAI streaming chat-completions
 loop_guard.rs
 server/
     tools/                    Tool trait, ToolContext, registry, catalog, runner,
-                              MCP manager, sandbox client (impls: gateway-tools;
+                              MCP manager, sandbox client (impls: aiplane-tools;
                               echo + time stay here as the test fixtures)
     state.rs                  AppState
     comfyui_tool.rs           ComfyUI Tool/ToolSource impls + ComfyuiHandle
@@ -122,13 +124,13 @@ rama_server/
     auth.rs                   require_bearer for /v1/*
 ```
 
-Inside `crates/gateway-tools/src/`: one module per tool family (`fetch_url`,
+Inside `crates/aiplane-tools/src/`: one module per tool family (`fetch_url`,
 `search_web`, `typst_render`, `document`, `rag`, `qr`, `netcheck`, …). Register a
 new tool in the `ToolRegistry` that `gateway`'s `main.rs` builds, and grant it in
 `[rbac]`. `tests/` holds the two test modules that need both the machinery and the
 real tools (catalog grouping, `AppState` authorization).
 
-Inside `crates/gateway-api/src/`:
+Inside `crates/aiplane-api/src/`:
 
 ```
 build_info.rs             # git SHA / version label (build.rs stamps it)
@@ -144,7 +146,7 @@ pages/                    # the /api/v0 JSON handlers (the name predates the SPA
                               before any SPA route exists
 ```
 
-Inside `crates/gateway/src/`:
+Inside `crates/aiplane/src/`:
 
 ```
 main.rs                   # boot: config → state → SessionStore → OIDC → rama serve
@@ -159,7 +161,7 @@ tests/it/                 # integration suite — builds the router, serves requ
 ```
 
 The SPA is built by `mise run build-web` into `target/frontend/build/` and
-served from disk by `rama_server::spa` when `GATEWAY_STATIC_DIR` points there;
+served from disk by `rama_server::spa` when `AIPLANE_STATIC_DIR` points there;
 the Dockerfile COPYs that directory into the image. Nothing is `include_bytes!`'d
 any more.
 
@@ -167,7 +169,7 @@ any more.
 
 1. **Minimize Cargo dependencies.** Every new crate added to `Cargo.toml` requires a one-line justification in [`docs/dependencies.md`](docs/dependencies.md). Prefer stdlib + what rama already brings in.
 2. **All toolchain and build/test/lint commands go through `mise`.** No `Makefile`, no `justfile`, no ad-hoc shell scripts checked in. See [`docs/dev-workflow.md`](docs/dev-workflow.md). One deliberate exception: [`scripts/derive-version.sh`](scripts/derive-version.sh), because CI has to resolve the build's version in jobs that install no toolchain at all — `mise run version` is still the way a human calls it, and the script stays the only implementation.
-3. **Thorough testing, test-first (TDD).** Write the failing test before the implementation — red, green, refactor. Every public function has unit tests; every rama route has an integration test (`crates/gateway/tests/`); upstream LLMs are mocked with `wiremock` so tests run offline. The rama integration pattern is `router.serve(req).await` — no socket binding. **Style is Chicago / Classicist (state-based):** assert on observable results and real collaborators (in-memory SQLite via `:memory:`, `wiremock` upstreams, actual registries), not on interaction mocks. Reach for London-school behaviour-verification mocks only when a collaborator is genuinely un-fakeable (network you can't stand up, a clock, randomness) — and say so in a comment. Full strategy + required coverage in [`docs/testing.md`](docs/testing.md).
+3. **Thorough testing, test-first (TDD).** Write the failing test before the implementation — red, green, refactor. Every public function has unit tests; every rama route has an integration test (`crates/aiplane/tests/`); upstream LLMs are mocked with `wiremock` so tests run offline. The rama integration pattern is `router.serve(req).await` — no socket binding. **Style is Chicago / Classicist (state-based):** assert on observable results and real collaborators (in-memory SQLite via `:memory:`, `wiremock` upstreams, actual registries), not on interaction mocks. Reach for London-school behaviour-verification mocks only when a collaborator is genuinely un-fakeable (network you can't stand up, a clock, randomness) — and say so in a comment. Full strategy + required coverage in [`docs/testing.md`](docs/testing.md).
 4. **Error messages are a product surface.** Use `thiserror` at API boundaries, `anyhow` + `.context()` internally, and write messages that say *what was happening, what went wrong, and what to do about it*. Full rules in [`docs/errors.md`](docs/errors.md).
 5. **UI uses daisyUI component classes + Tailwind utilities, not hand-invented CSS.** Every visual element gets daisyUI semantic classes (`btn btn-primary`, `card card-body`, `alert alert-error`, `dropdown dropdown-end`, `badge badge-outline`, …) in the Svelte components under `web/src/`. Token utilities for bespoke layout (`bg-base-100`, `text-base-content/60`, `border-base-300`, `text-error`, …) plus standard Tailwind layout (`flex`, `mb-4`, `grid`). One-off ".tagline" / ".brand-mark" classes are not — drop the visual treatment or push daisyUI for the missing component. New server endpoints return JSON under `/api/v0`, never HTML; live turn updates ride the JSON-SSE protocol in `session_core::chat_json`. See [`docs/ui.md`](docs/ui.md).
 6. **No comments explaining what code does** — names and types should already say that. Only comment *why* when it's non-obvious. Docs explain the system; code shows it.
@@ -189,7 +191,7 @@ mise run dev
 mise run dev-served        # production-shaped compiled SPA, no HMR
 
 # Other day-to-day tasks
-mise run dev-build         # debug build only (target/debug/gateway), ~2 s incremental
+mise run dev-build         # debug build only (target/debug/aiplane), ~2 s incremental
 mise run build-css         # one-shot CSS build
 mise run fmt               # cargo fmt
 
@@ -248,14 +250,14 @@ Start in [`docs/README.md`](docs/README.md) for the index. The topical docs:
 | Versioning + how a release is cut | [`docs/releases.md`](docs/releases.md) |
 | Running on Kubernetes (the Helm chart) | [`docs/kubernetes.md`](docs/kubernetes.md) |
 | Error handling — types, messages, OpenAI mapping | [`docs/errors.md`](docs/errors.md) |
-| Phased delivery plan + current phase | [`docs/roadmap.md`](docs/roadmap.md) |
+| What the rename from croit LLM Gateway changed, and what kept its old name on purpose | [`docs/renaming.md`](docs/renaming.md) |
 
 ## Working agreement for agents
 
 - **Plan before you implement.** For anything that touches more than one file or one concept, draft an approach and confirm before writing code.
 - **Update docs in the same change as the code.** If you change the auth flow, update `docs/auth.md` in the same commit. Stale docs are worse than no docs.
 - **When you discover a missing piece** — an undocumented invariant, a non-obvious gotcha — add it to the relevant doc. Don't rely on conversation history.
-- **Tests live next to the code.** Unit tests in `#[cfg(test)] mod tests`, integration tests in `crates/gateway/tests/`. Run `mise run verify` before declaring a task done.
+- **Tests live next to the code.** Unit tests in `#[cfg(test)] mod tests`, integration tests in `crates/aiplane/tests/`. Run `mise run verify` before declaring a task done.
 - **Verify cheaply, then once for real.** Compiling dominates this workspace: a full `mise run verify` is ~20 minutes, of which ~19 are linking test binaries, not running tests. Iterate with `mise run test-crate <crate>` (seconds), then run the full gate **once**, at the end, after every fix you already know about is in. Starting it earlier means paying it twice. Don't kill a cargo process to unstick a parallel mise task — they share one `target/` lock, and killing one fails its sibling. See [`docs/dev-workflow.md`](docs/dev-workflow.md) → "The feedback ladder".
 - **Never cut a release unprompted.** A release is a git tag and nothing else (see [`docs/releases.md`](docs/releases.md)), and pushing one moves `:production`, which every auto-updating installation picks up that night. "Ship it" / "finish X" is not a release request; wait until someone asks for one in so many words.
 - **If a hard rule is in your way**, surface it to the user. Don't quietly bypass.

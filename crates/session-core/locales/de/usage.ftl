@@ -2,8 +2,8 @@
 # per-user `/usage` usage-statistics page and its admin-only "all
 # users" scope toggle.
 
-usage-title-all = Nutzung — alle Benutzer — LLM Gateway
-usage-title-mine = Deine Nutzung — LLM Gateway
+usage-title-all = Nutzung — alle Benutzer — AIplane
+usage-title-mine = Deine Nutzung — AIplane
 usage-heading-all = Nutzung — alle Benutzer
 usage-heading-mine = Deine Nutzung
 usage-blurb-all = Anfragevolumen und Token-Nutzung pro Benutzer und pro Backend über alle Zugriffswege hinweg. „Anfragen“ zählt Aufrufe an vorgelagerte Backends, daher zählt ein Turn mit Werkzeugnutzung (der mehrere Umläufe macht) mehr als einen.

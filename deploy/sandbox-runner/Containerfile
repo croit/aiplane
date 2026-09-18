@@ -28,7 +28,7 @@
 #
 # Build (from the repo root, after building the binary):
 #   cargo build --release -p sandbox-runner
-#   docker build -f deploy/sandbox-runner/Containerfile -t llm-gateway-sandbox-runner .
+#   docker build -f deploy/sandbox-runner/Containerfile -t aiplane-sandbox-runner .
 
 # Both base images are pinned by digest as well as tag — a tag is a moving
 # reference, so without the digest two builds of the same commit are not the

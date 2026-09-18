@@ -121,7 +121,7 @@ admin-comfyui-refresh = Aktualisieren
 admin-clear-overrides-confirm = Alle gespeicherten Überschreibungen für { $model } verwerfen?
 admin-cap-no-fallback = (keiner)
 
-admin-page-title = Modelle — LLM Gateway
+admin-page-title = Modelle — AIplane
 
 admin-intro-prefix = Einstellungen pro Modell — Preise, Kontextfenster, Reasoning, Fähigkeiten und Sampling-Standardwerte — angewendet auf
 

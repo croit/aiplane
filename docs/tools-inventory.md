@@ -1,10 +1,10 @@
 # Tool inventory
 
-Every tool the gateway can offer an LLM, with the condition under which it is
+Every tool AIplane can offer an LLM, with the condition under which it is
 registered. For *how* tools work — the trait, the registry, RBAC, the
 tool-call loop — see [`tools-rbac.md`](tools-rbac.md).
 
-This file is **drift-guarded**: `crates/gateway/tests/it/tools_inventory.rs`
+This file is **drift-guarded**: `crates/aiplane/tests/it/tools_inventory.rs`
 discovers the real tool ids from the source and fails CI when one is missing
 here (or when this file names an id no tool implements). Adding a tool
 therefore forces a conscious choice — document it, or allow-list it in that
@@ -46,7 +46,7 @@ message rather than being absent.
 | `get_user_location` | — | `get_user_location` | Caller's location: a browser GPS prompt when a live chat turn is watching, else coarse GeoIP. |
 | `generate_qr_code` | yes | `generate_qr_code` | QR codes (URL, WiFi, vCard, SEPA) as PNG/SVG, rendered in-process. |
 | `search_web` | — | `search_web` | Web search via SearXNG or Brave, with optional domain and recency filters. Backend configured on `/admin/models`. |
-| `browser_control` | yes | `browser_control` | Act in the user's own logged-in browser (navigate, read, click, type, screenshot) through the extension paired with the open chat page. Actions travel as a batch and run in order. Chat-only by construction — the transport *is* the open conversation. Everything it returns is untrusted page content, and the extension, not the gateway, confirms writes. See [`browser-control.md`](browser-control.md). |
+| `browser_control` | yes | `browser_control` | Act in the user's own logged-in browser (navigate, read, click, type, screenshot) through the extension paired with the open chat page. Actions travel as a batch and run in order. Chat-only by construction — the transport *is* the open conversation. Everything it returns is untrusted page content, and the extension, not AIplane, confirms writes. See [`browser-control.md`](browser-control.md). |
 | `fetch_url` | — | `fetch_url` | HTTP GET. HTML is reduced to readable text unless `raw` is set; images come back viewable; other binary returns metadata. |
 | `wikipedia` | — | `wikipedia` | Summary of the best-matching Wikipedia article. |
 | `dns_lookup` | — | `dns_lookup` | DNS records over DoH. |
@@ -129,7 +129,7 @@ the user's point of view even though it needs the sandbox to run.
 
 Whether a sandbox can reach the network is decided by the **runner's**
 deployment (`SANDBOX_EGRESS_NETWORK` + `SANDBOX_EGRESS_PROXY`), which nothing
-in the gateway's own config can see. So the gateway asks: at boot it reads
+in AIplane's own config can see. So AIplane asks: at boot it reads
 `GET /healthz` on the runner, which reports `egress: true|false`
 (`shared::sandbox::RunnerHealth`), and remembers the answer for the process
 lifetime.
@@ -208,7 +208,7 @@ there.
 
 Crossing over: **`import_file`** turns a text attachment into a document;
 **`offer_download`** writes a document's current version back out as a
-downloadable file. Both copy inside the gateway — content never round-trips
+downloadable file. Both copy inside AIplane — content never round-trips
 through the model, which is what made "give me that file" cost two passes of
 the whole payload and invite retyping drift.
 

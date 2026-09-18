@@ -1,7 +1,8 @@
 # Individual Contributor License Agreement ("Agreement")
 
-Thank you for your interest in contributing to **LLM Gateway** (the "Project"),
-maintained by **croit GmbH** ("croit", "We" or "Us").
+Thank you for your interest in contributing to **croit AIplane** (the "Project",
+formerly croit LLM Gateway), maintained by **croit GmbH** ("croit", "We" or
+"Us").
 
 This Agreement documents the rights granted by contributors to Us. It is based
 on the Apache Software Foundation Individual Contributor License Agreement

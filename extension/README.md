@@ -1,12 +1,12 @@
-# LLM Gateway Browser Control (Chrome extension)
+# croit AIplane Browser Control (Chrome extension)
 
-Lets a conversation on your gateway act in **this** browser — the one with your
+Lets a conversation on your AIplane act in **this** browser — the one with your
 logins — through the `browser_control` tool.
 
 ## Why an extension at all
 
-The gateway runs on a server. Your browser sits behind NAT with no reachable
-address, and gateway users are not necessarily the operator's own staff, so a
+AIplane runs on a server. Your browser sits behind NAT with no reachable
+address, and AIplane users are not necessarily the operator's own staff, so a
 tunnel or a local port is not an option. The only channel that always exists is
 the one your browser already opened: the chat page's event stream out, an
 authenticated POST back. This extension is the far end of that channel.
@@ -30,7 +30,7 @@ release does not have.
 
     mise run package-extension
 
-writes `target/llm-gateway-browser-control-<version>.zip`, without the tests or
+writes `target/aiplane-browser-control-<version>.zip`, without the tests or
 the icon script. Loading `extension/` unpacked during development shows 0.0.0,
 which is accurate: an unpacked tree is not a release.
 
@@ -38,7 +38,7 @@ The toolbar icons are generated, not hand-drawn:
 
     python3 extension/icons/render.py
 
-They are the gateway's own mark (`web/static/favicon.svg`) — a diamond with a
+They are AIplane's own mark (`web/static/favicon.svg`) — a diamond with a
 node at its centre — in the product's accent while it is on, and grey while it
 is off. Only the colour changes, never the shape, so the icon is read once and
 its state at a glance. Pillow is needed to run it, and is deliberately not in
@@ -46,20 +46,20 @@ the toolchain: the artwork changes roughly never.
 
 ## Turning it on
 
-Open your gateway in a tab with this extension installed and paired, and it
+Open your AIplane in a tab with this extension installed and paired, and it
 asks by itself: the same popup you get from clicking the toolbar icon opens on
 its own, and one click on **Switch on** is the whole thing.
 
-It asks once per browser session per gateway, and only while that tab is the
+It asks once per browser session per AIplane, and only while that tab is the
 one you are looking at — a chat loading in a background tab will not put
 anything over what you are reading. You can always switch it on yourself from
 the toolbar icon, which carries a badge while a question is waiting.
 
 ## After you reload the extension
 
-Chrome throws away the registration that puts this extension on your gateway,
+Chrome throws away the registration that puts this extension on your AIplane,
 and reloading an unpacked extension counts as a reload. Everything else
-survives — the gateway stays listed, the icon stays green — so it looks fine
+survives — AIplane stays listed, the icon stays green — so it looks fine
 and answers "no extension" to everything.
 
 It repairs itself: on browser start, on reload, and every time you open the
@@ -70,14 +70,14 @@ at, so there is nothing for you to do.
 
 1. `chrome://extensions` → enable *Developer mode* → *Load unpacked* → pick this
    `extension/` directory.
-2. Open the extension's *Settings* and pair your gateway's URL. Chrome will ask
+2. Open the extension's *Settings* and pair your AIplane's URL. Chrome will ask
    for permission on that origin; that dialog **is** the pairing.
-3. Open your gateway, click the extension's toolbar icon, *Switch on*.
+3. Open your AIplane, click the extension's toolbar icon, *Switch on*.
 
 ## Telling at a glance whether it is on
 
 The toolbar icon is **green with an "on" badge** while the extension may act and
-**grey** while it may not, and its tooltip names the gateway it is armed for.
+**grey** while it may not, and its tooltip names AIplane it is armed for.
 Chrome's "is debugging this browser" bar over the assistant's window says the
 same thing from the other side.
 
@@ -117,7 +117,7 @@ like this unusable, and a setting nobody keeps switched on protects nobody.
 What carries the weight instead is the switch: the extension does nothing until
 you turn it on from the toolbar, that click is one no web page can produce, the
 icon is green the whole time it is on, Chrome shows its own bar over the
-assistant's window, and every step is listed in the popup and in the gateway's
+assistant's window, and every step is listed in the popup and in AIplane's
 audit trail. Turning it off releases everything at once.
 
 Chrome's own site-access control (`chrome://extensions` → *Details* → *Site
@@ -126,7 +126,7 @@ declared `optional_host_permissions` precisely so Chrome does not grey it out.
 
 ## The bar Chrome shows
 
-While switched on, Chrome displays "LLM Gateway Browser Control is debugging
+While switched on, Chrome displays "croit AIplane Browser Control is debugging
 this browser" over the assistant's window. That is the price of real input —
 clicks and keystrokes the page cannot tell apart from yours, which is what makes
 editors, drag targets and canvas apps work at all. It is left visible rather
@@ -141,11 +141,11 @@ out without asking. Grant what you would let an assistant work in, and switch it
 off when you are done — that is the trade this design makes deliberately, in
 exchange for not asking you to approve every click.
 
-**Script on your gateway's origin** — an XSS there, a malicious dependency in
+**Script on your AIplane's origin** — an XSS there, a malicious dependency in
 its frontend, a compromised server — can ask this extension for anything the
-gateway could ask for. No check here can tell the difference; they are the same
+AIplane could ask for. No check here can tell the difference; they are the same
 sender. Chrome's per-site permission still bounds *where*, and the switch still
-bounds *when*, but neither is a substitute for trusting the gateway you paired.
+bounds *when*, but neither is a substitute for trusting the AIplane you paired.
 
 ## Layout
 
@@ -154,6 +154,6 @@ bounds *when*, but neither is a substitute for trusting the gateway you paired.
 | `src/policy.js` | The rules. Pure, no `chrome.*`, unit-tested (`mise run test-extension`) |
 | `src/cdp.js` | Real input through the DevTools protocol: mouse, keyboard, viewport emulation, screenshots |
 | `src/background.js` | Service worker: pairing checks, arming, permissions, confirmation, execution |
-| `src/content.js` | Wire between the gateway page and the service worker. Decides nothing |
-| `src/options.*` | Pair gateways, choose site access, forget trusted sites |
+| `src/content.js` | Wire between AIplane page and the service worker. Decides nothing |
+| `src/options.*` | Pair AIplane servers, choose site access, forget trusted sites |
 | `src/popup.*` | Switch on/off, recent activity |

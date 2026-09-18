@@ -5,7 +5,7 @@ to the chat model as untrusted document text, so a conversation about a scanned
 invoice works without the chat model being vision-capable.
 
 The feature is **off** until two things are true: `[chat.ocr] enabled = true`
-and a healthy `kind = "ocr"` pool serving a model. Until then the gateway
+and a healthy `kind = "ocr"` pool serving a model. Until then AIplane
 behaves exactly as if OCR did not exist — no tool, no model, no extra call.
 
 ## Where it happens
@@ -122,8 +122,7 @@ max_pages    page ceiling for this document
 dpi          rasterisation DPI
 ```
 
-The sidecar exposes `GET /healthz` for the backend health path. Configure the
-gateway backend with `health_path = "/healthz"`, `probe_models = false`, and
+The sidecar exposes `GET /healthz` for the backend health path. Configure its backend entry in AIplane with `health_path = "/healthz"`, `probe_models = false`, and
 `baidu/Unlimited-OCR` as its static model — the sidecar is not a
 model-discovery endpoint.
 
@@ -146,7 +145,7 @@ or flat, for a single image or a sidecar doing one multi-image call:
 {"markdown": "# Extracted document\n\n…", "pages_total": 1, "pages_processed": 1}
 ```
 
-The gateway sorts page blocks by page number before assembling them — a sidecar
+AIplane sorts page blocks by page number before assembling them — a sidecar
 that recognises pages concurrently may answer out of order — and prefixes each
 with `--- page N ---`. Missing page numbers keep their arrival order; empty
 pages are dropped from the text but still count as unprocessed.
@@ -164,8 +163,7 @@ vLLM with
 ```
 
 pass `skip_special_tokens=false` plus the model's n-gram parameters, and strip
-`<|det|>` coordinate blocks / unwrap `<|ref|>` tokens before answering. (The
-gateway strips them again — defence against a sidecar that forgets.)
+`<|det|>` coordinate blocks / unwrap `<|ref|>` tokens before answering. (AIplane strips them again — defence against a sidecar that forgets.)
 
 By default the sidecar issues **one inference call per page**, which is what
 gives real page numbers and tolerates a single page failing. `OCR_MULTI_IMAGE=1`

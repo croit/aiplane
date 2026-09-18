@@ -1,0 +1,11 @@
+# Named volume for AIplane's SQLite DB + session store. Lives under
+# /var/lib/containers/storage/volumes/systemd-gateway/_data on the host;
+# survives `systemctl restart aiplane.service` and image swaps.
+#
+# `VolumeName` still says `systemd-gateway`, deliberately: it is the name of
+# the volume that already exists on every host installed before the project
+# was renamed to croit AIplane, and changing it here would start a second,
+# empty one beside the database. See docs/renaming.md.
+
+[Volume]
+VolumeName=systemd-gateway

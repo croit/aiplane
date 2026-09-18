@@ -4,10 +4,10 @@ This directory ships **example** workflow bundles an operator can drop into the 
 
 ## Naming convention
 
-Each bundle lives under `llmgw-<verb>/`. The `llmgw-` prefix marks the directory as belonging to the llm-gateway at a glance (vs. an unrelated operator-dropped bundle). Inside the manifest:
+Each bundle lives under `llmgw-<verb>/`. The `llmgw-` prefix marks the directory as belonging to AIplane at a glance (vs. an unrelated operator-dropped bundle). It spells the project's former name and is kept deliberately: it is baked into every manifest's `output_filename_prefix` and into the directory names operators have already copied into their own content dir, so renaming it would rename produced files for no gain. Inside the manifest:
 
 - `id = "<verb>"` (no `llmgw_` prefix) → tool id becomes `comfyui_<verb>` (e.g. `comfyui_text_to_image`). The `comfyui_` prefix is the gateway-side namespace.
-- `output_filename_prefix = "llmgw-<verb>"` → ComfyUI stamps every produced file with the prefix, so when the operator looks at ComfyUI's `/history/{id}` or the worker's `output/` directory, every file from a gateway run is unambiguously attributed: `llmgw-text2image_00001_.png`, `llmgw-image2video_00002_.webp`, `llmgw-text2music_00003_.wav`, etc.
+- `output_filename_prefix = "llmgw-<verb>"` → ComfyUI stamps every produced file with the prefix, so when the operator looks at ComfyUI's `/history/{id}` or the worker's `output/` directory, every file from an AIplane run is unambiguously attributed: `llmgw-text2image_00001_.png`, `llmgw-image2video_00002_.webp`, `llmgw-text2music_00003_.wav`, etc.
 
 ## Bundle layout
 
@@ -48,7 +48,7 @@ Every `workflow.json` pins model filenames that must exist on the ComfyUI worker
 MODELS=/path/to/ComfyUI/models ./fetch-missing-models.sh --dry-run          # report only
 MODELS=/path/to/ComfyUI/models ./fetch-missing-models.sh                    # whole catalog
 MODELS=/path/to/ComfyUI/models ./fetch-missing-models.sh llmgw-merge-images # one bundle
-CATALOG=/etc/gateway/comfyui-workflows MODELS=... ./fetch-missing-models.sh # deployed catalog
+CATALOG=/etc/aiplane/comfyui-workflows MODELS=... ./fetch-missing-models.sh # deployed catalog
 ```
 
 Point `CATALOG` at your live content dir to audit what's actually deployed rather than this example copy. A filename alone doesn't say where to download it from, so [`models.json`](models.json) maps each one to its Hugging Face repo and target subdirectory; anything a workflow references that isn't in the map is reported by name, so the gap is visible instead of silent. Entries marked `gated` need `HF_TOKEN` after accepting the licence on Hugging Face (currently the FLUX.2 klein 9B weights).
@@ -59,14 +59,14 @@ Present files are skipped, interrupted transfers resume, and downloads run `JOBS
 
 ## `workflow.json` are skeletons — operators must validate them
 
-The `workflow.json` files in this catalog are **reference skeletons** built from the ComfyUI templates the gateway authors observed. They wire the parameters the manifest declares to the right `(node_id, input_key)` targets, but they are **not** load-tested against a specific ComfyUI version or custom-node set. Operators must:
+The `workflow.json` files in this catalog are **reference skeletons** built from the ComfyUI templates AIplane authors observed. They wire the parameters the manifest declares to the right `(node_id, input_key)` targets, but they are **not** load-tested against a specific ComfyUI version or custom-node set. Operators must:
 
 1. Open ComfyUI's template (the comment at the top of each `workflow.json` names the exact template).
 2. Switch to **API format** (`Workflow → Export ... → API format`).
 3. Replace the skeleton's body with the exported JSON, keeping the `(node_id, input_key)` targets the manifest references. The simplest way is to rename the export's nodes to match the manifest's `node_id` strings (e.g. `SaveImage`, `LoadImage`, `KSampler`).
 4. Adjust model filenames to match what's actually installed under `models/` on the worker.
 
-The gateway substitutes `{{placeholders}}` and stamps the `output_filename_prefix` onto the output node — everything else stays exactly as the operator authored it.
+AIplane substitutes `{{placeholders}}` and stamps the `output_filename_prefix` onto the output node — everything else stays exactly as the operator authored it.
 
 ## Adding new bundles
 

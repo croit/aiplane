@@ -1,8 +1,8 @@
 # Gateway HTTP API
 
-The gateway exposes an OpenAI-compatible API so any standard SDK works against it unmodified. Every `/v1/*` endpoint requires a valid gateway bearer token (see [`auth.md`](auth.md)). The two health probes are unauthenticated.
+AIplane exposes an OpenAI-compatible API so any standard SDK works against it unmodified. Every `/v1/*` endpoint requires a valid gateway bearer token (see [`auth.md`](auth.md)). The two health probes are unauthenticated.
 
-The routes are wired in `crates/gateway/src/rama_server/router.rs`; the `/v1/*` handlers live in `crates/gateway/src/rama_server/proxy.rs`.
+The routes are wired in `crates/aiplane/src/rama_server/router.rs`; the `/v1/*` handlers live in `crates/aiplane/src/rama_server/proxy.rs`.
 
 ## Supported endpoints
 
@@ -26,7 +26,7 @@ The routes are wired in `crates/gateway/src/rama_server/router.rs`; the `/v1/*` 
 
 ## Authentication
 
-Every `/v1/*` call must send `Authorization: Bearer gwk_<64 hex chars>`. The gateway validates the token (SHA-256 lookup against active tokens) and resolves the caller's user before doing any work; on success it background-bumps the token's `last_used_at`. A missing, malformed, or unknown token gets a `401` with an OpenAI-shaped envelope and a `WWW-Authenticate: Bearer realm="gateway"` header:
+Every `/v1/*` call must send `Authorization: Bearer gwk_<64 hex chars>`. AIplane validates the token (SHA-256 lookup against active tokens) and resolves the caller's user before doing any work; on success it background-bumps the token's `last_used_at`. A missing, malformed, or unknown token gets a `401` with an OpenAI-shaped envelope and a `WWW-Authenticate: Bearer realm="gateway"` header:
 
 ```json
 {
@@ -40,13 +40,13 @@ Every `/v1/*` call must send `Authorization: Bearer gwk_<64 hex chars>`. The gat
 
 The client's own `Authorization` header is never forwarded upstream — it is dropped and the configured backend key (if any) is injected in its place. Token format and storage details are in [`auth.md`](auth.md).
 
-There is **no per-model RBAC gate** on the proxy paths: any authenticated caller may address any model the gateway serves. RBAC applies to *tools* only — it (together with the user's `/tools` toggles and the token's per-capability switches) decides which gateway tools get advertised and injected into a chat completion. A denied tool is simply never offered; it does not produce a `403`.
+There is **no per-model RBAC gate** on the proxy paths: any authenticated caller may address any model AIplane serves. RBAC applies to *tools* only — it (together with the user's `/tools` toggles and the token's per-capability switches) decides which gateway tools get advertised and injected into a chat completion. A denied tool is simply never offered; it does not produce a `403`.
 
 ## Model field and alias resolution
 
 The `model` field may be a real model id **or an alias** (see [`upstreams.md`](upstreams.md#model-aliases)). Requests without a string `model` field get `400 invalid_request`.
 
-When an alias — or one of the configured fallbacks — resolves to a different real model, the gateway:
+When an alias — or one of the configured fallbacks — resolves to a different real model, AIplane:
 
 - rewrites the forwarded body's `model` to the real id (upstreams don't know the alias),
 - echoes the real id in the response, and
@@ -56,7 +56,7 @@ Admin-configured sampling/reasoning defaults are keyed on the *real* model id an
 
 ## Response headers
 
-Beyond the relayed upstream headers, the gateway may add:
+Beyond the relayed upstream headers, AIplane may add:
 
 | Header | When | Meaning |
 |---|---|---|
@@ -67,9 +67,9 @@ Beyond the relayed upstream headers, the gateway may add:
 
 `POST /v1/chat/completions` with `"stream": true` returns `text/event-stream`:
 
-- Upstream SSE frames are relayed 1:1 — the gateway does not reframe `data:` lines. The deltas are tapped in parallel through a repetition-based loop guard; a model that collapses into a loop is cut off with a terminating error chunk and `[DONE]`, while a long-but-progressing answer streams through untouched.
+- Upstream SSE frames are relayed 1:1 — AIplane does not reframe `data:` lines. The deltas are tapped in parallel through a repetition-based loop guard; a model that collapses into a loop is cut off with a terminating error chunk and `[DONE]`, while a long-but-progressing answer streams through untouched.
 - When the caller has tool grants, intermediate tool-loop rounds are executed against the upstream **non-streaming** even though the client asked for a stream; only the final round streams to the client.
-- This is distinct from the web UI's chat, which posts to `POST /api/v0/chat/sessions/{id}/messages` and reads `GET /api/v0/chat/sessions/{id}/events` — SSE carrying the gateway's own JSON event protocol (`snapshot`, `turn_delta`, `tool_call_done`, …), not OpenAI SSE. See [`ui.md`](ui.md#chat-streaming-the-json-event-protocol).
+- This is distinct from the web UI's chat, which posts to `POST /api/v0/chat/sessions/{id}/messages` and reads `GET /api/v0/chat/sessions/{id}/events` — SSE carrying AIplane's own JSON event protocol (`snapshot`, `turn_delta`, `tool_call_done`, …), not OpenAI SSE. See [`ui.md`](ui.md#chat-streaming-the-json-event-protocol).
 
 ## Header handling
 
@@ -81,7 +81,7 @@ We mirror the OpenAI schema for compatibility. We do **not** invent new request/
 
 ## Usage and cost accounting
 
-The gateway records one usage event per upstream call. Token usage accepts both
+AIplane records one usage event per upstream call. Token usage accepts both
 OpenAI-style `prompt_tokens`/`completion_tokens` and providers that return
 `input_tokens`/`output_tokens`. Non-token calls are normalized into billable
 units:
@@ -129,7 +129,7 @@ An unknown model is the one deliberate exception — it matches OpenAI's `model_
 
 Upstream 4xx/5xx bodies are relayed verbatim (status, headers, and body), so a provider's own error reaches the client unchanged.
 
-Status codes the gateway itself produces:
+Status codes AIplane itself produces:
 
 | Status | `code` | Cause |
 |---|---|---|

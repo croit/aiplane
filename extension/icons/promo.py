@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from render import BACKDROP, GRADIENT, icon
 
-TITLE = "LLM Gateway Browser Control"
+TITLE = "croit AIplane Browser Control"
 TAGLINE = "Let a conversation work in your own browser"
 
 # The store shows these tiles small and often next to text, so the type has to
@@ -83,9 +83,9 @@ def tile(width: int, height: int) -> Image.Image:
     gap = int(height * 0.11)
     room = width - margin * 2 - mark_size - gap
 
-    # Two lines for the name: "LLM Gateway" then "Browser Control". One line
+    # Two lines for the name: "croit AIplane" then "Browser Control". One line
     # would have to be small enough to be unreadable at 440px.
-    first, second = "LLM Gateway", "Browser Control"
+    first, second = "croit AIplane", "Browser Control"
     title_font = fitted(draw, (first, second), room, int(height * 0.155))
     title_size = title_font.size
     line_gap = int(title_size * 0.22)

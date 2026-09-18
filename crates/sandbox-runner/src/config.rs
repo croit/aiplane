@@ -27,7 +27,7 @@ pub struct Config {
     #[arg(
         long,
         env = "SANDBOX_IMAGE",
-        default_value = "ghcr.io/croit/llm-gateway-sandbox:latest"
+        default_value = "ghcr.io/croit/aiplane-sandbox:latest"
     )]
     pub image: String,
 

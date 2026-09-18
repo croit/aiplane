@@ -1,6 +1,6 @@
 # e2e/
 
-End-to-end browser tests for the gateway, driven by Playwright through Node's built-in test runner. Zero project-level `node_modules` — the tests import `playwright` directly out of the mise-installed `npm:@playwright/cli` tool.
+End-to-end browser tests for AIplane, driven by Playwright through Node's built-in test runner. Zero project-level `node_modules` — the tests import `playwright` directly out of the mise-installed `npm:@playwright/cli` tool.
 
 ## Run
 
@@ -17,7 +17,7 @@ That runs every `e2e/*.test.mjs`:
 - `anonymous.test.mjs` — Playwright-driven browser flows for the sign-in funnel an anonymous visitor sees.
 - `authed.test.mjs` — Playwright flows on authenticated pages, each on a fresh seeded fixture session.
 - `spa.test.mjs` — the SvelteKit SPA at the root: shell boot, signed-out redirect into OIDC, signed-in identity from `GET /api/v0/me`.
-- `spa-chat.test.mjs` — the SPA chat round trip (issue #22 P2): create a conversation, submit a turn, watch the reply stream in over the JSON-SSE event protocol. Needs a gateway with a chat upstream — `GATEWAY_STATIC_DIR=target/frontend/build mise run dev-ui` — and skips with a pointer at that command when the gateway has no pools.
+- `spa-chat.test.mjs` — the SPA chat round trip (issue #22 P2): create a conversation, submit a turn, watch the reply stream in over the JSON-SSE event protocol. Needs an AIplane with a chat upstream — `AIPLANE_STATIC_DIR=target/frontend/build mise run dev-ui` — and skips with a pointer at that command when AIplane has no pools.
 
 The `e2e` mise task points `PLAYWRIGHT_DIR` at the mise-installed `npm:@playwright/cli` tool automatically; export it yourself only to override.
 
@@ -27,7 +27,7 @@ Set `CHROMIUM_HEADED=1` to watch the browser locally:
 CHROMIUM_HEADED=1 mise run e2e
 ```
 
-Set `GATEWAY_URL=https://gw.dev` to point at a remote gateway (note: the authed/SPA-signin tests need the seeding endpoints below, so a remote target must be a debug build — in practice that means a local `mise run dev`).
+Set `AIPLANE_URL=https://gw.dev` to point at a remote gateway (note: the authed/SPA-signin tests need the seeding endpoints below, so a remote target must be a debug build — in practice that means a local `mise run dev`).
 
 ## Session seeding (no OIDC needed)
 

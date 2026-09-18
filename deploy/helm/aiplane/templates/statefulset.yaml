@@ -1,0 +1,327 @@
+{{- /*
+SPDX-License-Identifier: AGPL-3.0-only
+Copyright (C) 2026 croit GmbH
+
+A StatefulSet, not a Deployment, and exactly one replica.
+
+SQLite in WAL mode requires every process using the database to share memory,
+i.e. to sit on the same host; on top of that the gateway keeps each running
+chat turn — its cancel flag and the SSE fan-out its subscribers attach to — in
+process memory. A second replica would therefore not share work, it would
+duplicate it and stream into the void. The StatefulSet is what makes "replace
+the pod, do not run two" the default behaviour, and its volumeClaimTemplate
+keeps the database when the release is uninstalled.
+
+docs/kubernetes.md → "Why one replica" has the full reasoning and what it would
+take to lift it.
+*/ -}}
+
+{{- if and .Values.mcp.googleWorkspace.enabled (not .Values.mcp.googleWorkspace.existingSecret) }}
+{{- fail "mcp.googleWorkspace.existingSecret is required: it must hold GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET and FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY" }}
+{{- end }}
+{{- if and .Values.mcp.discord.enabled (not .Values.mcp.discord.existingSecret) }}
+{{- fail "mcp.discord.existingSecret is required: it must hold DISCORD_TOKEN" }}
+{{- end }}
+{{- if and .Values.ocr.enabled (not .Values.ocr.vllmBaseUrl) }}
+{{- fail "ocr.vllmBaseUrl is required: the /v1 URL of your Unlimited-OCR vLLM server" }}
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "aiplane.fullname" . }}
+  labels:
+    {{- include "aiplane.labels" . | nindent 4 }}
+spec:
+  # Not a value. See the header.
+  replicas: 1
+  serviceName: {{ include "aiplane.fullname" . }}
+  selector:
+    matchLabels:
+      {{- include "aiplane.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aiplane.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "aiplane.serviceAccountName" . }}
+      # Nothing in this pod talks to the Kubernetes API.
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      # fsGroup is what makes a freshly provisioned volume writable: it lands
+      # root:root 0755 otherwise and the gateway (uid 1000) cannot open the
+      # database. It also adds gid 1000 to every container's supplementary
+      # groups, which is how the sidecars write their own subdirectories
+      # without having to run as the same user.
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ include "aiplane.imageTag" . }}"
+          imagePullPolicy: {{ include "aiplane.imagePullPolicy" . }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: AIPLANE_SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aiplane.sessionSecretName" . }}
+                  key: {{ include "aiplane.sessionSecretKey" . }}
+            {{- with (include "aiplane.publicUrl" .) }}
+            - name: AIPLANE_PUBLIC_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.bootstrapAdminGroups }}
+            - name: AIPLANE_BOOTSTRAP_ADMIN_GROUPS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.logLevel }}
+            - name: RUST_LOG
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          # All three probes hit /healthz on purpose.
+          #
+          # The gateway also serves /readyz, which answers 503 until the setup
+          # wizard has been completed — correct for a load balancer in front of
+          # a fleet, but fatal as a readinessProbe here: the Service would have
+          # no endpoints on a fresh install, so nobody could reach /setup to
+          # complete it. Liveness on /healthz, readiness on /healthz, and the
+          # wizard stays reachable.
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          volumeMounts:
+            # AIPLANE_DATA_DIR is baked into the image and points here, so this
+            # one mount covers the database and the RAG index store.
+            - name: data
+              mountPath: /var/lib/gateway
+            # The rootfs is read-only; typst compiles and file conversions want
+            # a scratch directory.
+            - name: tmp
+              mountPath: /tmp
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+        {{- if .Values.mcp.googleWorkspace.enabled }}
+        - name: gworkspace-mcp
+          image: "{{ .Values.mcp.googleWorkspace.image.repository }}:{{ .Values.mcp.googleWorkspace.image.tag }}"
+          imagePullPolicy: {{ .Values.mcp.googleWorkspace.image.pullPolicy }}
+          # No readOnlyRootFilesystem: this image's entrypoint runs `uv run`,
+          # which builds an editable install under /app at startup.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: gworkspace
+              containerPort: {{ .Values.mcp.googleWorkspace.port }}
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ .Values.mcp.googleWorkspace.existingSecret }}
+          env:
+            - name: MCP_ENABLE_OAUTH21
+              value: "true"
+            - name: WORKSPACE_MCP_STATELESS_MODE
+              value: "true"
+            - name: WORKSPACE_MCP_PORT
+              value: {{ .Values.mcp.googleWorkspace.port | quote }}
+            - name: TOOL_TIER
+              value: {{ .Values.mcp.googleWorkspace.toolTier | quote }}
+            {{- with .Values.mcp.googleWorkspace.externalUrl }}
+            - name: WORKSPACE_EXTERNAL_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.mcp.googleWorkspace.allowedClientRedirectUris }}
+            - name: WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS
+              value: {{ . | quote }}
+            {{- end }}
+            # The OAuth store must outlive the container: it holds the
+            # gateway's registered client, the authorization codes, the refresh
+            # tokens it issues AND the upstream Google tokens. Unconfigured it
+            # writes them into the container's writable layer, and every user
+            # is disconnected with `Invalid client_id` after the next image
+            # update. It gets a small PVC of its own — see pvc-gworkspace.yaml
+            # for why it is not a subPath on the gateway's volume.
+            - name: WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND
+              value: disk
+            - name: WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY
+              value: /var/lib/gworkspace-mcp/oauth-proxy
+            - name: UV_CACHE_DIR
+              value: /tmp/uv-cache
+            - name: XDG_CACHE_HOME
+              value: /tmp
+          volumeMounts:
+            - name: gworkspace-oauth
+              mountPath: /var/lib/gworkspace-mcp
+            - name: tmp-gworkspace
+              mountPath: /tmp
+          {{- with .Values.mcp.googleWorkspace.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+
+        {{- if .Values.mcp.gitlab.enabled }}
+        - name: gitlab-mcp
+          image: "{{ .Values.mcp.gitlab.image.repository }}:{{ .Values.mcp.gitlab.image.tag }}"
+          imagePullPolicy: {{ .Values.mcp.gitlab.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: HOST
+              value: "0.0.0.0"
+            - name: STREAMABLE_HTTP
+              value: "true"
+            # Each request carries the calling user's own GitLab token, which
+            # the bridge forwards — so there is no shared credential here and
+            # nothing to connect per user beyond pasting a PAT.
+            - name: REMOTE_AUTHORIZATION
+              value: "true"
+            - name: GITLAB_API_URL
+              value: {{ .Values.mcp.gitlab.apiUrl | quote }}
+            - name: GITLAB_PERMISSION_MODE
+              value: {{ .Values.mcp.gitlab.permissionMode | quote }}
+            # No MCP_ALLOWED_HOSTS needed: the bridge always allows loopback,
+            # and the gateway reaches it at http://localhost:<port>/mcp.
+          {{- with .Values.mcp.gitlab.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+
+        {{- if .Values.mcp.discord.enabled }}
+        - name: discord-mcp
+          image: "{{ .Values.mcp.discord.image.repository }}:{{ .Values.mcp.discord.image.tag }}"
+          imagePullPolicy: {{ .Values.mcp.discord.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          envFrom:
+            - secretRef:
+                name: {{ .Values.mcp.discord.existingSecret }}
+          env:
+            # The image defaults to stdio; this makes it serve streamable HTTP.
+            - name: SPRING_PROFILES_ACTIVE
+              value: http
+          {{- with .Values.mcp.discord.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+
+        {{- if .Values.ocr.enabled }}
+        - name: ocr-sidecar
+          image: "{{ .Values.ocr.image.repository }}:{{ .Values.ocr.image.tag | default (include "aiplane.imageTag" .) }}"
+          imagePullPolicy: {{ .Values.ocr.image.pullPolicy | default (include "aiplane.imagePullPolicy" .) }}
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: VLLM_BASE_URL
+              value: {{ .Values.ocr.vllmBaseUrl | quote }}
+            - name: OCR_MODEL
+              value: {{ .Values.ocr.model | quote }}
+            - name: OCR_MULTI_IMAGE
+              value: {{ ternary "1" "0" .Values.ocr.multiImage | quote }}
+          {{- with .Values.ocr.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp-ocr
+              mountPath: /tmp
+          {{- with .Values.ocr.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.mcp.googleWorkspace.enabled }}
+        - name: tmp-gworkspace
+          emptyDir: {}
+        - name: gworkspace-oauth
+          persistentVolumeClaim:
+            claimName: {{ include "aiplane.fullname" . }}-gworkspace-oauth
+        {{- end }}
+        {{- if .Values.ocr.enabled }}
+        - name: tmp-ocr
+          emptyDir: {}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        {{- with .Values.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes: [{{ .Values.persistence.accessMode | quote }}]
+        {{- with .Values.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size | quote }}

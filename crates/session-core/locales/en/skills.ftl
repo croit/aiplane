@@ -38,7 +38,7 @@ skills-description-heading = Description
 skills-grant-dialog-heading = Who can use this skill?
 skills-grant-dialog-desc-part1 = Pick the groups allowed to load
 skills-grant-dialog-desc-part2 = . Everyone in a selected group gets it.
-skills-grant-dialog-no-roles-part1 = No gateway groups are defined. Add
+skills-grant-dialog-no-roles-part1 = No AIplane groups are defined. Add
 skills-grant-dialog-no-roles-part2 = entries before you can grant access.
 
 skills-cancel-button = Cancel

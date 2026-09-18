@@ -8,7 +8,7 @@ const PLAYWRIGHT_DIR = process.env.PLAYWRIGHT_DIR
 
 const { chromium } = await import(`${PLAYWRIGHT_DIR}/index.mjs`);
 
-export const BASE = process.env.GATEWAY_URL ?? "http://localhost:8080";
+export const BASE = process.env.AIPLANE_URL ?? "http://localhost:8080";
 
 export { chromium };
 

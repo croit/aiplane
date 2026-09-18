@@ -1,8 +1,8 @@
 {
-	"name": "gateway-web",
+	"name": "aiplane-web",
 	"private": true,
 	"version": "0.1.0",
-	"description": "The gateway's web UI. adapter-static output is served from GATEWAY_STATIC_DIR in production; local development exposes Vite HMR and every gateway route through one origin on port 8080.",
+	"description": "The croit AIplane web UI. adapter-static output is served from AIPLANE_STATIC_DIR in production; local development exposes Vite HMR and every gateway route through one origin on port 8080.",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",

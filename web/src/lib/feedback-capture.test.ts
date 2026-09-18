@@ -13,7 +13,7 @@ import assert from 'node:assert';
 import { REDACTED, extractQuery, sanitizeBody } from './feedback-capture.ts';
 
 test('query parameters that look like credentials are redacted', () => {
-	const query = extractQuery('https://gateway.example.com/x?token=sekrit&page=2');
+	const query = extractQuery('https://aiplane.example.com/x?token=sekrit&page=2');
 	assert.ok(query);
 	const params = new URLSearchParams(query);
 	assert.equal(params.get('token'), REDACTED);
@@ -24,13 +24,13 @@ test('query parameters that look like credentials are redacted', () => {
 
 test('redaction is case insensitive and covers every credential spelling', () => {
 	for (const key of ['Authorization', 'API_KEY', 'client_secret', 'Refresh_Token']) {
-		const query = extractQuery(`https://gateway.example.com/x?${key}=value`);
+		const query = extractQuery(`https://aiplane.example.com/x?${key}=value`);
 		assert.equal(new URLSearchParams(query!).get(key), REDACTED, key);
 	}
 });
 
 test('a URL without a query yields nothing rather than an empty string', () => {
-	assert.equal(extractQuery('https://gateway.example.com/x'), undefined);
+	assert.equal(extractQuery('https://aiplane.example.com/x'), undefined);
 	// A relative URL still resolves — fetch is called with those constantly.
 	assert.equal(extractQuery('/api/v0/me'), undefined);
 });

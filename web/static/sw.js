@@ -1,4 +1,4 @@
-// croit LLM Gateway — SPA service worker (root scope).
+// croit AIplane — SPA service worker (root scope).
 //
 // Ports the legacy root-scope worker's Web Push half (crates/session-core/
 // assets/sw.js) to the SPA: turn-complete notifications + notification
@@ -42,7 +42,7 @@ self.addEventListener('push', (event) => {
   } catch (_) {
     data = {};
   }
-  const title = data.title || 'LLM Gateway';
+  const title = data.title || 'AIplane';
   const target = spaUrl(data.url);
   const options = {
     body: data.body || '',

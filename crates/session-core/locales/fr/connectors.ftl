@@ -1,6 +1,6 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
-connectors-page-title = Connecteurs — LLM Gateway
+connectors-page-title = Connecteurs — AIplane
 connectors-audit-page-title = { $name } — Journal d’audit
 connectors-heading = Connecteurs
 connectors-restore-defaults-button = Restaurer les valeurs par défaut
@@ -97,7 +97,7 @@ connectors-badge-needs-setup = Identifiant client requis
 connectors-field-scope-label = Portée
 connectors-scope-per-user = Par utilisateur (chacun connecte son propre compte)
 connectors-scope-global = Global (une identité partagée pour tous)
-connectors-field-scope-help = Les connecteurs globaux sont partagés par toutes les personnes autorisées par leurs groupes de passerelle. Ils doivent utiliser aucune authentification ou un jeton partagé, et non OAuth par utilisateur.
+connectors-field-scope-help = Les connecteurs globaux sont partagés par toutes les personnes autorisées par leurs groupes AIplane. Ils doivent utiliser aucune authentification ou un jeton partagé, et non OAuth par utilisateur.
 connectors-token-help-global = Ce connecteur partagé envoie un jeton Bearer chiffré pour chaque utilisateur autorisé.
 connectors-token-help-user = Chaque utilisateur fournit son propre jeton API dans Intégrations. Aucun client OAuth n'est nécessaire.
 connectors-field-shared-token-label = Jeton Bearer (partagé)

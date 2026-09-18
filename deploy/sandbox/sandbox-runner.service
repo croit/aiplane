@@ -23,7 +23,7 @@
 #          sudo systemctl daemon-reload && sudo systemctl enable --now sandbox-runner.service
 
 [Unit]
-Description=LLM Gateway code-execution sandbox runner (host service)
+Description=croit AIplane code-execution sandbox runner (host service)
 Wants=network-online.target
 After=network-online.target
 # Host-backed scratch (set by `setup-sandbox.sh --work-image SIZE`): refuse to
@@ -36,7 +36,7 @@ After=network-online.target
 # detects the real value and rewrites it. The gateway config's runner_url must match.
 Environment=SANDBOX_BIND=10.88.0.1:9000
 Environment=SANDBOX_RUNTIME=runsc
-Environment=SANDBOX_IMAGE=ghcr.io/croit/llm-gateway-sandbox:latest
+Environment=SANDBOX_IMAGE=ghcr.io/croit/aiplane-sandbox:latest
 # How often (s) to re-resolve SANDBOX_IMAGE and recycle the warm pool if it
 # changed (rebuild / re-tag) — so a new image goes live without restarting this
 # service. Default 60; 0 disables.
@@ -65,7 +65,12 @@ ExecStart=/usr/local/bin/sandbox-runner
 # Leave no sandboxes behind on a stop: the runner reaps stale containers and
 # scratch directories at startup, but a service that is stopped and not started
 # again would otherwise keep both pinned indefinitely.
-ExecStopPost=/bin/sh -c 'podman ps -aq --filter label=app=llm-gateway-sandbox | xargs -r podman rm -f >/dev/null 2>&1 || true'
+# Two commands, not two `--filter` arguments (podman ANDs repeated filters, so
+# asking for both labels at once matches nothing) and not a shell loop either
+# (systemd expands `$var` in an Exec line before the shell ever sees it). The
+# second label is what runners wrote before the project was renamed to croit
+# AIplane; an upgrade must not leave those containers behind. docs/renaming.md.
+ExecStopPost=/bin/sh -c 'podman ps -aq --filter label=app=aiplane-sandbox | xargs -r podman rm -f >/dev/null 2>&1; podman ps -aq --filter label=app=llm-gateway-sandbox | xargs -r podman rm -f >/dev/null 2>&1; true'
 # Deprioritise the runner for the host OOM-killer: a sandbox memory bomb (which
 # runs with --oom-score-adj=1000) gets reaped first, so the runner survives.
 OOMScoreAdjust=-800

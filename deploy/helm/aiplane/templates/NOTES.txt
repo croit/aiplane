@@ -1,0 +1,60 @@
+{{ .Chart.Name }} {{ .Chart.AppVersion }} is installed as {{ include "aiplane.fullname" . }}.
+
+1. Reach it
+{{- if .Values.ingress.enabled }}
+
+   https://{{ .Values.ingress.host }}
+{{- else }}
+
+   No ingress is enabled. To look at it right away:
+
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "aiplane.fullname" . }} 8080:{{ .Values.service.port }}
+
+   then open http://localhost:8080
+{{- end }}
+
+2. Finish the setup wizard
+
+   The first page asks for your OIDC provider, proves the login with a real
+   sign-in, and hands you an admin account. There is no config file: pools,
+   backends, models and groups are all managed in the UI afterwards.
+
+   The wizard shows you the exact redirect URI to register with your provider.
+
+3. Back up the session key — today, not later
+{{- if .Values.sessionKey.existingSecret }}
+
+   You brought your own Secret ({{ .Values.sessionKey.existingSecret }}). Make sure it is in your
+   backups: AIPLANE_SESSION_KEY seals every secret in the database, so the
+   volume alone cannot be restored without it.
+{{- else }}
+
+     kubectl -n {{ .Release.Namespace }} get secret {{ include "aiplane.sessionSecretName" . }} \
+       -o jsonpath='{.data.AIPLANE_SESSION_KEY}' | base64 -d
+
+   That value seals every secret in the database (backend API keys, the OIDC
+   client secret, per-user OAuth tokens). Without it a restored volume is
+   unreadable. Store it wherever your other credentials live.
+{{- end }}
+
+4. If you are ever locked out (IdP moved, no group maps to admin)
+
+     kubectl -n {{ .Release.Namespace }} exec -it {{ include "aiplane.fullname" . }}-0 -c gateway -- restore-setup
+
+   It prints a one-time URL valid for 30 minutes and reopens the wizard. Nobody
+   is logged out and nothing is deleted in the meantime.
+{{ if or .Values.mcp.googleWorkspace.enabled .Values.mcp.gitlab.enabled .Values.mcp.discord.enabled }}
+5. Point the gateway at the MCP sidecars you enabled
+
+   /admin/connectors → pick the connector → paste the URL → Save → Enable:
+{{- if .Values.mcp.googleWorkspace.enabled }}
+     Google Workspace  http://localhost:{{ .Values.mcp.googleWorkspace.port }}/mcp
+{{- end }}
+{{- if .Values.mcp.gitlab.enabled }}
+     GitLab (CE)       http://localhost:{{ .Values.mcp.gitlab.port }}/mcp
+{{- end }}
+{{- if .Values.mcp.discord.enabled }}
+     Discord           http://localhost:{{ .Values.mcp.discord.port }}/mcp
+{{- end }}
+{{ end }}
+Step-by-step guide, day-2 operations and the code sandbox: docs/kubernetes.md

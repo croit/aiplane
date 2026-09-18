@@ -1,0 +1,103 @@
+# systemd-podman Quadlet for croit AIplane.
+#
+# Install:
+#   sudo cp deploy/quadlet/aiplane.container /etc/containers/systemd/
+#   sudo cp deploy/quadlet/aiplane.volume    /etc/containers/systemd/
+#   sudo mkdir -p /etc/aiplane
+#   printf 'AIPLANE_SESSION_KEY=%s\n' "$(openssl rand -hex 32)" \
+#     | sudo tee /etc/aiplane/aiplane.env >/dev/null
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now aiplane.service
+#
+# That is the whole install. No config file: upstream pools, models, groups
+# and the OIDC provider are all configured in the browser and stored in the
+# database. Open the gateway's URL and the setup wizard takes it from there.
+#
+# There is exactly ONE thing you must supply, and it is generated above:
+# AIPLANE_SESSION_KEY. It signs browser sessions and derives the key that
+# seals every secret in the database, so generate it ONCE and keep it — losing
+# it logs everyone out and makes stored backend API keys, connector secrets and
+# OAuth tokens permanently unreadable. Back it up with the volume.
+#
+# Quadlet generates `aiplane.service` from this file. `Volume=aiplane.volume`
+# resolves against `aiplane.volume` (the sibling unit in this directory) and
+# the named volume's data is owned by Podman at /var/lib/containers/storage/.
+#
+# Update with a new image tag:
+#   sudo $EDITOR /etc/containers/systemd/aiplane.container   # bump :latest → :<sha>
+#   sudo systemctl daemon-reload
+#   sudo systemctl restart aiplane.service
+#
+# Rolling back a bad release is just the inverse — bump the tag back and
+# `systemctl restart`. The DB lives in the named volume, so config + state
+# survive image swaps.
+#
+# Locked out (IdP moved, no group maps to admin)? Reopen the setup wizard
+# without disturbing anyone who is still using the gateway:
+#   sudo podman exec aiplane restore-setup
+# It prints a one-time URL, valid for 30 minutes. See docs/auth.md.
+
+[Unit]
+Description=croit AIplane (self-hosted AI infrastructure)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=aiplane
+
+# Pin to a content-addressed digest in production. `:latest` is convenient
+# for first-time setup but `systemctl restart` won't see new pushes unless
+# you change the tag.
+Image=ghcr.io/croit/aiplane:latest
+
+# Bind on the host's loopback by default — put a TLS-terminating reverse
+# proxy (Caddy, Traefik, nginx) in front. Change to `8080:8080` to expose
+# directly, but you'll lose HTTPS + sane access logs.
+PublishPort=127.0.0.1:8080:8080
+
+# Code-execution sandbox (optional): no network change needed here. The
+# sandbox-runner is a host service bound to this host's podman bridge gateway IP
+# (usually 10.88.0.1), which the gateway already reaches over the default
+# network. Just set the sandbox runner URL to `http://10.88.0.1:9000` at
+# /admin/settings and deploy the runner
+# (deploy/sandbox/setup-sandbox.sh). See docs/sandbox.md.
+
+# AIPLANE_SESSION_KEY lives here — the one required variable.
+EnvironmentFile=/etc/aiplane/aiplane.env
+
+# Persistent SQLite + RAG index store. The named volume is declared in the
+# sibling `aiplane.volume` unit; the image's AIPLANE_DATA_DIR already points
+# every writable path at this mount, so nothing else needs configuring. The
+# container runs as uid 1000 (`gateway`); `:U` tells Podman to chown the volume
+# to the runtime user on mount, otherwise SQLite gets EACCES on first start
+# because Podman creates named volumes root-owned by default.
+Volume=aiplane.volume:/var/lib/gateway:z,U
+
+Environment=RUST_LOG=info,aiplane=info,aiplane_core=info,aiplane_features=info,aiplane_runtime=info,aiplane_tools=info,aiplane_api=info
+
+# There is no config file. Pools, backends, models, groups, OIDC, search and
+# every operator setting — OCR, compaction, attachment storage, sandbox,
+# ComfyUI, RAG, skills, Typst, GeoIP, usage, limits, feedback, push — live in
+# the database and are configured in the admin UI. What is left is a property
+# of where this process runs and is set above: the session key, the data dir,
+# the public URL, and IP/PORT (set in the image).
+
+# Drop all caps, no-new-privs, read-only root FS. The volume above + a small
+# tmpfs cover everything that needs to be writable.
+NoNewPrivileges=true
+DropCapability=ALL
+ReadOnly=true
+Tmpfs=/tmp
+
+# No `HealthCmd=` — the runtime image (debian:trixie-slim + tini + the server
+# binary) doesn't ship curl/wget, and adding either just for a health probe
+# bloats the image. systemd's `Restart=on-failure` covers crashes; for HTTP
+# health you're already running a reverse proxy in front (per the README),
+# which can probe `/healthz` from outside the container.
+
+[Service]
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target default.target

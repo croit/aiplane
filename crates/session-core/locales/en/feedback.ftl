@@ -3,7 +3,7 @@
 # public-tracker confirmation, and the `/api/v0/feedback*` API errors.
 #
 # The chrome is rendered by the SPA (web/src/lib/components/feedback/); the
-# `feedback-err-*` messages come from crates/gateway-api/src/pages/feedback.rs.
+# `feedback-err-*` messages come from crates/aiplane-api/src/pages/feedback.rs.
 
 feedback-fab-aria = Send feedback
 feedback-fab-title = Send feedback

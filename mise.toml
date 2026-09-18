@@ -1,4 +1,4 @@
-# mise — toolchain + task runner for the LLM gateway project.
+# mise — toolchain + task runner for the croit AIplane project.
 # Run `mise install` once after cloning, then use `mise run <task>` for everything.
 # Docs: https://mise.jdx.dev/
 
@@ -62,7 +62,7 @@ gitleaks = "8.30"
 
 [env]
 RUST_BACKTRACE = "1"
-RUST_LOG = "info,gateway=debug,gateway_core=debug,gateway_features=debug,gateway_runtime=debug,gateway_tools=debug,gateway_api=debug"
+RUST_LOG = "info,aiplane=debug,aiplane_core=debug,aiplane_features=debug,aiplane_runtime=debug,aiplane_tools=debug,aiplane_api=debug"
 # Secrets (API keys, tokens) go in the gitignored `mise.local.toml`, not
 # here. Web-search settings are the exception in the other direction: they
 # live in the DB and are set under "Web search" on /admin/models (the legacy
@@ -140,7 +140,7 @@ RUN_NEXTCLOUD_E2E=1 \
 NEXTCLOUD_URL="http://127.0.0.1:$PORT" \
 NEXTCLOUD_USER="$USER_NAME" \
 NEXTCLOUD_PASS="$PASSWORD" \
-  cargo test -p gateway --test nextcloud_e2e_live -- --nocapture --test-threads=1
+  cargo test -p aiplane --test nextcloud_e2e_live -- --nocapture --test-threads=1
 """
 dir = "{{ config_root }}"
 
@@ -148,21 +148,21 @@ dir = "{{ config_root }}"
 description = "Run the complete local stack: Vite HMR on public :8080 and the Rust gateway on private :8081. One browser origin, one command."
 depends = ["web-install"]
 run = """
-PUBLIC_PORT="${GATEWAY_DEV_PUBLIC_PORT:-8080}"
-BACKEND_PORT="${GATEWAY_DEV_BACKEND_PORT:-8081}"
+PUBLIC_PORT="${AIPLANE_DEV_PUBLIC_PORT:-8080}"
+BACKEND_PORT="${AIPLANE_DEV_BACKEND_PORT:-8081}"
 
 env IP=127.0.0.1 PORT="$BACKEND_PORT" mise run dev-gateway &
-GATEWAY_PID=$!
+AIPLANE_PID=$!
 cleanup() {
-  kill "$GATEWAY_PID" >/dev/null 2>&1 || true
-  wait "$GATEWAY_PID" 2>/dev/null || true
+  kill "$AIPLANE_PID" >/dev/null 2>&1 || true
+  wait "$AIPLANE_PID" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
 echo "public HMR UI: http://localhost:$PUBLIC_PORT (gateway backend: 127.0.0.1:$BACKEND_PORT)"
 env \
-  GATEWAY_DEV_PUBLIC_PORT="$PUBLIC_PORT" \
-  GATEWAY_DEV_BACKEND_ORIGIN="http://127.0.0.1:$BACKEND_PORT" \
+  AIPLANE_DEV_PUBLIC_PORT="$PUBLIC_PORT" \
+  AIPLANE_DEV_BACKEND_ORIGIN="http://127.0.0.1:$BACKEND_PORT" \
   npm --prefix web run dev
 """
 dir = "{{ config_root }}"
@@ -170,30 +170,30 @@ dir = "{{ config_root }}"
 [tasks.dev-gateway]
 description = "Run only the Rust gateway for another local frontend or debugger. Defaults to the normal IP/PORT; `mise run dev` overrides it to private :8081."
 run = """
-KEY_FILE=".gateway-dev-session-key"
+KEY_FILE=".aiplane-dev-session-key"
 if [ ! -f "$KEY_FILE" ]; then
   openssl rand -hex 32 > "$KEY_FILE"
   chmod 600 "$KEY_FILE"
   echo "generated a persistent dev session key at $KEY_FILE (gitignored)"
 fi
-exec env GATEWAY_SESSION_KEY="$(cat "$KEY_FILE")" cargo run --package gateway
+exec env AIPLANE_SESSION_KEY="$(cat "$KEY_FILE")" cargo run --package aiplane
 """
 dir = "{{ config_root }}"
 
 [tasks.dev-served]
 description = "Production-shaped local check: build the SPA and serve it directly from the debug gateway on :8080, without HMR."
 depends = ["build-web"]
-run = "GATEWAY_STATIC_DIR=target/frontend/build mise run dev-gateway"
+run = "AIPLANE_STATIC_DIR=target/frontend/build mise run dev-gateway"
 dir = "{{ config_root }}"
 
 [tasks.dev-build]
-description = "Debug build only — produces target/debug/gateway. Use this for fast iteration loops (typical ~2 s incremental vs ~11 s for a release build). For deploys / benchmarks use `mise run build` instead."
-run = "cargo build --package gateway --bin gateway"
+description = "Debug build only — produces target/debug/aiplane. Use this for fast iteration loops (typical ~2 s incremental vs ~11 s for a release build). For deploys / benchmarks use `mise run build` instead."
+run = "cargo build --package aiplane"
 
 [tasks.build]
 description = "Release build of the gateway binary. Slow (~12 s cold incremental, ~70 s from clean) — only use this when you actually want optimised output (deploys, perf measurement). For day-to-day work use `mise run dev` or `mise run dev-build`."
 depends = ["fetch-typst-cli", "fetch-pdfium"]
-run = "cargo build --release --package gateway --bin gateway"
+run = "cargo build --release --package aiplane"
 
 [tasks.fetch-typst-cli]
 description = "Copy mise's installed `typst` CLI into target/release/typst so the runtime Dockerfile picks it up via the same artifact pipeline that ships the gateway binary. The version + download URL are mise's responsibility — see the `typst` entry under [tools]."
@@ -288,7 +288,7 @@ npm --prefix web run prepare
 """
 
 [tasks.build-web]
-description = "Build the SvelteKit SPA (adapter-static) into target/frontend/build/. The Dockerfile COPYs that directory into the image; the gateway serves it from the root when GATEWAY_STATIC_DIR points there."
+description = "Build the SvelteKit SPA (adapter-static) into target/frontend/build/. The Dockerfile COPYs that directory into the image; the gateway serves it from the root when AIPLANE_STATIC_DIR points there."
 depends = ["web-install"]
 sources = ["web/src/**/*", "web/static/**/*", "web/vite.config.ts", "web/package.json"]
 outputs = ["target/frontend/build/index.html"]
@@ -334,8 +334,8 @@ run = "npm --prefix web run check"
 [tasks.dev-ui]
 description = "Stub gateway for local UI debugging: real rama server on :8080 against a wiremock chat + transcription backend with a pre-seeded session. Prints the session cookie to stdout so playwright (or curl) can drive any authed page (/, /tokens, /chat, /api/v0/*) without OIDC. See docs/dev-workflow.md → 'Debugging the UI'."
 depends = ["build-web"]
-env = { GATEWAY_STATIC_DIR = "target/frontend/build" }
-run = "cargo run --example dev_ui -p gateway"
+env = { AIPLANE_STATIC_DIR = "target/frontend/build" }
+run = "cargo run --example dev_ui -p aiplane"
 
 [tasks.test]
 description = "Run the workspace tests (cargo-nextest — parallel, compact report)."
@@ -370,7 +370,7 @@ dir = "{{ config_root }}"
 run = "node --test 'web/src/lib/**/*.test.ts'"
 
 [tasks.package-extension]
-description = "Zip the Chrome extension for upload, stamped with this commit's version. `manifest.json` carries a committed placeholder (0.0.0) exactly like the Helm chart's Chart.yaml: the number that ships comes from `scripts/derive-version.sh`, the same resolver the images and the chart use, so an extension build can never disagree with the gateway it talks to. Writes target/llm-gateway-browser-control-<version>.zip."
+description = "Zip the Chrome extension for upload, stamped with this commit's version. `manifest.json` carries a committed placeholder (0.0.0) exactly like the Helm chart's Chart.yaml: the number that ships comes from `scripts/derive-version.sh`, the same resolver the images and the chart use, so an extension build can never disagree with the gateway it talks to. Writes target/aiplane-browser-control-<version>.zip."
 dir = "{{ config_root }}"
 # A literal string ('''), not a basic one (""""): the node snippet below
 # contains a \n escape, and TOML would turn it into a real newline inside the
@@ -381,12 +381,12 @@ set -eu
 # Assign, then use — `X=$(...)` propagates the resolver's failure, which
 # embedding it in another command would swallow.
 VERSION=$(sh scripts/derive-version.sh)
-OUT="target/llm-gateway-browser-control-$VERSION.zip"
+OUT="target/aiplane-browser-control-$VERSION.zip"
 STAGE="target/extension-package"
 
 # Every previous build, not just this one: three versions side by side in
 # target/ is how the wrong zip gets uploaded to the store.
-rm -rf "$STAGE" target/llm-gateway-browser-control-*.zip
+rm -rf "$STAGE" target/aiplane-browser-control-*.zip
 mkdir -p "$STAGE/src" "$STAGE/icons" target
 
 # Named, not swept. `cp -R extension/.` followed by deletions ships whatever
@@ -435,11 +435,11 @@ dir = "{{ config_root }}"
 run = "sh scripts/derive-version.sh"
 
 [tasks.helm-lint]
-description = "Render and validate the Kubernetes chart (deploy/helm/llm-gateway): `helm lint`, then `helm template` for both the default install and `ci/full-values.yaml` (every sidecar on), piped through kubeconform against the real Kubernetes API schemas — which is what catches a mistyped field that YAML itself is perfectly happy with. Not part of `ci`: nothing in the chart can break a Rust build, and the two tools are fetched on demand rather than added to [tools] so `mise install` stays lean. Run it after touching anything under deploy/helm/."
+description = "Render and validate the Kubernetes chart (deploy/helm/aiplane): `helm lint`, then `helm template` for both the default install and `ci/full-values.yaml` (every sidecar on), piped through kubeconform against the real Kubernetes API schemas — which is what catches a mistyped field that YAML itself is perfectly happy with. Not part of `ci`: nothing in the chart can break a Rust build, and the two tools are fetched on demand rather than added to [tools] so `mise install` stays lean. Run it after touching anything under deploy/helm/."
 dir = "{{ config_root }}"
 run = '''
 set -eu
-chart=deploy/helm/llm-gateway
+chart=deploy/helm/aiplane
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 
@@ -499,20 +499,20 @@ description = "The local pre-push gate: lint + Rust tests + SPA checks and build
 depends = ["lint", "test", "test-web", "test-extension", "build-web", "parity-gap"]
 
 [tasks.test-crate]
-description = "Tests for ONE crate — the iteration loop. `mise run test-crate gateway-api [filter]`. Seconds instead of the ~20 min a full `test` costs after touching a root crate, because it links that crate's test binaries only."
+description = "Tests for ONE crate — the iteration loop. `mise run test-crate aiplane-api [filter]`. Seconds instead of the ~20 min a full `test` costs after touching a root crate, because it links that crate's test binaries only."
 usage = '''
-arg "<crate>" help="workspace crate, e.g. gateway-api"
+arg "<crate>" help="workspace crate, e.g. aiplane-api"
 arg "[filter]" help="optional nextest name filter"
 '''
 run = 'cargo nextest run -p "$usage_crate" ${usage_filter:-}'
 
 [tasks.lint-crate]
-description = "Clippy for ONE crate: `mise run lint-crate gateway-api`. Use while iterating; `mise run verify` before pushing."
-usage = 'arg "<crate>" help="workspace crate, e.g. gateway-api"'
+description = "Clippy for ONE crate: `mise run lint-crate aiplane-api`. Use while iterating; `mise run verify` before pushing."
+usage = 'arg "<crate>" help="workspace crate, e.g. aiplane-api"'
 run = 'cargo clippy -p "$usage_crate" --all-targets -- -D warnings'
 
 [tasks.e2e]
-description = "Browser + HTTP end-to-end tests (Playwright via node:test). Needs `mise run dev` running in another terminal. Not part of `ci`. Set CHROMIUM_HEADED=1 to watch the browser, GATEWAY_URL=… to target a remote gateway. See e2e/README.md for first-time Chromium setup."
+description = "Browser + HTTP end-to-end tests (Playwright via node:test). Needs `mise run dev` running in another terminal. Not part of `ci`. Set CHROMIUM_HEADED=1 to watch the browser, AIPLANE_URL=… to target a remote gateway. See e2e/README.md for first-time Chromium setup."
 dir = "{{ config_root }}"
 run = """
 set -eu

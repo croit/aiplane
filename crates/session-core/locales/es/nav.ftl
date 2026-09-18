@@ -1,6 +1,6 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 
-nav-brand = LLM Gateway
+nav-brand = AIplane
 nav-memory = Memoria
 nav-scheduled = Programado
 nav-webhooks = Webhooks
@@ -51,15 +51,15 @@ nav-search-close-aria = Cerrar la búsqueda
 # live session, which on a shared machine is the worst outcome.
 nav-sign-out-failed = No se pudo cerrar la sesión, sigues conectado: { $error }
 
-nav-flow-error-title = Error de conexión — LLM Gateway
+nav-flow-error-title = Error de conexión — AIplane
 nav-flow-error-heading = La conexión no se completó
 nav-flow-error-back = Volver a la aplicación
 nav-admin-required = Se requiere el rol de administrador
 nav-source-title = Código fuente (AGPL-3.0)
 nav-source-line = Fuente · AGPL-3.0 · { $version }
-login-heading = Iniciar sesión en LLM Gateway
+login-heading = Iniciar sesión en AIplane
 login-description = Autentíquese con el proveedor OIDC de su empresa para generar tokens de API y enrutar solicitudes LLM.
 login-continue-button = Continuar con OIDC →
 login-source-link = Código fuente · AGPL-3.0
-login-page-title = Sign in — LLM Gateway
-page-title-branded = { $title } — LLM Gateway
+login-page-title = Sign in — AIplane
+page-title-branded = { $title } — AIplane

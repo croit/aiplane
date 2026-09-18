@@ -30,7 +30,7 @@ skills-description-heading = Description
 skills-grant-dialog-heading = Qui peut utiliser ce skill ?
 skills-grant-dialog-desc-part1 = Choisissez les groupes autorisés à charger ce skill :
 skills-grant-dialog-desc-part2 = . Chaque personne d'un groupe sélectionné y a accès.
-skills-grant-dialog-no-roles-part1 = Aucun groupe de passerelle n'est défini. Ajoutez des entrées
+skills-grant-dialog-no-roles-part1 = Aucun groupe AIplane n'est défini. Ajoutez des entrées
 skills-grant-dialog-no-roles-part2 = avant de pouvoir accorder l'accès.
 
 skills-cancel-button = Annuler

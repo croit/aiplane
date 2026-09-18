@@ -1,26 +1,26 @@
 # Deployment
 
-Everything needed to run the gateway in production lives here. Two equivalent
+Everything needed to run AIplane in production lives here. Two equivalent
 deployment methods are provided — pick one:
 
 | Method | For | Files |
 |---|---|---|
 | **Docker Compose** | Docker / Docker Desktop hosts | [`compose.example.yml`](compose.example.yml) |
 | **systemd + Podman (Quadlet)** | rootful-podman hosts (RHEL/Debian/…) | [`quadlet/`](quadlet/) (+ its [README](quadlet/README.md)) |
-| **Helm / Kubernetes** | clusters | [`helm/llm-gateway/`](helm/llm-gateway/) (+ the walkthrough in [`docs/kubernetes.md`](../docs/kubernetes.md)) |
+| **Helm / Kubernetes** | clusters | [`helm/aiplane/`](helm/aiplane/) (+ the walkthrough in [`docs/kubernetes.md`](../docs/kubernetes.md)) |
 
 ## Components & images
 
 | Component | Image | Purpose |
 |---|---|---|
-| **gateway** | `ghcr.io/croit/llm-gateway` | The OpenAI-compatible proxy + web UI. The only one that's mandatory. |
+| **gateway** | `ghcr.io/croit/aiplane` | The OpenAI-compatible proxy + web UI. The only one that's mandatory. |
 | **google-workspace-mcp** | `ghcr.io/taylorwilsdon/google_workspace_mcp` | Self-hosted Google Workspace MCP server backing the per-user **Google Workspace** connector (Gmail/Calendar/Drive/Docs/…). Optional. |
 | **gitlab-mcp** | `docker.io/zereight050/gitlab-mcp` | Community bridge backing the per-user **GitLab (self-managed / CE)** connector; forwards each request's bearer as that user's GitLab PAT. Optional. |
 | **discord-mcp** | `ghcr.io/croit/discord-mcp` | Discord bot bridge (channel + DM tools, plus full-roster cache + `fuzz_search_members`) backing the seeded **global** Discord connector (enabled + pointed at this bridge in `/admin/connectors`, see below). Our fork of `SaseQ/discord-mcp`. Optional. |
-| **sandbox-runner** | `ghcr.io/croit/llm-gateway-sandbox-runner` | Code-execution runner (`run_in_sandbox` etc.). Optional; needs gVisor. |
+| **sandbox-runner** | `ghcr.io/croit/aiplane-sandbox-runner` | Code-execution runner (`run_in_sandbox` etc.). Optional; needs gVisor. |
 | **egress-proxy** | `docker.io/ubuntu/squid` | Allowlisting proxy for networked sandbox runs. Optional. |
-| **ocr-sidecar** | `ghcr.io/croit/llm-gateway-ocr-sidecar` | PDF-aware Unlimited-OCR adapter. Optional; needs an external Unlimited-OCR vLLM service. (Compose still builds it locally from [`ocr-sidecar/`](ocr-sidecar/); the published image is what Kubernetes pulls.) |
-| sandbox workload | `ghcr.io/croit/llm-gateway-sandbox` | The "gold image" the runner spawns per job (pulled by the runner, not run directly). |
+| **ocr-sidecar** | `ghcr.io/croit/aiplane-ocr-sidecar` | PDF-aware Unlimited-OCR adapter. Optional; needs an external Unlimited-OCR vLLM service. (Compose still builds it locally from [`ocr-sidecar/`](ocr-sidecar/); the published image is what Kubernetes pulls.) |
+| sandbox workload | `ghcr.io/croit/aiplane-sandbox` | The "gold image" the runner spawns per job (pulled by the runner, not run directly). |
 
 Per-host secrets live in env files; everything an operator would once have put
 in a config TOML now lives in the database and is edited in the browser. The
@@ -34,18 +34,18 @@ SQLite DB (also the session store) lives in a named volume. Real secret files
 
 ```bash
 # from the repo root
-printf 'GATEWAY_SESSION_KEY=%s\n' "$(openssl rand -hex 32)" > deploy/gateway.env
-docker compose -f deploy/compose.example.yml up -d gateway
+printf 'AIPLANE_SESSION_KEY=%s\n' "$(openssl rand -hex 32)" > deploy/gateway.env
+docker compose -f deploy/compose.example.yml up -d aiplane
 ```
 
-Then open the gateway and finish the **setup wizard** — it asks for your OIDC
+Then open AIplane and finish the **setup wizard** — it asks for your OIDC
 provider, proves it with a real sign-in, and hands you an admin account. There
 is no config file to write: pools, backends, models and groups are all managed
 in the signed-in UI afterwards.
 
-Generate `GATEWAY_SESSION_KEY` once and keep it for the life of the deployment.
+Generate `AIPLANE_SESSION_KEY` once and keep it for the life of the deployment.
 It signs sessions *and* derives the key that seals every secret in the database,
-so back it up together with the volume. The gateway refuses to boot without it.
+so back it up together with the volume. AIplane refuses to boot without it.
 
 Optional extras:
 
@@ -62,25 +62,24 @@ There is no config file. OCR, ComfyUI, the sandbox, Typst, skills, GeoIP and
 RAG tuning are all configured at `/admin/settings`; upstream pools and backends
 at `/admin/upstreams`; groups at `/admin/groups`; and the OIDC provider in the
 setup wizard on first run. What is left is a property of where the process runs
-and comes from the environment: `$GATEWAY_SESSION_KEY`, `$GATEWAY_DB_PATH`,
-`$GATEWAY_PUBLIC_URL`, `$GATEWAY_BOOTSTRAP_ADMIN_GROUPS`, `$IP` / `$PORT`.
+and comes from the environment: `$AIPLANE_SESSION_KEY`, `$AIPLANE_DB_PATH`,
+`$AIPLANE_PUBLIC_URL`, `$AIPLANE_BOOTSTRAP_ADMIN_GROUPS`, `$IP` / `$PORT`.
 
 ### Locked out?
 
 ```bash
-docker compose -f deploy/compose.example.yml exec gateway restore-setup
-podman exec gateway restore-setup     # quadlet
+docker compose -f deploy/compose.example.yml exec aiplane restore-setup
+podman exec aiplane restore-setup     # quadlet
 ```
 
-Reopens the setup wizard for 30 minutes and prints a one-time link. The gateway
+Reopens the setup wizard for 30 minutes and prints a one-time link. AIplane
 keeps serving the whole time — nobody is logged out, nothing is deleted, and the
 wizard comes up pre-filled with the current provider.
 
 Relative paths in the compose file resolve against `deploy/`, so the env/config
 files above live there regardless of your shell's CWD.
 
-**Local testing tip (Docker Desktop):** run *only* the MCP server and keep the
-gateway native (`mise run dev`) — that avoids a split-horizon URL problem (the
+**Local testing tip (Docker Desktop):** run *only* the MCP server and keep AIplane native (`mise run dev`) — that avoids a split-horizon URL problem (the
 browser and a native gateway both reach the MCP at `http://localhost:8000`):
 
 ```bash
@@ -90,24 +89,24 @@ docker compose -f deploy/compose.example.yml up google-workspace-mcp
 ## Quick start — Kubernetes (Helm)
 
 ```bash
-kubectl create namespace llm-gateway
-kubectl -n llm-gateway create secret generic llm-gateway-session \
-  --from-literal=GATEWAY_SESSION_KEY="$(openssl rand -hex 32)"
+kubectl create namespace aiplane
+kubectl -n aiplane create secret generic aiplane-session \
+  --from-literal=AIPLANE_SESSION_KEY="$(openssl rand -hex 32)"
 
-helm install llm-gateway oci://ghcr.io/croit/charts/llm-gateway -n llm-gateway \
+helm install aiplane oci://ghcr.io/croit/charts/aiplane -n aiplane \
   --version 2609.1.0 \
-  --set sessionKey.existingSecret=llm-gateway-session \
-  --set ingress.enabled=true --set ingress.host=gateway.example.com
+  --set sessionKey.existingSecret=aiplane-session \
+  --set ingress.enabled=true --set ingress.host=aiplane.example.com
 ```
 
 The chart is published next to the images and carries the same
-`YYMM.RELEASE.BUILD` number, so `--version 2609.1.0` pins the gateway, the OCR
+`YYMM.RELEASE.BUILD` number, so `--version 2609.1.0` pins AIplane, the OCR
 sidecar and the chart to one build ([`docs/releases.md`](../docs/releases.md)).
 
 A default install is four objects: StatefulSet (1 replica), PVC, Service,
 ServiceAccount. The MCP sidecars run as extra containers in the same pod and
 are enabled per connector; the code sandbox stays outside the chart, because it
-needs a gVisor/Kata host and the gateway only ever knows its URL.
+needs a gVisor/Kata host and AIplane only ever knows its URL.
 
 The full walkthrough — setup wizard, backups, sidecar credentials, the sandbox
 options and why the deployment is single-replica — is in
@@ -117,22 +116,22 @@ options and why the deployment is single-replica — is in
 
 See [`quadlet/README.md`](quadlet/README.md) for the full walkthrough. In short,
 install the `.container`/`.volume` units into `/etc/containers/systemd/`, the
-env/config into `/etc/gateway/`, then `systemctl daemon-reload && systemctl
+env/config into `/etc/aiplane/`, then `systemctl daemon-reload && systemctl
 enable --now gateway.service`.
 
 ---
 
-## Gateway
+## AIplane
 
 - **TLS:** the container binds `127.0.0.1:8080` — terminate HTTPS with a reverse
   proxy (Caddy/Traefik/nginx). The setup wizard pre-fills the public URL from
   the request (honouring `X-Forwarded-Proto`) and shows the exact
   `<public_url>/auth/callback` to register with your provider.
 - **State:** nothing to configure. The image sets
-  `GATEWAY_DATA_DIR=/var/lib/gateway`, so the SQLite database and the RAG index
+  `AIPLANE_DATA_DIR=/var/lib/gateway`, so the SQLite database and the RAG index
   store both land on the named volume and survive image swaps.
-- **Secrets** (`gateway.env`): `GATEWAY_SESSION_KEY` — required, and the only
-  one. Optionally `GATEWAY_ENCRYPTION_KEY` to decouple at-rest encryption from
+- **Secrets** (`gateway.env`): `AIPLANE_SESSION_KEY` — required, and the only
+  one. Optionally `AIPLANE_ENCRYPTION_KEY` to decouple at-rest encryption from
   session signing. The OIDC client secret and backend API keys are entered in
   the UI and stored encrypted in the database.
 
@@ -144,11 +143,11 @@ The OCR sidecar is inactive unless all of the following are true:
 2. An `ocr` pool and backend are configured at `/admin/upstreams`, pointing at `http://ocr-sidecar:9100` with `baidu/Unlimited-OCR` in its model list.
 3. `chat.ocr.enabled` is turned on at `/admin/settings`.
 
-Without an available `ocr` backend the gateway neither fetches attachments for OCR nor sends OCR tools or models to an LLM. The sidecar accepts the original PDF/image at `/ocr`, converts PDFs internally, and calls vLLM with the model-specific request recipe.
+Without an available `ocr` backend AIplane neither fetches attachments for OCR nor sends OCR tools or models to an LLM. The sidecar accepts the original PDF/image at `/ocr`, converts PDFs internally, and calls vLLM with the model-specific request recipe.
 
 Operationally worth knowing:
 
-- Results are cached in the gateway's `ocr_derivatives` table by document hash + model + prompt version + settings, so a document costs one OCR run no matter how many turns reference it, and the cache survives restarts. Changing `dpi`, `max_tokens`, `ngram_window`, `max_pages`, or `max_output_chars` invalidates it by design.
+- Results are cached in AIplane's `ocr_derivatives` table by document hash + model + prompt version + settings, so a document costs one OCR run no matter how many turns reference it, and the cache survives restarts. Changing `dpi`, `max_tokens`, `ngram_window`, `max_pages`, or `max_output_chars` invalidates it by design.
 - The sidecar issues one inference call **per page** by default (page numbers survive, one bad page doesn't lose the document). `OCR_MULTI_IMAGE=1` switches to one call per document.
 - OCR work is metered like any upstream call: `usage_events` rows with `kind = "ocr"`, tokens from the sidecar, and pages in `input_units`. Cache hits cost nothing and are not recorded.
 - `[chat.ocr] max_concurrency` bounds documents in flight gateway-wide; everything else queues (visibly, in the chat UI).
@@ -161,7 +160,7 @@ See [`../docs/ocr.md`](../docs/ocr.md).
 
 The **Google Workspace** connector is backed by the self-hosted
 `google-workspace-mcp` service — Google's *hosted* MCP endpoints are gated behind
-a developer-preview program and don't scale to per-user use, so the gateway uses
+a developer-preview program and don't scale to per-user use, so AIplane uses
 a self-hosted server against the **GA** Google APIs (one sign-in per user, no
 preview). Background: [`../docs/connectors.md`](../docs/connectors.md).
 
@@ -187,9 +186,9 @@ default CMD that already runs `uv run main.py --transport streamable-http`):
 | `MCP_ENABLE_OAUTH21` | `true` | Multi-user OAuth 2.1 + DCR. |
 | `WORKSPACE_MCP_STATELESS_MODE` | `true` | In-memory sessions. |
 | `WORKSPACE_MCP_PORT` | `8000` | Endpoint served at **`/mcp`** (no trailing slash; `/mcp/` 307-redirects). |
-| `TOOL_TIER` | `core` | `core`/`extended`/`complete`. **Not** `WORKSPACE_MCP_TOOL_TIER`. Mail attachments need `extended`: `get_gmail_attachment_content` is not in `core`. The gateway stores any file a tool returns as a conversation artifact rather than letting the base64 into the model's context, so the wider tier costs context only in tool definitions. |
+| `TOOL_TIER` | `core` | `core`/`extended`/`complete`. **Not** `WORKSPACE_MCP_TOOL_TIER`. Mail attachments need `extended`: `get_gmail_attachment_content` is not in `core`. AIplane stores any file a tool returns as a conversation artifact rather than letting the base64 into the model's context, so the wider tier costs context only in tool definitions. |
 | `WORKSPACE_EXTERNAL_URL` | `https://<mcp-host>` | Public URL the browser reaches during consent. |
-| `WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS` | `https://<gateway-host>/integrations/callback` | The gateway's callback (DCR allowlist). |
+| `WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS` | `https://<gateway-host>/integrations/callback` | AIplane's callback (DCR allowlist). |
 | `UV_CACHE_DIR` / `XDG_CACHE_HOME` | `/tmp/uv-cache` / `/tmp` | uv builds an editable install at startup; **the rootfs must stay writable** (no read-only) and the cache is redirected to tmpfs. |
 | `WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND` | `disk` | **Required.** See *OAuth state must survive restarts* below. |
 | `WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY` | `/var/lib/gworkspace-mcp/oauth-proxy` | Path **on the mounted volume**. |
@@ -201,8 +200,8 @@ Do **not** set a `command:`/`Exec=` override — it would be parsed as
 #### OAuth state must survive restarts
 
 This server *is* the authorization server, and its FastMCP OAuth proxy keeps
-everything in one store: the client the gateway registered via DCR, the
-authorization codes, the refresh tokens it issues to the gateway, and the
+everything in one store: the client AIplane registered via DCR, the
+authorization codes, the refresh tokens it issues to AIplane, and the
 upstream Google tokens. Left unconfigured it writes them under `$HOME` **inside
 the container** — and Quadlet recreates the container on every `systemctl
 restart` (as does `--force-recreate` / an image update), destroying it.
@@ -216,7 +215,7 @@ token refresh: token exchange failed: provider rejected the request
 ```
 
 within ~30 minutes of the restart (that's the server's access-token lifetime).
-The gateway is fine; the server simply no longer knows the client it issued.
+AIplane is fine; the server simply no longer knows the client it issued.
 
 So the shipped units mount a named volume (`gworkspace-mcp-oauth.volume` for
 Quadlet, `gworkspace-mcp-oauth` for Compose) and point the store at it with the
@@ -244,7 +243,7 @@ gworkspace-mcp.example.com {
 
 ### 4. Wire the connector
 
-In the gateway: **/admin/connectors → Google Workspace**, set the **MCP server
+In AIplane: **/admin/connectors → Google Workspace**, set the **MCP server
 URL** to `https://<mcp-host>/mcp` (no trailing slash), leave client id/secret
 empty (DCR), Save, **Enable**.
 
@@ -267,7 +266,7 @@ the community bridge [`zereight/gitlab-mcp`](https://github.com/zereight/gitlab-
 in streamable-HTTP + remote-authorization mode. Each MCP request carries the
 caller's own GitLab token, which the bridge forwards to GitLab — so every user
 gets their own permissions, and the bridge needs **no public URL and no OAuth**
-(the gateway reaches it internally). It backs the **GitLab (self-managed / CE)**
+(AIplane reaches it internally). It backs the **GitLab (self-managed / CE)**
 connector (a `static_bearer` connector; each user pastes their PAT).
 
 Compose (`gitlab` profile) or Quadlet
@@ -291,7 +290,7 @@ returns `HTTP 403 "Host header is not allowed"`. Set `MCP_ALLOWED_HOSTS` to that
 ship `MCP_ALLOWED_HOSTS=gitlab-mcp:3002`. The native-gateway loopback URL below
 needs nothing, as loopback is always allowed.
 
-Then in the gateway: **/admin/connectors → GitLab (self-managed / CE)** → set the
+Then in AIplane: **/admin/connectors → GitLab (self-managed / CE)** → set the
 MCP server URL (`http://gitlab-mcp:3002/mcp` full-stack, or
 `http://localhost:3333/mcp` for a native gateway) → Save → Enable. Each user
 connects at **/integrations** and pastes a GitLab **personal access token**
@@ -304,7 +303,7 @@ connects at **/integrations** and pastes a GitLab **personal access token**
 Discord is a **global** connector: a Discord bot authenticates with a single
 **bot token** for the whole server/guild, not a per-user OAuth account, so
 there's no "each user connects their own Discord account" flow the way there is
-for Slack, GitHub, or Atlassian. One bot, shared by everyone the gateway's RBAC
+for Slack, GitHub, or Atlassian. One bot, shared by everyone AIplane's RBAC
 grants the `mcp__discord__*` tools to (still individually toggleable
 always/ask/off on `/tools`, same as any other tool).
 
@@ -338,7 +337,7 @@ to stdio, so set
 **`SPRING_PROFILES_ACTIVE=http`** to make it serve streamable HTTP on **:8085**
 at `/mcp` (the compose/Quadlet configs below already do this). Optionally set
 `DISCORD_GUILD_ID` as a default server. (Do *not* use the `mcp/mcp-discord`
-verified image — it's a different, stdio-only project the gateway can't reach
+verified image — it's a different, stdio-only project AIplane can't reach
 over HTTP.)
 
 Compose (`discord` profile):
@@ -350,27 +349,27 @@ docker compose -f deploy/compose.example.yml --profile discord up -d
 ```
 
 Quadlet ([`quadlet/discord-mcp.container`](quadlet/discord-mcp.container)) — it
-joins the gateway's `llm` network so the gateway resolves it by name:
+joins AIplane's `llm` network so AIplane resolves it by name:
 
 ```bash
 sudo cp deploy/quadlet/discord-mcp.container /etc/containers/systemd/
-sudo install -m 0600 deploy/quadlet/discord-mcp.example.env /etc/gateway/discord-mcp.env
-sudo $EDITOR /etc/gateway/discord-mcp.env            # DISCORD_TOKEN=...
+sudo install -m 0600 deploy/quadlet/discord-mcp.example.env /etc/aiplane/discord-mcp.env
+sudo $EDITOR /etc/aiplane/discord-mcp.env            # DISCORD_TOKEN=...
 sudo systemctl daemon-reload
 sudo systemctl enable --now discord-mcp.service
 ```
 
 Endpoint: `/mcp` (container port 8085). Keep it internal-only (private network),
 never exposed publicly: the bot token grants full bot access with no per-caller
-scoping. **The bridge must share a DNS-enabled network with the gateway** — the
-`llm` network for Quadlet, the compose network by service name — or the gateway
+scoping. **The bridge must share a DNS-enabled network with AIplane** — the
+`llm` network for Quadlet, the compose network by service name — or AIplane
 can't resolve `discord-mcp`.
 
 **Enable it** in the gateway UI (as an admin): open **`/admin/connectors`**,
 find **Discord**, click **Edit**, set the **URL** to
 `http://discord-mcp:8085/mcp` (compose service name or Quadlet `llm` network) or
 `http://127.0.0.1:3334/mcp` (native gateway + the loopback port published above),
-save, then **Enable**. The connector's auth is **No auth** (the gateway sends no
+save, then **Enable**. The connector's auth is **No auth** (AIplane sends no
 credentials — the bot token lives in the bridge), its scope is **Global**, and
 it ships **audited** — every tool call is logged (the **Audit log** button on
 its row). Its tools are then available to everyone the connector's role allows.
@@ -392,7 +391,7 @@ model, the gVisor install, and the isolation self-check are documented in
   stop. On Docker Desktop / macOS (no gVisor) use `SANDBOX_RUNTIME=local-unsafe`
   for dev only — never in a deployment.
 
-Point the gateway at the runner via `[sandbox] runner_url` in the config TOML
+Point AIplane at the runner via `[sandbox] runner_url` in the config TOML
 (`http://sandbox-runner:9000` on the compose network, or the podman bridge IP for
 the host-service path).
 

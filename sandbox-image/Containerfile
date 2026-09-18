@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 croit GmbH
 #
-# Gold workload image for the LLM-gateway sandbox.
+# Gold workload image for the croit AIplane sandbox.
 #
 # Goal: a batteries-included environment so the model can act like a
 # capable system engineer — debug large (and compressed) log files, work
@@ -18,7 +18,7 @@
 # (typst/duckdb/yq) match the production host; adjust for other arches.
 #
 # Build:
-#   podman build -t ghcr.io/croit/llm-gateway-sandbox:latest sandbox-image/
+#   podman build -t ghcr.io/croit/aiplane-sandbox:latest sandbox-image/
 
 # Base image is pinned by digest, not just by tag. `debian:trixie-slim` is a
 # moving target — the same tag points at a new build every few days — so a tag

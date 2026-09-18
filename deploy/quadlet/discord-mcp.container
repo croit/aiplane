@@ -23,8 +23,8 @@
 # Install:
 #   sudo cp deploy/quadlet/discord-mcp.container /etc/containers/systemd/
 #   sudo install -m 0600 deploy/quadlet/discord-mcp.example.env \
-#        /etc/gateway/discord-mcp.env
-#   sudo $EDITOR /etc/gateway/discord-mcp.env          # set DISCORD_TOKEN
+#        /etc/aiplane/discord-mcp.env
+#   sudo $EDITOR /etc/aiplane/discord-mcp.env          # set DISCORD_TOKEN
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now discord-mcp.service
 #
@@ -50,7 +50,7 @@ Network=llm.network
 # Serve streamable HTTP on :8085 (instead of the default stdio transport).
 Environment=SPRING_PROFILES_ACTIVE=http
 # DISCORD_TOKEN (+ optional DISCORD_GUILD_ID) — secret, kept out of the unit.
-EnvironmentFile=/etc/gateway/discord-mcp.env
+EnvironmentFile=/etc/aiplane/discord-mcp.env
 
 # No published host port: the gateway reaches it internally over `llm`. The bot
 # token grants full bot access with no per-caller scoping, so keep it internal.

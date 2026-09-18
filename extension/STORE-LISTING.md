@@ -19,13 +19,13 @@ questioned, and a disclosure that contradicts the privacy policy is a rejection.
 
 ## Name
 
-    LLM Gateway Browser Control
+    croit AIplane Browser Control
 
 75 characters is the limit; this is 27.
 
 ## Summary (132 characters max)
 
-    Let a conversation in your own LLM Gateway read and operate pages in this browser — only while you switch it on.
+    Let a conversation in your own AIplane read and operate pages in this browser — only while you switch it on.
 
 111 characters.
 
@@ -35,7 +35,7 @@ Productivity / Workflow & Planning.
 
 ## Detailed description
 
-    LLM Gateway Browser Control connects a conversation in your own LLM Gateway
+    croit AIplane Browser Control connects a conversation in your own AIplane
     to the browser you are already using — with the sessions you are already
     signed in to.
 
@@ -44,16 +44,16 @@ Productivity / Workflow & Planning.
     found. It works in a tab of its own, in its own tab group, so it stays out
     of the way of whatever you are doing.
 
-    WHOSE GATEWAY
+    WHOSE AIPLANE
 
-    LLM Gateway is open-source software that you or your organisation host. This
-    extension talks to the gateway you pair it with and to nothing else. The
+    AIplane is open-source software that you or your organisation host. This
+    extension talks to the AIplane you pair it with and to nothing else. The
     authors of this extension receive no data from it at all — no page content,
-    no addresses, no statistics. Whoever runs your gateway holds your data.
+    no addresses, no statistics. Whoever runs your AIplane holds your data.
 
     IT IS OFF UNTIL YOU SWITCH IT ON
 
-    Nothing happens until you pair a gateway and switch the extension on from
+    Nothing happens until you pair an AIplane and switch the extension on from
     its toolbar icon. The icon is coloured while it is on and grey while it is
     off, Chrome shows its own banner across every tab, and every step is listed
     in the popup. Switching it off releases everything at once, and so does
@@ -67,7 +67,7 @@ Productivity / Workflow & Planning.
 
     WHAT IT CANNOT DO
 
-    Run code sent from anywhere. The gateway sends a fixed set of named actions
+    Run code sent from anywhere. AIplane sends a fixed set of named actions
     that this extension checks against a list it ships with; anything else is
     refused. It also cannot switch itself on — that takes a click on the
     extension's own button, which no web page can produce.
@@ -82,7 +82,7 @@ Productivity / Workflow & Planning.
 
 ## Single purpose
 
-    Let a conversation in a user's own LLM Gateway read and operate web pages in
+    Let a conversation in a user's own AIplane read and operate web pages in
     the user's browser, on the user's behalf and only while the user has
     switched the extension on.
 
@@ -115,8 +115,8 @@ One per declared permission. The dashboard asks for each separately.
 ### `scripting`
 
     Two uses. First, registering a small bridge script on the origins of
-    gateways the user paired, which is how the gateway's page reaches the
-    extension; these origins are not known at publish time because a gateway is
+    the AIplane servers the user paired, which is how AIplane's page reaches the
+    extension; these origins are not known at publish time because an AIplane is
     self-hosted on the user's own domain, so externally_connectable cannot be
     used. Second, reading the structure of a page the assistant is working on
     (read_page, find), which is done in the page rather than over the debugger.
@@ -124,7 +124,7 @@ One per declared permission. The dashboard asks for each separately.
 ### `tabs`
 
     To open the tab the assistant works in and find it again across steps, to
-    re-attach the bridge script to gateway tabs that were already open after the
+    re-attach the bridge script to AIplane tabs that were already open after the
     extension updates, and to report the titles and addresses of open tabs when
     the user asks the assistant to list them.
 
@@ -135,8 +135,8 @@ One per declared permission. The dashboard asks for each separately.
 
 ### `storage`
 
-    To remember which gateways the user paired, whether the extension is
-    currently switched on and for which gateway, and a short local log of the
+    To remember which AIplane servers the user paired, whether the extension is
+    currently switched on and for which AIplane, and a short local log of the
     steps carried out, shown in the popup. All of it stays in the browser; none
     of it is transmitted.
 
@@ -144,7 +144,7 @@ One per declared permission. The dashboard asks for each separately.
 
     Declared as optional_host_permissions and requested at the moment the user
     switches the extension on, not at install time. The assistant cannot know in
-    advance which sites a user will ask it to work on, and a gateway is
+    advance which sites a user will ask it to work on, and an AIplane is
     self-hosted on an address only the user knows, so the set cannot be
     enumerated at publish time. Users who prefer a narrower grant can switch the
     extension to "only sites I approve" in its settings and approve individual
@@ -154,13 +154,13 @@ One per declared permission. The dashboard asks for each separately.
 
 Answer: **No, the extension does not execute remote code.**
 
-    All logic is contained in the extension package. The gateway sends data, not
+    All logic is contained in the extension package. AIplane sends data, not
     code: a JSON list of named actions drawn from a fixed set of fourteen
     (navigate, read_page, find, click, hover, drag, type_text, press_key, scroll,
     screenshot, set_viewport, wait_for, go_back, list_tabs). Every action is
     checked against KNOWN_ACTIONS in src/policy.js before anything runs, and an
     action the extension does not recognise is refused and treated as a write
-    attempt. No string received from the gateway is ever evaluated, injected as
+    attempt. No string received from AIplane is ever evaluated, injected as
     script, or passed to a function constructor. No script is loaded from a
     remote origin; the extension loads no external resources of any kind.
 
@@ -176,9 +176,9 @@ Tick these, and only these — they must match `PRIVACY.md` exactly:
 | Authentication information | No |
 | Personal communications | No |
 | Location | No |
-| Web history | **Yes** — page addresses and titles are sent to the user's own gateway while the extension is switched on |
-| User activity | **Yes** — the actions the assistant performs are sent to the user's own gateway and recorded in its audit trail |
-| Website content | **Yes** — text, structure and screenshots of pages the assistant works on are sent to the user's own gateway |
+| Web history | **Yes** — page addresses and titles are sent to the user's own AIplane while the extension is switched on |
+| User activity | **Yes** — the actions the assistant performs are sent to the user's own AIplane and recorded in its audit trail |
+| Website content | **Yes** — text, structure and screenshots of pages the assistant works on are sent to the user's own AIplane |
 
 Certifications (all three must be true, and are):
 

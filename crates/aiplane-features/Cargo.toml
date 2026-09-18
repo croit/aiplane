@@ -1,0 +1,74 @@
+[package]
+name = "aiplane-features"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The gateway's optional subsystems: RAG, skills, ComfyUI, push, geoip, typst
+# discovery, image gen, chat attachments, embeddings, speech, PDF, OCR, search
+# settings. Stands on `aiplane-core` and knows nothing about AppState or the tool
+# registry, which is what lets it sit below `aiplane-runtime`.
+# See docs/architecture.md.
+
+[dependencies]
+aiplane-core = { path = "../aiplane-core" }
+shared = { path = "../shared" }
+session-core = { path = "../session-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+jiff = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+sqlx = { workspace = true }
+toml = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+rand = { workspace = true }
+base64 = "0.23"
+tempfile = { workspace = true }
+# Chat-attachment uploader (S3 or S3-compatible).
+rust-s3 = { workspace = true }
+# Web Push: VAPID signing (P-256 ECDSA) + RFC 8291 payload encryption
+# (P-256 ECDH -> HKDF-SHA256 -> AES-128-GCM).
+aes-gcm = "0.10"
+p256 = { version = "0.13", features = ["ecdh"] }
+hkdf = "0.12"
+sha2 = { workspace = true }
+sha1 = "0.10"
+data-encoding = "2.11"
+mail-parser = "0.11"
+flate2 = "1.1"
+# GeoIP: the LITE DB11 BIN reader, its hot-reload watcher, and the unpacker for
+# the optional weekly updater.
+ip2location = { workspace = true }
+notify = { workspace = true }
+zip = { workspace = true }
+# Vector index for RAG (one mmap'd index per collection).
+usearch = { workspace = true }
+# PDF text tier (pure Rust) + the pdfium image tier for scanned documents.
+pdf-extract = { workspace = true }
+pdfium-render = { workspace = true }
+image = { workspace = true }
+# Rama wire types the subsystems hand back (bodies, header maps).
+rama = { workspace = true }
+# Object-safe async traits. Needed for `Arc<dyn FileProvider>`: the RAG
+# indexer dispatches over pluggable remote file sources (WebDAV today,
+# OneDrive/Dropbox later) and tests swap in an in-memory fake, exactly as
+# `sandbox-runner` does for `dyn ContainerBackend`.
+async-trait = { workspace = true }
+# PROPFIND multistatus parsing for the WebDAV source provider.
+quick-xml = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+# The mailing-list cache writes real files; its tests write them somewhere
+# that cleans itself up.
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

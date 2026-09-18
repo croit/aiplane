@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 croit GmbH
 #
-# In-image job marshaller for the LLM-gateway sandbox.
+# In-image job marshaller for the croit AIplane sandbox.
 #
 # The `sandbox-runner` service pipes a RunRequest (JSON) to this program's
 # stdin via `podman exec -i <container> /usr/local/bin/sandbox-agent`, and

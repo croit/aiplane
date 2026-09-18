@@ -2,7 +2,7 @@
 
 ## Hard rules
 
-1. **No Node in the runtime tree.** The gateway binary and everything it serves at runtime are built without a Node process: Rust for the server, and the SvelteKit SPA (`web/`) is *compiled ahead of time* by Vite into static files the binary serves from `GATEWAY_STATIC_DIR`. Node appears in two build/test-only places, each documented in its section below: the **SPA build toolchain** (`web/package.json`, pinned versions, invoked via the `mise run *-web` tasks) and **test tooling** (Node + `@playwright/cli` via mise's `npm:` backend for the e2e suite). Neither ships in the container image — it carries the binary plus the static build output and nothing else.
+1. **No Node in the runtime tree.** The gateway binary and everything it serves at runtime are built without a Node process: Rust for the server, and the SvelteKit SPA (`web/`) is *compiled ahead of time* by Vite into static files the binary serves from `AIPLANE_STATIC_DIR`. Node appears in two build/test-only places, each documented in its section below: the **SPA build toolchain** (`web/package.json`, pinned versions, invoked via the `mise run *-web` tasks) and **test tooling** (Node + `@playwright/cli` via mise's `npm:` backend for the e2e suite). Neither ships in the container image — it carries the binary plus the static build output and nothing else.
 2. **Every Cargo dep needs a justification.** Add it to the table below in the same PR that introduces it. A one-line "why" is enough.
 3. **Prefer stdlib.** Don't pull in `chrono` for a single `Instant::now()`. Don't pull in `lazy_static` — use `std::sync::OnceLock` or `LazyLock`.
 4. **Prefer crates rama already brings in.** rama re-exports `tokio`, `hyper`, `http`, `http-body`, and tower-style traits. Adding features to existing crates doesn't grow the tree — pulling in a parallel implementation does.
@@ -16,23 +16,23 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 | Crate | Used in | Why |
 |---|---|---|
 | `rama` | `gateway` | HTTP framework + proxying primitives. Features `http-full` + `tower`; rustls deliberately off (aws-lc-sys is cmake-only). |
-| `serde_urlencoded` | `gateway`, `gateway-api` | Query-string encode/decode: building the `return_to` parameter on the sign-in redirect and parsing the OIDC callback's query. (It used to parse form bodies for the page POST handlers; those are gone.) |
+| `serde_urlencoded` | `gateway`, `aiplane-api` | Query-string encode/decode: building the `return_to` parameter on the sign-in redirect and parsing the OIDC callback's query. (It used to parse form bodies for the page POST handlers; those are gone.) |
 | `tokio` | `gateway`, `cli` | Async runtime. |
 | `serde`, `serde_json` | all | Data interchange (OpenAI schema, config). |
 | `thiserror` | all | Library-style error types. |
 | `tracing`, `tracing-subscriber` | `gateway`, `cli` | Structured logging. |
-| `reqwest` (rustls-tls, stream) | `gateway`, `cli` | Outbound HTTP — upstream LLM calls (gateway) + gateway-API calls (cli). ring-backed rustls avoids the aws-lc-sys / cmake dependency that comes with rama's TLS features. See `crates/gateway/src/rama_server/proxy.rs` for why the gateway keeps reqwest rather than driving rama's client side directly. |
+| `reqwest` (rustls-tls, stream) | `gateway`, `cli` | Outbound HTTP — upstream LLM calls (gateway) + gateway-API calls (cli). ring-backed rustls avoids the aws-lc-sys / cmake dependency that comes with rama's TLS features. See `crates/aiplane/src/rama_server/proxy.rs` for why AIplane keeps reqwest rather than driving rama's client side directly. |
 | `openidconnect` | `gateway` | OIDC discovery + code exchange. The Rust ecosystem's standard. |
 | `sqlx` (sqlite, runtime-tokio-rustls, macros, migrate) | `gateway` | Persistence for users, gateway tokens, sessions, pending_logins, audit log. |
 | `hmac` + `sha2` | `gateway` | HMAC-SHA256 for the signed session cookie; SHA-256 for indexed bearer-token lookup. Tokens are 256-bit OS-random opaque strings, so argon2id would only add CPU cost without security gain. |
 | `rand` (with OsRng) | `gateway` | Session IDs and new gateway tokens from the OS RNG. |
-| `aes-gcm` | `gateway` | AES-256-GCM for at-rest secret sealing (`server::crypto`: MCP OAuth tokens, connector secrets, backend API keys) and AES-128-GCM for Web Push payload encryption (`gateway_features::server::push`, RFC 8291). |
-| `p256` (+ `ecdh`) | `gateway` | Web Push (`gateway_features::server::push`): P-256 ECDSA (ES256) for VAPID request signing (RFC 8292) + P-256 ECDH for payload encryption (RFC 8291). Already in the tree via `jsonwebtoken`; the `ecdh` feature is the only real addition. |
-| `mail-parser` | `gateway-features` | Mailing-list RAG source: RFC 5322 + MIME parsing for HyperKitty mbox archives. Hand-rolling multipart walking, transfer-encodings and charset transcoding is a bug farm — the real `ceph-users` archive is 100% multipart across eight years of mail clients. Pure Rust; its only dependency, `encoding_rs`, is already in the tree. |
-| `flate2` | `gateway-features`, `gateway` (dev) | Gunzip for the `.mbox.gz` archive exports; the dev-dependency is the integration test gzipping a fixture archive to serve. Already in the tree transitively. |
-| `sha1` + `data-encoding` | `gateway-features` | HyperKitty derives a message's permalink as `base32(sha1(Message-ID))`, so citations are computed offline instead of costing a request each. Both already in the tree transitively. |
-| `hkdf` | `gateway` | HKDF-SHA256 key schedule for RFC 8291 Web Push payload encryption (`gateway_features::server::push`). Already transitive via `elliptic-curve`. |
-| `base64` | `gateway` | base64url (no-pad) for the Web Push wire format (`gateway_features::server::push`): VAPID JWT segments, the VAPID public key, and decoding subscription keys. Unconditionally in the tree already via `reqwest`/`hyper` (see the note below on why this is no longer avoided). |
+| `aes-gcm` | `gateway` | AES-256-GCM for at-rest secret sealing (`server::crypto`: MCP OAuth tokens, connector secrets, backend API keys) and AES-128-GCM for Web Push payload encryption (`aiplane_features::server::push`, RFC 8291). |
+| `p256` (+ `ecdh`) | `gateway` | Web Push (`aiplane_features::server::push`): P-256 ECDSA (ES256) for VAPID request signing (RFC 8292) + P-256 ECDH for payload encryption (RFC 8291). Already in the tree via `jsonwebtoken`; the `ecdh` feature is the only real addition. |
+| `mail-parser` | `aiplane-features` | Mailing-list RAG source: RFC 5322 + MIME parsing for HyperKitty mbox archives. Hand-rolling multipart walking, transfer-encodings and charset transcoding is a bug farm — the real `ceph-users` archive is 100% multipart across eight years of mail clients. Pure Rust; its only dependency, `encoding_rs`, is already in the tree. |
+| `flate2` | `aiplane-features`, `gateway` (dev) | Gunzip for the `.mbox.gz` archive exports; the dev-dependency is the integration test gzipping a fixture archive to serve. Already in the tree transitively. |
+| `sha1` + `data-encoding` | `aiplane-features` | HyperKitty derives a message's permalink as `base32(sha1(Message-ID))`, so citations are computed offline instead of costing a request each. Both already in the tree transitively. |
+| `hkdf` | `gateway` | HKDF-SHA256 key schedule for RFC 8291 Web Push payload encryption (`aiplane_features::server::push`). Already transitive via `elliptic-curve`. |
+| `base64` | `gateway` | base64url (no-pad) for the Web Push wire format (`aiplane_features::server::push`): VAPID JWT segments, the VAPID public key, and decoding subscription keys. Unconditionally in the tree already via `reqwest`/`hyper` (see the note below on why this is no longer avoided). |
 | `uuid` (v4, serde) | `gateway` | Stable IDs for tokens. |
 | `url` | `gateway` | OIDC redirect-URI construction and parsing. |
 | `clap` (derive) | `sandbox-runner` | Argument parsing. The standard. |
@@ -48,7 +48,7 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 | `earshot` | `gateway` | Pure-Rust neural VAD (~110 KiB, no ONNX runtime) on the `/v1/audio/transcriptions` upload path. Strips leading/trailing silence + clips long pauses before forwarding to Whisper, since silence is the dominant source of Whisper hallucinations. |
 | `symphonia` | `gateway` | Pure-Rust audio format probing for transcription billing. Reads frame counts and sample rates from WAV, MP3, FLAC, Ogg/Vorbis, and ISO-MP4 uploads when providers omit duration; decoder features are limited to common transcription formats. |
 | `lumis` (`default-features = false` + explicit grammar list) | `session-core` | Syntax highlighting for fenced code blocks in exported conversations. Enables nearly all tree-sitter grammars but excludes `lang-caddy` (GPL-3.0, license-incompatible with our AGPL-3.0 binary). See [Notes](#notes-on-specific-deps) for the licensing/build trade-off and theme handling. |
-| `regex` | `session-core`, `gateway-runtime`, `gateway-tools` | Already a transitive dep via `tracing-subscriber`'s env-filter, so pulling it in explicitly costs nothing. Used for attachment-marker parsing, RAG chunk matching, and sandbox output scanning. |
+| `regex` | `session-core`, `aiplane-runtime`, `aiplane-tools` | Already a transitive dep via `tracing-subscriber`'s env-filter, so pulling it in explicitly costs nothing. Used for attachment-marker parsing, RAG chunk matching, and sandbox output scanning. |
 | `ip2location` | `gateway` | Reads an IP2Location LITE DB11 `.BIN` (memory-mapped, sync, `Send + Sync`) to resolve a caller's source IP → coarse city/country/lat-lon for the `get_user_location` tool. Optional at runtime: with no DB file the feature is simply inactive. |
 | `notify` | `gateway` | Filesystem watcher that hot-reloads the GeoIP `.BIN` when it changes (operator drop-in or the weekly updater) without a gateway restart. Cross-platform backend (inotify/FSEvents/…) via default features. |
 | `zip` (default-features off, `deflate` only) | `gateway` | Unpacks the IP2Location LITE distribution downloaded by the optional weekly GeoIP updater. `deflate`-only — the LITE archives use standard deflate, so the C-backed bzip2/lzma/zstd codecs in zip's defaults stay out of the tree. |
@@ -68,7 +68,7 @@ Detailed rationale that's too long for the table cells above.
 
 **`fluent-templates`/`fluent-bundle` — transitive `once_cell`.** The Fluent stack's own transitive deps (`unic-langid-impl`, `intl-memoizer`) use `once_cell` internally. The "explicitly not allowed" rule below is about *direct* additions to code we write — it doesn't reach into an approved crate's own dependency choices, so this isn't an oversight of that rule.
 
-**`base64` — why it's no longer hand-rolled.** It used to sit in "not allowed": `rama_server::session` (and an OIDC test) carry a tiny inline `base64url_nopad` to save a transitive dep. That rationale is now moot — `reqwest`/`hyper-util` pull `base64` unconditionally, so it's compiled regardless. `gateway_features::server::push` needs both base64url encode **and** validating decode across several call sites (VAPID JWT, subscription keys), where the crate's `URL_SAFE_NO_PAD` engine is safer than growing the hand-rolled helper. The existing inline helpers are left as-is (not worth the churn); new code uses the crate.
+**`base64` — why it's no longer hand-rolled.** It used to sit in "not allowed": `rama_server::session` (and an OIDC test) carry a tiny inline `base64url_nopad` to save a transitive dep. That rationale is now moot — `reqwest`/`hyper-util` pull `base64` unconditionally, so it's compiled regardless. `aiplane_features::server::push` needs both base64url encode **and** validating decode across several call sites (VAPID JWT, subscription keys), where the crate's `URL_SAFE_NO_PAD` engine is safer than growing the hand-rolled helper. The existing inline helpers are left as-is (not worth the churn); new code uses the crate.
 
 **`pdfium-render` — the runtime native-library exception.** This is the one runtime native-library exception to the static-binary rule. It loads Chromium's `pdfium` (BSD-3) *dynamically at runtime* via pre-generated bindings, so there's no bindgen/clang at build time and the build never needs the lib. It's optional: with no `pdfium` deployed, the `mode="images"` tier returns a clean "renderer unavailable" note (`server::pdf::bind_pdfium`) and the text tier is unaffected. Operators enable it by dropping `libpdfium` on the system search path or pointing `PDFIUM_LIB_PATH` at it.
 
@@ -79,7 +79,7 @@ Detailed rationale that's too long for the table cells above.
 | `wiremock` | `gateway` tests | Mock upstream LLM endpoints and the OIDC IdP (`tests/oidc_integration.rs`). The mocking exception to "minimize deps". |
 | `tempfile` | tests | Scratch directories for SQLite + credential-file tests. |
 | `http-body-util` | tests | `BodyExt::collect()` for draining rama response bodies in tests. |
-| `rsa` (features: sha2) | `gateway` tests | Generates a throw-away RSA keypair per OIDC integration test run: the public half feeds the mock JWKS endpoint, the private half signs the ID token the gateway verifies. Test-only; never linked into the binary. |
+| `rsa` (features: sha2) | `gateway` tests | Generates a throw-away RSA keypair per OIDC integration test run: the public half feeds the mock JWKS endpoint, the private half signs the ID token AIplane verifies. Test-only; never linked into the binary. |
 
 ## Test-tooling carve-out (Node + Playwright)
 
@@ -95,7 +95,7 @@ Used by:
 - `mise run test-web` — Node's own `node --test` (with type stripping) over the SPA's `web/src/lib/*.test.ts` unit tests. No test framework dependency, no jsdom.
 - `.claude/skills/take-screenshots/screenshot.mjs` — generates the README screenshots (`docs/img/*.png`) against the seeded `dev_ui` example. See that skill for the flow.
 
-None of these touch `web/node_modules`: the Playwright scripts `import` the library directly out of the mise tool's install directory (path overridable via `$PLAYWRIGHT_DIR`), and `test-web` runs on Node alone. The SPA's `package.json` is for building the SPA, not for testing the gateway. Adding any other Node tool needs the same justification step as a Cargo dep.
+None of these touch `web/node_modules`: the Playwright scripts `import` the library directly out of the mise tool's install directory (path overridable via `$PLAYWRIGHT_DIR`), and `test-web` runs on Node alone. The SPA's `package.json` is for building the SPA, not for testing AIplane. Adding any other Node tool needs the same justification step as a Cargo dep.
 
 ## SPA build dependencies (`web/package.json`)
 
@@ -122,7 +122,7 @@ output (see the Dockerfile).
 | `figment` | Hand-roll config layering until it stops being trivial. |
 | `axum`, `tower-sessions`, `tower-http` | The server stack is rama-only. Sessions are hand-rolled (`rama_server::session`); HTTP-layer concerns ride on rama services. Bringing axum back would mean running two routers in parallel. |
 | `dioxus`, `dioxus-primitives`, `dioxus-icons` | Dropped during the rama spike. The UI went server-rendered (plait + datastar) and then, in the SPA migration, to SvelteKit — see `web/` and [`ui.md`](ui.md). Don't reopen this; two UI frameworks is one too many. |
-| `plait` | **Removed** with the server-rendered pages. It provided the `html! { ... }` macro that rendered them inline in rama handlers. The gateway no longer produces HTML for the UI at all: the wire carries JSON, and the SPA owns the pixels. Do not reintroduce it to hand-render a fragment — that is how two UIs start. |
+| `plait` | **Removed** with the server-rendered pages. It provided the `html! { ... }` macro that rendered them inline in rama handlers. AIplane no longer produces HTML for the UI at all: the wire carries JSON, and the SPA owns the pixels. Do not reintroduce it to hand-render a fragment — that is how two UIs start. |
 | `datastar` (vendored JS) | **Removed** with the server-rendered pages. It drove `datastar-patch-elements` SSE DOM patches; the SPA gets structured JSON events instead (`session_core::chat_json`) and renders them itself, so there is no `include_bytes!`'d JS bundle left to vendor. |
 
 ## Adding a dep — checklist

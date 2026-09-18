@@ -14,7 +14,7 @@ We use the `openidconnect` crate (PKCE, discovery, code exchange) against any st
 The provider lives in the **database**, entered through the setup wizard at
 `/setup` (see below). Issuer, client id, scopes and the roles claim are plain
 `app_settings` rows; the client secret is sealed with the at-rest key
-(`gateway_core::server::setup`).
+(`aiplane_core::server::setup`).
 
 There is no config-file path into this. A fresh install lands in the wizard;
 an established one already has its provider in the database.
@@ -45,7 +45,7 @@ account to authenticate against and nothing configured worth stealing.
 `restore-setup` on the host for 30 minutes and needs the one-time token that
 command prints, carried afterwards by a `gw_setup` cookie scoped to `/api/v0/setup`.
 
-**Recovery is not first-run mode.** With a recovery window open the gateway
+**Recovery is not first-run mode.** With a recovery window open AIplane
 keeps serving normally — chats, `/v1`, existing sessions — and only `/setup`
 becomes reachable again. Conflating the two would let one locked-out admin take
 a production gateway offline for everyone else. `setup_wizard.rs` pins this.
@@ -54,7 +54,7 @@ The wizard cannot help if the provider itself is gone, since it proves a
 provider by signing in through it. `[gateway].bootstrap_admin_groups` remains
 the break-glass anchor that does not depend on the group tables.
 
-Required env: none for OIDC. `GATEWAY_SESSION_KEY` is required for the gateway
+Required env: none for OIDC. `AIPLANE_SESSION_KEY` is required for AIplane
 to boot at all (it signs sessions and derives the at-rest key).
 
 ### Browser flow (web UI users)
@@ -97,7 +97,7 @@ Why SHA-256, not argon2id:
 
 We **don't** use JWTs for gateway tokens. Rationale:
 - Revocation is trivial with DB-backed tokens (`UPDATE … SET revoked_at = …`).
-- We don't need cross-service verification; the gateway is the only verifier.
+- We don't need cross-service verification; AIplane is the only verifier.
 - One fewer crate (no `jsonwebtoken`).
 
 ### Token-bound metadata

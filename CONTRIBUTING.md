@@ -1,11 +1,11 @@
-# Contributing to LLM Gateway
+# Contributing to croit AIplane
 
 Thanks for considering a contribution! This document covers how to submit
 changes and the legal terms your contribution is made under.
 
 ## License & Contributor License Agreement
 
-LLM Gateway is licensed under the **GNU AGPL-3.0** (see [`LICENSE`](LICENSE)).
+croit AIplane is licensed under the **GNU AGPL-3.0** (see [`LICENSE`](LICENSE)).
 croit GmbH additionally offers the software under separate commercial licenses.
 
 To keep that dual-licensing model possible, every contribution must be covered

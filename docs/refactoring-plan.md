@@ -57,7 +57,7 @@ Backend-Abstraktion ist bereits sauber table-driven — kein `if qwen … else i
 
 | # | Task | Aufwand | Wirkung |
 |---|------|---------|---------|
-| 2.1 | **`gateway`-Crate in Layer-Sub-Crates splitten** — der **einzige** Hebel, der die 13-s-Edit-Loop senkt (→ ~5–7 s in einem Leaf-Crate). Reihenfolge: **`gateway-core` zuerst** (db/ + config + state/AppState + crypto + rbac — hoher fan-in), dann `gateway-tools`, `gateway-api` (pages/), `gateway-drivers` (openai_driver + upstreams), `gateway` (bin: router/proxy/api/main). Achtung: `crate::server` wird von tools/ 182× und pages/ 129× referenziert — Hub muss zuerst entflochten werden. Inkrementell machen. | L | Edit-Loop **13 s → 5–7 s** |
+| 2.1 | **`gateway`-Crate in Layer-Sub-Crates splitten** — der **einzige** Hebel, der die 13-s-Edit-Loop senkt (→ ~5–7 s in einem Leaf-Crate). Reihenfolge: **`aiplane-core` zuerst** (db/ + config + state/AppState + crypto + rbac — hoher fan-in), dann `aiplane-tools`, `aiplane-api` (pages/), `gateway-drivers` (openai_driver + upstreams), `gateway` (bin: router/proxy/api/main). Achtung: `crate::server` wird von tools/ 182× und pages/ 129× referenziert — Hub muss zuerst entflochten werden. Inkrementell machen. | L | Edit-Loop **13 s → 5–7 s** |
 | 2.2 | **37 Test-Binaries zu 1 Harness** (`tests/main.rs` mit `mod proxy; mod rag; …`, geteiltes `tests/common/`) — 37 Links → 1. Risiko: prozess-globaler State (env `set_var`, DB-Pfade, Ports) auf Kollision prüfen; genuin isolierte (OIDC, sandbox-live) separat lassen | M | **1–3 min** weniger `mise run test`/CI |
 | 2.3 | `run_one_turn` (openai_driver `:242`, **~810 Z.**, Verschachtelung ~7): `run_round` (SSE, auf 1.1) + `classify_and_dispatch_tool_calls` (`:836`, testbare State-Machine) + `build_round_request` (`:441`) extrahieren | L | Größte God-Function reviewbar |
 | 2.4 | `session-core/db.rs` (3037) → Submodule (sessions/turns/tool_calls/search/fork/recovery); `fork_session`/`search_sessions` in Helfer zerlegen; `str_enum!`-Makro für die 3 identischen Enum-`as_str`/`parse` | M | Navigation + Dedup |
@@ -72,4 +72,4 @@ Backend-Abstraktion ist bereits sauber table-driven — kein `if qwen … else i
 2. **1.1 (SSE-Merge)** und **1.2 (PageCtx)** — die zwei größten Wartbarkeits-Hebel
 3. **2.2 (Test-Harness)** — billigster großer Dev-Speed-Gewinn
 4. Rest P1 nach Bedarf
-5. **2.1 (Crate-Split)** als eigenes, gestaffeltes Projekt (`gateway-core` zuerst) — sobald die Edit-Loop wirklich stört
+5. **2.1 (Crate-Split)** als eigenes, gestaffeltes Projekt (`aiplane-core` zuerst) — sobald die Edit-Loop wirklich stört

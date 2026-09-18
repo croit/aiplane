@@ -1,4 +1,4 @@
-LLM Gateway
+croit AIplane (formerly croit LLM Gateway)
 Copyright (C) croit GmbH and contributors
 
 This product is licensed under the GNU Affero General Public License v3.0
@@ -11,21 +11,18 @@ dependency audit — run `cargo about generate` or `cargo deny check licenses`
 for an exhaustive, machine-generated manifest of every transitive crate.
 
 ================================================================================
-Assets compiled into the binary (via `include_bytes!`)
+Assets shipped with the web UI
 ================================================================================
 
-- Datastar (https://data-star.dev/) — MIT License.
-  Copyright © Star Federation.
-  Bundled verbatim as `crates/session-core/assets/datastar.js` and served from
-  the binary.
+The SvelteKit single-page app in `web/` is built to `web/build/` and copied into
+the container image, which serves it from `$AIPLANE_STATIC_DIR`. These are
+compiled into its stylesheet (`web/src/app.css`).
 
 - Tailwind CSS v4 (https://tailwindcss.com/) — MIT License.
   Copyright (c) Tailwind Labs, Inc.
-  Compiled into `crates/session-core/assets/app.css`.
 
 - daisyUI v5 (https://daisyui.com/) — MIT License.
   Copyright (c) 2020 Pouya Saadeghi.
-  Compiled into `crates/session-core/assets/app.css`.
 
 The above components are distributed under the MIT License. As the MIT License
 requires, the following permission notice accompanies each of them:

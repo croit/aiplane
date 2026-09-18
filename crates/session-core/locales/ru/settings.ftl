@@ -1,7 +1,7 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
 # Настройки оператора (/admin/settings). Заголовки карточек (settings-s-*),
 # подписи полей (settings-f-*) и их подсказки (settings-f-*-help) выводятся
-# из записей в gateway_core::server::settings::SECTIONS:
+# из записей в aiplane_core::server::settings::SECTIONS:
 # `sandbox.runner_url` -> `settings-f-sandbox-runner_url`.
 # Источник — locales/en/settings.ftl.
 

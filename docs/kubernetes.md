@@ -1,12 +1,12 @@
 # Kubernetes
 
-How to run the gateway on Kubernetes with the Helm chart in
-[`deploy/helm/llm-gateway/`](../deploy/helm/llm-gateway/).
+How to run AIplane on Kubernetes with the Helm chart in
+[`deploy/helm/aiplane/`](../deploy/helm/aiplane/).
 
 The deployment is deliberately small: **one pod, one volume, one secret.**
 Everything else — upstream pools, models, groups, the OIDC provider, RAG, tool
 permissions — is configured in the web UI after the first start and stored in
-the gateway's own database. There is no config file and no ConfigMap.
+AIplane's own database. There is no config file and no ConfigMap.
 
 | | |
 |---|---|
@@ -24,7 +24,7 @@ the gateway's own database. There is no config file and no ConfigMap.
 - A **StorageClass** that can provision a `ReadWriteOnce` volume. Snapshot
   support (a `VolumeSnapshotClass`) makes backups much nicer, but is optional.
 - An **ingress controller** with TLS, or your own way of routing to a Service.
-  The gateway speaks plain HTTP and expects TLS to be terminated in front of it.
+  AIplane speaks plain HTTP and expects TLS to be terminated in front of it.
 - An **OIDC provider** (Keycloak, Entra ID, Authentik, Google, …) where you can
   register a redirect URI. You do this *during* the setup wizard, not before —
   the wizard shows you the exact URI to paste.
@@ -36,27 +36,27 @@ the gateway's own database. There is no config file and no ConfigMap.
 ## Step 1 — Create a namespace
 
 ```bash
-kubectl create namespace llm-gateway
+kubectl create namespace aiplane
 ```
 
 ## Step 2 — Decide how the session key is managed
 
-`GATEWAY_SESSION_KEY` is the single secret a deployment must have. It signs
+`AIPLANE_SESSION_KEY` is the single secret a deployment must have. It signs
 sessions **and** derives the key that seals every secret in the database:
 backend API keys, the OIDC client secret, per-user OAuth tokens. Lose it and
 the volume is unreadable — back the two up together.
 
-It must be **64 hex characters** (32 bytes). The gateway refuses to boot on
+It must be **64 hex characters** (32 bytes). AIplane refuses to boot on
 anything else.
 
 **Option A — bring your own Secret (recommended, and required for GitOps):**
 
 ```bash
-kubectl -n llm-gateway create secret generic llm-gateway-session \
-  --from-literal=GATEWAY_SESSION_KEY="$(openssl rand -hex 32)"
+kubectl -n aiplane create secret generic aiplane-session \
+  --from-literal=AIPLANE_SESSION_KEY="$(openssl rand -hex 32)"
 ```
 
-and then install with `--set sessionKey.existingSecret=llm-gateway-session`.
+and then install with `--set sessionKey.existingSecret=aiplane-session`.
 
 **Option B — let the chart generate it.** This is the default. On every
 `helm upgrade` the chart reads the key back out of the cluster, so it stays
@@ -77,15 +77,15 @@ needed — and with no `--version`, Helm resolves the **newest official
 release**:
 
 ```bash
-helm install llm-gateway oci://ghcr.io/croit/charts/llm-gateway \
-  --namespace llm-gateway \
-  --set sessionKey.existingSecret=llm-gateway-session \
+helm install aiplane oci://ghcr.io/croit/charts/aiplane \
+  --namespace aiplane \
+  --set sessionKey.existingSecret=aiplane-session \
   --set ingress.enabled=true \
-  --set ingress.host=gateway.example.com \
+  --set ingress.host=aiplane.example.com \
   --set ingress.className=nginx
 ```
 
-That is the recommended way to install: you stay current, and the gateway keeps
+That is the recommended way to install: you stay current, and AIplane keeps
 itself current afterwards (see [Updates](#updates)). Builds from `main` are
 published too, as SemVer prereleases, which Helm skips unless you ask for them
 with `--devel` — so "latest" never lands on an untagged build by accident.
@@ -93,15 +93,15 @@ with `--devel` — so "latest" never lands on an untagged build by accident.
 Check what you are about to get, or pin a specific release:
 
 ```bash
-helm show chart oci://ghcr.io/croit/charts/llm-gateway            # newest release
-helm install … oci://ghcr.io/croit/charts/llm-gateway --version 2609.1.0
+helm show chart oci://ghcr.io/croit/charts/aiplane            # newest release
+helm install … oci://ghcr.io/croit/charts/aiplane --version 2609.1.0
 ```
 
 To try an unreleased state, install from a git checkout instead — that chart
 has `appVersion: latest` and therefore follows the `:latest` images:
 
 ```bash
-helm install llm-gateway ./deploy/helm/llm-gateway -n llm-gateway
+helm install aiplane ./deploy/helm/aiplane -n aiplane
 ```
 
 The version scheme and how releases are cut: [`releases.md`](releases.md).
@@ -109,13 +109,13 @@ The version scheme and how releases are cut: [`releases.md`](releases.md).
 Watch it come up:
 
 ```bash
-kubectl -n llm-gateway rollout status statefulset/llm-gateway
+kubectl -n aiplane rollout status statefulset/aiplane
 ```
 
 Without an ingress, reach it directly instead:
 
 ```bash
-kubectl -n llm-gateway port-forward svc/llm-gateway 8080:8080
+kubectl -n aiplane port-forward svc/aiplane 8080:8080
 # → http://localhost:8080
 ```
 
@@ -137,7 +137,7 @@ ingress:
 
 ## Step 4 — Run the setup wizard
 
-Open the gateway. A fresh install lands on **`/setup`**.
+Open AIplane. A fresh install lands on **`/setup`**.
 
 1. The wizard shows the **redirect URI** to register with your identity
    provider — `https://<your host>/auth/callback`. Register it there first.
@@ -146,8 +146,8 @@ Open the gateway. A fresh install lands on **`/setup`**.
 4. The wizard **proves the login with a real sign-in** before it commits
    anything, then hands you an admin account.
 
-If the gateway is behind a proxy that rewrites the scheme, set the public URL
-explicitly: `--set publicUrl=https://gateway.example.com`. With
+If AIplane is behind a proxy that rewrites the scheme, set the public URL
+explicitly: `--set publicUrl=https://aiplane.example.com`. With
 `ingress.enabled=true` the chart already derives it from the ingress host.
 
 ## Step 5 — Add a backend and a model
@@ -163,8 +163,8 @@ Signed in as admin:
 ## Step 6 — Back up the session key today
 
 ```bash
-kubectl -n llm-gateway get secret llm-gateway-session \
-  -o jsonpath='{.data.GATEWAY_SESSION_KEY}' | base64 -d
+kubectl -n aiplane get secret aiplane-session \
+  -o jsonpath='{.data.AIPLANE_SESSION_KEY}' | base64 -d
 ```
 
 Put it wherever your other credentials live. See [Backups](#backups-and-restore).
@@ -176,12 +176,12 @@ Put it wherever your other credentials live. See [Backups](#backups-and-restore)
 | Object | Why |
 |---|---|
 | `StatefulSet` (1 replica) | The gateway pod, plus any sidecars you enabled. A StatefulSet rather than a Deployment because its `volumeClaimTemplate` keeps the database on uninstall and its update strategy replaces the pod instead of briefly running two. |
-| `PersistentVolumeClaim` (`data-<name>-0`) | `/var/lib/gateway` — the SQLite database and the RAG index store. The image points `GATEWAY_DATA_DIR` here, so this one mount is all the persistence there is. |
-| `Secret` (`<name>-session`) | `GATEWAY_SESSION_KEY`, unless you brought your own. |
+| `PersistentVolumeClaim` (`data-<name>-0`) | `/var/lib/gateway` — the SQLite database and the RAG index store. The image points `AIPLANE_DATA_DIR` here, so this one mount is all the persistence there is. |
+| `Secret` (`<name>-session`) | `AIPLANE_SESSION_KEY`, unless you brought your own. |
 | `Service` | Port 8080, plus port 8000 when the Google Workspace sidecar is on. |
 | `ServiceAccount` | Identity only. Its token is **not** mounted — nothing in the pod talks to the Kubernetes API. |
 | `PersistentVolumeClaim` (`<name>-gworkspace-oauth`) | Only with the Google Workspace sidecar: its OAuth store, which must survive a container restart. |
-| `Ingress` (optional) | One for the gateway, one more for the Google Workspace sidecar if it needs a public hostname. |
+| `Ingress` (optional) | One for AIplane, one more for the Google Workspace sidecar if it needs a public hostname. |
 | `CronJob` + `ServiceAccount`/`Role`/`RoleBinding` | Automatic updates (on by default): a nightly `kubectl rollout restart` of this StatefulSet, and nothing else. |
 
 The pod runs as uid 1000, non-root, with a read-only root filesystem, all
@@ -194,7 +194,7 @@ what makes a freshly provisioned volume writable.
 
 ### Updates
 
-**By default the gateway updates itself.** The images follow `:production` —
+**By default AIplane updates itself.** The images follow `:production` —
 the moving pointer at the newest official release — and a small CronJob
 restarts the StatefulSet nightly at 04:00 so a moved tag is actually picked up.
 Kubernetes does not notice a tag moving on its own; something has to restart the
@@ -225,13 +225,13 @@ not with the image. Run this when you want them; with no `--version` it takes
 the newest released chart:
 
 ```bash
-helm upgrade llm-gateway oci://ghcr.io/croit/charts/llm-gateway -n llm-gateway --reuse-values
+helm upgrade aiplane oci://ghcr.io/croit/charts/aiplane -n aiplane --reuse-values
 ```
 
 **Roll back:**
 
 ```bash
-helm rollback llm-gateway                       # previous release of the chart
+helm rollback aiplane                       # previous release of the chart
 helm upgrade … --version 2609.1.0 --set autoUpdate.enabled=false   # pin an older build
 ```
 
@@ -243,32 +243,32 @@ would pull `:production` again and undo it.
 pending; deliver it with:
 
 ```bash
-kubectl -n llm-gateway rollout restart statefulset/llm-gateway
+kubectl -n aiplane rollout restart statefulset/aiplane
 ```
 
 **Logs:**
 
 ```bash
-kubectl -n llm-gateway logs statefulset/llm-gateway -c gateway -f
+kubectl -n aiplane logs statefulset/aiplane -c gateway -f
 ```
 
 **Locked out** (the IdP moved, or no group maps to admin any more):
 
 ```bash
-kubectl -n llm-gateway exec -it llm-gateway-0 -c gateway -- restore-setup
+kubectl -n aiplane exec -it aiplane-0 -c gateway -- restore-setup
 ```
 
 It prints a one-time URL valid for 30 minutes and reopens the wizard pre-filled
-with the current provider. The gateway keeps serving the whole time — nobody is
+with the current provider. AIplane keeps serving the whole time — nobody is
 logged out and nothing is deleted.
 
 **Uninstall.** `helm uninstall` deliberately leaves the PVC and the session
 Secret behind, so the data survives a reinstall. To really delete everything:
 
 ```bash
-helm uninstall llm-gateway -n llm-gateway
-kubectl -n llm-gateway delete pvc data-llm-gateway-0
-kubectl -n llm-gateway delete secret llm-gateway-session   # point of no return
+helm uninstall aiplane -n aiplane
+kubectl -n aiplane delete pvc data-aiplane-0
+kubectl -n aiplane delete secret aiplane-session   # point of no return
 ```
 
 ---
@@ -289,15 +289,15 @@ The image ships no `sqlite3` binary, so take the volume, not the file.
 **With volume snapshots** (preferred — no downtime):
 
 ```bash
-cat <<'EOF' | kubectl -n llm-gateway apply -f -
+cat <<'EOF' | kubectl -n aiplane apply -f -
 apiVersion: snapshot.storage.k8s.io/v1
 kind: VolumeSnapshot
 metadata:
-  name: llm-gateway-$(date +%Y%m%d)
+  name: aiplane-20 20 101 12 61 79 80 81 399 701 33 98 100 204 250 395 398 400date +%Y%m%d)
 spec:
   volumeSnapshotClassName: csi-snapclass    # yours
   source:
-    persistentVolumeClaimName: data-llm-gateway-0
+    persistentVolumeClaimName: data-aiplane-0
 EOF
 ```
 
@@ -306,10 +306,10 @@ WAL mode has a `-wal` sidecar file, and copying the three files from underneath
 a running writer is not a backup:
 
 ```bash
-kubectl -n llm-gateway scale statefulset llm-gateway --replicas=0
+kubectl -n aiplane scale statefulset aiplane --replicas=0
 # … copy the volume with whatever your storage offers, or run a throwaway pod
 #   that mounts the PVC and tars /var/lib/gateway …
-kubectl -n llm-gateway scale statefulset llm-gateway --replicas=1
+kubectl -n aiplane scale statefulset aiplane --replicas=1
 ```
 
 **Restore** is the reverse: restore the volume, re-create the Secret with the
@@ -323,10 +323,10 @@ They run as extra containers in the gateway pod. With one replica that is
 simply simpler than separate Deployments: the connector URL becomes
 `http://localhost:<port>/mcp`, there is no extra Service, no cross-pod DNS and
 no Host-header allowlist, and one restart covers everything. A crashing sidecar
-is restarted on its own by the kubelet and does not take the gateway down.
+is restarted on its own by the kubelet and does not take AIplane down.
 
 Prefer to run one elsewhere? Deploy it however you like and paste its URL into
-`/admin/connectors`. The gateway only ever knows a URL, so the chart does not
+`/admin/connectors`. AIplane only ever knows a URL, so the chart does not
 need to model that case.
 
 Background on the connectors themselves: [`connectors.md`](connectors.md).
@@ -341,7 +341,7 @@ screen redirects through it — so it gets its own hostname.
 2. Create the Secret:
 
    ```bash
-   kubectl -n llm-gateway create secret generic gworkspace-oauth \
+   kubectl -n aiplane create secret generic gworkspace-oauth \
      --from-literal=GOOGLE_OAUTH_CLIENT_ID=… \
      --from-literal=GOOGLE_OAUTH_CLIENT_SECRET=… \
      --from-literal=FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY="$(openssl rand -hex 32)"
@@ -355,19 +355,19 @@ screen redirects through it — so it gets its own hostname.
        enabled: true
        existingSecret: gworkspace-oauth
        externalUrl: https://gworkspace-mcp.example.com
-       allowedClientRedirectUris: https://gateway.example.com/integrations/callback
+       allowedClientRedirectUris: https://aiplane.example.com/integrations/callback
        ingress:
          enabled: true
          className: nginx
          host: gworkspace-mcp.example.com
    ```
 
-4. In the gateway: `/admin/connectors` → **Google Workspace** → URL
+4. In AIplane: `/admin/connectors` → **Google Workspace** → URL
    `http://localhost:8000/mcp` (no trailing slash) → Save → Enable. Users then
    connect their own account at `/integrations`.
 
 Its OAuth store gets a small PVC of its own (`<name>-gworkspace-oauth`). That
-is not a detail: the store holds the gateway's registered client, the
+is not a detail: the store holds AIplane's registered client, the
 authorization codes, the refresh tokens the server issues *and* the upstream
 Google tokens. If it is ever lost, every user is disconnected with
 `invalid_client: Invalid client_id` within about half an hour — so the chart
@@ -399,7 +399,7 @@ per user. Member search additionally needs the **Server Members Intent**
 enabled in the Discord developer portal, or the roster never loads.
 
 ```bash
-kubectl -n llm-gateway create secret generic discord-bot \
+kubectl -n aiplane create secret generic discord-bot \
   --from-literal=DISCORD_TOKEN=…
 ```
 
@@ -414,10 +414,9 @@ Connector URL: `http://localhost:8085/mcp`.
 
 ### Document OCR
 
-The sidecar adapts the gateway's internal `/ocr` contract to an Unlimited-OCR
+The sidecar adapts AIplane's internal `/ocr` contract to an Unlimited-OCR
 vLLM server, which this chart does **not** deploy — it wants a GPU and a
-lifecycle of its own. The sidecar image itself is published alongside the
-gateway (`ghcr.io/croit/llm-gateway-ocr-sidecar`) and versioned with it, so
+lifecycle of its own. The sidecar image itself is published alongside AIplane (`ghcr.io/croit/aiplane-ocr-sidecar`) and versioned with it, so
 enabling it needs no image of your own.
 
 OCR needs all three of these before it does anything:
@@ -437,8 +436,7 @@ The code sandbox (`run_in_sandbox`, `generate_document`, `capture_webpage`) is
 **not part of this chart**, on purpose.
 
 The runner executes model-written code, so it needs a kernel-level boundary —
-gVisor or Kata — which a generic cluster does not have by default. And the
-gateway reaches it over plain HTTP at a URL stored in the database. That makes
+gVisor or Kata — which a generic cluster does not have by default. And AIplane reaches it over plain HTTP at a URL stored in the database. That makes
 it a *setting*, not a Kubernetes object.
 
 Three ways to get there, simplest first.
@@ -447,7 +445,7 @@ Three ways to get there, simplest first.
 
 Keep the runner on a host that already has gVisor, exactly as
 [`docs/sandbox.md`](sandbox.md) and [`deploy/quadlet/`](../deploy/quadlet/)
-describe it. Then point the gateway at it:
+describe it. Then point AIplane at it:
 
 `/admin/settings` → **Code sandbox** → `sandbox.enabled` on,
 `sandbox.runner_url` = `http://sandbox-host.example.com:9000` → restart the pod.
@@ -457,7 +455,7 @@ image-pull pain that the (large) sandbox image causes on a generic node pool.
 The sandbox host is a specialist machine anyway; forcing it into a generic
 cluster buys little.
 
-Make sure that URL is only reachable from the gateway — the runner executes
+Make sure that URL is only reachable from AIplane — the runner executes
 untrusted code and has no authentication of its own.
 
 ### Option B — pod-per-job inside the cluster
@@ -498,8 +496,7 @@ work for host-root-equivalent access on behalf of model-generated code.
    duplicate turns and stream into the void, and the stop button would land on
    the wrong pod.
 
-So this is a vertical-scaling deployment: give the pod more CPU and memory. The
-gateway spends nearly all of its time waiting on upstream models, and one pod
+So this is a vertical-scaling deployment: give the pod more CPU and memory. AIplane spends nearly all of its time waiting on upstream models, and one pod
 carries a lot of concurrent conversations.
 
 Lifting the limit is a real project, not a flag: move the database to Postgres,
@@ -519,14 +516,14 @@ StatefulSet, the probes and a 45-second grace period are for.
 | `CrashLoopBackOff`, log says the session key is missing or malformed | Not 64 hex chars | `openssl rand -hex 32`; recreate the Secret |
 | Log shows a permission error opening the database | Storage driver ignores `fsGroup` (some NFS provisioners do) | Use a CSI driver that honours it, or pre-chown the volume to uid 1000 |
 | Browser reaches `/setup` again after it was completed | The PVC was replaced — a new, empty database | Check that the PVC bound and was not deleted between installs |
-| "Setup is closed on this gateway" | Expected once configured | `kubectl exec … -- restore-setup` |
+| "Setup is closed on this AIplane" | Expected once configured | `kubectl exec … -- restore-setup` |
 | Chat answers appear all at once at the end, or time out | Ingress buffers responses or times them out | `proxy-buffering: "off"`, raise `proxy-read-timeout` |
 | Uploads fail at a certain size | Ingress body-size cap | Raise `proxy-body-size` |
 | `invalid_client: Invalid client_id` on a Google connector | The MCP OAuth store was lost | Confirm the `gworkspace-mcp` subPath is on the volume; users must reconnect once |
 | Sandbox tools missing from the tool list | `sandbox.enabled` off, or no runner reachable | See [Sandbox](#sandbox) |
-| The gateway restarted overnight on its own | The auto-update CronJob — working as intended | Move it with `autoUpdate.schedule`, or set `autoUpdate.enabled=false` |
+| AIplane restarted overnight on its own | The auto-update CronJob — working as intended | Move it with `autoUpdate.schedule`, or set `autoUpdate.enabled=false` |
 | A pinned older version came back after a night | Auto-updates re-pulled `:production` | Pin *and* set `autoUpdate.enabled=false` |
-| `helm upgrade` fails with "updates to statefulset spec … are forbidden" after changing `persistence.size` | A StatefulSet's volumeClaimTemplates are immutable | Resize the PVC directly (`kubectl -n … patch pvc data-llm-gateway-0 …`) if the StorageClass allows expansion, and set the value to match |
+| `helm upgrade` fails with "updates to statefulset spec … are forbidden" after changing `persistence.size` | A StatefulSet's volumeClaimTemplates are immutable | Resize the PVC directly (`kubectl -n … patch pvc data-aiplane-0 …`) if the StorageClass allows expansion, and set the value to match |
 
 ---
 

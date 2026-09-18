@@ -112,8 +112,8 @@ rag-placeholder-embedding-model-none = aucun pool d'embedding configuré — sai
 rag-option-choose-embedding-model = Choisir un modèle d'embedding…
 rag-suffix-not-advertised = (plus proposé)
 
-rag-label-allowed-groups = Groupes autorisÃ©s
-rag-hint-allowed-groups = Groupes du gateway (sÃ©parÃ©s par des virgules) autorisÃ©s Ã  lister et rechercher cette collection. Vide = tout le monde disposant des outils RAG. Les admins ont toujours accÃ¨s.
+rag-label-allowed-groups = Groupes autorisés
+rag-hint-allowed-groups = Groupes AIplane (séparés par des virgules) autorisés à lister et rechercher cette collection. Vide = tout le monde disposant des outils RAG. Les admins ont toujours accès.
 
 # Sélecteur de source + identifiants du fournisseur (rag_source.rs). Les
 # libellés des champs viennent du fournisseur et ne sont pas traduits.

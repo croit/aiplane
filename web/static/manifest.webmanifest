@@ -1,7 +1,7 @@
 {
-	"name": "croit LLM Gateway",
-	"short_name": "LLM Gateway",
-	"description": "Authenticated LLM gateway — chat, tokens, usage.",
+	"name": "croit AIplane",
+	"short_name": "AIplane",
+	"description": "croit AIplane — chat, tokens, usage.",
 	"start_url": "/",
 	"scope": "/",
 	"display": "standalone",

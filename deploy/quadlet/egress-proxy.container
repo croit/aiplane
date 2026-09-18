@@ -7,9 +7,9 @@
 # else. Default-deny: an empty allowlist blocks everything.
 #
 # Install:
-#   sudo mkdir -p /etc/gateway/sandbox
-#   sudo cp deploy/quadlet/squid.conf      /etc/gateway/sandbox/squid.conf
-#   sudo cp deploy/quadlet/allowlist.txt   /etc/gateway/sandbox/allowlist.txt
+#   sudo mkdir -p /etc/aiplane/sandbox
+#   sudo cp deploy/quadlet/squid.conf      /etc/aiplane/sandbox/squid.conf
+#   sudo cp deploy/quadlet/allowlist.txt   /etc/aiplane/sandbox/allowlist.txt
 #   sudo cp deploy/quadlet/egress-proxy.container /etc/containers/systemd/
 #   sudo systemctl daemon-reload && sudo systemctl start egress-proxy.service
 
@@ -28,8 +28,8 @@ Image=docker.io/ubuntu/squid:latest
 Network=sandbox-egress.network
 Network=podman
 
-Volume=/etc/gateway/sandbox/squid.conf:/etc/squid/squid.conf:ro,z
-Volume=/etc/gateway/sandbox/allowlist.txt:/etc/squid/allowlist.txt:ro,z
+Volume=/etc/aiplane/sandbox/squid.conf:/etc/squid/squid.conf:ro,z
+Volume=/etc/aiplane/sandbox/allowlist.txt:/etc/squid/allowlist.txt:ro,z
 
 [Service]
 Restart=on-failure

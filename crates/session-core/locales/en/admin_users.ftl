@@ -3,16 +3,16 @@
 # impersonation audit trail shown on `/admin/users`.
 
 admin-users-heading = Users
-admin-users-desc-allowed-prefix = Everyone who has signed in to this gateway, with their identity-provider groups and the gateway roles those map to.
+admin-users-desc-allowed-prefix = Everyone who has signed in to this gateway, with their identity-provider groups and the AIplane roles those map to.
 admin-users-desc-allowed-suffix = starts a session that behaves exactly as that user — useful for reproducing what they see. Every impersonation is logged below.
-admin-users-desc-disabled-prefix = Everyone who has signed in to this gateway, with their identity-provider groups and the gateway roles those map to. Impersonation is
+admin-users-desc-disabled-prefix = Everyone who has signed in to this gateway, with their identity-provider groups and the AIplane roles those map to. Impersonation is
 admin-users-desc-disabled-suffix = on this gateway (`allow_impersonation = false`).
 admin-users-disabled-label = disabled
 admin-users-impersonate-button = Impersonate
 
 admin-users-col-user = User
 admin-users-col-oidc-groups = OIDC groups
-admin-users-col-gateway-roles = Gateway roles
+admin-users-col-gateway-roles = AIplane roles
 admin-users-col-joined = Joined
 admin-users-col-action = Action
 

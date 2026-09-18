@@ -30,7 +30,7 @@ skills-description-heading = 描述
 skills-grant-dialog-heading = 谁可以使用此技能?
 skills-grant-dialog-desc-part1 = 选择允许加载此技能的组:
 skills-grant-dialog-desc-part2 = 。所选组的所有成员都将获得访问权限。
-skills-grant-dialog-no-roles-part1 = 未定义网关组。请添加
+skills-grant-dialog-no-roles-part1 = 未定义 AIplane 组。请添加
 skills-grant-dialog-no-roles-part2 = 条目后才能授予访问权限。
 
 skills-cancel-button = 取消

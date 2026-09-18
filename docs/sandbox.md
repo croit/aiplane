@@ -1,6 +1,6 @@
 # Code-execution sandbox
 
-The gateway can let the chat model **run code** — Python, shell, document
+AIplane can let the chat model **run code** — Python, shell, document
 generation, headless-browser capture — inside a strongly isolated gVisor
 sandbox, and return the results (stdout/stderr + produced files) into the
 conversation. Containers are single-use by default; `run_in_sandbox` keeps one
@@ -22,8 +22,7 @@ tools:
 ### Working on uploaded files
 
 `convert_document` / `edit_presentation` — and `run_in_sandbox` itself — can
-operate on files the user uploaded. The model never holds the bytes, so the
-gateway bridges them in server-side: the **current turn's uploads are staged
+operate on files the user uploaded. The model never holds the bytes, so AIplane bridges them in server-side: the **current turn's uploads are staged
 into the sandbox working directory automatically** (under their original
 names), and the model can pull in a file from **earlier in the conversation**
 by passing its attachment id (`<turn>/<file>`, from an `[attached …]` stub) —
@@ -59,15 +58,15 @@ host: llm01
 │         drives LOCAL podman:  podman run --runtime runsc …  ───────────┐   │
 │                                                                        │   │
 ├─ podman containers  ── these ARE in `podman ps` ──────────────────────│──┐ │
-│    ├─ gateway          ghcr.io/croit/llm-gateway        :8080  ◄─HTTP /run │
+│    ├─ gateway          ghcr.io/croit/aiplane        :8080  ◄─HTTP /run │
 │    ├─ qwen / embedding / voxtral   (vLLM model servers) :8002/3/5          │
-│    └─ warm pool: N × llm-gateway-sandbox  "sleep infinity"  ◄──────────┘   │
+│    └─ warm pool: N × aiplane-sandbox  "sleep infinity"  ◄──────────┘   │
 │         gVisor (runsc) · --network none · uid 1001 · mem/cpu/pids capped   │
 │         created + destroyed by the runner, one job each (single-use)       │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
-So the three idle `…/llm-gateway-sandbox  sleep infinity` containers in
+So the three idle `…/aiplane-sandbox  sleep infinity` containers in
 `podman ps` **are** the runner's warm pool — proof it's running. To see the
 runner itself: `systemctl status sandbox-runner.service` /
 `curl 10.88.0.1:9000/healthz`.
@@ -163,7 +162,7 @@ installed under `pip --require-hashes`. Consequences for editing:
   sandbox. Plain containers (`crun`/`runc`) share the host kernel and are
   *not* a sufficient boundary.
   See [Installing a sandbox runtime](#installing-a-sandbox-runtime).
-- **The gateway stays unprivileged.** It only does HTTP. The
+- **AIplane stays unprivileged.** It only does HTTP. The
   **`sandbox-runner`** is the one component that drives podman and spawns the
   sandboxes, so the powerful surface is small, separate, and never
   internet-facing. It runs as a host service (it needs **local** podman to
@@ -178,7 +177,7 @@ installed under `pip --require-hashes`. Consequences for editing:
   pool of pre-booted sandboxes hides cold-start latency.
 - **Default-deny network:** a sandbox has no network unless the call requests
   it *and* the operator wired an egress proxy, which only forwards to an
-  allowlist. The gateway *asks the runner* whether egress exists and stops
+  allowlist. AIplane *asks the runner* whether egress exists and stops
   advertising the web tools when it doesn't — see
   [Egress and the capability probe](#egress-and-the-capability-probe).
 
@@ -314,7 +313,7 @@ Mechanics:
   exit. A `SandboxLease` `Drop` guard is the backstop for any exit that skips
   the explicit release. Backing all of that, the runner runs a
   **TTL sweeper** that reaps any lease left idle longer than `lease_ttl_secs`
-  (skipping one with an in-flight exec), so a gateway that crashed mid-turn
+  (skipping one with an in-flight exec), so an instance that crashed mid-turn
   can't leak a container indefinitely.
 - **Capacity is bounded** by `max_leases`, independent of `max_concurrent`
   (which counts in-flight execs). A leased container pins RAM the whole time
@@ -347,7 +346,7 @@ call failed** with `network egress requested but not configured on this
 runner`. The model cannot tell "misconfigured" from "wrong tool for the job",
 so it would keep trying.
 
-So the gateway asks. At startup it reads `GET /healthz` on the runner, which
+So AIplane asks. At startup it reads `GET /healthz` on the runner, which
 answers with its capabilities:
 
 ```json
@@ -371,8 +370,7 @@ and that answer decides what the model is offered:
 The probe runs **once**, at gateway startup. Egress changes when an operator
 edits a unit file and restarts things — at which point the gateway restarts too
 — and a capability set that shifted underneath a running conversation would be
-worse than a slightly stale one. So: **after enabling egress, restart the
-gateway**, or the web tools stay hidden.
+worse than a slightly stale one. So: **after enabling egress, restart AIplane**, or the web tools stay hidden.
 
 Verify the runner's side:
 
@@ -439,7 +437,7 @@ against `SANDBOX_MAX_LEASES`).
 | Path | What |
 |---|---|
 | `crates/sandbox-runner/` | The runner service (warm pool, podman + OCI-runtime orchestration, `/run` API). |
-| `crates/gateway-runtime/src/server/tools/sandbox.rs` | The gateway sandbox tools. |
+| `crates/aiplane-runtime/src/server/tools/sandbox.rs` | AIplane sandbox tools. |
 | `crates/shared/src/sandbox.rs` | The runner↔gateway wire contract. |
 | `sandbox-image/` | The gold workload image (`Containerfile` + `sandbox-agent`). |
 | `deploy/sandbox-runner/Containerfile` | The runner image — built by CI; the host runner binary is extracted from it. |
@@ -490,12 +488,12 @@ sudo podman run --rm --network none --runtime runsc docker.io/library/alpine una
 
 ## Quick start (Debian 13, podman + gVisor)
 
-Copy-paste runbook for a host already running the gateway as a Quadlet, with a
+Copy-paste runbook for a host already running AIplane as a Quadlet, with a
 repo checkout present. `/dev/kvm` is NOT required (gVisor runs in userspace).
 
 ```sh
 # 0. one-time: make the GHCR images pullable — GitHub → org Packages →
-#    llm-gateway-sandbox and -sandbox-runner → make Public
+#    aiplane-sandbox and -sandbox-runner → make Public
 #    (or: sudo podman login ghcr.io  with a read:packages PAT)
 
 # 1. install gVisor (runsc) and register it as a podman runtime
@@ -523,12 +521,12 @@ uname -r
 #    podman bridge gateway IP — setup prints the exact runner_url to use)
 sudo deploy/sandbox/setup-sandbox.sh            # add --egress for pip / capture_webpage
 
-# 3. wire the gateway to the runner (no gateway network change — it already
+# 3. wire AIplane to the runner (no gateway network change — it already
 #    reaches the bridge gateway IP that setup printed, usually 10.88.0.1):
-#      add to the gateway config:
+#      add to the AIplane settings:
 #         [sandbox]
 #         runner_url = "http://10.88.0.1:9000"
-sudo podman pull ghcr.io/croit/llm-gateway:latest     # the rebuilt gateway has the sandbox tools
+sudo podman pull ghcr.io/croit/aiplane:latest     # the rebuilt gateway has the sandbox tools
 sudo systemctl daemon-reload
 sudo systemctl restart gateway.service
 
@@ -542,7 +540,7 @@ kernel version"* — the kernel must differ from the host's `uname -r`.
 
 ## Deploy (detailed)
 
-Prereqs: a Linux host with rootful podman and the gateway already running as a
+Prereqs: a Linux host with rootful podman and AIplane already running as a
 Quadlet. (`/dev/kvm` is not required — gVisor runs entirely in userspace.)
 
 1. **Install the runtime** (see [above](#installing-a-sandbox-runtime)) and
@@ -550,7 +548,7 @@ Quadlet. (`/dev/kvm` is not required — gVisor runs entirely in userspace.)
    prints a kernel different from the host's `uname -r`.
 
 2. **Pull access to the images.** CI builds + pushes all three to GHCR on
-   `main`/tags (`ghcr.io/croit/llm-gateway`, `…-sandbox`, `…-sandbox-runner`;
+   `main`/tags (`ghcr.io/croit/aiplane`, `…-sandbox`, `…-sandbox-runner`;
    tags `latest`/branch/tag/SHA). GHCR packages are **private by default** —
    make the two `…-sandbox*` packages **public** in the org's package settings,
    or `podman login ghcr.io` on the host. (To build locally instead, see the
@@ -566,7 +564,7 @@ Quadlet. (`/dev/kvm` is not required — gVisor runs entirely in userspace.)
    bridge gateway IP), and `enable --now`s the runner. Equivalent manual steps:
    ```sh
    # runner binary (extracted from the runner image)
-   cid=$(sudo podman create ghcr.io/croit/llm-gateway-sandbox-runner:latest)
+   cid=$(sudo podman create ghcr.io/croit/aiplane-sandbox-runner:latest)
    sudo podman cp "$cid":/usr/local/bin/sandbox-runner /usr/local/bin/sandbox-runner
    sudo podman rm "$cid"; sudo chmod +x /usr/local/bin/sandbox-runner
    # find the podman bridge gateway IP the runner should bind (usually 10.88.0.1)
@@ -575,9 +573,9 @@ Quadlet. (`/dev/kvm` is not required — gVisor runs entirely in userspace.)
    sudo sed -i "s|^Environment=SANDBOX_BIND=.*|Environment=SANDBOX_BIND=${BRIDGE_IP}:9000|" \
        /etc/systemd/system/sandbox-runner.service
    # optional egress (pip / web):
-   sudo mkdir -p /etc/gateway/sandbox
-   sudo cp deploy/quadlet/squid.conf    /etc/gateway/sandbox/
-   sudo cp deploy/quadlet/allowlist.txt /etc/gateway/sandbox/
+   sudo mkdir -p /etc/aiplane/sandbox
+   sudo cp deploy/quadlet/squid.conf    /etc/aiplane/sandbox/
+   sudo cp deploy/quadlet/allowlist.txt /etc/aiplane/sandbox/
    sudo cp deploy/quadlet/sandbox-egress.network /etc/containers/systemd/
    sudo cp deploy/quadlet/egress-proxy.container  /etc/containers/systemd/
    sudo systemctl daemon-reload
@@ -585,12 +583,12 @@ Quadlet. (`/dev/kvm` is not required — gVisor runs entirely in userspace.)
    ```
    For egress also uncomment `SANDBOX_EGRESS_NETWORK=sandbox-egress` +
    `SANDBOX_EGRESS_PROXY=http://egress-proxy:3128` in `sandbox-runner.service`
-   and start `egress-proxy.service`. Then **restart the gateway** — it probes
+   and start `egress-proxy.service`. Then **restart AIplane** — it probes
    the runner's capabilities once at startup, so until it does, `browse_page` /
    `capture_webpage` stay hidden and `run_in_sandbox` shows no `network`
    option. See [Egress and the capability probe](#egress-and-the-capability-probe).
 
-4. **Point the gateway at the runner.** No gateway network change is needed —
+4. **Point AIplane at the runner.** No gateway network change is needed —
    it already reaches the bridge gateway IP over the default podman network. In
    the gateway config (use the `BRIDGE_IP` from step 3, usually `10.88.0.1`):
    ```toml
@@ -623,7 +621,7 @@ One-time host setup:
    Under Docker no `--network=host` wrapper is needed — that shim is a rootful-
    podman quirk; `runsc install` is the Docker-native equivalent.
 
-2. Bring up the sandbox profile and point the gateway at the runner:
+2. Bring up the sandbox profile and point AIplane at the runner:
    ```sh
    docker compose -f deploy/compose.example.yml --profile sandbox up -d
    ```
@@ -694,7 +692,7 @@ cargo test -p shared -p sandbox-runner -p gateway sandbox
 SANDBOX_RUNTIME=local-unsafe SANDBOX_BIND=127.0.0.1:9000 \
   cargo run -p sandbox-runner
 
-# Terminal 2: point the gateway at it.
+# Terminal 2: point AIplane at it.
 #   [sandbox]
 #   runner_url = "http://127.0.0.1:9000"
 # then `mise run dev` and call run_in_sandbox from the chat UI / API.
@@ -711,8 +709,8 @@ the real sandbox image under a container runtime:
 
 ```sh
 podman machine init && podman machine start
-podman build -t llm-gateway-sandbox:dev sandbox-image/
-SANDBOX_RUNTIME=crun SANDBOX_IMAGE=llm-gateway-sandbox:dev \
+podman build -t aiplane-sandbox:dev sandbox-image/
+SANDBOX_RUNTIME=crun SANDBOX_IMAGE=aiplane-sandbox:dev \
   cargo run -p sandbox-runner          # crun = container only, NOT isolation — dev only
 ```
 
@@ -747,7 +745,7 @@ role and toggleable per user/token on the `/tools` page — default-off.
 `SANDBOX_MAX_TIMEOUT_SECS`, `SANDBOX_MEMORY`, `SANDBOX_CPUS`, `SANDBOX_PIDS_LIMIT`,
 `SANDBOX_WORK_SIZE`, `SANDBOX_TMP_SIZE`, `SANDBOX_MAX_OUTPUT_BYTES`,
 `SANDBOX_EGRESS_NETWORK`, `SANDBOX_EGRESS_PROXY` (these two also decide which
-tools the gateway offers at all — see
+tools AIplane offers at all — see
 [Egress and the capability probe](#egress-and-the-capability-probe)),
 `SANDBOX_LEASE_TTL_SECS`
 (default 600 — idle-lease reap TTL; keep it above `SANDBOX_MAX_TIMEOUT_SECS`),
@@ -760,7 +758,7 @@ see [Per-turn container reuse](#per-turn-container-reuse)).
 > `SANDBOX_MEMORY`. Warm/in-flight containers *and* idle per-turn leases both
 > count, so budget `SANDBOX_MEMORY × (SANDBOX_MAX_CONCURRENT + SANDBOX_MAX_LEASES)`
 > against free host RAM (with headroom). Produced files also pass back through
-> the gateway's `[sandbox] max_artifact_bytes` cap — raise it for large outputs.
+> AIplane's `[sandbox] max_artifact_bytes` cap — raise it for large outputs.
 
 **Egress allowlist** — `deploy/quadlet/allowlist.txt` (one host per line),
 consumed by the squid proxy. Default-deny: only listed hosts are reachable.
@@ -779,8 +777,7 @@ OpenAI/Codex tool-output handling:
    not the whole stream. The model reads the rest on demand with
    **`read_sandbox_output`** (`grep` / `head` / `tail` / `range`, with bounded
    defaults). Nothing is lost; it's just not inlined.
-3. **Cumulative budget + re-callable eviction.** Across tool-loop rounds the
-   gateway keeps the last few `role:"tool"` results verbatim and replaces older
+3. **Cumulative budget + re-callable eviction.** Across tool-loop rounds AIplane keeps the last few `role:"tool"` results verbatim and replaces older
    large ones with a short stub (preserving the `tool_call_id` so the
    tool_call↔result pairing is never orphaned). Evicted output stays
    addressable via its `full_output_ref`.
