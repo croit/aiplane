@@ -25,7 +25,7 @@
     "128": "icons/off-128.png"
   },
   "options_page": "src/options.html",
-  "permissions": ["storage", "scripting", "tabs", "tabGroups", "debugger", "activeTab"],
+  "permissions": ["storage", "scripting", "tabs", "tabGroups", "debugger"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "host_permissions": []
 }

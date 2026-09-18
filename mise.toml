@@ -385,15 +385,16 @@ OUT="target/llm-gateway-browser-control-$VERSION.zip"
 STAGE="target/extension-package"
 
 rm -rf "$STAGE" "$OUT"
-mkdir -p "$STAGE" target
-# Copy rather than zip in place: the manifest is rewritten with the real
-# version, and the working tree keeps its placeholder.
-cp -R extension/. "$STAGE/"
+mkdir -p "$STAGE/src" "$STAGE/icons" target
 
-# Development files. They break nothing in a published package, but they are
-# not part of the product and a Web Store review reads everything shipped.
-find "$STAGE" -name '*.test.js' -delete
-rm -f "$STAGE/icons/render.py"
+# Named, not swept. `cp -R extension/.` followed by deletions ships whatever
+# was added since somebody last thought about this: the icon scripts, the
+# promo tiles, the store copy. A review reads everything in the package, so
+# the package contains the product and nothing else.
+cp extension/manifest.json "$STAGE/"
+cp extension/src/*.js extension/src/*.html "$STAGE/src/"
+cp extension/icons/on-*.png extension/icons/off-*.png "$STAGE/icons/"
+rm -f "$STAGE"/src/*.test.js
 
 node -e '
   const fs = require("fs");
