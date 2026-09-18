@@ -156,6 +156,32 @@ pub async fn state_with_pool(upstream_url: &str, kind: PoolKind, model_name: &st
     state_from_registry(db_pool, registry)
 }
 
+pub async fn state_with_automatic_route_pools(upstream_url: &str) -> RamaState {
+    let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+    let mut pools = HashMap::new();
+    for (name, kind) in [("chat", PoolKind::Chat), ("selector", PoolKind::SystemOne)] {
+        pools.insert(
+            name.to_string(),
+            UpstreamPoolConfig {
+                voices: Default::default(),
+                offer_voices: Vec::new(),
+                allowed_groups: Vec::new(),
+                fallback_offline: None,
+                compliance: Default::default(),
+                enforce_limits: true,
+                kind,
+                strategy: PickerStrategy::RoundRobin,
+                models: Vec::new(),
+                backend: vec![mock_backend(name, upstream_url)],
+            },
+        );
+    }
+    let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
+    seed_pool_models(&registry, "chat", 0, &["fast-model", "expert-model"]);
+    seed_pool_models(&registry, "selector", 0, &["jev-model"]);
+    state_from_registry(db_pool, registry)
+}
+
 /// A chat pool with **two** backends serving the same model, for tests about
 /// what happens when one of them fails.
 pub async fn state_with_two_chat_backends(first_url: &str, second_url: &str) -> RamaState {
@@ -190,6 +216,15 @@ pub async fn state_with_two_chat_backends(first_url: &str, second_url: &str) -> 
 /// ids a client sends (`claude-sonnet-4-6`) are names no self-hosted backend
 /// serves.
 pub async fn state_with_alias(upstream_url: &str, alias: &str, real_model: &str) -> RamaState {
+    state_with_alias_for_kind(upstream_url, PoolKind::Chat, alias, real_model).await
+}
+
+pub async fn state_with_alias_for_kind(
+    upstream_url: &str,
+    kind: PoolKind,
+    alias: &str,
+    real_model: &str,
+) -> RamaState {
     let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let mut backend = mock_backend("mock", upstream_url);
     backend.alias = Some(upstreams::config::AliasSpec::Targets(HashMap::from([(
@@ -206,7 +241,7 @@ pub async fn state_with_alias(upstream_url: &str, alias: &str, real_model: &str)
             fallback_offline: None,
             compliance: Default::default(),
             enforce_limits: true,
-            kind: PoolKind::Chat,
+            kind,
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![backend],

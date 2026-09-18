@@ -7,6 +7,7 @@ use arc_swap::ArcSwap;
 
 use crate::server::tools::ToolRegistry;
 use aiplane_core::server::auth::oidc::OidcClient;
+use aiplane_core::server::automatic_routing::AutomaticRouter;
 use aiplane_core::server::config::Config;
 use aiplane_core::server::crypto::Crypto;
 use aiplane_core::server::db::Pool;
@@ -200,6 +201,7 @@ pub fn typst_template_metas(config: &Config) -> Vec<crate::server::tools::catalo
 #[derive(Clone)]
 pub struct AppState {
     pub http: reqwest::Client,
+    pub automatic_router: Arc<AutomaticRouter>,
     /// The effective configuration: what the file said, with the twelve
     /// settings-owned blocks overwritten from the database.
     ///
@@ -280,8 +282,15 @@ impl AppState {
         // historical behaviour; production replaces it with the shared handle
         // via `with_runtime_handle` and then fills it in from the DB.
         let runtime = RuntimeSettings::new_handle(config.public_url_fallback());
+        let http = reqwest::Client::new();
+        let automatic_router = Arc::new(AutomaticRouter::new(
+            db.clone(),
+            upstreams.clone(),
+            http.clone(),
+        ));
         Self {
-            http: reqwest::Client::new(),
+            http,
+            automatic_router,
             config: Arc::new(ArcSwap::from_pointee(config)),
             db,
             runtime,

@@ -10,6 +10,7 @@
 mod admin_json_api;
 mod anthropic_messages;
 mod ask_feedback;
+mod automatic_routing;
 mod browser_feedback;
 mod chat_json_api;
 mod comfyui_integration;
@@ -37,6 +38,7 @@ mod session_routes;
 mod setup_wizard;
 mod spa_routes;
 mod speech_voice;
+mod system_one;
 mod token_scope;
 mod tool_loop;
 mod tools_inventory;

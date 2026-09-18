@@ -633,11 +633,19 @@ impl SessionDriver for OpenAiDriver {
             // Resolve any alias to the real id so the context window (and thus the
             // auto-compaction trigger) keys on the model that actually ran — an
             // alias carries no settings of its own.
+            let routing_model = self
+                .state
+                .automatic_router
+                .session_target(&ctx.model, &self.tool_ctx.user_id, &ctx.session_id)
+                .unwrap_or_else(|| ctx.model.clone());
             let model = self
                 .state
                 .upstreams
-                .resolve_model(&ctx.model, aiplane_core::server::upstreams::PoolKind::Chat)
-                .unwrap_or_else(|| ctx.model.clone());
+                .resolve_model(
+                    &routing_model,
+                    aiplane_core::server::upstreams::PoolKind::Chat,
+                )
+                .unwrap_or(routing_model);
             tokio::spawn(async move {
                 crate::server::compaction::maybe_autocompact(&state, &session_id, &model).await;
             });
@@ -838,55 +846,7 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
         crate::server::tools::mcp::manager::CompositeToolSource::new(tools.as_ref(), &user_mcp)
             .with_comfyui(comfyui.as_ref());
 
-    // The conversation's model may be an alias (the picker lists them). Resolve
-    // it to the real upstream id ONCE per turn and key every per-model lookup
-    // below on it — reasoning style/budgets, sampling defaults, and the outgoing
-    // `model` field. An alias therefore carries no settings of its own: it
-    // inherits the target's, exactly like cost accounting, which meters the
-    // resolved id. Falls through to the requested name when it isn't an alias
-    // (or isn't currently served — `route` below then maps the error).
-    // Gate model resolution + routing to pools the signed-in user's groups
-    // permit, so a chat conversation can't route to a restricted pool.
     let access = d.state.pool_access_for(&d.tool_ctx.roles);
-    let real_model = d
-        .state
-        .upstreams
-        .resolve_model_for(
-            &ctx.model,
-            aiplane_core::server::upstreams::PoolKind::Chat,
-            &access,
-        )
-        .unwrap_or_else(|| ctx.model.clone());
-
-    // The conversation's effort level ("Denkaufwand") and the selected model's
-    // reasoning style drive both the upstream reasoning parameter and the
-    // tool-round cap. Loaded once per turn (sticky per conversation).
-    let effort = aiplane_core::server::reasoning::Effort::from_db(
-        aiplane_core::server::db::chat_session_settings::get_effort(&d.state.db, &ctx.session_id)
-            .await
-            .ok()
-            .flatten()
-            .as_deref(),
-    );
-    // What the servers that could take this request imply about how to phrase
-    // it: which reasoning spelling they understand, and whether `tool_choice`
-    // is worth sending. Resolved here rather than after routing because the
-    // body is built and serialised before a backend is picked, and both facts
-    // decide what goes into it.
-    let serving = d.state.upstreams.serving_profile(
-        &real_model,
-        aiplane_core::server::upstreams::PoolKind::Chat,
-        &access,
-    );
-    let (reasoning_style, reasoning_overrides) =
-        aiplane_core::server::reasoning::resolve_for_model(
-            &d.state.db,
-            &real_model,
-            serving.dialect,
-        )
-        .await;
-    let max_rounds = effort.max_rounds();
-
     let turns = chat::list_turns(&d.state.db, &ctx.session_id)
         .await
         .map_err(persist_err("list_turns", &ctx.assistant_turn_id))?;
@@ -933,6 +893,73 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
         ),
     );
 
+    let routing_has_tools = !d
+        .state
+        .allowed_tools_for_session(&d.tool_ctx.roles, &d.tool_ctx.user_id, &ctx.session_id)
+        .await
+        .is_empty()
+        || !aiplane_core::server::db::chat_session_tools::enabled_keys_for_session(
+            &d.state.db,
+            &ctx.session_id,
+        )
+        .await
+        .unwrap_or_default()
+        .is_empty();
+    let routing_state = serde_json::json!({
+        "messages": &messages,
+        "tools": if routing_has_tools { serde_json::json!([{}]) } else { serde_json::json!([]) },
+    });
+    let automatic_decision = d
+        .state
+        .automatic_router
+        .select(
+            &ctx.model,
+            &routing_state,
+            &access,
+            Some(
+                aiplane_core::server::automatic_routing::AutomaticRouteAffinity {
+                    principal: &d.tool_ctx.user_id,
+                    session: &ctx.session_id,
+                },
+            ),
+        )
+        .await
+        .map_err(upstream_err)?;
+    let routing_model = automatic_decision
+        .as_ref()
+        .map(|decision| decision.effective_target.as_str())
+        .unwrap_or(&ctx.model);
+    let real_model = d
+        .state
+        .upstreams
+        .resolve_model_for(
+            routing_model,
+            aiplane_core::server::upstreams::PoolKind::Chat,
+            &access,
+        )
+        .unwrap_or_else(|| routing_model.to_string());
+
+    let effort = aiplane_core::server::reasoning::Effort::from_db(
+        aiplane_core::server::db::chat_session_settings::get_effort(&d.state.db, &ctx.session_id)
+            .await
+            .ok()
+            .flatten()
+            .as_deref(),
+    );
+    let serving = d.state.upstreams.serving_profile(
+        &real_model,
+        aiplane_core::server::upstreams::PoolKind::Chat,
+        &access,
+    );
+    let (reasoning_style, reasoning_overrides) =
+        aiplane_core::server::reasoning::resolve_for_model(
+            &d.state.db,
+            &real_model,
+            serving.dialect,
+        )
+        .await;
+    let max_rounds = effort.max_rounds();
+
     // Monotonic zero point of the reasoning phase, set on the first
     // reasoning chunk. Used to compute the single authoritative
     // `reasoning_elapsed_ms` frozen when content starts. The *live*
@@ -957,6 +984,9 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
     } else {
         String::new()
     };
+    if metrics_on && let Some(decision) = automatic_decision.as_ref() {
+        emit_selector_usage(d, &user_email, decision);
+    }
 
     // Whether compaction wants the trailing usage frame even when usage metrics
     // are off — the trigger sizes the context from `prompt_tokens`, so we must
@@ -2796,6 +2826,44 @@ fn emit_usage(
             .state
             .upstreams
             .enforce_limits_for_model(model, aiplane_core::server::upstreams::PoolKind::Chat),
+    });
+}
+
+fn emit_selector_usage(
+    d: &OpenAiDriver,
+    user_email: &str,
+    decision: &aiplane_core::server::automatic_routing::AutomaticRouteDecision,
+) {
+    let (Some(backend), Some(usage)) = (
+        decision.selector_backend.as_deref(),
+        decision.selector_usage.as_ref(),
+    ) else {
+        return;
+    };
+    d.state.usage.emit(UsageRecord {
+        created_at: jiff::Timestamp::now(),
+        user_id: d.tool_ctx.user_id.clone(),
+        user_email: (!user_email.is_empty()).then(|| user_email.to_string()),
+        token_id: None,
+        token_name: None,
+        source: d.source,
+        kind: UsageKind::SystemOne,
+        backend: backend.to_string(),
+        model: decision.selector_model.clone(),
+        status: 200,
+        duration_ms: decision.selector_duration_ms,
+        prompt_tokens: usage.input_tokens,
+        completion_tokens: usage.output_tokens,
+        total_tokens: match (usage.input_tokens, usage.output_tokens) {
+            (Some(input), Some(output)) => Some(input + output),
+            _ => None,
+        },
+        input_units: None,
+        output_units: None,
+        enforce_limits: d.state.upstreams.enforce_limits_for_model(
+            &decision.selector_model,
+            aiplane_core::server::upstreams::PoolKind::SystemOne,
+        ),
     });
 }
 

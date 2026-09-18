@@ -2155,6 +2155,33 @@ impl UpstreamRegistry {
             .filter(|p| p.kind == kind && access.allows(p))
             .find_map(|p| p.resolve_healthy(model))
     }
+
+    /// Every distinct real model id a healthy permitted backend may resolve
+    /// `model` to. A routing policy must evaluate capabilities against the
+    /// same real model it can ultimately dispatch, so heterogeneous aliases
+    /// are not safe automatic-route candidates.
+    pub fn resolved_models_for(
+        &self,
+        model: &str,
+        kind: PoolKind,
+        access: &PoolAccess,
+    ) -> Vec<String> {
+        if !access.allows_model(model) {
+            return Vec::new();
+        }
+        let mut models: Vec<String> = self
+            .data()
+            .pools
+            .values()
+            .filter(|pool| pool.kind == kind && access.allows(pool))
+            .flat_map(|pool| pool.backends.iter())
+            .filter(|backend| backend.is_available())
+            .filter_map(|backend| backend.resolve(model))
+            .collect();
+        models.sort();
+        models.dedup();
+        models
+    }
 }
 
 /// Boot-time alias validation (§ Alias validation in `docs/upstreams.md`).
@@ -4220,6 +4247,10 @@ mod tests {
         ];
         resolved.sort();
         assert_eq!(resolved, ["Qwen/Qwen2.5-72B", "Qwen/Qwen3-30B-A3B"]);
+        assert_eq!(
+            reg.resolved_models_for("qwen", PoolKind::Chat, &PoolAccess::all()),
+            ["Qwen/Qwen2.5-72B", "Qwen/Qwen3-30B-A3B"]
+        );
         // Pinning a real id hits exactly that backend.
         assert_eq!(
             reg.route("Qwen/Qwen3-30B-A3B", PoolKind::Chat)

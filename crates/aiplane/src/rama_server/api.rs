@@ -516,6 +516,50 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
             aiplane_core::server::upstreams::PoolKind::Chat,
             &access,
         );
+    let mut automatic_targets: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    if let Ok(routes) = aiplane_core::server::db::automatic_routes::all(&state.db).await {
+        let chat_compliance: std::collections::HashMap<_, _> = models.iter().cloned().collect();
+        let selector_compliance: std::collections::HashMap<_, _> = state
+            .upstreams
+            .models_with_compliance_for_kind_for(
+                aiplane_core::server::upstreams::PoolKind::SystemOne,
+                &access,
+            )
+            .into_iter()
+            .collect();
+        for route in routes {
+            let Some(fallback) = chat_compliance.get(&route.fallback_target) else {
+                continue;
+            };
+            let mut compliance = *fallback;
+            if let Some(selector) = selector_compliance.get(&route.selector_model) {
+                compliance.gdpr &= selector.gdpr;
+                compliance.nda &= selector.nda;
+            } else {
+                compliance.gdpr = false;
+                compliance.nda = false;
+            }
+            for candidate in &route.candidates {
+                if let Some(candidate_compliance) = chat_compliance.get(&candidate.target) {
+                    compliance.gdpr &= candidate_compliance.gdpr;
+                    compliance.nda &= candidate_compliance.nda;
+                }
+            }
+            if !models.iter().any(|(name, _)| name == &route.alias) {
+                automatic_targets.insert(
+                    route.alias.clone(),
+                    route
+                        .candidates
+                        .iter()
+                        .map(|candidate| candidate.target.clone())
+                        .collect(),
+                );
+                models.push((route.alias, compliance));
+            }
+        }
+        models.sort_by(|left, right| left.0.cmp(&right.0));
+    }
     use aiplane_core::server::feature_defaults::{self, Feature};
     let configured = feature_defaults::get(&state.db, Feature::Chat).await;
     feature_defaults::promote(configured.as_deref(), &mut models, |m| m.0.as_str());
@@ -552,32 +596,38 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
             // out on a name like `default` while the request path happily
             // sends Qwen's `enable_thinking`, which is the same disagreement
             // between UI and wire this whole field exists to prevent.
-            let target = state
-                .upstreams
-                .resolve_model_for(
-                    &id,
-                    aiplane_core::server::upstreams::PoolKind::Chat,
-                    &access,
-                )
-                .unwrap_or_else(|| id.clone());
-            let dialect = state
-                .upstreams
-                .serving_profile(
-                    &target,
-                    aiplane_core::server::upstreams::PoolKind::Chat,
-                    &access,
-                )
-                .dialect;
-            let style = aiplane_core::server::reasoning::ReasoningStyle::resolve(
-                stored.get(&target).and_then(Option::as_deref),
-                dialect,
-                &target,
-            );
+            let targets = automatic_targets.get(&id).cloned().unwrap_or_else(|| {
+                vec![
+                    state
+                        .upstreams
+                        .resolve_model_for(
+                            &id,
+                            aiplane_core::server::upstreams::PoolKind::Chat,
+                            &access,
+                        )
+                        .unwrap_or_else(|| id.clone()),
+                ]
+            });
+            let reasoning = targets.iter().any(|target| {
+                let dialect = state
+                    .upstreams
+                    .serving_profile(
+                        target,
+                        aiplane_core::server::upstreams::PoolKind::Chat,
+                        &access,
+                    )
+                    .dialect;
+                aiplane_core::server::reasoning::ReasoningStyle::resolve(
+                    stored.get(target).and_then(Option::as_deref),
+                    dialect,
+                    target,
+                ) != aiplane_core::server::reasoning::ReasoningStyle::None
+            });
             json!({
                 "id": id,
                 "gdpr": compliance.gdpr,
                 "nda": compliance.nda,
-                "reasoning": style != aiplane_core::server::reasoning::ReasoningStyle::None,
+                "reasoning": reasoning,
             })
         })
         .collect();

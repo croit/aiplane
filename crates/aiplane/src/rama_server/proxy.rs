@@ -28,6 +28,9 @@ use jiff::Timestamp;
 
 use crate::rama_server::vad;
 use aiplane_core::server::auth::UserCtx;
+use aiplane_core::server::automatic_routing::{
+    AutomaticRouteAffinity, AutomaticRouteDecision, AutomaticRoutingError,
+};
 use aiplane_core::server::db::usage::{self, UnitUsage, UsageKind, UsageRecord, UsageSource};
 use aiplane_core::server::upstreams::PoolKind;
 use aiplane_core::server::upstreams::registry::{Acquired, RouteError};
@@ -657,6 +660,16 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
             "request body is missing a string `model` field",
         );
     };
+    let request_value: Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("body is not valid JSON: {error}"),
+            );
+        }
+    };
 
     // The token's whole tool surface, resolved in one place (see
     // `api_tool_layer`): what to advertise, and the overlay that dispatches it.
@@ -674,8 +687,36 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
     // Per-user pool access: a model served only by pools this caller can't
     // reach routes as `UnknownModel` → 404, identical to a nonexistent model.
     let access = state.pool_access_for_token(&user);
+    let (routing_model, automatic_decision) = match resolve_automatic_chat_route(
+        &state,
+        &user,
+        &model,
+        &request_value,
+        &access,
+        &parts.headers,
+        !allowed_tools.is_empty(),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let route_access = if automatic_decision.is_some() {
+        access_without_model_allowlist(&access)
+    } else {
+        access.clone()
+    };
     if allowed_tools.is_empty() {
-        return chat_bytedumb(&state, &user, &model, &access, parts.headers, body).await;
+        let response = chat_bytedumb(
+            &state,
+            &user,
+            &routing_model,
+            &route_access,
+            parts.headers,
+            body,
+        )
+        .await;
+        return with_automatic_route_headers(response, automatic_decision.as_ref());
     }
 
     // Gateway-tool path. Resolve aliases + fallback once, up front: the tool
@@ -689,7 +730,7 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
     // a dispatch-balanced picker, locks the two acquisitions into strict
     // alternation and pins every real dispatch to one replica). The outage wait
     // still applies.
-    let real_model = match resolve_or_wait(&state, &model, &access).await {
+    let real_model = match resolve_or_wait(&state, &routing_model, &route_access).await {
         Ok(id) => id,
         Err(e) => return route_error_response(e),
     };
@@ -732,13 +773,14 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
             Box::new(OpenAiSink),
         )
         .await;
-        return with_resolved_model_header(resp, &model, &real_model);
+        let response = with_resolved_model_header(resp, &model, &real_model);
+        return with_automatic_route_headers(response, automatic_decision.as_ref());
     }
     let outcome = buffered_with_tools(
         &state,
         &user,
         &real_model,
-        access,
+        route_access,
         parts.headers,
         client_ip,
         request_body,
@@ -769,7 +811,180 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
         Some(b) => with_backend_header(resp, b),
         None => resp,
     };
-    with_resolved_model_header(resp, &model, &real_model)
+    let response = with_resolved_model_header(resp, &model, &real_model);
+    with_automatic_route_headers(response, automatic_decision.as_ref())
+}
+
+pub(crate) async fn resolve_automatic_chat_route(
+    state: &Arc<RamaState>,
+    user: &UserCtx,
+    requested_model: &str,
+    request_body: &Value,
+    access: &aiplane_core::server::upstreams::PoolAccess,
+    headers: &HeaderMap,
+    has_gateway_tools: bool,
+) -> Result<(String, Option<AutomaticRouteDecision>), Response> {
+    let session_id = headers
+        .get("x-gateway-session-id")
+        .or_else(|| headers.get("x-gateway-session"))
+        .and_then(|value| value.to_str().ok())
+        .or_else(|| request_body.get("session_id").and_then(Value::as_str))
+        .or_else(|| {
+            request_body
+                .pointer("/metadata/session_id")
+                .and_then(Value::as_str)
+        });
+    let routing_state = routing_state(request_body, has_gateway_tools);
+    let affinity = session_id.map(|session| AutomaticRouteAffinity {
+        principal: &user.token_id,
+        session,
+    });
+    let lang = Lang::from_request(headers);
+    let decision = state
+        .automatic_router
+        .select(requested_model, &routing_state, access, affinity)
+        .await
+        .map_err(|error| automatic_route_error_response(error, lang))?;
+    let Some(decision) = decision else {
+        return Ok((requested_model.to_string(), None));
+    };
+    record_selector_usage(state, user, &decision);
+    Ok((decision.effective_target.clone(), Some(decision)))
+}
+
+fn routing_state(request_body: &Value, has_gateway_tools: bool) -> Value {
+    if !has_gateway_tools
+        || request_body
+            .get("tools")
+            .and_then(Value::as_array)
+            .is_some_and(|tools| !tools.is_empty())
+    {
+        return request_body.clone();
+    }
+    let mut state = request_body.clone();
+    if let Some(object) = state.as_object_mut() {
+        object.insert("tools".into(), json!([{}]));
+    }
+    state
+}
+
+fn automatic_route_error_response(error: AutomaticRoutingError, lang: Lang) -> Response {
+    match error {
+        AutomaticRoutingError::AliasNotAllowed(alias) => {
+            route_error_response(RouteError::ModelNotAllowed(alias))
+        }
+        AutomaticRoutingError::NoEligibleCandidates { .. }
+        | AutomaticRoutingError::IneligibleFallback { .. } => {
+            tracing::warn!(error = %error, "automatic route is temporarily unavailable");
+            let mut response = error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "automatic_route_unavailable",
+                &t(lang, "auto-route-error-unavailable"),
+            );
+            response.headers_mut().insert(
+                rama::http::header::RETRY_AFTER,
+                rama::http::HeaderValue::from_static("5"),
+            );
+            response
+        }
+        AutomaticRoutingError::Load { .. } => {
+            tracing::error!(error = %error, "loading automatic route failed");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "automatic_route_error",
+                &t(lang, "auto-route-error-internal"),
+            )
+        }
+    }
+}
+
+fn record_selector_usage(state: &RamaState, user: &UserCtx, decision: &AutomaticRouteDecision) {
+    let (Some(backend), Some(usage)) = (
+        decision.selector_backend.as_deref(),
+        decision.selector_usage.as_ref(),
+    ) else {
+        return;
+    };
+    state.usage.emit(UsageRecord {
+        created_at: Timestamp::now(),
+        user_id: user.user_id.clone(),
+        user_email: Some(user.user_email.clone()).filter(|value| !value.is_empty()),
+        token_id: Some(user.token_id.clone()),
+        token_name: Some(user.token_name.clone()),
+        source: UsageSource::V1Api,
+        kind: UsageKind::SystemOne,
+        backend: backend.to_string(),
+        model: decision.selector_model.clone(),
+        status: 200,
+        duration_ms: decision.selector_duration_ms,
+        prompt_tokens: usage.input_tokens,
+        completion_tokens: usage.output_tokens,
+        total_tokens: match (usage.input_tokens, usage.output_tokens) {
+            (Some(input), Some(output)) => Some(input + output),
+            _ => None,
+        },
+        input_units: None,
+        output_units: None,
+        enforce_limits: state
+            .upstreams
+            .enforce_limits_for_model(&decision.selector_model, PoolKind::SystemOne),
+    });
+}
+
+fn access_without_model_allowlist(
+    access: &aiplane_core::server::upstreams::PoolAccess,
+) -> aiplane_core::server::upstreams::PoolAccess {
+    aiplane_core::server::upstreams::PoolAccess {
+        allowed_models: None,
+        ..access.clone()
+    }
+}
+
+pub(crate) fn with_automatic_route_headers(
+    mut response: Response,
+    decision: Option<&AutomaticRouteDecision>,
+) -> Response {
+    let Some(decision) = decision else {
+        return response;
+    };
+    for (name, value) in [
+        ("x-gateway-route-alias", decision.alias.clone()),
+        (
+            "x-gateway-route-version",
+            decision.policy_version.to_string(),
+        ),
+        ("x-gateway-route-reason", decision.reason.clone()),
+        ("x-gateway-route-target", decision.effective_target.clone()),
+    ] {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            rama::http::HeaderValue::from_str(&value),
+        ) {
+            response.headers_mut().insert(name, value);
+        }
+    }
+    if let Some(target) = decision.selected_target.as_deref()
+        && let Ok(value) = rama::http::HeaderValue::from_str(target)
+    {
+        response
+            .headers_mut()
+            .insert("x-gateway-route-suggested-target", value);
+    }
+    if let Some(confidence) = decision.confidence
+        && let Ok(value) = rama::http::HeaderValue::from_str(&confidence.to_string())
+    {
+        response
+            .headers_mut()
+            .insert("x-gateway-route-confidence", value);
+    }
+    if !response.headers().contains_key("x-gateway-resolved-model")
+        && let Ok(value) = rama::http::HeaderValue::from_str(&decision.effective_target)
+    {
+        response
+            .headers_mut()
+            .insert("x-gateway-resolved-model", value);
+    }
+    response
 }
 
 fn loop_error_response(err: LoopError) -> Response {
@@ -1197,6 +1412,62 @@ pub async fn embeddings(State(state): State<Arc<RamaState>>, req: Request) -> Re
     )
     .await;
     with_resolved_model_header(resp, &model, &real_model)
+}
+
+/// `POST /v1/systemone` — TypeSafe System One compatible typed decisions.
+/// The body is relayed without interpreting the question schema; only the
+/// model field is read for routing and rewritten when an alias resolves.
+pub async fn system_one(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (parts, body) = req.into_parts();
+    let user = match require_bearer(&state, &parts.headers).await {
+        Ok(user) => user,
+        Err(refusal) => return refusal.into_response(),
+    };
+    if let Some(resp) = limit_check(&state, &user).await {
+        return resp;
+    }
+    let body = match read_body_to_bytes(body).await {
+        Ok(body) => body,
+        Err(message) => {
+            return error_response(StatusCode::BAD_REQUEST, "invalid_request", &message);
+        }
+    };
+    let Some(model) = parse_model_field(&body) else {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "request body is missing a string `model` field",
+        );
+    };
+    let access = state.pool_access_for_token(&user);
+    let acquired = match state
+        .upstreams
+        .route_access(&model, PoolKind::SystemOne, &access)
+    {
+        Ok(acquired) => acquired,
+        Err(error) => return route_error_response(error),
+    };
+    let real_model = acquired.resolved_model().to_string();
+    let body = rewrite_model_in_bytes(body, &real_model);
+    let record = RecordParams::v1(
+        &user,
+        UsageKind::SystemOne,
+        real_model.clone(),
+        state
+            .upstreams
+            .enforce_limits_for_model(&real_model, PoolKind::SystemOne),
+    );
+    let response = forward(
+        &state,
+        acquired,
+        Method::POST,
+        "systemone",
+        parts.headers,
+        body,
+        record,
+    )
+    .await;
+    with_resolved_model_header(response, &model, &real_model)
 }
 
 /// `POST /v1/images/generations` — OpenAI-compatible image generation.
@@ -1648,12 +1919,20 @@ pub async fn list_models(State(state): State<Arc<RamaState>>, req: Request) -> R
     // access. A withheld model is also unroutable for them (see `route_access`),
     // so the list is a true capability view, not a cosmetic filter.
     let access = state.pool_access_for_token(&user);
-    let data: Vec<Value> = state
-        .upstreams
-        .all_models_for(&access)
-        .into_iter()
-        .map(model_object)
-        .collect();
+    let mut listed = state.upstreams.all_models_for(&access);
+    if let Ok(routes) = aiplane_core::server::db::automatic_routes::all(&state.db).await {
+        let target_access = access_without_model_allowlist(&access);
+        for route in routes {
+            if access.allows_model(&route.alias)
+                && automatic_route_available(&state, &route, &target_access)
+                && !listed.contains(&route.alias)
+            {
+                listed.push(route.alias);
+            }
+        }
+    }
+    listed.sort();
+    let data: Vec<Value> = listed.into_iter().map(model_object).collect();
     let body = json!({ "object": "list", "data": data });
     (
         StatusCode::OK,
@@ -1686,7 +1965,18 @@ pub async fn retrieve_model(State(state): State<Arc<RamaState>>, req: Request) -
         .unwrap_or_default();
     let id = percent_decode(raw);
     let access = state.pool_access_for_token(&user);
-    if id.is_empty() || !state.upstreams.knows_any_for(&id, &access) {
+    let automatic = if id.is_empty() || !access.allows_model(&id) {
+        false
+    } else {
+        aiplane_core::server::db::automatic_routes::get(&state.db, &id)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|route| {
+                automatic_route_available(&state, &route, &access_without_model_allowlist(&access))
+            })
+    };
+    if id.is_empty() || (!state.upstreams.knows_any_for(&id, &access) && !automatic) {
         return model_not_found_response(&id);
     }
     (
@@ -1695,6 +1985,17 @@ pub async fn retrieve_model(State(state): State<Arc<RamaState>>, req: Request) -
         model_object(id).to_string(),
     )
         .into_response()
+}
+
+fn automatic_route_available(
+    state: &RamaState,
+    route: &aiplane_core::server::db::automatic_routes::AutomaticRoute,
+    access: &aiplane_core::server::upstreams::PoolAccess,
+) -> bool {
+    state
+        .upstreams
+        .resolve_model_for(&route.fallback_target, PoolKind::Chat, access)
+        .is_some()
 }
 
 /// Minimal percent-decoder for a path segment. Model ids are sent verbatim
@@ -3395,6 +3696,18 @@ mod tests {
         let v = parse(&out);
         assert!(v.get("stream_options").is_none());
         assert_eq!(v["stream"], false);
+    }
+
+    #[test]
+    fn routing_state_includes_gateway_owned_tool_requirement() {
+        let state = routing_state(
+            &serde_json::json!({"model": "default", "messages": []}),
+            true,
+        );
+        assert_eq!(state["tools"].as_array().map(Vec::len), Some(1));
+
+        let client_tools = serde_json::json!({"tools": [{"type": "function"}]});
+        assert_eq!(routing_state(&client_tools, true), client_tools);
     }
 
     #[test]

@@ -239,6 +239,34 @@ async fn main() -> anyhow::Result<()> {
             }],
         },
     );
+    pools.insert(
+        "selector".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            compliance: Default::default(),
+            enforce_limits: true,
+            kind: PoolKind::SystemOne,
+            strategy: PickerStrategy::RoundRobin,
+            models: vec!["demo-selector".into()],
+            backend: vec![BackendConfig {
+                alias: None,
+                probe_models: false,
+                supports_edit: false,
+                enabled: true,
+                name: "wiremock-selector".into(),
+                base_url: chat_mock.uri(),
+                api_key_env: None,
+                api_key: None,
+                weight: 1,
+                max_inflight: 16,
+                health_path: "/models".into(),
+                models: vec!["demo-selector".into()],
+            }],
+        },
+    );
     // Speech (TTS) pool — its mere presence flips `voice_available` on so the
     // chat composer renders the live-voice button (and modal). Points at the
     // chat mock's URL (never actually called just to render the button);

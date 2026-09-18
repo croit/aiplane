@@ -146,6 +146,10 @@ pub enum PoolKind {
     /// internal capability pool: it scores (query, passage) pairs and is
     /// never a chat model, so it stays out of `/v1/models`.
     Rerank,
+    /// TypeSafe System One compatible decision models. Backs
+    /// `POST /v1/systemone`; unlike chat models these return typed `noul`,
+    /// `choice`, and `score` answers rather than generated text.
+    SystemOne,
 }
 
 impl PoolKind {
@@ -159,6 +163,7 @@ impl PoolKind {
             Self::Speech => "speech",
             Self::Ocr => "ocr",
             Self::Rerank => "rerank",
+            Self::SystemOne => "system_one",
         }
     }
 
@@ -169,7 +174,7 @@ impl PoolKind {
     /// list, and the copy in the API was missing `Rerank` — so creating a
     /// rerank pool through the UI was rejected as an "unknown pool kind"
     /// even though the config loader accepts it.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Chat,
         Self::Transcription,
         Self::Embedding,
@@ -177,6 +182,7 @@ impl PoolKind {
         Self::Speech,
         Self::Ocr,
         Self::Rerank,
+        Self::SystemOne,
     ];
 }
 
@@ -364,7 +370,7 @@ impl FallbackConfig {
             PoolKind::Image => self.image.as_deref(),
             // Speech has no unknown-model fallback: a mistyped voice/model just
             // surfaces the backend's own error. No sensible cross-substitution.
-            PoolKind::Speech | PoolKind::Ocr | PoolKind::Rerank => None,
+            PoolKind::Speech | PoolKind::Ocr | PoolKind::Rerank | PoolKind::SystemOne => None,
         }
     }
 }
