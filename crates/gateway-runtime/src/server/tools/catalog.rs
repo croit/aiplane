@@ -273,6 +273,10 @@ pub fn requires_chat_session(tool_id: &str) -> bool {
         || tool_id == "read_sandbox_output"
         // Needs a live turn *and* a human watching it to answer.
         || tool_id == "ask_user"
+        // Acts through the browser extension paired with the *open* chat page.
+        // Off the chat path there is no page to relay through, so there is
+        // nothing for a /v1 caller to call.
+        || tool_id == "browser_control"
         // Creating or deleting a scheduled action needs a human "yes" (the
         // action later runs *as the user*, unattended), and that confirmation
         // is an `ask_user` card — so these need the same live chat turn.
@@ -305,6 +309,10 @@ pub fn category_for(tool_id: &str) -> Category {
     match tool_id {
         "search_web" | "fetch_url" | "lookup_ip" | "dns_lookup" | "whois_lookup" | "tls_cert"
         | "wikipedia" => Category::Web,
+        // Grouped with the other ways of reaching a page, because that is where
+        // a user goes looking for it — while being the only one that acts *as
+        // them*, which is what its display copy has to make unmistakable.
+        "browser_control" => Category::Web,
         "fetch_attachment" | "upload_attachment" | "offer_download" | "zip_attachments"
         | "list_attachments" | "read_skill" => Category::Documents,
         "generate_image" | "edit_image" | "generate_qr_code" | "load_image_url" => Category::Media,
@@ -407,6 +415,14 @@ fn display_meta(tool_id: &str) -> Option<(&'static str, &'static str)> {
              are not watching the conversation — long work finished, or a scheduled action \
              found something you should know. Limited to one per reply, and it needs a \
              device you enabled notifications on.",
+        ),
+        "browser_control" => (
+            "Your own browser",
+            "Lets the assistant act in the browser you are using right now — open a page, \
+             read it, fill a form — so it can reach things that need you to be logged in. \
+             It only works while this conversation is open, it needs the browser extension \
+             installed and switched on, and the extension asks you before anything is \
+             clicked, typed or submitted.",
         ),
         "ask_user" => (
             "Clarifying questions",

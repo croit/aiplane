@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "LLM Gateway Browser Control",
+  "version": "0.0.0",
+  "description": "Lets an LLM Gateway conversation act in this browser — with your logins, and only after you switch it on.",
+  "minimum_chrome_version": "127",
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "Browser control — off",
+    "default_icon": {
+      "16": "icons/off-16.png",
+      "32": "icons/off-32.png",
+      "48": "icons/off-48.png",
+      "128": "icons/off-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/off-16.png",
+    "32": "icons/off-32.png",
+    "48": "icons/off-48.png",
+    "128": "icons/off-128.png"
+  },
+  "options_page": "src/options.html",
+  "permissions": ["storage", "scripting", "tabs", "tabGroups", "debugger", "activeTab"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "host_permissions": []
+}

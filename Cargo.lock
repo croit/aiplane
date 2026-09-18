@@ -1977,6 +1977,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "url",
+ "uuid",
  "wiremock",
  "x509-parser",
  "zip",

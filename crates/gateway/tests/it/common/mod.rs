@@ -643,6 +643,31 @@ pub fn post_form(uri: &str, cookie: &str, body: &str) -> rama::http::Request {
         .unwrap()
 }
 
+/// A JSON POST carrying a session cookie. The shape every `/api/v0` suite
+/// needs, kept beside `post_form` rather than copied into each one.
+pub fn post_json(uri: &str, cookie: &str, body: &str) -> rama::http::Request {
+    rama::http::Request::builder()
+        .method(rama::http::Method::POST)
+        .uri(uri)
+        .header("cookie", format!("id={cookie}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// Seed a chat session for `user` with one in-progress assistant turn under
+/// `turn_id` — the unit the mid-turn feedback endpoints key on.
+pub async fn seed_turn(state: &RamaState, user: &str, turn_id: &str) {
+    use session_core::db as chat;
+    let session = chat::create_session(&state.db, user).await.unwrap();
+    chat::create_user_turn(&state.db, &session.id, &format!("{turn_id}-u"), "question")
+        .await
+        .unwrap();
+    chat::create_assistant_turn_in_progress(&state.db, &session.id, turn_id, "model-a")
+        .await
+        .unwrap();
+}
+
 /// Seed a user + an active session + a bearer token. Returns the
 /// plaintext bearer suitable for an `Authorization: Bearer …` header.
 pub async fn seed_user_with_token(state: &RamaState, user_id: &str) -> String {

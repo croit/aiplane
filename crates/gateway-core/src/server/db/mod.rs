@@ -14,6 +14,7 @@ use thiserror::Error;
 
 pub mod app_settings;
 pub mod audit;
+pub mod browser_audit;
 pub mod chat_compactions;
 pub mod chat_session_settings;
 pub mod chat_session_skills;

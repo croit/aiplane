@@ -39,6 +39,15 @@ pub struct RamaState {
     /// have both pending.
     pub ask_feedback:
         Arc<crate::server::tools::feedback::FeedbackHub<crate::server::tools::feedback::AskReply>>,
+    /// And once more for `browser_control`: the tool parks here after putting a
+    /// batch of actions on the turn's event stream, and `POST
+    /// /api/v0/me/browser/feedback/{id}` resolves it with what the extension
+    /// did. Same reason for being its own hub as `ask_feedback` — a turn can
+    /// have a question and a browser batch outstanding at once, and neither
+    /// endpoint may wake the other's tool.
+    pub browser_feedback: Arc<
+        crate::server::tools::feedback::FeedbackHub<crate::server::tools::feedback::BrowserReply>,
+    >,
     /// Fire-and-forget usage-metrics sink. The proxy, chat driver, and
     /// scheduler hand it a `UsageRecord` per upstream call; a background
     /// task batches the writes. `disabled()` when `[usage] enabled = false`,
@@ -84,6 +93,7 @@ impl RamaState {
             chats: Arc::new(SessionWorkers::default()),
             location_feedback: Arc::new(crate::server::tools::feedback::FeedbackHub::default()),
             ask_feedback: Arc::new(crate::server::tools::feedback::FeedbackHub::default()),
+            browser_feedback: Arc::new(crate::server::tools::feedback::FeedbackHub::default()),
             usage,
             ocr,
             enforcer,

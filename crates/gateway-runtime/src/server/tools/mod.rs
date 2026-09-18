@@ -244,12 +244,39 @@ pub struct ChatFeedback {
     pub hub: std::sync::Arc<feedback::FeedbackHub<feedback::BrowserFix>>,
     /// Where `ask_user` parks waiting for an answer to a question.
     pub ask_hub: std::sync::Arc<feedback::FeedbackHub<feedback::AskReply>>,
+    /// Where `browser_control` parks waiting for the paired browser extension
+    /// to run a batch of actions.
+    pub browser_hub: std::sync::Arc<feedback::FeedbackHub<feedback::BrowserReply>>,
     /// Whether the browser is on a secure context (so `navigator.
     /// geolocation` is actually allowed). When false, the tool skips the
     /// futile precise-location prompt, warns inline, and falls back to
     /// GeoIP. Computed per-request from `X-Forwarded-Proto` / `Host` —
     /// see `geoip::transport_is_secure`.
     pub secure: bool,
+}
+
+impl ChatFeedback {
+    /// A chat context wired to fresh, empty hubs, for tests that only care
+    /// about one of them.
+    ///
+    /// Without it, every tool test that fakes a live turn has to name all three
+    /// hubs — so adding a fourth callback edits test modules that have nothing
+    /// to do with it. Callers override the hub they assert on:
+    /// `ChatFeedback { ask_hub, ..ChatFeedback::for_test(broadcast) }`.
+    ///
+    /// Ungated, like [`ToolContext::for_test`]: the callers are tests in other
+    /// crates, which `cfg(test)` does not reach.
+    pub fn for_test(
+        broadcast: tokio::sync::broadcast::Sender<session_core::workers::TurnUpdate>,
+    ) -> Self {
+        Self {
+            broadcast,
+            hub: std::sync::Arc::new(feedback::FeedbackHub::default()),
+            ask_hub: std::sync::Arc::new(feedback::FeedbackHub::default()),
+            browser_hub: std::sync::Arc::new(feedback::FeedbackHub::default()),
+            secure: true,
+        }
+    }
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -404,6 +431,20 @@ pub trait Tool: Send + Sync + 'static {
     /// shorter than the default is fine too.
     fn max_duration(&self) -> Option<std::time::Duration> {
         None
+    }
+
+    /// Whether this tool's call arguments must be kept out of the journal.
+    ///
+    /// The runner logs every call's arguments at info level so operators can
+    /// see what a hanging tool was asked to do. For almost every tool that is
+    /// exactly right. For a few it is a disclosure: `browser_control` carries
+    /// the URLs a user's own browser is being sent to and the text being typed
+    /// into their forms — the very things its audit table goes out of its way
+    /// *not* to store. A redaction that the process logger quietly undoes is
+    /// not a redaction, so the tool declares it here and the runner logs a
+    /// placeholder instead.
+    fn sensitive_args(&self) -> bool {
+        false
     }
 }
 

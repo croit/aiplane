@@ -393,6 +393,7 @@ async fn spawn_assistant_worker(
                 broadcast: worker.broadcast.clone(),
                 hub: state.location_feedback.clone(),
                 ask_hub: state.ask_feedback.clone(),
+                browser_hub: state.browser_feedback.clone(),
                 secure: req.secure,
             }),
             model: Some(model.to_string()),

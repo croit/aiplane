@@ -20,6 +20,7 @@
 //! rebuild. See `docs/architecture.md`.
 
 pub mod ask_user;
+pub mod browser_control;
 pub mod currency;
 pub mod document;
 pub mod edit_image;

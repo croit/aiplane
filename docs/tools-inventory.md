@@ -46,6 +46,7 @@ message rather than being absent.
 | `get_user_location` | — | `get_user_location` | Caller's location: a browser GPS prompt when a live chat turn is watching, else coarse GeoIP. |
 | `generate_qr_code` | yes | `generate_qr_code` | QR codes (URL, WiFi, vCard, SEPA) as PNG/SVG, rendered in-process. |
 | `search_web` | — | `search_web` | Web search via SearXNG or Brave, with optional domain and recency filters. Backend configured on `/admin/models`. |
+| `browser_control` | yes | `browser_control` | Act in the user's own logged-in browser (navigate, read, click, type, screenshot) through the extension paired with the open chat page. Actions travel as a batch and run in order. Chat-only by construction — the transport *is* the open conversation. Everything it returns is untrusted page content, and the extension, not the gateway, confirms writes. See [`browser-control.md`](browser-control.md). |
 | `fetch_url` | — | `fetch_url` | HTTP GET. HTML is reduced to readable text unless `raw` is set; images come back viewable; other binary returns metadata. |
 | `wikipedia` | — | `wikipedia` | Summary of the best-matching Wikipedia article. |
 | `dns_lookup` | — | `dns_lookup` | DNS records over DoH. |

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Browser control</title>
+		<style>
+			:root {
+				color-scheme: light dark;
+				font-family: system-ui, sans-serif;
+			}
+			body {
+				margin: 0;
+				padding: 16px;
+				width: 300px;
+			}
+			h1 {
+				font-size: 0.95rem;
+				margin: 0 0 4px;
+			}
+			p {
+				font-size: 0.82rem;
+				opacity: 0.8;
+				margin: 0 0 12px;
+			}
+			button {
+				width: 100%;
+				padding: 9px;
+				border-radius: 6px;
+				border: 1px solid rgba(127, 127, 127, 0.5);
+				background: transparent;
+				font: inherit;
+				cursor: pointer;
+			}
+			button.on {
+				border-color: transparent;
+				background: #2563eb;
+				color: #fff;
+			}
+			ul {
+				list-style: none;
+				margin: 14px 0 0;
+				padding: 0;
+				font-size: 0.75rem;
+				max-height: 160px;
+				overflow: auto;
+			}
+			li {
+				padding: 3px 0;
+				border-bottom: 1px solid rgba(127, 127, 127, 0.18);
+			}
+			a {
+				font-size: 0.78rem;
+				display: inline-block;
+				margin-top: 12px;
+			}
+		</style>
+	</head>
+	<body>
+		<h1 id="title">Browser control</h1>
+		<p id="status">Checking…</p>
+		<button id="toggle">…</button>
+		<ul id="activity"></ul>
+		<a href="#" id="options">Settings</a>
+		<script type="module" src="popup.js"></script>
+	</body>
+</html>

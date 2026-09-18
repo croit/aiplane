@@ -15,6 +15,7 @@
  */
 import { applyEvent, newConversationState, parseSseBlock, type ChatEvent } from './chat-protocol';
 import { api } from './api';
+import { handleBrowserAction } from './browser-bridge';
 
 export type SidebarChangedCallback = () => void;
 
@@ -42,6 +43,7 @@ const EVENT_NAMES = [
 	'sidebar_changed',
 	'info',
 	'tool_prompt',
+	'browser_action',
 	'idle'
 ] as const;
 
@@ -106,6 +108,14 @@ export function createConversationController(sessionId: string): ConversationCon
 
 		apply(event) {
 			applyEvent(state, event);
+			// Work for the browser extension. Fired and not awaited: the tool on
+			// the other end has its own timeout, and blocking the event pump on
+			// a page load would stall the transcript this same stream delivers.
+			// `handleBrowserAction` always reports back, including when no
+			// extension is there, so a turn never waits on silence from here.
+			if (event.type === 'browser_action') {
+				void handleBrowserAction(event, { post: api.browserFeedback });
+			}
 			if (event.type === 'sidebar_changed') controller.onSidebarChanged?.();
 			if (event.type === 'turn_finalized') controller.onTurnFinalized?.();
 			// A turn that finishes before the re-attach lands — a cached reply,

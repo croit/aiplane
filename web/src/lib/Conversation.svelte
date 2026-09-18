@@ -5,6 +5,8 @@
 	import { api, ApiError } from '$lib/api';
 	import type { CanvasDocument, ChatAsset, ChatCapability } from '$lib/api';
 	import { createConversationController } from '$lib/chat.svelte';
+	import { extensionStatus, onExtensionState, requestActivation } from '$lib/browser-bridge';
+	import type { ExtensionStatus } from '$lib/browser-bridge';
 	import { createVoiceController } from '$lib/voice.svelte';
 	import { refreshSidebar, sidebar } from '$lib/sidebar.svelte';
 	import { parseUserContent, replaceUserText } from '$lib/chat-protocol';
@@ -50,6 +52,43 @@
 	const EFFORTS = ['fast', 'standard', 'deep', 'max'] as const;
 	let sending = $state(false);
 	let notice = $state<string | null>(null);
+
+	/**
+	 * The browser extension, as this page sees it.
+	 *
+	 * Worth doing something about exactly one of the three cases: installed,
+	 * paired with this gateway, and switched off. Somebody who never installed
+	 * it gets nothing — an advert for a browser extension is not what a chat
+	 * page is for — and somebody already switched on needs nothing either.
+	 */
+	let extension = $state<ExtensionStatus>({ present: false, armed: false });
+	/**
+	 * Offer the switch, and then get out of the way.
+	 *
+	 * The asking is the extension's job end to end: it opens its own popup, or
+	 * a small window of its own when Chrome refuses the popup. This page
+	 * deliberately shows nothing of its own — a banner here would be a second
+	 * prompt for the same question, and one that cannot do anything except ask
+	 * the extension to ask.
+	 *
+	 * Nor could it do more if it wanted to. Arming takes a click inside the
+	 * extension's UI, which is the one gesture script on this origin cannot
+	 * produce, and that is what stops a compromised gateway arming itself.
+	 *
+	 * Only while this tab is in front: the popup opens over whatever tab is
+	 * active, not over the tab that asked, so a chat restored into a background
+	 * tab would drop it on top of whatever the user is really reading. The
+	 * extension refuses in that case and keeps the offer unspent, which is why
+	 * this runs on every return to the tab and not only on load.
+	 */
+	function offerWhenInFront() {
+		// Not on somebody else's shared conversation: offering to drive this
+		// browser is a question for the person whose chat it is.
+		if (!isOwner) return;
+		if (document.visibilityState !== 'visible') return;
+		if (!extension.present || extension.armed) return;
+		void requestActivation({ auto: true });
+	}
 	let compactedUpToSeq = $state<number | null>(null);
 	let assets = $state<ChatAsset[]>([]);
 	let clock = $state(Date.now());
@@ -269,9 +308,20 @@
 		if (transcript) observer.observe(transcript);
 		if (transcriptBody) observer.observe(transcriptBody);
 		const timer = window.setInterval(() => (clock = Date.now()), 100);
+		// Read the extension's state once, then let it push. Polling would be
+		// the obvious shape and the wrong one: the switch is in the extension,
+		// so it knows the moment it moves and the page should hear it.
+		void extensionStatus().then((status) => {
+			extension = status;
+			offerWhenInFront();
+		});
+		document.addEventListener('visibilitychange', offerWhenInFront);
+		const unwatch = onExtensionState((status) => (extension = status));
 		return () => {
 			observer.disconnect();
 			window.clearInterval(timer);
+			document.removeEventListener('visibilitychange', offerWhenInFront);
+			unwatch();
 			c.destroy();
 		};
 	});

@@ -369,6 +369,51 @@ sources = ["web/src/lib/**/*.ts", "web/package-lock.json"]
 dir = "{{ config_root }}"
 run = "node --test 'web/src/lib/**/*.test.ts'"
 
+[tasks.package-extension]
+description = "Zip the Chrome extension for upload, stamped with this commit's version. `manifest.json` carries a committed placeholder (0.0.0) exactly like the Helm chart's Chart.yaml: the number that ships comes from `scripts/derive-version.sh`, the same resolver the images and the chart use, so an extension build can never disagree with the gateway it talks to. Writes target/llm-gateway-browser-control-<version>.zip."
+dir = "{{ config_root }}"
+# A literal string ('''), not a basic one (""""): the node snippet below
+# contains a \n escape, and TOML would turn it into a real newline inside the
+# JavaScript string literal.
+run = '''
+set -eu
+
+# Assign, then use — `X=$(...)` propagates the resolver's failure, which
+# embedding it in another command would swallow.
+VERSION=$(sh scripts/derive-version.sh)
+OUT="target/llm-gateway-browser-control-$VERSION.zip"
+STAGE="target/extension-package"
+
+rm -rf "$STAGE" "$OUT"
+mkdir -p "$STAGE" target
+# Copy rather than zip in place: the manifest is rewritten with the real
+# version, and the working tree keeps its placeholder.
+cp -R extension/. "$STAGE/"
+
+# Development files. They break nothing in a published package, but they are
+# not part of the product and a Web Store review reads everything shipped.
+find "$STAGE" -name '*.test.js' -delete
+rm -f "$STAGE/icons/render.py"
+
+node -e '
+  const fs = require("fs");
+  const [path, version] = process.argv.slice(1);
+  const manifest = JSON.parse(fs.readFileSync(path, "utf8"));
+  manifest.version = version;
+  fs.writeFileSync(path, JSON.stringify(manifest, null, 2) + "\n");
+' "$STAGE/manifest.json" "$VERSION"
+
+(cd "$STAGE" && zip -qr "../../$OUT" .)
+rm -rf "$STAGE"
+echo "$OUT"
+'''
+
+[tasks.test-extension]
+description = "Unit-test the Chrome extension (node --test). Two files are covered: `policy.js`, the pure module that decides whether a page gets clicked, kept free of `chrome.*` precisely so it can be tested without a browser; and `content.js`, the page↔worker wire, run inside a `vm` context with stub globals because Chrome runs it as a classic script too. The rest needs a real browser (pairing, MV3 lifecycle, CDP input) and is verified by hand — see extension/README.md."
+sources = ["extension/src/**/*.js"]
+dir = "{{ config_root }}"
+run = "node --test 'extension/src/**/*.test.js'"
+
 [tasks.lint]
 description = "Clippy + rustfmt + svelte-check."
 depends = ["check-web"]
@@ -444,11 +489,11 @@ run = "gitleaks git . --staged --redact --no-banner"
 
 [tasks.ci]
 description = "Everything CI runs: lint + tests + release build of the gateway binary + SPA build. mise fans out via the DAG. Locally prefer `verify` — same gate, minus the release build you don't need."
-depends = ["lint", "test", "test-web", "build", "build-web", "parity-gap"]
+depends = ["lint", "test", "test-web", "test-extension", "build", "build-web", "parity-gap"]
 
 [tasks.verify]
 description = "The local pre-push gate: lint + Rust tests + SPA checks and build. Same checks as `ci` minus the release build — nothing in `ci` catches a compile error that `test` doesn't, and the release build is a THIRD full compile of the workspace (dev for clippy, test for nextest, release for the binary). Run this once before pushing; use `test-crate` / `lint-crate` while iterating."
-depends = ["lint", "test", "test-web", "build-web", "parity-gap"]
+depends = ["lint", "test", "test-web", "test-extension", "build-web", "parity-gap"]
 
 [tasks.test-crate]
 description = "Tests for ONE crate — the iteration loop. `mise run test-crate gateway-api [filter]`. Seconds instead of the ~20 min a full `test` costs after touching a root crate, because it links that crate's test binaries only."

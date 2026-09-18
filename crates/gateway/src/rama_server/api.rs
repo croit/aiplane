@@ -787,6 +787,49 @@ pub async fn clear_location(State(state): State<Arc<RamaState>>, req: Request) -
     json_ok(&json!({ "ok": true }))
 }
 
+/// Shared preamble of the three mid-turn feedback endpoints: authenticate the
+/// caller, read the body, parse it, and prove the turn is theirs.
+///
+/// Extracted because the ownership check is the security-critical half of all
+/// three and was written out three times. An unknown turn and somebody else's
+/// turn answer identically, so the endpoint cannot be used to discover which
+/// turn ids exist — a property that has to hold in every copy, which is the
+/// argument for there being only one.
+///
+/// `shape` is the hint appended to a parse failure; `missing` is the message
+/// for a turn the caller does not own. The session comes back with the body —
+/// `location_feedback` also writes to the caller's own user row.
+async fn turn_feedback_body<T: serde::de::DeserializeOwned>(
+    state: &RamaState,
+    req: Request,
+    turn_id: &str,
+    shape: &str,
+    missing: &str,
+) -> Result<(Session, T), Response> {
+    let session = match require_session(state, &req).await {
+        Ok(s) => s,
+        Err(resp) => return Err(resp),
+    };
+    let (_, body) = req.into_parts();
+    let body = match read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return Err(invalid_request(&msg)),
+    };
+    let parsed: T = match serde_json::from_slice(&body) {
+        Ok(p) => p,
+        Err(err) => return Err(invalid_request(&format!("expected {shape}: {err}"))),
+    };
+
+    match session_core::db::user_for_turn(&state.db, turn_id).await {
+        Ok(Some(owner)) if owner == session.user_id => Ok((session, parsed)),
+        Ok(_) => Err(invalid_request(missing)),
+        Err(err) => {
+            tracing::warn!(error = %err, turn_id, "turn feedback user_for_turn");
+            Err(internal_error("could not verify the request"))
+        }
+    }
+}
+
 /// POST /api/v0/me/location/feedback/{turn_id} — reply to an in-flight
 /// `get_user_location` prompt for assistant turn `turn_id`. Posted by
 /// `geo.ts` when the user clicks "share" (body `{lat, lon, accuracy}`)
@@ -805,15 +848,6 @@ pub async fn location_feedback(
 ) -> Response {
     use gateway_runtime::server::tools::feedback::BrowserFix;
 
-    let session = match require_session(&state, &req).await {
-        Ok(s) => s,
-        Err(resp) => return resp,
-    };
-    let (_, body) = req.into_parts();
-    let body = match read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return invalid_request(&msg),
-    };
     #[derive(serde::Deserialize)]
     struct Body {
         #[serde(default)]
@@ -825,25 +859,18 @@ pub async fn location_feedback(
         #[serde(default)]
         denied: bool,
     }
-    let parsed: Body = match serde_json::from_slice(&body) {
+    let (session, parsed): (Session, Body) = match turn_feedback_body(
+        &state,
+        req,
+        &turn_id,
+        "a position or {\"denied\":true}",
+        "no such pending prompt",
+    )
+    .await
+    {
         Ok(p) => p,
-        Err(err) => {
-            return invalid_request(&format!(
-                "expected a position or {{\"denied\":true}}: {err}"
-            ));
-        }
+        Err(resp) => return resp,
     };
-
-    // Only the turn's own user may answer it. An unknown turn is reported the
-    // same way as someone else's, so this can't be used to probe for live turns.
-    match session_core::db::user_for_turn(&state.db, &turn_id).await {
-        Ok(Some(owner)) if owner == session.user_id => {}
-        Ok(_) => return invalid_request("no such pending prompt"),
-        Err(err) => {
-            tracing::warn!(error = %err, "location_feedback user_for_turn");
-            return internal_error("could not verify the prompt");
-        }
-    }
 
     let fix = if parsed.denied {
         BrowserFix::Declined
@@ -889,15 +916,6 @@ pub async fn ask_feedback(
 ) -> Response {
     use gateway_runtime::server::tools::feedback::AskReply;
 
-    let session = match require_session(&state, &req).await {
-        Ok(s) => s,
-        Err(resp) => return resp,
-    };
-    let (_, body) = req.into_parts();
-    let body = match read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return invalid_request(&msg),
-    };
     #[derive(serde::Deserialize)]
     struct Body {
         #[serde(default)]
@@ -907,25 +925,18 @@ pub async fn ask_feedback(
         #[serde(default)]
         dismissed: bool,
     }
-    let parsed: Body = match serde_json::from_slice(&body) {
+    let (_session, parsed): (Session, Body) = match turn_feedback_body(
+        &state,
+        req,
+        &turn_id,
+        "{choices, text} or {\"dismissed\":true}",
+        "no such pending question",
+    )
+    .await
+    {
         Ok(p) => p,
-        Err(err) => {
-            return invalid_request(&format!(
-                "expected {{choices, text}} or {{\"dismissed\":true}}: {err}"
-            ));
-        }
+        Err(resp) => return resp,
     };
-
-    // Only the turn's own user may answer it. An unknown turn is reported the
-    // same way as someone else's, so this can't be used to probe for live turns.
-    match session_core::db::user_for_turn(&state.db, &turn_id).await {
-        Ok(Some(owner)) if owner == session.user_id => {}
-        Ok(_) => return invalid_request("no such pending question"),
-        Err(err) => {
-            tracing::warn!(error = %err, "ask_feedback user_for_turn");
-            return internal_error("could not verify the question");
-        }
-    }
 
     let reply = if parsed.dismissed {
         AskReply::Dismissed
@@ -951,6 +962,90 @@ pub async fn ask_feedback(
     // Whoever's parked on this turn (if anyone — the tool may have timed out)
     // gets the reply. "No one waiting" is not an error.
     state.ask_feedback.resolve(&turn_id, reply);
+    json_ok(&json!({ "ok": true }))
+}
+
+/// POST /api/v0/me/browser/feedback/{turn_id} — report what the paired browser
+/// extension did with an in-flight `browser_control` batch.
+///
+/// Posted by `browser-bridge.ts` after the extension has worked through the
+/// actions, refused them, or reported that it isn't there. Body is one of:
+///
+/// ```json
+/// {"request_id": "…", "results": [ ... ]}                 // every action ran
+/// {"request_id": "…", "error": "…", "results": [ ... ]}   // stopped partway
+/// {"request_id": "…", "refused": "the user declined the click"}
+/// {"request_id": "…", "no_extension": true}
+/// ```
+///
+/// The two ids do different jobs. The **path** carries the turn, which is what
+/// authorisation is checked against; the **body** carries the request id the
+/// tool is actually parked on, because one turn can have several batches in
+/// flight (the runner executes a round's tool calls concurrently). Resolving by
+/// turn would let one batch's reply wake another batch's tool.
+///
+/// Ownership is verified exactly as in [`ask_feedback`], and for a sharper
+/// reason: this reply becomes the model's picture of a page in *someone's*
+/// browser. A stranger able to answer another user's turn could hand the model
+/// a page that never existed, which is prompt injection with a return address.
+pub async fn browser_feedback(
+    State(state): State<Arc<RamaState>>,
+    Path(turn_id): Path<String>,
+    req: Request,
+) -> Response {
+    use gateway_runtime::server::tools::feedback::BrowserReply;
+
+    #[derive(serde::Deserialize)]
+    struct Body {
+        request_id: String,
+        #[serde(default)]
+        results: Vec<serde_json::Value>,
+        #[serde(default)]
+        error: Option<String>,
+        #[serde(default)]
+        refused: Option<String>,
+        #[serde(default)]
+        no_extension: bool,
+    }
+    let (_session, parsed): (Session, Body) = match turn_feedback_body(
+        &state,
+        req,
+        &turn_id,
+        "{request_id, results}, {request_id, error, results}, {request_id, refused} \
+         or {request_id, \"no_extension\":true}",
+        "no such pending browser request",
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    if parsed.request_id.trim().is_empty() {
+        return invalid_request("request_id must not be empty");
+    }
+
+    // Order matters: a refusal outranks a partial result (the user said no, so
+    // whatever ran before that is not the headline), and "no extension"
+    // outranks an empty success (which would otherwise read as "it worked and
+    // did nothing").
+    let reply = if let Some(reason) = parsed.refused.filter(|r| !r.trim().is_empty()) {
+        BrowserReply::Refused { reason }
+    } else if parsed.no_extension {
+        BrowserReply::NoExtension
+    } else if let Some(error) = parsed.error.filter(|e| !e.trim().is_empty()) {
+        BrowserReply::Failed {
+            error,
+            results: parsed.results,
+        }
+    } else {
+        BrowserReply::Done {
+            results: parsed.results,
+        }
+    };
+
+    // Resolved by request id: several batches can be parked for one turn, and
+    // an unknown id simply finds nobody waiting (the tool may have timed out).
+    state.browser_feedback.resolve(&parsed.request_id, reply);
     json_ok(&json!({ "ok": true }))
 }
 
