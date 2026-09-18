@@ -698,6 +698,17 @@ async fn main() -> anyhow::Result<()> {
     let state =
         Arc::new(gateway::rama_server::RamaState::new(state, sessions, usage).with_ocr(ocr));
 
+    // Messages that were accepted but never got a worker — the process went
+    // down between "sent" and "answered". They are rows precisely so they
+    // survive that, and nothing else will ever start them: the browser that
+    // sent them may be long closed.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            gateway_api::pages::chat::start_pending_turns_at_startup(&state).await;
+        });
+    }
+
     // Scheduled actions: start the background loop that fires due actions
     // (the `scheduled_actions` table is created by migration 0021).
     rt::scheduled::worker::spawn(state.clone());

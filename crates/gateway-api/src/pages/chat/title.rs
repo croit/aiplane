@@ -129,9 +129,7 @@ pub(super) async fn generate_session_title(
     // session's worker is still being tailed; if it's already
     // finalised (slow title gen) the sidebar will pick up the new
     // title on the user's next page interaction.
-    if let Some(worker) = state.chats.get(&user_id)
-        && worker.session_id == session_id
-    {
+    if let Some(worker) = state.chats.get(&user_id, &session_id) {
         let _ = worker.broadcast.send(TurnUpdate::SidebarChanged);
     }
 }

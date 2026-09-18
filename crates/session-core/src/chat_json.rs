@@ -53,6 +53,15 @@ pub enum ChatEvent {
         live_turn_id: Option<String>,
         /// Every turn of the session in `seq` order, newest last.
         turns: Vec<TurnWithTools>,
+        /// User turns that have been sent but not started yet.
+        ///
+        /// Carried rather than derived: "a trailing user turn with no answer"
+        /// looks like the same thing and is not — a turn whose assistant row
+        /// failed to insert has that shape with nothing queued, and a client
+        /// guessing from it renders a spinner on a message that will never
+        /// start. The server asks its work queue; this is the answer.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        waiting_turn_ids: Vec<String>,
     },
     /// Text appended to the assistant turn's `content` since the last event.
     /// `full: true` marks a cursor reset — the row was rewritten and
@@ -103,6 +112,20 @@ pub enum ChatEvent {
         /// `None` while the driver never stamped a completion.
         duration_ms: Option<i64>,
     },
+    /// A mid-turn interjection appeared, or the one already on screen
+    /// reached its outcome.
+    ///
+    /// One event for both because the client merges on `id`: a note is drawn
+    /// the moment it is typed (`pending`) and then re-labelled when it is
+    /// either handed to the model (`delivered`) or re-sent as its own message
+    /// (`resent`). Splitting it would make the client handle an "added" it
+    /// may never have seen, on a stream it attached to late.
+    Steer {
+        turn_id: String,
+        id: String,
+        text: String,
+        status: String,
+    },
     /// Session metadata changed (title generated, pin toggled, …). The
     /// client refetches the session list; the event carries no payload by
     /// design — the list endpoint is the source of truth.
@@ -128,6 +151,7 @@ impl ChatEvent {
             Self::ToolCallStarted { .. } => "tool_call_started",
             Self::ToolCallDone { .. } => "tool_call_done",
             Self::TurnFinalized { .. } => "turn_finalized",
+            Self::Steer { .. } => "steer",
             Self::SidebarChanged => "sidebar_changed",
             Self::Info { .. } => "info",
             Self::ToolPrompt(_) => "tool_prompt",
@@ -171,6 +195,9 @@ pub struct JsonTurnFeed {
     /// order matches the row order (seq), so `started` events replay in the
     /// order the model issued them.
     tools_sent: Vec<(String, String)>,
+    /// Interjections already announced, with the status last sent — same
+    /// shape and same reason as `tools_sent`.
+    steers_sent: Vec<(String, String)>,
     /// Whether [`ChatEvent::TurnFinalized`] has been emitted. The feed is
     /// done afterwards; the stream loop closes on it.
     finalized: bool,
@@ -183,6 +210,7 @@ impl JsonTurnFeed {
             content_sent: String::new(),
             reasoning_sent: String::new(),
             tools_sent: Vec::new(),
+            steers_sent: Vec::new(),
             finalized: false,
         }
     }
@@ -264,6 +292,26 @@ impl JsonTurnFeed {
                     }
                 }
             }
+        }
+
+        for steer in &current.steers {
+            // Compare before allocating: on a quiet flush — the common case —
+            // nothing has changed and the `to_string` would be thrown away.
+            let status = steer.status.as_str();
+            match self.steers_sent.iter_mut().find(|(id, _)| *id == steer.id) {
+                Some(entry) if entry.1 == status => continue,
+                Some(entry) => entry.1 = status.to_string(),
+                None => self
+                    .steers_sent
+                    .push((steer.id.clone(), status.to_string())),
+            }
+            let status = status.to_string();
+            events.push(ChatEvent::Steer {
+                turn_id: turn.id.clone(),
+                id: steer.id.clone(),
+                text: steer.text.clone(),
+                status,
+            });
         }
 
         if !self.finalized && turn.status != TurnStatus::InProgress {
@@ -439,6 +487,170 @@ async fn flush(
     }
 }
 
+/// Serve a conversation whose message is waiting for a free slot: snapshot
+/// first, then hold the stream open until its turn actually starts, and hand
+/// over to [`run_json_turn_stream`] when it does.
+///
+/// Without this the stream would end at `idle` — there is no worker to tail —
+/// and the page would sit on "waiting" long after the answer began, because
+/// the worker that eventually starts belongs to a conversation nothing is
+/// attached to. The alternative, a client asking again every few seconds, is a
+/// poll standing in for an event the server already has.
+///
+/// Bounded by [`WAIT_FOR_START`]: an unbounded wait would pin a connection and
+/// a task for as long as the queue stays congested. On expiry the stream ends
+/// with `idle`, exactly as a quiet conversation does.
+pub async fn stream_until_started(
+    pool: db::Pool,
+    workers: std::sync::Arc<crate::workers::SessionWorkers>,
+    user_id: String,
+    session_id: String,
+    turns: Vec<TurnWithTools>,
+    mut starts: broadcast::Receiver<crate::workers::WorkerStarted>,
+    tx: SseTx,
+) {
+    use rama::futures::sink::SinkExt;
+
+    let mut tx = tx;
+    let waiting_turn_ids = waiting_ids(&pool, &session_id).await;
+    let snapshot = ChatEvent::Snapshot {
+        live_turn_id: None,
+        turns,
+        waiting_turn_ids,
+    };
+    if tx.send(Ok(sse_json(&snapshot))).await.is_err() {
+        return;
+    }
+
+    // The worker may have been registered between the caller's lookup and its
+    // subscribe; check once more before waiting on the channel.
+    let worker = match workers.get(&user_id, &session_id) {
+        Some(worker) => Some(worker),
+        None => {
+            wait_for_start(&workers, &mut starts, &user_id, &session_id, || {
+                tx.is_closed()
+            })
+            .await
+        }
+    };
+    let Some(worker) = worker else {
+        // Either the wait expired, or the turn started *and finished* inside
+        // it. A fresh snapshot covers the second case; `idle` closes the
+        // stream for both, and the client re-attaches on its next interaction.
+        match db::list_turns(&pool, &session_id).await {
+            Ok(turns) => {
+                let waiting_turn_ids = waiting_ids(&pool, &session_id).await;
+                let _ = tx
+                    .send(Ok(sse_json(&ChatEvent::Snapshot {
+                        live_turn_id: None,
+                        turns,
+                        waiting_turn_ids,
+                    })))
+                    .await;
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, %session_id, "re-reading a conversation after the wait");
+            }
+        }
+        let _ = tx.send(Ok(sse_json(&ChatEvent::Idle))).await;
+        return;
+    };
+    // A second snapshot, and it is load-bearing: `live_turn_id` is the only
+    // thing that tells the client a turn is streaming, and the snapshot it
+    // already has says `null`. Without this the deltas arrive into a page that
+    // still believes it is idle — no stop button, no interrupt, and no
+    // reconnect if the stream drops.
+    let initial = match db::list_turns(&pool, &session_id).await {
+        Ok(turns) => vec![ChatEvent::Snapshot {
+            live_turn_id: Some(worker.turn_id.clone()),
+            turns,
+            // Nothing is waiting any more: this turn is the one that was.
+            waiting_turn_ids: Vec::new(),
+        }],
+        Err(err) => {
+            tracing::warn!(error = %err, %session_id, "re-reading a conversation as its turn starts");
+            let _ = tx.send(Ok(sse_json(&ChatEvent::Idle))).await;
+            return;
+        }
+    };
+    run_json_turn_stream(
+        pool,
+        session_id,
+        worker.turn_id.clone(),
+        worker.broadcast.subscribe(),
+        initial,
+        tx,
+    )
+    .await;
+}
+
+/// The conversation's waiting user turns, for a snapshot. An unreadable queue
+/// degrades to "nothing waiting": the transcript is still correct, one message
+/// just renders without its spinner until the next snapshot.
+async fn waiting_ids(pool: &db::Pool, session_id: &str) -> Vec<String> {
+    db::list_pending_for_session(pool, session_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|pending| pending.turn_id)
+        .collect()
+}
+
+/// How long a stream waits for a waiting turn to start before ending as idle.
+///
+/// Long enough to cover an ordinary queue (the turn ahead of it finishing),
+/// short enough that a congested gateway is not holding connections open for
+/// hours.
+const WAIT_FOR_START: Duration = Duration::from_secs(300);
+
+/// How often the wait looks up to see whether the reader is still there.
+const DISCONNECT_CHECK: Duration = Duration::from_secs(5);
+
+/// Wait for a worker to be registered for this conversation.
+///
+/// The frame is only a wake-up: what it carries may already be stale by the
+/// time it is read, so the registry is asked for the live handle — the one
+/// with the broadcast channel this stream then tails. `None` means the wait
+/// expired, or the turn was over before the handle could be taken.
+async fn wait_for_start(
+    workers: &crate::workers::SessionWorkers,
+    starts: &mut broadcast::Receiver<crate::workers::WorkerStarted>,
+    user_id: &str,
+    session_id: &str,
+    is_gone: impl Fn() -> bool,
+) -> Option<crate::workers::ActiveWorker> {
+    let deadline = tokio::time::Instant::now() + WAIT_FOR_START;
+    loop {
+        // Wake up regularly even when nothing is happening, so a viewer who
+        // closed the tab is not held for the whole deadline.
+        let next = (tokio::time::Instant::now() + DISCONNECT_CHECK).min(deadline);
+        match tokio::time::timeout_at(next, starts.recv()).await {
+            Ok(Ok(started)) => {
+                if started.user_id == user_id && started.session_id == session_id {
+                    return workers.get(user_id, session_id);
+                }
+            }
+            // Lagged: starts were missed while this subscriber was slow, and
+            // one of them may have been ours. Ask the registry rather than
+            // waiting for the next frame.
+            Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
+                if let Some(worker) = workers.get(user_id, session_id) {
+                    return Some(worker);
+                }
+            }
+            // The registry is gone: nothing will ever start.
+            Ok(Err(broadcast::error::RecvError::Closed)) => return None,
+            // Nothing happened in this slice. Give up at the deadline, or when
+            // the reader has gone away.
+            Err(_) => {
+                if tokio::time::Instant::now() >= deadline || is_gone() {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
 /// An SSE response whose body is fed by `rx` — the JSON twin of the
 /// streaming response constructor in [`crate::chat`]. EventSource on the
 /// client reconnects automatically; each attach replays a fresh snapshot.
@@ -468,12 +680,9 @@ pub fn cancel_turn(
     user_id: &str,
     session_id: &str,
 ) -> bool {
-    let Some(worker) = workers.get(user_id) else {
+    let Some(worker) = workers.get(user_id, session_id) else {
         return false;
     };
-    if worker.session_id != session_id {
-        return false;
-    }
     worker
         .cancel
         .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -509,6 +718,7 @@ mod tests {
                 completed_at: None,
             },
             tool_calls: Vec::new(),
+            steers: Vec::new(),
         }
     }
 
@@ -524,6 +734,74 @@ mod tests {
             created_at: Timestamp::now(),
             completed_at: None,
         }
+    }
+
+    fn steer_row(id: &str, text: &str, status: crate::db::SteerStatus) -> crate::db::TurnSteer {
+        crate::db::TurnSteer {
+            id: id.into(),
+            turn_id: "t1".into(),
+            seq: 0,
+            text: text.into(),
+            status,
+            created_at: Timestamp::now(),
+            settled_at: None,
+        }
+    }
+
+    /// An interjection is part of the conversation from the moment it is
+    /// typed, so it goes out while still `pending` — waiting for the model to
+    /// read it would leave the user staring at a composer that swallowed
+    /// their sentence. The outcome then arrives as a second event on the same
+    /// id, and nothing is re-sent in between.
+    #[test]
+    fn a_steer_is_announced_when_typed_and_again_when_it_settles() {
+        use crate::db::SteerStatus;
+        let mut feed = JsonTurnFeed::new("t1");
+        let mut row = turn(TurnStatus::InProgress, "Hello", "");
+        feed.diff(&row); // drain the content delta
+
+        row.steers = vec![steer_row("n1", "in euros", SteerStatus::Pending)];
+        assert_eq!(
+            feed.diff(&row),
+            vec![ChatEvent::Steer {
+                turn_id: "t1".into(),
+                id: "n1".into(),
+                text: "in euros".into(),
+                status: "pending".into(),
+            }]
+        );
+
+        // Unchanged row: nothing repeats.
+        assert!(feed.diff(&row).is_empty());
+
+        row.steers = vec![steer_row("n1", "in euros", SteerStatus::Delivered)];
+        assert_eq!(
+            feed.diff(&row),
+            vec![ChatEvent::Steer {
+                turn_id: "t1".into(),
+                id: "n1".into(),
+                text: "in euros".into(),
+                status: "delivered".into(),
+            }]
+        );
+    }
+
+    /// A client attaching after the fact gets the note from the snapshot, so
+    /// a feed that starts mid-turn must still announce what it finds rather
+    /// than assuming the client saw it.
+    #[test]
+    fn a_steer_already_settled_at_attach_is_announced_once() {
+        use crate::db::SteerStatus;
+        let mut feed = JsonTurnFeed::new("t1");
+        let mut row = turn(TurnStatus::InProgress, "", "");
+        row.steers = vec![steer_row("n1", "in euros", SteerStatus::Resent)];
+        let first = feed.diff(&row);
+        assert_eq!(first.len(), 1);
+        assert!(matches!(
+            &first[0],
+            ChatEvent::Steer { status, .. } if status == "resent"
+        ));
+        assert!(feed.diff(&row).is_empty());
     }
 
     #[test]

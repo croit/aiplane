@@ -209,11 +209,13 @@ pub struct ToolCall {
     pub completed_at: Option<Timestamp>,
 }
 
-/// Turn + its tool calls, fetched as one unit for rendering.
+/// Turn + its tool calls + any mid-turn interjections, fetched as one unit
+/// for rendering.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TurnWithTools {
     pub turn: Turn,
     pub tool_calls: Vec<ToolCall>,
+    pub steers: Vec<TurnSteer>,
 }
 
 // ---------------------------------------------------------------------------
@@ -288,14 +290,18 @@ fn map_tool_call(row: &SqliteRow) -> Result<ToolCall, DbError> {
 // Sessions
 
 mod fork;
+mod pending;
 mod search;
 mod sessions;
+mod steers;
 mod tool_calls;
 mod turns;
 
 pub use fork::*;
+pub use pending::*;
 pub use search::*;
 pub use sessions::*;
+pub use steers::*;
 pub use tool_calls::*;
 pub use turns::*;
 
@@ -403,6 +409,30 @@ mod tests {
                 FOREIGN KEY (turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE,
                 UNIQUE (turn_id, seq)
             )"#,
+            r#"CREATE TABLE chat_pending_turns (
+                turn_id     TEXT PRIMARY KEY NOT NULL,
+                session_id  TEXT NOT NULL,
+                user_id     TEXT NOT NULL,
+                model       TEXT NOT NULL,
+                voice       INTEGER NOT NULL DEFAULT 0,
+                client_ip   TEXT,
+                secure      INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT NOT NULL,
+                FOREIGN KEY (turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE,
+                FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )"#,
+            r#"CREATE TABLE chat_turn_steers (
+                id          TEXT PRIMARY KEY NOT NULL,
+                turn_id     TEXT NOT NULL,
+                seq         INTEGER NOT NULL,
+                text        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                created_at  TEXT NOT NULL,
+                settled_at  TEXT,
+                FOREIGN KEY (turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE,
+                UNIQUE (turn_id, seq)
+            )"#,
             // FTS5 table for search (matches migration 0031). Keyed on the
             // implicit integer `rowid` because `chat_turns.id` is a TEXT UUID
             // and FTS5's content_rowid must be an integer.
@@ -451,6 +481,338 @@ mod tests {
         .await
         .unwrap();
         pool
+    }
+
+    fn pending(turn_id: &str, session_id: &str) -> PendingTurn {
+        PendingTurn {
+            turn_id: turn_id.into(),
+            session_id: session_id.into(),
+            user_id: "u1".into(),
+            model: "m".into(),
+            voice: false,
+            client_ip: Some("198.51.100.7".into()),
+            secure: true,
+            created_at: Timestamp::now(),
+        }
+    }
+
+    /// A waiting turn is claimed exactly once. Two schedulers can run at the
+    /// same instant — one conversation finishing while another releases a slot
+    /// — and a read-then-delete would let both start the same turn, which is
+    /// two workers writing one transcript.
+    #[tokio::test]
+    async fn a_waiting_turn_is_claimed_exactly_once() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &s.id, "u0", "first").await.unwrap();
+        insert_pending_turn(&pool, &pending("u0", &s.id))
+            .await
+            .unwrap();
+
+        let first = take_next_for_user(&pool, "u1", &[]).await.unwrap();
+        assert_eq!(first.as_ref().map(|p| p.turn_id.as_str()), Some("u0"));
+        assert!(
+            take_next_for_user(&pool, "u1", &[])
+                .await
+                .unwrap()
+                .is_none(),
+            "the second caller finds nothing to start"
+        );
+
+        // The start parameters survive the wait — the request that accepted
+        // the message is long gone by now.
+        let claimed = first.unwrap();
+        assert_eq!(claimed.client_ip.as_deref(), Some("198.51.100.7"));
+        assert!(claimed.secure);
+        assert_eq!(claimed.model, "m");
+    }
+
+    /// Oldest first, and never a conversation that is already being answered:
+    /// one writer per transcript is the invariant the whole design rests on.
+    #[tokio::test]
+    async fn claiming_skips_conversations_that_are_already_busy() {
+        let pool = pool().await;
+        let busy = create_session(&pool, "u1").await.unwrap();
+        let free = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &busy.id, "u0", "older")
+            .await
+            .unwrap();
+        create_user_turn(&pool, &free.id, "u1", "newer")
+            .await
+            .unwrap();
+        let mut older = pending("u0", &busy.id);
+        older.created_at = "2026-01-01T00:00:00Z".parse().unwrap();
+        let mut newer = pending("u1", &free.id);
+        newer.created_at = "2026-01-02T00:00:00Z".parse().unwrap();
+        insert_pending_turn(&pool, &older).await.unwrap();
+        insert_pending_turn(&pool, &newer).await.unwrap();
+
+        let claimed = take_next_for_user(&pool, "u1", std::slice::from_ref(&busy.id))
+            .await
+            .unwrap()
+            .expect("the free conversation's turn is startable");
+        assert_eq!(claimed.turn_id, "u1", "the older one is skipped, not taken");
+
+        // With nothing busy, the older one is next.
+        let claimed = take_next_for_user(&pool, "u1", &[]).await.unwrap().unwrap();
+        assert_eq!(claimed.turn_id, "u0");
+    }
+
+    /// Waiting turns outlive the process that accepted them — the browser that
+    /// sent them may be long closed, so the startup sweep is the only thing
+    /// that will ever start them.
+    #[tokio::test]
+    async fn the_startup_sweep_finds_users_with_work_waiting() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &s.id, "u0", "hi").await.unwrap();
+        assert!(users_with_pending_turns(&pool).await.unwrap().is_empty());
+
+        insert_pending_turn(&pool, &pending("u0", &s.id))
+            .await
+            .unwrap();
+        assert_eq!(users_with_pending_turns(&pool).await.unwrap(), ["u1"]);
+
+        // Cancelled by the user: out of the queue, and out of the sweep.
+        assert!(delete_pending_turn(&pool, "u0").await.unwrap());
+        assert!(!delete_pending_turn(&pool, "u0").await.unwrap());
+        assert!(users_with_pending_turns(&pool).await.unwrap().is_empty());
+    }
+
+    /// Deleting the conversation takes its queue with it — otherwise the
+    /// scheduler would try to start a turn whose transcript no longer exists.
+    #[tokio::test]
+    async fn waiting_turns_die_with_their_conversation() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &s.id, "u0", "hi").await.unwrap();
+        insert_pending_turn(&pool, &pending("u0", &s.id))
+            .await
+            .unwrap();
+
+        delete_session(&pool, "u1", &s.id).await.unwrap();
+        assert!(
+            list_pending_for_session(&pool, &s.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            take_next_for_user(&pool, "u1", &[])
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// An interjection against a turn that is still running. Panics if the
+    /// insert was refused, which in these fixtures means the test set the turn
+    /// up wrong.
+    async fn running_steer(pool: &Pool, turn_id: &str, text: &str) -> TurnSteer {
+        insert_steer(pool, turn_id, text)
+            .await
+            .unwrap()
+            .expect("the turn is in progress")
+    }
+
+    /// The write is conditional on the turn still running, which is what
+    /// closes the window between a handler reading the live worker and the row
+    /// landing. A note against a finished answer would sit in a queue nobody
+    /// drains while the caller was told it was accepted.
+    #[tokio::test]
+    async fn an_interjection_against_a_finished_turn_is_refused() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&pool, &s.id, "a", "m")
+            .await
+            .unwrap();
+        finalize_turn(&pool, "a", TurnStatus::Completed, None)
+            .await
+            .unwrap();
+
+        assert!(
+            insert_steer(&pool, "a", "too late")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(list_steers(&pool, "a").await.unwrap().is_empty());
+        // And one against a turn that does not exist at all.
+        assert!(
+            insert_steer(&pool, "nope", "hello")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// Interjections are ordered by arrival and start out pending — the UI
+    /// reads `status` to tell "the model saw this" from "this was re-sent as
+    /// the next message".
+    #[tokio::test]
+    async fn steers_keep_arrival_order_and_start_pending() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&pool, &s.id, "a", "m")
+            .await
+            .unwrap();
+
+        let first = running_steer(&pool, "a", "use metric units").await;
+        let second = running_steer(&pool, "a", "and keep it short").await;
+        assert_eq!((first.seq, second.seq), (0, 1));
+        assert_eq!(first.status, SteerStatus::Pending);
+
+        let listed = list_steers(&pool, "a").await.unwrap();
+        assert_eq!(
+            listed.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(),
+            ["use metric units", "and keep it short"]
+        );
+    }
+
+    /// Settling is one-way and exclusive: the second caller settles nothing
+    /// and is told so, which is what stops two tabs from re-sending the same
+    /// interjection. The note the turn never reached stays pending.
+    #[tokio::test]
+    async fn settling_is_exclusive_and_only_touches_the_named_note() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&pool, &s.id, "a", "m")
+            .await
+            .unwrap();
+        let delivered = running_steer(&pool, "a", "delivered").await;
+        running_steer(&pool, "a", "too late").await;
+
+        assert!(
+            settle_steer(&pool, &delivered.id, SteerStatus::Delivered)
+                .await
+                .unwrap()
+        );
+        let first_stamp = list_steers(&pool, "a").await.unwrap()[0]
+            .settled_at
+            .unwrap();
+        assert!(
+            !settle_steer(&pool, &delivered.id, SteerStatus::Resent)
+                .await
+                .unwrap(),
+            "a settled note cannot be claimed again"
+        );
+
+        let rows = list_steers(&pool, "a").await.unwrap();
+        assert_eq!(rows[0].status, SteerStatus::Delivered);
+        assert_eq!(rows[0].settled_at.unwrap(), first_stamp);
+        assert_eq!(
+            rows[1].status,
+            SteerStatus::Pending,
+            "the note that never reached the model stays pending"
+        );
+    }
+
+    /// A claim can be handed back — and only the kind of claim the caller
+    /// says it is undoing. Releasing is what keeps a refused re-send from
+    /// eating the note it stood in for; refusing to release a *delivered*
+    /// note is what keeps that from resurrecting something the model has
+    /// already read.
+    #[tokio::test]
+    async fn a_claim_can_be_released_but_a_delivery_cannot() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&pool, &s.id, "a", "m")
+            .await
+            .unwrap();
+        let claimed = running_steer(&pool, "a", "re-sent").await;
+        let delivered = running_steer(&pool, "a", "read by the model").await;
+        settle_steer(&pool, &claimed.id, SteerStatus::Resent)
+            .await
+            .unwrap();
+        settle_steer(&pool, &delivered.id, SteerStatus::Delivered)
+            .await
+            .unwrap();
+
+        assert!(
+            release_steer(&pool, &claimed.id, SteerStatus::Resent)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !release_steer(&pool, &delivered.id, SteerStatus::Resent)
+                .await
+                .unwrap(),
+            "a delivered note is not a claim and cannot be taken back"
+        );
+
+        let rows = list_steers(&pool, "a").await.unwrap();
+        assert_eq!(rows[0].status, SteerStatus::Pending);
+        assert!(
+            rows[0].settled_at.is_none(),
+            "and it is pending again fully"
+        );
+        assert_eq!(rows[1].status, SteerStatus::Delivered);
+
+        // Released means claimable again — that is the point.
+        assert!(
+            settle_steer(&pool, &claimed.id, SteerStatus::Resent)
+                .await
+                .unwrap()
+        );
+    }
+
+    /// `pending` is not an outcome, so asking to settle *to* it is a caller
+    /// bug rather than a no-op that quietly un-settles a row.
+    #[tokio::test]
+    async fn settling_to_pending_is_rejected() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&pool, &s.id, "a", "m")
+            .await
+            .unwrap();
+        let steer = running_steer(&pool, "a", "note").await;
+        assert!(
+            settle_steer(&pool, &steer.id, SteerStatus::Pending)
+                .await
+                .is_err()
+        );
+    }
+
+    /// The transcript reads interjections back with the turn they belong to,
+    /// and only that turn's.
+    #[tokio::test]
+    async fn list_turns_carries_each_turns_own_steers() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &s.id, "u", "hi").await.unwrap();
+        create_assistant_turn_in_progress(&pool, &s.id, "a", "m")
+            .await
+            .unwrap();
+        insert_steer(&pool, "a", "context").await.unwrap();
+
+        let turns = list_turns(&pool, &s.id).await.unwrap();
+        let user = turns.iter().find(|t| t.turn.id == "u").unwrap();
+        let assistant = turns.iter().find(|t| t.turn.id == "a").unwrap();
+        assert!(user.steers.is_empty());
+        assert_eq!(assistant.steers.len(), 1);
+        assert_eq!(assistant.steers[0].text, "context");
+
+        // The single-turn read (what every streaming tick uses) agrees.
+        let one = get_turn_with_tools(&pool, &s.id, "a")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(one.steers.len(), 1);
+    }
+
+    /// Deleting the turn takes its interjections with it — a retry truncates
+    /// the tail of a conversation, and orphan rows would resurrect notes
+    /// against a turn that no longer exists.
+    #[tokio::test]
+    async fn steers_die_with_their_turn() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&pool, &s.id, "a", "m")
+            .await
+            .unwrap();
+        running_steer(&pool, "a", "context").await;
+        assert_eq!(delete_turns_from_seq(&pool, &s.id, 0).await.unwrap(), 1);
+        assert!(list_steers(&pool, "a").await.unwrap().is_empty());
     }
 
     #[tokio::test]

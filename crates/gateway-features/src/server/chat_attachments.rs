@@ -924,6 +924,7 @@ mod tests {
                 completed_at: Some(now),
             },
             tool_calls: vec![],
+            steers: vec![],
         }
     }
 

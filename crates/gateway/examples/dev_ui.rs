@@ -131,11 +131,23 @@ async fn main() -> anyhow::Result<()> {
         })))
         .mount(&chat_mock)
         .await;
+    // `DEV_UI_CHAT_DELAY_MS` holds the reply back before it starts streaming.
+    //
+    // Everything the composer does *during* a turn — queueing the next
+    // message, interjecting into the running answer, interrupting to re-aim —
+    // only exists while a turn is in flight, and against an upstream that
+    // answers instantly there is no such moment to click in. Default 0, so the
+    // normal harness is as fast as it was.
+    let chat_delay_ms: u64 = std::env::var("DEV_UI_CHAT_DELAY_MS")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(0);
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
+                .set_delay(std::time::Duration::from_millis(chat_delay_ms))
                 .set_body_string(concat!(
                     "data: {\"choices\":[{\"delta\":{\"content\":\"Hi! \"}}]}\n\n",
                     "data: {\"choices\":[{\"delta\":{\"content\":\"How can I help?\"}}]}\n\n",

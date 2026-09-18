@@ -110,9 +110,32 @@ export interface UpdateTokenToolsRequest {
 
 export class ApiError extends Error {
 	readonly status: number;
-	constructor(status: number, message: string) {
+	/**
+	 * The gateway's own error code (`error.code` in the response envelope),
+	 * when it sent one.
+	 *
+	 * Several refusals share a status and differ only here — a `409` on a
+	 * chat submit is `turn_in_progress`, `at_capacity` or
+	 * `steer_already_settled`, and each wants a different reaction. Carrying
+	 * the code means callers branch on it rather than pattern-matching the
+	 * human-readable message, which is translated and free to change.
+	 */
+	readonly code?: string;
+	constructor(status: number, message: string, code?: string) {
 		super(message);
 		this.status = status;
+		this.code = code;
+	}
+}
+
+/** Pull `error.code` out of a gateway error envelope; undefined for anything else. */
+function errorCode(detail: string): string | undefined {
+	try {
+		const parsed: unknown = JSON.parse(detail);
+		const code = (parsed as { error?: { code?: unknown } })?.error?.code;
+		return typeof code === 'string' ? code : undefined;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -129,10 +152,28 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 		// The gateway answers auth failures with an OpenAI-style envelope;
 		// surface status so callers can distinguish 401 (sign in) from 5xx.
 		const detail = await res.text().catch(() => '');
-		throw new ApiError(res.status, `${res.status} ${res.statusText}${detail ? ` — ${detail}` : ''}`);
+		throw new ApiError(
+			res.status,
+			`${res.status} ${res.statusText}${detail ? ` — ${detail}` : ''}`,
+			errorCode(detail)
+		);
 	}
 	if (res.status === 204) return undefined as T;
 	return (await res.json()) as T;
+}
+
+/**
+ * What the server did with an accepted message.
+ *
+ * `placement` is the honest half: the client no longer decides where a message
+ * goes, so it is told. `started` carries both turn ids, `folded` the turn it
+ * was added to, `queued` the user turn now waiting for a slot.
+ */
+export interface ChatSubmitAck {
+	placement: 'started' | 'folded' | 'queued';
+	user_turn_id?: string;
+	assistant_turn_id?: string;
+	steer_id?: string;
 }
 
 export const api = {
@@ -180,15 +221,63 @@ export const api = {
 			body: JSON.stringify({ pinned })
 		}),
 
-	/** POST /api/v0/chat/sessions/{id}/messages — 202, reply on the events stream. */
-	sendChatMessage: (id: string, body: { model: string; message: string; voice?: boolean }) =>
-		request<{ user_turn_id: string; assistant_turn_id: string }>(
+	/**
+	 * POST /api/v0/chat/sessions/{id}/messages — `202`, reply on the events
+	 * stream.
+	 *
+	 * The response's `placement` says what the server did with it: `started` a
+	 * turn, `folded` it into the answer already being written, or `queued` it
+	 * until one of this user's conversations frees a slot. The client does not
+	 * choose — only the server knows whether a worker is running.
+	 */
+	sendChatMessage: (
+		id: string,
+		body: { model: string; message: string; voice?: boolean }
+	) =>
+		request<ChatSubmitAck>(
 			`/api/v0/chat/sessions/${encodeURIComponent(id)}/messages`,
 			{
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify(body)
 			}
+		),
+
+	/**
+	 * POST /api/v0/chat/sessions/{id}/messages as multipart — a message with
+	 * attachments.
+	 *
+	 * Here rather than in the component because of what `request` does to a
+	 * failure: it throws `ApiError` carrying `error.code`. A hand-rolled
+	 * `fetch` throws a plain `Error`, which silently disables every
+	 * `err.code` branch the caller has — a queued message with a file refused
+	 * with `at_capacity` never armed its retry and sat in the queue forever.
+	 */
+	sendChatMessageWithFiles: (
+		id: string,
+		body: { model: string; message: string; files: File[] }
+	) => {
+		const fd = new FormData();
+		fd.append('model', body.model);
+		fd.append('message', body.message);
+		for (const file of body.files) fd.append('attachment', file);
+		return request<ChatSubmitAck>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/messages`,
+			{ method: 'POST', body: fd }
+		);
+	},
+
+	/**
+	 * DELETE /api/v0/chat/sessions/{id}/turns/{turn_id} — take back a message
+	 * that has been sent but not answered yet.
+	 *
+	 * Refused with `409 already_answered` once an answer exists or is being
+	 * written; that is what cancelling the turn is for.
+	 */
+	deleteChatTurn: (id: string, turnId: string) =>
+		request<{ deleted: string }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}`,
+			{ method: 'DELETE' }
 		),
 
 	/** POST /api/v0/chat/sessions/{id}/cancel — idempotent stop request. */

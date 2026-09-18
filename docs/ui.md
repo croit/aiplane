@@ -210,6 +210,7 @@ Each frame is `event: <name>` plus one JSON `data:` line carrying `{type, …}`.
 | `tool_call_started` | `turn_id`, `tool_call_id`, `name`, `arguments` | The model invoked a tool. `arguments` is the model's raw JSON string. |
 | `tool_call_done` | `turn_id`, `tool_call_id`, `status`, `output?` | A tool call reached a terminal status. The output is the **full** payload — truncating is a display decision and belongs to the client. |
 | `turn_finalized` | `turn_id`, `status`, `error_message?`, `model?`, `duration_ms` | Terminal: no further deltas for this turn. |
+| `steer` | `turn_id`, `id`, `text`, `status` | A mid-turn interjection appeared or reached its outcome. One event for both, merged on `id`, so a client attaching late ends up in the same state as one that watched from the start. |
 | `sidebar_changed` | — | Session metadata changed (title generated, pin toggled). Deliberately payload-free: the list endpoint is the source of truth, so the client refetches. |
 | `info` | `message` | Transient notice, rendered as a dismissible banner (e.g. a vision fallback). |
 | `tool_prompt` | a `ToolPromptEvent` | Human-in-the-loop prompt — `ask_user`, a location request, or a tool confirmation — plus its `Hide` counterpart when it is answered, times out, or the turn ends. |
@@ -238,6 +239,78 @@ shape so editing does not lose the composer's attachment support. The other
 mutations include `…/cancel`, `…/fork`, `…/share`, `…/effort`,
 `…/documents/*` (canvas and version history), `…/export.md`,
 `…/export.pdf`, and `…/turns/{turn_id}/retry`.
+
+## The composer during a turn
+
+The composer stays usable while an answer streams, and **Enter always means
+send**. Where the message lands is the server's decision, because it is the
+only party that knows whether a worker is running:
+
+| Placement | When | What the user sees |
+|---|---|---|
+| `started` | nothing was running in this conversation | an ordinary turn |
+| `folded` | a turn was already running here | the text appears inside that answer as an addition, and goes into its prompt at the next tool round — every pending addition at once, not one per round |
+| `queued` | this user's other conversations hold every parallel slot | the message sits in the transcript marked "sent — waiting for a free slot", with a *take back* action |
+
+`POST …/messages` answers `202` with that `placement`. There is no client-side
+outbox: a waiting message is a **user turn with no answer after it**, which is
+both what the transcript renders and what the scheduler reads. It therefore
+survives a closed tab, shows up on another device, and cannot be sent twice by
+two browsers.
+
+Why not a new `chat_turns.status`: that column is read in 66 places (export,
+the FTS triggers, compaction, webhooks, history replay, the startup sweep), and
+a fifth variant would have to be right in all of them. "No answer after it"
+needs no new state. What a waiting turn needs in order to *start* later — the
+model, the voice flag, the caller's IP — lives in `chat_pending_turns`, a work
+queue whose rows are deleted the moment a worker claims one.
+
+The scheduler (`start_pending_turns` in `pages/chat/mod.rs`) runs at every
+moment a turn can become startable: a turn finishing, a conversation being
+cancelled, a message being queued, and the process coming back. No timer, no
+polling. Claiming is `DELETE … RETURNING`, so two schedulers racing cannot
+start the same turn twice — and queueing kicks it, because the slot can free up
+between "at capacity" and the row landing.
+
+A page watching a waiting message is told when it starts: the events stream
+does **not** end at `idle` for a conversation with something queued. It stays
+open, waits for the registry's `WorkerStarted` announcement
+(`stream_until_started`), and hands over to the live turn with a snapshot that
+names it — `live_turn_id` is what tells the client a turn is streaming, so
+without that second snapshot the page would receive deltas while still
+believing it is idle. Bounded at five minutes, after which the stream ends as
+`idle` like any quiet conversation. Which messages are waiting travels in the
+snapshot (`waiting_turn_ids`) rather than being inferred from the transcript's
+shape: a turn whose assistant row failed to insert looks identical and would
+spin forever.
+
+An addition only reaches the model if another round follows. One that arrives
+while the closing answer is being written does not, and at finalize the server
+turns it into the next message itself — in the same place, whether or not a
+browser is open. The transcript says which happened: `pending`, `delivered`,
+`resent`, or `discarded`. Only `delivered` notes replay in the history a later
+turn sees; a `resent` one is already there as its own user turn.
+
+**Interrupt and re-aim** is the deterministic version: send, then stop. Sending
+folds the text into the running turn, stopping guarantees no round will carry
+it, and the finalize path re-queues it as the next message. The cancelled
+partial answer stays in the transcript *and* in the model's replayed history,
+marked as interrupted, so the second attempt continues from what the reader
+saw. Cancelling is cooperative — the worker notices between upstream chunks —
+so a slot frees when the turn actually ends, not when the button is pressed.
+
+## Parallel conversations
+
+One worker per conversation is a hard invariant: two would interleave writes
+into the same transcript. How many *conversations* one user may stream at once
+is an operator setting — `chat.turns.max_parallel` under Chat in
+`/admin/settings`, default `1`, read at submit time so a change takes effect on
+the next message.
+
+The registry (`session-core/src/workers.rs`) keys on `(user id, session id)`.
+Past the ceiling nothing is refused any more: the message is persisted and
+waits. Retry and edit still refuse with `409` — regeneration rewrites history a
+running turn is reading, so there is nothing sensible to queue.
 
 `GET …/sessions/{id}/capabilities` is the conversation's complete capability
 read model. Each built-in tool, connected integration tool, and skill carries

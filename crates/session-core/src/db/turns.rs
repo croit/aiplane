@@ -355,10 +355,14 @@ pub async fn list_turns(pool: &Pool, session_id: &str) -> Result<Vec<TurnWithToo
         by_turn.entry(tc.turn_id.clone()).or_default().push(tc);
     }
 
+    // Same one-query-then-bucket treatment for mid-turn interjections.
+    let mut steers_by_turn = crate::db::steers::list_steers_for_session(pool, session_id).await?;
+
     Ok(turns
         .into_iter()
         .map(|turn| TurnWithTools {
             tool_calls: by_turn.remove(&turn.id).unwrap_or_default(),
+            steers: steers_by_turn.remove(&turn.id).unwrap_or_default(),
             turn,
         })
         .collect())
@@ -420,21 +424,32 @@ pub async fn get_turn_with_tools(
     let Some(turn) = get_turn(pool, session_id, turn_id).await? else {
         return Ok(None);
     };
-    let tool_rows = sqlx::query(
-        r#"SELECT id, turn_id, seq, name, arguments_json, output_json,
-                  status, created_at, completed_at
-           FROM chat_tool_calls
-           WHERE turn_id = ?
-           ORDER BY seq ASC"#,
-    )
-    .bind(turn_id)
-    .fetch_all(pool)
-    .await?;
+    // The turn's two side tables, read at the same time. This function runs on
+    // every coalesced streaming flush, for every attached viewer, so the
+    // second read costs a round trip it does not have to: the queries are
+    // independent and neither depends on the other's result.
+    let (tool_rows, steers) = tokio::try_join!(
+        sqlx::query(
+            r#"SELECT id, turn_id, seq, name, arguments_json, output_json,
+                      status, created_at, completed_at
+               FROM chat_tool_calls
+               WHERE turn_id = ?
+               ORDER BY seq ASC"#,
+        )
+        .bind(turn_id)
+        .fetch_all(pool),
+        crate::db::steers::list_steers_query(pool, turn_id),
+    )?;
     let tool_calls: Vec<ToolCall> = tool_rows
         .iter()
         .map(map_tool_call)
         .collect::<Result<_, _>>()?;
-    Ok(Some(TurnWithTools { turn, tool_calls }))
+    let steers: Vec<TurnSteer> = steers.iter().map(map_steer).collect::<Result<_, _>>()?;
+    Ok(Some(TurnWithTools {
+        turn,
+        tool_calls,
+        steers,
+    }))
 }
 
 /// Replace a user turn's text (the "edit" action). Scoped to the

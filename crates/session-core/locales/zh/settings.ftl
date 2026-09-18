@@ -25,6 +25,8 @@ settings-s-chat-ocr = 文档 OCR
 settings-s-chat-ocr-blurb = 把上传的 PDF 与图片转成模型能读的文本。
 settings-s-chat-compaction = 会话压缩
 settings-s-chat-compaction-blurb = 概括长会话中较早的一半，使其继续能放进模型的上下文窗口。
+settings-s-chat-turns = 并行会话
+settings-s-chat-turns-blurb = 同一位用户可以同时有多少个会话在作答。
 settings-s-chat-s3 = 附件存储（S3）
 settings-s-chat-s3-blurb = 聊天附件的对象存储。没有它，上传会被拒绝。
 settings-s-sandbox = 代码沙箱
@@ -87,6 +89,9 @@ settings-f-chat-compaction-min_turns_to_compact = 会话最小长度
 settings-f-chat-compaction-min_turns_to_compact-help = 轮次少于此数的会话永不压缩。
 settings-f-chat-compaction-summary_max_tokens = 摘要 token 预算
 settings-f-chat-compaction-summary_max_tokens-help = 用于替换被压缩轮次的摘要的 token 预算。
+
+settings-f-chat-turns-max_parallel = 同时进行的会话
+settings-f-chat-turns-max_parallel-help = 一位用户可以在不同会话中并行进行的回答数量。设为 1 保持原有行为：第二个会话需要等待。
 
 settings-f-chat-s3-enabled = 将附件存入 S3
 settings-f-chat-s3-enabled-help = 关闭时聊天附件不可用。

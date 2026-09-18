@@ -42,9 +42,30 @@ export interface Turn {
 	completed_at: string | null;
 }
 
+/** What became of a mid-turn interjection. Mirrors `SteerStatus` on the server. */
+export type SteerStatus = 'pending' | 'delivered' | 'resent' | 'discarded';
+
+/**
+ * Something the user typed while this turn was already running.
+ *
+ * `status` is the honest part: `delivered` means the model was handed it
+ * mid-turn, `resent` means the turn ended first and it was submitted as an
+ * ordinary message, `pending` means neither has happened yet.
+ */
+export interface TurnSteer {
+	id: string;
+	turn_id: string;
+	seq: number;
+	text: string;
+	status: SteerStatus;
+	created_at: string;
+	settled_at: string | null;
+}
+
 export interface TurnWithTools {
 	turn: Turn;
 	tool_calls: ToolCall[];
+	steers: TurnSteer[];
 }
 
 export interface ChatSession {
@@ -58,7 +79,13 @@ export interface ChatSession {
 }
 
 export type ChatEvent =
-	| { type: 'snapshot'; live_turn_id?: string; turns: TurnWithTools[] }
+	| {
+			type: 'snapshot';
+			live_turn_id?: string;
+			turns: TurnWithTools[];
+			/** User turns sent but not started yet; absent means none. */
+			waiting_turn_ids?: string[];
+	  }
 	| { type: 'turn_delta'; turn_id: string; text_delta: string; full?: boolean }
 	| { type: 'reasoning_delta'; turn_id: string; text_delta: string; full?: boolean }
 	| {
@@ -83,6 +110,7 @@ export type ChatEvent =
 			model?: string;
 			duration_ms?: number;
 	  }
+	| { type: 'steer'; turn_id: string; id: string; text: string; status: SteerStatus }
 	| { type: 'sidebar_changed' }
 	| { type: 'info'; message: string }
 	| {
@@ -128,6 +156,7 @@ export interface PromptPreview {
 export interface LiveTurn {
 	turn: Turn;
 	tool_calls: ToolCall[];
+	steers: TurnSteer[];
 }
 
 /**
@@ -150,10 +179,19 @@ export interface ConversationState {
 	info: string | null;
 	/** The human-in-loop prompt, when one is showing. */
 	prompt: Extract<ChatEvent, { type: 'tool_prompt' }> | null;
+	/**
+	 * User turns the server has accepted but not started answering.
+	 *
+	 * Taken from the snapshot, never derived from the turn list: "a trailing
+	 * user turn with no answer" looks like the same thing and is not — a turn
+	 * whose assistant row failed to insert has exactly that shape with nothing
+	 * queued, and a spinner on it would never stop.
+	 */
+	waitingTurnIds: string[];
 }
 
 export function newConversationState(): ConversationState {
-	return { turns: [], liveTurnId: null, idle: false, info: null, prompt: null };
+	return { turns: [], liveTurnId: null, idle: false, info: null, prompt: null, waitingTurnIds: [] };
 }
 
 function ensureTurn(state: ConversationState, id: string): LiveTurn {
@@ -180,7 +218,8 @@ function ensureTurn(state: ConversationState, id: string): LiveTurn {
 				created_at: '',
 				completed_at: null
 			},
-			tool_calls: []
+			tool_calls: [],
+			steers: []
 		};
 		state.turns.push(existing);
 	}
@@ -203,10 +242,12 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 		case 'snapshot': {
 			state.turns = event.turns.map((row) => ({
 				turn: row.turn,
-				tool_calls: [...row.tool_calls]
+				tool_calls: [...row.tool_calls],
+				steers: [...row.steers]
 			}));
 			state.liveTurnId = event.live_turn_id ?? null;
 			state.idle = !event.live_turn_id;
+			state.waitingTurnIds = event.waiting_turn_ids ?? [];
 			return;
 		}
 		case 'turn_delta': {
@@ -247,6 +288,8 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 		}
 		case 'turn_finalized': {
 			const live = ensureTurn(state, event.turn_id);
+			// Whatever this turn was answering is no longer waiting.
+			state.waitingTurnIds = [];
 			live.turn.status = event.status as Turn['status'];
 			live.turn.error_message = event.error_message ?? live.turn.error_message;
 			if (event.model) live.turn.model = event.model;
@@ -255,6 +298,29 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 				state.liveTurnId = null;
 				state.idle = true;
 			}
+			return;
+		}
+		case 'steer': {
+			// One event covers both "typed" and "settled" — merge on id so a
+			// client that attached late, and first learns of a note when it is
+			// already `resent`, ends up with the same state as one that
+			// watched it from `pending`.
+			const live = ensureTurn(state, event.turn_id);
+			const existing = live.steers.find((s) => s.id === event.id);
+			if (existing) {
+				existing.status = event.status;
+				existing.text = event.text;
+				return;
+			}
+			live.steers.push({
+				id: event.id,
+				turn_id: event.turn_id,
+				seq: live.steers.length,
+				text: event.text,
+				status: event.status,
+				created_at: new Date().toISOString(),
+				settled_at: null
+			});
 			return;
 		}
 		case 'sidebar_changed':

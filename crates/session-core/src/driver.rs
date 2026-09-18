@@ -94,6 +94,15 @@ pub struct SessionContext {
     /// harness owns the broadcast channel and fans it out to attached
     /// HTTP subscribers.
     pub broadcast: broadcast::Sender<TurnUpdate>,
+    /// What the user typed *while this turn was running*. Drained by the
+    /// driver at a round boundary and folded into the prompt as further user
+    /// messages; see [`crate::workers::SteerInbox`].
+    ///
+    /// A driver that has no rounds to fold them into can simply ignore this:
+    /// notes left in the queue stay `pending` in the database and the client
+    /// re-sends them as an ordinary next message, which is the honest
+    /// outcome rather than a silent drop.
+    pub steers: crate::workers::SteerInbox,
 }
 
 /// Drive one user→assistant turn.

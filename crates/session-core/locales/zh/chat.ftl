@@ -6,8 +6,6 @@
 
 chat-default-title = 聊天
 
-chat-error-still-streaming = 该用户仍有响应正在生成 — 请等待或点击停止。
-
 chat-error-auth-required = 需要身份验证
 chat-error-no-such-turn = 没有此消息
 chat-error-db-error = 数据库错误
@@ -24,3 +22,14 @@ chat-prompt-heading = 助手提问
 chat-prompt-placeholder = 输入答案…
 chat-prompt-answer = 回答
 chat-prompt-skip = 跳过
+
+# 回答生成期间输入框依然可用。
+chat-composer-send-during-turn-title = 发送。回答生成期间，这条会补充进去；若送达太晚，则作为下一条消息发送。
+chat-composer-interrupt = 中断并重新提问
+chat-composer-interrupt-title = 停止当前回答，改为发送这条。已经写出的内容仍保留在会话中。
+chat-turn-waiting = 已发送 — 正在等待空闲名额
+chat-turn-waiting-cancel = 撤回
+chat-steer-pending = 在本条回答期间补充 — 尚未读取
+chat-steer-delivered = 在本条回答期间补充 — 已采纳
+chat-steer-resent = 在本条回答期间补充 — 送达太晚，已作为下一条消息发送
+chat-steer-discarded = 在本条回答期间补充 — 送达太晚，已丢弃

@@ -6,8 +6,6 @@
 
 chat-default-title = Chat
 
-chat-error-still-streaming = Todavía se está transmitiendo una respuesta para este usuario — espera o pulsa Detener.
-
 chat-error-auth-required = se requiere autenticación
 chat-error-no-such-turn = no existe ese mensaje
 chat-error-db-error = error de base de datos
@@ -24,3 +22,14 @@ chat-prompt-heading = El asistente pregunta
 chat-prompt-placeholder = Escribe una respuesta…
 chat-prompt-answer = Responder
 chat-prompt-skip = Omitir
+
+# El campo de entrada sigue disponible mientras se genera una respuesta.
+chat-composer-send-during-turn-title = Enviar. Mientras se escribe una respuesta, esto se añade a ella; si llega tarde, se envía como el mensaje siguiente.
+chat-composer-interrupt = Interrumpir y reorientar
+chat-composer-interrupt-title = Detener la respuesta actual y enviar esto en su lugar. Lo ya escrito permanece en la conversación.
+chat-turn-waiting = Enviado — esperando un espacio libre
+chat-turn-waiting-cancel = Retirar
+chat-steer-pending = Añadido durante esta respuesta — aún sin leer
+chat-steer-delivered = Añadido durante esta respuesta — tenido en cuenta
+chat-steer-resent = Añadido durante esta respuesta — llegó tarde, enviado como mensaje siguiente
+chat-steer-discarded = Añadido durante esta respuesta — llegó tarde y se descartó

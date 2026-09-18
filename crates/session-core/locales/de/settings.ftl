@@ -25,6 +25,8 @@ settings-s-chat-ocr = Dokumenten-OCR
 settings-s-chat-ocr-blurb = Hochgeladene PDFs und Bilder in Text umwandeln, den das Modell lesen kann.
 settings-s-chat-compaction = Gesprächsverdichtung
 settings-s-chat-compaction-blurb = Die ältere Hälfte eines langen Gesprächs zusammenfassen, damit es weiter in das Kontextfenster des Modells passt.
+settings-s-chat-turns = Parallele Gespräche
+settings-s-chat-turns-blurb = Wie viele Chats einer Person gleichzeitig antworten dürfen.
 settings-s-chat-s3 = Anhang-Speicher (S3)
 settings-s-chat-s3-blurb = Objektspeicher für Chat-Anhänge. Ohne ihn werden Uploads abgelehnt.
 settings-s-sandbox = Code-Sandbox
@@ -87,6 +89,9 @@ settings-f-chat-compaction-min_turns_to_compact = Mindestlänge des Gesprächs
 settings-f-chat-compaction-min_turns_to_compact-help = Gespräche mit weniger Zügen werden nie verdichtet.
 settings-f-chat-compaction-summary_max_tokens = Token-Budget der Zusammenfassung
 settings-f-chat-compaction-summary_max_tokens-help = Token-Budget für die Zusammenfassung, die die verdichteten Züge ersetzt.
+
+settings-f-chat-turns-max_parallel = Gespräche gleichzeitig
+settings-f-chat-turns-max_parallel-help = Wie viele Antworten eine Person parallel laufen lassen darf, in verschiedenen Gesprächen. 1 behält das bisherige Verhalten: Ein zweiter Chat wartet.
 
 settings-f-chat-s3-enabled = Anhänge in S3 speichern
 settings-f-chat-s3-enabled-help = Ausgeschaltet stehen Chat-Anhänge nicht zur Verfügung.

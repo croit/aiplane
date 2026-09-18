@@ -33,6 +33,8 @@ settings-s-chat-ocr = Document OCR
 settings-s-chat-ocr-blurb = Turning uploaded PDFs and images into text the model can read.
 settings-s-chat-compaction = Conversation compaction
 settings-s-chat-compaction-blurb = Summarising the older half of a long conversation so it keeps fitting in the model's context window.
+settings-s-chat-turns = Parallel conversations
+settings-s-chat-turns-blurb = How many of a user's chats may be answering at the same time.
 settings-s-chat-s3 = Attachment storage (S3)
 settings-s-chat-s3-blurb = Object storage for chat attachments. Without it, uploads are refused.
 settings-s-sandbox = Code sandbox
@@ -95,6 +97,9 @@ settings-f-chat-compaction-min_turns_to_compact = Minimum conversation length
 settings-f-chat-compaction-min_turns_to_compact-help = Never compact a conversation shorter than this many turns.
 settings-f-chat-compaction-summary_max_tokens = Summary token budget
 settings-f-chat-compaction-summary_max_tokens-help = Token budget for the summary that replaces the compacted turns.
+
+settings-f-chat-turns-max_parallel = Conversations at once
+settings-f-chat-turns-max_parallel-help = Turns one user may have running in parallel, in different conversations. 1 keeps the old behaviour: a second chat waits.
 
 settings-f-chat-s3-enabled = Store attachments in S3
 settings-f-chat-s3-enabled-help = Off means chat attachments are unavailable.

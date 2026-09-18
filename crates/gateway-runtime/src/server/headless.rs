@@ -122,6 +122,10 @@ pub async fn drive(state: &Arc<RamaState>, p: DriveParams) {
         model: p.model,
         cancel: Arc::new(AtomicBool::new(false)),
         broadcast,
+        // Nobody can interject into a scheduled run: there is no composer
+        // attached to it. An always-empty inbox is the honest expression of
+        // that, and costs the driver one lock-free check per round.
+        steers: session_core::workers::SteerInbox::default(),
     };
     session_core::worker::run_session_turn(state.db.clone(), driver, ctx).await;
 }

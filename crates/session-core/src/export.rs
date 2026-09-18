@@ -480,6 +480,7 @@ mod tests {
                 completed_at: Some(ts),
             },
             tool_calls: vec![],
+            steers: vec![],
         }
     }
 

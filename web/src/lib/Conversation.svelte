@@ -49,6 +49,20 @@
 	// language switch re-renders the picker (same reason as the layout's nav).
 	const EFFORTS = ['fast', 'standard', 'deep', 'max'] as const;
 	let sending = $state(false);
+	/**
+	 * The composer's textarea, so the actions that empty it can hand the
+	 * cursor back.
+	 *
+	 * Clicking send moves focus to the button, and that is exactly the moment
+	 * the next thought gets typed — into the button, where it is swallowed
+	 * silently with the text visibly gone. Sending puts the cursor back.
+	 */
+	let composerInput = $state<HTMLTextAreaElement | null>(null);
+
+	function focusComposer() {
+		composerInput?.focus();
+	}
+
 	let notice = $state<string | null>(null);
 	let compactedUpToSeq = $state<number | null>(null);
 	let assets = $state<ChatAsset[]>([]);
@@ -127,6 +141,15 @@
 	const isOwner = $derived(
 		session === null || me.value === null || session.user_id === me.value.id
 	);
+	/**
+	 * User turns the server has accepted but not started answering.
+	 *
+	 * Taken from the snapshot rather than inferred from the transcript's
+	 * shape: the server asks its work queue, and a turn whose assistant row
+	 * failed to insert looks identical from here while never being startable.
+	 */
+	const waitingTurnIds = $derived(new Set(controller?.state.waitingTurnIds ?? []));
+
 	let metaRequest = 0;
 
 	$effect(() => {
@@ -340,41 +363,95 @@
 		if (finalized) narratingTurnId = null;
 	});
 
-	async function send() {
+	/**
+	 * Send what is in the composer.
+	 *
+	 * One path, whatever is happening in the conversation: the server decides
+	 * where the message lands — folded into the answer being written, started
+	 * as a turn, or queued until a slot frees — and says so in `placement`.
+	 * The client used to make that call with a queue of its own, which meant
+	 * "sent" was a fact only this browser knew.
+	 */
+	async function send(): Promise<boolean> {
 		const text = draft.trim();
-		if ((!text && files.length === 0) || !model.trim() || sending) return;
+		if ((!text && files.length === 0) || !model.trim() || sending) return false;
 		sending = true;
 		notice = null;
+		const sentText = text;
+		const sentFiles = files;
+		// Clear immediately: the message is on its way, and a composer that
+		// still holds it invites sending it twice.
+		draft = '';
+		files = [];
 		try {
-			if (files.length > 0) {
-				// Attachments ride as multipart (same shape as the legacy
-				// composer) so they land under this turn's storage prefix.
-				const fd = new FormData();
-				fd.append('model', model.trim());
-				fd.append('message', text);
-				for (const f of files) fd.append('attachment', f);
-				const res = await fetch(`/api/v0/chat/sessions/${id}/messages`, {
-					method: 'POST',
-					credentials: 'same-origin',
-					body: fd
+			if (sentFiles.length > 0) {
+				await api.sendChatMessageWithFiles(id, {
+					model: model.trim(),
+					message: sentText,
+					files: sentFiles
 				});
-				if (!res.ok) throw new Error((await res.text()).slice(0, 200));
 			} else {
-				await api.sendChatMessage(id, { model: model.trim(), message: text });
+				await api.sendChatMessage(id, { model: model.trim(), message: sentText });
 			}
-			draft = '';
-			files = [];
 			followEnd();
-			// The reply arrives on a fresh stream (the idle one closed).
+			focusComposer();
+			// Re-attach in every case: a started turn streams on a fresh
+			// stream, and a folded or queued message is drawn from the
+			// snapshot the re-attach brings.
 			controller?.attach();
+			void refreshSidebar();
+			return true;
 		} catch (err) {
-			notice =
-				err instanceof ApiError && err.status === 409
-					? t('chat-error-still-streaming')
-					: String(err);
+			// Nothing was accepted, so the text comes back. It is *prepended*
+			// rather than assigned: the composer stays live during a submit,
+			// so the user may well have started the next message already, and
+			// overwriting that would lose what they typed while waiting.
+			draft = draft.trim() ? `${sentText}\n${draft}` : sentText;
+			files = [...sentFiles, ...files];
+			notice = String(err);
+			return false;
 		} finally {
 			sending = false;
 		}
+	}
+
+	/**
+	 * Take back a message that was sent but has not started yet.
+	 *
+	 * Deleting the turn is the whole of it: the work queue rows hang off the
+	 * turn and go with it, so there is no second place to clean up and no way
+	 * for the two to disagree.
+	 */
+	async function cancelWaitingTurn(turnId: string) {
+		try {
+			await api.deleteChatTurn(id, turnId);
+			controller?.attach();
+			void refreshSidebar();
+		} catch (err) {
+			notice = String(err);
+		}
+	}
+
+	/**
+	 * Send this, and stop waiting for the answer that is being written.
+	 *
+	 * The deterministic counterpart to an ordinary send: sending alone folds
+	 * the text into the running turn, which only reaches the model if another
+	 * round follows. Stopping straight afterwards makes that impossible on
+	 * purpose — and the server, finalising the cancelled turn, turns the
+	 * undelivered addition into the next message and starts it. So the text
+	 * always lands, at the price of the answer in flight.
+	 *
+	 * Two calls, no special case: `send` and `stop` already do exactly this
+	 * between them.
+	 */
+	async function interruptAndReaim() {
+		if (!streaming || !draft.trim()) return;
+		// Only stop if the text actually went out. `send` swallows its errors
+		// (it hands the draft back and shows a notice), so stopping
+		// unconditionally would throw away the answer in flight *and* send
+		// nothing — the worst of both.
+		if (await send()) await stop();
 	}
 
 	function addFiles(list: FileList | File[] | null) {
@@ -635,10 +712,11 @@
 	}
 
 	function onKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter' && !event.shiftKey) {
-			event.preventDefault();
-			void send();
-		}
+		if (event.key !== 'Enter' || event.shiftKey) return;
+		event.preventDefault();
+		// One meaning again: send. Where it lands is the server's call, and
+		// the transcript reports it — the user no longer picks a mode.
+		void send();
 	}
 </script>
 
@@ -712,7 +790,20 @@
 						<div class="whitespace-pre-wrap">{parsed.text}</div>
 					{/if}
 				</div>
-				{#if isOwner && !streaming}
+				{#if waitingTurnIds.has(entry.turn.id)}
+					<!-- Sent, not started: another of this user's conversations
+					     is using the slot. It starts on its own when one frees
+					     up, so the only thing to offer is a way out. -->
+					<div class="chat-footer flex items-center gap-2 opacity-70" data-waiting-turn>
+						<span class="loading loading-dots loading-xs"></span>
+						<span>{t('chat-turn-waiting')}</span>
+						{#if isOwner}
+							<button class="btn btn-ghost btn-xs" onclick={() => void cancelWaitingTurn(entry.turn.id)}>
+								{t('chat-turn-waiting-cancel')}
+							</button>
+						{/if}
+					</div>
+				{:else if isOwner && !streaming}
 					<div class="chat-footer opacity-60">
 						<button class="btn btn-ghost btn-xs" onclick={() => editTurn(entry.turn.id, entry.turn.user_content ?? '')}>
 							{t('render-edit-button')}
@@ -738,6 +829,26 @@
 						{/if}
 
 						<ToolCalls calls={entry.tool_calls} />
+
+						{#each entry.steers as note (note.id)}
+							<!-- What the user said while this answer was being
+							     written. Labelled with what became of it: a note the
+							     turn never carried was re-sent as its own message, and
+							     saying so is the difference between a transcript and a
+							     flattering summary of one. -->
+							<div class="rounded-box border border-warning/40 bg-warning/10 px-3 py-2 text-sm" data-steer={note.status}>
+								<div class="mb-1 flex items-center gap-2 text-xs opacity-70">
+									<span aria-hidden="true">↪</span>
+									<span>
+										{#if note.status === 'delivered'}{t('chat-steer-delivered')}
+										{:else if note.status === 'resent'}{t('chat-steer-resent')}
+										{:else if note.status === 'discarded'}{t('chat-steer-discarded')}
+										{:else}{t('chat-steer-pending')}{/if}
+									</span>
+								</div>
+								<div class="whitespace-pre-wrap">{note.text}</div>
+							</div>
+						{/each}
 
 						{#if entry.turn.status === 'in_progress'}
 							<div class="flex items-center gap-2 text-sm text-base-content/60">
@@ -908,13 +1019,13 @@
 		</div>
 		<div class="flex items-end gap-1">
 			<textarea
+				bind:this={composerInput}
 				class="textarea textarea-ghost min-h-11 max-h-48 flex-1 resize-none focus:outline-none"
 				rows="1"
 				placeholder={t('chat-render-composer-placeholder')}
 				bind:value={draft}
 				onkeydown={onKeydown}
 				onpaste={onPaste}
-				disabled={streaming}
 			></textarea>
 			<label
 				class="btn btn-sm btn-circle btn-ghost"
@@ -938,6 +1049,28 @@
 				</button>
 			{/if}
 			{#if streaming}
+				<!-- Sending during a turn is an ordinary send: the server puts
+				     the message where it belongs. Stopping is still its own
+				     decision, so it keeps its own button. -->
+				<button
+					class="btn btn-sm btn-circle btn-primary"
+					onclick={send}
+					disabled={(!draft.trim() && files.length === 0) || !model.trim() || sending}
+					aria-label={t('render-composer-send')}
+					title={t('chat-composer-send-during-turn-title')}
+				>
+					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5m0 0-6 6m6-6 6 6" /></svg>
+				</button>
+				<button
+					class="btn btn-sm btn-circle btn-ghost"
+					data-composer-interrupt
+					onclick={interruptAndReaim}
+					disabled={!draft.trim() || sending}
+					aria-label={t('chat-composer-interrupt')}
+					title={t('chat-composer-interrupt-title')}
+				>
+					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h7"/><path d="m7 8-4 4 4 4"/><path d="M21 6v6a6 6 0 0 1-6 6h-5"/></svg>
+				</button>
 				<button class="btn btn-sm btn-circle btn-error" onclick={stop} aria-label={t('render-composer-stop')} title={t('render-composer-stop')}>
 					<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
 				</button>

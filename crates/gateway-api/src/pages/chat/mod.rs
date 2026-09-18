@@ -75,18 +75,42 @@ mod title;
 // ---------------------------------------------------------------------------
 // POST /chat/{id}/messages — submit + spawn worker + SSE.
 
-/// Why a submit was refused, before anything was persisted. Both submit
-/// JSON and multipart submission paths map these onto their own response
-/// shapes.
+/// Why a submit was refused, before anything was persisted.
+///
+/// Short, now, because "this conversation is busy" and "your other chats are
+/// using every slot" stopped being refusals: a message sent into either of
+/// those is accepted and answered later. What is left is the caller having no
+/// budget, and the database failing.
 #[derive(Debug)]
 pub(crate) enum SubmitTurnError {
     RateLimited,
-    /// This user's previous turn is still streaming — the registry refused.
-    Busy,
-    /// A DB write failed after the worker slot was reserved; the message is
-    /// the human-readable cause. The slot has been released by the time this
-    /// travels to the caller.
+    /// A DB write failed; the message is the human-readable cause. Any worker
+    /// slot reserved along the way has been released by the time this travels
+    /// to the caller.
     Db(String),
+}
+
+/// What became of an accepted message.
+///
+/// The three are genuinely different events for the reader — a turn starting,
+/// an addition to the answer being written, and a message waiting its turn —
+/// and the client renders each of them differently. Deciding *which* is the
+/// server's job: only it knows whether a worker is running and whether another
+/// round is still to come.
+pub(crate) enum SubmitOutcome {
+    /// A worker was free: the turn is running. Boxed because it carries both
+    /// turn rows, which the other two variants (a pair of ids) do not — the
+    /// enum is returned by value from every submit.
+    Started(Box<SubmittedTurn>),
+    /// A turn was already running in this conversation, so the text went into
+    /// its prompt instead. Carries the assistant turn it was added to.
+    Folded {
+        assistant_turn_id: String,
+        steer_id: String,
+    },
+    /// Every slot this user has is in use by their other conversations. The
+    /// message is persisted and starts when one frees up.
+    Queued { user_turn_id: String },
 }
 
 /// A turn accepted into the worker: both rows persisted, worker spawned,
@@ -114,7 +138,7 @@ pub(crate) async fn submit_turn(
     active: &chat::Session,
     submit: ChatSubmit,
     req: RequestCtx,
-) -> Result<SubmittedTurn, SubmitTurnError> {
+) -> Result<SubmitOutcome, SubmitTurnError> {
     // Rate-limit / quota gate — before reserving a worker or touching the DB,
     // so an over-budget user is turned away cleanly (details on `/usage`).
     {
@@ -139,20 +163,71 @@ pub(crate) async fn submit_turn(
     // (user + completed-assistant) pair. The pre-generated id is the
     // turn we'll insert immediately below, so the worker entry's
     // `turn_id` always matches the row that exists.
+    // Bounded retry around one race: the running turn can finish between the
+    // registry saying "busy" and the interjection landing. Twice is enough —
+    // the second pass finds the slot free — and a bound is what keeps a
+    // pathological loop impossible.
+    for attempt in 0..2 {
+        match submit_once(state, user, active, &submit, &user_msg, &req).await? {
+            Some(outcome) => return Ok(outcome),
+            None => {
+                tracing::debug!(attempt, "the running turn ended mid-submit; retrying");
+            }
+        }
+    }
+    Err(SubmitTurnError::Db(
+        "the conversation kept changing underneath this message".into(),
+    ))
+}
+
+/// One attempt at placing a message. `Ok(None)` means the conversation changed
+/// underneath it and the caller should try again.
+async fn submit_once(
+    state: &Arc<RamaState>,
+    user: &User,
+    active: &chat::Session,
+    submit: &ChatSubmit,
+    user_msg: &str,
+    req: &RequestCtx,
+) -> Result<Option<SubmitOutcome>, SubmitTurnError> {
     let assistant_turn_id = uuid::Uuid::new_v4().to_string();
-    let outcome = state
-        .chats
-        .register(&user.id, &assistant_turn_id, &active.id);
+    let outcome = state.chats.register(
+        &user.id,
+        &assistant_turn_id,
+        &active.id,
+        // Read per submit, not cached: raising the ceiling in /admin/settings
+        // then takes effect on the next message rather than on the next
+        // restart.
+        state.config().chat.turns.max_parallel,
+    );
     let worker = match outcome {
         RegisterOutcome::Registered { worker } => worker,
-        RegisterOutcome::Busy { .. } => return Err(SubmitTurnError::Busy),
+        // This conversation is already being answered. The text belongs to
+        // that answer, not to the one after it: it goes into the running
+        // worker's prompt at its next round. A message carrying attachments
+        // cannot — the prompt-level addition has no place to put a file — so
+        // that one waits instead.
+        // Folded into the answer being written — but only what belongs in a
+        // prompt. Attachments have nowhere to go there, and a long message is
+        // a message: both wait instead. See `MAX_STEER_BYTES`.
+        RegisterOutcome::Busy { existing }
+            if submit.attachments.is_empty()
+                && submit.user_text.len() <= json_api::MAX_STEER_BYTES =>
+        {
+            return fold_into_running_turn(state, &existing, submit).await;
+        }
+        RegisterOutcome::Busy { .. } | RegisterOutcome::AtCapacity { .. } => {
+            return queue_for_later(state, user, active, submit, user_msg, req)
+                .await
+                .map(Some);
+        }
     };
 
     // Slot held. Any early-return from here must `state.chats.clear`
     // the worker so the next submit isn't permanently blocked.
     let user_turn_id = submit.user_turn_id.clone();
     let user_turn =
-        match chat::create_user_turn(&state.db, &active.id, &user_turn_id, &user_msg).await {
+        match chat::create_user_turn(&state.db, &active.id, &user_turn_id, user_msg).await {
             Ok(t) => t,
             Err(err) => {
                 state.chats.clear(&user.id, &worker);
@@ -212,7 +287,7 @@ pub(crate) async fn submit_turn(
         &assistant_turn_id,
         &submit.model,
         &worker,
-        req,
+        req.clone(),
     )
     .await;
 
@@ -230,9 +305,343 @@ pub(crate) async fn submit_turn(
         ));
     }
 
-    Ok(SubmittedTurn {
+    Ok(Some(SubmitOutcome::Started(Box::new(SubmittedTurn {
         user_turn,
         assistant_turn,
+    }))))
+}
+
+/// Turn interjections the finished turn never delivered into waiting messages.
+///
+/// The model only sees an addition if another round follows; one that arrives
+/// while the closing answer is being written never reaches it. That text was
+/// still sent, so it becomes the next message — here, at finalize, rather than
+/// in whichever browser happens to be open. A tab closed mid-turn used to
+/// leave such a note stranded forever.
+///
+/// Runs before the scheduler, so the turn it queues is a candidate for the
+/// slot that just freed up.
+async fn requeue_undelivered_steers(
+    state: &Arc<RamaState>,
+    user_id: &str,
+    session_id: &str,
+    assistant_turn_id: &str,
+) {
+    let notes = match chat::list_steers(&state.db, assistant_turn_id).await {
+        Ok(notes) => notes,
+        Err(err) => {
+            tracing::warn!(error = %err, turn = %assistant_turn_id, "reading interjections at finalize");
+            return;
+        }
+    };
+    let model = chat::get_turn(&state.db, session_id, assistant_turn_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|turn| turn.model);
+    for note in notes
+        .iter()
+        .filter(|n| n.status == chat::SteerStatus::Pending)
+    {
+        // Claiming through the same `WHERE status = 'pending'` guard the rest
+        // of the code uses: a second finalize, or a client that still holds
+        // the old protocol, cannot queue the same sentence twice.
+        match chat::settle_steer(&state.db, &note.id, chat::SteerStatus::Resent).await {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(err) => {
+                tracing::warn!(error = %err, steer = %note.id, "settling an undelivered interjection");
+                continue;
+            }
+        }
+        let Some(model) = model.clone() else {
+            tracing::warn!(turn = %assistant_turn_id, "no model on the finished turn; cannot queue its interjection");
+            let _ = chat::release_steer(&state.db, &note.id, chat::SteerStatus::Resent).await;
+            continue;
+        };
+        let turn_id = uuid::Uuid::new_v4().to_string();
+        let queued_turn = match chat::create_user_turn(&state.db, session_id, &turn_id, &note.text)
+            .await
+        {
+            Ok(turn) => turn,
+            Err(err) => {
+                tracing::warn!(error = %err, steer = %note.id, "queueing an undelivered interjection");
+                let _ = chat::release_steer(&state.db, &note.id, chat::SteerStatus::Resent).await;
+                continue;
+            }
+        };
+        let pending = chat::PendingTurn {
+            turn_id,
+            session_id: session_id.to_string(),
+            user_id: user_id.to_string(),
+            model,
+            // The interjection was typed into a running conversation, not
+            // spoken, and the request that carried it is gone.
+            voice: false,
+            client_ip: None,
+            secure: false,
+            created_at: jiff::Timestamp::now(),
+        };
+        if let Err(err) = chat::insert_pending_turn(&state.db, &pending).await {
+            tracing::warn!(error = %err, steer = %note.id, "queueing an undelivered interjection");
+            // Take the turn row back out: a user turn with nothing to answer
+            // it, and nothing queued to produce an answer, is a message that
+            // reads as sent and never runs.
+            let _ = chat::delete_turns_from_seq(&state.db, session_id, queued_turn.seq).await;
+            let _ = chat::release_steer(&state.db, &note.id, chat::SteerStatus::Resent).await;
+        }
+    }
+}
+
+/// Start whatever this user has waiting, as far as their slots allow.
+///
+/// Called at the three moments a slot can free up: a turn finishing, a
+/// conversation being cancelled, and the process coming back. There is no
+/// timer and no polling — a waiting turn is started by the event that made
+/// room for it, and the claim is what makes that safe to call from several
+/// places at once.
+///
+/// Best-effort by design: a user whose turn cannot be started right now keeps
+/// their place in the queue, and the next slot to free up tries again. The one
+/// thing it must never do is start the same turn twice, which
+/// `take_next_for_user` guarantees by claiming through a delete.
+/// Returns a boxed future rather than being a plain `async fn`, and that is
+/// load-bearing: starting a turn spawns a worker, and the end of that worker
+/// starts the next waiting turn — so this function reaches itself. An `async
+/// fn` would make its own future's type infinitely nested, and the compiler
+/// gives up on proving it `Send` (which `tokio::spawn` requires). Naming the
+/// type here ends the recursion at a `dyn Future + Send`.
+pub(crate) fn start_pending_turns<'a>(
+    state: &'a Arc<RamaState>,
+    user_id: &'a str,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+    Box::pin(start_pending_turns_inner(state, user_id))
+}
+
+async fn start_pending_turns_inner(state: &Arc<RamaState>, user_id: &str) {
+    // Bounded: one pass can only start as many turns as the ceiling allows,
+    // and each iteration either starts one or stops. The limit is re-read per
+    // iteration so lowering it in /admin/settings takes effect immediately.
+    loop {
+        let limit = state.config().chat.turns.max_parallel.max(1);
+        let busy = state.chats.sessions_for_user(user_id);
+        if busy.len() >= limit {
+            return;
+        }
+        let pending = match chat::take_next_for_user(&state.db, user_id, &busy).await {
+            Ok(Some(pending)) => pending,
+            Ok(None) => return,
+            Err(err) => {
+                tracing::warn!(error = %err, %user_id, "reading the waiting-turn queue");
+                return;
+            }
+        };
+        if !start_pending_turn(state, &pending).await {
+            // Could not start it, and it is already out of the queue. Put it
+            // back so it is not silently lost — a message the user sent must
+            // either run or still be waiting, never neither.
+            if let Err(err) = chat::insert_pending_turn(&state.db, &pending).await {
+                tracing::error!(
+                    error = %err,
+                    turn_id = %pending.turn_id,
+                    "a waiting turn could not be started and could not be re-queued"
+                );
+            }
+            return;
+        }
+    }
+}
+
+/// Start one claimed waiting turn. Returns whether it is now running.
+async fn start_pending_turn(state: &Arc<RamaState>, pending: &chat::PendingTurn) -> bool {
+    let Ok(Some(user)) =
+        gateway_core::server::db::users::find_by_id(&state.db, &pending.user_id).await
+    else {
+        tracing::warn!(user_id = %pending.user_id, "waiting turn for an unknown user");
+        return false;
+    };
+    // The budget is spent when the work runs, not when it was asked for. A
+    // user who queued three messages and then ran out of quota gets the ones
+    // that fit, and the rest wait rather than running for free.
+    let role_ids = state.role_ids_for(&user.roles);
+    if state.enforcer.check(&user.id, &role_ids).await.is_err() {
+        tracing::info!(user_id = %user.id, "waiting turn held: over budget");
+        return false;
+    }
+
+    let assistant_turn_id = uuid::Uuid::new_v4().to_string();
+    let worker = match state.chats.register(
+        &user.id,
+        &assistant_turn_id,
+        &pending.session_id,
+        state.config().chat.turns.max_parallel,
+    ) {
+        RegisterOutcome::Registered { worker } => worker,
+        // Somebody started a turn in this conversation between the claim and
+        // here, or the ceiling filled up. Either way this turn waits.
+        _ => return false,
+    };
+    if chat::create_assistant_turn_in_progress(
+        &state.db,
+        &pending.session_id,
+        &assistant_turn_id,
+        &pending.model,
+    )
+    .await
+    .is_err()
+    {
+        state.chats.clear(&user.id, &worker);
+        return false;
+    }
+    let _ = chat::touch_session(&state.db, &pending.session_id).await;
+    spawn_assistant_worker(
+        state,
+        &user,
+        &pending.session_id,
+        &assistant_turn_id,
+        &pending.model,
+        &worker,
+        RequestCtx {
+            client_ip: pending.client_ip.clone(),
+            secure: pending.secure,
+            voice_mode: pending.voice,
+        },
+    )
+    .await;
+    true
+}
+
+/// Start the waiting turns of every user who has any.
+///
+/// Boot only. A waiting turn outlives the process that accepted it — that is
+/// the whole point of it being a row — and the browser that sent it may be
+/// long closed, so nothing else will ever start it.
+pub async fn start_pending_turns_at_startup(state: &Arc<RamaState>) {
+    let users = match chat::users_with_pending_turns(&state.db).await {
+        Ok(users) => users,
+        Err(err) => {
+            tracing::warn!(error = %err, "reading the waiting-turn queue at startup");
+            return;
+        }
+    };
+    if users.is_empty() {
+        return;
+    }
+    tracing::info!(users = users.len(), "starting turns that were waiting");
+    for user_id in users {
+        start_pending_turns(state, &user_id).await;
+    }
+}
+
+/// Add an accepted message to the answer that is already being written.
+///
+/// Recorded against the running turn and handed to its worker, which folds
+/// every waiting note into the prompt at its next round — all of them at once,
+/// not one per round. Whether the model ever reads it depends on whether
+/// another round follows; the row's status is what says so afterwards, and a
+/// note no round could carry becomes a waiting turn when the turn ends.
+/// `Ok(None)` means the turn ended underneath us and the caller should start
+/// over — see the comment on the `None` arm.
+async fn fold_into_running_turn(
+    state: &Arc<RamaState>,
+    worker: &session_core::workers::ActiveWorker,
+    submit: &ChatSubmit,
+) -> Result<Option<SubmitOutcome>, SubmitTurnError> {
+    let steer = chat::insert_steer(&state.db, &worker.turn_id, &submit.user_text)
+        .await
+        .map_err(|err| SubmitTurnError::Db(err.to_string()))?;
+    let Some(steer) = steer else {
+        // The turn finished between the registry check and this write, so
+        // nothing was recorded. That is an ordinary race, not a failure: the
+        // caller retries and now finds a free slot. Reporting it as an error
+        // surfaced "the answer completed while your message was in flight" as
+        // a 500, and dropped the message.
+        return Ok(None);
+    };
+    worker.steers.push(session_core::workers::SteerNote {
+        id: steer.id.clone(),
+        text: submit.user_text.clone(),
+    });
+    // Draw it in every attached transcript straight away: it is part of the
+    // conversation from the moment it is sent, not from the moment the model
+    // happens to read it.
+    let _ = worker.broadcast.send(TurnUpdate::Tick);
+    Ok(Some(SubmitOutcome::Folded {
+        assistant_turn_id: worker.turn_id.clone(),
+        steer_id: steer.id,
+    }))
+}
+
+/// Persist an accepted message that cannot start yet.
+///
+/// The user turn is written exactly as it would be for a turn starting now —
+/// it *is* a user turn, attachments and all — and the work queue records how
+/// to start it. `start_pending_turns` picks it up when a slot frees.
+async fn queue_for_later(
+    state: &Arc<RamaState>,
+    user: &User,
+    active: &chat::Session,
+    submit: &ChatSubmit,
+    user_msg: &str,
+    req: &RequestCtx,
+) -> Result<SubmitOutcome, SubmitTurnError> {
+    let user_turn = chat::create_user_turn(&state.db, &active.id, &submit.user_turn_id, user_msg)
+        .await
+        .map_err(|err| SubmitTurnError::Db(err.to_string()))?;
+    let pending = chat::PendingTurn {
+        turn_id: user_turn.id.clone(),
+        session_id: active.id.clone(),
+        user_id: user.id.clone(),
+        model: submit.model.clone(),
+        voice: submit.voice,
+        client_ip: req.client_ip.clone(),
+        secure: req.secure,
+        created_at: jiff::Timestamp::now(),
+    };
+    if let Err(err) = chat::insert_pending_turn(&state.db, &pending).await {
+        // The turn row would otherwise sit in the transcript with no answer
+        // and nothing to produce one — and its uploads would be unreferenced
+        // for good, so they are swept the same way every other truncation
+        // does it.
+        let doomed = doomed_attachments(state, &active.id, user_turn.seq).await;
+        let _ = chat::delete_turns_from_seq(&state.db, &active.id, user_turn.seq).await;
+        reclaim_attachments(state, doomed);
+        return Err(SubmitTurnError::Db(err.to_string()));
+    }
+    let _ = chat::touch_session(&state.db, &active.id).await;
+    if active.title.is_none() {
+        // Same two stages as a turn that starts right away: a heuristic title
+        // so the sidebar has something now, and the LLM-generated one when it
+        // lands. Without the second stage, a conversation whose very first
+        // message was queued kept its truncated first line for good.
+        let fallback = first_message_title(&submit.user_text);
+        let _ = chat::set_session_title(&state.db, &active.id, &fallback).await;
+        tokio::spawn(title::generate_session_title(
+            state.clone(),
+            user.id.clone(),
+            active.id.clone(),
+            submit.user_text.clone(),
+            submit.model.clone(),
+        ));
+    }
+    // Kick the scheduler. Queueing is the third moment a turn can become
+    // startable — next to a worker finishing and the process coming back —
+    // and without this there is a window that loses the wake-up entirely: the
+    // turn holding the last slot can finish between `register()` saying "at
+    // capacity" and this row landing, so its own pass sees an empty queue and
+    // this message waits for an event that has already happened.
+    //
+    // Spawned rather than awaited: the answer to this submit does not depend
+    // on it, and the caller should not wait for a model round-trip to start.
+    {
+        let state = state.clone();
+        let user_id = user.id.clone();
+        tokio::spawn(async move {
+            start_pending_turns(&state, &user_id).await;
+        });
+    }
+    Ok(SubmitOutcome::Queued {
+        user_turn_id: user_turn.id,
     })
 }
 
@@ -303,6 +712,14 @@ pub struct TurnPath {
     pub turn_id: String,
 }
 
+/// `{id}/steer/{steer_id}/…`. A struct for the reason spelled out on
+/// [`DocumentPath`]: a two-param tuple binds by map order, not path order.
+#[derive(serde::Deserialize)]
+pub struct SteerPath {
+    pub id: String,
+    pub steer_id: String,
+}
+
 /// The attachments a pending `delete_turns_from_seq` is about to
 /// orphan. Read *before* the delete — afterwards the markers are gone
 /// and the bucket objects are unreferenced forever. Empty when
@@ -346,6 +763,7 @@ fn reclaim_attachments(state: &Arc<RamaState>, orphaned: Vec<chat_attachments::A
 /// session itself: the caller's source IP (for GeoIP) and whether the
 /// browser is on a secure context (so a precise-location prompt can even
 /// succeed). Bundled so the worker/regeneration signatures stay legible.
+#[derive(Clone)]
 pub(crate) struct RequestCtx {
     client_ip: Option<String>,
     secure: bool,
@@ -414,6 +832,7 @@ async fn spawn_assistant_worker(
         model: model.to_string(),
         cancel: worker.cancel.clone(),
         broadcast: worker.broadcast.clone(),
+        steers: worker.steers.clone(),
     };
     let worker_state = state.clone();
     let worker_for_task = worker.clone();
@@ -436,6 +855,20 @@ async fn spawn_assistant_worker(
             &turn_id_for_push,
         )
         .await;
+        // Anything the user added that no round could carry becomes the next
+        // message, before the scheduler looks for work — so it is a candidate
+        // for the slot that just freed up.
+        requeue_undelivered_steers(
+            &worker_state,
+            &user_id_for_clear,
+            &session_id_for_push,
+            &turn_id_for_push,
+        )
+        .await;
+        // A slot just freed up, so this is where anything waiting starts —
+        // in this conversation or in another of this user's. No timer, no
+        // poll: the event that made room is what acts on it.
+        start_pending_turns(&worker_state, &user_id_for_clear).await;
     });
 }
 
