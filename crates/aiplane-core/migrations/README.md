@@ -38,6 +38,24 @@ production DB."
    migration is fine as long as the file hasn't reached prod yet.
    The moment it lands on `main`, rule (1) kicks in.
 
+### What enforces this
+
+Rules (1) and (3) used to live only in this file, and prose is not
+something a tree-wide `sed` reads. The rename to croit AIplane
+rewrote a documentation path in a comment inside `0013_rag.sql` —
+a migration from the initial public release — and every existing
+installation stopped booting. `0013_rag.sql` still points at
+`docs/rag.md`, a file that no longer exists, and that stale
+pointer stays: correcting it is exactly the edit that caused the
+outage.
+
+`crates/aiplane-core/tests/migrations_are_frozen.rs` now pins
+every migration's sqlx checksum in
+`crates/aiplane-core/tests/migration-checksums.txt` and compares
+on every test run, so the same mistake fails in CI rather than at
+an operator's next restart. A new migration appends one line —
+the test prints it. Nothing else in that file is ever edited.
+
 ### Recovering from an accidental edit
 
 If the boot is already broken by a checksum mismatch and you

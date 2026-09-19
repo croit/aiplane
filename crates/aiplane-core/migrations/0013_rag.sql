@@ -33,7 +33,7 @@ CREATE TABLE rag_collections (
     git_url             TEXT NOT NULL,
     git_ref             TEXT NOT NULL DEFAULT 'main',
     -- Personal access token for private repos. Plaintext is deliberate:
-    -- gateway runs on trusted infra, see docs/fileshare-rag.md.
+    -- gateway runs on trusted infra, see docs/rag.md.
     pat                 TEXT,
     embedding_model     TEXT NOT NULL,
     include_globs_json  TEXT NOT NULL DEFAULT '[]',       -- JSON array
