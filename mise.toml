@@ -411,6 +411,11 @@ rm -rf "$STAGE"
 echo "$OUT"
 '''
 
+[tasks.extension-screenshots]
+description = "Capture the three 1280×800 Chrome Web Store screenshots into extension/store/. Drives a Chromium with the extension loaded unpacked and a dev-UI gateway behind it, so every pixel is the real product; see the header of extension/store/shots.mjs for the two things automation cannot drive (Chrome's own permission dialog, and which tab is in front) and what stands in for them. Needs a dev-UI gateway on :8080 — start `mise run dev-ui` in another terminal first, and pass the cookie it prints."
+dir = "{{ config_root }}"
+run = "node extension/store/shots.mjs {{ arg(name='args', var=true, default='') }}"
+
 [tasks.test-extension]
 description = "Unit-test the Chrome extension (node --test). Two files are covered: `policy.js`, the pure module that decides whether a page gets clicked, kept free of `chrome.*` precisely so it can be tested without a browser; and `content.js`, the page↔worker wire, run inside a `vm` context with stub globals because Chrome runs it as a classic script too. The rest needs a real browser (pairing, MV3 lifecycle, CDP input) and is verified by hand — see extension/README.md."
 sources = ["extension/src/**/*.js"]

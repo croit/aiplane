@@ -885,6 +885,60 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
     )
     .await?;
 
+    // --- A finished `browser_control` conversation: the assistant working in
+    // the user's own logged-in browser. Seeded because the tool's own path
+    // needs a paired extension and a real Chrome, which neither a browser test
+    // nor the Web Store screenshot run can stand up — and the listing has to
+    // show the feature rather than describe it. Everything below is the shape
+    // a real batch leaves in the database.
+    const BROWSER_REASONING: &str = "The supplier portal is behind their login, so \
+        `fetch_url` would get the sign-in page. This is what the paired browser is \
+        for: navigate there in the session the user already has, then read the page \
+        rather than guess at its markup.";
+    const BROWSER_ANSWER_MD: &str = "Order **48217** shipped yesterday.\n\n\
+        | Field | Value |\n\
+        | --- | --- |\n\
+        | Status | Shipped — 18 Sep, 16:42 |\n\
+        | Carrier | DHL Freight |\n\
+        | Tracking | `JD014600008912345678` |\n\
+        | Expected | 22 Sep |\n\n\
+        Two of the four pallets went out on an earlier truck, so the portal shows one \
+        tracking number covering the whole order.\n\n\
+        I read this in your browser, in your own session — nothing was submitted or \
+        changed.";
+    let bc = chatdb::create_session(&state.db, "dev").await?;
+    chatdb::set_session_title(&state.db, &bc.id, "Has order 48217 shipped?").await?;
+    let bcu = uuid::Uuid::new_v4().to_string();
+    chatdb::create_user_turn(
+        &state.db,
+        &bc.id,
+        &bcu,
+        "The supplier portal only works when I'm signed in. Open order 48217 and tell me whether it shipped, with the tracking number.",
+    )
+    .await?;
+    let bca = uuid::Uuid::new_v4().to_string();
+    chatdb::create_assistant_turn_in_progress(&state.db, &bc.id, &bca, "demo-model").await?;
+    chatdb::append_reasoning(&state.db, &bca, BROWSER_REASONING).await?;
+    chatdb::set_reasoning_elapsed(&state.db, &bca, 900).await?;
+    chatdb::insert_running_tool_call(
+        &state.db,
+        &bca,
+        "call_browser",
+        "browser_control",
+        r#"{"actions":[{"action":"navigate","url":"https://portal.example-supplier.com/orders/48217"},{"action":"wait_for","text":"Order 48217"},{"action":"read_page"}]}"#,
+    )
+    .await?;
+    chatdb::complete_tool_call(
+        &state.db,
+        &bca,
+        "call_browser",
+        r#"{"results":[{"action":"navigate","ok":true,"url":"https://portal.example-supplier.com/orders/48217","title":"Order 48217 — Supplier Portal"},{"action":"wait_for","ok":true},{"action":"read_page","ok":true,"text":"Order 48217 · Status: Shipped 18 Sep 16:42 · Carrier: DHL Freight · Tracking: JD014600008912345678 · Expected delivery: 22 Sep · 4 pallets, 2 dispatched early"}]}"#,
+        ToolCallStatus::Completed,
+    )
+    .await?;
+    chatdb::append_content(&state.db, &bca, BROWSER_ANSWER_MD).await?;
+    chatdb::finalize_turn(&state.db, &bca, TurnStatus::Completed, None).await?;
+
     // --- A finished chat conversation showcasing the tool-call loop:
     // reasoning → web search → page fetch → a markdown answer with a source.
     const REASONING: &str = "This is a configuration question with a canonical \

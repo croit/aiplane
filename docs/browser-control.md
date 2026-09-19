@@ -301,6 +301,23 @@ stamps the real number from `scripts/derive-version.sh` — the same resolver
 behind the container images and the Helm chart (see docs/releases.md). The zip
 it writes leaves out `*.test.js` and `icons/render.py`.
 
+Everything the store asks for lives in [`extension/STORE-LISTING.md`]
+(../extension/STORE-LISTING.md) — the copy, the per-permission justifications,
+the remote-code answer, the data disclosures, and the submission runbook with
+the steps that cannot be automated. The listing's three screenshots come from
+`mise run extension-screenshots`, which drives a Chromium with the extension
+loaded unpacked against `mise run dev-ui`, so they are captures of the running
+product; the promo tiles come from `python3 extension/icons/promo.py`. Both are
+generated rather than collected because a rename is otherwise a rename
+everywhere except the pictures.
+
+Publishing is a `v*` tag once the item exists: `ci.yml`'s `extension` job
+packages the zip and `scripts/publish-extension.mjs` uploads and submits it as
+a service account. The one manual step is the **first** upload — Web Store API
+v2 updates items and cannot create them, so the extension has no id until
+somebody makes one in the dashboard. Its id then goes in the `CWS_EXTENSION_ID`
+repository variable, which is what switches the automation on.
+
 `minimum_chrome_version` is **127**, which is where `chrome.action.openPopup()`
 arrived. On anything older the extension would install and then never be able
 to ask to be switched on, which is worse than refusing to install.
