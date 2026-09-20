@@ -256,13 +256,14 @@ pub(crate) async fn connect_http_server(
 }
 
 /// Build the namespaced, OpenAI-function-name-safe id for a bridged tool.
-/// `mcp__<server>__<tool>` with any out-of-charset byte replaced by `_`, and
-/// truncated to the 64-char function-name limit (post-sanitize the string is
-/// pure ASCII, so the cut is always on a char boundary).
+///
+/// The id is stable for already-valid short names. Names that need scrubbing
+/// or exceed OpenAI's 64-character limit retain a readable prefix plus a
+/// digest of the original pair, so independently named MCP tools cannot
+/// silently collapse onto one registry entry.
 fn sanitize_tool_id(server: &str, tool: &str) -> String {
-    // Same charset the registry validates against, so a sanitized id can
-    // never fail `ToolRegistry::with`'s assertion.
-    let mut id: String = format!("{MCP_ID_PREFIX}{server}__{tool}")
+    let raw = format!("{MCP_ID_PREFIX}{server}__{tool}");
+    let mut id: String = raw
         .chars()
         .map(|c| {
             if super::registry::is_openai_function_name_char(c) {
@@ -272,8 +273,15 @@ fn sanitize_tool_id(server: &str, tool: &str) -> String {
             }
         })
         .collect();
-    id.truncate(64);
-    id
+    if id == raw && id.len() <= 64 {
+        return id;
+    }
+
+    const DIGEST_LEN: usize = 16;
+    const PREFIX_LEN: usize = 64 - DIGEST_LEN - 1;
+    id.truncate(PREFIX_LEN);
+    let digest = aiplane_core::server::crypto::sha256_hex(raw.as_bytes());
+    format!("{id}_{}", &digest[..DIGEST_LEN])
 }
 
 /// Turn an MCP `CallToolResult` into the gateway's tool-result `Value`.
@@ -342,9 +350,16 @@ fn map_call_result(res: CallToolResult) -> ToolResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{map_call_result, sanitize_tool_id};
-    use crate::server::tools::{ToolError, extract_content_parts};
+    use super::{connect_http_server, map_call_result, sanitize_tool_id};
+    use crate::server::tools::{
+        Tool, ToolContext, ToolError, ToolRegistry, extract_content_parts, runner,
+    };
+    use rama::bytes::Bytes;
     use rmcp::model::{CallToolResult, ContentBlock};
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
     fn result(content: Vec<ContentBlock>, is_error: bool) -> CallToolResult {
         // `CallToolResult` is `#[non_exhaustive]` but derives `Default`, so
@@ -362,10 +377,29 @@ mod tests {
             "mcp__gcal__list_events"
         );
         // dots / slashes / spaces collapse to `_`.
-        assert_eq!(
-            sanitize_tool_id("g.cal", "list events"),
-            "mcp__g_cal__list_events"
-        );
+        let scrubbed = sanitize_tool_id("g.cal", "list events");
+        assert!(scrubbed.starts_with("mcp__g_cal__list_events_"));
+        assert_eq!(scrubbed, sanitize_tool_id("g.cal", "list events"));
+        assert_eq!(scrubbed.rsplit('_').next().unwrap().len(), 16);
+    }
+
+    #[test]
+    fn sanitize_keeps_distinct_foreign_tool_names_distinct() {
+        let dotted = sanitize_tool_id("git.lab", "search code");
+        let underscored = sanitize_tool_id("git_lab", "search_code");
+        assert_ne!(dotted, underscored);
+        assert!(dotted.len() <= 64);
+        assert!(underscored.len() <= 64);
+    }
+
+    #[test]
+    fn sanitize_long_names_keeps_a_stable_distinguishing_suffix() {
+        let prefix = "a".repeat(200);
+        let first = sanitize_tool_id("connector", &format!("{prefix}1"));
+        let second = sanitize_tool_id("connector", &format!("{prefix}2"));
+        assert_ne!(first, second);
+        assert_eq!(first.len(), 64);
+        assert_eq!(second.len(), 64);
     }
 
     #[test]
@@ -373,6 +407,132 @@ mod tests {
         let id = sanitize_tool_id("server", &"x".repeat(200));
         assert!(id.len() <= 64, "len was {}", id.len());
         assert!(id.starts_with("mcp__server__x"));
+    }
+
+    #[tokio::test]
+    async fn http_mcp_tools_list_and_call_round_trip_through_the_adapter() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(|request: &wiremock::Request| {
+                let request: Value = serde_json::from_slice(&request.body).unwrap();
+                let result = match request["method"].as_str() {
+                    Some("initialize") => json!({
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "fixture", "version": "1"},
+                    }),
+                    Some("tools/list") => json!({
+                        "tools": [{
+                            "name": "look up",
+                            "description": "Returns the requested fixture.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {"needle": {"type": "string"}},
+                                "required": ["needle"],
+                            },
+                        }],
+                    }),
+                    Some("tools/call") => {
+                        assert_eq!(request["params"]["name"], "look up");
+                        assert_eq!(request["params"]["arguments"]["needle"], "needle");
+                        json!({
+                            "content": [{"type": "text", "text": "found fixture"}],
+                            "isError": false,
+                        })
+                    }
+                    Some("notifications/initialized") => return ResponseTemplate::new(202),
+                    method => panic!("unexpected MCP method {method:?}"),
+                };
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/json")
+                    .set_body_json(json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": result,
+                    }))
+            })
+            .mount(&server)
+            .await;
+
+        let connected = connect_http_server("fixture", &server.uri(), None)
+            .await
+            .expect("MCP tools/list must connect");
+        assert_eq!(connected.tools.len(), 1);
+        let tool = connected.tools.first().unwrap();
+        let tool_id = tool.id().to_string();
+        assert!(tool_id.starts_with("mcp__fixture__look_up_"));
+        assert_eq!(
+            tool.schema().function.parameters["required"],
+            json!(["needle"])
+        );
+        let tools = ToolRegistry::new().with(connected.tools.into_iter().next().unwrap());
+
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let tool_id_for_upstream = tool_id.clone();
+        let rounds = Arc::new(AtomicU32::new(0));
+        let upstream_rounds = rounds.clone();
+        let output = runner::run_with_tools(
+            &tools,
+            &[tool_id],
+            &ToolContext::for_test(db),
+            json!({
+                "model": "fixture-model",
+                "messages": [{"role": "user", "content": "find the fixture"}],
+            }),
+            move |request| {
+                let tool_id = tool_id_for_upstream.clone();
+                let rounds = upstream_rounds.clone();
+                async move {
+                    let response = match rounds.fetch_add(1, Ordering::SeqCst) {
+                        0 => {
+                            assert_eq!(request["tools"][0]["function"]["name"], tool_id);
+                            json!({
+                                "choices": [{"message": {
+                                    "role": "assistant",
+                                    "tool_calls": [{
+                                        "id": "call_fixture",
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_id,
+                                            "arguments": "{\"needle\":\"needle\"}",
+                                        },
+                                    }],
+                                }}],
+                            })
+                        }
+                        1 => {
+                            let tool_result = request["messages"]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .find(|message| message["role"] == "tool")
+                                .expect("next model round receives the MCP result");
+                            assert_eq!(tool_result["content"][0]["text"], "found fixture");
+                            json!({"choices": [{"message": {
+                                "role": "assistant",
+                                "content": "fixture found",
+                            }}]})
+                        }
+                        round => panic!("unexpected model round {round}"),
+                    };
+                    Ok::<_, runner::LoopError>((
+                        200,
+                        Bytes::from(serde_json::to_vec(&response).unwrap()),
+                    ))
+                }
+            },
+        )
+        .await
+        .expect("MCP tools/call must return its result");
+        assert_eq!(output.rounds, 1);
+        assert_eq!(rounds.load(Ordering::SeqCst), 2);
+        let response: Value = serde_json::from_slice(&output.body).unwrap();
+        assert_eq!(
+            response["choices"][0]["message"]["content"],
+            "fixture found"
+        );
     }
 
     #[test]
