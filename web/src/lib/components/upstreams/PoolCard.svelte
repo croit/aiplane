@@ -23,10 +23,14 @@
 	let editing = $state(false);
 	let coverage = $derived(suppliedCoverage ?? poolCoverage(pool, allBackends));
 	let missing = $derived(pool.backends.filter((name) => !allBackends.some((backend) => backend.name === name)));
+	let poolBackends = $derived(backends.map((backend) => ({
+		...backend,
+		live: pool.live_backends?.[backend.name] ?? backend.live
+	})));
 	let problems = $derived.by(() => {
 		const result: string[] = [];
 		if (pool.backends.length === 0) result.push(t('upstreams-problem-no-backends'));
-		const live = backends.flatMap((backend) => backend.live ? [backend] : []);
+		const live = poolBackends.flatMap((backend) => backend.live ? [backend] : []);
 		if (live.length && live.every((backend) => !backend.live?.enabled)) result.push(t('upstreams-problem-all-drained'));
 		else if (live.length && live.every((backend) => !backend.live?.healthy || !backend.live?.enabled)) result.push(t('upstreams-problem-all-down'));
 		const rejected = live.filter((backend) => backend.live?.auth_failed).map((backend) => backend.name);
@@ -84,7 +88,7 @@
 
 		{#if backends.length}
 			<div class="flex flex-col gap-2">
-				{#each backends as backend (backend.name)}
+				{#each poolBackends as backend (backend.name)}
 					<BackendCard {backend} currentPool={pool.name} {pools} backendNames={allBackends.map((candidate) => candidate.name)} usage={usage[backend.name] ?? []} onChanged={onChanged} />
 				{/each}
 			</div>

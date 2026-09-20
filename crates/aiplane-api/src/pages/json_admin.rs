@@ -1287,6 +1287,10 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
     // Live registry state per backend name.
     let mut live: std::collections::HashMap<String, serde_json::Value> =
         std::collections::HashMap::new();
+    let mut live_by_pool: std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, serde_json::Value>,
+    > = std::collections::HashMap::new();
     for pool in state.upstreams.pools() {
         for backend in &pool.backends {
             // One snapshot each: `models_snapshot` materialises the effective
@@ -1318,7 +1322,11 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 // one describing the server it used to be.
                 "detected_at": detected.detected_at,
             });
-            live.insert(backend.name.clone(), entry);
+            live.insert(backend.name.clone(), entry.clone());
+            live_by_pool
+                .entry(pool.name.clone())
+                .or_default()
+                .insert(backend.name.clone(), entry);
         }
     }
 
@@ -1361,6 +1369,7 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 "sort_order": p.sort_order,
                 "allowed_groups": p.allowed_groups,
                 "backends": p.backends,
+                "live_backends": live_by_pool.get(&p.name),
                 "models": p.models,
                 "voices": p.voices.iter().map(|v| serde_json::json!({"lang": v.lang_code, "voice": v.voice_id})).collect::<Vec<_>>(),
                 "offer_voices": p.offer_voices,

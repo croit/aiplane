@@ -81,6 +81,7 @@ export interface Pool {
 	sort_order: number;
 	allowed_groups: string[];
 	backends: string[];
+	live_backends?: Record<string, LiveBackend>;
 	models: string[];
 	voices: Voice[];
 	offer_voices: string[];
