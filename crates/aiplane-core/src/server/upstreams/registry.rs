@@ -67,7 +67,9 @@ pub struct Backend {
     pub health_path: String,
     /// Whether the probe may overwrite [`models`](Self::models) from a
     /// `/models` response. `false` pins the model set to `config_models`
-    /// (see [`BackendConfig::probe_models`]).
+    /// (see [`BackendConfig::probe_models`]). System One pools always pin
+    /// their configured models because their endpoint has a separate catalog
+    /// from OpenAI-compatible `/models`.
     probe_models: bool,
     /// Whether this backend can edit images (image-to-image), not just
     /// generate. Only meaningful on image pools; see
@@ -159,7 +161,7 @@ pub struct Backend {
 impl Backend {
     /// `pool_models` is the pool-level fallback, applied when this backend
     /// declares no `models` of its own (backend config wins over pool).
-    fn new(cfg: &BackendConfig, pool_models: &[String]) -> Self {
+    fn new(cfg: &BackendConfig, pool_models: &[String], kind: PoolKind) -> Self {
         let fallback = if cfg.models.is_empty() {
             pool_models
         } else {
@@ -175,7 +177,7 @@ impl Backend {
             weight: cfg.weight.max(1),
             max_inflight: cfg.max_inflight.max(1),
             health_path: cfg.health_path.clone(),
-            probe_models: cfg.probe_models,
+            probe_models: cfg.probe_models && kind != PoolKind::SystemOne,
             supports_edit: cfg.supports_edit,
             inflight: AtomicU32::new(0),
             dispatched: AtomicU64::new(0),
@@ -795,7 +797,7 @@ impl Pool {
         let backends = cfg
             .backend
             .iter()
-            .map(|b| Arc::new(Backend::new(b, &cfg.models)))
+            .map(|b| Arc::new(Backend::new(b, &cfg.models, cfg.kind)))
             .collect();
         Self {
             name,
@@ -2714,7 +2716,7 @@ mod tests {
     fn a_bare_alias_on_a_backend_with_no_models_reports_itself_broken() {
         let mut b = backend("qwen-gpu0", 16);
         b.alias = Some(AliasSpec::Names(vec!["default".into()]));
-        let be = Backend::new(&b, &[]);
+        let be = Backend::new(&b, &[], PoolKind::Chat);
 
         assert!(
             be.models_snapshot().is_empty(),
@@ -2737,6 +2739,33 @@ mod tests {
             Some("unsloth/Qwen3.8-27B-NVFP4")
         );
         assert!(be.alias_status()[0].resolves);
+    }
+
+    #[test]
+    fn system_one_keeps_configured_models_independent_of_openai_catalog() {
+        let mut config = backend("openrouter", 16);
+        config.models = vec!["~typesafe/jev-latest".into(), "typesafe/jev-1.13".into()];
+        config.probe_models = true;
+        let pools = HashMap::from([(
+            "selector".to_string(),
+            pool_config(
+                PoolKind::SystemOne,
+                PickerStrategy::RoundRobin,
+                vec![config],
+            ),
+        )]);
+
+        let registry = UpstreamRegistry::new(&pools).unwrap();
+        let backend = registry.pools()[0].backends[0].clone();
+
+        assert!(!backend.probe_models_enabled());
+        assert_eq!(
+            backend.models_snapshot(),
+            HashSet::from([
+                "~typesafe/jev-latest".to_string(),
+                "typesafe/jev-1.13".to_string(),
+            ])
+        );
     }
 
     /// Sequential traffic — one request at a time, which is what a single agent
@@ -2896,7 +2925,7 @@ mod tests {
         // Bare alias + exactly one served model: resolves and is advertised.
         let mut b = backend("qwen-gpu0", 4);
         b.alias = Some(AliasSpec::Names(vec!["default".into(), "qwen".into()]));
-        let bare = Backend::new(&b, &[]);
+        let bare = Backend::new(&b, &[], PoolKind::Chat);
         bare.set_models(HashSet::from([served.to_string()]));
         assert_eq!(bare.resolve("default").as_deref(), Some(served));
         assert!(bare.listed_models().contains("default"));
@@ -2916,7 +2945,7 @@ mod tests {
             "default".to_string(),
             "qwen-32b".to_string(),
         )])));
-        let mapped = Backend::new(&m, &[]);
+        let mapped = Backend::new(&m, &[], PoolKind::Chat);
         mapped.set_models(HashSet::from([served.to_string()]));
         assert!(
             mapped.resolve("default").is_none(),
@@ -2930,7 +2959,7 @@ mod tests {
             "default".to_string(),
             served.to_string(),
         )])));
-        let ok = Backend::new(&m2, &[]);
+        let ok = Backend::new(&m2, &[], PoolKind::Chat);
         ok.set_models(HashSet::from([served.to_string()]));
         assert_eq!(ok.resolve("default").as_deref(), Some(served));
     }
