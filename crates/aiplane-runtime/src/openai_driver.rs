@@ -468,6 +468,31 @@ fn ensure_unique_tool_call_ids(
     }
 }
 
+fn unavailable_tool_message(name: &str, allowed_tools: &[String]) -> String {
+    let available = allowed_tools
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if available.is_empty() {
+        format!(
+            "No tool named `{name}` is available in this request. Do not invent tool names; respond \
+             without a tool or ask the user to enable the needed integration."
+        )
+    } else {
+        format!(
+            "No tool named `{name}` is available in this request. Only call a tool whose schema was \
+             provided to you. Available tools: {available}."
+        )
+    }
+}
+
+fn unparsed_tool_markup(content: &str) -> bool {
+    content.contains("<tool_call>") || content.contains("<function=")
+}
+
 /// Per-turn driver. Built once by the chat-message handler with the
 /// caller's tool context, then boxed into a `dyn SessionDriver` and handed
 /// to `session_core::worker::run_session_turn`. Holding `Arc<RamaState>`
@@ -763,22 +788,10 @@ async fn classify_and_dispatch_tool_calls(
                 arguments_raw: acc.arguments.clone(),
             });
         } else {
-            // The model called a tool we don't own — almost always a name
-            // it invented (the common case is an MCP capability id called
-            // as if it were a tool, instead of through the connector's
-            // `invoke_capability`). Left alone, the 'running' row we just
-            // inserted renders as "Calling" forever and the call goes
-            // unanswered. Complete it as errored and reply with a message
-            // the model can recover from — exactly like the user-disabled
-            // path above (so the assistant turn's tool_calls all resolve
-            // and a single unknown call no longer dead-ends the turn).
-            let reason = format!(
-                "No tool named `{}` is available in this conversation. Only call tools that \
-                     were provided to you. If you meant to use an MCP capability, call the \
-                     connector's invocation tool (e.g. `invoke_capability`) with the capability \
-                     id as an argument — do not call the capability id as if it were its own tool.",
-                acc.name
-            );
+            // A remote integration's metadata is opaque: only its advertised
+            // tool schemas are callable. Resolve this row so an invented or
+            // stale name cannot leave the turn permanently in "Calling".
+            let reason = unavailable_tool_message(&acc.name, allowed_tools);
             if let Err(err) = chat::complete_tool_call(
                 &d.state.db,
                 &ctx.assistant_turn_id,
@@ -1484,6 +1497,17 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
                     .map_err(persist_err("append_content_flush", &ctx.assistant_turn_id))?;
                 let _ = ctx.broadcast.send(TurnUpdate::Tick);
             }
+        }
+
+        if unparsed_tool_markup(&round_content) {
+            tracing::warn!(
+                model = %ctx.model,
+                backend = %backend_name,
+                round,
+                finish_reason = ?finish_reason,
+                structured_tool_calls = !tool_acc.is_empty(),
+                "upstream returned tool-call markup as assistant content instead of structured tool_calls"
+            );
         }
 
         if ctx.cancel.load(Ordering::SeqCst) {
@@ -2935,7 +2959,7 @@ mod tests {
         announce_final_round, configure_final_tool_round, ensure_unique_tool_call_ids,
         fold_in_steers, inject_ocr_blocks, message_for_history, ocr_activity_result,
         ocr_context_block, render_active_skills, render_skill_listing, take_safe_content,
-        truncated_output,
+        truncated_output, unavailable_tool_message, unparsed_tool_markup,
     };
     use aiplane_features::server::ocr::{OcrError, OcrOutcome};
     use aiplane_features::server::skills::{Skill, SkillRegistry};
@@ -3048,6 +3072,34 @@ mod tests {
                 .unwrap()
                 .contains("fetch_attachment")
         );
+    }
+
+    #[test]
+    fn unavailable_tool_message_only_advertises_tools_in_this_request() {
+        let message = unavailable_tool_message(
+            "mcp__example__capability",
+            &["enable_tools".into(), "mcp__example__search".into()],
+        );
+        assert!(message.contains("mcp__example__capability"));
+        assert!(message.contains("enable_tools, mcp__example__search"));
+        assert!(!message.contains("invoke_capability"));
+    }
+
+    #[test]
+    fn unavailable_tool_message_deduplicates_and_sorts_advertised_tools() {
+        let message = unavailable_tool_message("missing", &["z".into(), "a".into(), "z".into()]);
+        assert!(message.contains("a, z"));
+        assert!(!message.contains("z, a"));
+    }
+
+    #[test]
+    fn unparsed_tool_markup_only_flags_tool_protocol_markup() {
+        assert!(unparsed_tool_markup("<tool_call><function=search>"));
+        assert!(unparsed_tool_markup("before <function=search> after"));
+        assert!(!unparsed_tool_markup(
+            "<tool-call>literal prose</tool-call>"
+        ));
+        assert!(!unparsed_tool_markup("normal answer"));
     }
 
     #[test]

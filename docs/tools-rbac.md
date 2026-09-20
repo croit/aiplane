@@ -62,6 +62,12 @@ before emitting `tool_calls`, and the symptom looks like the model ignoring the
 tool. Use `_` for namespacing. Failing at boot beats shipping a tool that only
 breaks on some upstreams.
 
+MCP tool ids are derived from the connector and remote tool names. A short id
+that is already valid stays readable as `mcp__<server>__<tool>`; otherwise the
+adapter appends a digest of the original pair after sanitizing or shortening it.
+That keeps arbitrary remote names within the wire contract without silently
+merging two distinct MCP tools.
+
 ### `ToolContext`
 
 Carries the caller's identity plus the handles a tool may need, so adding a
