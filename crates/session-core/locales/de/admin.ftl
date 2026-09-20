@@ -4,6 +4,12 @@
 # Kontextfenster, Reasoning-Stil + Budgets/Aufwand, Fähigkeiten, Sampling).
 
 admin-heading = Modelle
+admin-models-routing-heading = Modelle & Routing
+admin-models-routing-intro = Konfigurieren Sie Modellinfrastruktur, Katalogverhalten, Standardmodelle und automatisches Routing an einem Ort.
+admin-models-tab-upstreams = Upstreams
+admin-models-tab-catalog = Modellkatalog
+admin-models-tab-defaults = Standardmodelle
+admin-models-tab-routing = Automatisches Routing
 
 # Spaltenüberschriften der Liste.
 admin-col-model = Modell
@@ -122,16 +128,6 @@ admin-clear-overrides-confirm = Alle gespeicherten Überschreibungen für { $mod
 admin-cap-no-fallback = (keiner)
 
 admin-page-title = Modelle — AIplane
-
-admin-intro-prefix = Einstellungen pro Modell — Preise, Kontextfenster, Reasoning, Fähigkeiten und Sampling-Standardwerte — angewendet auf
-
-admin-intro-every = jede
-
-admin-intro-middle = Anfrage für dieses Modell, von jedem Benutzer oder Token, es sei denn, der Aufrufer setzt denselben Wert, was
-
-admin-intro-always-wins = immer gewinnt
-
-admin-intro-suffix = . Chat-Modelle, Aliase und andere Arten sind alle in einer Liste.
 
 admin-no-models = Noch keine Modelle verfügbar. Sobald ein Upstream-Backend erreichbar ist, erscheint es hier.
 
@@ -308,11 +304,15 @@ auto-route-confidence = Mindestkonfidenz
 auto-route-confidence-help = Entscheidungen mit geringerer Konfidenz verwenden das Fallback-Ziel.
 auto-route-timeout = Selektor-Timeout (ms)
 auto-route-instructions = Routing-Anweisungen
+auto-route-instructions-help = Optionale Regeln für den Selektor in normaler Sprache. Es gibt keine besondere Syntax.
+auto-route-instructions-placeholder = Beispiel: Für komplexe Analysen und Code expert bevorzugen; für kurze Routineanfragen fast verwenden.
 auto-route-candidate-add = Kandidat hinzufügen
 auto-route-candidates-help = Beschreiben Sie jedes Modell anhand der passenden Anfragen. Der Selektor sieht Schlüssel und Beschreibung, nicht den Namen des Zielmodells.
 auto-route-candidate-key = Undurchsichtiger Schlüssel
 auto-route-candidate-target = Zielmodell oder statischer Alias
 auto-route-candidate-description = Wann dieser Kandidat verwendet werden soll
+auto-route-candidate-description-help = Erforderlicher Freitext. Beschreiben Sie die Anfragen, die dieser Kandidat am besten bearbeitet; der Selektor sieht diesen Text, nicht den Zielmodellnamen.
+auto-route-candidate-description-placeholder = Beispiel: Kurze Routineanfragen, bei denen geringe Latenz und Kosten entscheidend sind.
 auto-route-fallback = Fallback-Ziel
 auto-route-session-affinity = Sitzung beim zuerst ausgewählten Modell halten
 auto-route-session-affinity-help = Verwendet das effektive Ziel für denselben authentifizierten Client und dieselbe Sitzung bis zum Ablauf der TTL erneut.

@@ -1,4 +1,4 @@
-export const SETTINGS_CATEGORIES = ['chat', 'tools', 'data', 'access', 'notifications'] as const;
+export const SETTINGS_CATEGORIES = ['chat', 'tools', 'data', 'access', 'notifications', 'web-search'] as const;
 export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number];
 export type SettingsFieldKind =
 	| 'bool'

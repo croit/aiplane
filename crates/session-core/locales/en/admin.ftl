@@ -4,6 +4,12 @@
 # window, reasoning style + budgets/efforts, capabilities, sampling defaults).
 
 admin-heading = Models
+admin-models-routing-heading = Models & routing
+admin-models-routing-intro = Configure model infrastructure, catalog behavior, defaults, and automatic routing in one place.
+admin-models-tab-upstreams = Upstreams
+admin-models-tab-catalog = Model catalog
+admin-models-tab-defaults = Default models
+admin-models-tab-routing = Automatic routing
 
 # List column headers.
 admin-col-model = Model
@@ -122,16 +128,6 @@ admin-clear-overrides-confirm = Drop all stored overrides for { $model }?
 admin-cap-no-fallback = (none)
 
 admin-page-title = Models — AIplane
-
-admin-intro-prefix = Per-model settings — pricing, context window, reasoning, capabilities and sampling defaults — applied to
-
-admin-intro-every = every
-
-admin-intro-middle = request for this model, from any user or token, unless the caller sets the same value, which
-
-admin-intro-always-wins = always wins
-
-admin-intro-suffix = . Chat models, aliases and other kinds are all in one list.
 
 admin-no-models = No models advertised yet. Once an upstream backend is reachable, it'll appear here.
 
@@ -309,11 +305,15 @@ auto-route-confidence = Minimum confidence
 auto-route-confidence-help = Lower-confidence decisions use the fallback target.
 auto-route-timeout = Selector timeout (ms)
 auto-route-instructions = Routing instructions
+auto-route-instructions-help = Optional plain-language rules for the selector. No special syntax is required.
+auto-route-instructions-placeholder = Example: Prefer expert for complex analysis and code; use fast for short, routine requests.
 auto-route-candidate-add = Add candidate
 auto-route-candidates-help = Describe each model by the requests it should handle. The selector sees the key and description, not the target model name.
 auto-route-candidate-key = Opaque key
 auto-route-candidate-target = Target model or static alias
 auto-route-candidate-description = When this candidate should be used
+auto-route-candidate-description-help = Required plain text. Describe the requests this candidate handles best; the selector sees this text, not the target model name.
+auto-route-candidate-description-placeholder = Example: Short, routine requests where low latency and cost matter most.
 auto-route-fallback = Fallback target
 auto-route-session-affinity = Keep a session on its first selected model
 auto-route-session-affinity-help = Reuses the effective target for the same authenticated client and session until the TTL expires.

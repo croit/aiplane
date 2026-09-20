@@ -2,6 +2,12 @@
 # `/admin/models`.
 
 admin-heading = Modelos
+admin-models-routing-heading = Modelos y enrutamiento
+admin-models-routing-intro = Configura la infraestructura de modelos, el catálogo, los modelos predeterminados y el enrutamiento automático en un solo lugar.
+admin-models-tab-upstreams = Upstreams
+admin-models-tab-catalog = Catálogo de modelos
+admin-models-tab-defaults = Modelos predeterminados
+admin-models-tab-routing = Enrutamiento automático
 
 admin-col-model = Modelo
 
@@ -115,16 +121,6 @@ admin-clear-overrides-confirm = ¿Descartar todas las anulaciones guardadas de {
 admin-cap-no-fallback = (ninguno)
 
 admin-page-title = Modelos — AIplane
-
-admin-intro-prefix = Ajustes por modelo — precios, ventana de contexto, razonamiento, capacidades y valores de muestreo — aplicados a
-
-admin-intro-every = cada
-
-admin-intro-middle = solicitud de este modelo, de cualquier usuario o token, salvo que quien llame defina el mismo valor, el cual
-
-admin-intro-always-wins = siempre prevalece
-
-admin-intro-suffix = . Los modelos de chat, los alias y otras clases están todos en una lista.
 
 admin-no-models = Aún no se anuncian modelos. En cuanto un backend upstream esté accesible, aparecerá aquí.
 
@@ -298,11 +294,15 @@ auto-route-confidence = Confianza mínima
 auto-route-confidence-help = Las decisiones con menor confianza usan el destino alternativo.
 auto-route-timeout = Tiempo límite del selector (ms)
 auto-route-instructions = Instrucciones de enrutamiento
+auto-route-instructions-help = Reglas opcionales para el selector en lenguaje natural. No se requiere ninguna sintaxis especial.
+auto-route-instructions-placeholder = Ejemplo: prioriza expert para análisis complejos y código; usa fast para solicitudes breves y rutinarias.
 auto-route-candidate-add = Añadir candidato
 auto-route-candidates-help = Describa cada modelo según las solicitudes que debe atender. El selector ve la clave y la descripción, no el nombre del modelo objetivo.
 auto-route-candidate-key = Clave opaca
 auto-route-candidate-target = Modelo objetivo o alias estático
 auto-route-candidate-description = Cuándo debe usarse este candidato
+auto-route-candidate-description-help = Texto libre obligatorio. Describe las solicitudes que este candidato gestiona mejor; el selector ve este texto, no el nombre del modelo objetivo.
+auto-route-candidate-description-placeholder = Ejemplo: solicitudes breves y rutinarias donde la baja latencia y el coste son prioritarios.
 auto-route-fallback = Objetivo alternativo
 auto-route-session-affinity = Mantener la sesión en el primer modelo elegido
 auto-route-session-affinity-help = Reutiliza el destino efectivo para el mismo cliente autenticado y la misma sesión hasta que venza el TTL.

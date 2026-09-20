@@ -18,6 +18,7 @@ settings-tab-tools = Herramientas
 settings-tab-data = Contenido y datos
 settings-tab-access = Acceso y uso
 settings-tab-notifications = Notificaciones
+settings-tab-web-search = Búsqueda web
 settings-restart-pending-body = Estos ajustes están guardados, pero solo se aplican tras reiniciar la pasarela:
 
 # ─── Tarjetas de sección ─────────────────────────────────────────────────────
@@ -218,9 +219,9 @@ settings-cleared = Restablecido. Vuelve a aplicarse el valor por defecto.
 settings-restart-badge = reinicio
 settings-no-backend-heading = Todavía no hay backend de modelos
 settings-no-backend-body = El inicio de sesión ya está configurado, pero esta pasarela no sirve ningún modelo hasta que añadas un backend. Hasta entonces, el chat y la API /v1 rechazan las peticiones.
-settings-no-backend-cta = Añadir un backend en /admin/upstreams →
+settings-no-backend-cta = Añadir un backend en Modelos y enrutamiento →
 settings-show-fields = Mostrar { $count } ajustes más
 settings-model-automatic = Automático — usar el primer modelo disponible
-settings-model-none-configured = Todavía no hay ningún modelo de este tipo configurado. Añade un pool en /admin/upstreams y aparecerá aquí.
+settings-model-none-configured = Todavía no hay ningún modelo de este tipo configurado. Añade un pool en Modelos y enrutamiento y aparecerá aquí.
 settings-model-unavailable = { $model } (configurado, pero no disponible ahora)
 settings-restart-pending-heading = Reinicio pendiente

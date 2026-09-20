@@ -2,6 +2,12 @@
 # `/admin/models`.
 
 admin-heading = Модели
+admin-models-routing-heading = Модели и маршрутизация
+admin-models-routing-intro = Настройте инфраструктуру моделей, каталог, модели по умолчанию и автоматическую маршрутизацию в одном месте.
+admin-models-tab-upstreams = Апстримы
+admin-models-tab-catalog = Каталог моделей
+admin-models-tab-defaults = Модели по умолчанию
+admin-models-tab-routing = Автоматическая маршрутизация
 
 admin-col-model = Модель
 
@@ -114,16 +120,6 @@ admin-clear-overrides-confirm = Удалить все сохранённые п�
 admin-cap-no-fallback = (нет)
 
 admin-page-title = Модели — AIplane
-
-admin-intro-prefix = Настройки по каждой модели — цены, окно контекста, рассуждения, возможности и значения сэмплирования — применяются к
-
-admin-intro-every = каждому
-
-admin-intro-middle = запросу к этой модели от любого пользователя или токена, если только вызывающая сторона не задаст то же значение, которое
-
-admin-intro-always-wins = всегда имеет приоритет
-
-admin-intro-suffix = . Чат-модели, псевдонимы и другие виды — всё в одном списке.
 
 admin-no-models = Пока нет доступных моделей. Как только появится доступный вышестоящий бэкенд, он отобразится здесь.
 
@@ -297,11 +293,15 @@ auto-route-confidence = Минимальная уверенность
 auto-route-confidence-help = Решения с меньшей уверенностью используют резервную цель.
 auto-route-timeout = Тайм-аут селектора (мс)
 auto-route-instructions = Инструкции маршрутизации
+auto-route-instructions-help = Необязательные правила для селектора на обычном языке. Специальный синтаксис не нужен.
+auto-route-instructions-placeholder = Пример: выбирайте expert для сложного анализа и кода; используйте fast для коротких типовых запросов.
 auto-route-candidate-add = Добавить кандидата
 auto-route-candidates-help = Опишите каждую модель через запросы, которые она должна обрабатывать. Селектор видит ключ и описание, но не имя целевой модели.
 auto-route-candidate-key = Непрозрачный ключ
 auto-route-candidate-target = Целевая модель или статический псевдоним
 auto-route-candidate-description = Когда следует использовать кандидата
+auto-route-candidate-description-help = Обязательный свободный текст. Опишите запросы, с которыми этот кандидат справляется лучше всего; селектор видит этот текст, а не имя целевой модели.
+auto-route-candidate-description-placeholder = Пример: короткие типовые запросы, где особенно важны низкая задержка и стоимость.
 auto-route-fallback = Резервная цель
 auto-route-session-affinity = Закрепить сессию за первой выбранной моделью
 auto-route-session-affinity-help = Повторно использует фактическую цель для того же авторизованного клиента и сеанса до истечения TTL.

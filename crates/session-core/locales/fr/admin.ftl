@@ -2,6 +2,12 @@
 # `/admin/models`.
 
 admin-heading = Modèles
+admin-models-routing-heading = Modèles et routage
+admin-models-routing-intro = Configurez l’infrastructure des modèles, le catalogue, les modèles par défaut et le routage automatique au même endroit.
+admin-models-tab-upstreams = Amonts
+admin-models-tab-catalog = Catalogue de modèles
+admin-models-tab-defaults = Modèles par défaut
+admin-models-tab-routing = Routage automatique
 
 admin-col-model = Modèle
 
@@ -114,16 +120,6 @@ admin-clear-overrides-confirm = Supprimer toutes les surcharges enregistrées po
 admin-cap-no-fallback = (aucun)
 
 admin-page-title = Modèles — AIplane
-
-admin-intro-prefix = Réglages par modèle — tarifs, fenêtre de contexte, raisonnement, capacités et valeurs d'échantillonnage — appliqués à
-
-admin-intro-every = chaque
-
-admin-intro-middle = requête pour ce modèle, quel que soit l'utilisateur ou le jeton, sauf si l'appelant définit la même valeur, laquelle
-
-admin-intro-always-wins = l'emporte toujours
-
-admin-intro-suffix = . Les modèles de chat, les alias et les autres types sont tous dans une seule liste.
 
 admin-no-models = Aucun modèle annoncé pour l'instant. Dès qu'un backend en amont sera accessible, il apparaîtra ici.
 
@@ -297,11 +293,15 @@ auto-route-confidence = Confiance minimale
 auto-route-confidence-help = Les décisions moins fiables utilisent la cible de repli.
 auto-route-timeout = Délai du sélecteur (ms)
 auto-route-instructions = Instructions de routage
+auto-route-instructions-help = Règles facultatives pour le sélecteur, en langage naturel. Aucune syntaxe spéciale n’est requise.
+auto-route-instructions-placeholder = Exemple : préférez expert pour les analyses complexes et le code ; utilisez fast pour les demandes courtes et routinières.
 auto-route-candidate-add = Ajouter un candidat
 auto-route-candidates-help = Décrivez chaque modèle selon les requêtes qu’il doit traiter. Le sélecteur voit la clé et la description, pas le nom du modèle cible.
 auto-route-candidate-key = Clé opaque
 auto-route-candidate-target = Modèle cible ou alias statique
 auto-route-candidate-description = Quand utiliser ce candidat
+auto-route-candidate-description-help = Texte libre obligatoire. Décrivez les demandes que ce candidat traite le mieux ; le sélecteur voit ce texte, pas le nom du modèle cible.
+auto-route-candidate-description-placeholder = Exemple : demandes courtes et routinières, où la faible latence et le coût comptent le plus.
 auto-route-fallback = Cible de repli
 auto-route-session-affinity = Conserver le premier modèle choisi pour la session
 auto-route-session-affinity-help = Réutilise la cible effective pour le même client authentifié et la même session jusqu’à expiration de la durée.

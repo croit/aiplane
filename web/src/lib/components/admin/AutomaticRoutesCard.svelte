@@ -172,7 +172,7 @@
 			{#if blocker}
 				<div class="alert alert-info alert-soft" role="status">
 					<span>{t(blocker === 'selector' ? 'auto-route-needs-selector' : 'auto-route-needs-candidates')}</span>
-					<a class="btn btn-sm" href="{base}/admin/upstreams">{t('auto-route-open-upstreams')}</a>
+					<a class="btn btn-sm" href="{base}/admin/models?tab=upstreams">{t('auto-route-open-upstreams')}</a>
 				</div>
 			{/if}
 			{#if data.routes.length === 0 && !editing}<p class="text-sm text-base-content/60">{t('auto-route-empty')}</p>{/if}
@@ -209,14 +209,14 @@
 							<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-confidence')}</legend><input class="input w-full" type="number" min="0" max="1" step="0.01" bind:value={editing.minimum_confidence} /><p class="label whitespace-normal">{t('auto-route-confidence-help')}</p></fieldset>
 							<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-timeout')}</legend><input class="input w-full" type="number" min="100" max="30000" step="100" bind:value={editing.selector_timeout_ms} /></fieldset>
 						</div>
-						<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-instructions')}</legend><textarea class="textarea min-h-24 w-full" bind:value={editing.instructions}></textarea></fieldset>
+						<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-instructions')}</legend><textarea class="textarea min-h-24 w-full" bind:value={editing.instructions} placeholder={t('auto-route-instructions-placeholder')}></textarea><p class="label whitespace-normal">{t('auto-route-instructions-help')}</p></fieldset>
 						<div class="flex flex-col gap-3">
 							<div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><h4 class="font-semibold">{t('auto-route-candidates')}</h4><p class="text-sm text-base-content/70">{t('auto-route-candidates-help')}</p></div><button class="btn btn-sm" type="button" onclick={addCandidate}>+ {t('auto-route-candidate-add')}</button></div>
 							{#each editing.candidates as candidate, index}
 								<div class="grid items-start gap-2 rounded-box border border-base-300 p-3 md:grid-cols-[1fr_1.4fr_2fr_auto]">
 									<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-candidate-key')}</legend><input class="input w-full" required bind:value={candidate.key} /></fieldset>
 									<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-candidate-target')}</legend><select class="select w-full" required bind:value={candidate.target}>{#if !data.candidate_models.includes(candidate.target)}<option value={candidate.target}>{candidate.target}</option>{/if}{#each data.candidate_models as model}<option value={model}>{model}</option>{/each}</select></fieldset>
-									<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-candidate-description')}</legend><input class="input w-full" required bind:value={candidate.description} /></fieldset>
+									<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-candidate-description')}</legend><input class="input w-full" required bind:value={candidate.description} placeholder={t('auto-route-candidate-description-placeholder')} /><p class="label whitespace-normal">{t('auto-route-candidate-description-help')}</p></fieldset>
 									<button class="btn btn-ghost btn-sm text-error md:mt-7" type="button" onclick={() => removeCandidate(index)}>{t('auto-route-delete')}</button>
 								</div>
 							{/each}

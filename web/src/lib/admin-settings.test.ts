@@ -4,6 +4,7 @@ import { categorySummary, fieldDraft, selectedSettingsCategory } from './admin-s
 
 test('settings category selection is bookmarkable and falls back to chat', () => {
 	assert.equal(selectedSettingsCategory('?tab=tools'), 'tools');
+	assert.equal(selectedSettingsCategory('?tab=web-search'), 'web-search');
 	assert.equal(selectedSettingsCategory('?tab=unknown'), 'chat');
 	assert.equal(selectedSettingsCategory(''), 'chat');
 });

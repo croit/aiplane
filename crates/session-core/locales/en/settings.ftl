@@ -25,6 +25,7 @@ settings-tab-tools = Tools
 settings-tab-data = Content & data
 settings-tab-access = Access & usage
 settings-tab-notifications = Notifications
+settings-tab-web-search = Web search
 settings-restart-pending-body = These settings are saved but only take effect after the gateway restarts:
 
 # ─── Section cards ───────────────────────────────────────────────────────────
@@ -225,9 +226,9 @@ settings-cleared = Cleared. The built-in default applies again.
 settings-restart-badge = restart
 settings-no-backend-heading = No model backend yet
 settings-no-backend-body = Setup configured sign-in, but this gateway serves no models until you add a backend. Chat and the /v1 API will refuse requests until then.
-settings-no-backend-cta = Add a backend at /admin/upstreams →
+settings-no-backend-cta = Add a backend under Models & routing →
 settings-show-fields = Show { $count } more settings
 settings-model-automatic = Automatic — use the first available model
-settings-model-none-configured = No model of this kind is configured yet. Add a pool for it at /admin/upstreams and it will appear here.
+settings-model-none-configured = No model of this kind is configured yet. Add a pool under Models & routing and it will appear here.
 settings-model-unavailable = { $model } (configured, but not currently available)
 settings-restart-pending-heading = Restart pending

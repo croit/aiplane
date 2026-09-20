@@ -17,6 +17,7 @@ settings-tab-tools = Werkzeuge
 settings-tab-data = Inhalte & Daten
 settings-tab-access = Zugriff & Nutzung
 settings-tab-notifications = Benachrichtigungen
+settings-tab-web-search = Websuche
 settings-restart-pending-body = Diese Einstellungen sind gespeichert, greifen aber erst nach einem Neustart des Gateways:
 
 # ─── Abschnittskarten ────────────────────────────────────────────────────────
@@ -217,9 +218,9 @@ settings-cleared = Zurückgesetzt. Es gilt wieder der Standardwert.
 settings-restart-badge = Neustart
 settings-no-backend-heading = Noch kein Modell-Backend
 settings-no-backend-body = Die Anmeldung ist eingerichtet, aber dieses Gateway liefert erst Modelle, wenn ein Backend hinzugefügt ist. Bis dahin lehnen Chat und die /v1-API Anfragen ab.
-settings-no-backend-cta = Backend unter /admin/upstreams hinzufügen →
+settings-no-backend-cta = Backend unter Modelle & Routing hinzufügen →
 settings-show-fields = { $count } weitere Einstellungen anzeigen
 settings-model-automatic = Automatisch — erstes verfügbares Modell verwenden
-settings-model-none-configured = Für diesen Zweck ist noch kein Modell konfiguriert. Legen Sie unter /admin/upstreams einen passenden Pool an, dann erscheint es hier.
+settings-model-none-configured = Für diesen Zweck ist noch kein Modell konfiguriert. Legen Sie unter Modelle & Routing einen passenden Pool an, dann erscheint es hier.
 settings-model-unavailable = { $model } (konfiguriert, aber derzeit nicht verfügbar)
 settings-restart-pending-heading = Neustart ausstehend

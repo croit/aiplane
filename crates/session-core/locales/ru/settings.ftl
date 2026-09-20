@@ -17,6 +17,7 @@ settings-tab-tools = Инструменты
 settings-tab-data = Контент и данные
 settings-tab-access = Доступ и использование
 settings-tab-notifications = Уведомления
+settings-tab-web-search = Веб-поиск
 settings-restart-pending-body = Эти настройки сохранены, но вступят в силу только после перезапуска шлюза:
 
 # ─── Карточки разделов ───────────────────────────────────────────────────────
@@ -217,9 +218,9 @@ settings-cleared = Сброшено. Снова действует значен�
 settings-restart-badge = перезапуск
 settings-no-backend-heading = Бэкенд моделей ещё не добавлен
 settings-no-backend-body = Вход настроен, но шлюз не выдаёт ни одной модели, пока не добавлен бэкенд. До этого чат и API /v1 будут отклонять запросы.
-settings-no-backend-cta = Добавить бэкенд в /admin/upstreams →
+settings-no-backend-cta = Добавить бэкенд в разделе «Модели и маршрутизация» →
 settings-show-fields = Показать ещё { $count } настроек
 settings-model-automatic = Автоматически — использовать первую доступную модель
-settings-model-none-configured = Модель такого типа ещё не настроена. Добавьте соответствующий пул в /admin/upstreams, и она появится здесь.
+settings-model-none-configured = Модель такого типа ещё не настроена. Добавьте соответствующий пул в разделе «Модели и маршрутизация», и она появится здесь.
 settings-model-unavailable = { $model } (настроена, но сейчас недоступна)
 settings-restart-pending-heading = Требуется перезапуск

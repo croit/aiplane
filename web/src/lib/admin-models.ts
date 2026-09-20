@@ -1,6 +1,13 @@
 export type ModelKind = 'chat' | 'embedding' | 'image' | 'speech' | 'transcription' | 'ocr' | 'rerank' | 'system_one';
 export type ModelFilter = 'all' | 'chat' | 'other' | 'alias' | 'configured';
 export type PricingUnit = 'tokens' | 'images' | 'characters' | 'seconds';
+export const MODEL_ADMIN_TABS = ['upstreams', 'catalog', 'defaults', 'routing'] as const;
+export type ModelAdminTab = (typeof MODEL_ADMIN_TABS)[number];
+
+export function selectedModelAdminTab(search: string): ModelAdminTab {
+	const selected = new URLSearchParams(search).get('tab');
+	return MODEL_ADMIN_TABS.find((tab) => tab === selected) ?? 'catalog';
+}
 
 export interface ModelCapabilities {
 	vision?: boolean | null;

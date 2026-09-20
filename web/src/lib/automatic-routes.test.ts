@@ -48,3 +48,15 @@ test('the session-affinity label can wrap at mobile width', () => {
 
 	assert.match(component, /<label class="label[^"]*\bwhitespace-normal\b/);
 });
+
+test('the selector prompt and candidate descriptions explain their free-text format', () => {
+	const component = readFileSync(
+		new URL('./components/admin/AutomaticRoutesCard.svelte', import.meta.url),
+		'utf8'
+	);
+
+	assert.match(component, /auto-route-instructions-help/);
+	assert.match(component, /auto-route-instructions-placeholder/);
+	assert.match(component, /auto-route-candidate-description-help/);
+	assert.match(component, /auto-route-candidate-description-placeholder/);
+});

@@ -1,6 +1,12 @@
 # Strings owned by `gateway/src/rama_server/pages/admin.rs` — `/admin/models` 页面。
 
 admin-heading = 模型
+admin-models-routing-heading = 模型与路由
+admin-models-routing-intro = 在一个位置配置模型基础设施、模型目录、默认模型和自动路由。
+admin-models-tab-upstreams = 上游
+admin-models-tab-catalog = 模型目录
+admin-models-tab-defaults = 默认模型
+admin-models-tab-routing = 自动路由
 
 admin-col-model = 模型
 
@@ -112,16 +118,6 @@ admin-clear-overrides-confirm = 要删除 { $model } 的全部已保存覆盖设
 admin-cap-no-fallback = （无）
 
 admin-page-title = 模型 — AIplane
-
-admin-intro-prefix = 按模型的设置 —— 定价、上下文窗口、推理、能力和采样默认值 —— 适用于
-
-admin-intro-every = 任何
-
-admin-intro-middle = 用户或令牌对该模型发起的请求，除非调用方设置了相同的值，此时
-
-admin-intro-always-wins = 始终以调用方的值为准
-
-admin-intro-suffix = 。聊天模型、别名和其他类型都在同一个列表中。
 
 admin-no-models = 尚未发现任何模型。一旦有可用的上游后端，它就会显示在这里。
 
@@ -295,11 +291,15 @@ auto-route-confidence = 最低置信度
 auto-route-confidence-help = 置信度低于此值时使用回退目标。
 auto-route-timeout = 选择器超时（毫秒）
 auto-route-instructions = 路由说明
+auto-route-instructions-help = 用自然语言为选择器提供可选规则，不需要特殊语法。
+auto-route-instructions-placeholder = 示例：复杂分析和代码优先选择 expert；简短的常规请求使用 fast。
 auto-route-candidate-add = 添加候选项
 auto-route-candidates-help = 请按适合处理的请求描述每个模型。选择器只会看到候选键和描述，不会看到目标模型名称。
 auto-route-candidate-key = 不透明键
 auto-route-candidate-target = 目标模型或静态别名
 auto-route-candidate-description = 何时使用此候选项
+auto-route-candidate-description-help = 必填自由文本。说明此候选项最适合处理哪些请求；选择器会看到这段文字，但看不到目标模型名称。
+auto-route-candidate-description-placeholder = 示例：重视低延迟和成本的简短常规请求。
 auto-route-fallback = 回退目标
 auto-route-session-affinity = 会话保持使用首次选中的模型
 auto-route-session-affinity-help = 在 TTL 到期前，为同一已认证客户端和会话重复使用实际目标。

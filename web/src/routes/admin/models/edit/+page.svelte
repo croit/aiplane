@@ -22,7 +22,7 @@
 	// on a page that is about to unmount.
 	async function save(body: Record<string, string>) {
 		await adminPut('/api/v0/admin/models', body);
-		await goto(`${base}/admin/models?notice=saved&model=${encodeURIComponent(body.model_name)}`);
+		await goto(`${base}/admin/models?tab=catalog&notice=saved&model=${encodeURIComponent(body.model_name)}`);
 	}
 
 	async function clear(name: string) {
@@ -30,7 +30,7 @@
 		// undone — keep the confirmation the inline editor had.
 		if (!confirm(t('admin-clear-overrides-confirm', { model: name }))) return;
 		await adminDelete(`/api/v0/admin/models/${encodeURIComponent(name)}`);
-		await goto(`${base}/admin/models?notice=cleared&model=${encodeURIComponent(name)}`);
+		await goto(`${base}/admin/models?tab=catalog&notice=cleared&model=${encodeURIComponent(name)}`);
 	}
 
 	onMount(async () => {
@@ -45,7 +45,7 @@
 <svelte:head><title>{t('admin-edit-model-page-title')}</title></svelte:head>
 
 <div class="w-full max-w-4xl">
-	<a class="link link-hover text-sm text-base-content/60" href="{base}/admin/models">← {t('admin-heading')}</a>
+	<a class="link link-hover text-sm text-base-content/60" href="{base}/admin/models?tab=catalog">← {t('admin-heading')}</a>
 	<h1 class="m-0 mt-2 break-all font-mono text-2xl font-bold">{requested}</h1>
 
 	{#if error}<div class="alert alert-error mt-4 text-sm"><span>{error}</span></div>{/if}
@@ -61,7 +61,7 @@
 					allModels={data.all_models}
 					onsave={save}
 					onclear={clear}
-					oncancel={() => goto(`${base}/admin/models`)}
+				oncancel={() => goto(`${base}/admin/models?tab=catalog`)}
 				/>
 			</div>
 		</div>

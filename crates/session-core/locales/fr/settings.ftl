@@ -17,6 +17,7 @@ settings-tab-tools = Outils
 settings-tab-data = Contenu & données
 settings-tab-access = Accès & utilisation
 settings-tab-notifications = Notifications
+settings-tab-web-search = Recherche web
 settings-restart-pending-body = Ces réglages sont enregistrés mais ne prendront effet qu'après un redémarrage de la passerelle :
 
 # ─── Cartes de section ───────────────────────────────────────────────────────
@@ -217,9 +218,9 @@ settings-cleared = Réinitialisé. La valeur par défaut s'applique de nouveau.
 settings-restart-badge = redémarrage
 settings-no-backend-heading = Aucun backend de modèle
 settings-no-backend-body = La connexion est configurée, mais cette passerelle ne sert aucun modèle avant l'ajout d'un backend. D'ici là, le chat et l'API /v1 refusent les requêtes.
-settings-no-backend-cta = Ajouter un backend dans /admin/upstreams →
+settings-no-backend-cta = Ajouter un backend dans Modèles et routage →
 settings-show-fields = Afficher { $count } réglages supplémentaires
 settings-model-automatic = Automatique — utiliser le premier modèle disponible
-settings-model-none-configured = Aucun modèle de ce type n'est encore configuré. Ajoutez un pool correspondant dans /admin/upstreams et il apparaîtra ici.
+settings-model-none-configured = Aucun modèle de ce type n'est encore configuré. Ajoutez un pool correspondant dans Modèles et routage et il apparaîtra ici.
 settings-model-unavailable = { $model } (configuré, mais indisponible actuellement)
 settings-restart-pending-heading = Redémarrage en attente

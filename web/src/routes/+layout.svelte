@@ -150,7 +150,6 @@
 		['nav-users', '/admin/users', 'users'],
 		['nav-admin-tokens', '/admin/tokens', 'key'],
 		['nav-groups', '/admin/groups', 'users'],
-		['nav-upstreams', '/admin/upstreams', 'cube'],
 		['nav-models', '/admin/models', 'cpu'],
 		['nav-rag', '/rag', 'database'],
 		['nav-skills', '/admin/skills', 'sparkles'],

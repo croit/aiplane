@@ -1,13 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
+	import { base } from '$app/paths';
 	import { adminJson, adminPut } from '$lib/admin-client';
-	import { matchesModelFilter } from '$lib/admin-models';
+	import { matchesModelFilter, selectedModelAdminTab } from '$lib/admin-models';
 	import type { AdminModelsData, ModelFilter } from '$lib/admin-models';
 	import AdminModelRow from '$lib/components/admin/AdminModelRow.svelte';
 	import DefaultModelsCard from '$lib/components/admin/DefaultModelsCard.svelte';
-	import SearchSettingsCard from '$lib/components/admin/SearchSettingsCard.svelte';
 	import AutomaticRoutesCard from '$lib/components/admin/AutomaticRoutesCard.svelte';
+	import UpstreamsPanel from '$lib/components/admin/UpstreamsPanel.svelte';
 	import { t } from '$lib/i18n.svelte';
 
 	let data = $state<AdminModelsData | null>(null);
@@ -40,33 +41,37 @@
 		await refresh();
 	}
 
-	async function saveSearch(settings: { provider: string; searxng_url: string; brave_api_key: string; clear_brave_key: boolean }) {
-		await adminPut('/api/v0/admin/search-settings', settings);
-		notice = t('admin-search-saved');
-		await refresh();
-	}
-
 	let visibleModels = $derived(data?.models.filter((model) => matchesModelFilter(model, filter, query)) ?? []);
+	let selected = $derived(selectedModelAdminTab(page.url.search));
 	onMount(refresh);
 </script>
 
 <svelte:head><title>{t('admin-page-title')}</title></svelte:head>
 
 <section class="flex w-full flex-col gap-4">
-	<header class="flex flex-col gap-1">
-		<h1 class="text-2xl font-bold">{t('admin-heading')}</h1>
-		<p class="max-w-2xl text-sm text-base-content/70">{t('admin-intro-prefix')} <strong>{t('admin-intro-every')}</strong> {t('admin-intro-middle')} <strong>{t('admin-intro-always-wins')}</strong>{t('admin-intro-suffix')}</p>
+	<header class="flex flex-col gap-3">
+		<div>
+			<h1 class="text-2xl font-bold">{t('admin-models-routing-heading')}</h1>
+			<p class="max-w-2xl text-sm text-base-content/70">{t('admin-models-routing-intro')}</p>
+		</div>
+		<nav class="tabs tabs-border w-full overflow-x-auto" aria-label={t('admin-models-routing-heading')}>
+			<a class:tab-active={selected === 'upstreams'} class="tab whitespace-nowrap" href="{base}/admin/models?tab=upstreams">{t('admin-models-tab-upstreams')}</a>
+			<a class:tab-active={selected === 'catalog'} class="tab whitespace-nowrap" href="{base}/admin/models?tab=catalog">{t('admin-models-tab-catalog')}</a>
+			<a class:tab-active={selected === 'defaults'} class="tab whitespace-nowrap" href="{base}/admin/models?tab=defaults">{t('admin-models-tab-defaults')}</a>
+			<a class:tab-active={selected === 'routing'} class="tab whitespace-nowrap" href="{base}/admin/models?tab=routing">{t('admin-models-tab-routing')}</a>
+		</nav>
 	</header>
 
 	{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}
 	{#if notice}<div class="alert alert-success"><span>{notice}</span></div>{/if}
-	{#if data}
-		<DefaultModelsCard defaults={data.feature_defaults} onsave={saveDefault} />
-		<AutomaticRoutesCard />
-		{#key `${data.search.provider}:${data.search.searxng_url}:${data.search.brave_key_set}`}
-			<SearchSettingsCard search={data.search} onsave={saveSearch} />
-		{/key}
-
+	{#if selected === 'upstreams'}
+		<UpstreamsPanel />
+	{:else if data}
+		{#if selected === 'defaults'}
+			<DefaultModelsCard defaults={data.feature_defaults} onsave={saveDefault} />
+		{:else if selected === 'routing'}
+			<AutomaticRoutesCard />
+		{:else}
 		{#if data.models.length === 0}
 			<div class="alert"><span>{t('admin-no-models')}</span></div>
 		{:else}
@@ -90,6 +95,7 @@
 					{/each}
 				</div>
 			</article>
+		{/if}
 		{/if}
 	{/if}
 </section>

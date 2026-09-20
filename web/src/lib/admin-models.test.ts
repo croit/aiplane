@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { configuredFacets, contextWindowHint, matchesModelFilter, pricingUnitFor } from './admin-models.ts';
+import { configuredFacets, contextWindowHint, matchesModelFilter, pricingUnitFor, selectedModelAdminTab } from './admin-models.ts';
 import type { AdminModel } from './admin-models.ts';
 
 const model: AdminModel = {
@@ -28,6 +28,14 @@ const model: AdminModel = {
 		capabilities: { vision: true, tools: null }
 	}
 };
+
+test('model administration defaults to the catalog and accepts only known tabs', () => {
+	assert.equal(selectedModelAdminTab(''), 'catalog');
+	assert.equal(selectedModelAdminTab('?tab=upstreams'), 'upstreams');
+	assert.equal(selectedModelAdminTab('?tab=defaults'), 'defaults');
+	assert.equal(selectedModelAdminTab('?tab=routing'), 'routing');
+	assert.equal(selectedModelAdminTab('?tab=unknown'), 'catalog');
+});
 
 test('model filters combine kind, alias, configuration, and name', () => {
 	assert.equal(matchesModelFilter(model, 'chat', 'qwen3'), true);

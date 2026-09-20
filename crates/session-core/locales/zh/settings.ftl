@@ -17,6 +17,7 @@ settings-tab-tools = 工具
 settings-tab-data = 内容与数据
 settings-tab-access = 访问与用量
 settings-tab-notifications = 通知
+settings-tab-web-search = 网络搜索
 settings-restart-pending-body = 以下设置已保存，但需重启网关后才会生效：
 
 # ─── 分区卡片 ─────────────────────────────────────────────────────────────────
@@ -217,9 +218,9 @@ settings-cleared = 已清除，重新使用内置默认值。
 settings-restart-badge = 需重启
 settings-no-backend-heading = 尚未配置模型后端
 settings-no-backend-body = 登录已配置好，但在添加后端之前，本网关不提供任何模型。在此之前，聊天和 /v1 接口都会拒绝请求。
-settings-no-backend-cta = 前往 /admin/upstreams 添加后端 →
+settings-no-backend-cta = 在“模型与路由”中添加后端 →
 settings-show-fields = 显示另外 { $count } 项设置
 settings-model-automatic = 自动 — 使用第一个可用模型
-settings-model-none-configured = 尚未配置此类型的模型。请在 /admin/upstreams 添加相应的池，它就会出现在这里。
+settings-model-none-configured = 尚未配置此类型的模型。请在“模型与路由”中添加相应的池，它就会出现在这里。
 settings-model-unavailable = { $model }（已配置，但当前不可用）
 settings-restart-pending-heading = 待重启
