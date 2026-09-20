@@ -25,6 +25,9 @@ limits-col-window = Ventana
 limits-none = No hay límites configurados — todos son ilimitados.
 limits-all-models = todos los modelos
 limits-delete = Eliminar
+limits-edit = Editar
+limits-edit-heading = Editar límite
+limits-edit-submit = Guardar cambios
 limits-saved = límite guardado para { $subject }
 limits-subject-token = Token de API
 

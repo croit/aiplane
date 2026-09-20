@@ -25,6 +25,9 @@ limits-col-window = 时间窗口
 limits-none = 未配置任何限制 — 所有人都不受限制。
 limits-all-models = 所有模型
 limits-delete = 删除
+limits-edit = 编辑
+limits-edit-heading = 编辑限制
+limits-edit-submit = 保存更改
 limits-saved = 已保存 { $subject } 的限制
 limits-subject-token = API 令牌
 

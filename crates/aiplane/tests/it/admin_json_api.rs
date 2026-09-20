@@ -782,6 +782,34 @@ async fn limits_upsert_and_delete() {
         .find(|r| r["subject_id"] == "boss")
         .expect("rule listed with the resolved id");
     let id = rule["id"].as_str().unwrap().to_string();
+    let updated = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/limits",
+            &cookie,
+            Some(format!(
+                r#"{{"id":"{id}","subject_type":"user","subject_id":"boss","model":"model-a","dimension":"cost","window":"month","value":200}}"#
+            )),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    let listed = body(
+        app.serve(req(Method::GET, "/api/v0/admin/limits", &cookie, None))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let parsed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    let rule = parsed["limits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .expect("updated rule remains at its original id");
+    assert_eq!(rule["model"], "model-a");
+    assert_eq!(rule["dimension"], "cost");
+    assert_eq!(rule["value"], 200.0);
     let resp = app
         .serve(req(
             Method::DELETE,

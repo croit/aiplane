@@ -197,6 +197,29 @@ impl Enforcer {
         first_breach(self.statuses(user_id, role_ids).await)
     }
 
+    /// Gate a call for one resolved model. Pools exempt from enforcement do
+    /// not consume a budget and must remain available after it is spent.
+    /// Model-scoped rules apply only when their scope names this model; an
+    /// unscoped rule remains the aggregate budget across all metered models.
+    pub async fn check_for_model(
+        &self,
+        user_id: &str,
+        role_ids: &[String],
+        model: &str,
+        enforce_limits: bool,
+    ) -> Result<(), LimitExceeded> {
+        if !enforce_limits {
+            return Ok(());
+        }
+        first_breach(
+            self.statuses(user_id, role_ids)
+                .await
+                .into_iter()
+                .filter(|status| status.model.as_deref().is_none_or(|scope| scope == model))
+                .collect(),
+        )
+    }
+
     /// Gate a call against the calling token's own rules — the *additional*
     /// ceiling. A caller under their personal budget can still be refused
     /// here, and a token rule can never grant more than the owner's budget
@@ -204,6 +227,25 @@ impl Enforcer {
     /// default for every token ever issued) passes instantly.
     pub async fn check_token(&self, token_id: &str) -> Result<(), LimitExceeded> {
         first_breach(self.token_statuses(token_id).await)
+    }
+
+    /// The token-owned counterpart of [`Self::check_for_model`].
+    pub async fn check_token_for_model(
+        &self,
+        token_id: &str,
+        model: &str,
+        enforce_limits: bool,
+    ) -> Result<(), LimitExceeded> {
+        if !enforce_limits {
+            return Ok(());
+        }
+        first_breach(
+            self.token_statuses(token_id)
+                .await
+                .into_iter()
+                .filter(|status| status.model.as_deref().is_none_or(|scope| scope == model))
+                .collect(),
+        )
     }
 }
 
@@ -557,6 +599,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exempt_models_are_allowed_after_a_budget_is_spent() {
+        let pool = pool().await;
+        limits::upsert(
+            &pool,
+            SubjectType::User,
+            "alice",
+            None,
+            Dimension::Requests,
+            Window::Day,
+            1.0,
+        )
+        .await
+        .unwrap();
+        let now = Timestamp::now();
+        let charged = event("alice", "paid", 1, true, now);
+        usage::insert_batch(&pool, &[charged]).await.unwrap();
+
+        let enf = Enforcer::new(pool, true);
+        assert!(
+            enf.check_for_model("alice", &[], "free", false)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
     async fn per_model_scope_counts_only_that_model() {
         let pool = pool().await;
         limits::upsert(
@@ -581,7 +649,16 @@ mod tests {
         )
         .await
         .unwrap();
+        assert!(
+            enf.check_for_model("alice", &[], "cheap", true)
+                .await
+                .is_ok()
+        );
         // Only "pricey" usage (100) counts against the pricey-scoped limit → at ceiling.
-        assert!(enf.check("alice", &[]).await.is_err());
+        assert!(
+            enf.check_for_model("alice", &[], "pricey", true)
+                .await
+                .is_err()
+        );
     }
 }

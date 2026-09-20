@@ -134,7 +134,15 @@ async fn run_action(state: Arc<RamaState>, action: ScheduledAction, next: Option
         let role_ids = state.role_ids_for(&user.roles);
         if state
             .enforcer
-            .check(&action.user_id, &role_ids)
+            .check_for_model(
+                &action.user_id,
+                &role_ids,
+                &action.model,
+                state.upstreams.enforce_limits_for_model(
+                    &action.model,
+                    aiplane_core::server::upstreams::PoolKind::Chat,
+                ),
+            )
             .await
             .is_err()
         {

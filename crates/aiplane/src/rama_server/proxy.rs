@@ -127,6 +127,42 @@ async fn limit_check(state: &RamaState, user: &UserCtx) -> Option<Response> {
         .map(|e| limit_exceeded_response(&e))
 }
 
+async fn limit_check_for_model(
+    state: &RamaState,
+    user: &UserCtx,
+    model: &str,
+    kind: PoolKind,
+) -> Option<Response> {
+    limit_exceeded_for_model(state, user, model, kind)
+        .await
+        .map(|exceeded| limit_exceeded_response(&exceeded))
+}
+
+pub(crate) async fn limit_exceeded_for_model(
+    state: &RamaState,
+    user: &UserCtx,
+    model: &str,
+    kind: PoolKind,
+) -> Option<aiplane_core::server::limits::LimitExceeded> {
+    let role_ids = state.role_ids_for(&user.roles);
+    let enforce_limits = state.upstreams.enforce_limits_for_model(model, kind);
+    if let Err(exceeded) = state
+        .enforcer
+        .check_for_model(&user.user_id, &role_ids, model, enforce_limits)
+        .await
+    {
+        return Some(exceeded);
+    }
+    if let Err(exceeded) = state
+        .enforcer
+        .check_token_for_model(&user.token_id, model, enforce_limits)
+        .await
+    {
+        return Some(exceeded);
+    }
+    None
+}
+
 /// The breached limit, if any — [`limit_check`] without the OpenAI-shaped
 /// rendering, so a caller that owes its client a different error envelope
 /// (the Anthropic `/v1/messages` path) can enforce the same ceilings.
@@ -571,6 +607,9 @@ async fn chat_bytedumb(
         Ok(id) => id,
         Err(e) => return route_error_response(e),
     };
+    if let Some(resp) = limit_check_for_model(state, user, &real_model, PoolKind::Chat).await {
+        return resp;
+    }
     // Admin sampling/reasoning defaults key on the *real* model id (so an
     // alias inherits the target's defaults). Client keys still win —
     // `apply_defaults` only fills missing top-level fields. Then rewrite the
@@ -645,9 +684,6 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
         Ok(u) => u,
         Err(refusal) => return refusal.into_response(),
     };
-    if let Some(resp) = limit_check(&state, &user).await {
-        return resp;
-    }
     let body = match read_body_to_bytes(body).await {
         Ok(b) => b,
         Err(msg) => return error_response(StatusCode::BAD_REQUEST, "invalid_request", &msg),
@@ -734,6 +770,9 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
         Ok(id) => id,
         Err(e) => return route_error_response(e),
     };
+    if let Some(resp) = limit_check_for_model(&state, &user, &real_model, PoolKind::Chat).await {
+        return resp;
+    }
 
     // Defaults key on the resolved real id, same as the byte-dumb path.
     let body =
@@ -1019,9 +1058,6 @@ pub async fn transcribe(State(state): State<Arc<RamaState>>, req: Request) -> Re
         Ok(u) => u,
         Err(refusal) => return refusal.into_response(),
     };
-    if let Some(resp) = limit_check(&state, &user).await {
-        return resp;
-    }
     let body = match read_body_to_bytes(body).await {
         Ok(b) => b,
         Err(msg) => return error_response(StatusCode::BAD_REQUEST, "invalid_request", &msg),
@@ -1392,6 +1428,10 @@ pub async fn embeddings(State(state): State<Arc<RamaState>>, req: Request) -> Re
         Err(e) => return route_error_response(e),
     };
     let real_model = acquired.resolved_model().to_string();
+    if let Some(resp) = limit_check_for_model(&state, &user, &real_model, PoolKind::Embedding).await
+    {
+        return resp;
+    }
     let body = rewrite_model_in_bytes(body, &real_model);
     let rec = RecordParams::v1(
         &user,
@@ -1423,9 +1463,6 @@ pub async fn system_one(State(state): State<Arc<RamaState>>, req: Request) -> Re
         Ok(user) => user,
         Err(refusal) => return refusal.into_response(),
     };
-    if let Some(resp) = limit_check(&state, &user).await {
-        return resp;
-    }
     let body = match read_body_to_bytes(body).await {
         Ok(body) => body,
         Err(message) => {
@@ -1448,6 +1485,10 @@ pub async fn system_one(State(state): State<Arc<RamaState>>, req: Request) -> Re
         Err(error) => return route_error_response(error),
     };
     let real_model = acquired.resolved_model().to_string();
+    if let Some(resp) = limit_check_for_model(&state, &user, &real_model, PoolKind::SystemOne).await
+    {
+        return resp;
+    }
     let body = rewrite_model_in_bytes(body, &real_model);
     let record = RecordParams::v1(
         &user,
@@ -1484,9 +1525,6 @@ pub async fn images_generations(State(state): State<Arc<RamaState>>, req: Reques
         Ok(u) => u,
         Err(refusal) => return refusal.into_response(),
     };
-    if let Some(resp) = limit_check(&state, &user).await {
-        return resp;
-    }
     let body = match read_body_to_bytes(body).await {
         Ok(b) => b,
         Err(msg) => return error_response(StatusCode::BAD_REQUEST, "invalid_request", &msg),
@@ -1507,6 +1545,9 @@ pub async fn images_generations(State(state): State<Arc<RamaState>>, req: Reques
         Err(e) => return route_error_response(e),
     };
     let real_model = acquired.resolved_model().to_string();
+    if let Some(resp) = limit_check_for_model(&state, &user, &real_model, PoolKind::Image).await {
+        return resp;
+    }
     let body = rewrite_model_in_bytes(body, &real_model);
     let rec = RecordParams::v1(
         &user,
@@ -1542,9 +1583,6 @@ pub async fn images_edits(State(state): State<Arc<RamaState>>, req: Request) -> 
         Ok(u) => u,
         Err(refusal) => return refusal.into_response(),
     };
-    if let Some(resp) = limit_check(&state, &user).await {
-        return resp;
-    }
     let mut headers = parts.headers;
     let body = match read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -1576,6 +1614,9 @@ pub async fn images_edits(State(state): State<Arc<RamaState>>, req: Request) -> 
         Err(e) => return route_error_response(e),
     };
     let real_model = acquired.resolved_model().to_string();
+    if let Some(resp) = limit_check_for_model(&state, &user, &real_model, PoolKind::Image).await {
+        return resp;
+    }
     if real_model != model
         && let Some(field) = fields.iter_mut().find(|f| f.name == "model")
     {
@@ -1667,9 +1708,6 @@ pub async fn speech(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         Ok(u) => u,
         Err(refusal) => return refusal.into_response(),
     };
-    if let Some(resp) = limit_check(&state, &user).await {
-        return resp;
-    }
     let body = match read_body_to_bytes(body).await {
         Ok(b) => b,
         Err(msg) => return error_response(StatusCode::BAD_REQUEST, "invalid_request", &msg),
@@ -1690,6 +1728,9 @@ pub async fn speech(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         Err(e) => return route_error_response(e),
     };
     let real_model = acquired.resolved_model().to_string();
+    if let Some(resp) = limit_check_for_model(&state, &user, &real_model, PoolKind::Speech).await {
+        return resp;
+    }
     let body = rewrite_model_in_bytes(body, &real_model);
     let rec = RecordParams::v1(
         &user,

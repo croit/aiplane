@@ -822,6 +822,10 @@ fn limit_json(rule: &limits::LimitRule) -> serde_json::Value {
 
 #[derive(serde::Deserialize)]
 pub struct LimitBody {
+    /// Omitted when creating a new rule; present when replacing a row from
+    /// the admin editor.
+    #[serde(default)]
+    pub id: Option<String>,
     pub subject_type: String,
     pub subject_id: String,
     /// Empty = all models.
@@ -890,19 +894,40 @@ pub async fn limits_save(State(state): State<Arc<RamaState>>, req: Request) -> R
     }
     let model = parsed.model.trim();
     let model = if model.is_empty() { None } else { Some(model) };
-    match limits::upsert(
-        &state.db,
-        subject_type,
-        &subject_id,
-        model,
-        dimension,
-        window,
-        parsed.value,
-    )
-    .await
-    {
+    let saved = match parsed.id.as_deref() {
+        Some(id) => match limits::update(
+            &state.db,
+            id,
+            limits::LimitUpdate {
+                subject_type,
+                subject_id: &subject_id,
+                model,
+                dimension,
+                window,
+                value: parsed.value,
+            },
+        )
+        .await
+        {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(bad_request("the limit no longer exists")),
+            Err(err) => Err(internal(err)),
+        },
+        None => limits::upsert(
+            &state.db,
+            subject_type,
+            &subject_id,
+            model,
+            dimension,
+            window,
+            parsed.value,
+        )
+        .await
+        .map_err(internal),
+    };
+    match saved {
         Ok(()) => json_ok(StatusCode::OK, serde_json::json!({ "ok": true })),
-        Err(err) => internal(err),
+        Err(response) => response,
     }
 }
 

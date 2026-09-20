@@ -9,6 +9,7 @@
 	let data = $state<AdminLimitsData | null>(null);
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
+	let editing = $state<AdminLimitRule | null>(null);
 
 	async function refresh() {
 		try { data = await adminJson<AdminLimitsData>('/api/v0/admin/limits'); error = null; }
@@ -17,7 +18,7 @@
 
 	async function save(body: Record<string, string | number>, subject: string) {
 		error = null;
-		try { await adminPost('/api/v0/admin/limits', body); notice = t('limits-saved', { subject }); await refresh(); }
+		try { await adminPost('/api/v0/admin/limits', body); notice = t('limits-saved', { subject }); editing = null; await refresh(); }
 		catch (caught) { error = String(caught); }
 	}
 
@@ -35,6 +36,6 @@
 	<header class="flex flex-col gap-1"><h1 class="m-0 text-2xl font-semibold">{t('limits-heading')}</h1><p class="m-0 text-sm text-base-content/70">{t('limits-intro')}</p></header>
 	{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}
 	{#if notice}<div class="alert alert-success"><span>{notice}</span></div>{/if}
-	{#if data}<AdminLimitForm {data} onsave={save} /><AdminLimitsTable {data} onremove={remove} />
+	{#if data}<AdminLimitForm {data} {editing} onsave={save} /><AdminLimitsTable {data} onedit={(rule) => { editing = rule; }} onremove={remove} />
 	{:else if !error}<div class="flex flex-col gap-4"><div class="skeleton h-64 w-full"></div><div class="skeleton h-40 w-full"></div></div>{/if}
 </div>

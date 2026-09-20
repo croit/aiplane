@@ -143,7 +143,20 @@ pub(crate) async fn submit_turn(
     // so an over-budget user is turned away cleanly (details on `/usage`).
     {
         let role_ids = state.role_ids_for(&user.roles);
-        if state.enforcer.check(&user.id, &role_ids).await.is_err() {
+        if state
+            .enforcer
+            .check_for_model(
+                &user.id,
+                &role_ids,
+                &submit.model,
+                state.upstreams.enforce_limits_for_model(
+                    &submit.model,
+                    aiplane_core::server::upstreams::PoolKind::Chat,
+                ),
+            )
+            .await
+            .is_err()
+        {
             return Err(SubmitTurnError::RateLimited);
         }
     }
@@ -464,7 +477,20 @@ async fn start_pending_turn(state: &Arc<RamaState>, pending: &chat::PendingTurn)
     // user who queued three messages and then ran out of quota gets the ones
     // that fit, and the rest wait rather than running for free.
     let role_ids = state.role_ids_for(&user.roles);
-    if state.enforcer.check(&user.id, &role_ids).await.is_err() {
+    if state
+        .enforcer
+        .check_for_model(
+            &user.id,
+            &role_ids,
+            &pending.model,
+            state.upstreams.enforce_limits_for_model(
+                &pending.model,
+                aiplane_core::server::upstreams::PoolKind::Chat,
+            ),
+        )
+        .await
+        .is_err()
+    {
         tracing::info!(user_id = %user.id, "waiting turn held: over budget");
         return false;
     }

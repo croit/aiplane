@@ -366,6 +366,36 @@ pub async fn delete(pool: &Pool, id: &str) -> Result<(), DbError> {
     Ok(())
 }
 
+/// The editable coordinates and ceiling of an existing rule.
+pub struct LimitUpdate<'a> {
+    pub subject_type: SubjectType,
+    pub subject_id: &'a str,
+    pub model: Option<&'a str>,
+    pub dimension: Dimension,
+    pub window: Window,
+    pub value: f64,
+}
+
+/// Replace every editable field of one admin rule. Returns `false` when the
+/// rule was removed before the edit was saved.
+pub async fn update(pool: &Pool, id: &str, update: LimitUpdate<'_>) -> Result<bool, DbError> {
+    let result = sqlx::query(
+        "UPDATE limits SET subject_type = ?, subject_id = ?, model = ?, dimension = ?, \
+         window_kind = ?, value = ?, updated_at = ?, managed_by = 'admin' WHERE id = ?",
+    )
+    .bind(update.subject_type.as_str())
+    .bind(update.subject_id)
+    .bind(norm_model(update.model))
+    .bind(update.dimension.as_str())
+    .bind(update.window.as_str())
+    .bind(update.value.max(0.0))
+    .bind(Timestamp::now().to_string())
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Delete one of a token's *own* rules — the self-service path. Scoped to the
 /// token and to `managed_by = 'owner'` in the statement itself rather than
 /// checked beforehand, so neither another subject's rule nor an admin's cap

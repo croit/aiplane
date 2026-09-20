@@ -25,6 +25,9 @@ limits-col-window = Fenêtre
 limits-none = Aucune limite configurée — tout le monde est illimité.
 limits-all-models = tous les modèles
 limits-delete = Supprimer
+limits-edit = Modifier
+limits-edit-heading = Modifier la limite
+limits-edit-submit = Enregistrer les modifications
 limits-saved = limite enregistrée pour { $subject }
 limits-subject-token = Jeton d'API
 

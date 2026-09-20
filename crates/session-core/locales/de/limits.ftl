@@ -25,6 +25,9 @@ limits-col-window = Zeitfenster
 limits-none = Keine Limits konfiguriert — jeder ist unbegrenzt.
 limits-all-models = alle Modelle
 limits-delete = Löschen
+limits-edit = Bearbeiten
+limits-edit-heading = Limit bearbeiten
+limits-edit-submit = Änderungen speichern
 limits-saved = Limit für { $subject } gespeichert
 limits-subject-token = API-Token
 

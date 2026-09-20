@@ -90,10 +90,6 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
         // distinguish.
         Err(refusal) => return error_response(refusal.status, &refusal.message),
     };
-    if let Some(exceeded) = proxy::limit_exceeded(&state, &user).await {
-        return rate_limited(&exceeded);
-    }
-
     let translated = match translated_request(body).await {
         Ok(t) => t,
         Err(resp) => return resp,
@@ -146,6 +142,16 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
         Ok(id) => id,
         Err(e) => return route_error_response(e),
     };
+    if let Some(exceeded) = proxy::limit_exceeded_for_model(
+        &state,
+        &user,
+        &real_model,
+        aiplane_core::server::upstreams::PoolKind::Chat,
+    )
+    .await
+    {
+        return rate_limited(&exceeded);
+    }
 
     // The model's `model` field becomes the resolved id first, because the
     // admin defaults are keyed on it — an alias inherits its target's

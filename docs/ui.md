@@ -337,7 +337,8 @@ the complete role, user, token-with-owner, and model option sets needed to
 assign them safely. The SPA keeps those identifiers behind labelled selects,
 shows the policy resolution and metering rules beside the editor, and preserves
 the production table's separate dimension, window, and locale-formatted value
-columns. `POST /api/v0/admin/limits` upserts the selected rule and `DELETE
+columns. `POST /api/v0/admin/limits` creates or upserts a selected rule; with
+the existing rule's `id`, it edits that row in place. `DELETE
 /api/v0/admin/limits/{id}` removes it.
 
 `GET /api/v0/admin/settings` carries the declarative settings specification

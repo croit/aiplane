@@ -25,6 +25,9 @@ limits-col-window = Окно
 limits-none = Лимиты не настроены — все безлимитны.
 limits-all-models = все модели
 limits-delete = Удалить
+limits-edit = Изменить
+limits-edit-heading = Изменить лимит
+limits-edit-submit = Сохранить изменения
 limits-saved = лимит сохранён для { $subject }
 limits-subject-token = API-токен
 
