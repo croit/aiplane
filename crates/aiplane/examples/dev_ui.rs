@@ -49,8 +49,6 @@ use rama::net::address::SocketAddress;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const SESSION_SECRET: [u8; 32] = [9u8; 32];
-
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -59,6 +57,10 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "info,gateway=debug".into()),
         )
         .init();
+    let session_secret: [u8; 32] =
+        aiplane_core::server::crypto::hex_decode(&aiplane_core::server::crypto::random_hex(32))
+            .and_then(|bytes| bytes.try_into().ok())
+            .expect("random session secret has the requested length");
 
     // --- Wiremock upstreams ------------------------------------------
     //
@@ -335,7 +337,7 @@ async fn main() -> anyhow::Result<()> {
     // real boot takes, rather than a parallel one that could drift from it.
     // Backends here carry no API key, so the crypto instance never seals
     // anything. Fresh in-memory DB every boot, so this always runs.
-    let crypto = aiplane_core::server::crypto::Crypto::from_env_or_session(&SESSION_SECRET);
+    let crypto = aiplane_core::server::crypto::Crypto::from_env_or_session(&session_secret);
     for (sort_order, (name, cfg)) in pools.iter().enumerate() {
         for backend in &cfg.backend {
             db::upstreams_config::upsert_backend(
@@ -599,7 +601,7 @@ async fn main() -> anyhow::Result<()> {
     // aggregates instead of the "metrics disabled" banner. Spawn before the
     // pool is moved into the session store.
     let usage = aiplane_core::server::usage::spawn(pool.clone(), 90);
-    let sessions = SessionStore::new(pool, SESSION_SECRET);
+    let sessions = SessionStore::new(pool, session_secret);
     let state = RamaState::new(app, sessions, usage);
 
     // --- Seed a user + session so the authed UI is reachable ---------

@@ -125,7 +125,7 @@ test('the origins a batch will touch include where it navigates to', () => {
 		{}
 	);
 	assert.equal(verdict.ok, true);
-	assert.ok(verdict.origins.includes('https://bank.example'), JSON.stringify(verdict.origins));
+	assert.deepEqual(verdict.origins, ['https://bank.example']);
 });
 
 test('reads on a page are always fine', () => {
@@ -155,7 +155,7 @@ test('granting a site grants working on it, with no dialog per action', () => {
 		{}
 	);
 	assert.equal(verdict.ok, true);
-	assert.ok(verdict.origins.includes('https://shop.example'), 'but the target is still checked');
+	assert.deepEqual(verdict.origins, ['https://shop.example']);
 });
 
 test('reading every open tab is not covered by a per-site grant', () => {

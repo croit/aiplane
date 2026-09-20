@@ -175,7 +175,7 @@ mod tests {
     }
 
     fn crypto() -> Crypto {
-        Crypto::from_key([0u8; 32])
+        Crypto::ephemeral()
     }
 
     #[test]
@@ -410,14 +410,16 @@ mod tests {
     /// backend falls back to no direct key rather than failing the whole reload.
     #[test]
     fn undecryptable_key_degrades_to_none() {
-        let sealed = Crypto::from_key([1u8; 32]).seal_str("x").unwrap();
+        let original = Crypto::ephemeral();
+        let sealed = original.seal_str("x").unwrap();
         let mut snap = snap_with_backend("chat", vec![]);
         let b = snap.backends.get_mut("b").unwrap();
         b.api_key_ct = Some(sealed.ciphertext);
         b.api_key_nonce = Some(sealed.nonce);
         b.api_key_env = None;
 
-        let (pools, _) = snapshot_to_configs(&snap, &Crypto::from_key([2u8; 32]));
+        let replacement = Crypto::ephemeral();
+        let (pools, _) = snapshot_to_configs(&snap, &replacement);
         assert!(pools["p"].backend[0].api_key().is_none());
     }
 

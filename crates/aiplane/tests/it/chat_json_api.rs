@@ -737,7 +737,7 @@ async fn wait_for_idle(state: &Arc<RamaState>, user_id: &str) {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    panic!("a turn was still running for {user_id} after 5s");
+    panic!("a turn was still running after 5s");
 }
 
 /// Raise the operator's parallel-turn ceiling the way the admin UI does —

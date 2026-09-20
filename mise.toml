@@ -341,6 +341,10 @@ run = "cargo run --example dev_ui -p aiplane"
 description = "Run the workspace tests (cargo-nextest — parallel, compact report)."
 run = "cargo nextest run --workspace"
 
+[tasks.test-system-one-live]
+description = "Explicit live System One API smoke test against a running gateway and real upstream. Requires SYSTEM_ONE_GATEWAY_TOKEN or SYSTEM_ONE_TOKEN_FILE; incurs upstream inference charges."
+run = "node --test e2e/live/system-one.test.mjs"
+
 [tasks.test-nocapture]
 description = "Run tests with stdout/stderr visible."
 run = "cargo nextest run --workspace --no-capture"
@@ -417,10 +421,10 @@ dir = "{{ config_root }}"
 run = "node extension/store/shots.mjs {{ arg(name='args', var=true, default='') }}"
 
 [tasks.test-extension]
-description = "Unit-test the Chrome extension (node --test). Two files are covered: `policy.js`, the pure module that decides whether a page gets clicked, kept free of `chrome.*` precisely so it can be tested without a browser; and `content.js`, the page↔worker wire, run inside a `vm` context with stub globals because Chrome runs it as a classic script too. The rest needs a real browser (pairing, MV3 lifecycle, CDP input) and is verified by hand — see extension/README.md."
-sources = ["extension/src/**/*.js"]
+description = "Unit-test the Chrome extension and its publisher (node --test). Covers `policy.js`, the pure module that decides whether a page gets clicked; `content.js`, the page↔worker wire run inside a `vm` context with stub globals; and publisher diagnostics that must not leak credentials. The remaining browser behavior needs a real browser and is verified by hand — see extension/README.md."
+sources = ["extension/src/**/*.js", "scripts/publish-extension*.mjs"]
 dir = "{{ config_root }}"
-run = "node --test 'extension/src/**/*.test.js'"
+run = "node --test 'extension/src/**/*.test.js' scripts/publish-extension.test.mjs"
 
 [tasks.lint]
 description = "Clippy + rustfmt + svelte-check."

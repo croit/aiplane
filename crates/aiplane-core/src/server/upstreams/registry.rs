@@ -391,9 +391,14 @@ impl Backend {
 
     /// Replace the advertised-model set wholesale. Probe-only path —
     /// called from `health.rs` after a successful `/models` parse so the
-    /// next routing lookup reflects the upstream's current loadout. Also
-    /// re-evaluates bare-alias ambiguity against the new set.
+    /// next routing lookup reflects the upstream's current loadout. Ignored
+    /// when model discovery is disabled, keeping configured models authoritative
+    /// even if a stale probe, startup seed, or reload carryover reaches here.
+    /// Also re-evaluates bare-alias ambiguity against the new set.
     pub fn set_models(&self, models: HashSet<String>) {
+        if !self.probe_models {
+            return;
+        }
         if let Ok(mut guard) = self.models.write() {
             *guard = models;
         }
@@ -1400,15 +1405,21 @@ impl UpstreamRegistry {
             for b in &pool.backends {
                 let live = b.live_models();
                 let detected = b.detected();
-                if !live.is_empty() || detected != Detected::default() {
-                    prior.insert((b.name.as_str(), b.base_url.as_str()), (live, detected));
+                let entry = prior
+                    .entry((b.name.as_str(), b.base_url.as_str()))
+                    .or_insert_with(|| (HashSet::new(), Detected::default()));
+                if b.probe_models_enabled() && !live.is_empty() {
+                    entry.0 = live;
+                }
+                if detected != Detected::default() {
+                    entry.1 = detected;
                 }
             }
         }
         for pool in data.pools.values() {
             for b in &pool.backends {
                 if let Some((live, detected)) = prior.get(&(b.name.as_str(), b.base_url.as_str())) {
-                    if !live.is_empty() {
+                    if b.probe_models_enabled() && !live.is_empty() {
                         b.set_models(live.clone());
                     }
                     b.set_detected(detected);
@@ -4594,6 +4605,23 @@ mod tests {
                 created_at: Timestamp::now(),
                 updated_at: Timestamp::now(),
             });
+            snap.pools.push(PoolRow {
+                name: "system-one".into(),
+                kind: "system_one".into(),
+                strategy: "least_inflight".into(),
+                fallback_offline: None,
+                compliance_gdpr: true,
+                compliance_nda: true,
+                enforce_limits: true,
+                sort_order: 1,
+                allowed_groups: Vec::new(),
+                backends: vec!["b".into()],
+                models: vec!["typesafe/jev-1.13".into()],
+                voices: vec![],
+                offer_voices: Vec::new(),
+                created_at: Timestamp::now(),
+                updated_at: Timestamp::now(),
+            });
             snap
         };
 
@@ -4608,6 +4636,10 @@ mod tests {
         reg.data().pools.get("chat").unwrap().backends[0]
             .set_models(HashSet::from(["live-model".to_string()]));
         assert!(reg.knows_model("live-model", PoolKind::Chat));
+        assert!(
+            reg.knows_model("typesafe/jev-1.13", PoolKind::SystemOne),
+            "a static System One model must not depend on the chat probe"
+        );
 
         // Reload the same topology: the rebuilt backend starts with an empty
         // live set, but the carry-over must keep "live-model" routable.
@@ -4617,6 +4649,10 @@ mod tests {
         assert!(
             reg.knows_model("live-model", PoolKind::Chat),
             "reload must carry over the live model set for an unchanged backend"
+        );
+        assert!(
+            reg.knows_model("typesafe/jev-1.13", PoolKind::SystemOne),
+            "reloading must not copy a chat catalog over a static System One model list"
         );
     }
 }

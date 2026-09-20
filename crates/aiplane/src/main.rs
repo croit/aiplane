@@ -790,9 +790,7 @@ fn load_session_secret(raw: &str) -> anyhow::Result<[u8; 32]> {
             bytes.len()
         );
     }
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes);
-    Ok(out)
+    Ok(bytes.try_into().expect("session key length was checked"))
 }
 
 /// Abort if the database we are about to open is *not* the one this deployment

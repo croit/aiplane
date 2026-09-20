@@ -193,10 +193,6 @@ async fn edit_presentation_live_round_trip() {
         .expect("fetch produced output.pptx from S3");
     assert!(fetched.bytes.starts_with(b"PK"), "output is not a zip/pptx");
     assert!(fetched.bytes.len() > 10_000, "output suspiciously small");
-    eprintln!(
-        "PASS edit_presentation: produced + delivered a {}-byte edited .pptx",
-        fetched.bytes.len()
-    );
 }
 
 #[tokio::test]

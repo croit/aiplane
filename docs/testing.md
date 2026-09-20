@@ -99,3 +99,33 @@ What belongs there rather than in the mocked suite: assertions about
 *someone else's* behaviour, which a mock cannot check because the mock is
 built from the same assumption. See
 [`fileshare-rag.md`](fileshare-rag.md#testing) for the current list.
+
+The separate Node suite `e2e/live/system-one.test.mjs` runs only through
+`mise run test-system-one-live`. It calls a running local gateway backed by a
+real System One provider and incurs inference charges. It checks model
+discovery, pinned and rolling IDs, all three decision primitives, and (with
+an owner session cookie) persisted token accounting. Configuration and
+credential handling are documented in the root [README](../README.md).
+It is deliberately outside the ordinary browser-test glob and offline CI.
+
+## Security scanning triage
+
+Run CodeQL against the changed source, not only the last committed revision.
+Use the default code-scanning suites for Rust and JavaScript/TypeScript, as
+configured in GitHub. Local results do not update GitHub alerts: those remain
+attached to the last uploaded analysis until a new scan or explicit triage.
+
+Do not weaken regression coverage or hide whole rules to achieve an empty
+report. These four existing alerts have specific false-positive rationales:
+
+| GitHub alert | Code | Rationale |
+| --- | --- | --- |
+| #52 | `crypto::sha256_hex`, called by `auth::token` | Gateway bearer tokens are generated from 32 OS-random bytes, not user-chosen passwords. SHA-256 is used for lookup of these high-entropy credentials; password hashing rules do not apply. Revisit if human-chosen credentials ever reach this path. |
+| #81 | `known_answers::a_ciphertext_from_an_earlier_release_still_opens` | The fixed nonce belongs to a historical decryption-only test vector. Production encryption generates a fresh nonce. |
+| #93 | `known_answers::key_derivation_is_byte_for_byte_stable` | A fixed session-secret input pins the exact HMAC derivation output across releases. It is not a deployed credential. |
+| #94 | `known_answers::a_ciphertext_from_an_earlier_release_still_opens` | The fixed AES key must match the historical ciphertext. Randomizing it would remove the compatibility check. |
+
+Preserve these known-answer vectors unchanged. Other round-trip fixtures use
+ephemeral keys; production entropy failure must never substitute a fixed key.
+Any dismissal should cite the individual rationale above, not suppress the
+rule or the source file.

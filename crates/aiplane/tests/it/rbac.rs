@@ -34,15 +34,13 @@ use aiplane_core::server::upstreams::{
     self,
     config::{BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
 };
-use aiplane_core::server::{Config, db};
+use aiplane_core::server::{Config, crypto, db};
 use aiplane_runtime::server::AppState;
 use common::Service as _;
 use rama::http::{Body, Method, Request, StatusCode};
 use serde_json::json;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
-
-const TEST_SECRET: [u8; 32] = [7u8; 32];
 
 /// A backend pointed at the mock, optionally advertising image-edit support.
 fn backend(name: &str, base_url: &str, supports_edit: bool) -> BackendConfig {
@@ -217,7 +215,10 @@ async fn fixture(restrict_kind: PoolKind, groups: &[&str]) -> (Fixture, Principa
         tools,
         resolver(),
     );
-    let sessions = SessionStore::new(db_pool, TEST_SECRET);
+    let session_secret = crypto::hex_decode(&crypto::random_hex(32))
+        .and_then(|bytes| bytes.try_into().ok())
+        .expect("random session secret has the requested length");
+    let sessions = SessionStore::new(db_pool, session_secret);
     let state = RamaState::new(
         app,
         sessions,

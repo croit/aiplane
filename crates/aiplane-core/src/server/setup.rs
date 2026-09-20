@@ -310,7 +310,7 @@ mod tests {
     }
 
     fn crypto() -> Crypto {
-        Crypto::from_key([7u8; 32])
+        Crypto::ephemeral()
     }
 
     async fn seed_a_user(pool: &Pool) {

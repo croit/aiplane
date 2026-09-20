@@ -9,6 +9,7 @@ use aiplane_core::server::db::token_models;
 use common::Service as _;
 use rama::http::{Body, Method, Request, StatusCode};
 use serde_json::{Value, json};
+use std::time::Duration;
 use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -79,6 +80,25 @@ async fn mount_selector(upstream: &MockServer, confidence: f64) {
         })))
         .mount(upstream)
         .await;
+}
+
+async fn wait_for_latest_decision_reason(db: &aiplane_core::server::db::Pool) -> String {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(reason) = sqlx::query_scalar(
+                "SELECT reason FROM automatic_route_decisions ORDER BY id DESC LIMIT 1",
+            )
+            .fetch_optional(db)
+            .await
+            .unwrap()
+            {
+                return reason;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("automatic routing decision was not persisted within 2s")
 }
 
 #[tokio::test]
@@ -165,11 +185,7 @@ async fn shadow_route_records_the_suggestion_but_sends_the_fallback() {
             .and_then(|value| value.to_str().ok()),
         Some("expert-model")
     );
-    let reason: String =
-        sqlx::query_scalar("SELECT reason FROM automatic_route_decisions ORDER BY id DESC LIMIT 1")
-            .fetch_one(&db)
-            .await
-            .unwrap();
+    let reason = wait_for_latest_decision_reason(&db).await;
     assert_eq!(reason, "shadow");
 }
 

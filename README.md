@@ -719,6 +719,28 @@ openai api chat_completions.create -m <model-id> -g user "Hello"
 
 **3 — Or just use the chat UI** at `/chat`: pick a model, attach files, and chat with streaming replies. Conversations persist server-side and resume on reconnect.
 
+### Testing System One against a real upstream
+
+Configure an OpenRouter backend with base URL `https://openrouter.ai/api/v1`
+and its API key, then assign it to a `system_one` pool listing
+`typesafe/jev-1.13` and/or `~typesafe/jev-latest`. The same backend may also
+belong to a chat pool: its chat discovery cannot override the System One
+pool's configured models. Apply the topology and create a gateway user token
+with access to that pool and those models.
+
+`mise run test-system-one-live` explicitly exercises the running gateway's
+model listing, model retrieval, and all three decision primitives against the
+real upstream. It requires `SYSTEM_ONE_GATEWAY_TOKEN`, or
+`SYSTEM_ONE_TOKEN_FILE` naming a private JSON file with a `bearer` property.
+`SYSTEM_ONE_GATEWAY_URL` defaults to `http://127.0.0.1:8080`;
+`SYSTEM_ONE_MODELS` is a comma-separated list defaulting to the two IDs above.
+This test incurs upstream inference charges and is separate from the offline
+test suite and browser E2E suite. The upstream key stays in the gateway;
+clients use only their gateway token. To also verify persisted token usage,
+provide the token owner's session cookie via `SYSTEM_ONE_SESSION_COOKIE` or a
+`sessionCookie` property in the private token file. Without a session, the
+usage-accounting check is explicitly skipped.
+
 ### HTTP endpoints
 
 | Endpoint | Auth | Purpose |
@@ -732,7 +754,7 @@ openai api chat_completions.create -m <model-id> -g user "Hello"
 | `POST /v1/images/edits` | Bearer token | Image editing (multipart: `image` + `prompt`); routes to an `image`-kind pool. |
 | `POST /v1/audio/transcriptions` | Bearer token | Whisper-style transcription (multipart upload). |
 | `POST /v1/audio/speech` | Bearer token | Text-to-speech (OpenAI-shaped). Only served when a `speech` upstream pool is configured. |
-| `GET /v1/models` | Bearer token | All discovered models across pools (deduplicated by id). |
+| `GET /v1/models` | Bearer token | Permitted public models across pools, discovered or explicitly configured (deduplicated by id). |
 | `GET /v1/sandbox/files/{run}/{filename}` | Bearer token | Download a file a sandbox run produced for the caller (scoped to your user). |
 | `HEAD /api/hello` | none | Connection-warming probe an Anthropic-format client sends at startup. |
 | `GET /healthz`, `GET /readyz` | none | Liveness / readiness probes. |

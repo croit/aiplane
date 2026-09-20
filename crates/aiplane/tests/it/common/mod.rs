@@ -171,14 +171,17 @@ pub async fn state_with_automatic_route_pools(upstream_url: &str) -> RamaState {
                 enforce_limits: true,
                 kind,
                 strategy: PickerStrategy::RoundRobin,
-                models: Vec::new(),
-                backend: vec![mock_backend(name, upstream_url)],
+                models: if kind == PoolKind::SystemOne {
+                    vec!["jev-model".into()]
+                } else {
+                    Vec::new()
+                },
+                backend: vec![mock_backend("openrouter", upstream_url)],
             },
         );
     }
     let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
     seed_pool_models(&registry, "chat", 0, &["fast-model", "expert-model"]);
-    seed_pool_models(&registry, "selector", 0, &["jev-model"]);
     state_from_registry(db_pool, registry)
 }
 

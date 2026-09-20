@@ -1007,7 +1007,7 @@ mod tests {
 
     async fn manager() -> Arc<McpConnectionManager> {
         let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
-        McpConnectionManager::new(pool, Arc::new(Crypto::from_key([7u8; 32])))
+        McpConnectionManager::new(pool, Arc::new(Crypto::ephemeral()))
     }
 
     fn global_connector(auth: AuthKind) -> Connector {
@@ -1259,9 +1259,9 @@ mod tests {
         .execute(&mgr.db)
         .await
         .unwrap();
-        // Seal the token under a DIFFERENT key than the manager's ([7; 32]), so
+        // Seal the token under a different ephemeral key than the manager's, so
         // the manager can't open it — exactly the production key-drift scenario.
-        let sealed = Crypto::from_key([1u8; 32]).seal_str("stale-token").unwrap();
+        let sealed = Crypto::ephemeral().seal_str("stale-token").unwrap();
         user_mcp::upsert_connection(
             &mgr.db,
             user_mcp::NewConnection {

@@ -1121,8 +1121,6 @@ mod tests {
         let started = std::time::Instant::now();
         let report = p.probe().await.expect("the live list probes");
         println!("  probe took     {:?}", started.elapsed());
-        println!("  account        {:?}", report.account);
-        println!("  server         {:?}", report.server);
         println!("  messages seen  {}", report.root_entries);
         assert!(
             report.root_entries > 0,

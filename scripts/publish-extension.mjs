@@ -41,6 +41,8 @@ import { readFile } from 'node:fs/promises';
 const API = 'https://chromewebstore.googleapis.com';
 const SCOPE = 'https://www.googleapis.com/auth/chromewebstore';
 
+class PublishError extends Error {}
+
 /** base64url, which JWTs use and Node's base64 is one replace away from. */
 const b64url = (input) =>
 	Buffer.from(input).toString('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
@@ -78,11 +80,7 @@ async function accessToken(key) {
 	});
 	const body = await response.json().catch(() => ({}));
 	if (!response.ok) {
-		// Google's error here is genuinely informative (wrong audience, clock
-		// skew, key revoked), so pass it through rather than paraphrasing.
-		throw new Error(
-			`could not get a token for ${key.client_email}: ${response.status} ${JSON.stringify(body)}`
-		);
+		throw new PublishError(`could not get a Chrome Web Store access token: HTTP ${response.status}`);
 	}
 	return body.access_token;
 }
@@ -102,7 +100,7 @@ async function call(url, token, init = {}) {
 
 async function main() {
 	const zip = process.argv[2];
-	if (!zip) throw new Error('usage: publish-extension.mjs <path-to-zip> | --check');
+	if (!zip) throw new PublishError('usage: publish-extension.mjs <path-to-zip> | --check');
 	const checkOnly = zip === '--check';
 
 	const { CWS_SERVICE_ACCOUNT, CWS_PUBLISHER_ID, CWS_EXTENSION_ID } = process.env;
@@ -112,25 +110,24 @@ async function main() {
 		? ['CWS_SERVICE_ACCOUNT']
 		: ['CWS_SERVICE_ACCOUNT', 'CWS_PUBLISHER_ID', 'CWS_EXTENSION_ID'];
 	const missing = required.filter((name) => !process.env[name]);
-	if (missing.length > 0) throw new Error(`missing ${missing.join(', ')}`);
+	if (missing.length > 0) {
+		throw new PublishError(`missing ${missing.join(', ')}`);
+	}
 
 	let key;
 	try {
 		key = JSON.parse(CWS_SERVICE_ACCOUNT);
-	} catch (err) {
+	} catch {
 		// By far the most likely failure, and the least obvious one downstream.
-		throw new Error(
-			`CWS_SERVICE_ACCOUNT is not valid JSON (${err.message}). It must be the ` +
-				`whole downloaded key file, unedited.`
-		);
+		throw new PublishError('CWS_SERVICE_ACCOUNT is not valid JSON; paste the whole key file');
 	}
 	if (!key.private_key?.includes('BEGIN PRIVATE KEY')) {
-		throw new Error('CWS_SERVICE_ACCOUNT has no usable private_key — was it pasted whole?');
+		throw new PublishError('CWS_SERVICE_ACCOUNT has no usable private_key; paste the whole key file');
 	}
 
 	const token = await accessToken(key);
 	if (checkOnly) {
-		console.log(`credentials work: ${key.client_email} authenticated against the store API`);
+		console.log('credentials work: authenticated against the Chrome Web Store API');
 		return;
 	}
 	const item = `publishers/${CWS_PUBLISHER_ID}/items/${CWS_EXTENSION_ID}`;
@@ -162,6 +159,10 @@ async function main() {
 }
 
 main().catch((err) => {
-	console.error(String(err?.message ?? err));
+	console.error(
+		err instanceof PublishError
+			? err.message
+			: 'Chrome Web Store publication failed unexpectedly; no sensitive error details were logged'
+	);
 	process.exit(1);
 });

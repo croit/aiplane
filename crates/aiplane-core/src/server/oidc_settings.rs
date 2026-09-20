@@ -157,7 +157,7 @@ mod tests {
         // defaults there starts requesting `groups`, and a provider that does
         // not know that scope rejects the whole authorization request.
         let pool = open(Path::new(":memory:")).await.unwrap();
-        let crypto = Crypto::from_key([9u8; 32]);
+        let crypto = Crypto::ephemeral();
         set_params(
             &pool,
             &crypto,
@@ -192,7 +192,7 @@ mod tests {
     #[tokio::test]
     async fn params_round_trip_with_the_secret_sealed() {
         let pool = open(Path::new(":memory:")).await.unwrap();
-        let crypto = Crypto::from_key([3u8; 32]);
+        let crypto = Crypto::ephemeral();
         let want = OidcParams {
             issuer: "https://id.example.com/realms/x".into(),
             client_id: "gw".into(),
@@ -221,9 +221,10 @@ mod tests {
         // The at-rest key changed. Sign-in must report "not configured" (which
         // `restore-setup` can fix) rather than surfacing a decryption error.
         let pool = open(Path::new(":memory:")).await.unwrap();
+        let original = Crypto::ephemeral();
         set_params(
             &pool,
-            &Crypto::from_key([1u8; 32]),
+            &original,
             &OidcParams {
                 issuer: "https://id.example.com".into(),
                 client_id: "gw".into(),
@@ -235,18 +236,14 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(
-            params(&pool, &Crypto::from_key([2u8; 32]))
-                .await
-                .unwrap()
-                .is_none()
-        );
+        let replacement = Crypto::ephemeral();
+        assert!(params(&pool, &replacement).await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn clearing_the_roles_claim_removes_the_row() {
         let pool = open(Path::new(":memory:")).await.unwrap();
-        let crypto = Crypto::from_key([4u8; 32]);
+        let crypto = Crypto::ephemeral();
         let mut p = OidcParams {
             issuer: "https://id.example.com".into(),
             client_id: "gw".into(),

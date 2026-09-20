@@ -34,6 +34,10 @@ The routes are wired in `crates/aiplane/src/rama_server/router.rs`; the `/v1/*` 
 
 `POST /v1/systemone` preserves TypeSafe's request and response contract. The gateway reads only the `model` field for routing, rewrites it when an alias resolves, and forwards every other field without translation. That keeps `noul`, `choice`, `score`, `instructions`, `criteria`, probabilities, confidence, and future protocol additions under the upstream contract rather than a gateway-owned schema.
 
+The selected backend receives `POST <base_url>/systemone`; System One requests are never translated into chat completions. One provider backend can belong to both the `chat` and `system_one` pools, sharing its identity, base URL, and API key. The explicit System One model allowlist belongs to the `system_one` pool, and pool-scoped model state keeps its catalog and wire protocol isolated from chat.
+
+Both rolling and pinned provider IDs are ordinary model IDs. For example, an operator can expose `jev-latest` as an alias for `~typesafe/jev-latest` while also offering the version-pinned `typesafe/jev-1.13`. `/v1/models` lists the routable alias and real IDs subject to the caller's pool and token restrictions.
+
 The official TypeSafe JavaScript SDK accepts a custom base URL, so an application can use its normal client against the gateway:
 
 ```ts
@@ -71,7 +75,12 @@ Every `/v1/*` call must send `Authorization: Bearer gwk_<64 hex chars>`. AIplane
 
 The client's own `Authorization` header is never forwarded upstream — it is dropped and the configured backend key (if any) is injected in its place. Token format and storage details are in [`auth.md`](auth.md).
 
-There is **no per-model RBAC gate** on the proxy paths: any authenticated caller may address any model AIplane serves. RBAC applies to *tools* only — it (together with the user's `/tools` toggles and the token's per-capability switches) decides which gateway tools get advertised and injected into a chat completion. A denied tool is simply never offered; it does not produce a `403`.
+Model access on proxy paths has two cumulative gates:
+
+- A pool's `allowed_groups` controls which gateway groups can discover and route its models. Admins bypass this operator policy. A model available only through an inaccessible pool is hidden as `404 model_not_found` in both routing and model discovery.
+- A bearer token's model allowlist can narrow its owner's access further. Admin status does not bypass a credential's own allowlist. An excluded model is omitted from `/v1/models` and direct routing returns `403 model_not_allowed`.
+
+RBAC also applies to *tools*: together with the user's `/tools` toggles and the token's per-capability switches, it decides which gateway tools get advertised and injected into a chat completion. A denied tool is simply never offered; it does not itself produce a `403`.
 
 ## Model field and alias resolution
 
@@ -104,7 +113,7 @@ Beyond the relayed upstream headers, AIplane may add:
 
 ## Header handling
 
-Hop-by-hop and identity headers are filtered in both directions. Requests drop `authorization`, `host`, `content-length`, `connection`, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `te`, `trailer`, `transfer-encoding`, `upgrade`, `expect` before forwarding. Responses drop the same set minus `authorization`/`host`/`expect`. Everything else is passed through.
+Hop-by-hop and identity headers are filtered in both directions. Requests drop `authorization`, `host`, `content-length`, `connection`, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `te`, `trailer`, `transfer-encoding`, `upgrade`, `expect`, and the client's `accept-encoding` before forwarding. AIplane sends `Accept-Encoding: identity` upstream because it inspects buffered JSON responses for usage accounting and streaming responses for loop protection; forwarding a client's gzip preference would make those bytes opaque while the client silently decompressed them. Responses drop the same hop-by-hop set minus `authorization`/`host`/`expect`. Other end-to-end headers are passed through.
 
 ## Schema
 

@@ -116,10 +116,10 @@ fn encrypt_with(
     // Step 2: the RFC 8188 content-encryption key + nonce, salted with our
     // random per-message salt.
     let hk = Hkdf::<Sha256>::new(Some(&salt), &ikm);
-    let mut cek = [0u8; 16];
+    let mut cek = aes_gcm::Key::<Aes128Gcm>::default();
     hk.expand(b"Content-Encoding: aes128gcm\0", &mut cek)
         .map_err(|_| EncryptError::Hkdf)?;
-    let mut nonce = [0u8; 12];
+    let mut nonce = Nonce::<Aes128Gcm>::default();
     hk.expand(b"Content-Encoding: nonce\0", &mut nonce)
         .map_err(|_| EncryptError::Hkdf)?;
 
@@ -128,9 +128,9 @@ fn encrypt_with(
     record.extend_from_slice(plaintext);
     record.push(0x02);
 
-    let cipher = Aes128Gcm::new_from_slice(&cek).map_err(|_| EncryptError::Aead)?;
+    let cipher = Aes128Gcm::new(&cek);
     let ciphertext = cipher
-        .encrypt(&Nonce::<Aes128Gcm>::from(nonce), record.as_slice())
+        .encrypt(&nonce, record.as_slice())
         .map_err(|_| EncryptError::Aead)?;
 
     // Frame: salt(16) ‖ rs(u32 BE) ‖ idlen(u8) ‖ keyid(as_public) ‖ ciphertext.
@@ -173,16 +173,14 @@ mod tests {
             .unwrap();
 
         let hk = Hkdf::<Sha256>::new(Some(salt), &ikm);
-        let mut cek = [0u8; 16];
+        let mut cek = aes_gcm::Key::<Aes128Gcm>::default();
         hk.expand(b"Content-Encoding: aes128gcm\0", &mut cek)
             .unwrap();
-        let mut nonce = [0u8; 12];
+        let mut nonce = Nonce::<Aes128Gcm>::default();
         hk.expand(b"Content-Encoding: nonce\0", &mut nonce).unwrap();
 
-        let cipher = Aes128Gcm::new_from_slice(&cek).unwrap();
-        let mut plain = cipher
-            .decrypt(&Nonce::<Aes128Gcm>::from(nonce), ciphertext)
-            .unwrap();
+        let cipher = Aes128Gcm::new(&cek);
+        let mut plain = cipher.decrypt(&nonce, ciphertext).unwrap();
         assert_eq!(plain.pop(), Some(0x02), "last-record delimiter");
         plain
     }
@@ -241,17 +239,13 @@ mod tests {
             .expand(&key_info, &mut ikm)
             .unwrap();
         let hk = Hkdf::<Sha256>::new(Some(&body[0..16]), &ikm);
-        let mut cek = [0u8; 16];
+        let mut cek = aes_gcm::Key::<Aes128Gcm>::default();
         hk.expand(b"Content-Encoding: aes128gcm\0", &mut cek)
             .unwrap();
-        let mut nonce = [0u8; 12];
+        let mut nonce = Nonce::<Aes128Gcm>::default();
         hk.expand(b"Content-Encoding: nonce\0", &mut nonce).unwrap();
-        let cipher = Aes128Gcm::new_from_slice(&cek).unwrap();
-        assert!(
-            cipher
-                .decrypt(&Nonce::<Aes128Gcm>::from(nonce), &body[21 + POINT_LEN..])
-                .is_err()
-        );
+        let cipher = Aes128Gcm::new(&cek);
+        assert!(cipher.decrypt(&nonce, &body[21 + POINT_LEN..]).is_err());
     }
 
     #[test]

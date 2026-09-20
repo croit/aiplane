@@ -19,7 +19,7 @@
 //! after a restart (reconnect / re-enter them).
 
 use aes_gcm::Aes256Gcm;
-use aes_gcm::aead::{Aead, KeyInit, Nonce};
+use aes_gcm::aead::{Aead, Generate, KeyInit, Nonce};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hmac::{Hmac, Mac};
@@ -107,10 +107,7 @@ pub(crate) fn derive(session_secret: &[u8; 32], label: &[u8]) -> [u8; 32] {
     let mut mac =
         <Hmac<Sha256>>::new_from_slice(session_secret).expect("HMAC accepts any key length");
     mac.update(label);
-    let derived = mac.finalize().into_bytes();
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&derived);
-    key
+    mac.finalize().into_bytes().into()
 }
 
 fn open_with(key: &[u8; 32], nonce: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
@@ -135,12 +132,7 @@ impl Crypto {
     /// [`Crypto::from_env_or_session`]. Stored secrets sealed under an
     /// ephemeral key won't survive a restart — acceptable for tests/dev.
     pub fn ephemeral() -> Self {
-        let mut key = [0u8; 32];
-        // OsRng failing is catastrophic and vanishingly rare; fall back to a
-        // fixed key rather than panic so a misconfigured host still boots.
-        if rand::rngs::SysRng.try_fill_bytes(&mut key).is_err() {
-            key = [0u8; 32];
-        }
+        let key = <[u8; 32]>::generate();
         Self {
             key,
             legacy: Vec::new(),
@@ -155,10 +147,9 @@ impl Crypto {
         if let Ok(raw) = crate::server::env::var("AIPLANE_ENCRYPTION_KEY")
             && !raw.is_empty()
         {
-            match hex_decode(&raw) {
-                Some(bytes) if bytes.len() == 32 => {
-                    let mut key = [0u8; 32];
-                    key.copy_from_slice(&bytes);
+            let key: Option<[u8; 32]> = hex_decode(&raw).and_then(|bytes| bytes.try_into().ok());
+            match key {
+                Some(key) => {
                     return Self {
                         key,
                         legacy: Vec::new(),
@@ -195,16 +186,13 @@ impl Crypto {
     /// Encrypt `plaintext` under a fresh random nonce.
     pub fn seal(&self, plaintext: &[u8]) -> Result<Sealed, CryptoError> {
         let cipher = Aes256Gcm::new_from_slice(&self.key).map_err(|_| CryptoError::Encrypt)?;
-        let mut nonce_bytes = [0u8; 12];
-        rand::rngs::SysRng
-            .try_fill_bytes(&mut nonce_bytes)
-            .map_err(|e| CryptoError::Nonce(e.to_string()))?;
-        let nonce = Nonce::<Aes256Gcm>::from(nonce_bytes);
+        let nonce =
+            Nonce::<Aes256Gcm>::try_generate().map_err(|e| CryptoError::Nonce(e.to_string()))?;
         let ciphertext = cipher
             .encrypt(&nonce, plaintext)
             .map_err(|_| CryptoError::Encrypt)?;
         Ok(Sealed {
-            nonce: nonce_bytes.to_vec(),
+            nonce: nonce.to_vec(),
             ciphertext,
         })
     }
@@ -371,7 +359,11 @@ mod tests {
     use super::*;
 
     fn crypto() -> Crypto {
-        Crypto::from_key([7u8; 32])
+        Crypto::ephemeral()
+    }
+
+    fn session_secret() -> [u8; 32] {
+        <[u8; 32]>::generate()
     }
 
     #[test]
@@ -397,8 +389,8 @@ mod tests {
 
     #[test]
     fn wrong_key_fails_to_open() {
-        let a = Crypto::from_key([1u8; 32]);
-        let b = Crypto::from_key([2u8; 32]);
+        let a = Crypto::ephemeral();
+        let b = Crypto::ephemeral();
         let sealed = a.seal_str("secret").unwrap();
         assert!(b.open(&sealed.nonce, &sealed.ciphertext).is_err());
     }
@@ -413,7 +405,7 @@ mod tests {
 
     #[test]
     fn derivation_from_session_is_stable() {
-        let secret = [9u8; 32];
+        let secret = session_secret();
         let a = Crypto::from_env_or_session(&secret);
         let b = Crypto::from_env_or_session(&secret);
         let sealed = a.seal_str("x").unwrap();
@@ -424,7 +416,9 @@ mod tests {
     #[test]
     fn bad_nonce_length_rejected() {
         let c = crypto();
-        assert!(c.open(&[0u8; 8], &[0u8; 32]).is_err());
+        let nonce = <[u8; 8]>::generate();
+        let ciphertext = <[u8; 32]>::generate();
+        assert!(c.open(&nonce, &ciphertext).is_err());
     }
 
     /// A value sealed under ANY retired derivation label must still open.
@@ -442,7 +436,7 @@ mod tests {
     /// through the gap. A future rotation is covered by this test for free.
     #[test]
     fn a_value_sealed_under_any_retired_label_still_opens() {
-        let session = [42u8; 32];
+        let session = session_secret();
         let now = Crypto::from_session(&session);
 
         assert!(
@@ -478,7 +472,7 @@ mod tests {
     /// need rewriting, and the re-seal pass would skip them forever.
     #[test]
     fn every_label_derives_a_distinct_key() {
-        let session = [42u8; 32];
+        let session = session_secret();
         let mut keys: Vec<[u8; 32]> = vec![derive(&session, LABEL)];
         for label in RETIRED_LABELS {
             keys.push(derive(&session, label));
@@ -491,7 +485,8 @@ mod tests {
 
     #[test]
     fn a_value_sealed_under_the_current_label_needs_no_reseal() {
-        let now = Crypto::from_session(&[42u8; 32]);
+        let session = session_secret();
+        let now = Crypto::from_session(&session);
         let sealed = now.seal(b"fresh").unwrap();
         assert_eq!(
             now.open(&sealed.nonce, &sealed.ciphertext).unwrap(),
@@ -504,10 +499,11 @@ mod tests {
     /// still fails, and is not misreported as a migration.
     #[test]
     fn an_unrelated_key_is_not_mistaken_for_a_legacy_seal() {
-        let stranger = Crypto::from_key([9u8; 32]);
+        let stranger = Crypto::ephemeral();
         let sealed = stranger.seal(b"other deployment").unwrap();
 
-        let now = Crypto::from_session(&[42u8; 32]);
+        let session = session_secret();
+        let now = Crypto::from_session(&session);
         assert!(now.open(&sealed.nonce, &sealed.ciphertext).is_err());
         assert!(!now.is_legacy_sealed(&sealed.nonce, &sealed.ciphertext));
     }
@@ -517,18 +513,18 @@ mod tests {
     /// fallback would be silently widening which keys can read a database.
     #[test]
     fn an_explicit_key_has_no_legacy_fallback() {
-        let session = [42u8; 32];
+        let session = session_secret();
         let old = Crypto::from_key(derive(&session, RETIRED_LABELS[0]));
         let sealed = old.seal(b"secret").unwrap();
 
-        let explicit = Crypto::from_key([1u8; 32]);
+        let explicit = Crypto::ephemeral();
         assert!(explicit.legacy.is_empty());
         assert!(explicit.open(&sealed.nonce, &sealed.ciphertext).is_err());
     }
 
     #[test]
     fn the_string_form_reports_a_legacy_seal_too() {
-        let session = [42u8; 32];
+        let session = session_secret();
         for label in RETIRED_LABELS {
             let old = Crypto::from_key(derive(&session, label));
             let stored = old.seal_to_string("vapid-ish").unwrap();

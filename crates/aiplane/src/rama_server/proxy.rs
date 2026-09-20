@@ -483,7 +483,7 @@ async fn forward_one_round_once(
     let serialized = serde_json::to_vec(&body_value)
         .map_err(|e| LoopError::Upstream(format!("serialise: {e}")))?;
     let url = format!("{}/chat/completions", acquired.backend().base_url);
-    let mut http = state.http.post(&url);
+    let mut http = state.http.post(&url).header("accept-encoding", "identity");
     for (name, value) in headers {
         if is_request_header_forwarded(name) {
             http = http.header(name.as_str(), value);
@@ -2109,7 +2109,10 @@ async fn forward(
     let started = Instant::now();
     let request_usage = request_units(rec.kind, &body);
 
-    let mut req = state.http.request(method, &url);
+    let mut req = state
+        .http
+        .request(method, &url)
+        .header("accept-encoding", "identity");
     for (name, value) in &client_headers {
         if is_request_header_forwarded(name) {
             req = req.header(name.as_str(), value);
@@ -2292,7 +2295,10 @@ async fn forward_streaming(
     // tokens/cost); hide it from the client if they didn't opt in.
     let (body, suppress_usage_frame) = force_usage_in_body(body);
 
-    let mut req = state.http.request(method, &url);
+    let mut req = state
+        .http
+        .request(method, &url)
+        .header("accept-encoding", "identity");
     for (name, value) in &client_headers {
         if is_request_header_forwarded(name) {
             req = req.header(name.as_str(), value);
@@ -3063,10 +3069,6 @@ async fn drive_streaming_tool_loop_inner(
                     .post(&url)
                     .header("content-type", "application/json")
                     .header("accept", "text/event-stream")
-                    // `accept-encoding: identity` prevents reqwest from
-                    // requesting gzip — a compressed SSE response is
-                    // buffered until the upstream closes, which kills
-                    // streaming.
                     .header("accept-encoding", "identity")
                     .body(serialized);
                 for (name, value) in &client_headers {
@@ -3554,6 +3556,9 @@ const REQUEST_HEADER_DENYLIST: &[&str] = &[
     // per-session identifier for no reason. It is consumed here and stops here.
     aiplane_core::server::upstreams::affinity::AFFINITY_HEADER,
     aiplane_core::server::upstreams::affinity::LEGACY_AFFINITY_HEADER,
+    // We inspect upstream bytes for usage and SSE frames, so every outbound
+    // path requests identity explicitly and a client preference cannot replace it.
+    "accept-encoding",
 ];
 
 const RESPONSE_HEADER_DENYLIST: &[&str] = &[

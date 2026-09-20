@@ -226,6 +226,9 @@ async fn seed_remembered_models(registry: &UpstreamRegistry, db: &Pool) {
     };
     for pool in registry.pools() {
         for backend in &pool.backends {
+            if !backend.probe_models_enabled() {
+                continue;
+            }
             if !backend.live_models().is_empty() {
                 continue;
             }
@@ -755,7 +758,7 @@ mod tests {
 
     // --- probe_models gate ---------------------------------------------------
 
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -879,6 +882,194 @@ mod tests {
             std::collections::HashSet::from(["glm-image".to_string()]),
             "configured image model must remain authoritative"
         );
+    }
+
+    #[tokio::test]
+    async fn shared_backend_keeps_system_one_catalog_isolated_across_its_lifecycle() {
+        use crate::server::db;
+        use crate::server::db::upstreams_config::{BackendRow, PoolRow};
+        use jiff::Timestamp;
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "object": "list",
+                "data": [{ "id": "fresh-chat" }]
+            })))
+            .mount(&server)
+            .await;
+
+        let db = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let now = Timestamp::now();
+        upstreams_config::upsert_backend(
+            &db,
+            &BackendRow {
+                name: "openrouter".into(),
+                base_url: server.uri(),
+                api_key_env: None,
+                api_key_ct: None,
+                api_key_nonce: None,
+                weight: 1,
+                max_inflight: 16,
+                health_path: "/models".into(),
+                probe_models: true,
+                supports_edit: false,
+                enabled: true,
+                models: Vec::new(),
+                aliases: Vec::new(),
+                created_at: now,
+                updated_at: now,
+            },
+        )
+        .await
+        .unwrap();
+        for (name, kind, sort_order, models) in [
+            ("chat", "chat", 0, Vec::new()),
+            (
+                "system-one",
+                "system_one",
+                1,
+                vec!["typesafe/jev-1.13".to_string()],
+            ),
+        ] {
+            upstreams_config::upsert_pool(
+                &db,
+                &PoolRow {
+                    name: name.into(),
+                    kind: kind.into(),
+                    strategy: "least_inflight".into(),
+                    fallback_offline: None,
+                    compliance_gdpr: true,
+                    compliance_nda: true,
+                    enforce_limits: true,
+                    sort_order,
+                    allowed_groups: Vec::new(),
+                    backends: vec!["openrouter".into()],
+                    models,
+                    voices: Vec::new(),
+                    offer_voices: Vec::new(),
+                    created_at: now,
+                    updated_at: now,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        upstreams_config::save_probed_models(
+            &db,
+            "openrouter",
+            &HashSet::from(["cached-chat".to_string()]),
+        )
+        .await
+        .unwrap();
+
+        let snapshot = upstreams_config::load_snapshot(&db).await.unwrap();
+        let crypto = crate::server::crypto::Crypto::ephemeral();
+        let registry = UpstreamRegistry::from_snapshot(&snapshot, &crypto).unwrap();
+        seed_remembered_models(&registry, &db).await;
+
+        let chat = registry
+            .pools()
+            .into_iter()
+            .find(|pool| pool.kind == PoolKind::Chat)
+            .unwrap()
+            .backends[0]
+            .clone();
+        let system_one = registry
+            .pools()
+            .into_iter()
+            .find(|pool| pool.kind == PoolKind::SystemOne)
+            .unwrap()
+            .backends[0]
+            .clone();
+        assert_eq!(chat.live_models(), HashSet::from(["cached-chat".into()]));
+        assert_eq!(
+            chat.models_snapshot(),
+            HashSet::from(["cached-chat".into()])
+        );
+        assert!(chat.withheld_models().is_empty());
+        assert!(system_one.live_models().is_empty());
+        assert_eq!(
+            system_one.models_snapshot(),
+            HashSet::from(["typesafe/jev-1.13".into()])
+        );
+        assert!(system_one.withheld_models().is_empty());
+
+        system_one.set_models(HashSet::from(["cached-chat".into()]));
+        assert!(
+            system_one.live_models().is_empty(),
+            "the model-state boundary must reject discovery for a pinned catalog"
+        );
+
+        assert!(registry.route("cached-chat", PoolKind::Chat).is_ok());
+        assert!(
+            registry
+                .route("typesafe/jev-1.13", PoolKind::SystemOne)
+                .is_ok()
+        );
+        assert!(registry.route("cached-chat", PoolKind::SystemOne).is_err());
+
+        assert!(matches!(
+            probe_once(&reqwest::Client::new(), "chat", &chat, Some(&db)).await,
+            ProbeOutcome::AliveWithModels
+        ));
+        assert!(matches!(
+            probe_once(
+                &reqwest::Client::new(),
+                "system-one",
+                &system_one,
+                Some(&db),
+            )
+            .await,
+            ProbeOutcome::AliveNoData
+        ));
+        assert_eq!(chat.models_snapshot(), HashSet::from(["fresh-chat".into()]));
+        assert!(chat.withheld_models().is_empty());
+        assert!(system_one.live_models().is_empty());
+        assert_eq!(
+            system_one.models_snapshot(),
+            HashSet::from(["typesafe/jev-1.13".into()])
+        );
+        assert!(system_one.withheld_models().is_empty());
+        assert!(registry.route("fresh-chat", PoolKind::Chat).is_ok());
+        assert!(registry.route("fresh-chat", PoolKind::SystemOne).is_err());
+
+        registry.reload(&snapshot, &crypto).unwrap();
+        let reloaded_chat = registry
+            .pools()
+            .into_iter()
+            .find(|pool| pool.kind == PoolKind::Chat)
+            .unwrap()
+            .backends[0]
+            .clone();
+        let reloaded_system_one = registry
+            .pools()
+            .into_iter()
+            .find(|pool| pool.kind == PoolKind::SystemOne)
+            .unwrap()
+            .backends[0]
+            .clone();
+        assert_eq!(
+            reloaded_chat.models_snapshot(),
+            HashSet::from(["fresh-chat".into()]),
+            "reload must carry the live chat catalog across"
+        );
+        assert!(reloaded_chat.withheld_models().is_empty());
+        assert!(reloaded_system_one.live_models().is_empty());
+        assert_eq!(
+            reloaded_system_one.models_snapshot(),
+            HashSet::from(["typesafe/jev-1.13".into()]),
+            "reload must leave the System One catalog pinned to config"
+        );
+        assert!(reloaded_system_one.withheld_models().is_empty());
+        assert!(registry.route("fresh-chat", PoolKind::Chat).is_ok());
+        assert!(
+            registry
+                .route("typesafe/jev-1.13", PoolKind::SystemOne)
+                .is_ok()
+        );
+        assert!(registry.route("fresh-chat", PoolKind::SystemOne).is_err());
     }
 
     #[tokio::test]

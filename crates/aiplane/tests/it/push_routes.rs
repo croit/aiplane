@@ -36,7 +36,7 @@ async fn state_with_push() -> RamaState {
     let state = common::state_with_chat_pool("http://unused.invalid").await;
     let sender = PushSender::new(
         &state.db,
-        &Crypto::from_key([1u8; 32]),
+        &Crypto::ephemeral(),
         "mailto:test@example.com".to_string(),
     )
     .await

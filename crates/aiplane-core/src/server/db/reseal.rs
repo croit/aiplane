@@ -192,18 +192,19 @@ mod tests {
     /// build uses. `RETIRED_LABELS[0]` rather than a literal, so a future
     /// rotation moves these tests with it instead of silently exercising a
     /// label nothing writes any more.
-    fn keys() -> (Crypto, Crypto) {
-        let session = [3u8; 32];
+    fn keys() -> (Crypto, Crypto, Crypto) {
+        let session = rand::random();
         (
             Crypto::from_key(derive(&session, RETIRED_LABELS[0])),
             Crypto::from_session(&session),
+            Crypto::from_key(derive(&session, LABEL)),
         )
     }
 
     #[tokio::test]
     async fn a_legacy_sealed_backend_key_is_rewritten_under_the_current_key() {
         let pool = fresh().await;
-        let (old, now) = keys();
+        let (old, now, no_fallback) = keys();
         let sealed = old.seal(b"sk-upstream").unwrap();
         sqlx::query(
             "INSERT INTO backends \
@@ -226,7 +227,6 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        let no_fallback = Crypto::from_key(derive(&[3u8; 32], LABEL));
         assert_eq!(no_fallback.open(&nonce, &ct).unwrap(), b"sk-upstream");
 
         // And it is idempotent.
@@ -236,7 +236,7 @@ mod tests {
     #[tokio::test]
     async fn a_plain_app_setting_is_left_alone() {
         let pool = fresh().await;
-        let (_, now) = keys();
+        let (_, now, _) = keys();
         // Contains a dot, so it matches the LIKE filter, but is not ciphertext.
         crate::server::db::app_settings::set(&pool, "default_model.chat", "qwen.72b")
             .await
@@ -256,7 +256,7 @@ mod tests {
     #[tokio::test]
     async fn a_legacy_sealed_setting_is_rewritten() {
         let pool = fresh().await;
-        let (old, now) = keys();
+        let (old, now, no_fallback) = keys();
         let stored = old.seal_to_string("vapid-private").unwrap();
         crate::server::db::app_settings::set(&pool, "push.vapid.private", &stored)
             .await
@@ -267,7 +267,6 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let no_fallback = Crypto::from_key(derive(&[3u8; 32], LABEL));
         assert_eq!(
             no_fallback.open_from_string(&after).as_deref(),
             Some("vapid-private")
