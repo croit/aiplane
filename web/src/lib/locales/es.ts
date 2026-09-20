@@ -1035,6 +1035,7 @@ export const es: Catalog = {
  "rag-status-indexing": "indexando",
  "rag-status-pending": "pendiente",
  "rag-status-ready": "listo",
+ "rag-status-unconfigured": "sin fuentes",
  "rag-suffix-not-advertised": "(ya no disponible)",
  "rag-sync-token-confirm": "¿Generar una nueva URL de sincronización? La anterior dejará de funcionar.",
  "rag-sync-url-heading": "URL de sincronización — se muestra una sola vez",

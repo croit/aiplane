@@ -22,9 +22,7 @@ use sqlx::sqlite::SqliteRow;
 use super::{DbError, Pool};
 use crate::server::crypto::{Crypto, Sealed};
 
-/// Lifecycle of a collection from the indexer's point of view. The chat
-/// surface only ever searches `Ready` collections; everything else is in
-/// some intermediate state the admin UI surfaces.
+/// Lifecycle of an indexable source from the indexer's point of view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollectionStatus {
     /// New row, or re-index requested. The indexer will pick it up.
@@ -35,8 +33,7 @@ pub enum CollectionStatus {
     Indexing,
     /// Last indexing run succeeded; searchable.
     Ready,
-    /// Last indexing run failed; see `last_error`. Won't retry until
-    /// status is flipped back to `Pending`.
+    /// Last indexing run failed; see the source's `last_error`.
     Error,
 }
 
@@ -175,15 +172,11 @@ pub struct Collection {
     /// sync hook decides. Set it for a source nothing can ring a doorbell
     /// for — a mailing-list archive is polled or it is stale.
     pub refresh_interval_mins: i64,
-    pub status: CollectionStatus,
     /// Gateway-group names allowed to list + search this collection. Empty =
     /// unrestricted (every user with the RAG tools). Managed on the `/rag` edit
     /// form. See `migrations/0046_rag_allowed_groups.sql` and
     /// `Resolver::resource_allowed`.
     pub allowed_groups: Vec<String>,
-    pub last_indexed_at: Option<Timestamp>,
-    pub last_indexed_commit: Option<String>,
-    pub last_error: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -227,15 +220,10 @@ fn decode_globs(s: &str, column: &'static str) -> Result<Vec<String>, DbError> {
 }
 
 fn map_collection_row(row: &SqliteRow) -> Result<Collection, DbError> {
-    let last_indexed_at: Option<String> = row.try_get("last_indexed_at")?;
-    let last_indexed_at = last_indexed_at
-        .map(|s| parse_ts(&s, "last_indexed_at"))
-        .transpose()?;
     let include_globs_json: String = row.try_get("include_globs_json")?;
     let exclude_globs_json: String = row.try_get("exclude_globs_json")?;
     let created_at_s: String = row.try_get("created_at")?;
     let updated_at_s: String = row.try_get("updated_at")?;
-    let status_s: String = row.try_get("status")?;
     let search_mode_s: String = row.try_get("search_mode")?;
     Ok(Collection {
         id: row.try_get("id")?,
@@ -290,7 +278,6 @@ fn map_collection_row(row: &SqliteRow) -> Result<Collection, DbError> {
         chunk_overlap: row.try_get("chunk_overlap")?,
         search_mode: SearchMode::from_db(&search_mode_s),
         refresh_interval_mins: row.try_get("refresh_interval_mins")?,
-        status: CollectionStatus::from_db(&status_s),
         allowed_groups: {
             let json: String = row.try_get("allowed_groups")?;
             serde_json::from_str(&json).map_err(|e| DbError::Decode {
@@ -298,9 +285,6 @@ fn map_collection_row(row: &SqliteRow) -> Result<Collection, DbError> {
                 source: anyhow::Error::from(e),
             })?
         },
-        last_indexed_at,
-        last_indexed_commit: row.try_get("last_indexed_commit")?,
-        last_error: row.try_get("last_error")?,
         created_at: parse_ts(&created_at_s, "created_at")?,
         updated_at: parse_ts(&updated_at_s, "updated_at")?,
     })
@@ -309,7 +293,7 @@ fn map_collection_row(row: &SqliteRow) -> Result<Collection, DbError> {
 const COLLECTION_COLUMNS: &str = "id, data_uuid, name, description, git_url, git_ref, pat, \
      source_kind, source_config_json, source_secrets_ct, source_secrets_nonce, \
      profile_id, extraction_model, sync_token_hash, embedding_model, include_globs_json, exclude_globs_json, chunk_size, chunk_overlap, \
-     search_mode, refresh_interval_mins, status, allowed_groups, last_indexed_at, last_indexed_commit, last_error, \
+     search_mode, refresh_interval_mins, allowed_groups, \
      connected_account, connected_by, connected_at, \
      created_at, updated_at";
 
@@ -338,8 +322,8 @@ pub async fn create_collection(pool: &Pool, new: &NewCollection) -> Result<Colle
             source_kind, source_config_json, source_secrets_ct, source_secrets_nonce,
             profile_id, extraction_model, embedding_model,
             include_globs_json, exclude_globs_json, chunk_size, chunk_overlap,
-            search_mode, refresh_interval_mins, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            search_mode, refresh_interval_mins, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING id"#,
     )
     .bind(&data_uuid)
@@ -397,78 +381,6 @@ pub async fn find_collection_by_name(
     let q = format!("SELECT {COLLECTION_COLUMNS} FROM rag_collections WHERE name = ?");
     let row = sqlx::query(&q).bind(name).fetch_optional(pool).await?;
     row.as_ref().map(map_collection_row).transpose()
-}
-
-/// Set a collection's status. Indexer-only; the admin API uses
-/// [`request_reindex`] to bump back to `Pending` rather than calling this
-/// directly so timestamps stay consistent.
-pub async fn set_collection_status(
-    pool: &Pool,
-    id: i64,
-    status: CollectionStatus,
-) -> Result<(), DbError> {
-    let now = Timestamp::now().to_string();
-    sqlx::query("UPDATE rag_collections SET status = ?, updated_at = ? WHERE id = ?")
-        .bind(status.as_str())
-        .bind(&now)
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-/// Indexer-side: a successful run lands here. Sets status to `Ready`,
-/// stamps `last_indexed_at`, records the resolved commit, and clears
-/// any prior `last_error`.
-pub async fn mark_indexed(pool: &Pool, id: i64, commit_sha: &str) -> Result<(), DbError> {
-    let now = Timestamp::now().to_string();
-    sqlx::query(
-        r#"UPDATE rag_collections
-           SET status = 'ready', last_indexed_at = ?, last_indexed_commit = ?,
-               last_error = NULL, updated_at = ?
-           WHERE id = ?"#,
-    )
-    .bind(&now)
-    .bind(commit_sha)
-    .bind(&now)
-    .bind(id)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// Indexer-side: a failed run lands here. Status → `Error`, message
-/// stored verbatim. Stays in `Error` until an admin reset.
-pub async fn mark_failed(pool: &Pool, id: i64, message: &str) -> Result<(), DbError> {
-    let now = Timestamp::now().to_string();
-    sqlx::query(
-        r#"UPDATE rag_collections
-           SET status = 'error', last_error = ?, updated_at = ?
-           WHERE id = ?"#,
-    )
-    .bind(message)
-    .bind(&now)
-    .bind(id)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// Admin-side: re-queue a collection for indexing regardless of its
-/// current status. Clears the prior error so the UI can show "queued"
-/// without sticky failure text bleeding through.
-pub async fn request_reindex(pool: &Pool, id: i64) -> Result<(), DbError> {
-    let now = Timestamp::now().to_string();
-    sqlx::query(
-        r#"UPDATE rag_collections
-           SET status = 'pending', last_error = NULL, updated_at = ?
-           WHERE id = ?"#,
-    )
-    .bind(&now)
-    .bind(id)
-    .execute(pool)
-    .await?;
-    Ok(())
 }
 
 /// Replace a collection's gateway-group access list (empty = unrestricted).
@@ -1188,7 +1100,8 @@ pub async fn queue_due_refs(pool: &Pool) -> Result<u64, DbError> {
                 COALESCE(r.last_indexed_at, r.updated_at) AS since \
          FROM rag_collection_refs r \
          JOIN rag_collections c ON c.id = r.collection_id \
-         WHERE c.refresh_interval_mins > 0 AND r.status IN ('ready', 'error')",
+         WHERE c.refresh_interval_mins > 0 AND r.status IN ('ready', 'error') \
+           AND (c.search_mode != 'aggregate' OR r.is_primary = 1)",
     )
     .fetch_all(pool)
     .await?;
@@ -1996,7 +1909,6 @@ mod tests {
         let pool = fresh().await;
         let c = create_collection(&pool, &sample_new()).await.unwrap();
         assert_eq!(c.name, "gateway");
-        assert_eq!(c.status, CollectionStatus::Pending);
         assert_eq!(c.include_globs, vec!["*.rs"]);
         assert_eq!(c.exclude_globs, vec!["target/"]);
 
@@ -2018,32 +1930,6 @@ mod tests {
             matches!(err, DbError::Query(_)),
             "expected Query(UNIQUE failure), got {err:?}"
         );
-    }
-
-    #[tokio::test]
-    async fn lifecycle_transitions_clear_and_set_last_error() {
-        let pool = fresh().await;
-        let c = create_collection(&pool, &sample_new()).await.unwrap();
-
-        set_collection_status(&pool, c.id, CollectionStatus::Indexing)
-            .await
-            .unwrap();
-        mark_failed(&pool, c.id, "git auth failed").await.unwrap();
-        let after_fail = find_collection_by_id(&pool, c.id).await.unwrap().unwrap();
-        assert_eq!(after_fail.status, CollectionStatus::Error);
-        assert_eq!(after_fail.last_error.as_deref(), Some("git auth failed"));
-
-        request_reindex(&pool, c.id).await.unwrap();
-        let after_requeue = find_collection_by_id(&pool, c.id).await.unwrap().unwrap();
-        assert_eq!(after_requeue.status, CollectionStatus::Pending);
-        assert!(after_requeue.last_error.is_none());
-
-        mark_indexed(&pool, c.id, "abc123").await.unwrap();
-        let after_ok = find_collection_by_id(&pool, c.id).await.unwrap().unwrap();
-        assert_eq!(after_ok.status, CollectionStatus::Ready);
-        assert_eq!(after_ok.last_indexed_commit.as_deref(), Some("abc123"));
-        assert!(after_ok.last_indexed_at.is_some());
-        assert!(after_ok.last_error.is_none());
     }
 
     /// Put a ref's clock back, as if its last index were `mins` ago.
@@ -2087,6 +1973,57 @@ mod tests {
         // ref is no longer `ready`, and re-queueing a running build discards
         // its work.
         assert_eq!(queue_due_refs(&pool).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_scheduled_resync_of_an_aggregate_queues_only_its_unified_index() {
+        let pool = fresh().await;
+        let mut new = sample_new();
+        new.search_mode = SearchMode::Aggregate;
+        new.refresh_interval_mins = 60;
+        let c = create_collection(&pool, &new).await.unwrap();
+        let primary = add_ref(
+            &pool,
+            c.id,
+            "main",
+            Some("https://example.invalid/one.git"),
+            true,
+        )
+        .await
+        .unwrap();
+        let source = add_ref(
+            &pool,
+            c.id,
+            "main",
+            Some("https://example.invalid/two.git"),
+            false,
+        )
+        .await
+        .unwrap();
+        for r in [&primary, &source] {
+            set_ref_status(&pool, r.id, CollectionStatus::Ready)
+                .await
+                .unwrap();
+            age_ref(&pool, r.id, 61).await;
+        }
+
+        assert_eq!(queue_due_refs(&pool).await.unwrap(), 1);
+        assert_eq!(
+            find_ref_by_id(&pool, primary.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            CollectionStatus::Pending
+        );
+        assert_eq!(
+            find_ref_by_id(&pool, source.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            CollectionStatus::Ready
+        );
     }
 
     #[tokio::test]

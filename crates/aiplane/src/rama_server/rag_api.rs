@@ -66,8 +66,20 @@ struct CollectionView {
     updated_at: String,
 }
 
-impl From<rag_db::Collection> for CollectionView {
-    fn from(c: rag_db::Collection) -> Self {
+impl CollectionView {
+    fn from_collection(c: rag_db::Collection, search_ref: Option<rag_db::CollectionRef>) -> Self {
+        let status = search_ref
+            .as_ref()
+            .map(|r| r.status.as_str().to_string())
+            .unwrap_or_else(|| "unconfigured".to_string());
+        let last_indexed_at = search_ref
+            .as_ref()
+            .and_then(|r| r.last_indexed_at)
+            .map(|t| t.to_string());
+        let last_indexed_commit = search_ref
+            .as_ref()
+            .and_then(|r| r.last_indexed_commit.clone());
+        let last_error = search_ref.and_then(|r| r.last_error);
         CollectionView {
             id: c.id,
             name: c.name,
@@ -92,14 +104,22 @@ impl From<rag_db::Collection> for CollectionView {
             search_mode: c.search_mode.as_str().to_string(),
             refresh_interval_mins: c.refresh_interval_mins,
             allowed_groups: c.allowed_groups,
-            status: c.status.as_str().to_string(),
-            last_indexed_at: c.last_indexed_at.map(|t| t.to_string()),
-            last_indexed_commit: c.last_indexed_commit,
-            last_error: c.last_error,
+            status,
+            last_indexed_at,
+            last_indexed_commit,
+            last_error,
             created_at: c.created_at.to_string(),
             updated_at: c.updated_at.to_string(),
         }
     }
+}
+
+async fn collection_view(
+    pool: &aiplane_core::server::db::Pool,
+    collection: rag_db::Collection,
+) -> Result<CollectionView, aiplane_core::server::db::DbError> {
+    let search_ref = rag_db::primary_ref(pool, collection.id).await?;
+    Ok(CollectionView::from_collection(collection, search_ref))
 }
 
 #[derive(Deserialize)]
@@ -225,7 +245,16 @@ pub async fn list_collections(State(state): State<Arc<RamaState>>, req: Request)
             return internal_error("listing collections failed");
         }
     };
-    let view: Vec<CollectionView> = rows.into_iter().map(Into::into).collect();
+    let mut view = Vec::with_capacity(rows.len());
+    for collection in rows {
+        match collection_view(&state.db, collection).await {
+            Ok(collection) => view.push(collection),
+            Err(err) => {
+                tracing::warn!(error = %err, "deriving rag collection status");
+                return internal_error("deriving collection status failed");
+            }
+        }
+    }
     json_ok(&json!({ "data": view }))
 }
 
@@ -238,7 +267,13 @@ pub async fn get_collection(
         return resp;
     }
     match rag_db::find_collection_by_id(&state.db, id).await {
-        Ok(Some(c)) => json_ok(&CollectionView::from(c)),
+        Ok(Some(c)) => match collection_view(&state.db, c).await {
+            Ok(view) => json_ok(&view),
+            Err(err) => {
+                tracing::warn!(error = %err, %id, "deriving rag collection status");
+                internal_error("deriving collection status failed")
+            }
+        },
         Ok(None) => not_found(&format!("no collection with id {id}")),
         Err(err) => {
             tracing::warn!(error = %err, %id, "get rag collection");
@@ -318,12 +353,18 @@ pub async fn create_collection(State(state): State<Arc<RamaState>>, req: Request
         refresh_interval_mins: body.refresh_interval_mins,
     };
     match rag_db::create_collection(&state.db, &new).await {
-        Ok(c) => (
-            StatusCode::CREATED,
-            [(header::CONTENT_TYPE, "application/json")],
-            serde_json::to_string(&CollectionView::from(c)).unwrap_or_default(),
-        )
-            .into_response(),
+        Ok(c) => match collection_view(&state.db, c).await {
+            Ok(view) => (
+                StatusCode::CREATED,
+                [(header::CONTENT_TYPE, "application/json")],
+                serde_json::to_string(&view).unwrap_or_default(),
+            )
+                .into_response(),
+            Err(err) => {
+                tracing::warn!(error = %err, "deriving created rag collection status");
+                internal_error("deriving collection status failed")
+            }
+        },
         // sqlx wraps the underlying sqlite error inside `DbError::Query`;
         // pull it out so the operator gets "name already exists" instead
         // of a vague 500.
@@ -460,11 +501,36 @@ fn source_registry(state: &RamaState) -> &aiplane_features::server::rag::source:
 
 /// Re-queue one ref for indexing, through the indexer when there is one and
 /// straight into the queue table when there is not.
-async fn requeue_ref(state: &RamaState, ref_id: i64) {
+async fn requeue_ref(
+    state: &RamaState,
+    ref_id: i64,
+) -> Result<(), aiplane_core::server::db::DbError> {
     if let Some(indexer) = state.indexer.as_ref() {
-        let _ = indexer.request_reindex(ref_id).await;
+        indexer.request_reindex(ref_id).await
     } else {
-        let _ = rag_db::request_ref_reindex(&state.db, ref_id).await;
+        rag_db::request_ref_reindex(&state.db, ref_id).await
+    }
+}
+
+async fn request_full_rebuild(
+    state: &RamaState,
+    ref_id: i64,
+) -> Result<(), aiplane_core::server::db::DbError> {
+    if let Some(indexer) = state.indexer.as_ref() {
+        indexer.request_full_rebuild(ref_id).await
+    } else {
+        rag_db::request_full_rebuild(&state.db, ref_id).await
+    }
+}
+
+fn index_targets(
+    collection: &rag_db::Collection,
+    refs: Vec<rag_db::CollectionRef>,
+) -> Vec<rag_db::CollectionRef> {
+    if collection.search_mode == rag_db::SearchMode::Aggregate {
+        refs.into_iter().filter(|r| r.is_primary).collect()
+    } else {
+        refs
     }
 }
 
@@ -484,7 +550,7 @@ async fn requeue_unified_if_aggregate(state: &RamaState, collection_id: i64) {
         return;
     }
     if let Ok(Some(primary)) = rag_db::primary_ref(&state.db, collection_id).await {
-        requeue_ref(state, primary.id).await;
+        let _ = requeue_ref(state, primary.id).await;
     }
 }
 
@@ -573,9 +639,7 @@ pub async fn add_refs(
             (collection.search_mode == rag_db::SearchMode::Aggregate).then_some(url.as_str());
         match rag_db::add_ref(&state.db, id, git_ref, stored_url, is_primary).await {
             Ok(r) => {
-                if let Some(indexer) = state.indexer.as_ref() {
-                    let _ = indexer.request_reindex(r.id).await;
-                }
+                let _ = requeue_ref(&state, r.id).await;
                 added.push(json!({ "id": r.id, "git_url": r.git_url, "git_ref": r.git_ref }));
             }
             Err(_) => skipped += 1,
@@ -1201,7 +1265,13 @@ pub async fn update_collection(
         // Nothing to do — still surface the current row so the caller
         // can write a UI that doesn't special-case the empty diff.
         return match rag_db::find_collection_by_id(&state.db, id).await {
-            Ok(Some(c)) => json_ok(&CollectionView::from(c)),
+            Ok(Some(c)) => match collection_view(&state.db, c).await {
+                Ok(view) => json_ok(&view),
+                Err(err) => {
+                    tracing::warn!(error = %err, %id, "deriving rag collection status");
+                    internal_error("deriving collection status failed")
+                }
+            },
             Ok(None) => not_found(&format!("no collection with id {id}")),
             Err(err) => {
                 tracing::warn!(error = %err, %id, "lookup rag collection");
@@ -1251,14 +1321,21 @@ pub async fn update_collection(
     // source, the profile or the embedding model over the API has to re-queue
     // too, or the corpus keeps answering out of a store that no longer matches
     // its own settings.
-    if rag_db::index_shape_changed(&before, &after)
-        && let Some(indexer) = state.indexer.as_ref()
-    {
-        for r in rag_db::list_refs(&state.db, id).await.unwrap_or_default() {
-            let _ = indexer.request_full_rebuild(r.id).await;
+    if rag_db::index_shape_changed(&before, &after) {
+        for r in index_targets(
+            &after,
+            rag_db::list_refs(&state.db, id).await.unwrap_or_default(),
+        ) {
+            let _ = request_full_rebuild(&state, r.id).await;
         }
     }
-    json_ok(&CollectionView::from(after))
+    match collection_view(&state.db, after).await {
+        Ok(view) => json_ok(&view),
+        Err(err) => {
+            tracing::warn!(error = %err, %id, "deriving rag collection status");
+            internal_error("deriving collection status failed")
+        }
+    }
 }
 
 enum UpdateBinding {
@@ -1298,8 +1375,8 @@ pub async fn delete_collection(
     }
 }
 
-/// POST /api/v0/rag/collections/{id}/reindex — bump back to `pending`
-/// so the worker picks it up on the next tick. Clears any prior error.
+/// POST /api/v0/rag/collections/{id}/reindex — re-queue every index that
+/// contributes to this collection's search result.
 pub async fn reindex_collection(
     State(state): State<Arc<RamaState>>,
     Path(id): Path<i64>,
@@ -1308,12 +1385,29 @@ pub async fn reindex_collection(
     if let Err(resp) = require_admin(&state, &req).await {
         return resp;
     }
-    if let Err(err) = rag_db::request_reindex(&state.db, id).await {
-        tracing::warn!(error = %err, %id, "reindex request");
-        return internal_error("reindex request failed");
-    }
     match rag_db::find_collection_by_id(&state.db, id).await {
-        Ok(Some(c)) => json_ok(&CollectionView::from(c)),
+        Ok(Some(c)) => {
+            let refs = match rag_db::list_refs(&state.db, id).await {
+                Ok(refs) => index_targets(&c, refs),
+                Err(err) => {
+                    tracing::warn!(error = %err, %id, "listing collection refs for reindex");
+                    return internal_error("listing collection sources failed");
+                }
+            };
+            for source in refs {
+                if let Err(err) = requeue_ref(&state, source.id).await {
+                    tracing::warn!(error = %err, %id, ref_id = source.id, "reindex request");
+                    return internal_error("queueing collection source failed");
+                }
+            }
+            match collection_view(&state.db, c).await {
+                Ok(view) => json_ok(&view),
+                Err(err) => {
+                    tracing::warn!(error = %err, %id, "deriving rag collection status");
+                    internal_error("deriving collection status failed")
+                }
+            }
+        }
         Ok(None) => not_found(&format!("no collection with id {id}")),
         Err(err) => {
             tracing::warn!(error = %err, %id, "post-reindex lookup");
@@ -1617,16 +1711,44 @@ pub async fn delete_ref(
 /// re-walk of one source on the next index pass.
 pub async fn rebuild_ref(
     State(state): State<Arc<RamaState>>,
-    Path(RagRefPath { ref_id, .. }): Path<RagRefPath>,
+    Path(RagRefPath { id, ref_id }): Path<RagRefPath>,
     req: Request,
 ) -> Response {
     if let Err(resp) = require_admin(&state, &req).await {
         return resp;
     }
-    match rag_db::request_full_rebuild(&state.db, ref_id).await {
-        Ok(()) => json_ok(&json!({ "requested": ref_id })),
+    let collection = match rag_db::find_collection_by_id(&state.db, id).await {
+        Ok(Some(collection)) => collection,
+        Ok(None) => return not_found(&format!("no collection {id}")),
         Err(err) => {
-            tracing::warn!(error = %err, ref_id, "requesting rag rebuild");
+            tracing::warn!(error = %err, %id, "looking up rag collection for rebuild");
+            return internal_error("looking up collection failed");
+        }
+    };
+    let source = match rag_db::find_ref_by_id(&state.db, ref_id).await {
+        Ok(Some(source)) if source.collection_id == id => source,
+        Ok(_) => return not_found(&format!("no ref {ref_id} in collection {id}")),
+        Err(err) => {
+            tracing::warn!(error = %err, ref_id, "looking up rag source for rebuild");
+            return internal_error("looking up source failed");
+        }
+    };
+    let target = if collection.search_mode == rag_db::SearchMode::Aggregate {
+        match rag_db::primary_ref(&state.db, id).await {
+            Ok(Some(primary)) => primary,
+            Ok(None) => return invalid_request("the collection has no primary source to rebuild"),
+            Err(err) => {
+                tracing::warn!(error = %err, %id, "looking up aggregate primary source");
+                return internal_error("looking up primary source failed");
+            }
+        }
+    } else {
+        source
+    };
+    match request_full_rebuild(&state, target.id).await {
+        Ok(()) => json_ok(&json!({ "requested": target.id })),
+        Err(err) => {
+            tracing::warn!(error = %err, ref_id = target.id, "requesting rag rebuild");
             internal_error("requesting the rebuild failed")
         }
     }

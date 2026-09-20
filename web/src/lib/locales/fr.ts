@@ -1035,6 +1035,7 @@ export const fr: Catalog = {
  "rag-status-indexing": "indexation",
  "rag-status-pending": "en attente",
  "rag-status-ready": "prêt",
+ "rag-status-unconfigured": "aucune source",
  "rag-suffix-not-advertised": "(plus proposé)",
  "rag-sync-token-confirm": "Générer une nouvelle URL de synchronisation ? L'ancienne cessera de fonctionner.",
  "rag-sync-url-heading": "URL de synchronisation — affichée une seule fois",

@@ -20,6 +20,7 @@ rag-toast-source-updated = Source updated.
 
 # Status badges
 rag-status-pending = pending
+rag-status-unconfigured = no sources
 rag-status-cloning = cloning
 rag-status-indexing = indexing
 rag-status-ready = ready

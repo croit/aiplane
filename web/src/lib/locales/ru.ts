@@ -1039,6 +1039,7 @@ export const ru: Catalog = {
  "rag-status-indexing": "индексация",
  "rag-status-pending": "в ожидании",
  "rag-status-ready": "готово",
+ "rag-status-unconfigured": "нет источников",
  "rag-suffix-not-advertised": "(больше не предлагается)",
  "rag-sync-token-confirm": "Создать новый URL синхронизации? Старый перестанет работать.",
  "rag-sync-url-heading": "URL синхронизации — показывается один раз",

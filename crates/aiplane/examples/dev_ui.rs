@@ -1284,7 +1284,6 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             },
         )
         .await?;
-        rag::mark_indexed(&state.db, c.id, commit).await?;
         let r = rag::add_ref(&state.db, c.id, git_ref, None, true).await?;
         rag::set_ref_status(&state.db, r.id, rag::CollectionStatus::Indexing).await?;
         rag::swap_ref_index(

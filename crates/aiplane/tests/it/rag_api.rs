@@ -149,7 +149,7 @@ async fn full_create_get_list_update_reindex_delete_round_trip() {
     let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
     assert_eq!(created["name"], "gateway-repo");
     assert_eq!(created["pat_set"], false);
-    assert_eq!(created["status"], "pending");
+    assert_eq!(created["status"], "unconfigured");
     let id = created["id"].as_i64().unwrap();
 
     // Get one.
@@ -187,12 +187,14 @@ async fn full_create_get_list_update_reindex_delete_round_trip() {
     );
     assert_eq!(updated["embedding_model"], "embed-2");
 
-    // Reindex: the row was 'pending', set it to error first, then bump back.
+    // Add a source and move its lifecycle to error. Collection status must
+    // follow the searchable source, never a separate collection lifecycle.
     {
-        // Move status off 'pending' by writing the DB directly so we
-        // can prove reindex flips it back.
         use aiplane_core::server::db::rag as rag_db;
-        rag_db::mark_failed(&db, id, "manual force").await.unwrap();
+        let source = rag_db::add_ref(&db, id, "main", None, true).await.unwrap();
+        rag_db::set_ref_status(&db, source.id, rag_db::CollectionStatus::Error)
+            .await
+            .unwrap();
     }
     let resp = app
         .serve(req_with_cookie(
@@ -206,7 +208,6 @@ async fn full_create_get_list_update_reindex_delete_round_trip() {
     assert_eq!(resp.status(), StatusCode::OK);
     let after: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
     assert_eq!(after["status"], "pending");
-    assert!(after["last_error"].is_null());
 
     // List should now have one entry.
     let resp = app
@@ -244,6 +245,47 @@ async fn full_create_get_list_update_reindex_delete_round_trip() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn collection_status_is_derived_from_its_search_ref() {
+    use aiplane_core::server::db::rag as rag_db;
+
+    let state = common::state_with_admin_rbac("http://unused.invalid").await;
+    let cookie = seed_admin(&state, "alice").await;
+    let db = state.db.clone();
+    let app = common::app(state);
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/collections",
+            &cookie,
+            Some(create_body()),
+        ))
+        .await
+        .unwrap();
+    let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    let id = created["id"].as_i64().unwrap();
+    assert_eq!(created["status"], "unconfigured");
+
+    let source = rag_db::add_ref(&db, id, "main", None, true).await.unwrap();
+    rag_db::set_ref_status(&db, source.id, rag_db::CollectionStatus::Ready)
+        .await
+        .unwrap();
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::GET,
+            &format!("/api/v0/rag/collections/{id}"),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let collection: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(collection["status"], "ready");
 }
 
 #[tokio::test]

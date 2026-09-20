@@ -252,7 +252,7 @@ impl Harness {
     async fn index(&self) {
         // A ref left `ready` must be re-queued before the worker will build
         // it again, exactly as the "Re-index" button does.
-        rag_db::request_reindex(&self.central, self.ref_id)
+        rag_db::request_ref_reindex(&self.central, self.ref_id)
             .await
             .unwrap();
         self.indexer.index_ref(self.ref_id).await.unwrap();
@@ -470,7 +470,9 @@ async fn a_failed_walk_deletes_nothing() {
         .mount(&dav.server)
         .await;
 
-    rag_db::request_reindex(&h.central, h.ref_id).await.unwrap();
+    rag_db::request_ref_reindex(&h.central, h.ref_id)
+        .await
+        .unwrap();
     let _ = h.indexer.index_ref(h.ref_id).await;
 
     assert_eq!(

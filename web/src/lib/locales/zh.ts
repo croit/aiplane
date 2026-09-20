@@ -1026,6 +1026,7 @@ export const zh: Catalog = {
  "rag-status-indexing": "索引中",
  "rag-status-pending": "待处理",
  "rag-status-ready": "就绪",
+ "rag-status-unconfigured": "无来源",
  "rag-suffix-not-advertised": "（不再提供）",
  "rag-sync-token-confirm": "要生成新的同步 URL 吗？旧的将失效。",
  "rag-sync-url-heading": "同步 URL——仅显示一次",
