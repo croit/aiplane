@@ -130,6 +130,7 @@ pub enum PreviewKind {
 #[serde(rename_all = "snake_case")]
 pub enum ToolPromptKind {
     AskUser,
+    ContentGuard,
     Location,
 }
 

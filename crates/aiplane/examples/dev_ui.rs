@@ -90,6 +90,17 @@ async fn main() -> anyhow::Result<()> {
         })))
         .mount(&chat_mock)
         .await;
+    Mock::given(method("POST"))
+        .and(path("/systemone"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "model": "demo-selector",
+            "answers": {
+                "gdpr": {"type": "noul", "noul": 0.9},
+                "nda": {"type": "noul", "noul": 0.9}
+            }
+        })))
+        .mount(&chat_mock)
+        .await;
     // Feedback field-extraction: matched before the generic non-streaming
     // mock (first-mounted wins on ties) via the unique system-prompt phrase,
     // so the voice→fields flow returns a valid structured JSON object the
@@ -192,7 +203,10 @@ async fn main() -> anyhow::Result<()> {
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            compliance: aiplane_core::server::upstreams::Compliance {
+                gdpr: false,
+                nda: false,
+            },
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,

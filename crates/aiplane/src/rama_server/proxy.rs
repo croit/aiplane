@@ -32,10 +32,11 @@ use aiplane_core::server::automatic_routing::{
     AutomaticRouteAffinity, AutomaticRouteDecision, AutomaticRoutingError,
 };
 use aiplane_core::server::db::usage::{self, UnitUsage, UsageKind, UsageRecord, UsageSource};
-use aiplane_core::server::upstreams::PoolKind;
 use aiplane_core::server::upstreams::registry::{Acquired, RouteError};
+use aiplane_core::server::upstreams::{PoolAccess, PoolKind};
 use aiplane_core::server::usage::UsageHandle;
 use aiplane_features::server::speech::{self, SpokenMarkers};
+use aiplane_runtime::content_guard::{self, Action as ContentGuardAction};
 use aiplane_runtime::rama_server::auth::require_bearer;
 use aiplane_runtime::rama_server::state::RamaState;
 use aiplane_runtime::server::tools::ToolContext;
@@ -742,6 +743,11 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
     } else {
         access.clone()
     };
+    if let Some(response) =
+        enforce_content_guard(&state, &request_value, &routing_model, &route_access).await
+    {
+        return with_automatic_route_headers(response, automatic_decision.as_ref());
+    }
     if allowed_tools.is_empty() {
         let response = chat_bytedumb(
             &state,
@@ -852,6 +858,32 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
     };
     let response = with_resolved_model_header(resp, &model, &real_model);
     with_automatic_route_headers(response, automatic_decision.as_ref())
+}
+
+pub async fn enforce_content_guard(
+    state: &RamaState,
+    request: &Value,
+    model: &str,
+    access: &PoolAccess,
+) -> Option<Response> {
+    match content_guard::evaluate_for_model(state, request, model, access).await {
+        Ok(ContentGuardAction::Allow) => None,
+        Ok(ContentGuardAction::Confirm) => Some(error_response(
+            StatusCode::CONFLICT,
+            "content_confirmation_required",
+            "Content requires user confirmation before it can be sent to this model.",
+        )),
+        Ok(ContentGuardAction::Deny) => Some(error_response(
+            StatusCode::FORBIDDEN,
+            "content_policy_denied",
+            "Content policy prevents sending this request to the selected model.",
+        )),
+        Err(error) => Some(error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "content_guard_unavailable",
+            &error,
+        )),
+    }
 }
 
 pub(crate) async fn resolve_automatic_chat_route(

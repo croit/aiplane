@@ -49,6 +49,8 @@ pub enum ConfigError {
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub gateway: GatewayConfig,
+    #[serde(default)]
+    pub content_guard: ContentGuardConfig,
     /// Chat-page knobs that aren't routing-related — attachment
     /// storage + which model names are allowed to receive image
     /// content. Optional; defaults are conservative (S3 disabled,
@@ -142,6 +144,83 @@ pub struct Config {
     /// `[push] enabled = false` to turn the feature (and its endpoints) off.
     #[serde(default)]
     pub push: PushConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ContentGuardConfig {
+    pub enabled: bool,
+    pub model: String,
+    pub mode: ContentGuardMode,
+    pub gdpr_action: ContentGuardPolicy,
+    pub nda_action: ContentGuardPolicy,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentGuardMode {
+    #[default]
+    Monitor,
+    Enforce,
+}
+
+impl ContentGuardMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Monitor => "monitor",
+            Self::Enforce => "enforce",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentGuardPolicy {
+    Allow,
+    Confirm,
+    #[default]
+    Deny,
+}
+
+impl ContentGuardPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Confirm => "confirm",
+            Self::Deny => "deny",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim() {
+            "allow" => Self::Allow,
+            "confirm" => Self::Confirm,
+            "deny" => Self::Deny,
+            _ => Self::Deny,
+        }
+    }
+}
+
+impl ContentGuardMode {
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim() {
+            "enforce" => Self::Enforce,
+            "monitor" => Self::Monitor,
+            _ => Self::Monitor,
+        }
+    }
+}
+
+impl Default for ContentGuardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: String::new(),
+            mode: ContentGuardMode::Monitor,
+            gdpr_action: ContentGuardPolicy::Deny,
+            nda_action: ContentGuardPolicy::Deny,
+        }
+    }
 }
 
 /// Web Push settings. Everything needed to send is self-generated (the VAPID

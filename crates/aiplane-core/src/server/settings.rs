@@ -49,9 +49,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::server::config::{
-    ChatConfig, ComfyuiConfig, CompactionConfig, Config, FeedbackConfig, GatewayConfig,
-    GeoipConfig, LimitsConfig, OcrConfig, PushConfig, RagConfig, S3Config, SandboxConfig,
-    SkillsConfig, TurnsConfig, TypstConfig, UsageConfig,
+    ChatConfig, ComfyuiConfig, CompactionConfig, Config, ContentGuardConfig, ContentGuardMode,
+    ContentGuardPolicy, FeedbackConfig, GatewayConfig, GeoipConfig, LimitsConfig, OcrConfig,
+    PushConfig, RagConfig, S3Config, SandboxConfig, SkillsConfig, TurnsConfig, TypstConfig,
+    UsageConfig,
 };
 use crate::server::crypto::Crypto;
 use crate::server::db::{DbError, Pool, app_settings};
@@ -339,6 +340,23 @@ const fn r(key: &'static str, kind: Kind) -> FieldSpec {
 /// another locale file and this table stays a table.
 pub static SECTIONS: &[SectionSpec] = &[
     SectionSpec {
+        name: "content_guard",
+        category: Category::Access,
+        fields: &[
+            f("content_guard.enabled", Kind::Bool),
+            f("content_guard.model", Kind::Model(PoolKind::SystemOne)),
+            f("content_guard.mode", Kind::Choice(&["monitor", "enforce"])),
+            f(
+                "content_guard.gdpr_action",
+                Kind::Choice(&["allow", "confirm", "deny"]),
+            ),
+            f(
+                "content_guard.nda_action",
+                Kind::Choice(&["allow", "confirm", "deny"]),
+            ),
+        ],
+    },
+    SectionSpec {
         name: "chat.ocr",
         category: Category::Chat,
         fields: &[
@@ -607,6 +625,7 @@ pub fn section_is_enabled(config: &Config, section: &SectionSpec) -> Option<bool
         "geoip" => config.geoip.is_some(),
         "usage" => config.usage.enabled,
         "limits" => config.limits.enabled,
+        "content_guard" => config.content_guard.enabled,
         "feedback" => config.feedback.is_some(),
         "push" => config.push.enabled,
         // `[gateway]` is session and token lifetimes — always in force, no
@@ -810,6 +829,17 @@ pub fn apply(settings: &Settings, config: &mut Config) {
     config.usage = usage(settings);
     config.limits = LimitsConfig {
         enabled: settings.bool("limits.enabled", true),
+    };
+    config.content_guard = ContentGuardConfig {
+        enabled: settings.bool("content_guard.enabled", false),
+        model: settings.text_or("content_guard.model", ""),
+        mode: ContentGuardMode::parse(&settings.text_or("content_guard.mode", "monitor")),
+        gdpr_action: ContentGuardPolicy::parse(
+            &settings.text_or("content_guard.gdpr_action", "deny"),
+        ),
+        nda_action: ContentGuardPolicy::parse(
+            &settings.text_or("content_guard.nda_action", "deny"),
+        ),
     };
     config.feedback = settings
         .bool("feedback.enabled", false)
@@ -1215,6 +1245,21 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
     put("usage.currency", c.usage.currency.clone());
 
     put("limits.enabled", c.limits.enabled.to_string());
+
+    put("content_guard.enabled", c.content_guard.enabled.to_string());
+    put("content_guard.model", c.content_guard.model.clone());
+    put(
+        "content_guard.mode",
+        c.content_guard.mode.as_str().to_string(),
+    );
+    put(
+        "content_guard.gdpr_action",
+        c.content_guard.gdpr_action.as_str().to_string(),
+    );
+    put(
+        "content_guard.nda_action",
+        c.content_guard.nda_action.as_str().to_string(),
+    );
 
     put("feedback.enabled", fb.is_some().to_string());
     put(

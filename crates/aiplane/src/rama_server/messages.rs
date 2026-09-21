@@ -127,6 +127,11 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
     } else {
         access
     };
+    if let Some(response) =
+        proxy::enforce_content_guard(&state, &translated.body, &routing_model, &access).await
+    {
+        return proxy::with_automatic_route_headers(response, automatic_decision.as_ref());
+    }
     // `route_or_wait`, not `route_access`: when the pool is momentarily down
     // (a restarting GPU box, a model being swapped) this parks the request until
     // a backend answers its probe again instead of failing it. Nothing has been

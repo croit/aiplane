@@ -82,9 +82,17 @@ pub fn state_from_registry(
     db_pool: db::Pool,
     registry: Arc<upstreams::UpstreamRegistry>,
 ) -> RamaState {
+    state_from_registry_with_config(db_pool, registry, test_config())
+}
+
+pub fn state_from_registry_with_config(
+    db_pool: db::Pool,
+    registry: Arc<upstreams::UpstreamRegistry>,
+    config: Config,
+) -> RamaState {
     let tools = Arc::new(ToolRegistry::new());
     let rbac = Arc::new(Resolver::empty());
-    let app = AppState::new(test_config(), db_pool.clone(), registry, tools, rbac)
+    let app = AppState::new(config, db_pool.clone(), registry, tools, rbac)
         .with_tool_family_builder(aiplane::tool_families::typst());
     let sessions = SessionStore::new(db_pool, TEST_SECRET);
     RamaState::new(
@@ -183,6 +191,62 @@ pub async fn state_with_automatic_route_pools(upstream_url: &str) -> RamaState {
     let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
     seed_pool_models(&registry, "chat", 0, &["fast-model", "expert-model"]);
     state_from_registry(db_pool, registry)
+}
+
+pub async fn state_with_content_guard_pools(upstream_url: &str) -> RamaState {
+    state_with_content_guard_pools_in_mode(
+        upstream_url,
+        aiplane_core::server::config::ContentGuardMode::Enforce,
+    )
+    .await
+}
+
+pub async fn state_with_content_guard_pools_in_mode(
+    upstream_url: &str,
+    mode: aiplane_core::server::config::ContentGuardMode,
+) -> RamaState {
+    let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+    let mut pools = HashMap::new();
+    pools.insert(
+        "chat".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            compliance: upstreams::Compliance {
+                gdpr: false,
+                nda: false,
+            },
+            enforce_limits: true,
+            kind: PoolKind::Chat,
+            strategy: PickerStrategy::RoundRobin,
+            models: Vec::new(),
+            backend: vec![mock_backend("chat", upstream_url)],
+        },
+    );
+    pools.insert(
+        "guard".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            compliance: Default::default(),
+            enforce_limits: true,
+            kind: PoolKind::SystemOne,
+            strategy: PickerStrategy::RoundRobin,
+            models: vec!["guard-model".into()],
+            backend: vec![mock_backend("guard", upstream_url)],
+        },
+    );
+    let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
+    seed_pool_models(&registry, "chat", 0, &["model-a"]);
+    let mut config = test_config();
+    config.content_guard.enabled = true;
+    config.content_guard.model = "guard-model".into();
+    config.content_guard.mode = mode;
+    state_from_registry_with_config(db_pool, registry, config)
 }
 
 /// A chat pool with **two** backends serving the same model, for tests about

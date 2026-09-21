@@ -54,6 +54,8 @@ settings-s-usage = Usage metrics
 settings-s-usage-blurb = Per-request accounting behind /usage.
 settings-s-limits = Rate limits & quotas
 settings-s-limits-blurb = Master switch for the rules configured at /admin/limits.
+settings-s-content_guard = Content guard
+settings-s-content_guard-blurb = Checks content before a selected model receives it.
 settings-s-feedback = Feedback widget
 settings-s-feedback-blurb = Where the in-app feedback widget files issues.
 settings-s-push = Web Push
@@ -62,6 +64,30 @@ settings-s-gateway = Sessions & tokens
 settings-s-gateway-blurb = How long a browser login and an API token stay valid, and whether admins may impersonate.
 
 # ─── Fields ──────────────────────────────────────────────────────────────────
+
+settings-f-content_guard-enabled = Enable content guard
+settings-f-content_guard-enabled-help = Check only the compliance area the selected model pool does not cover.
+settings-f-content_guard-model = Guard model
+settings-f-content_guard-model-help = System One model used for GDPR and NDA decisions.
+settings-content-guard-model-warning = This System One model is not compliant with: { $requirements }. Content sent to it may leave the respective protection boundary.
+content-guard-confirm-heading = Content protection
+content-guard-confirm-question = This content was identified as protected. Do you want to send it to the selected model anyway?
+content-guard-confirm-approve = Send anyway
+content-guard-confirm-deny = Do not send
+settings-f-content_guard-mode = Mode
+settings-f-content_guard-mode-help = Monitor logs decisions; enforce applies the selected action.
+settings-f-content_guard-mode-opt-monitor = Monitor
+settings-f-content_guard-mode-opt-enforce = Enforce
+settings-f-content_guard-gdpr_action = GDPR action
+settings-f-content_guard-gdpr_action-help = Action when personal data would be sent to a non-GDPR pool.
+settings-f-content_guard-nda_action = NDA action
+settings-f-content_guard-nda_action-help = Action when confidential content would be sent to a pool without NDA coverage.
+settings-f-content_guard-gdpr_action-opt-allow = Allow
+settings-f-content_guard-gdpr_action-opt-confirm = Ask for confirmation
+settings-f-content_guard-gdpr_action-opt-deny = Deny
+settings-f-content_guard-nda_action-opt-allow = Allow
+settings-f-content_guard-nda_action-opt-confirm = Ask for confirmation
+settings-f-content_guard-nda_action-opt-deny = Deny
 
 settings-f-chat-ocr-enabled = Enable OCR
 settings-f-chat-ocr-enabled-help = Master switch for reading text out of uploaded documents.
