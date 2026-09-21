@@ -683,9 +683,17 @@ async fn groups_list_carries_families_and_cached_mcp_tools() {
             "id": "mcp__slack__post",
             "connector": "slack",
             "description": "Post a message",
+            "category": "integrations",
+            "order": 9,
         }]),
         "{raw}"
     );
+    // The grantable ids ride under `tools`, each with the section the catalog
+    // puts it in. This harness registers no tools, so the list is empty here and
+    // the category mapping itself is covered by the `mcp_tools` row above and by
+    // `category_for`'s own tests — what this pins is the field, which a rename
+    // would break for the matrix.
+    assert!(listed["tools"].is_array(), "{raw}");
 }
 
 /// The pool editor renders its access picker from the payload rather than asking

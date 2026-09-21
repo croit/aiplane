@@ -8,7 +8,8 @@
 	 * in turn. Both write through the same save, so neither is a second source of
 	 * truth.
 	 */
-	import { coverageOf, matchesGrantFilter, type GrantFilter, type GrantRow } from '$lib/admin-groups';
+	import { coverageOf, groupGrantRows, matchesGrantFilter, FAMILY_SECTION, type GrantFilter, type GrantRow } from '$lib/admin-groups';
+	import { toolCategoryLabel } from '$lib/tools';
 	import { toggleValue } from '$lib/multi-select';
 	import { t } from '$lib/i18n.svelte';
 	import type { AdminGroup } from './AdminGroupForm.svelte';
@@ -31,6 +32,9 @@
 	let saving = $state<string | null>(null);
 
 	let visible = $derived(rows.filter((row) => matchesGrantFilter(row, filter, query, groups, held)));
+	let sections = $derived(groupGrantRows(visible));
+	const sectionLabel = (section: string) =>
+		section === FAMILY_SECTION ? t('groups-matrix-section-families') : toolCategoryLabel(section);
 
 	const FILTERS: [GrantFilter, string][] = [
 		['all', 'groups-matrix-filter-all'],
@@ -73,7 +77,13 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each visible as row (row.value)}
+					{#each sections as [section, entries] (section)}
+					{#if section !== ''}
+						<tr>
+							<th colspan={groups.length + 1} class="sticky left-0 bg-base-200 text-xs uppercase tracking-wide text-base-content/60">{sectionLabel(section)}</th>
+						</tr>
+					{/if}
+					{#each entries as row (row.value)}
 						<tr class={row.kind === 'tool' ? '' : 'bg-base-200/40'}>
 							<td class="sticky left-0 bg-base-100">
 								<span class="block {row.kind === 'tool' ? 'font-mono text-xs' : 'text-sm font-medium'}">{row.label}</span>
@@ -97,6 +107,7 @@
 								</td>
 							{/each}
 						</tr>
+					{/each}
 					{/each}
 				</tbody>
 			</table>

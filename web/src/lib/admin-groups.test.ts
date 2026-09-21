@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
 	coverageOf,
+	groupGrantRows,
+	FAMILY_SECTION,
 	identityRows,
 	matchesGrantFilter,
 	selectedGroupAdminTab,
@@ -63,9 +65,12 @@ test('an explicit tool id inside a covered family still reads as granted', () =>
 
 test('the tool matrix orders the wildcard, then families, then ids', () => {
 	const rows = toolMatrixRows(
-		['search_web', 'comfyui_upscale'],
+		[
+			{ id: 'search_web', category: 'Web & Network', order: 0 },
+			{ id: 'comfyui_upscale', category: 'ComfyUI workflows', order: 4 }
+		],
 		[{ id: 'comfyui', subject: '' }, { id: 'mcp__slack', subject: 'Slack' }],
-		[{ id: 'mcp__slack__post', connector: 'slack', description: 'Post' }]
+		[{ id: 'mcp__slack__post', connector: 'slack', description: 'Post', category: 'Integrations', order: 9 }]
 	);
 	assert.deepEqual(
 		rows.map((row) => row.value),
@@ -77,8 +82,57 @@ test('the tool matrix orders the wildcard, then families, then ids', () => {
 });
 
 test('a row is not listed twice when an id is also offered as a family', () => {
-	const rows = toolMatrixRows(['comfyui'], [{ id: 'comfyui', subject: '' }], []);
+	const rows = toolMatrixRows([{ id: 'comfyui', category: 'Utility', order: 10 }], [{ id: 'comfyui', subject: '' }], []);
 	assert.deepEqual(rows.map((row) => row.value), ['*', 'comfyui']);
+});
+
+// The matrix lists every registry tool, every workflow and every cached MCP
+// tool; without sections that is one undifferentiated scroll. Grouping reuses
+// the catalog's own `Category`, so this page sections the same way `/tools` and
+// `/tokens` already do.
+test('rows group into the families section first, then by category in catalog order', () => {
+	const grouped = groupGrantRows(
+		[
+			{ value: '*', kind: 'wildcard', label: 'Every tool' },
+			{ value: 'comfyui', kind: 'family', label: 'Every ComfyUI workflow' },
+			{ value: 'run_in_sandbox', kind: 'tool', label: 'run_in_sandbox', category: 'Code & Sandbox', order: 6 },
+			{ value: 'search_web', kind: 'tool', label: 'search_web', category: 'Web & Network', order: 0 }
+		]
+	);
+	assert.deepEqual(
+		grouped.map(([section, entries]) => [section, entries.map((row) => row.value)]),
+		[
+			[FAMILY_SECTION, ['*', 'comfyui']],
+			['Web & Network', ['search_web']],
+			['Code & Sandbox', ['run_in_sandbox']]
+		]
+	);
+});
+
+test('rows with no category fall into one unnamed section', () => {
+	const grouped = groupGrantRows(
+		[{ value: 'brand', kind: 'tool', label: 'brand' }]
+	);
+	assert.deepEqual(grouped, [['', [{ value: 'brand', kind: 'tool', label: 'brand' }]]]);
+});
+
+test('an empty families section is not emitted', () => {
+	const grouped = groupGrantRows(
+		[{ value: 'search_web', kind: 'tool', label: 'search_web', category: 'Web & Network', order: 0 }]
+	);
+	assert.deepEqual(grouped.map(([section]) => section), ['Web & Network']);
+});
+
+// The skills matrix has no categories, so its rows land in a section whose label
+// is empty. Rendering that as a heading puts a blank grey bar above the list.
+test('an uncategorised section keeps the empty label for the view to skip', () => {
+	const grouped = groupGrantRows(
+		[
+			{ value: '*', kind: 'wildcard', label: 'Every skill' },
+			{ value: 'brand', kind: 'tool', label: 'brand' }
+		]
+	);
+	assert.deepEqual(grouped.map(([section]) => section), [FAMILY_SECTION, '']);
 });
 
 const rows: GrantRow[] = [

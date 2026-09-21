@@ -25,6 +25,8 @@
 		id: string;
 		connector: string;
 		description: string;
+		category: string;
+		order: number;
 	}
 
 	let { group = null, toolIds = [], toolFamilies = [], mcpTools = [], skillNames = [], seedOidcValue = '', onsave, ondelete }: {

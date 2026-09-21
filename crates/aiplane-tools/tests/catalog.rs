@@ -19,6 +19,29 @@ mod catalog_tests {
     use aiplane_tools::search_web::SearchWeb;
     use std::collections::HashSet;
 
+    /// Every category's heading has to exist in the catalogs, in every language.
+    ///
+    /// The slug is all the SPA gets — it renders `tool-category-<key>` — so a
+    /// category added without its keys shows up as a raw slug on four surfaces
+    /// at once. That is exactly how three categories came to be untranslated
+    /// under the previous scheme, where the SPA matched on the English prose and
+    /// silently fell through for the ones its map had missed.
+    #[test]
+    fn every_category_heading_is_translated_in_every_language() {
+        use session_core::i18n::{Lang, t};
+        for lang in Lang::ALL {
+            for category in Category::ALL {
+                let key = format!("tool-category-{}", category.key());
+                assert_ne!(
+                    t(lang, &key),
+                    key,
+                    "{key} is missing from the {} catalog",
+                    lang.code()
+                );
+            }
+        }
+    }
+
     #[test]
     fn each_typst_template_is_its_own_key_variants_collapse_to_it() {
         // Different templates → different keys (independently selectable).

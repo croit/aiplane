@@ -47,7 +47,7 @@ pub async fn tools_list_json(State(state): State<Arc<RamaState>>, req: Request) 
                 "title": e.title,
                 "tech": e.tech,
                 "description": e.description,
-                "category": e.category.label(),
+                "category": e.category.key(),
                 "enabled": !disabled.contains(&e.key),
             })
         })

@@ -15,3 +15,18 @@ tools-location-unavailable = Auf Ihren Standort konnte nicht zugegriffen werden.
 
 # SPA-only: the Svelte /tools toggle list.
 tools-toggle-aria = { $name } umschalten
+
+# Section headings for the tool catalog, shared by /tools, the per-token
+# capability panel, the chat capability picker and the admin grant matrix.
+tool-category-web-network = Web & Netzwerk
+tool-category-attachments-documents = Anhänge & Dokumente
+tool-category-document-templates = Dokumentvorlagen
+tool-category-knowledge-base = Wissensdatenbank
+tool-category-code-sandbox = Code & Sandbox
+tool-category-memory = Speicher
+tool-category-integrations = Integrationen
+tool-category-utility = Dienstprogramme
+tool-category-skills = Skills
+tool-category-images-media = Bilder & Medien
+tool-category-comfyui-workflows = ComfyUI-Workflows
+tool-category-scheduled-actions = Geplante Aktionen

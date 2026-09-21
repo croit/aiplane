@@ -42,3 +42,4 @@ groups-identity-unseen = Bei keiner Anmeldung gesehen
 groups-identity-unseen-hint = An einer Gruppe konfiguriert, aber nie übermittelt – prüfen Sie den Wert gegen das, was Ihr IdP tatsächlich sendet.
 groups-identity-empty = Noch keine Claim-Werte. Sie werden bei der Anmeldung erfasst.
 groups-identity-create = Gruppe dafür anlegen
+groups-matrix-section-families = Ganze Familien

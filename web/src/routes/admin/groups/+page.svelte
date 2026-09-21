@@ -8,13 +8,14 @@
 	import AdminGroupForm from '$lib/components/admin/AdminGroupForm.svelte';
 	import AdminGrantMatrix from '$lib/components/admin/AdminGrantMatrix.svelte';
 	import AdminIdentityMapping from '$lib/components/admin/AdminIdentityMapping.svelte';
+	import type { GrantableTool } from '$lib/admin-groups';
 	import type { AdminGroup, McpTool, ToolFamily } from '$lib/components/admin/AdminGroupForm.svelte';
 	import { t } from '$lib/i18n.svelte';
 
 	interface GroupsData {
 		groups: AdminGroup[];
 		observed_oidc_values: string[];
-		tool_ids: string[];
+		tools: GrantableTool[];
 		tool_families: ToolFamily[];
 		mcp_tools: McpTool[];
 		skill_names: string[];
@@ -63,7 +64,7 @@
 	}
 
 	let toolRows = $derived(
-		toolMatrixRows(data?.tool_ids ?? [], data?.tool_families ?? [], data?.mcp_tools ?? [], {
+		toolMatrixRows(data?.tools ?? [], data?.tool_families ?? [], data?.mcp_tools ?? [], {
 			wildcard: t('groups-matrix-wildcard-tools'),
 			family: (family) =>
 				family.subject === ''
@@ -104,7 +105,7 @@
 			<AdminGrantMatrix rows={skillRows} groups={data.groups} held={(group) => group.skills} onsave={saveSkills} />
 		{:else}
 			{#key seedOidcValue}
-				<AdminGroupForm seedOidcValue={seedOidcValue} toolIds={data.tool_ids} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={save} />
+				<AdminGroupForm seedOidcValue={seedOidcValue} toolIds={data.tools.map((tool) => tool.id)} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={save} />
 			{/key}
 			<div class="flex flex-col gap-4">
 				<h2 class="text-lg font-semibold">{t('groups-existing-heading')}</h2>
@@ -112,7 +113,7 @@
 					<p class="text-sm text-base-content/60">{t('groups-empty')}</p>
 				{:else}
 					{#each data.groups as group (group.name)}
-						<AdminGroupForm {group} toolIds={data.tool_ids} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={save} ondelete={remove} />
+						<AdminGroupForm {group} toolIds={data.tools.map((tool) => tool.id)} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={save} ondelete={remove} />
 					{/each}
 				{/if}
 			</div>

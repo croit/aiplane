@@ -56,6 +56,17 @@ export interface GrantRow {
 	kind: GrantRowKind;
 	label: string;
 	description?: string;
+	/** Section heading, from the tool catalog's own `Category`. */
+	category?: string;
+	/** The catalog's render order for that category. */
+	order?: number;
+}
+
+/** A grantable tool id with the section the tool catalog puts it in. */
+export interface GrantableTool {
+	id: string;
+	category: string;
+	order: number;
 }
 
 /**
@@ -64,7 +75,7 @@ export interface GrantRow {
  * meet it before a list it would otherwise have to check row by row.
  */
 export function toolMatrixRows(
-	toolIds: readonly string[],
+	tools: readonly GrantableTool[],
 	families: readonly ToolFamily[],
 	mcpTools: readonly McpTool[],
 	labels: { wildcard?: string; family?: (family: ToolFamily) => string } = {}
@@ -83,15 +94,28 @@ export function toolMatrixRows(
 			description: family.id
 		});
 	}
-	for (const id of toolIds) {
-		if (seen.has(id)) continue;
-		seen.add(id);
-		rows.push({ value: id, kind: 'tool', label: id });
+	for (const tool of tools) {
+		if (seen.has(tool.id)) continue;
+		seen.add(tool.id);
+		rows.push({
+			value: tool.id,
+			kind: 'tool',
+			label: tool.id,
+			category: tool.category,
+			order: tool.order
+		});
 	}
 	for (const tool of mcpTools) {
 		if (seen.has(tool.id)) continue;
 		seen.add(tool.id);
-		rows.push({ value: tool.id, kind: 'tool', label: tool.id, description: tool.description });
+		rows.push({
+			value: tool.id,
+			kind: 'tool',
+			label: tool.id,
+			description: tool.description,
+			category: tool.category,
+			order: tool.order
+		});
 	}
 	return rows;
 }
@@ -105,6 +129,37 @@ export function skillMatrixRows(
 		{ value: GRANT_WILDCARD, kind: 'wildcard', label: labels.wildcard ?? GRANT_WILDCARD },
 		...skillNames.map((name): GrantRow => ({ value: name, kind: 'tool', label: name }))
 	];
+}
+
+/**
+ * Section key for the leading block of wide grants. Not a catalog category, so
+ * it cannot collide with one — the view gives it its own heading.
+ */
+export const FAMILY_SECTION = '\u0000families';
+
+/**
+ * The matrix rows as sections, keyed by the tool catalog's category slug.
+ *
+ * The wide grants lead, in their own section — they are the ones an operator
+ * should meet before a list they would otherwise check row by row. The rest use
+ * the catalog's own `Category`, so this page sections the same way `/tools` and
+ * the token panel do rather than inventing a second taxonomy. Keys, not
+ * headings: the words come from the Fluent catalogs at render time.
+ */
+export function groupGrantRows(rows: readonly GrantRow[]): [string, GrantRow[]][] {
+	const families = rows.filter((row) => row.kind !== 'tool');
+	const sections = new Map<string, { order: number; rows: GrantRow[] }>();
+	for (const row of rows) {
+		if (row.kind !== 'tool') continue;
+		const label = row.category ?? '';
+		const section = sections.get(label) ?? { order: row.order ?? 0, rows: [] };
+		section.rows.push(row);
+		sections.set(label, section);
+	}
+	const ordered = [...sections.entries()]
+		.sort((a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0]))
+		.map(([label, section]): [string, GrantRow[]] => [label, section.rows]);
+	return families.length > 0 ? [[FAMILY_SECTION, families], ...ordered] : ordered;
 }
 
 export type GrantFilter = 'all' | 'families' | 'granted' | 'ungranted';

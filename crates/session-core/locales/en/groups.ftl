@@ -42,3 +42,4 @@ groups-identity-unseen = Not seen on any sign-in yet
 groups-identity-unseen-hint = Configured on a group but never presented — check it against what your IdP actually sends.
 groups-identity-empty = No claim values yet. They are recorded as users sign in.
 groups-identity-create = Create a group for this
+groups-matrix-section-families = Whole families

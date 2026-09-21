@@ -42,3 +42,4 @@ groups-identity-unseen = Не встречалось ни при одном вх
 groups-identity-unseen-hint = Настроено у группы, но ни разу не присылалось — сверьте со значениями, которые действительно отправляет ваш IdP.
 groups-identity-empty = Значений claim'ов пока нет. Они записываются при входе пользователей.
 groups-identity-create = Создать группу для этого значения
+groups-matrix-section-families = Целые семейства

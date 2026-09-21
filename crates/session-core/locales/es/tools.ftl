@@ -15,3 +15,18 @@ tools-location-unavailable = No se pudo acceder a tu ubicación. Comprueba el pe
 
 # SPA-only: the Svelte /tools toggle list.
 tools-toggle-aria = Activar o desactivar { $name }
+
+# Section headings for the tool catalog, shared by /tools, the per-token
+# capability panel, the chat capability picker and the admin grant matrix.
+tool-category-web-network = Web y Red
+tool-category-attachments-documents = Adjuntos y Documentos
+tool-category-document-templates = Plantillas de documentos
+tool-category-knowledge-base = Base de conocimiento
+tool-category-code-sandbox = Código y Sandbox
+tool-category-memory = Memoria
+tool-category-integrations = Integraciones
+tool-category-utility = Utilidades
+tool-category-skills = Skills
+tool-category-images-media = Imágenes y Medios
+tool-category-comfyui-workflows = Flujos de ComfyUI
+tool-category-scheduled-actions = Acciones programadas

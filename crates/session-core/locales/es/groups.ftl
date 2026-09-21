@@ -42,3 +42,4 @@ groups-identity-unseen = No visto en ningún inicio de sesión
 groups-identity-unseen-hint = Configurado en un grupo pero nunca presentado: compruébelo con lo que su IdP envía realmente.
 groups-identity-empty = Aún no hay valores de claims. Se registran cuando los usuarios inician sesión.
 groups-identity-create = Crear un grupo para esto
+groups-matrix-section-families = Familias completas

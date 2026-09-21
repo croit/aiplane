@@ -4,7 +4,7 @@
 	import LocationSharingCard from '$lib/components/tools/LocationSharingCard.svelte';
 	import ToolToggleSections from '$lib/components/tools/ToolToggleSections.svelte';
 	import { t } from '$lib/i18n.svelte';
-	import { currentBrowserLocation, type LocationSharingState, type ToolEntry, type ToolsResponse } from '$lib/tools';
+	import { currentBrowserLocation, toolCategoryLabel, type LocationSharingState, type ToolEntry, type ToolsResponse } from '$lib/tools';
 
 	let tools = $state<ToolEntry[]>([]);
 	let error = $state<string | null>(null);
@@ -20,7 +20,10 @@
 			list.push(tool);
 			byCategory.set(tool.category, list);
 		}
-		return [...byCategory.entries()];
+		return [...byCategory.entries()].map(([key, list]): [string, ToolEntry[]] => [
+			toolCategoryLabel(key),
+			list
+		]);
 	});
 
 	async function refresh() {

@@ -41,3 +41,4 @@ groups-identity-unseen = 尚未在任何登录中出现
 groups-identity-unseen-hint = 已在某个组上配置但从未提交过 — 请对照 IdP 实际发送的内容检查。
 groups-identity-empty = 尚无声明值。它们会在用户登录时记录。
 groups-identity-create = 为此创建一个组
+groups-matrix-section-families = 整个系列
