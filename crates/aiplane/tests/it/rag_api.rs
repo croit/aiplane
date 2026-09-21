@@ -583,10 +583,6 @@ async fn create_validates_inputs() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-/// The scheduled re-sync is the only way a pull-only source (a mailing-list
-/// archive; a plain WebDAV share) ever gets newer, so its contract is pinned:
-/// off unless asked for, a real schedule when asked, and a refusal — not a
-/// clamp — for an interval that would re-index continuously.
 /// A collection may only be restricted to groups that exist. An unmatchable name
 /// makes it invisible and unsearchable rather than restricted, which reads as the
 /// collection having broken.
@@ -673,6 +669,10 @@ async fn providers_endpoint_carries_the_group_vocabulary() {
     assert_eq!(listed["groups"], serde_json::json!(["engineering"]));
 }
 
+/// The scheduled re-sync is the only way a pull-only source (a mailing-list
+/// archive; a plain WebDAV share) ever gets newer, so its contract is pinned:
+/// off unless asked for, a real schedule when asked, and a refusal — not a
+/// clamp — for an interval that would re-index continuously.
 #[tokio::test]
 async fn a_refresh_interval_round_trips_and_refuses_a_runaway_schedule() {
     let state = common::state_with_admin_rbac("http://unused.invalid").await;

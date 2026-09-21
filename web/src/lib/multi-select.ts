@@ -42,8 +42,10 @@ export function normalizeSelection(values: readonly string[]): string[] {
  * Storing `["*", "search_web"]` would resolve identically to `["*"]` but read as
  * a narrower grant than it is, so whichever the operator picked last wins.
  */
-export function toggleValue(selected: readonly string[], value: string, on: boolean): string[] {
-	if (!on) return normalizeSelection(selected.filter((held) => held !== value));
+export function toggleValue(selected: readonly string[], value: string): string[] {
+	if (selected.includes(value)) {
+		return normalizeSelection(selected.filter((held) => held !== value));
+	}
 	if (value === GRANT_WILDCARD) return [GRANT_WILDCARD];
 	return normalizeSelection([...selected.filter((held) => held !== GRANT_WILDCARD), value]);
 }

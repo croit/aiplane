@@ -18,13 +18,8 @@ const tools: SearchOption[] = [
 ];
 
 test('toggling adds and removes without disturbing the rest', () => {
-	assert.deepEqual(toggleValue(['search_web'], 'fetch_url', true), ['search_web', 'fetch_url']);
-	assert.deepEqual(toggleValue(['search_web', 'fetch_url'], 'search_web', false), ['fetch_url']);
-});
-
-test('toggling on a value already held changes nothing', () => {
-	assert.deepEqual(toggleValue(['search_web'], 'search_web', true), ['search_web']);
-	assert.deepEqual(toggleValue([], 'search_web', false), []);
+	assert.deepEqual(toggleValue(['search_web'], 'fetch_url'), ['search_web', 'fetch_url']);
+	assert.deepEqual(toggleValue(['search_web', 'fetch_url'], 'search_web'), ['fetch_url']);
 });
 
 // `*` is not sugar for "every box checked": the resolver expands it against the
@@ -32,16 +27,16 @@ test('toggling on a value already held changes nothing', () => {
 // ComfyUI workflows that are in no registry. Expanding it into explicit ids on
 // save would silently narrow the seeded admin group to today's tool list.
 test('selecting the wildcard collapses the selection to itself', () => {
-	assert.deepEqual(toggleValue(['search_web', 'fetch_url'], GRANT_WILDCARD, true), [GRANT_WILDCARD]);
+	assert.deepEqual(toggleValue(['search_web', 'fetch_url'], GRANT_WILDCARD), [GRANT_WILDCARD]);
 	assert.deepEqual(normalizeSelection([GRANT_WILDCARD, 'search_web']), [GRANT_WILDCARD]);
 });
 
 test('selecting a concrete value while the wildcard is held replaces the wildcard', () => {
-	assert.deepEqual(toggleValue([GRANT_WILDCARD], 'search_web', true), ['search_web']);
+	assert.deepEqual(toggleValue([GRANT_WILDCARD], 'search_web'), ['search_web']);
 });
 
 test('clearing the wildcard empties the selection', () => {
-	assert.deepEqual(toggleValue([GRANT_WILDCARD], GRANT_WILDCARD, false), []);
+	assert.deepEqual(toggleValue([GRANT_WILDCARD], GRANT_WILDCARD), []);
 });
 
 test('normalizing drops blanks and duplicates but keeps order', () => {

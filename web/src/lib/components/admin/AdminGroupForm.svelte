@@ -3,6 +3,7 @@
 	import { t } from '$lib/i18n.svelte';
 	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 	import { isWildcardSelected, multiSelectOptions, normalizeSelection } from '$lib/multi-select';
+	import { splitList } from '$lib/upstreams';
 
 	export interface AdminGroup {
 		name: string;
@@ -55,10 +56,6 @@
 	// `*` on an admin group is what the setup wizard seeds and is meant there.
 	// On any other group it silently widens with every release that adds a tool.
 	let wildcardUnreviewed = $derived(!isAdmin && (isWildcardSelected(tools) || isWildcardSelected(skills)));
-
-	function splitList(value: string) {
-		return value.split(',').map((item) => item.trim()).filter(Boolean);
-	}
 
 	async function save() {
 		saving = true;

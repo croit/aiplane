@@ -228,12 +228,7 @@ async fn load_all_pools(db: &Pool) -> Result<Vec<PoolRow>, DbError> {
     for row in &rows {
         let created_at = parse_ts("created_at", row)?;
         let updated_at = parse_ts("updated_at", row)?;
-        let allowed_groups_json: String = row.try_get("allowed_groups")?;
-        let allowed_groups: Vec<String> =
-            serde_json::from_str(&allowed_groups_json).map_err(|e| DbError::Decode {
-                column: "allowed_groups",
-                source: e.into(),
-            })?;
+        let allowed_groups = decode_allowed_groups(row)?;
         pools.push(PoolRow {
             name: row.try_get("name")?,
             kind: row.try_get("kind")?,
@@ -558,7 +553,6 @@ pub async fn backend_exists(db: &Pool, name: &str) -> Result<bool, DbError> {
     Ok(n > 0)
 }
 
-/// Whether a pool with this name already exists. See [`backend_exists`].
 /// One pool's stored `allowed_groups`, for diffing a save against what is
 /// already there. Empty for a pool that does not exist yet, so a create
 /// validates every name it carries.
@@ -570,6 +564,12 @@ pub async fn pool_allowed_groups(db: &Pool, name: &str) -> Result<Vec<String>, D
     else {
         return Ok(Vec::new());
     };
+    decode_allowed_groups(&row)
+}
+
+/// The `allowed_groups` column is a JSON array of group names, not an FK — see
+/// `gateway_groups::delete_group` for why it stays that way.
+fn decode_allowed_groups(row: &sqlx::sqlite::SqliteRow) -> Result<Vec<String>, DbError> {
     let json: String = row.try_get("allowed_groups")?;
     serde_json::from_str(&json).map_err(|e| DbError::Decode {
         column: "allowed_groups",
@@ -577,6 +577,7 @@ pub async fn pool_allowed_groups(db: &Pool, name: &str) -> Result<Vec<String>, D
     })
 }
 
+/// Whether a pool with this name already exists. See [`backend_exists`].
 pub async fn pool_exists(db: &Pool, name: &str) -> Result<bool, DbError> {
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pools WHERE name = ?")
         .bind(name)

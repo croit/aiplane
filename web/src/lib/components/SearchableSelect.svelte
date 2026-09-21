@@ -46,14 +46,14 @@
 	let activeIndex = $state(0);
 	let filtered = $derived(filterSearchOptions(options, query));
 	let selected = $derived(options.find((option) => option.value === value));
-	let held = $derived(multiple ? values : []);
-	let isHeld = $derived((candidate: string) => held.includes(candidate));
 	/* One predicate for "this row is part of the current selection", so the
 	 * check mark, the weight and `aria-selected` cannot disagree. */
-	let isChosen = $derived((candidate: string) => (multiple ? isHeld(candidate) : candidate === value));
+	let isChosen = $derived((candidate: string) =>
+		multiple ? values.includes(candidate) : candidate === value
+	);
 	let triggerLabel = $derived(
 		multiple && summary
-			? summarizeSelection(held, options, summary)
+			? summarizeSelection(values, options, summary)
 			: (selected?.label ?? (placeholder || value))
 	);
 	let buttonSize = $derived(size === 'xs' ? 'btn-xs' : size === 'sm' ? 'btn-sm' : 'btn-md');
@@ -146,7 +146,7 @@
 			// The panel stays open: picking grants is a multi-step edit, and
 			// reopening between every tool is what made the old field faster to
 			// type into than to click through.
-			values = toggleValue(values, option.value, !isHeld(option.value));
+			values = toggleValue(values, option.value);
 			onchangemany?.(values);
 			return;
 		}
@@ -279,7 +279,7 @@
 				<div class="px-3 py-6 text-center text-sm text-base-content/60">{t('searchable-select-no-results')}</div>
 			{/if}
 
-			{#if multiple && held.length > 0}
+			{#if multiple && values.length > 0}
 				<div class="mt-2 flex shrink-0 justify-end border-t border-base-300 pt-2">
 					<button type="button" class="btn btn-ghost btn-xs" onkeydown={onEscape} onclick={() => { values = []; onchangemany?.(values); }}>{t('multi-select-clear')}</button>
 				</div>

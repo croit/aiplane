@@ -39,13 +39,13 @@
 		try {
 			const [collectionData, providerData, profileData] = await Promise.all([
 				adminJson<{ data: RagCollection[] }>('/api/v0/rag/collections'),
-				adminJson<{ data: RagProvider[]; embedding_models: string[]; default_embedding: string | null; groups?: string[] }>('/api/v0/rag/providers'),
+				adminJson<{ data: RagProvider[]; embedding_models: string[]; default_embedding: string | null; groups: string[] }>('/api/v0/rag/providers'),
 				adminJson<{ data: RagProfile[] }>('/api/v0/rag/profiles')
 			]);
 			providers = providerData.data ?? [];
 			profiles = profileData.data ?? [];
 			models = providerData.embedding_models;
-			groups = providerData.groups ?? [];
+			groups = providerData.groups;
 			defaultEmbedding = providerData.default_embedding;
 			if (id !== null) {
 				collection = (collectionData.data ?? []).find((entry) => String(entry.id) === id) ?? null;

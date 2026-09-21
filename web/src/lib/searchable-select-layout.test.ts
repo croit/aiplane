@@ -26,7 +26,7 @@ describe('searchable select option layout', () => {
 		assert.match(searchableSelect, /aria-selected=\{isChosen\(option\.value\)\}/);
 		// `choose` returns before `hide()` in multiple mode — picking several
 		// grants must not close the panel between every click.
-		assert.match(searchableSelect, /values = toggleValue\(values, option\.value, !isHeld\(option\.value\)\);/);
+		assert.match(searchableSelect, /values = toggleValue\(values, option\.value\);/);
 		assert.match(searchableSelect, /multi-select-clear/);
 		// `popover="manual"` turns off the browser's light dismiss, and in multiple
 		// mode a click leaves focus on the option button — so every control inside

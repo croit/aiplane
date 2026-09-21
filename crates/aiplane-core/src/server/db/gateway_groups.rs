@@ -60,9 +60,10 @@ pub async fn list_groups(pool: &Pool) -> Result<Vec<GroupRow>, DbError> {
     rows.iter().map(map_group).collect()
 }
 
-/// Just the group names, for the admin pickers and for validating a resource's
-/// `allowed_groups` before it is stored. Four call sites used to re-derive this
-/// from [`list_groups`].
+/// Just the group names, for the admin pickers, the admin roster's role list and
+/// for validating a resource's `allowed_groups` before it is stored. Every one of
+/// those used to re-derive the names from [`list_groups`] and throw the rest of
+/// each row away.
 pub async fn list_group_names(pool: &Pool) -> Result<Vec<String>, DbError> {
     let rows = sqlx::query("SELECT name FROM gateway_groups ORDER BY name")
         .fetch_all(pool)
@@ -77,7 +78,7 @@ pub async fn list_group_names(pool: &Pool) -> Result<Vec<String>, DbError> {
 /// then matches nobody — the resource goes invisible and unroutable with no
 /// clue as to why. Callers reject on a non-empty result rather than filtering,
 /// which would silently discard a grant the operator asked for.
-pub async fn unknown_groups(pool: &Pool, wanted: &[String]) -> Result<Vec<String>, DbError> {
+async fn unknown_groups(pool: &Pool, wanted: &[String]) -> Result<Vec<String>, DbError> {
     if wanted.is_empty() {
         return Ok(Vec::new());
     }
@@ -98,7 +99,7 @@ pub async fn unknown_groups(pool: &Pool, wanted: &[String]) -> Result<Vec<String
 /// it would make an inherited dangling name block every later edit of an
 /// unrelated field. An edit may therefore keep a dangling name, but may not
 /// introduce one.
-pub async fn unknown_added_groups(
+async fn unknown_added_groups(
     pool: &Pool,
     wanted: &[String],
     previously: &[String],
@@ -111,10 +112,23 @@ pub async fn unknown_added_groups(
     unknown_groups(pool, &added).await
 }
 
+/// `Some(message)` when this save introduces group names that do not exist —
+/// the 400 body for the pool, RAG collection and MCP connector saves, so an
+/// operator gets the same wording and the same next step wherever they hit it.
+/// `None` means the ACL is fine to store. The `DbError` stays separate so a
+/// lookup failure is still a 500 rather than being reported as a bad request.
+pub async fn unknown_added_groups_message(
+    pool: &Pool,
+    lang: session_core::i18n::Lang,
+    wanted: &[String],
+    previously: &[String],
+) -> Result<Option<String>, DbError> {
+    let unknown = unknown_added_groups(pool, wanted, previously).await?;
+    Ok((!unknown.is_empty()).then(|| unknown_groups_message(lang, &unknown)))
+}
+
 /// The 400 body for a resource save that named groups which do not exist.
-/// Shared by the pool, RAG collection and MCP connector saves so an operator
-/// gets the same wording and the same next step wherever they hit it.
-pub fn unknown_groups_message(lang: session_core::i18n::Lang, unknown: &[String]) -> String {
+fn unknown_groups_message(lang: session_core::i18n::Lang, unknown: &[String]) -> String {
     session_core::i18n::t_args(
         lang,
         "admin-error-unknown-groups",

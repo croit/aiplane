@@ -2,8 +2,7 @@
 	import { connectorForm, connectorUsesOAuth, type AdminConnector, type ConnectorFormValue } from '$lib/admin-connectors';
 	import ConnectorOAuthHelp from './ConnectorOAuthHelp.svelte';
 	import { t } from '$lib/i18n.svelte';
-	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
-	import { multiSelectOptions } from '$lib/multi-select';
+	import GroupSelect from '$lib/components/GroupSelect.svelte';
 
 	let { connector, redirectUri, groups, onsave } = $props<{
 		connector?: AdminConnector;
@@ -61,14 +60,7 @@
 
 	<div class="flex w-full flex-col gap-1">
 		<span class="text-xs">{t('connectors-field-allowed-groups-label')}</span>
-		<SearchableSelect
-			multiple
-			bind:values={form.groups}
-			options={multiSelectOptions(groups.map((group: string) => ({ value: group, label: group })), { unknownLabel: t('multi-select-unknown') }, form.groups)}
-			size="sm"
-			ariaLabel={t('connectors-field-allowed-groups-label')}
-			summary={{ empty: t('multi-select-none'), counted: (count: number) => t('multi-select-count', { count }) }}
-		/>
+		<GroupSelect {groups} bind:values={form.groups} label={t('connectors-field-allowed-groups-label')} />
 	</div>
 	<label class="flex min-h-11 cursor-pointer items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={form.audit} /><span class="text-xs">{t('connectors-field-audit-label')}</span></label>
 	<div><button type="submit" class="btn btn-primary btn-sm" disabled={saving}>{connector ? t('connectors-save-changes-button') : t('connectors-add-connector-button')}</button></div>

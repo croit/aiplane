@@ -132,7 +132,7 @@ export interface Topology {
 	dirty: number;
 	pool_kinds: string[];
 	pool_strategies: string[];
-	groups?: string[];
+	groups: string[];
 	fallback_kinds: string[];
 	all_models?: string[];
 	coverage?: Record<string, Coverage[]>;

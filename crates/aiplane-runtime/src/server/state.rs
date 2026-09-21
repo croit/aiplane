@@ -421,6 +421,25 @@ impl AppState {
         allowed
     }
 
+    /// Every tool id an operator can *grant*: the static registry plus the
+    /// ComfyUI workflows. Those are loaded at runtime and so are in no registry,
+    /// yet `comfyui_<id>` is a legitimate grant that
+    /// [`Resolver::grants_comfyui_overlay`] honours — so a grant editor built
+    /// from the registry alone would render an existing workflow grant as
+    /// unrecognised and offer no way to add one short of `*`.
+    pub fn grantable_tool_ids(&self) -> Vec<String> {
+        use crate::server::tools::ToolSource;
+        let mut ids: Vec<String> = self.tools().ids().map(|s| s.to_string()).collect();
+        if let Some(handle) = self.comfyui() {
+            ids.extend(
+                crate::server::comfyui_tool::ComfyuiToolSource::new((*handle).clone()).ids(),
+            );
+        }
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
     /// Append the currently-loaded `comfyui_*` tool ids to `allowed` based
     /// on the RBAC grant (admin / wildcard / explicit list). Centralised so
     /// every call site that asks "what tools does this caller see"

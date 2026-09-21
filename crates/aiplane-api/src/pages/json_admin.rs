@@ -63,22 +63,7 @@ pub async fn groups_list(State(state): State<Arc<RamaState>>, req: Request) -> R
     let observed = db::gateway_groups::observed_oidc_values(&state.db)
         .await
         .unwrap_or_default();
-    let mut tool_ids: Vec<String> = state.tools().ids().map(|s| s.to_string()).collect();
-    // The ComfyUI workflows are loaded at runtime and so are in no registry, but
-    // `comfyui_<id>` is a legitimate grant (`Resolver::grants_comfyui_overlay`).
-    // Without them the picker would render an existing workflow grant as
-    // unrecognised and offer no way to add one short of `*`.
-    if let Some(handle) = state.comfyui() {
-        for manifest in handle.store.current().workflows() {
-            tool_ids.push(format!(
-                "{}{}",
-                aiplane_core::server::tool_naming::COMFYUI_PREFIX,
-                manifest.id
-            ));
-        }
-    }
-    tool_ids.sort();
-    tool_ids.dedup();
+    let tool_ids = state.grantable_tool_ids();
     let skill_names: Vec<String> = state
         .skills()
         .as_ref()
@@ -791,8 +776,8 @@ pub async fn limits_list(State(state): State<Arc<RamaState>>, req: Request) -> R
     };
     // Not `unwrap_or_default()`: an empty list renders as "this gateway has no
     // groups", which is indistinguishable from a read that failed.
-    let roles: Vec<String> = match db::gateway_groups::list_groups(&state.db).await {
-        Ok(groups) => groups.into_iter().map(|g| g.name).collect(),
+    let roles: Vec<String> = match db::gateway_groups::list_group_names(&state.db).await {
+        Ok(names) => names,
         Err(err) => return internal(err),
     };
     let users = db::users::list_all(&state.db)
@@ -870,10 +855,10 @@ pub async fn limits_save(State(state): State<Arc<RamaState>>, req: Request) -> R
     // groups, tokens in the DB, users by id or email.
     let subject_id = match subject_type {
         limits::SubjectType::Role => {
-            let known = db::gateway_groups::list_groups(&state.db)
+            let known = db::gateway_groups::list_group_names(&state.db)
                 .await
                 .unwrap_or_default();
-            if !known.iter().any(|g| g.name == parsed.subject_id) {
+            if !known.contains(&parsed.subject_id) {
                 return bad_request(format!("unknown role: {}", parsed.subject_id));
             }
             parsed.subject_id
@@ -2159,24 +2144,24 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
     // A group name that matches nothing makes the pool non-empty-but-unmatchable:
     // invisible and unroutable to every non-admin, with no clue as to why. Only
     // names this save introduces are checked — see `unknown_added_groups`.
-    let stored_groups = match upstreams_config::pool_allowed_groups(&state.db, &name).await {
-        Ok(groups) => groups,
-        Err(err) => return internal(err),
+    let stored_groups = if parsed.allowed_groups.is_empty() {
+        Vec::new()
+    } else {
+        match upstreams_config::pool_allowed_groups(&state.db, &name).await {
+            Ok(groups) => groups,
+            Err(err) => return internal(err),
+        }
     };
-    match db::gateway_groups::unknown_added_groups(
+    match db::gateway_groups::unknown_added_groups_message(
         &state.db,
+        Lang::from_request(&parts.headers),
         &parsed.allowed_groups,
         &stored_groups,
     )
     .await
     {
-        Ok(unknown) if !unknown.is_empty() => {
-            return bad_request(db::gateway_groups::unknown_groups_message(
-                Lang::from_request(&parts.headers),
-                &unknown,
-            ));
-        }
-        Ok(_) => {}
+        Ok(Some(message)) => return bad_request(message),
+        Ok(None) => {}
         Err(err) => return internal(err),
     }
     let strategy = if STRATEGIES.contains(&parsed.strategy.as_str()) {

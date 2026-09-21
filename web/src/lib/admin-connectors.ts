@@ -1,3 +1,5 @@
+import { normalizeSelection } from './multi-select.ts';
+
 export type ConnectorAuth = 'oauth2' | 'static_bearer' | 'none';
 export type ConnectorScope = 'per_user' | 'global';
 
@@ -70,7 +72,7 @@ export function connectorForm(connector?: AdminConnector): ConnectorFormValue {
 		authorize_url: connector?.authorize_url ?? '',
 		token_url: connector?.token_url ?? '',
 		registration_url: connector?.registration_url ?? '',
-		groups: connector?.groups.slice() ?? [],
+		groups: normalizeSelection(connector?.groups ?? []),
 		audit: connector?.audit ?? false,
 		overwrite: connector !== undefined
 	};

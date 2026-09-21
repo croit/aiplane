@@ -4,7 +4,8 @@
 	import { t } from '$lib/i18n.svelte';
 	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 	import { parseList, type RagCollection, type RagProfile, type RagProvider } from '$lib/rag';
-	import { multiSelectOptions, normalizeSelection } from '$lib/multi-select';
+	import GroupSelect from '$lib/components/GroupSelect.svelte';
+	import { normalizeSelection } from '$lib/multi-select';
 
 	let {
 		collection = null,
@@ -252,14 +253,7 @@
 			{#if collection}
 				<fieldset class="fieldset md:col-span-2">
 					<legend class="fieldset-legend">{t('rag-label-allowed-groups')}</legend>
-					<SearchableSelect
-						multiple
-						bind:values={form.allowed_groups}
-						options={multiSelectOptions(groups.map((group: string) => ({ value: group, label: group })), { unknownLabel: t('multi-select-unknown') }, form.allowed_groups)}
-						ariaLabel={t('rag-label-allowed-groups')}
-						summary={{ empty: t('multi-select-none'), counted: (count: number) => t('multi-select-count', { count }) }}
-						class="w-full"
-					/>
+					<GroupSelect {groups} bind:values={form.allowed_groups} label={t('rag-label-allowed-groups')} size="md" class="w-full" />
 					<p class="label max-w-full whitespace-normal">{t('rag-hint-allowed-groups')}</p>
 				</fieldset>
 			{/if}

@@ -1133,21 +1133,16 @@ pub async fn update_collection(
     // Same gate as the pool and connector saves: a group name matching nothing
     // makes the collection invisible and unsearchable rather than restricted.
     if let Some(groups) = allowed_groups.as_ref() {
-        match aiplane_core::server::db::gateway_groups::unknown_added_groups(
+        match aiplane_core::server::db::gateway_groups::unknown_added_groups_message(
             &state.db,
+            lang,
             groups,
             &before.allowed_groups,
         )
         .await
         {
-            Ok(unknown) if !unknown.is_empty() => {
-                return invalid_request(
-                    &aiplane_core::server::db::gateway_groups::unknown_groups_message(
-                        lang, &unknown,
-                    ),
-                );
-            }
-            Ok(_) => {}
+            Ok(Some(message)) => return invalid_request(&message),
+            Ok(None) => {}
             Err(err) => {
                 tracing::warn!(error = %err, %id, "validating rag collection access");
                 return internal_error("validating collection access failed");

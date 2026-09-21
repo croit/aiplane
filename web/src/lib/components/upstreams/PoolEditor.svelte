@@ -3,8 +3,8 @@
 	import { adminPost, adminPut } from '$lib/admin-client';
 	import { t } from '$lib/i18n.svelte';
 	import { parseVoices, splitLines, splitList, type Backend, type Pool } from '$lib/upstreams';
-	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
-	import { multiSelectOptions, normalizeSelection } from '$lib/multi-select';
+	import GroupSelect from '$lib/components/GroupSelect.svelte';
+	import { normalizeSelection } from '$lib/multi-select';
 
 	interface Props {
 		pool?: Pool | null;
@@ -121,14 +121,7 @@
 	</label>
 	<div class="flex flex-col gap-1">
 		<span class="text-xs text-base-content/70">{t('pools-field-allowed-groups')}</span>
-		<SearchableSelect
-			multiple
-			bind:values={allowedGroups}
-			options={multiSelectOptions(groups.map((group) => ({ value: group, label: group })), { unknownLabel: t('multi-select-unknown') }, allowedGroups)}
-			size="sm"
-			ariaLabel={t('pools-field-allowed-groups')}
-			summary={{ empty: t('multi-select-none'), counted: (count: number) => t('multi-select-count', { count }) }}
-		/>
+		<GroupSelect {groups} bind:values={allowedGroups} label={t('pools-field-allowed-groups')} />
 		<span class="text-xs text-base-content/50">{t('pools-field-allowed-groups-hint')}</span>
 	</div>
 	{#if kind === 'speech'}
