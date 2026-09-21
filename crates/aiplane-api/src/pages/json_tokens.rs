@@ -68,7 +68,7 @@ pub async fn details(State(state): State<Arc<RamaState>>, req: Request) -> Respo
                 "title": entry.title,
                 "tech": entry.tech,
                 "description": entry.description,
-                "category": entry.category.label(),
+                "category": entry.category.key(),
             })
         })
         .collect::<Vec<_>>();

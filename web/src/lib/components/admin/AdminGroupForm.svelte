@@ -25,14 +25,18 @@
 		id: string;
 		connector: string;
 		description: string;
+		category: string;
+		order: number;
 	}
 
-	let { group = null, toolIds = [], toolFamilies = [], mcpTools = [], skillNames = [], onsave, ondelete }: {
+	let { group = null, toolIds = [], toolFamilies = [], mcpTools = [], skillNames = [], seedOidcValue = '', onsave, ondelete }: {
 		group?: AdminGroup | null;
 		toolIds?: string[];
 		toolFamilies?: ToolFamily[];
 		mcpTools?: McpTool[];
 		skillNames?: string[];
+		/** Prefills the create form's claim values, from the identity tab. */
+		seedOidcValue?: string;
 		onsave: (group: AdminGroup) => Promise<void>;
 		ondelete?: (name: string) => Promise<void>;
 	} = $props();
@@ -41,7 +45,7 @@
 	let description = $state(untrack(() => group?.description ?? ''));
 	let isAdmin = $state(untrack(() => group?.is_admin ?? false));
 	let isDefault = $state(untrack(() => group?.is_default ?? false));
-	let oidcValues = $state(untrack(() => group?.oidc_values.join(', ') ?? ''));
+	let oidcValues = $state(untrack(() => group?.oidc_values.join(', ') ?? seedOidcValue));
 	let tools = $state(untrack(() => normalizeSelection(group?.tools ?? [])));
 	let skills = $state(untrack(() => normalizeSelection(group?.skills ?? [])));
 	let saving = $state(false);

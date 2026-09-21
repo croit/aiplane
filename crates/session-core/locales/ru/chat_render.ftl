@@ -37,15 +37,6 @@ chat-render-tools-search-placeholder = Поиск инструментов…
 chat-render-all-tools-label = Все инструменты
 chat-render-no-tools-prefix = Для вашей учётной записи пока нет доступных инструментов. Подключите интеграцию в разделе
 chat-render-no-tools-suffix = .
-chat-render-group-web-network = Веб и сеть
-chat-render-group-attachments-documents = Вложения и документы
-chat-render-group-document-templates = Шаблоны документов
-chat-render-group-knowledge-base = База знаний
-chat-render-group-code-sandbox = Код и песочница
-chat-render-group-memory = Память
-chat-render-group-integrations = Интеграции
-chat-render-group-utility = Утилиты
-chat-render-group-skills = Скиллы
 chat-render-tool-count = { $count ->
     [one] { $count } инструмент
     [few] { $count } инструмента

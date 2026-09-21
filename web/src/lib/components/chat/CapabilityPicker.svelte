@@ -3,6 +3,7 @@
 	import type { ChatCapability } from '$lib/api';
 	import { capabilityCounts, filterCapabilities, type CapabilityStateFilter } from '$lib/capability-picker';
 	import { t } from '$lib/i18n.svelte';
+	import { toolCategoryLabel } from '$lib/tools';
 	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 
 	let { capabilities, onset }: {
@@ -32,23 +33,8 @@
 	const stateFilters: CapabilityStateFilter[] = ['all', 'on', 'auto', 'off'];
 	let groupOptions = $derived([
 		{ value: '', label: t('chat-render-all-tools-label'), description: t('chat-render-tool-count', { count: capabilities.length }) },
-		...groups.map((group) => ({ value: group.name, label: groupLabel(group.name), description: t('chat-render-tool-count', { count: group.rows.length }) }))
+		...groups.map((group) => ({ value: group.name, label: toolCategoryLabel(group.name), description: t('chat-render-tool-count', { count: group.rows.length }) }))
 	]);
-
-	function groupLabel(group: string): string {
-		const key: Record<string, string> = {
-			'Web & Network': 'chat-render-group-web-network',
-			'Attachments & Documents': 'chat-render-group-attachments-documents',
-			'Document templates': 'chat-render-group-document-templates',
-			'Knowledge base': 'chat-render-group-knowledge-base',
-			'Code & Sandbox': 'chat-render-group-code-sandbox',
-			Memory: 'chat-render-group-memory',
-			Integrations: 'chat-render-group-integrations',
-			Utility: 'chat-render-group-utility',
-			Skills: 'chat-render-group-skills'
-		};
-		return key[group] ? t(key[group]) : group;
-	}
 
 	function stateLabel(state: CapabilityStateFilter): string {
 		return t(`chat-render-state-${state}-label`);
@@ -136,7 +122,7 @@
 						<ul class="menu w-full gap-1">
 							<li><button type="button" class={selectedGroup === '' ? 'menu-active' : ''} onclick={() => { selectedGroup = ''; query = ''; }}><span class="min-w-0 flex-1 truncate">{t('chat-render-all-tools-label')}</span><span class="badge badge-sm">{capabilities.length}</span></button></li>
 							{#each groups as group (group.name)}
-								<li><button type="button" class={selectedGroup === group.name ? 'menu-active' : ''} onclick={() => { selectedGroup = group.name; query = ''; }}><span class="min-w-0 flex-1 truncate">{groupLabel(group.name)}</span><span class="badge badge-sm">{group.rows.length}</span></button></li>
+								<li><button type="button" class={selectedGroup === group.name ? 'menu-active' : ''} onclick={() => { selectedGroup = group.name; query = ''; }}><span class="min-w-0 flex-1 truncate">{toolCategoryLabel(group.name)}</span><span class="badge badge-sm">{group.rows.length}</span></button></li>
 							{/each}
 						</ul>
 					</nav>
@@ -147,7 +133,7 @@
 						</div>
 						<div class="flex flex-col gap-3 border-b border-base-300 px-4 py-3 sm:flex-row sm:items-center sm:px-6">
 							<div class="min-w-0 flex-1">
-								<h3 class="truncate text-lg font-semibold">{query.trim() ? t('chat-render-tools-search-results') : selectedGroup ? groupLabel(selectedGroup) : t('chat-render-all-tools-label')}</h3>
+								<h3 class="truncate text-lg font-semibold">{query.trim() ? t('chat-render-tools-search-results') : selectedGroup ? toolCategoryLabel(selectedGroup) : t('chat-render-all-tools-label')}</h3>
 								<p class="text-sm text-base-content/60">{t('chat-render-tool-count', { count: shown.length })}</p>
 							</div>
 							{#if !query.trim() && shown.length > 0}

@@ -126,8 +126,50 @@ pub enum Category {
 }
 
 impl Category {
-    /// Section heading shown on the page.
-    pub fn label(self) -> &'static str {
+    /// Every category, so a guard can walk them.
+    pub const ALL: [Category; 11] = [
+        Category::Web,
+        Category::Documents,
+        Category::Media,
+        Category::Templates,
+        Category::ComfyMedia,
+        Category::Knowledge,
+        Category::Code,
+        Category::Memory,
+        Category::Scheduling,
+        Category::Integrations,
+        Category::Utility,
+    ];
+
+    /// Stable slug for the section, sent to the SPA in place of a heading.
+    ///
+    /// The heading itself is `tool-category-<key>` in the Fluent catalogs, so it
+    /// is translated once and every surface that groups by category — `/tools`,
+    /// the per-token panel, the chat capability picker, the admin grant matrix —
+    /// renders the same words in the user's language. This used to be an English
+    /// string the SPA mapped back to a key by matching on the prose, which left
+    /// three categories untranslated because the map had no entry for them.
+    pub fn key(self) -> &'static str {
+        match self {
+            Category::Web => "web-network",
+            Category::Documents => "attachments-documents",
+            Category::Media => "images-media",
+            Category::Templates => "document-templates",
+            Category::ComfyMedia => "comfyui-workflows",
+            Category::Knowledge => "knowledge-base",
+            Category::Code => "code-sandbox",
+            Category::Memory => "memory",
+            Category::Scheduling => "scheduled-actions",
+            Category::Integrations => "integrations",
+            Category::Utility => "utility",
+        }
+    }
+
+    /// English name for the **model-facing** system context only
+    /// (`capability_domains`), which is prose in the prompt rather than UI copy
+    /// and is English by design. Anything a person reads goes through
+    /// [`Self::key`] and the Fluent catalogs instead.
+    pub fn prompt_label(self) -> &'static str {
         match self {
             Category::Web => "Web & Network",
             Category::Documents => "Attachments & Documents",
@@ -624,7 +666,7 @@ pub fn capability_domains(registry: &ToolRegistry) -> Vec<&'static str> {
         }
     }
     seen.sort_by_key(|c| c.order());
-    seen.into_iter().map(Category::label).collect()
+    seen.into_iter().map(Category::prompt_label).collect()
 }
 
 /// Build the grouped, de-noised toggle list from the tool ids the

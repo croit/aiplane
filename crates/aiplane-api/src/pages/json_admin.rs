@@ -63,7 +63,21 @@ pub async fn groups_list(State(state): State<Arc<RamaState>>, req: Request) -> R
     let observed = db::gateway_groups::observed_oidc_values(&state.db)
         .await
         .unwrap_or_default();
-    let tool_ids = state.grantable_tool_ids();
+    // Each grantable id with the section it belongs in, so the grant matrix can
+    // group a long list the way `/tools` and `/tokens` already group theirs —
+    // same `Category`, same ordering, no second taxonomy.
+    let tools: Vec<serde_json::Value> = state
+        .grantable_tool_ids()
+        .into_iter()
+        .map(|id| {
+            let category = aiplane_runtime::server::tools::catalog::category_for(&id);
+            serde_json::json!({
+                "id": id,
+                "category": category.key(),
+                "order": category.order(),
+            })
+        })
+        .collect();
     // Family grants and the MCP tools a connector was seen to expose. The tool
     // cache is best-effort — a connector nobody has connected yet contributes
     // nothing, which the editor reports rather than showing an empty list.
@@ -82,6 +96,8 @@ pub async fn groups_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 "id": tool.tool_id,
                 "connector": connector,
                 "description": tool.description,
+                "category": aiplane_runtime::server::tools::catalog::Category::Integrations.key(),
+                "order": aiplane_runtime::server::tools::catalog::Category::Integrations.order(),
             })
         })
         .collect();
@@ -95,7 +111,7 @@ pub async fn groups_list(State(state): State<Arc<RamaState>>, req: Request) -> R
         serde_json::json!({
             "groups": groups,
             "observed_oidc_values": observed,
-            "tool_ids": tool_ids,
+            "tools": tools,
             "tool_families": tool_families,
             "mcp_tools": mcp_tools,
             "skill_names": skill_names,

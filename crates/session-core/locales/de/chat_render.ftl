@@ -37,15 +37,6 @@ chat-render-tools-search-placeholder = Tools durchsuchen…
 chat-render-all-tools-label = Alle Tools
 chat-render-no-tools-prefix = Für dein Konto sind noch keine Tools verfügbar. Verbinde eine Integration unter
 chat-render-no-tools-suffix = .
-chat-render-group-web-network = Web & Netzwerk
-chat-render-group-attachments-documents = Anhänge & Dokumente
-chat-render-group-document-templates = Dokumentvorlagen
-chat-render-group-knowledge-base = Wissensdatenbank
-chat-render-group-code-sandbox = Code & Sandbox
-chat-render-group-memory = Speicher
-chat-render-group-integrations = Integrationen
-chat-render-group-utility = Dienstprogramme
-chat-render-group-skills = Skills
 chat-render-tool-count = { $count ->
     [one] { $count } Tool
    *[other] { $count } Tools
