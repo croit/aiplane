@@ -103,6 +103,16 @@ all stamped with the same number:
 | OCR sidecar | `ghcr.io/croit/aiplane-ocr-sidecar` |
 | Helm chart | `oci://ghcr.io/croit/charts/aiplane` |
 
+A **tag** build makes one more thing: a [GitHub Release][gh-releases] entry,
+written by the `github release` job once every publishing job above it has
+succeeded. That ordering is the point — the Releases page is what a human reads
+instead of checking GHCR by hand, so it must never be able to name a build
+whose images did not actually ship. The entry is a face on the tag, nothing
+more: its notes are the commit range since the previous release, nothing reads
+it, and deleting it would not un-publish a single image.
+
+[gh-releases]: https://github.com/croit/aiplane/releases
+
 ### Tag ownership
 
 Every moving tag has exactly one owning job, so two pipelines can never race
@@ -184,7 +194,8 @@ git push origin v2609.1.0
 **3. Watch the tag pipeline.** It runs the *full* suite again — lint, tests,
 release build — and only then publishes. So unlike a promotion-style pipeline,
 a red tag build publishes nothing; the tests are the gate, not a prior run's
-receipt.
+receipt. Last, after every image and the chart are up, it creates the GitHub
+Release entry. There is nothing to write by hand.
 
 The practical consequence is worth knowing: the released image is **rebuilt**,
 not relabelled, so it is not bit-for-bit the image `main` built from the same
@@ -199,6 +210,7 @@ and every auto-update follows:
 
 ```bash
 helm show chart oci://ghcr.io/croit/charts/aiplane
+gh release view v2609.1.0        # the entry, and that its notes read sensibly
 ```
 
 Note what step 3 implies for users: publishing a release **moves
@@ -222,6 +234,12 @@ with no further action.
   CI-built image, so AIplane falls back to the crate version. Expected.
 - **A tag that is not `vX.Y.Z`** does not start a build at all: the workflow
   only triggers on `v*`, and the resolver rejects anything else.
+- **The Releases page is empty for an old release.** Entries are only created
+  from `v2609.2.0` onward; earlier tags predate the `github release` job and
+  were never backfilled. The tag is the release either way.
+- **Editing release notes is safe.** They are prose for humans — no tooling
+  parses them, and the images and chart are already published by the time the
+  entry exists.
 - **Never hand-edit a version** in `Chart.yaml`, the Dockerfile or a CI job. The
   number flows from the tag through `derive-version.sh` and nowhere else.
 
