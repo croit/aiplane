@@ -967,9 +967,29 @@ pub async fn settings_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 .fields
                 .iter()
                 .map(|f| {
-                    let models = match f.kind {
-                        settings::Kind::Model(kind) => state.upstreams.models_for_kind(kind),
-                        _ => Vec::new(),
+                    let (models, model_options) = match f.kind {
+                        settings::Kind::Model(kind) => {
+                            let models = state.upstreams.models_for_kind(kind);
+                            let model_options =
+                                if kind == aiplane_core::server::upstreams::PoolKind::SystemOne {
+                                    state
+                                        .upstreams
+                                        .models_with_compliance_for_kind(kind)
+                                        .into_iter()
+                                        .map(|(id, compliance)| {
+                                            serde_json::json!({
+                                                "id": id,
+                                                "gdpr": compliance.gdpr,
+                                                "nda": compliance.nda,
+                                            })
+                                        })
+                                        .collect::<Vec<_>>()
+                                } else {
+                                    Vec::new()
+                                };
+                            (models, model_options)
+                        }
+                        _ => (Vec::new(), Vec::new()),
                     };
                     serde_json::json!({
                         "key": f.key,
@@ -980,6 +1000,7 @@ pub async fn settings_list(State(state): State<Arc<RamaState>>, req: Request) ->
                         "secret_set": matches!(f.kind, settings::Kind::Secret)
                             && effective.secret_is_set(f.key),
                         "models": models,
+                        "model_options": model_options,
                         // Closed option set for a `choice` field; empty for
                         // every other kind. The SPA labels each option from
                         // its own catalog, so only the identifiers travel.

@@ -859,6 +859,30 @@ async fn settings_list_save_clear() {
     assert_eq!(resp.status(), StatusCode::OK, "empty save is a no-op save");
 }
 
+#[tokio::test]
+async fn settings_list_exposes_system_one_model_compliance() {
+    let (state, cookie) = setup().await;
+    let app = router(state);
+
+    let listed: serde_json::Value = serde_json::from_str(
+        &body(
+            app.serve(req(Method::GET, "/api/v0/admin/settings", &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    let field = listed["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|section| section["fields"].as_array().unwrap())
+        .find(|field| field["key"] == "content_guard.model")
+        .unwrap();
+    assert!(field["model_options"].is_array());
+}
+
 /// Topology: save a backend + pool (dirty bumps), apply (dirty resets),
 /// and the live stream answers with status events.
 #[tokio::test]

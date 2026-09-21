@@ -46,6 +46,8 @@ settings-s-usage = Nutzungsmetriken
 settings-s-usage-blurb = Abrechnung pro Anfrage hinter /usage.
 settings-s-limits = Ratenlimits & Kontingente
 settings-s-limits-blurb = Hauptschalter für die Regeln unter /admin/limits.
+settings-s-content_guard = Inhaltsprüfung
+settings-s-content_guard-blurb = Prüft Inhalte, bevor das ausgewählte Modell sie erhält.
 settings-s-feedback = Feedback-Widget
 settings-s-feedback-blurb = Wohin das In-App-Feedback-Widget Issues anlegt.
 settings-s-push = Web Push
@@ -54,6 +56,30 @@ settings-s-gateway = Sitzungen & Tokens
 settings-s-gateway-blurb = Wie lange ein Browser-Login und ein API-Token gültig bleiben, und ob Admins sich als andere Nutzer ausgeben dürfen.
 
 # ─── Felder ──────────────────────────────────────────────────────────────────
+
+settings-f-content_guard-enabled = Inhaltsprüfung aktivieren
+settings-f-content_guard-enabled-help = Prüft nur den Compliance-Bereich, den der Pool des ausgewählten Modells nicht abdeckt.
+settings-f-content_guard-model = Prüfmodell
+settings-f-content_guard-model-help = System-One-Modell für GDPR- und NDA-Entscheidungen.
+settings-content-guard-model-warning = Dieses System-One-Modell ist nicht konform mit: { $requirements }. An dieses Modell gesendete Inhalte können die jeweilige Schutzgrenze verlassen.
+content-guard-confirm-heading = Inhaltsschutz
+content-guard-confirm-question = Dieser Inhalt wurde als geschützt erkannt. Möchten Sie ihn dennoch an das ausgewählte Modell senden?
+content-guard-confirm-approve = Trotzdem senden
+content-guard-confirm-deny = Nicht senden
+settings-f-content_guard-mode = Modus
+settings-f-content_guard-mode-help = Beobachten protokolliert Entscheidungen; Erzwingen wendet die gewählte Aktion an.
+settings-f-content_guard-mode-opt-monitor = Beobachten
+settings-f-content_guard-mode-opt-enforce = Erzwingen
+settings-f-content_guard-gdpr_action = GDPR-Aktion
+settings-f-content_guard-gdpr_action-help = Aktion, wenn personenbezogene Daten an einen nicht GDPR-konformen Pool gesendet würden.
+settings-f-content_guard-nda_action = NDA-Aktion
+settings-f-content_guard-nda_action-help = Aktion, wenn vertrauliche Inhalte an einen Pool ohne NDA-Abdeckung gesendet würden.
+settings-f-content_guard-gdpr_action-opt-allow = Erlauben
+settings-f-content_guard-gdpr_action-opt-confirm = Bestätigung anfordern
+settings-f-content_guard-gdpr_action-opt-deny = Ablehnen
+settings-f-content_guard-nda_action-opt-allow = Erlauben
+settings-f-content_guard-nda_action-opt-confirm = Bestätigung anfordern
+settings-f-content_guard-nda_action-opt-deny = Ablehnen
 
 settings-f-chat-ocr-enabled = OCR aktivieren
 settings-f-chat-ocr-enabled-help = Hauptschalter für das Auslesen von Text aus hochgeladenen Dokumenten.

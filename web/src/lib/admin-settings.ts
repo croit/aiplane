@@ -19,6 +19,7 @@ export interface AdminSettingsField {
 	value: string | null;
 	secret_set: boolean;
 	models: string[];
+	model_options: Array<{ id: string; gdpr: boolean; nda: boolean }>;
 	/**
 	 * The closed option set of a `choice` field; empty for every other kind.
 	 * Only the identifiers travel — each option's label is a catalog key the

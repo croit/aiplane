@@ -942,6 +942,30 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
         .as_ref()
         .map(|decision| decision.effective_target.as_str())
         .unwrap_or(&ctx.model);
+    match crate::content_guard::evaluate_for_model(&d.state, &routing_state, routing_model, &access)
+        .await
+        .map_err(upstream_err)?
+    {
+        crate::content_guard::Action::Allow => {}
+        crate::content_guard::Action::Confirm => {
+            if !crate::content_guard::confirm_in_chat(
+                d.tool_ctx.chat_feedback.as_ref(),
+                d.tool_ctx.assistant_turn_id.as_deref(),
+            )
+            .await
+            {
+                return Err(TurnError::Upstream {
+                    message: "Content was not approved for sending to the selected model.".into(),
+                });
+            }
+        }
+        crate::content_guard::Action::Deny => {
+            return Err(TurnError::Upstream {
+                message: "Content policy prevents sending this request to the selected model."
+                    .into(),
+            });
+        }
+    }
     let real_model = d
         .state
         .upstreams

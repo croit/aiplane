@@ -17,6 +17,7 @@
 //! `aiplane-tools` and `aiplane-api` both depend on this and on nothing of each
 //! other, so a tool edit and a page edit stay independent.
 
+pub mod content_guard;
 pub mod loop_guard;
 pub mod openai_driver;
 pub mod rama_server;

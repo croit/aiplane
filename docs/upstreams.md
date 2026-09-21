@@ -40,6 +40,10 @@ required image requests and `vllm_xargs` values itself.
 
 A **system_one** pool serves the TypeSafe-compatible `POST /v1/systemone` endpoint. The gateway does not translate its question or answer schema. Because this endpoint has its own model catalog, System One backends always use their explicitly configured model list and only use the health probe for liveness; startup model-cache seeding, reload carryover, and the OpenAI-compatible `/models` response cannot replace or withhold those models. A multi-capability backend such as OpenRouter can be linked to both a normal chat pool and a System One pool: leave discovery enabled for the shared backend, let the chat pool use its discovered catalog, and put the System One models on the `system_one` pool. For example, configure `~typesafe/jev-latest`, or pin a versioned id such as `typesafe/jev-1.13`.
 
+## Content guard
+
+Content guard is an optional Settings feature. The administrator selects any configured System One model, with its GDPR and NDA flags shown in the selector; a non-compliant choice remains possible but is explicitly warned about. AIplane does not call the guard for a selected chat pool whose GDPR and NDA flags are both true; it asks only the missing GDPR and/or NDA questions, batching both questions into one request when both flags are false. Monitor mode logs a structured, content-free outcome and never blocks dispatch. Enforce mode treats a malformed or unavailable guard response as unavailable, asks an interactive chat user to confirm when configured to do so, returns machine-readable `content_confirmation_required` to API clients, and prevents dispatch for `deny`.
+
 There is no static model table for ordinary pools: each backend's `/models` response is the source of truth for what it serves. `system_one` is the deliberate exception because its contract has a separate model catalog. API keys are stored encrypted at rest; the optional env-var fallback is the only place key material comes from the environment.
 
 For aliases and the two fallback mechanisms, see [Model aliases](#model-aliases) and [Fallback models](#fallback-models) below.

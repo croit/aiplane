@@ -98,6 +98,79 @@ async fn v1_chat_completions_relays_through_upstream() {
 }
 
 #[tokio::test]
+async fn v1_chat_content_guard_denies_before_dispatching_to_a_noncompliant_pool() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/systemone"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "answers": {
+                "gdpr": {"type": "noul", "noul": 0.9},
+                "nda": {"type": "noul", "noul": 0.9}
+            }
+        })))
+        .mount(&upstream)
+        .await;
+    let state = common::state_with_content_guard_pools(&upstream.uri()).await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"model": "model-a", "messages": [{"role": "user", "content": "secret"}]})
+                .to_string(),
+        ))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    let status = resp.status();
+    let body: serde_json::Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"]["code"], "content_policy_denied");
+    let requests = upstream.received_requests().await.unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.url.path() == "/chat/completions")
+            .count(),
+        0,
+        "the guarded request must not reach the selected chat pool"
+    );
+}
+
+#[tokio::test]
+async fn v1_chat_content_guard_monitor_logs_an_unavailable_guard_and_dispatches() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"role": "assistant", "content": "hi from upstream"}}]
+        })))
+        .mount(&upstream)
+        .await;
+    let state = common::state_with_content_guard_pools_in_mode(
+        &upstream.uri(),
+        aiplane_core::server::config::ContentGuardMode::Monitor,
+    )
+    .await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"model": "model-a", "messages": [{"role": "user", "content": "secret"}]})
+                .to_string(),
+        ))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn v1_chat_blocked_by_quota_returns_429() {
     use aiplane_core::server::db::limits::{self, Dimension, SubjectType, Window};
 
