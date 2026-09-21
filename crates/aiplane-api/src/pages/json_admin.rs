@@ -64,7 +64,21 @@ pub async fn groups_list(State(state): State<Arc<RamaState>>, req: Request) -> R
         .await
         .unwrap_or_default();
     let mut tool_ids: Vec<String> = state.tools().ids().map(|s| s.to_string()).collect();
+    // The ComfyUI workflows are loaded at runtime and so are in no registry, but
+    // `comfyui_<id>` is a legitimate grant (`Resolver::grants_comfyui_overlay`).
+    // Without them the picker would render an existing workflow grant as
+    // unrecognised and offer no way to add one short of `*`.
+    if let Some(handle) = state.comfyui() {
+        for manifest in handle.store.current().workflows() {
+            tool_ids.push(format!(
+                "{}{}",
+                aiplane_core::server::tool_naming::COMFYUI_PREFIX,
+                manifest.id
+            ));
+        }
+    }
     tool_ids.sort();
+    tool_ids.dedup();
     let skill_names: Vec<String> = state
         .skills()
         .as_ref()
@@ -2143,8 +2157,19 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
         return bad_request(format!("unknown pool kind: {}", parsed.kind));
     }
     // A group name that matches nothing makes the pool non-empty-but-unmatchable:
-    // invisible and unroutable to every non-admin, with no clue as to why.
-    match db::gateway_groups::unknown_groups(&state.db, &parsed.allowed_groups).await {
+    // invisible and unroutable to every non-admin, with no clue as to why. Only
+    // names this save introduces are checked — see `unknown_added_groups`.
+    let stored_groups = match upstreams_config::pool_allowed_groups(&state.db, &name).await {
+        Ok(groups) => groups,
+        Err(err) => return internal(err),
+    };
+    match db::gateway_groups::unknown_added_groups(
+        &state.db,
+        &parsed.allowed_groups,
+        &stored_groups,
+    )
+    .await
+    {
         Ok(unknown) if !unknown.is_empty() => {
             return bad_request(db::gateway_groups::unknown_groups_message(
                 Lang::from_request(&parts.headers),

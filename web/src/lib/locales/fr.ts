@@ -552,7 +552,6 @@ export const fr: Catalog = {
  "connectors-oauth-why-3": "Passez l'authentification sur « Jeton fourni par l'utilisateur » : chaque utilisateur colle alors son propre jeton (par ex. un jeton d'accès personnel GitHub) — les identifiants proviennent alors directement de l'utilisateur, sans client admin.",
  "connectors-oauth-why-no-app": "Aucune application OAuth du tout ?",
  "connectors-page-title": "Connecteurs — AIplane",
- "connectors-placeholder-optional": "optionnel",
  "connectors-placeholder-optional-override": "substitution optionnelle",
  "connectors-restore-defaults-button": "Restaurer les valeurs par défaut",
  "connectors-restore-defaults-confirm": "Réinitialiser les entrées intégrées du catalogue ?",

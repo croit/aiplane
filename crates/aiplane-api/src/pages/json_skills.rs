@@ -603,7 +603,12 @@ pub async fn admin_connectors_save(State(state): State<Arc<RamaState>>, req: Req
     }
     // Same gate as the pool and RAG saves: an unmatchable group name hides the
     // connector from everyone instead of restricting it to someone.
-    match db::gateway_groups::unknown_groups(&state.db, &parsed.groups).await {
+    let stored_groups: Vec<String> = existing
+        .as_ref()
+        .map(|c| c.allowed_groups.clone())
+        .unwrap_or_default();
+    match db::gateway_groups::unknown_added_groups(&state.db, &parsed.groups, &stored_groups).await
+    {
         Ok(unknown) if !unknown.is_empty() => {
             return bad_request(db::gateway_groups::unknown_groups_message(
                 session_core::i18n::Lang::from_request(&parts.headers),

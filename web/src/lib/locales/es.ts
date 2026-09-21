@@ -552,7 +552,6 @@ export const es: Catalog = {
  "connectors-oauth-why-3": "Cambia la autenticación a «Token proporcionado por el usuario» y cada usuario pega su propio token (p. ej. un token de acceso personal de GitHub) — las credenciales llegan entonces directamente del usuario, sin cliente de administrador.",
  "connectors-oauth-why-no-app": "¿Ninguna aplicación OAuth en absoluto?",
  "connectors-page-title": "Conectores — AIplane",
- "connectors-placeholder-optional": "opcional",
  "connectors-placeholder-optional-override": "anulación opcional",
  "connectors-restore-defaults-button": "Restaurar valores predeterminados",
  "connectors-restore-defaults-confirm": "¿Volver a crear las entradas integradas del catálogo?",

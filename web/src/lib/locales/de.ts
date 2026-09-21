@@ -552,7 +552,6 @@ export const de: Catalog = {
  "connectors-oauth-why-3": "Stelle die Authentifizierung auf „Nutzer-eigenes Token“ um, dann fügt jeder Nutzer sein eigenes Token ein (z. B. ein persönliches GitHub-Zugriffstoken) — die Zugangsdaten kommen dann direkt vom Nutzer, kein Admin-Client nötig.",
  "connectors-oauth-why-no-app": "Gar keine OAuth-App?",
  "connectors-page-title": "Konnektoren — AIplane",
- "connectors-placeholder-optional": "optional",
  "connectors-placeholder-optional-override": "optionale Überschreibung",
  "connectors-restore-defaults-button": "Standardwerte wiederherstellen",
  "connectors-restore-defaults-confirm": "Die integrierten Katalogeinträge erneut anlegen?",

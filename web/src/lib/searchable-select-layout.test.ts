@@ -28,6 +28,11 @@ describe('searchable select option layout', () => {
 		// grants must not close the panel between every click.
 		assert.match(searchableSelect, /values = toggleValue\(values, option\.value, !isHeld\(option\.value\)\);/);
 		assert.match(searchableSelect, /multi-select-clear/);
+		// `popover="manual"` turns off the browser's light dismiss, and in multiple
+		// mode a click leaves focus on the option button — so every control inside
+		// the panel has to be able to close it, not just the search field.
+		assert.match(searchableSelect, /function onEscape\(event: KeyboardEvent\)/);
+		assert.match(searchableSelect, /onkeydown=\{onEscape\}[\s\S]*onclick=\{\(\) => choose\(option\)\}/);
 	});
 
 	// The popup used to be an absolutely positioned `dropdown-content`, which

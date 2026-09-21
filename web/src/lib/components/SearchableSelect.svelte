@@ -166,6 +166,19 @@
 		listbox?.querySelector(`[data-option-index="${activeIndex}"]`)?.scrollIntoView({ block: 'nearest' });
 	}
 
+	/* Escape has to close the panel from wherever focus sits inside it. The popup
+	 * is `popover="manual"`, so the browser's own light dismiss is off, and in
+	 * `multiple` mode `choose` deliberately keeps the panel open and leaves focus
+	 * on the option button — bound to the search input alone it would strand the
+	 * keyboard there with the panel covering whatever is behind it. Hung on each
+	 * control rather than the container, which as a bare div may not take one. */
+	function onEscape(event: KeyboardEvent) {
+		if (event.key !== 'Escape') return;
+		event.preventDefault();
+		hide();
+		void tick().then(() => trigger?.focus());
+	}
+
 	function onSearchKeydown(event: KeyboardEvent) {
 		if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
 			event.preventDefault();
@@ -175,10 +188,8 @@
 			event.preventDefault();
 			const option = filtered[activeIndex];
 			if (option) choose(option);
-		} else if (event.key === 'Escape') {
-			event.preventDefault();
-			hide();
-			void tick().then(() => trigger?.focus());
+		} else {
+			onEscape(event);
 		}
 	}
 
@@ -237,6 +248,7 @@
 								data-option-index={index}
 								disabled={option.disabled}
 								onmouseenter={() => { if (!option.disabled) activeIndex = index; }}
+								onkeydown={onEscape}
 								onclick={() => choose(option)}
 							>
 								<span class="grid w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 px-3 py-2">
@@ -269,7 +281,7 @@
 
 			{#if multiple && held.length > 0}
 				<div class="mt-2 flex shrink-0 justify-end border-t border-base-300 pt-2">
-					<button type="button" class="btn btn-ghost btn-xs" onclick={() => { values = []; onchangemany?.(values); }}>{t('multi-select-clear')}</button>
+					<button type="button" class="btn btn-ghost btn-xs" onkeydown={onEscape} onclick={() => { values = []; onchangemany?.(values); }}>{t('multi-select-clear')}</button>
 				</div>
 			{/if}
 		</div>

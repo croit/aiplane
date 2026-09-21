@@ -549,6 +549,75 @@ async fn pool_save_accepts_a_group_that_exists() {
     assert_eq!(resp.status(), StatusCode::OK, "{}", body(resp).await);
 }
 
+/// Deleting a group leaves its name behind in every ACL that listed it (dropping
+/// it would un-restrict the resource). The editors resend the whole list, so an
+/// inherited dangling name must not block an edit to some unrelated field.
+#[tokio::test]
+async fn pool_save_keeps_a_dangling_group_it_inherited() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+
+    aiplane_core::server::db::gateway_groups::upsert_group(
+        &state.db,
+        "contractors",
+        "",
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    let save = |groups: &str, enforce: &str| {
+        format!(
+            r#"{{"name":"gated","kind":"chat","strategy":"least_inflight","allowed_groups":{groups},"enforce_limits":{enforce},"backends":[],"models":[],"voices":[],"offer_voices":[],"overwrite":true}}"#
+        )
+    };
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/pools",
+            &cookie,
+            Some(save(r#"["contractors"]"#, "true")),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "{}", body(resp).await);
+
+    aiplane_core::server::db::gateway_groups::delete_group(&state.db, "contractors")
+        .await
+        .unwrap();
+
+    // Toggling an unrelated field still works, and the stale name is preserved
+    // rather than quietly dropped — dropping it would un-restrict the pool.
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/pools",
+            &cookie,
+            Some(save(r#"["contractors"]"#, "false")),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "{}", body(resp).await);
+
+    // Adding a second bad name on top is still refused.
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/pools",
+            &cookie,
+            Some(save(r#"["contractors","typoed"]"#, "false")),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let raw = body(resp).await;
+    assert!(raw.contains("typoed"), "{raw}");
+    assert!(
+        !raw.contains("contractors"),
+        "the inherited name is not flagged: {raw}"
+    );
+}
+
 /// The pool editor renders its access picker from the payload rather than asking
 /// the operator to retype a name that only works spelled exactly.
 #[tokio::test]

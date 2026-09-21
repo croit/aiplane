@@ -76,8 +76,12 @@ export function multiSelectOptions(
 	for (const option of options) {
 		rows.push(shadowed ? { ...option, disabled: true, description: labels.shadowLabel } : option);
 	}
+	// With no options at all the set is unknowable, not empty — the registry is
+	// unconfigured or unreachable — so held values are shown plainly rather than
+	// flagged as strays the operator should delete.
+	const unknownLabel = options.length === 0 ? undefined : labels.unknownLabel;
 	for (const value of unknownValues(selected, options)) {
-		rows.push({ value, label: value, description: labels.unknownLabel });
+		rows.push({ value, label: value, description: unknownLabel });
 	}
 	return rows;
 }

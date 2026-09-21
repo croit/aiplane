@@ -543,7 +543,6 @@ export const zh: Catalog = {
  "connectors-oauth-why-3": "将身份验证方式改为\"用户提供的令牌\",这样每位用户都会粘贴自己的令牌(例如 GitHub 个人访问令牌)— 凭据将直接来自用户本人,无需管理员客户端。",
  "connectors-oauth-why-no-app": "完全没有 OAuth 应用?",
  "connectors-page-title": "连接器 — AIplane",
- "connectors-placeholder-optional": "可选",
  "connectors-placeholder-optional-override": "可选覆盖项",
  "connectors-restore-defaults-button": "恢复默认值",
  "connectors-restore-defaults-confirm": "重新写入内置目录条目吗？",

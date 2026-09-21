@@ -107,6 +107,17 @@ test('an unknown held value is offered so it can be seen and removed', () => {
 	assert.equal(retired?.description, 'unknown');
 });
 
+// An empty option list means the subsystem is unconfigured or unreachable (the
+// skills directory, say), not that every grant the group holds has been removed.
+// Calling them all "not registered" there reads as an instruction to delete
+// working grants.
+test('held values are not called unknown when there are no options to compare against', () => {
+	const offered = multiSelectOptions([], { unknownLabel: 'unknown' }, ['release-notes-writer']);
+	assert.equal(offered.length, 1);
+	assert.equal(offered[0]?.value, 'release-notes-writer');
+	assert.equal(offered[0]?.description, undefined);
+});
+
 test('the summary names a lone selection and counts a longer one', () => {
 	assert.equal(summarizeSelection([], tools, { empty: 'Nothing', counted: (n) => `${n} selected` }), 'Nothing');
 	assert.equal(

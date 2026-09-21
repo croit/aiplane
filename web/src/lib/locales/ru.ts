@@ -556,7 +556,6 @@ export const ru: Catalog = {
  "connectors-oauth-why-3": "Переключите аутентификацию на «Токен, предоставленный пользователем», и каждый пользователь вставит свой собственный токен (например, персональный токен доступа GitHub) — учётные данные тогда поступают напрямую от пользователя, без клиента администратора.",
  "connectors-oauth-why-no-app": "Совсем нет OAuth-приложения?",
  "connectors-page-title": "Коннекторы — AIplane",
- "connectors-placeholder-optional": "необязательно",
  "connectors-placeholder-optional-override": "необязательное переопределение",
  "connectors-restore-defaults-button": "Восстановить значения по умолчанию",
  "connectors-restore-defaults-confirm": "Повторно добавить встроенные записи каталога?",

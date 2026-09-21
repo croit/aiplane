@@ -89,6 +89,28 @@ pub async fn unknown_groups(pool: &Pool, wanted: &[String]) -> Result<Vec<String
         .collect())
 }
 
+/// Like [`unknown_groups`], but only for names this save *introduces*.
+///
+/// Deleting a group deliberately leaves its name behind in resource ACLs
+/// ([`delete_group`]) — dropping it would turn a resource restricted to only
+/// that group into an unrestricted one, so the dangling name is the fail-closed
+/// choice. The editors resend the whole list on every save, so validating all of
+/// it would make an inherited dangling name block every later edit of an
+/// unrelated field. An edit may therefore keep a dangling name, but may not
+/// introduce one.
+pub async fn unknown_added_groups(
+    pool: &Pool,
+    wanted: &[String],
+    previously: &[String],
+) -> Result<Vec<String>, DbError> {
+    let added: Vec<String> = wanted
+        .iter()
+        .filter(|name| !previously.contains(name))
+        .cloned()
+        .collect();
+    unknown_groups(pool, &added).await
+}
+
 /// The 400 body for a resource save that named groups which do not exist.
 /// Shared by the pool, RAG collection and MCP connector saves so an operator
 /// gets the same wording and the same next step wherever they hit it.
@@ -440,6 +462,40 @@ mod tests {
     async fn unknown_groups_accepts_an_empty_list_without_a_query() {
         let pool = fresh().await;
         assert!(unknown_groups(&pool, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unknown_added_groups_lets_an_inherited_dangling_name_through() {
+        let pool = fresh().await;
+        upsert_group(&pool, "developers", "", false, false)
+            .await
+            .unwrap();
+        // `contractors` was deleted; the pool still lists it. Re-saving the pool
+        // to change some other field must not be blocked by that.
+        assert!(
+            unknown_added_groups(
+                &pool,
+                &v(&["developers", "contractors"]),
+                &v(&["developers", "contractors"])
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_added_groups_still_refuses_a_newly_typed_name() {
+        let pool = fresh().await;
+        upsert_group(&pool, "developers", "", false, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            unknown_added_groups(&pool, &v(&["developers", "devlopers"]), &v(&["developers"]))
+                .await
+                .unwrap(),
+            v(&["devlopers"])
+        );
     }
 
     #[tokio::test]

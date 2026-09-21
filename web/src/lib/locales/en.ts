@@ -552,7 +552,6 @@ export const en: Catalog = {
  "connectors-oauth-why-3": "Switch Authentication to “User-supplied token” and each user pastes their own token (e.g. a GitHub Personal Access Token) — credentials then come straight from the user, no admin client.",
  "connectors-oauth-why-no-app": "No OAuth app at all?",
  "connectors-page-title": "Connectors — AIplane",
- "connectors-placeholder-optional": "optional",
  "connectors-placeholder-optional-override": "optional override",
  "connectors-restore-defaults-button": "Restore defaults",
  "connectors-restore-defaults-confirm": "Re-seed the built-in catalog entries?",

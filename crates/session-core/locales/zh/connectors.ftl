@@ -86,7 +86,6 @@ connectors-field-token-url-label = 令牌 URL
 connectors-field-registration-url-label = 注册 URL
 connectors-placeholder-optional-override = 可选覆盖项
 connectors-field-allowed-groups-label = 允许的组
-connectors-placeholder-optional = 可选
 connectors-save-changes-button = 保存更改
 connectors-add-connector-button = 添加连接器
 

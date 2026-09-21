@@ -559,6 +559,24 @@ pub async fn backend_exists(db: &Pool, name: &str) -> Result<bool, DbError> {
 }
 
 /// Whether a pool with this name already exists. See [`backend_exists`].
+/// One pool's stored `allowed_groups`, for diffing a save against what is
+/// already there. Empty for a pool that does not exist yet, so a create
+/// validates every name it carries.
+pub async fn pool_allowed_groups(db: &Pool, name: &str) -> Result<Vec<String>, DbError> {
+    let Some(row) = sqlx::query("SELECT allowed_groups FROM pools WHERE name = ?")
+        .bind(name)
+        .fetch_optional(db)
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+    let json: String = row.try_get("allowed_groups")?;
+    serde_json::from_str(&json).map_err(|e| DbError::Decode {
+        column: "allowed_groups",
+        source: e.into(),
+    })
+}
+
 pub async fn pool_exists(db: &Pool, name: &str) -> Result<bool, DbError> {
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pools WHERE name = ?")
         .bind(name)

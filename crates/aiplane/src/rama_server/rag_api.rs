@@ -1133,7 +1133,13 @@ pub async fn update_collection(
     // Same gate as the pool and connector saves: a group name matching nothing
     // makes the collection invisible and unsearchable rather than restricted.
     if let Some(groups) = allowed_groups.as_ref() {
-        match aiplane_core::server::db::gateway_groups::unknown_groups(&state.db, groups).await {
+        match aiplane_core::server::db::gateway_groups::unknown_added_groups(
+            &state.db,
+            groups,
+            &before.allowed_groups,
+        )
+        .await
+        {
             Ok(unknown) if !unknown.is_empty() => {
                 return invalid_request(
                     &aiplane_core::server::db::gateway_groups::unknown_groups_message(
