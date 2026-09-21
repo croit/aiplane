@@ -85,8 +85,7 @@ connectors-field-authorize-url-label = Authorize URL
 connectors-field-token-url-label = Token URL
 connectors-field-registration-url-label = Registration URL
 connectors-placeholder-optional-override = необязательное переопределение
-connectors-field-allowed-groups-label = Разрешённые группы (через запятую)
-connectors-placeholder-optional = необязательно
+connectors-field-allowed-groups-label = Разрешённые группы
 connectors-save-changes-button = Сохранить изменения
 connectors-add-connector-button = Добавить коннектор
 

@@ -63,8 +63,7 @@ pub async fn groups_list(State(state): State<Arc<RamaState>>, req: Request) -> R
     let observed = db::gateway_groups::observed_oidc_values(&state.db)
         .await
         .unwrap_or_default();
-    let mut tool_ids: Vec<String> = state.tools().ids().map(|s| s.to_string()).collect();
-    tool_ids.sort();
+    let tool_ids = state.grantable_tool_ids();
     let skill_names: Vec<String> = state
         .skills()
         .as_ref()
@@ -777,8 +776,8 @@ pub async fn limits_list(State(state): State<Arc<RamaState>>, req: Request) -> R
     };
     // Not `unwrap_or_default()`: an empty list renders as "this gateway has no
     // groups", which is indistinguishable from a read that failed.
-    let roles: Vec<String> = match db::gateway_groups::list_groups(&state.db).await {
-        Ok(groups) => groups.into_iter().map(|g| g.name).collect(),
+    let roles: Vec<String> = match db::gateway_groups::list_group_names(&state.db).await {
+        Ok(names) => names,
         Err(err) => return internal(err),
     };
     let users = db::users::list_all(&state.db)
@@ -856,10 +855,10 @@ pub async fn limits_save(State(state): State<Arc<RamaState>>, req: Request) -> R
     // groups, tokens in the DB, users by id or email.
     let subject_id = match subject_type {
         limits::SubjectType::Role => {
-            let known = db::gateway_groups::list_groups(&state.db)
+            let known = db::gateway_groups::list_group_names(&state.db)
                 .await
                 .unwrap_or_default();
-            if !known.iter().any(|g| g.name == parsed.subject_id) {
+            if !known.contains(&parsed.subject_id) {
                 return bad_request(format!("unknown role: {}", parsed.subject_id));
             }
             parsed.subject_id
@@ -1465,6 +1464,12 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 .map(|k| k.as_str())
                 .collect::<Vec<_>>(),
             "pool_strategies": ["prefix_affinity", "least_inflight", "round_robin"],
+            // The group vocabulary, for the same reason: the pool editor's
+            // access picker renders from this rather than asking the operator
+            // to retype a name that only matches when spelled exactly.
+            "groups": db::gateway_groups::list_group_names(&state.db)
+                .await
+                .unwrap_or_default(),
             "fallback_kinds": ["chat", "transcription", "embedding", "image"],
         }),
     )
@@ -2107,7 +2112,7 @@ pub struct VoiceBody {
 /// PUT /api/v0/admin/pools — upsert a pool row. Marks the topology dirty.
 pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
-    let (_, body) = req.into_parts();
+    let (parts, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
         Err(msg) => return bad_request(msg),
@@ -2135,6 +2140,29 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
     const STRATEGIES: &[&str] = &["prefix_affinity", "least_inflight", "round_robin"];
     if !pool_kind_exists(&parsed.kind) {
         return bad_request(format!("unknown pool kind: {}", parsed.kind));
+    }
+    // A group name that matches nothing makes the pool non-empty-but-unmatchable:
+    // invisible and unroutable to every non-admin, with no clue as to why. Only
+    // names this save introduces are checked — see `unknown_added_groups`.
+    let stored_groups = if parsed.allowed_groups.is_empty() {
+        Vec::new()
+    } else {
+        match upstreams_config::pool_allowed_groups(&state.db, &name).await {
+            Ok(groups) => groups,
+            Err(err) => return internal(err),
+        }
+    };
+    match db::gateway_groups::unknown_added_groups_message(
+        &state.db,
+        Lang::from_request(&parts.headers),
+        &parsed.allowed_groups,
+        &stored_groups,
+    )
+    .await
+    {
+        Ok(Some(message)) => return bad_request(message),
+        Ok(None) => {}
+        Err(err) => return internal(err),
     }
     let strategy = if STRATEGIES.contains(&parsed.strategy.as_str()) {
         parsed.strategy

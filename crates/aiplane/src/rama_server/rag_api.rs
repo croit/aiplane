@@ -1044,6 +1044,11 @@ pub async fn list_providers(State(state): State<Arc<RamaState>>, req: Request) -
         "data": providers,
         "embedding_models": embedding_models,
         "default_embedding": default_embedding,
+        // The collection editor's access picker renders from this; a group
+        // name only restricts anything when it matches a group exactly.
+        "groups": aiplane_core::server::db::gateway_groups::list_group_names(&state.db)
+            .await
+            .unwrap_or_default(),
     }))
 }
 
@@ -1111,6 +1116,7 @@ pub async fn update_collection(
     if let Err(resp) = require_admin(&state, &req).await {
         return resp;
     }
+    let lang = session_core::i18n::Lang::from_request(req.headers());
     let body = match read_json::<UpdateRequest>(req).await {
         Ok(b) => b,
         Err(resp) => return resp,
@@ -1124,6 +1130,25 @@ pub async fn update_collection(
         }
     };
     let allowed_groups = body.allowed_groups.clone();
+    // Same gate as the pool and connector saves: a group name matching nothing
+    // makes the collection invisible and unsearchable rather than restricted.
+    if let Some(groups) = allowed_groups.as_ref() {
+        match aiplane_core::server::db::gateway_groups::unknown_added_groups_message(
+            &state.db,
+            lang,
+            groups,
+            &before.allowed_groups,
+        )
+        .await
+        {
+            Ok(Some(message)) => return invalid_request(&message),
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(error = %err, %id, "validating rag collection access");
+                return internal_error("validating collection access failed");
+            }
+        }
+    }
     let mut sets: Vec<&'static str> = Vec::new();
     let mut bindings: Vec<UpdateBinding> = Vec::new();
     if let Some(desc) = body.description {

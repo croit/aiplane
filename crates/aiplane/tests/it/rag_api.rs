@@ -583,6 +583,92 @@ async fn create_validates_inputs() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// A collection may only be restricted to groups that exist. An unmatchable name
+/// makes it invisible and unsearchable rather than restricted, which reads as the
+/// collection having broken.
+#[tokio::test]
+async fn collection_access_rejects_a_group_that_does_not_exist() {
+    let state = common::state_with_admin_rbac("http://unused.invalid").await;
+    let cookie = seed_admin(&state, "alice").await;
+    aiplane_core::server::db::gateway_groups::upsert_group(
+        &state.db,
+        "engineering",
+        "",
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    let app = common::app(state);
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/collections",
+            &cookie,
+            Some(create_body()),
+        ))
+        .await
+        .unwrap();
+    let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    let id = created["id"].as_i64().unwrap();
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::PATCH,
+            &format!("/api/v0/rag/collections/{id}"),
+            &cookie,
+            Some(r#"{"allowed_groups": ["egineering"]}"#),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let raw = String::from_utf8(common::read_body(resp).await.to_vec()).unwrap();
+    assert!(raw.contains("egineering"), "{raw}");
+
+    // The rejection left the collection alone rather than half-applying.
+    let resp = app
+        .serve(req_with_cookie(
+            Method::GET,
+            &format!("/api/v0/rag/collections/{id}"),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let after: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(after["allowed_groups"], serde_json::json!([]));
+}
+
+/// The collection editor renders its access picker from this payload.
+#[tokio::test]
+async fn providers_endpoint_carries_the_group_vocabulary() {
+    let state = common::state_with_admin_rbac("http://unused.invalid").await;
+    let cookie = seed_admin(&state, "alice").await;
+    aiplane_core::server::db::gateway_groups::upsert_group(
+        &state.db,
+        "engineering",
+        "",
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    let app = common::app(state);
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::GET,
+            "/api/v0/rag/providers",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let listed: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(listed["groups"], serde_json::json!(["engineering"]));
+}
+
 /// The scheduled re-sync is the only way a pull-only source (a mailing-list
 /// archive; a plain WebDAV share) ever gets newer, so its contract is pinned:
 /// off unless asked for, a real schedule when asked, and a refusal — not a
@@ -963,6 +1049,7 @@ async fn profiles_create_update_and_guarded_delete() {
 async fn collection_editor_round_trips_search_access_and_profile_settings() {
     let state = common::state_with_admin_rbac("http://unused.invalid").await;
     let cookie = seed_admin(&state, "boss").await;
+    let db = state.db.clone();
     let app = common::app(state);
 
     let profile = json!({
@@ -1006,6 +1093,13 @@ async fn collection_editor_round_trips_search_access_and_profile_settings() {
     assert_eq!(created["allowed_groups"], json!([]));
     let id = created["id"].as_i64().unwrap();
 
+    // `allowed_groups` names groups, and a name that matches none is refused —
+    // it would hide the collection rather than restrict it. Create them first.
+    for group in ["legal", "admins"] {
+        aiplane_core::server::db::gateway_groups::upsert_group(&db, group, "", false, false)
+            .await
+            .unwrap();
+    }
     let patch = json!({
         "profile": "contracts",
         "extraction_model": "chat-1",

@@ -14,11 +14,12 @@
 		usage: Record<string, number[]>;
 		coverage?: Coverage[];
 		poolKinds: string[];
+		groups: string[];
 		poolStrategies: string[];
 		onChanged: () => void | Promise<void>;
 	}
 
-	let { pool, backends, allBackends, pools, usage, coverage: suppliedCoverage, poolKinds, poolStrategies, onChanged }: Props = $props();
+	let { pool, backends, allBackends, pools, usage, coverage: suppliedCoverage, poolKinds, poolStrategies, groups, onChanged }: Props = $props();
 	let deleting = $state(false);
 	let editing = $state(false);
 	let coverage = $derived(suppliedCoverage ?? poolCoverage(pool, allBackends));
@@ -118,7 +119,7 @@
 			description={pool.name}
 			cancellabel={t('upstreams-cancel')}
 		>
-			<PoolEditor {pool} backends={allBackends} {poolKinds} {poolStrategies} existingNames={pools.map((candidate) => candidate.name)} sortOrder={pool.sort_order} onSaved={onChanged} onCancel={() => (editing = false)} />
+			<PoolEditor {pool} backends={allBackends} {poolKinds} {poolStrategies} {groups} existingNames={pools.map((candidate) => candidate.name)} sortOrder={pool.sort_order} onSaved={onChanged} onCancel={() => (editing = false)} />
 		</EditModal>
 	</div>
 </article>

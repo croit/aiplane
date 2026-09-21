@@ -3,25 +3,28 @@
 	import { adminPost, adminPut } from '$lib/admin-client';
 	import { t } from '$lib/i18n.svelte';
 	import { parseVoices, splitLines, splitList, type Backend, type Pool } from '$lib/upstreams';
+	import GroupSelect from '$lib/components/GroupSelect.svelte';
+	import { normalizeSelection } from '$lib/multi-select';
 
 	interface Props {
 		pool?: Pool | null;
 		backends: Backend[];
 		poolKinds: string[];
 		poolStrategies: string[];
+		groups: string[];
 		existingNames: string[];
 		sortOrder: number;
 		onSaved: () => void | Promise<void>;
 		onCancel?: () => void;
 	}
 
-	let { pool = null, backends, poolKinds, poolStrategies, existingNames, sortOrder, onSaved, onCancel }: Props = $props();
+	let { pool = null, backends, poolKinds, poolStrategies, groups, existingNames, sortOrder, onSaved, onCancel }: Props = $props();
 	let name = $state(untrack(() => pool?.name ?? ''));
 	let kind = $state(untrack(() => pool?.kind ?? 'chat'));
 	let strategy = $state(untrack(() => pool?.strategy ?? 'least_inflight'));
 	let fallbackOffline = $state(untrack(() => pool?.fallback_offline ?? ''));
 	let models = $state(untrack(() => pool?.models.join(', ') ?? ''));
-	let allowedGroups = $state(untrack(() => pool?.allowed_groups.join(', ') ?? ''));
+	let allowedGroups = $state(untrack(() => normalizeSelection(pool?.allowed_groups ?? [])));
 	let assigned = $state(untrack(() => pool?.backends.slice() ?? []));
 	let complianceGdpr = $state(untrack(() => pool?.compliance_gdpr ?? true));
 	let complianceNda = $state(untrack(() => pool?.compliance_nda ?? true));
@@ -60,7 +63,7 @@
 				compliance_nda: complianceNda,
 				enforce_limits: enforceLimits,
 				sort_order: pool?.sort_order ?? sortOrder,
-				allowed_groups: splitList(allowedGroups),
+				allowed_groups: allowedGroups,
 				backends: assigned,
 				models: splitList(models),
 				voices: parseVoices(voices),
@@ -116,11 +119,11 @@
 		<input class="input input-bordered input-sm font-mono w-full" bind:value={models} />
 		<span class="text-xs text-base-content/50">{t('pools-field-models-hint')}</span>
 	</label>
-	<label class="flex flex-col gap-1">
+	<div class="flex flex-col gap-1">
 		<span class="text-xs text-base-content/70">{t('pools-field-allowed-groups')}</span>
-		<input class="input input-bordered input-sm font-mono w-full" bind:value={allowedGroups} />
+		<GroupSelect {groups} bind:values={allowedGroups} label={t('pools-field-allowed-groups')} />
 		<span class="text-xs text-base-content/50">{t('pools-field-allowed-groups-hint')}</span>
-	</label>
+	</div>
 	{#if kind === 'speech'}
 		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 			<label class="flex flex-col gap-1">

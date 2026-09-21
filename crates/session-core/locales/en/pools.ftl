@@ -26,7 +26,7 @@ pools-field-fallback-offline = Offline fallback model
 pools-field-fallback-offline-placeholder = served when every backend is down
 pools-field-models-hint = When set, only these ids are served from a probing backend — the rest are shown struck-through. Blank = serve everything the backend reports.
 pools-field-allowed-groups = Allowed groups
-pools-field-allowed-groups-hint = Comma-separated AIplane groups allowed to see + use this pool's models. Blank = everyone. Admins always have access. Manage groups in Admin → Groups.
+pools-field-allowed-groups-hint = AIplane groups allowed to see + use this pool's models. None selected = everyone. Admins always have access. Manage groups in Admin → Groups.
 pools-field-voices = Voices (lang=voice per line)
 pools-field-offer-voices = Selectable voices (one per line, users pick)
 pools-no-backends = No backends defined yet. Add one on the Backends page first.

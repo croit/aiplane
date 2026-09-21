@@ -38,7 +38,7 @@
 			await adminPut('/api/v0/admin/connectors', {
 				...value,
 				scopes: splitConnectorValues(value.scopes),
-				groups: splitConnectorValues(value.groups)
+				groups: value.groups
 			});
 			await goto(`${base}/admin/connectors`);
 		} catch (caught) {

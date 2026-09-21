@@ -96,7 +96,7 @@ rag-refresh-daily = Täglich
 rag-refresh-weekly = Wöchentlich
 rag-refresh-custom = Alle { $mins } Minuten
 rag-label-allowed-groups = Erlaubte Gruppen
-rag-hint-allowed-groups = Kommagetrennte AIplane-Gruppen, die diese Collection auflisten + durchsuchen dürfen. Leer = alle mit den RAG-Tools. Admins haben immer Zugriff.
+rag-hint-allowed-groups = AIplane-Gruppen, die diese Collection auflisten + durchsuchen dürfen. Nichts ausgewählt = alle mit den RAG-Tools. Admins haben immer Zugriff.
 rag-create-aggregate-help = Aggregat (Multi-Quelle): durchsucht viele Repos als einen Korpus. Lassen Sie die Git-URL leer und fügen Sie nach dem Erstellen jedes Quell-Repo hinzu. Branch / Tag wird zum Standard-Ref für hinzugefügte Quellen.
 rag-button-queue-indexing = Indexierung einplanen
 

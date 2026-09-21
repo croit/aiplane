@@ -4,12 +4,15 @@
 	import { t } from '$lib/i18n.svelte';
 	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 	import { parseList, type RagCollection, type RagProfile, type RagProvider } from '$lib/rag';
+	import GroupSelect from '$lib/components/GroupSelect.svelte';
+	import { normalizeSelection } from '$lib/multi-select';
 
 	let {
 		collection = null,
 		providers,
 		profiles,
 		models,
+		groups = [],
 		defaultModel = null,
 		onsaved,
 		oncancel
@@ -18,6 +21,7 @@
 		providers: RagProvider[];
 		profiles: RagProfile[];
 		models: string[];
+		groups?: string[];
 		defaultModel?: string | null;
 		onsaved: (name: string, aggregate: boolean) => void | Promise<void>;
 		oncancel?: () => void;
@@ -45,7 +49,7 @@
 		// corpus — it answers confidently out of last year's documents.
 		refresh_interval_mins: String(initialCollection?.refresh_interval_mins ?? 1440),
 		aggregate: initialCollection?.search_mode === 'aggregate',
-		allowed_groups: initialCollection?.allowed_groups.join(', ') ?? ''
+		allowed_groups: normalizeSelection(initialCollection?.allowed_groups ?? [])
 	});
 	let sourceConfig = $state<Record<string, string>>({ ...(initialCollection?.source_config ?? {}) });
 	let busy = $state(false);
@@ -98,7 +102,7 @@
 				chunk_overlap: Number(form.chunk_overlap),
 				refresh_interval_mins: Number(form.refresh_interval_mins),
 				search_mode: form.aggregate ? 'aggregate' : 'versioned',
-				allowed_groups: parseList(form.allowed_groups)
+				allowed_groups: form.allowed_groups
 			};
 			if (collection) {
 				if (form.clear_pat) body.pat = null;
@@ -249,7 +253,7 @@
 			{#if collection}
 				<fieldset class="fieldset md:col-span-2">
 					<legend class="fieldset-legend">{t('rag-label-allowed-groups')}</legend>
-					<input class="input w-full" bind:value={form.allowed_groups} />
+					<GroupSelect {groups} bind:values={form.allowed_groups} label={t('rag-label-allowed-groups')} size="md" class="w-full" />
 					<p class="label max-w-full whitespace-normal">{t('rag-hint-allowed-groups')}</p>
 				</fieldset>
 			{/if}

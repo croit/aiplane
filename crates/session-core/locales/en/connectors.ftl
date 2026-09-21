@@ -95,8 +95,7 @@ connectors-field-authorize-url-label = Authorize URL
 connectors-field-token-url-label = Token URL
 connectors-field-registration-url-label = Registration URL
 connectors-placeholder-optional-override = optional override
-connectors-field-allowed-groups-label = Allowed groups (comma-separated)
-connectors-placeholder-optional = optional
+connectors-field-allowed-groups-label = Allowed groups
 connectors-save-changes-button = Save changes
 connectors-add-connector-button = Add connector
 

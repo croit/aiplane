@@ -47,17 +47,15 @@
 	{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}
 	{#if data}
 		<datalist id="group-oidc-values">{#each data.observed_oidc_values as value}<option value={value}></option>{/each}</datalist>
-		<datalist id="group-tool-ids">{#each data.tool_ids as value}<option value={value}></option>{/each}</datalist>
-		<datalist id="group-skill-names">{#each data.skill_names as value}<option value={value}></option>{/each}</datalist>
 
-		<AdminGroupForm onsave={save} />
+		<AdminGroupForm toolIds={data.tool_ids} skillNames={data.skill_names} onsave={save} />
 		<div class="flex flex-col gap-4">
 			<h2 class="text-lg font-semibold">{t('groups-existing-heading')}</h2>
 			{#if data.groups.length === 0}
 				<p class="text-sm text-base-content/60">{t('groups-empty')}</p>
 			{:else}
 				{#each data.groups as group (group.name)}
-					<AdminGroupForm {group} onsave={save} ondelete={remove} />
+					<AdminGroupForm {group} toolIds={data.tool_ids} skillNames={data.skill_names} onsave={save} ondelete={remove} />
 				{/each}
 			{/if}
 		</div>

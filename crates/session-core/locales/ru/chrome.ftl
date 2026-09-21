@@ -32,3 +32,12 @@ searchable-select-model-nda = NDA
 # перешёл по старой ссылке или ввёл URL вручную.
 feature-disabled-body = { $feature } отключено на этом шлюзе, поэтому странице нечего показать. Администратор может включить это в настройках.
 feature-disabled-settings-link = Открыть настройки
+
+multi-select-none = Ничего не выбрано
+multi-select-count = Выбрано: { $count }
+multi-select-clear = Очистить всё
+multi-select-unknown = Здесь не зарегистрировано — удалите или создайте
+multi-select-wildcard-tools = Все инструменты, включая добавленные позже
+multi-select-wildcard-skills = Все навыки, включая добавленные позже
+multi-select-shadowed = Покрыто ✱
+multi-select-wildcard-warning = ✱ также без проверки выдаёт инструменты, которые появятся в будущих выпусках. Для группы без прав администратора лучше перечислить нужные инструменты явно.

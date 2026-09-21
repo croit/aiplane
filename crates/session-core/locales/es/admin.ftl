@@ -325,3 +325,7 @@ auto-route-error-invalid-config = La configuración de la ruta automática no es
 auto-route-error-nested = Las rutas automáticas no pueden apuntar a otras rutas automáticas. Elija alias estáticos o identificadores de modelo.
 auto-route-error-missing-alias = Falta el alias de la ruta automática en la URL de la solicitud.
 auto-route-error-not-found = La ruta automática no existe. Actualice la lista de rutas e inténtelo de nuevo.
+admin-error-unknown-groups = { $count ->
+    [one] No existe aquí este grupo: { $groups }. Créelo primero en Administración → Grupos o elija de la lista.
+   *[other] No existen aquí estos grupos: { $groups }. Créelos primero en Administración → Grupos o elija de la lista.
+}

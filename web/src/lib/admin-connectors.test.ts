@@ -20,7 +20,7 @@ test('the edit form preserves every non-secret connector field', () => {
 		key: 'discord', title: 'Discord', description: 'Chat', icon: '', category: '',
 		base_url: 'http://discord/mcp', auth_type: 'none', scope: 'global', scopes: '',
 		client_id: '', client_secret: '', client_json: '', use_dcr: true,
-		authorize_url: '', token_url: '', registration_url: '', groups: '', audit: true,
+		authorize_url: '', token_url: '', registration_url: '', groups: [], audit: true,
 		overwrite: true
 	});
 });

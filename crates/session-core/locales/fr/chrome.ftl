@@ -32,3 +32,12 @@ searchable-select-model-nda = NDA
 # ceci répond à un ancien lien ou à une URL saisie à la main.
 feature-disabled-body = { $feature } est désactivé sur cette passerelle, cette page n'a donc rien à afficher. Un administrateur peut l'activer dans les paramètres.
 feature-disabled-settings-link = Ouvrir les paramètres
+
+multi-select-none = Aucune sélection
+multi-select-count = { $count } sélectionné(s)
+multi-select-clear = Tout effacer
+multi-select-unknown = Non enregistré ici — supprimez-le ou créez-le
+multi-select-wildcard-tools = Tous les outils, y compris ceux ajoutés plus tard
+multi-select-wildcard-skills = Toutes les compétences, y compris celles ajoutées plus tard
+multi-select-shadowed = Couvert par ✱
+multi-select-wildcard-warning = ✱ accorde aussi, sans contrôle, les outils qu’une future version ajoutera. Pour un groupe non administrateur, préférez énumérer les outils voulus.

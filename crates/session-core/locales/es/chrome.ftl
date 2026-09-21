@@ -32,3 +32,12 @@ searchable-select-model-nda = NDA
 # responde a un enlace antiguo o a una URL escrita a mano.
 feature-disabled-body = { $feature } está desactivado en esta pasarela, así que esta página no tiene nada que mostrar. Un administrador puede activarlo en Ajustes.
 feature-disabled-settings-link = Abrir ajustes
+
+multi-select-none = Nada seleccionado
+multi-select-count = { $count } seleccionados
+multi-select-clear = Borrar todo
+multi-select-unknown = No registrado aquí: elimínelo o créelo
+multi-select-wildcard-tools = Todas las herramientas, incluidas las que se añadan después
+multi-select-wildcard-skills = Todas las habilidades, incluidas las que se añadan después
+multi-select-shadowed = Cubierto por ✱
+multi-select-wildcard-warning = ✱ concede también, sin revisión, las herramientas que añada una versión futura. En un grupo que no sea de administración, es preferible enumerar las herramientas concretas.

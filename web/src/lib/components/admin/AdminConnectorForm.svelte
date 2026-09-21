@@ -2,6 +2,7 @@
 	import { connectorForm, connectorUsesOAuth, type AdminConnector, type ConnectorFormValue } from '$lib/admin-connectors';
 	import ConnectorOAuthHelp from './ConnectorOAuthHelp.svelte';
 	import { t } from '$lib/i18n.svelte';
+	import GroupSelect from '$lib/components/GroupSelect.svelte';
 
 	let { connector, redirectUri, groups, onsave } = $props<{
 		connector?: AdminConnector;
@@ -57,7 +58,10 @@
 		<div class="rounded-md border border-info/30 bg-info/5 p-3 text-xs">{t(form.scope === 'global' ? 'connectors-none-help-global' : 'connectors-none-help-user')}</div>
 	{/if}
 
-	<label class="flex w-full flex-col gap-1"><span class="text-xs">{t('connectors-field-allowed-groups-label')}</span><input class="input input-bordered input-sm w-full" bind:value={form.groups} list={`connector-groups-${form.key || 'new'}`} placeholder={t('connectors-placeholder-optional')} /><datalist id={`connector-groups-${form.key || 'new'}`}>{#each groups as group}<option value={group}></option>{/each}</datalist></label>
+	<div class="flex w-full flex-col gap-1">
+		<span class="text-xs">{t('connectors-field-allowed-groups-label')}</span>
+		<GroupSelect {groups} bind:values={form.groups} label={t('connectors-field-allowed-groups-label')} />
+	</div>
 	<label class="flex min-h-11 cursor-pointer items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={form.audit} /><span class="text-xs">{t('connectors-field-audit-label')}</span></label>
 	<div><button type="submit" class="btn btn-primary btn-sm" disabled={saving}>{connector ? t('connectors-save-changes-button') : t('connectors-add-connector-button')}</button></div>
 </form>

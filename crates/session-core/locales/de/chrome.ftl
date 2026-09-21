@@ -32,3 +32,12 @@ searchable-select-model-nda = NDA
 # dies ist die Antwort auf einen alten Link oder eine getippte URL.
 feature-disabled-body = { $feature } ist auf diesem Gateway abgeschaltet, daher hat diese Seite nichts zu zeigen. Eine Administratorin oder ein Administrator kann die Funktion unter Einstellungen aktivieren.
 feature-disabled-settings-link = Einstellungen öffnen
+
+multi-select-none = Nichts ausgewählt
+multi-select-count = { $count } ausgewählt
+multi-select-clear = Alle entfernen
+multi-select-unknown = Hier nicht registriert – entfernen oder anlegen
+multi-select-wildcard-tools = Alle Werkzeuge, auch später hinzugefügte
+multi-select-wildcard-skills = Alle Skills, auch später hinzugefügte
+multi-select-shadowed = Durch ✱ abgedeckt
+multi-select-wildcard-warning = ✱ gewährt auch Werkzeuge, die ein künftiges Release hinzufügt – ungeprüft. Führen Sie bei Gruppen ohne Admin-Rechte lieber die gewünschten Werkzeuge einzeln auf.

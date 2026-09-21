@@ -41,7 +41,7 @@ const PAGES = [
     ["/tokens", "Create token", "API tokens — AIplane"],
     ["/usage", "Requests", "Your usage — AIplane"],
     ["/tools", "Tools", "Tools — AIplane"],
-    ["/admin/groups", "New group", "Gateway groups"],
+    ["/admin/groups", "New group", "AIplane groups"],
     ["/admin/users", "Users", "Users — AIplane"],
     ["/admin/models", "Default models", "Models — AIplane"],
     ["/admin/limits", "Add or update a limit", "Rate limits & quotas"],

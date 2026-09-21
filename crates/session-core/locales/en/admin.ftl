@@ -336,3 +336,7 @@ auto-route-error-invalid-config = The automatic route configuration is invalid. 
 auto-route-error-nested = Automatic routes cannot target other automatic routes. Choose static model aliases or model IDs instead.
 auto-route-error-missing-alias = The request URL is missing the automatic route alias.
 auto-route-error-not-found = The automatic route does not exist. Refresh the route list and try again.
+admin-error-unknown-groups = { $count ->
+    [one] No such group here: { $groups }. Create it under Admin → Groups first, or pick from the list.
+   *[other] No such groups here: { $groups }. Create them under Admin → Groups first, or pick from the list.
+}

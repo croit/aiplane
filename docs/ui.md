@@ -112,6 +112,19 @@ and keyboard-active options use a subtle surface change. Small
 closed enums such as hour/day/week or on/off remain native selects because a
 search field would add friction without improving discovery.
 
+The same component in `multiple` mode backs every multi-value **grant** field —
+a group's tools and skills, and the `allowed_groups` on a pool, a RAG collection
+and an MCP connector. The panel stays open while picking, the trigger summarises
+("3 selected"), and the selection logic lives in `multi-select.ts` so it is
+testable without a DOM. A field gets a picker when its value set is closed and
+the server knows it; a field whose set is open keeps free text with suggestions.
+`oidc_values` on a group is the open case and deliberately stays typed: its
+suggestions come from claim values seen on past logins, so the list is empty on a
+fresh install, and pre-creating the admin group's mapping before anyone has
+logged in is the day-one setup step. The grant wildcard `*` is a row of its own
+rather than "every box checked" — it resolves against the live registry at call
+time, so expanding it into today's ids would silently narrow the grant.
+
 The root layout owns the document title through the route registry in
 `page-titles.ts`; data-driven pages publish their resolved name through the
 shared override in `page-title.ts`. Conversation metadata is refreshed

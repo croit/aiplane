@@ -85,8 +85,7 @@ connectors-field-authorize-url-label = URL d'autorisation
 connectors-field-token-url-label = URL du jeton
 connectors-field-registration-url-label = URL d'enregistrement
 connectors-placeholder-optional-override = substitution optionnelle
-connectors-field-allowed-groups-label = Groupes autorisés (séparés par des virgules)
-connectors-placeholder-optional = optionnel
+connectors-field-allowed-groups-label = Groupes autorisés
 connectors-save-changes-button = Enregistrer les modifications
 connectors-add-connector-button = Ajouter un connecteur
 

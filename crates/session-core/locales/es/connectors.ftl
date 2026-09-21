@@ -85,8 +85,7 @@ connectors-field-authorize-url-label = URL de autorización
 connectors-field-token-url-label = URL de token
 connectors-field-registration-url-label = URL de registro
 connectors-placeholder-optional-override = anulación opcional
-connectors-field-allowed-groups-label = Grupos permitidos (separados por comas)
-connectors-placeholder-optional = opcional
+connectors-field-allowed-groups-label = Grupos permitidos
 connectors-save-changes-button = Guardar cambios
 connectors-add-connector-button = Añadir conector
 
