@@ -64,6 +64,27 @@ pub async fn groups_list(State(state): State<Arc<RamaState>>, req: Request) -> R
         .await
         .unwrap_or_default();
     let tool_ids = state.grantable_tool_ids();
+    // Family grants and the MCP tools a connector was seen to expose. The tool
+    // cache is best-effort — a connector nobody has connected yet contributes
+    // nothing, which the editor reports rather than showing an empty list.
+    let tool_families: Vec<serde_json::Value> = state
+        .grantable_tool_families()
+        .await
+        .into_iter()
+        .map(|(id, subject)| serde_json::json!({ "id": id, "subject": subject }))
+        .collect();
+    let mcp_tools: Vec<serde_json::Value> = db::mcp_catalog::all_tools(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(connector, tool)| {
+            serde_json::json!({
+                "id": tool.tool_id,
+                "connector": connector,
+                "description": tool.description,
+            })
+        })
+        .collect();
     let skill_names: Vec<String> = state
         .skills()
         .as_ref()
@@ -75,6 +96,8 @@ pub async fn groups_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             "groups": groups,
             "observed_oidc_values": observed,
             "tool_ids": tool_ids,
+            "tool_families": tool_families,
+            "mcp_tools": mcp_tools,
             "skill_names": skill_names,
         }),
     )

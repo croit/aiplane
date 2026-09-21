@@ -42,3 +42,6 @@ multi-select-wildcard-tools = Every tool, including ones added later
 multi-select-wildcard-skills = Every skill, including ones added later
 multi-select-shadowed = Covered by ✱
 multi-select-wildcard-warning = ✱ also grants whatever tools a future release adds, without review. On a group that is not an admin group, prefer listing the tools you mean.
+multi-select-family-comfyui = Every ComfyUI workflow, including ones added later
+multi-select-family-mcp = Every tool from { $subject }, including ones added later
+multi-select-mcp-none-cached = No tools known for this connector yet — they are recorded the first time someone connects it. Grant the whole connector above, or come back once it has been used.

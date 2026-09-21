@@ -145,6 +145,28 @@ impl McpConnectionManager {
         cache.remove(&Self::cache_key(user_id, connector_key));
     }
 
+    /// Record what this connector exposes, so the admin group editor can offer
+    /// its tools as grants.
+    ///
+    /// A connector's tool list lives on the server and is only ever seen while
+    /// connected on some user's behalf, which an admin editing a group cannot
+    /// do. Best-effort on purpose: a write failure must not fail the turn, and a
+    /// connector nobody has connected simply has nothing to offer yet.
+    async fn record_catalog_tools(&self, connector_key: &str, tools: &[Arc<McpTool>]) {
+        use crate::server::tools::Tool;
+        let cached: Vec<mcp_catalog::CachedTool> = tools
+            .iter()
+            .map(|t| mcp_catalog::CachedTool {
+                tool_id: t.id().to_string(),
+                description: t.schema().function.description,
+            })
+            .collect();
+        if let Err(err) = mcp_catalog::replace_tools(&self.db, connector_key, &cached).await {
+            tracing::warn!(connector = %connector_key, error = %err,
+                "could not cache the connector's tool list for the admin picker");
+        }
+    }
+
     /// Return the cached tools for `ck` if still within [`CACHE_TTL`].
     async fn cache_lookup(&self, ck: &str) -> Option<Vec<Arc<McpTool>>> {
         let cache = self.cache.lock().await;
@@ -355,6 +377,7 @@ impl McpConnectionManager {
         };
         let ConnectedServer { conn: _live, tools } = connected;
         let tools: Vec<Arc<McpTool>> = tools.into_iter().map(Arc::new).collect();
+        self.record_catalog_tools(&connector.key, &tools).await;
         self.cache_store(ck, tools.clone()).await;
         Ok(tools)
     }
@@ -387,6 +410,7 @@ impl McpConnectionManager {
         };
         let ConnectedServer { conn: _live, tools } = connected;
         let tools: Vec<Arc<McpTool>> = tools.into_iter().map(Arc::new).collect();
+        self.record_catalog_tools(&connector.key, &tools).await;
         self.cache_store(ck, tools.clone()).await;
         Ok(tools)
     }

@@ -307,7 +307,10 @@ impl Resolver {
                 continue;
             };
             for tool in &group.tools {
-                if tool == "*" {
+                // The family key grants every workflow the way `*` does, but
+                // without reaching past ComfyUI. Workflows are created at
+                // runtime, so an explicit list silently misses the next one.
+                if tool == "*" || tool == crate::server::tool_naming::COMFYUI_KEY {
                     wildcard = true;
                 } else if tool.starts_with(crate::server::tool_naming::COMFYUI_PREFIX)
                     && !specific.contains(tool)
@@ -331,6 +334,41 @@ impl Resolver {
             ComfyuiGrant::Specific(specific)
         } else {
             ComfyuiGrant::None
+        }
+    }
+
+    /// How the caller's grants narrow their MCP tools.
+    ///
+    /// Connector `allowed_groups` decides which connectors a caller reaches;
+    /// this decides how much of a reached connector they see. A deployment that
+    /// has never granted an `mcp__…` id is [`McpGrant::Unscoped`] and behaves
+    /// exactly as it did before per-tool grants existed, so turning this on
+    /// takes nothing away from anyone.
+    pub fn mcp_grant(&self, role_ids: &[String], mcp_prefix: &str) -> McpGrant {
+        let Ok(snap) = self.inner.read() else {
+            return McpGrant::Unscoped;
+        };
+        let mut scoped: Vec<String> = Vec::new();
+        for role_id in role_ids {
+            let Some(group) = snap.groups.get(role_id) else {
+                continue;
+            };
+            if group.is_admin {
+                return McpGrant::Unscoped;
+            }
+            for tool in &group.tools {
+                if tool == "*" {
+                    return McpGrant::Unscoped;
+                }
+                if tool.starts_with(mcp_prefix) && !scoped.contains(tool) {
+                    scoped.push(tool.clone());
+                }
+            }
+        }
+        if scoped.is_empty() {
+            McpGrant::Unscoped
+        } else {
+            McpGrant::Scoped(scoped)
         }
     }
 
@@ -408,6 +446,32 @@ fn build_snapshot(snap: &GroupSnapshot, bootstrap: &[String]) -> Snapshot {
     let mut snapshot = Snapshot { mappings, groups };
     apply_bootstrap(&mut snapshot, bootstrap);
     snapshot
+}
+
+/// Result of [`Resolver::mcp_grant`] — how far the caller's grants narrow the
+/// MCP tools their connectors already allow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpGrant {
+    /// Nothing in the caller's grants mentions MCP, so the connector's
+    /// `allowed_groups` stays the only gate — the behaviour before per-tool
+    /// grants existed, and what an admin or a `*` grant also produces.
+    Unscoped,
+    /// The caller's grants name MCP explicitly, so only tools whose own id or
+    /// whose `mcp__<server>` key appears here survive. Never widens: the
+    /// connector ACL has already run by the time this applies.
+    Scoped(Vec<String>),
+}
+
+impl McpGrant {
+    /// Whether one MCP tool survives this grant. `server_key` is the tool's
+    /// `mcp__<server>` family key, which the caller derives (the id→key rule
+    /// lives with the tool catalog, two crates up).
+    pub fn allows(&self, tool_id: &str, server_key: &str) -> bool {
+        match self {
+            Self::Unscoped => true,
+            Self::Scoped(scoped) => scoped.iter().any(|g| g == tool_id || g == server_key),
+        }
+    }
 }
 
 /// Result of [`Resolver::grants_comfyui_overlay`] — describes which
@@ -497,6 +561,140 @@ mod tests {
             models: Vec::new(),
             skills: Vec::new(),
         }
+    }
+
+    const MCP: &str = "mcp__";
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    // Workflows are created at runtime, so an explicit list is stale the moment
+    // the next one is added. The family key is the way to say "all of them"
+    // without `*`, which would reach past ComfyUI to every other tool.
+    #[test]
+    fn comfyui_family_key_grants_every_workflow() {
+        let r = Resolver::build(
+            RbacConfig::default(),
+            vec![role("art", &[crate::server::tool_naming::COMFYUI_KEY])],
+        )
+        .unwrap();
+        assert!(matches!(
+            r.grants_comfyui_overlay(&ids(&["art"])),
+            ComfyuiGrant::Wildcard
+        ));
+    }
+
+    #[test]
+    fn comfyui_explicit_ids_stay_explicit() {
+        let r = Resolver::build(
+            RbacConfig::default(),
+            vec![role("art", &["comfyui_upscale"])],
+        )
+        .unwrap();
+        match r.grants_comfyui_overlay(&ids(&["art"])) {
+            ComfyuiGrant::Specific(got) => assert_eq!(got, ids(&["comfyui_upscale"])),
+            other => panic!("expected an explicit grant, got {other:?}"),
+        }
+    }
+
+    // The point of the default: a deployment that has never written an `mcp__`
+    // grant must keep seeing every tool its connectors allow.
+    #[test]
+    fn mcp_is_unscoped_when_no_grant_mentions_it() {
+        let r =
+            Resolver::build(RbacConfig::default(), vec![role("staff", &["search_web"])]).unwrap();
+        assert_eq!(r.mcp_grant(&ids(&["staff"]), MCP), McpGrant::Unscoped);
+    }
+
+    #[test]
+    fn mcp_narrows_once_a_grant_names_it() {
+        let r = Resolver::build(
+            RbacConfig::default(),
+            vec![role(
+                "staff",
+                &["search_web", "mcp__slack", "mcp__jira__create"],
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            r.mcp_grant(&ids(&["staff"]), MCP),
+            McpGrant::Scoped(ids(&["mcp__slack", "mcp__jira__create"]))
+        );
+    }
+
+    #[test]
+    fn mcp_stays_unscoped_for_a_wildcard_or_admin_group() {
+        let r = Resolver::build(RbacConfig::default(), vec![role("power", &["*"])]).unwrap();
+        assert_eq!(r.mcp_grant(&ids(&["power"]), MCP), McpGrant::Unscoped);
+        let r = Resolver::build(RbacConfig::default(), vec![admin_role("ops")]).unwrap();
+        assert_eq!(r.mcp_grant(&ids(&["ops"]), MCP), McpGrant::Unscoped);
+    }
+
+    // A user holding two groups gets the wider of the two, the same way every
+    // other grant in this resolver unions rather than intersects.
+    #[test]
+    fn mcp_unscoped_group_wins_over_a_scoped_one() {
+        let r = Resolver::build(
+            RbacConfig::default(),
+            vec![role("narrow", &["mcp__slack"]), role("broad", &["*"])],
+        )
+        .unwrap();
+        assert_eq!(
+            r.mcp_grant(&ids(&["narrow", "broad"]), MCP),
+            McpGrant::Unscoped
+        );
+    }
+
+    // Typst deliberately gets no family mechanism: its templates are registered
+    // as ordinary tools at boot, so per-template and per-variant grants already
+    // work through the normal registry path. Pinned because it is not obvious
+    // from the outside that typst differs from ComfyUI here — and because a
+    // future "expand a family key" shortcut in `allowed_tools` would silently
+    // widen `typst_report` from the render tool to the whole template, since the
+    // key and the render tool's id are the same string.
+    #[test]
+    fn typst_grants_stay_exact_and_need_no_family_key() {
+        let reg = Registered::of(&[
+            "typst_report",
+            "typst_report_edit",
+            "typst_report_read",
+            "search_web",
+        ]);
+        let r = Resolver::build(
+            RbacConfig::default(),
+            vec![role("staff", &["typst_report", "typst_report_edit"])],
+        )
+        .unwrap();
+        assert_eq!(
+            r.allowed_tools(&ids(&["staff"]), &reg),
+            ids(&["typst_report", "typst_report_edit"]),
+            "an explicit list grants exactly what it names — no variant tags along"
+        );
+    }
+
+    #[test]
+    fn an_unscoped_grant_allows_every_tool_its_connector_allowed() {
+        let grant = McpGrant::Unscoped;
+        assert!(grant.allows("mcp__slack__post", "mcp__slack"));
+        assert!(grant.allows("mcp__jira__create", "mcp__jira"));
+    }
+
+    #[test]
+    fn a_server_key_grant_covers_that_server_and_no_other() {
+        let grant = McpGrant::Scoped(ids(&["mcp__slack"]));
+        assert!(grant.allows("mcp__slack__post", "mcp__slack"));
+        assert!(grant.allows("mcp__slack__read", "mcp__slack"));
+        assert!(!grant.allows("mcp__jira__create", "mcp__jira"));
+    }
+
+    // The point of per-tool narrowing: a connector the caller may reach, of
+    // which they see one tool.
+    #[test]
+    fn a_tool_id_grant_covers_only_that_tool() {
+        let grant = McpGrant::Scoped(ids(&["mcp__slack__post"]));
+        assert!(grant.allows("mcp__slack__post", "mcp__slack"));
+        assert!(!grant.allows("mcp__slack__delete", "mcp__slack"));
     }
 
     fn role_with_skills(id: &str, skills: &[&str]) -> RoleConfig {
