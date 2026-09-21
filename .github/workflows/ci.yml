@@ -644,3 +644,89 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The GitHub Releases entry. The tag remains the source of truth for what a
+  # release IS (docs/releases.md); this job only gives it a human-readable face
+  # — nothing downstream reads it, and deleting a release would not un-publish
+  # a single image.
+  #
+  # It runs last and needs every publishing job, so an entry can never claim a
+  # release whose images or chart did not actually make it to the registry.
+  # That ordering is the whole point: the Releases page is the one artefact a
+  # human reads instead of checking GHCR by hand, so it must not be able to
+  # lie.
+  release:
+    name: github release
+    needs: [version, container, sandbox-image, sandbox-runner-image, ocr-sidecar-image, chart]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    # The only job in this pipeline that writes to the repository itself. Kept
+    # to this job rather than raised workflow-wide so a compromised build step
+    # cannot rewrite the repo.
+    permissions:
+      contents: write
+    steps:
+      # fetch-depth: 0 for the same reason as the version job: the notes are a
+      # commit range between two tags, and a shallow clone has neither.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Deliberately `gh` from a run step rather than a release action: gh is
+      # preinstalled on the runner, so this adds no third-party action to pin,
+      # review and keep current (see the SHA-pinning note at the top of this
+      # file).
+      #
+      # --generate-notes is not used. It summarises merged pull requests, and
+      # this repository merges branches directly, so it would render an almost
+      # empty page next to 40 real commits.
+      - name: Create the release entry
+        env:
+          V: ${{ needs.version.outputs.version }}
+          TAG: ${{ github.ref_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          # Version order, not commit date: the previous release is the next
+          # number down, which is not necessarily the previous tag in time.
+          PREV=$(git tag -l 'v*.*.*' --sort=-v:refname | grep -Fxv "$TAG" | head -1)
+          {
+            if [ -n "$PREV" ]; then
+              echo "## Changes since $PREV"
+              echo
+              git log --no-merges --reverse --format='- %s' "$PREV..$TAG"
+            else
+              echo "## Changes"
+              echo
+              git log --no-merges --reverse --format='- %s' "$TAG"
+            fi
+            echo
+            echo "## Artifacts"
+            echo
+            echo "All stamped \`$V\`, published by this pipeline:"
+            echo
+            echo "| Artifact | Reference |"
+            echo "|---|---|"
+            echo "| Gateway | \`$IMAGE:v$V\` |"
+            echo "| Sandbox gold image | \`$IMAGE_SANDBOX:v$V\` |"
+            echo "| Sandbox runner | \`$IMAGE_RUNNER:v$V\` |"
+            echo "| OCR sidecar | \`$IMAGE_OCR:v$V\` |"
+            echo "| Helm chart | \`$CHART_REPO/$CHART_NAME\` version \`$V\` |"
+            echo
+            echo "Every image also carries \`:production\`, which this release moved."
+            echo "Installations with \`autoUpdate.enabled\` (the default) pick this up at"
+            # Absolute, and pinned to this tag: a relative link does not
+            # resolve in a release body, and a link to main would drift away
+            # from what this release actually shipped.
+            echo "their next nightly restart — see [docs/kubernetes.md]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$TAG/docs/kubernetes.md#updates)."
+            echo
+            echo '```bash'
+            echo "helm install aiplane $CHART_REPO/$CHART_NAME"
+            echo '```'
+          } > notes.md
+          # --verify-tag: refuse to invent a release for a tag that is not on
+          # the remote, rather than creating the tag as a side effect.
+          gh release create "$TAG" \
+            --title "$V" \
+            --notes-file notes.md \
+            --verify-tag
+          echo "### Release [\`$TAG\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG) published" >> "$GITHUB_STEP_SUMMARY"
