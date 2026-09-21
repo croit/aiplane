@@ -216,13 +216,57 @@ their roles**, and grants come from several sources that are unioned:
   group: stored verbatim it would hide the resource from everyone instead of
   reserving it for someone.
 
-Grants are matched **exactly**. The only non-id value is `*`; there is no glob
-syntax, so `some*` is looked up as that literal id and grants nothing. `*` is
-also what unlocks the dynamically-loaded ComfyUI workflows, which are in no
-registry — which is why it is not interchangeable with listing every tool that
-happens to exist today. Note that `is_admin` does **not** imply tool access:
-`allowed_tools` never consults it, so an admin group still needs its grants
-(the setup wizard seeds `admin` with `tools = ["*"]` for exactly this reason).
+Grants are matched **exactly**. There is no glob syntax, so `some*` is looked up
+as that literal id and grants nothing. Note that `is_admin` does **not** imply
+tool access: `allowed_tools` never consults it, so an admin group still needs its
+grants (the setup wizard seeds `admin` with `tools = ["*"]` for exactly this
+reason).
+
+### Family grants
+
+Besides ids, three values stand for a whole **family**. They are the toggle keys
+from `tool_naming`, and they are *late-binding*: unlike a list of ids, they keep
+covering items added later. That matters because two of these families change
+without a deploy.
+
+| Value | Covers | Why an id list is not enough |
+|---|---|---|
+| `*` | every registered tool, plus every ComfyUI workflow | — |
+| `comfyui` | every ComfyUI workflow, present and future | workflows are created by operators at runtime and are in no registry |
+| `mcp__<server>` | every tool of that MCP connector | the tool list is the server's to change |
+
+`typst_<id>` is deliberately **not** a family grant. Typst templates are
+discovered at boot and registered as ordinary tools, so per-template and
+per-variant (`_edit` / `_read` / `_pptx`) grants already work through the normal
+path — and the family key is identical to the render tool's own id, so treating
+it as a family would silently widen an existing grant.
+
+Neither `comfyui` nor `mcp__…` is a registry id, so both fall through
+`allowed_tools` untouched; they are resolved by `grants_comfyui_overlay` and
+`mcp_grant` respectively.
+
+### MCP: connector ACL, then tool grants
+
+MCP is gated twice, and the two do different jobs:
+
+1. **Which connectors** the caller reaches — the connector's `allowed_groups`,
+   checked in `layer_for_user`.
+2. **How much of a reached connector** they see — `Resolver::mcp_grant`.
+
+The second only ever *subtracts*. A caller whose groups contain no `mcp__…`
+grant at all (or `*`, or who is admin) is `McpGrant::Unscoped` and sees every
+tool their connectors allow — which is how every deployment behaved before
+per-tool grants existed, so enabling this takes nothing away. The moment any
+`mcp__…` grant appears, the caller is `Scoped` and a tool survives only if its
+own id or its `mcp__<server>` key is named.
+
+Authoring per-tool grants needs a tool list, and an MCP server's tools are only
+visible while connected on some user's behalf — which an admin editing a group
+cannot do. So `mcp_connector_tools` caches what each connector reported the last
+time anyone connected, and the group editor offers that. It is a cache, not a
+source of truth: a connector nobody has connected has nothing to offer yet (the
+editor says so), and a stale row is harmless because grants are matched against
+the live tool id at call time.
 - **Per-user toggles** — each user turns their granted tools on and off on
   `/tools`.
 - **Per-token scoping** — a `gwk_…` token can be scoped to a subset of its

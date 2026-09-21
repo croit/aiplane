@@ -618,6 +618,76 @@ async fn pool_save_keeps_a_dangling_group_it_inherited() {
     );
 }
 
+/// The group editor gets the family grants and the cached MCP tools it needs to
+/// offer them, not just bare registry ids.
+#[tokio::test]
+async fn groups_list_carries_families_and_cached_mcp_tools() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+
+    aiplane_core::server::db::mcp_catalog::create(
+        &state.db,
+        aiplane_core::server::db::mcp_catalog::ConnectorInput {
+            key: "slack".into(),
+            name: "Slack".into(),
+            description: None,
+            icon: None,
+            category: None,
+            url: "http://unused.invalid/mcp".into(),
+            auth: aiplane_core::server::db::mcp_catalog::AuthKind::None,
+            scope: aiplane_core::server::db::mcp_catalog::Scope::Global,
+            audit: false,
+            use_dcr: false,
+            client_id: None,
+            client_secret_ct: None,
+            client_secret_nonce: None,
+            authorize_url: None,
+            token_url: None,
+            registration_url: None,
+            scopes: vec![],
+            allowed_groups: Vec::new(),
+        },
+    )
+    .await
+    .unwrap();
+    aiplane_core::server::db::mcp_catalog::set_enabled(&state.db, "slack", true)
+        .await
+        .unwrap();
+    aiplane_core::server::db::mcp_catalog::replace_tools(
+        &state.db,
+        "slack",
+        &[aiplane_core::server::db::mcp_catalog::CachedTool {
+            tool_id: "mcp__slack__post".into(),
+            description: "Post a message".into(),
+        }],
+    )
+    .await
+    .unwrap();
+
+    let resp = app
+        .serve(req(Method::GET, "/api/v0/admin/groups", &cookie, None))
+        .await
+        .unwrap();
+    let raw = body(resp).await;
+    let listed: serde_json::Value = serde_json::from_str(&raw).expect("groups list is JSON");
+    let families: Vec<&str> = listed["tool_families"]
+        .as_array()
+        .expect("families array")
+        .iter()
+        .map(|f| f["id"].as_str().unwrap_or_default())
+        .collect();
+    assert!(families.contains(&"mcp__slack"), "{raw}");
+    assert_eq!(
+        listed["mcp_tools"],
+        serde_json::json!([{
+            "id": "mcp__slack__post",
+            "connector": "slack",
+            "description": "Post a message",
+        }]),
+        "{raw}"
+    );
+}
+
 /// The pool editor renders its access picker from the payload rather than asking
 /// the operator to retype a name that only works spelled exactly.
 #[tokio::test]

@@ -1150,8 +1150,12 @@ async fn run_one_turn(d: &OpenAiDriver, ctx: SessionContext) -> Result<TurnOutco
         )
         .await
         .unwrap_or_default();
-        d.state
-            .union_enabled_mcp_tool_ids(&mut allowed_tools, &user_mcp, &enabled_keys);
+        d.state.union_enabled_mcp_tool_ids(
+            &mut allowed_tools,
+            &user_mcp,
+            &enabled_keys,
+            &d.state.mcp_grant_for(&d.tool_ctx.roles),
+        );
         if final_round {
             // Inject, then let `configure_final_tool_round` decide whether the
             // definitions may stay — which depends on whether this backend

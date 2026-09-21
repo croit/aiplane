@@ -15,9 +15,23 @@
 		skills: string[];
 	}
 
-	let { group = null, toolIds = [], skillNames = [], onsave, ondelete }: {
+	export interface ToolFamily {
+		id: string;
+		/** The MCP connector's display name; empty for families that aren't per-server. */
+		subject: string;
+	}
+
+	export interface McpTool {
+		id: string;
+		connector: string;
+		description: string;
+	}
+
+	let { group = null, toolIds = [], toolFamilies = [], mcpTools = [], skillNames = [], onsave, ondelete }: {
 		group?: AdminGroup | null;
 		toolIds?: string[];
+		toolFamilies?: ToolFamily[];
+		mcpTools?: McpTool[];
 		skillNames?: string[];
 		onsave: (group: AdminGroup) => Promise<void>;
 		ondelete?: (name: string) => Promise<void>;
@@ -34,8 +48,37 @@
 	let error = $state<string | null>(null);
 
 	const asOptions = (ids: string[]) => ids.map((id) => ({ value: id, label: id }));
+	// Families first: they are the late-binding grants, and a reader scanning for
+	// "all of X" should meet them before a list of individual ids.
+	let familyOptions = $derived(
+		toolFamilies.map((family) => ({
+			value: family.id,
+			label:
+				family.subject === ''
+					? t('multi-select-family-comfyui')
+					: t('multi-select-family-mcp', { subject: family.subject }),
+			description: family.id,
+			keywords: [family.subject]
+		}))
+	);
+	// An MCP connector's own tools, so a group can be given part of a server
+	// rather than all of it. Only what some connection has actually reported.
+	let mcpToolOptions = $derived(
+		mcpTools.map((tool) => ({
+			value: tool.id,
+			label: tool.id,
+			description: tool.description,
+			keywords: [tool.connector]
+		}))
+	);
+	let grantableTools = $derived([...familyOptions, ...asOptions(toolIds), ...mcpToolOptions]);
+	// Only worth saying when the operator has connectors but no tools to pick
+	// from them — otherwise it is noise about a feature they are not using.
+	let mcpToolsUnknown = $derived(
+		mcpTools.length === 0 && toolFamilies.some((family) => family.subject !== '')
+	);
 	let toolOptions = $derived(
-		multiSelectOptions(asOptions(toolIds), {
+		multiSelectOptions(grantableTools, {
 			wildcardLabel: t('multi-select-wildcard-tools'),
 			shadowLabel: t('multi-select-shadowed'),
 			unknownLabel: t('multi-select-unknown')
@@ -119,6 +162,9 @@
 				<span class="label-text text-xs">{t('groups-field-skills')}</span>
 				<SearchableSelect multiple bind:values={skills} options={skillOptions} size="sm" ariaLabel={t('groups-field-skills')} summary={summaryFor(t('multi-select-wildcard-skills'))} />
 			</div>
+			{#if mcpToolsUnknown}
+				<div class="alert alert-info py-2 text-xs"><span>{t('multi-select-mcp-none-cached')}</span></div>
+			{/if}
 			{#if wildcardUnreviewed}
 				<div class="alert alert-warning py-2 text-xs"><span>{t('multi-select-wildcard-warning')}</span></div>
 			{/if}

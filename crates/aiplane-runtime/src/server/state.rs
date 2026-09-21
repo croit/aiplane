@@ -1017,7 +1017,7 @@ impl AppState {
         } else {
             crate::server::tools::mcp::manager::UserMcpLayer::default()
         };
-        self.union_mcp_tool_ids(&mut allowed, &layer);
+        self.union_mcp_tool_ids(&mut allowed, &layer, &self.mcp_grant_for(&user.roles));
         // No chat session on a `/v1` path, so the typst family, the
         // document-canvas tools and `upload_attachment` can't run: advertising
         // one only lets the model pick it and get an error instead of an
@@ -1030,12 +1030,26 @@ impl AppState {
         &self,
         allowed: &mut Vec<String>,
         layer: &crate::server::tools::mcp::manager::UserMcpLayer,
+        grant: &aiplane_core::server::rbac::resolver::McpGrant,
     ) {
         for id in layer.tool_ids() {
+            if !Self::mcp_tool_granted(&id, grant) {
+                continue;
+            }
             if !allowed.iter().any(|a| a == &id) {
                 allowed.push(id);
             }
         }
+    }
+
+    /// The caller's [`McpGrant`] applied to one tool id.
+    ///
+    /// Only ever subtracts: the connector's `allowed_groups` has already decided
+    /// that this caller reaches the server at all, and a scoped grant then says
+    /// how much of it they see. The id→family-key rule is the tool catalog's, so
+    /// it is supplied here rather than duplicated in the grant.
+    fn mcp_tool_granted(id: &str, grant: &aiplane_core::server::rbac::resolver::McpGrant) -> bool {
+        grant.allows(id, crate::server::tools::catalog::entry_key_for(id))
     }
 
     /// Like [`Self::union_mcp_tool_ids`], but only unions the tools whose
@@ -1052,11 +1066,63 @@ impl AppState {
         allowed: &mut Vec<String>,
         layer: &crate::server::tools::mcp::manager::UserMcpLayer,
         enabled_keys: &std::collections::HashSet<String>,
+        grant: &aiplane_core::server::rbac::resolver::McpGrant,
     ) {
         for id in layer.enabled_tool_ids(enabled_keys) {
+            if !Self::mcp_tool_granted(&id, grant) {
+                continue;
+            }
             if !allowed.iter().any(|a| a == &id) {
                 allowed.push(id);
             }
         }
+    }
+
+    /// The grant values that stand for a whole tool *family*, with a label, for
+    /// the group editor.
+    ///
+    /// These are the toggle keys from `tool_naming`, and they are late-binding:
+    /// unlike a list of ids they keep covering items added later. That is the
+    /// point — ComfyUI workflows are created at runtime and an MCP server's tool
+    /// list is the server's to change, so an explicit list goes stale on its own.
+    /// `typst_<id>` is deliberately absent: its key is the render tool's own id,
+    /// so it is already grantable as itself.
+    pub async fn grantable_tool_families(&self) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        if self
+            .comfyui()
+            .is_some_and(|h| !h.store.current().workflows().is_empty())
+        {
+            out.push((
+                aiplane_core::server::tool_naming::COMFYUI_KEY.to_string(),
+                String::new(),
+            ));
+        }
+        for connector in aiplane_core::server::db::mcp_catalog::list_enabled(&self.db)
+            .await
+            .unwrap_or_default()
+        {
+            out.push((
+                format!(
+                    "{}{}",
+                    crate::server::tools::mcp::MCP_ID_PREFIX,
+                    connector.key
+                ),
+                connector.name,
+            ));
+        }
+        out
+    }
+
+    /// The caller's MCP grant, from their raw OIDC claim values — the shape
+    /// both call sites hold.
+    pub fn mcp_grant_for(
+        &self,
+        roles: &[String],
+    ) -> aiplane_core::server::rbac::resolver::McpGrant {
+        self.rbac.mcp_grant(
+            &self.role_ids_for(roles),
+            crate::server::tools::mcp::MCP_ID_PREFIX,
+        )
     }
 }

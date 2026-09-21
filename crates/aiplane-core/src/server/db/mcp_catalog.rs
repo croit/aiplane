@@ -594,6 +594,70 @@ pub async fn seed_defaults(pool: &Pool) -> Result<u64, DbError> {
     Ok(inserted)
 }
 
+// ---- cached tool lists ----------------------------------------------------
+
+/// One tool an MCP connector was observed to expose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedTool {
+    /// The gateway-side id (`mcp__<server>__<tool>`) — exactly what a grant names.
+    pub tool_id: String,
+    pub description: String,
+}
+
+/// Replace the cached tool list for one connector.
+///
+/// Called after a successful connection, which is the only moment the list is
+/// knowable. A connection that fails leaves the previous rows alone: a server
+/// being briefly unreachable should not empty the admin's picker.
+pub async fn replace_tools(
+    pool: &Pool,
+    connector_key: &str,
+    tools: &[CachedTool],
+) -> Result<(), DbError> {
+    let now = Timestamp::now().to_string();
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM mcp_connector_tools WHERE connector_key = ?")
+        .bind(connector_key)
+        .execute(&mut *tx)
+        .await?;
+    for tool in tools {
+        sqlx::query(
+            "INSERT INTO mcp_connector_tools (connector_key, tool_id, description, seen_at)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(connector_key)
+        .bind(&tool.tool_id)
+        .bind(&tool.description)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Every connector's cached tools, keyed by connector. Admin surfaces only —
+/// nothing on the request path reads this.
+pub async fn all_tools(pool: &Pool) -> Result<Vec<(String, CachedTool)>, DbError> {
+    let rows = sqlx::query(
+        "SELECT connector_key, tool_id, description FROM mcp_connector_tools
+         ORDER BY connector_key, tool_id",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|row| {
+            Ok((
+                row.try_get("connector_key")?,
+                CachedTool {
+                    tool_id: row.try_get("tool_id")?,
+                    description: row.try_get("description")?,
+                },
+            ))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -863,5 +927,78 @@ mod tests {
             get(&pool, "g").await.unwrap().unwrap().scope,
             Scope::PerUser
         );
+    }
+
+    async fn seed_connector(pool: &Pool, key: &str) {
+        create(
+            pool,
+            ConnectorInput {
+                key: key.into(),
+                name: key.into(),
+                description: None,
+                icon: None,
+                category: None,
+                url: "http://localhost:8080/mcp".into(),
+                auth: AuthKind::None,
+                scope: Scope::Global,
+                audit: false,
+                use_dcr: false,
+                client_id: None,
+                client_secret_ct: None,
+                client_secret_nonce: None,
+                authorize_url: None,
+                token_url: None,
+                registration_url: None,
+                scopes: vec![],
+                allowed_groups: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    fn tool(id: &str) -> CachedTool {
+        CachedTool {
+            tool_id: id.into(),
+            description: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn cached_tools_replace_rather_than_accumulate() {
+        let pool = crate::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        seed_connector(&pool, "slack").await;
+        replace_tools(
+            &pool,
+            "slack",
+            &[tool("mcp__slack__post"), tool("mcp__slack__read")],
+        )
+        .await
+        .unwrap();
+        // A later connection that sees fewer tools must not leave the old ones
+        // behind, or the picker offers grants for tools that no longer exist.
+        replace_tools(&pool, "slack", &[tool("mcp__slack__post")])
+            .await
+            .unwrap();
+        let cached = all_tools(&pool).await.unwrap();
+        assert_eq!(
+            cached,
+            vec![("slack".to_string(), tool("mcp__slack__post"))]
+        );
+    }
+
+    #[tokio::test]
+    async fn cached_tools_go_with_their_connector() {
+        let pool = crate::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        seed_connector(&pool, "slack").await;
+        replace_tools(&pool, "slack", &[tool("mcp__slack__post")])
+            .await
+            .unwrap();
+        delete(&pool, "slack").await.unwrap();
+        assert!(all_tools(&pool).await.unwrap().is_empty());
     }
 }

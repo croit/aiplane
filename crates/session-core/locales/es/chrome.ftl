@@ -41,3 +41,6 @@ multi-select-wildcard-tools = Todas las herramientas, incluidas las que se añad
 multi-select-wildcard-skills = Todas las habilidades, incluidas las que se añadan después
 multi-select-shadowed = Cubierto por ✱
 multi-select-wildcard-warning = ✱ concede también, sin revisión, las herramientas que añada una versión futura. En un grupo que no sea de administración, es preferible enumerar las herramientas concretas.
+multi-select-family-comfyui = Todos los flujos de ComfyUI, incluidos los que se añadan después
+multi-select-family-mcp = Todas las herramientas de { $subject }, incluidas las que se añadan después
+multi-select-mcp-none-cached = Aún no se conocen herramientas de este conector: se registran la primera vez que alguien lo conecta. Conceda el conector completo arriba o vuelva cuando se haya usado.

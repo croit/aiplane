@@ -40,3 +40,6 @@ multi-select-wildcard-tools = 所有工具，包括后续新增的
 multi-select-wildcard-skills = 所有技能，包括后续新增的
 multi-select-shadowed = 已由 ✱ 涵盖
 multi-select-wildcard-warning = ✱ 还会在未经审核的情况下授予未来版本新增的工具。对于非管理员组，建议逐项列出所需工具。
+multi-select-family-comfyui = 所有 ComfyUI 工作流，包括后续新增的
+multi-select-family-mcp = { $subject } 的所有工具，包括后续新增的
+multi-select-mcp-none-cached = 尚不知道此连接器的工具 — 它们会在首次连接时记录。请在上方授予整个连接器，或在其被使用后再回来。
