@@ -2,28 +2,39 @@
 	import { tick } from 'svelte';
 	import { t } from '$lib/i18n.svelte';
 	import { filterSearchOptions, nextEnabledOptionIndex, type SearchOption } from '$lib/searchable-select';
+	import { summarizeSelection, toggleValue } from '$lib/multi-select';
 
 	const generatedId = $props.id();
 	let {
 		id = generatedId,
 		options,
 		value = $bindable(''),
+		values = $bindable([]),
+		multiple = false,
+		summary,
 		ariaLabel,
 		placeholder = '',
 		size = 'md',
 		class: className = '',
 		disabled = false,
-		onchange
+		onchange,
+		onchangemany
 	}: {
 		id?: string;
 		options: SearchOption[];
-		value: string;
+		value?: string;
+		/** The selection in `multiple` mode; `value` is ignored there. */
+		values?: string[];
+		multiple?: boolean;
+		/** Trigger label for a multiple selection of none, one, or many. */
+		summary?: { empty: string; counted: (count: number) => string; wildcard?: string };
 		ariaLabel: string;
 		placeholder?: string;
 		size?: 'xs' | 'sm' | 'md';
 		class?: string;
 		disabled?: boolean;
 		onchange?: (value: string) => void;
+		onchangemany?: (values: string[]) => void;
 	} = $props();
 
 	let root = $state<HTMLDivElement>();
@@ -35,6 +46,16 @@
 	let activeIndex = $state(0);
 	let filtered = $derived(filterSearchOptions(options, query));
 	let selected = $derived(options.find((option) => option.value === value));
+	let held = $derived(multiple ? values : []);
+	let isHeld = $derived((candidate: string) => held.includes(candidate));
+	/* One predicate for "this row is part of the current selection", so the
+	 * check mark, the weight and `aria-selected` cannot disagree. */
+	let isChosen = $derived((candidate: string) => (multiple ? isHeld(candidate) : candidate === value));
+	let triggerLabel = $derived(
+		multiple && summary
+			? summarizeSelection(held, options, summary)
+			: (selected?.label ?? (placeholder || value))
+	);
 	let buttonSize = $derived(size === 'xs' ? 'btn-xs' : size === 'sm' ? 'btn-sm' : 'btn-md');
 
 	/* Where the popup sits, in viewport coordinates. It is NOT laid out inside
@@ -105,7 +126,9 @@
 		place();
 		open = true;
 		query = '';
-		const selectedIndex = options.findIndex((option) => option.value === value && !option.disabled);
+		const selectedIndex = options.findIndex(
+			(option) => !option.disabled && isChosen(option.value)
+		);
 		activeIndex = selectedIndex >= 0 ? selectedIndex : nextEnabledOptionIndex(options, -1, 1);
 		await tick();
 		searchInput?.focus();
@@ -119,6 +142,14 @@
 
 	function choose(option: SearchOption) {
 		if (option.disabled) return;
+		if (multiple) {
+			// The panel stays open: picking grants is a multi-step edit, and
+			// reopening between every tool is what made the old field faster to
+			// type into than to click through.
+			values = toggleValue(values, option.value, !isHeld(option.value));
+			onchangemany?.(values);
+			return;
+		}
 		value = option.value;
 		onchange?.(option.value);
 		hide();
@@ -172,7 +203,7 @@
 		disabled={disabled}
 		onclick={() => (open ? hide() : void show())}
 	>
-		<span class="truncate">{selected?.label ?? (placeholder || value)}</span>
+		<span class="truncate">{triggerLabel}</span>
 		<svg class="size-4 shrink-0 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
 	</button>
 
@@ -195,21 +226,21 @@
 			</label>
 
 			{#if filtered.length > 0}
-				<ul bind:this={listbox} id={`${id}-listbox`} class="mt-2 flex min-h-0 w-full flex-1 flex-col gap-1 overflow-y-auto p-0" role="listbox" aria-label={ariaLabel}>
+				<ul bind:this={listbox} id={`${id}-listbox`} class="mt-2 flex min-h-0 w-full flex-1 flex-col gap-1 overflow-y-auto p-0" role="listbox" aria-label={ariaLabel} aria-multiselectable={multiple ? true : undefined}>
 					{#each filtered as option, index (option.value)}
 						<li class="list-none">
 							<button
 								type="button"
-								class="card card-xs w-full border text-left transition-colors {index === activeIndex ? 'border-base-300 bg-base-200' : 'border-transparent bg-base-100'} {option.value === value ? 'font-semibold' : ''}"
+								class="card card-xs w-full border text-left transition-colors {index === activeIndex ? 'border-base-300 bg-base-200' : 'border-transparent bg-base-100'} {isChosen(option.value) ? 'font-semibold' : ''}"
 								role="option"
-								aria-selected={option.value === value}
+								aria-selected={isChosen(option.value)}
 								data-option-index={index}
 								disabled={option.disabled}
 								onmouseenter={() => { if (!option.disabled) activeIndex = index; }}
 								onclick={() => choose(option)}
 							>
 								<span class="grid w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 px-3 py-2">
-									<span class="flex h-5 w-4 items-center justify-center">{option.value === value ? '✓' : ''}</span>
+									<span class="flex h-5 w-4 items-center justify-center">{isChosen(option.value) ? '✓' : ''}</span>
 									<span class="min-w-0 flex-1">
 										<span class="flex min-w-0 items-center justify-between gap-x-3">
 											<span class="truncate text-sm leading-5" title={option.label}>{option.label}</span>
@@ -234,6 +265,12 @@
 				</ul>
 			{:else}
 				<div class="px-3 py-6 text-center text-sm text-base-content/60">{t('searchable-select-no-results')}</div>
+			{/if}
+
+			{#if multiple && held.length > 0}
+				<div class="mt-2 flex shrink-0 justify-end border-t border-base-300 pt-2">
+					<button type="button" class="btn btn-ghost btn-xs" onclick={() => { values = []; onchangemany?.(values); }}>{t('multi-select-clear')}</button>
+				</div>
 			{/if}
 		</div>
 	{/if}

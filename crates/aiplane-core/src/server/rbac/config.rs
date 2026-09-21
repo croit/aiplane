@@ -39,12 +39,16 @@ pub struct RoleConfig {
     /// role never silently grants admin.
     #[serde(default)]
     pub admin: bool,
-    /// Model patterns this role can route to. Each entry is either an exact
-    /// model name or `"*"` (everything). `"name*"` prefix matches are also
-    /// supported.
+    /// Parsed but no longer consulted: model access moved per-pool
+    /// (`pools.allowed_groups`), so `Resolver::build` ignores this. Kept so an
+    /// existing config still loads. There is no pattern matching here or
+    /// anywhere else in RBAC — the prefix form this once documented is gone.
     #[serde(default)]
     pub models: Vec<String>,
-    /// Tool IDs this role grants. `"*"` expands to every registered tool.
+    /// Tool IDs this role grants, matched exactly. The one non-id value is
+    /// `"*"`, which expands to every registered tool at resolve time (and also
+    /// unlocks the ComfyUI workflows, which are in no registry). Globs are not
+    /// supported: `"some*"` is looked up as that literal id and grants nothing.
     #[serde(default)]
     pub tools: Vec<String>,
     /// Skill names this role grants. `"*"` expands to every loaded skill.

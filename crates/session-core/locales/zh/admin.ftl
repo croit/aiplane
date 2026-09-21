@@ -322,3 +322,7 @@ auto-route-error-invalid-config = 自动路由配置无效。请检查候选模�
 auto-route-error-nested = 自动路由不能指向其他自动路由。请改用静态模型别名或模型 ID。
 auto-route-error-missing-alias = 请求 URL 中缺少自动路由别名。
 auto-route-error-not-found = 自动路由不存在。请刷新路由列表后重试。
+admin-error-unknown-groups = { $count ->
+    [one] 此处不存在以下组：{ $groups }。请先在“管理 → 组”中创建，或从列表中选择。
+   *[other] 此处不存在以下组：{ $groups }。请先在“管理 → 组”中创建，或从列表中选择。
+}

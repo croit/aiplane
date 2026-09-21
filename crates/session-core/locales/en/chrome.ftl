@@ -33,3 +33,12 @@ searchable-select-model-nda = NDA
 # someone who followed an old link or typed the URL.
 feature-disabled-body = { $feature } is turned off for this gateway, so this page has nothing to show. An administrator can switch it on under Settings.
 feature-disabled-settings-link = Open settings
+
+multi-select-none = None selected
+multi-select-count = { $count } selected
+multi-select-clear = Clear all
+multi-select-unknown = Not registered here — remove it or create it
+multi-select-wildcard-tools = Every tool, including ones added later
+multi-select-wildcard-skills = Every skill, including ones added later
+multi-select-shadowed = Covered by ✱
+multi-select-wildcard-warning = ✱ also grants whatever tools a future release adds, without review. On a group that is not an admin group, prefer listing the tools you mean.

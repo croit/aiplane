@@ -212,7 +212,17 @@ their roles**, and grants come from several sources that are unioned:
   a stale config can't block startup).
 - **Groups** — `/admin/groups` maps OIDC claim values onto gateway groups with
   their own tool and skill grants. Pools, RAG collections, and MCP connectors
-  restrict access by group.
+  restrict access by group, and those saves reject a group name that matches no
+  group: stored verbatim it would hide the resource from everyone instead of
+  reserving it for someone.
+
+Grants are matched **exactly**. The only non-id value is `*`; there is no glob
+syntax, so `some*` is looked up as that literal id and grants nothing. `*` is
+also what unlocks the dynamically-loaded ComfyUI workflows, which are in no
+registry — which is why it is not interchangeable with listing every tool that
+happens to exist today. Note that `is_admin` does **not** imply tool access:
+`allowed_tools` never consults it, so an admin group still needs its grants
+(the setup wizard seeds `admin` with `tools = ["*"]` for exactly this reason).
 - **Per-user toggles** — each user turns their granted tools on and off on
   `/tools`.
 - **Per-token scoping** — a `gwk_…` token can be scoped to a subset of its

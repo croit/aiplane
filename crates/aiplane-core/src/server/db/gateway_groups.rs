@@ -60,6 +60,49 @@ pub async fn list_groups(pool: &Pool) -> Result<Vec<GroupRow>, DbError> {
     rows.iter().map(map_group).collect()
 }
 
+/// Just the group names, for the admin pickers and for validating a resource's
+/// `allowed_groups` before it is stored. Four call sites used to re-derive this
+/// from [`list_groups`].
+pub async fn list_group_names(pool: &Pool) -> Result<Vec<String>, DbError> {
+    let rows = sqlx::query("SELECT name FROM gateway_groups ORDER BY name")
+        .fetch_all(pool)
+        .await?;
+    rows.iter().map(|row| Ok(row.try_get("name")?)).collect()
+}
+
+/// The entries of `wanted` that name no existing group, in the order given.
+///
+/// Resource ACLs (`pools`, `rag_collections`, `mcp_catalog_connectors`) store
+/// group names as opaque strings, so a name with a typo is stored happily and
+/// then matches nobody — the resource goes invisible and unroutable with no
+/// clue as to why. Callers reject on a non-empty result rather than filtering,
+/// which would silently discard a grant the operator asked for.
+pub async fn unknown_groups(pool: &Pool, wanted: &[String]) -> Result<Vec<String>, DbError> {
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    let known = list_group_names(pool).await?;
+    Ok(wanted
+        .iter()
+        .filter(|name| !known.contains(name))
+        .cloned()
+        .collect())
+}
+
+/// The 400 body for a resource save that named groups which do not exist.
+/// Shared by the pool, RAG collection and MCP connector saves so an operator
+/// gets the same wording and the same next step wherever they hit it.
+pub fn unknown_groups_message(lang: session_core::i18n::Lang, unknown: &[String]) -> String {
+    session_core::i18n::t_args(
+        lang,
+        "admin-error-unknown-groups",
+        &session_core::i18n::args([
+            ("count", (unknown.len() as i64).into()),
+            ("groups", unknown.join(", ").into()),
+        ]),
+    )
+}
+
 /// Insert a group or update its mutable fields (description, flags). `name` is
 /// the stable key; renaming is a delete + create (resource ACLs reference the
 /// name, so we don't cascade-rename).
@@ -356,6 +399,47 @@ mod tests {
         assert!(groups[0].is_admin);
         assert_eq!(groups[1].name, "developers");
         assert_eq!(groups[1].description, "Dev team");
+    }
+
+    #[tokio::test]
+    async fn group_names_lists_every_group_sorted() {
+        let pool = fresh().await;
+        upsert_group(&pool, "developers", "", false, false)
+            .await
+            .unwrap();
+        upsert_group(&pool, "admins", "", true, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            list_group_names(&pool).await.unwrap(),
+            v(&["admins", "developers"])
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_groups_names_only_what_is_missing() {
+        let pool = fresh().await;
+        upsert_group(&pool, "developers", "", false, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            unknown_groups(&pool, &v(&["developers", "devlopers"]))
+                .await
+                .unwrap(),
+            v(&["devlopers"])
+        );
+        assert!(
+            unknown_groups(&pool, &v(&["developers"]))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_groups_accepts_an_empty_list_without_a_query() {
+        let pool = fresh().await;
+        assert!(unknown_groups(&pool, &[]).await.unwrap().is_empty());
     }
 
     #[tokio::test]

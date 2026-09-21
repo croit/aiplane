@@ -47,7 +47,7 @@ export interface ConnectorFormValue {
 	authorize_url: string;
 	token_url: string;
 	registration_url: string;
-	groups: string;
+	groups: string[];
 	audit: boolean;
 	overwrite: boolean;
 }
@@ -70,7 +70,7 @@ export function connectorForm(connector?: AdminConnector): ConnectorFormValue {
 		authorize_url: connector?.authorize_url ?? '',
 		token_url: connector?.token_url ?? '',
 		registration_url: connector?.registration_url ?? '',
-		groups: connector?.groups.join(', ') ?? '',
+		groups: connector?.groups.slice() ?? [],
 		audit: connector?.audit ?? false,
 		overwrite: connector !== undefined
 	};

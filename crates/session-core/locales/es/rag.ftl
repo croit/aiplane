@@ -114,7 +114,7 @@ rag-option-choose-embedding-model = Elija un modelo de embedding…
 rag-suffix-not-advertised = (ya no disponible)
 
 rag-label-allowed-groups = Grupos permitidos
-rag-hint-allowed-groups = Grupos de AIplane (separados por comas) autorizados a listar y buscar en esta colección. Vacío = todos los que tengan las herramientas RAG. Los admins siempre tienen acceso.
+rag-hint-allowed-groups = Grupos de AIplane autorizados a listar y buscar en esta colección. Sin selección = todos los que tengan las herramientas RAG. Los admins siempre tienen acceso.
 
 # Selector de origen + credenciales del proveedor (rag_source.rs). Las
 # etiquetas de los campos provienen del proveedor y no se traducen.

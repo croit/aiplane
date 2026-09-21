@@ -18,6 +18,18 @@ describe('searchable select option layout', () => {
 		assert.match(searchableSelect, /justify-end gap-1/);
 	});
 
+	// Multi-value grant fields (a group's tools/skills, a resource's allowed
+	// groups) share this component rather than forking the popup: the placement
+	// below is the subtle part, and two copies of it would drift.
+	test('multiple mode marks the listbox, keeps the panel open, and offers a reset', () => {
+		assert.match(searchableSelect, /aria-multiselectable=\{multiple \? true : undefined\}/);
+		assert.match(searchableSelect, /aria-selected=\{isChosen\(option\.value\)\}/);
+		// `choose` returns before `hide()` in multiple mode — picking several
+		// grants must not close the panel between every click.
+		assert.match(searchableSelect, /values = toggleValue\(values, option\.value, !isHeld\(option\.value\)\);/);
+		assert.match(searchableSelect, /multi-select-clear/);
+	});
+
 	// The popup used to be an absolutely positioned `dropdown-content`, which
 	// every scrolling ancestor was free to clip — in the document canvas it cut
 	// the option rows off at the panel edge, leaving a box that looked empty and

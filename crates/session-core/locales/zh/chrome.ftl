@@ -31,3 +31,12 @@ searchable-select-model-nda = NDA
 # 导航项会消失；这是对旧链接或手动输入网址的回应。
 feature-disabled-body = 本网关已关闭 { $feature }，因此此页面没有内容可显示。管理员可以在设置中启用它。
 feature-disabled-settings-link = 打开设置
+
+multi-select-none = 未选择
+multi-select-count = 已选择 { $count } 项
+multi-select-clear = 全部清除
+multi-select-unknown = 此处未注册 — 请移除或创建
+multi-select-wildcard-tools = 所有工具，包括后续新增的
+multi-select-wildcard-skills = 所有技能，包括后续新增的
+multi-select-shadowed = 已由 ✱ 涵盖
+multi-select-wildcard-warning = ✱ 还会在未经审核的情况下授予未来版本新增的工具。对于非管理员组，建议逐项列出所需工具。

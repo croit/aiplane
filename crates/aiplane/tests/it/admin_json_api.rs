@@ -497,6 +497,110 @@ async fn groups_round_trip() {
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 }
 
+/// A pool may only reference groups that exist. Typing a group name that matches
+/// nothing used to store fine and then hide the pool from everyone.
+#[tokio::test]
+async fn pool_save_rejects_a_group_that_does_not_exist() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/pools",
+            &cookie,
+            Some(
+                r#"{"name":"gated","kind":"chat","strategy":"least_inflight","allowed_groups":["admin","devlopers"],"backends":[],"models":[],"voices":[],"offer_voices":[],"overwrite":true}"#
+                    .into(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let raw = body(resp).await;
+    // The message names the offender: "one of them is wrong" is not actionable
+    // when the field holds several.
+    assert!(raw.contains("devlopers"), "{raw}");
+    assert!(
+        !raw.contains("\"admin\""),
+        "the existing group is not flagged: {raw}"
+    );
+}
+
+/// The same save succeeds once the group exists, so the gate is the name and not
+/// the presence of a restriction.
+#[tokio::test]
+async fn pool_save_accepts_a_group_that_exists() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/pools",
+            &cookie,
+            Some(
+                r#"{"name":"gated","kind":"chat","strategy":"least_inflight","allowed_groups":["admin"],"backends":[],"models":[],"voices":[],"offer_voices":[],"overwrite":true}"#
+                    .into(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "{}", body(resp).await);
+}
+
+/// The pool editor renders its access picker from the payload rather than asking
+/// the operator to retype a name that only works spelled exactly.
+#[tokio::test]
+async fn topology_carries_the_group_vocabulary() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+
+    let resp = app
+        .serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+        .await
+        .unwrap();
+    let raw = body(resp).await;
+    let listed: serde_json::Value = serde_json::from_str(&raw).expect("topology is JSON");
+    assert_eq!(listed["groups"], serde_json::json!(["admin"]), "{raw}");
+}
+
+/// An MCP connector restricted to a group that does not exist would be hidden
+/// from everyone rather than reserved for someone, so the save refuses it.
+#[tokio::test]
+async fn connector_save_rejects_a_group_that_does_not_exist() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/connectors",
+            &cookie,
+            Some(r#"{"key":"probe","title":"Probe","base_url":"https://mcp.invalid/mcp","scope":"per_user","auth_type":"static_bearer","client_secret":"tok","scopes":[],"groups":["adminz"],"audit":false}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let raw = body(resp).await;
+    assert!(raw.contains("adminz"), "{raw}");
+
+    // Refused means not stored — not stored-then-hidden.
+    let listed = app
+        .serve(req(Method::GET, "/api/v0/admin/connectors", &cookie, None))
+        .await
+        .unwrap();
+    let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+    assert!(
+        !listed["connectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|connector| connector["key"] == "probe"),
+        "the rejected connector was stored anyway: {listed}"
+    );
+}
+
 /// Model overrides: the shared validation rejects a bad price with a 400
 /// and accepts a real save.
 #[tokio::test]

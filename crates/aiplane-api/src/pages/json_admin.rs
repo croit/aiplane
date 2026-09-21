@@ -1465,6 +1465,12 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 .map(|k| k.as_str())
                 .collect::<Vec<_>>(),
             "pool_strategies": ["prefix_affinity", "least_inflight", "round_robin"],
+            // The group vocabulary, for the same reason: the pool editor's
+            // access picker renders from this rather than asking the operator
+            // to retype a name that only matches when spelled exactly.
+            "groups": db::gateway_groups::list_group_names(&state.db)
+                .await
+                .unwrap_or_default(),
             "fallback_kinds": ["chat", "transcription", "embedding", "image"],
         }),
     )
@@ -2107,7 +2113,7 @@ pub struct VoiceBody {
 /// PUT /api/v0/admin/pools — upsert a pool row. Marks the topology dirty.
 pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
-    let (_, body) = req.into_parts();
+    let (parts, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
         Err(msg) => return bad_request(msg),
@@ -2135,6 +2141,18 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
     const STRATEGIES: &[&str] = &["prefix_affinity", "least_inflight", "round_robin"];
     if !pool_kind_exists(&parsed.kind) {
         return bad_request(format!("unknown pool kind: {}", parsed.kind));
+    }
+    // A group name that matches nothing makes the pool non-empty-but-unmatchable:
+    // invisible and unroutable to every non-admin, with no clue as to why.
+    match db::gateway_groups::unknown_groups(&state.db, &parsed.allowed_groups).await {
+        Ok(unknown) if !unknown.is_empty() => {
+            return bad_request(db::gateway_groups::unknown_groups_message(
+                Lang::from_request(&parts.headers),
+                &unknown,
+            ));
+        }
+        Ok(_) => {}
+        Err(err) => return internal(err),
     }
     let strategy = if STRATEGIES.contains(&parsed.strategy.as_str()) {
         parsed.strategy

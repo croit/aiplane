@@ -118,14 +118,18 @@ test("groups keep the complete inline create and grant-editing workflow", async 
     const page = await ctx.newPage();
     await page.goto(`${BASE}/admin/groups`, { waitUntil: "domcontentloaded" });
 
-    await page.getByRole("heading", { name: "Gateway groups", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "AIplane groups", exact: true }).waitFor();
     await page.getByText("IdP-independent group names", { exact: false }).waitFor();
     const create = page.locator("article").filter({ has: page.getByRole("heading", { name: "New group", exact: true }) });
     await create.getByLabel("Name", { exact: true }).fill("parity-audit");
     await create.getByLabel("Description", { exact: true }).fill("Temporary browser-test group");
     await create.locator('input[list="group-oidc-values"]').fill("qa-team, qa-admins");
-    await create.getByLabel("Tools", { exact: true }).fill("search_web, fetch_url");
-    await create.getByLabel("Skills", { exact: true }).fill("release-notes-writer");
+    // Tools and skills are pickers now: a typo cannot be entered, so the test
+    // picks the way an operator does instead of typing ids.
+    await create.getByRole("combobox", { name: "Tools", exact: true }).click();
+    await page.getByRole("option", { name: "search_web", exact: true }).click();
+    await page.getByRole("option", { name: "fetch_url", exact: true }).click();
+    await page.keyboard.press("Escape");
     const created = page.waitForResponse((response) => response.url().endsWith("/api/v0/admin/groups") && response.request().method() === "PUT");
     await create.getByRole("button", { name: "Save", exact: true }).click();
     assert.equal((await created).status(), 200);
@@ -269,9 +273,11 @@ test("connectors preserve the complete catalog, lifecycle, and audit workflow", 
     await page.waitForURL((url) => url.pathname === "/admin/connectors/new");
     const create = page.locator("form").filter({ has: page.getByLabel("Key (stable id)", { exact: true }) });
     await create.waitFor();
-    for (const label of ["Key (stable id)", "Name", "Icon (emoji)", "Category", "Description", "MCP server URL", "Scope", "Authentication", "Allowed groups (comma-separated)"]) {
+    for (const label of ["Key (stable id)", "Name", "Icon (emoji)", "Category", "Description", "MCP server URL", "Scope", "Authentication"]) {
         assert.equal(await create.getByLabel(label, { exact: true }).count(), 1, `${label} must be present`);
     }
+    // Allowed groups is a picker rather than a labelled text input now.
+    assert.equal(await create.getByRole("combobox", { name: "Allowed groups", exact: true }).count(), 1);
     await create.getByLabel("Key (stable id)", { exact: true }).fill("google_workspace");
     await create.getByText("self-hosted Google Workspace MCP server", { exact: true }).waitFor();
     await create.getByRole("link", { name: "taylorwilsdon/google_workspace_mcp", exact: true }).waitFor();

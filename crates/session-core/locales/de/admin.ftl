@@ -335,3 +335,7 @@ auto-route-error-invalid-config = Die Konfiguration der automatischen Route ist 
 auto-route-error-nested = Automatische Routen können nicht auf andere automatische Routen verweisen. Wählen Sie statische Modell-Aliasse oder Modell-IDs.
 auto-route-error-missing-alias = In der Anfrage-URL fehlt der Alias der automatischen Route.
 auto-route-error-not-found = Die automatische Route existiert nicht. Aktualisieren Sie die Routenliste und versuchen Sie es erneut.
+admin-error-unknown-groups = { $count ->
+    [one] Diese Gruppe existiert hier nicht: { $groups }. Legen Sie sie zuerst unter Administration → Gruppen an oder wählen Sie aus der Liste.
+   *[other] Diese Gruppen existieren hier nicht: { $groups }. Legen Sie sie zuerst unter Administration → Gruppen an oder wählen Sie aus der Liste.
+}

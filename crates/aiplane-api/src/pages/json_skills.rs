@@ -279,12 +279,9 @@ pub async fn admin_skills_list(State(state): State<Arc<RamaState>>, req: Request
             "configured": state.skills().is_some(),
             "directory_accessible": !state.skills_dir_inaccessible(),
             "source": source,
-            "groups": db::gateway_groups::list_groups(&state.db)
+            "groups": db::gateway_groups::list_group_names(&state.db)
                 .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|g| g.name)
-                .collect::<Vec<_>>(),
+                .unwrap_or_default(),
         }),
     )
 }
@@ -398,11 +395,10 @@ pub async fn admin_skills_grants(State(state): State<Arc<RamaState>>, req: Reque
     if store.current().get(&parsed.skill).is_none() {
         return json_error(StatusCode::NOT_FOUND, "not_found", "no such skill");
     }
-    let groups: std::collections::HashSet<_> = db::gateway_groups::list_groups(&state.db)
+    let groups: std::collections::HashSet<_> = db::gateway_groups::list_group_names(&state.db)
         .await
         .unwrap_or_default()
         .into_iter()
-        .map(|group| group.name)
         .collect();
     let all_skills_groups: std::collections::HashSet<_> =
         db::skill_grants::roles_for_skill(&state.db, "*")
@@ -463,12 +459,9 @@ pub async fn admin_connectors_list(State(state): State<Arc<RamaState>>, req: Req
             })
         })
         .collect();
-    let groups = db::gateway_groups::list_groups(&state.db)
+    let groups = db::gateway_groups::list_group_names(&state.db)
         .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|group| group.name)
-        .collect::<Vec<_>>();
+        .unwrap_or_default();
     json_ok(
         StatusCode::OK,
         serde_json::json!({
@@ -552,7 +545,7 @@ fn oauth_client_json(raw: &str) -> Option<OAuthClientJson> {
 /// client secret is sealed before storage.
 pub async fn admin_connectors_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
-    let (_, body) = req.into_parts();
+    let (parts, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
         Err(msg) => return bad_request(msg),
@@ -607,6 +600,18 @@ pub async fn admin_connectors_save(State(state): State<Arc<RamaState>>, req: Req
     let scope = db::mcp_catalog::Scope::parse(&parsed.scope);
     if scope == db::mcp_catalog::Scope::Global && auth == db::mcp_catalog::AuthKind::OAuth2 {
         return bad_request("a global connector cannot use per-user OAuth");
+    }
+    // Same gate as the pool and RAG saves: an unmatchable group name hides the
+    // connector from everyone instead of restricting it to someone.
+    match db::gateway_groups::unknown_groups(&state.db, &parsed.groups).await {
+        Ok(unknown) if !unknown.is_empty() => {
+            return bad_request(db::gateway_groups::unknown_groups_message(
+                session_core::i18n::Lang::from_request(&parts.headers),
+                &unknown,
+            ));
+        }
+        Ok(_) => {}
+        Err(err) => return internal(err),
     }
     let input = db::mcp_catalog::ConnectorInput {
         key: parsed.key.clone(),

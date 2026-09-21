@@ -114,7 +114,7 @@ rag-option-choose-embedding-model = 选择 Embedding 模型…
 rag-suffix-not-advertised = （不再提供）
 
 rag-label-allowed-groups = 允许的组
-rag-hint-allowed-groups = 允许列出和搜索此集合的 AIplane 组（用逗号分隔）。留空 = 所有拥有 RAG 工具的人。管理员始终有权限。
+rag-hint-allowed-groups = 允许列出和搜索此集合的 AIplane 组。未选择 = 所有拥有 RAG 工具的人。管理员始终有权限。
 
 # 来源选择器和提供方凭据（rag_source.rs）。各字段标签由提供方自身给出，
 # 不做翻译。
