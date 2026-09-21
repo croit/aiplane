@@ -316,7 +316,11 @@ packages the zip and `scripts/publish-extension.mjs` uploads and submits it as
 a service account. The one manual step is the **first** upload — Web Store API
 v2 updates items and cannot create them, so the extension has no id until
 somebody makes one in the dashboard. Its id then goes in the `CWS_EXTENSION_ID`
-repository variable, which is what switches the automation on.
+repository variable, which is what switches the automation on. Until it is set
+the job still packages the zip and attaches it to the run, and the publish step
+is *skipped* rather than failed — a tag must not go red over an item nobody has
+created yet. (It did once: `v2609.2.0` gated on `CWS_SERVICE_ACCOUNT` alone, so
+the publish ran without an id and failed the release pipeline.)
 
 `minimum_chrome_version` is **127**, which is where `chrome.action.openPopup()`
 arrived. On anything older the extension would install and then never be able

@@ -518,15 +518,31 @@ jobs:
 
       # `secrets` cannot be read from a step's `if`, so the presence of the
       # credentials becomes an output first.
+      #
+      # All THREE are checked, not just the secret. `publish-extension.mjs`
+      # requires the publisher and item ids too, and `CWS_EXTENSION_ID` is the
+      # documented on-switch (docs/browser-control.md → Shipping it): Web Store
+      # API v2 can update an item but not create one, so the id does not exist
+      # until somebody makes the item in the dashboard by hand. Gating on the
+      # service account alone meant v2609.2.0 — service account configured,
+      # store item not yet created — sailed past the gate and then failed the
+      # release pipeline with `missing CWS_EXTENSION_ID`.
       - name: Are we able to publish?
         id: creds
         env:
           CWS_SERVICE_ACCOUNT: ${{ secrets.CWS_SERVICE_ACCOUNT }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
         run: |
-          if [ -n "$CWS_SERVICE_ACCOUNT" ]; then
+          MISSING=""
+          [ -n "$CWS_SERVICE_ACCOUNT" ] || MISSING="$MISSING CWS_SERVICE_ACCOUNT"
+          [ -n "$CWS_PUBLISHER_ID" ] || MISSING="$MISSING CWS_PUBLISHER_ID"
+          [ -n "$CWS_EXTENSION_ID" ] || MISSING="$MISSING CWS_EXTENSION_ID"
+          if [ -z "$MISSING" ]; then
             echo "have=true" >> "$GITHUB_OUTPUT"
           else
             echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "missing=${MISSING# }" >> "$GITHUB_OUTPUT"
           fi
 
       # Skipped rather than failed when the credentials are absent: a fork, and
@@ -544,6 +560,7 @@ jobs:
         env:
           V: ${{ needs.version.outputs.version }}
           HAVE_CREDENTIALS: ${{ steps.creds.outputs.have }}
+          MISSING: ${{ steps.creds.outputs.missing }}
         run: |
           {
             echo "### Chrome extension $V"
@@ -554,8 +571,10 @@ jobs:
               echo "Submitted to the Chrome Web Store. It is now **in review**;"
               echo "for this extension that takes days, not minutes."
             else
-              echo "Not submitted: no \`CWS_SERVICE_ACCOUNT\` secret configured."
+              echo "Not submitted — not configured: \`$MISSING\`."
               echo "The packaged zip is attached to this run."
+              echo "See docs/browser-control.md → Shipping it: the store item has to be"
+              echo "created by hand once before \`CWS_EXTENSION_ID\` can exist."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
