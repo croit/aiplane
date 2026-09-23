@@ -205,16 +205,21 @@ target/release/typst --version
 """
 
 [tasks.lock-sandbox-python]
-description = "Recompile sandbox-image/requirements.txt (the hash-pinned Python lock for the sandbox gold image) from requirements.in. Run after editing requirements.in, or to pull in upstream security fixes. Needs docker — the resolve happens inside the image's own pinned Debian base so the lock matches the build platform, not your Mac."
+description = "Recompile sandbox-image/requirements.txt (the hash-pinned Python lock for the sandbox gold image) from requirements.in. Run after editing requirements.in; `--upgrade` moves every package to its latest release (the way to pull in upstream security fixes). Needs docker — the resolve happens inside the image's own pinned Debian base so the lock matches the build platform, not your Mac."
 dir = "{{ config_root }}"
+usage = 'flag "--upgrade" help="re-resolve every package to its latest release instead of keeping the current pins"'
 run = '''
 set -eu
+# uv treats the existing lock as preferences, so without --upgrade a recompile
+# only moves what requirements.in forces to move.
+upgrade=""
+if [ "${usage_upgrade:-false}" = "true" ]; then upgrade="--upgrade"; fi
 # Keep this base in sync with sandbox-image/Containerfile's FROM. Resolving on
 # the target platform matters: a lock compiled against a different Python minor
 # or libc can pin versions that have no wheel in the image.
 base=$(sed -n 's|^FROM \(debian:[^ ]*\).*|\1|p' sandbox-image/Containerfile | head -1)
 echo "resolving against ${base}"
-docker run --rm --platform linux/amd64 \
+docker run --rm --platform linux/amd64 -e UPGRADE="$upgrade" \
     -v "$PWD/sandbox-image:/w" -w /w "$base" \
     sh -c '
         set -eu
@@ -223,7 +228,7 @@ docker run --rm --platform linux/amd64 \
         apt-get install -y -qq --no-install-recommends python3 python3-venv >/dev/null 2>&1
         python3 -m venv /tmp/v
         /tmp/v/bin/pip install -q --upgrade pip uv >/dev/null 2>&1
-        /tmp/v/bin/uv pip compile --generate-hashes --universal \
+        /tmp/v/bin/uv pip compile --generate-hashes --universal $UPGRADE \
             --python-version 3.13 -o requirements.txt requirements.in
     '
 echo "wrote sandbox-image/requirements.txt ($(grep -c -- --hash=sha256: sandbox-image/requirements.txt) hashes)"

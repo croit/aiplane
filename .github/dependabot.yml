@@ -92,7 +92,8 @@ updates:
   # The sandbox gold image's Python lock. Dependabot updates requirements.txt
   # directly; the hashes come along, because the lock carries them. Note it
   # will not re-run `mise run lock-sandbox-python` — for anything more than a
-  # single-package security bump, regenerate from requirements.in instead.
+  # single-package security bump, regenerate from requirements.in instead
+  # (`mise run lock-sandbox-python --upgrade`).
   - package-ecosystem: pip
     directory: /sandbox-image
     schedule:
