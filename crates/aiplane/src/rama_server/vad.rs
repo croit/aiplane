@@ -36,10 +36,9 @@ use std::io::Cursor;
 use earshot::Detector;
 use rama::bytes::Bytes;
 use symphonia::core::{
-    formats::FormatOptions,
+    formats::{FormatOptions, TrackType, probe::Hint},
     io::{MediaSourceStream, MediaSourceStreamOptions},
     meta::MetadataOptions,
-    probe::Hint,
 };
 use symphonia::default::get_probe;
 
@@ -287,33 +286,44 @@ pub fn encoded_audio_duration_seconds(bytes: Bytes) -> Option<f64> {
         Box::new(Cursor::new(bytes)),
         MediaSourceStreamOptions::default(),
     );
-    let mut probed = get_probe()
-        .format(
+    let mut format = get_probe()
+        .probe(
             &Hint::new(),
             source,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .ok()?;
-    let (track_id, sample_rate, declared_frames) = {
-        let track = probed.format.default_track()?;
-        (
-            track.id,
-            track.codec_params.sample_rate?,
-            track.codec_params.n_frames,
-        )
-    };
-    if let Some(frames) = declared_frames {
-        return Some(frames as f64 / f64::from(sample_rate));
+    let track = format.default_track(TrackType::Audio)?;
+    let track_id = track.id;
+    let time_base = track.time_base;
+    let sample_rate = track
+        .codec_params
+        .as_ref()
+        .and_then(|params| params.audio())
+        .and_then(|audio| audio.sample_rate);
+    if let (Some(time_base), Some(duration)) = (time_base, track.duration) {
+        return time_base
+            .calc_duration(duration)
+            .map(|time| time.as_secs_f64());
+    }
+    if let (Some(frames), Some(rate)) = (track.num_frames, sample_rate) {
+        return Some(frames as f64 / f64::from(rate));
     }
 
-    let mut packet_duration = 0u64;
-    while let Ok(packet) = probed.format.next_packet() {
-        if packet.track_id() == track_id {
-            packet_duration = packet_duration.checked_add(packet.dur())?;
+    // Without a timebase, packet durations are in frames — the 0.5 contract,
+    // and still what the sample-rate fallback assumes.
+    let seconds_per_tick = match time_base {
+        Some(time_base) => f64::from(time_base),
+        None => 1.0 / f64::from(sample_rate?),
+    };
+    let mut ticks = 0u64;
+    while let Ok(Some(packet)) = format.next_packet() {
+        if packet.track_id == track_id {
+            ticks = ticks.checked_add(packet.dur.get())?;
         }
     }
-    (packet_duration > 0).then(|| packet_duration as f64 / f64::from(sample_rate))
+    (ticks > 0).then_some(ticks as f64 * seconds_per_tick)
 }
 
 /// Validate the incoming WAV and return its sample buffer. We only
@@ -452,6 +462,23 @@ mod tests {
         wav[24..28].copy_from_slice(&48_000u32.to_le_bytes());
         wav[28..32].copy_from_slice(&96_000u32.to_le_bytes());
         assert!((wav_duration_seconds(&wav).unwrap() - 8.0 / 96_000.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn encoded_audio_duration_reads_the_declared_length() {
+        let wav = synth_wav(&vec![0i16; SAMPLE_RATE as usize * 3 / 2]);
+        let seconds = encoded_audio_duration_seconds(Bytes::from(wav)).unwrap();
+        assert!((seconds - 1.5).abs() < 1e-9, "{seconds}");
+    }
+
+    /// An MP3 without a Xing header declares no length, so this is the
+    /// packet-summing fallback. 1.5 s of tone from ffmpeg; the extra is the
+    /// encoder's padding frame, which a billing estimate may keep.
+    #[test]
+    fn encoded_audio_duration_sums_packets_when_nothing_is_declared() {
+        let mp3 = Bytes::from_static(include_bytes!("testdata/tone-1.5s-no-xing.mp3"));
+        let seconds = encoded_audio_duration_seconds(mp3).unwrap();
+        assert!((1.5..1.6).contains(&seconds), "{seconds}");
     }
 
     #[test]

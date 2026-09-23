@@ -148,7 +148,10 @@ installed under `pip --require-hashes`. Consequences for editing:
   then run `mise run lock-sandbox-python` to regenerate
   `sandbox-image/requirements.txt`. Never hand-edit the lock. The regeneration
   resolves inside the image's own Debian base via docker, so the pins match the
-  build platform rather than your laptop.
+  build platform rather than your laptop. A plain run keeps every existing pin
+  that `requirements.in` still allows (uv reads the old lock as preferences);
+  `mise run lock-sandbox-python --upgrade` moves everything to its latest
+  release, which is the way to take a batch of Dependabot bumps at once.
 - **Binaries:** bump the `ARG <TOOL>_VERSION` *and* its checksum together. A
   mismatch fails the build loudly, which is the point — that check is what
   stands between a tampered upstream artifact and the sandbox.

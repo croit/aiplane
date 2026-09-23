@@ -2170,13 +2170,22 @@ async fn turn_actions_edit_retry_share_export() {
 /// received the round is the exact observable signal that the first drain is
 /// behind us, so anything folded in from here on stays queued until the *next*
 /// round boundary — which never comes, because the mock holds the response.
+///
+/// Only the round's own request counts. Title generation is spawned alongside
+/// the turn and hits the same mock, often first; treating *any* request as the
+/// signal let the note land before the first drain, and the flake came back.
+/// The round is the streamed request; the title call is not.
 async fn wait_for_first_round(upstream: &MockServer) {
     let reached = wait_until(|| async {
-        !upstream
+        upstream
             .received_requests()
             .await
             .unwrap_or_default()
-            .is_empty()
+            .iter()
+            .any(|req| {
+                serde_json::from_slice::<serde_json::Value>(&req.body)
+                    .is_ok_and(|body| body["stream"] == true)
+            })
     })
     .await;
     assert!(reached, "the turn never reached the upstream");
