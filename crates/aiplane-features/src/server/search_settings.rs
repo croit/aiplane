@@ -35,6 +35,8 @@ pub const SEARXNG_URL_KEY: &str = "search.searxng_url";
 /// `app_settings` key for the sealed Brave API key (`nonce.ciphertext`,
 /// base64url, matching `server::push`'s stored form).
 pub const BRAVE_KEY_KEY: &str = "search.brave_api_key";
+pub const TAVILY_KEY_KEY: &str = "search.tavily_api_key";
+pub const TAVILY_ENABLED_KEY: &str = "search.tavily_enabled";
 
 /// Which search backend answers `search_web`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -44,6 +46,7 @@ pub enum SearchProvider {
     Searxng,
     /// Brave Search API. Needs a subscription token.
     Brave,
+    Tavily,
 }
 
 impl SearchProvider {
@@ -53,6 +56,7 @@ impl SearchProvider {
         match s.trim().to_ascii_lowercase().as_str() {
             "searxng" => Some(Self::Searxng),
             "brave" => Some(Self::Brave),
+            "tavily" => Some(Self::Tavily),
             _ => None,
         }
     }
@@ -62,6 +66,7 @@ impl SearchProvider {
         match self {
             Self::Searxng => "searxng",
             Self::Brave => "brave",
+            Self::Tavily => "tavily",
         }
     }
 }
@@ -77,6 +82,8 @@ pub struct SearchSettings {
     /// logged and treated as "not configured" so the tool reports a fixable
     /// state instead of a decryption error.
     pub brave_api_key: Option<String>,
+    pub tavily_api_key: Option<String>,
+    pub tavily_enabled: bool,
 }
 
 /// What the admin page shows. Never carries the Brave key itself — a secret
@@ -86,6 +93,9 @@ pub struct SearchSettingsView {
     pub provider: SearchProvider,
     pub searxng_url: Option<String>,
     pub brave_key_set: bool,
+    pub tavily_key_set: bool,
+    pub tavily_enabled: bool,
+    pub tavily_active: bool,
 }
 
 /// Load the effective settings.
@@ -97,22 +107,34 @@ pub async fn load(pool: &Pool, crypto: &Crypto) -> Result<SearchSettings, DbErro
     Ok(SearchSettings {
         provider,
         searxng_url: normalized_url(app_settings::get(pool, SEARXNG_URL_KEY).await?),
-        brave_api_key: open_brave_key(pool, crypto).await?,
+        brave_api_key: open_key(pool, crypto, BRAVE_KEY_KEY, "Brave").await?,
+        tavily_api_key: open_key(pool, crypto, TAVILY_KEY_KEY, "Tavily").await?,
+        tavily_enabled: tavily_enabled(pool).await?,
     })
 }
 
 /// Load the admin-page view (no secret material).
-pub async fn view(pool: &Pool) -> Result<SearchSettingsView, DbError> {
+pub async fn view(pool: &Pool, crypto: &Crypto) -> Result<SearchSettingsView, DbError> {
     let provider = app_settings::get(pool, PROVIDER_KEY)
         .await?
         .and_then(|v| SearchProvider::from_wire(&v))
         .unwrap_or_default();
+    let tavily_key_set = app_settings::get(pool, TAVILY_KEY_KEY)
+        .await?
+        .is_some_and(|v| !v.trim().is_empty());
+    let tavily_enabled = tavily_enabled(pool).await?;
     Ok(SearchSettingsView {
         provider,
         searxng_url: normalized_url(app_settings::get(pool, SEARXNG_URL_KEY).await?),
         brave_key_set: app_settings::get(pool, BRAVE_KEY_KEY)
             .await?
             .is_some_and(|v| !v.trim().is_empty()),
+        tavily_key_set,
+        tavily_enabled,
+        tavily_active: tavily_enabled
+            && open_key(pool, crypto, TAVILY_KEY_KEY, "Tavily")
+                .await?
+                .is_some(),
     })
 }
 
@@ -131,18 +153,47 @@ pub async fn set_searxng_url(pool: &Pool, url: &str) -> Result<(), DbError> {
 
 /// Seal and store the Brave API key. An empty string clears it.
 pub async fn set_brave_key(pool: &Pool, crypto: &Crypto, key: &str) -> Result<(), DbError> {
+    set_key(pool, crypto, BRAVE_KEY_KEY, key, "Brave").await
+}
+
+pub async fn set_tavily_key(pool: &Pool, crypto: &Crypto, key: &str) -> Result<(), DbError> {
+    set_key(pool, crypto, TAVILY_KEY_KEY, key, "Tavily").await
+}
+
+pub async fn set_tavily_enabled(pool: &Pool, enabled: bool) -> Result<(), DbError> {
+    app_settings::set(
+        pool,
+        TAVILY_ENABLED_KEY,
+        if enabled { "true" } else { "false" },
+    )
+    .await
+}
+
+async fn tavily_enabled(pool: &Pool) -> Result<bool, DbError> {
+    Ok(app_settings::get(pool, TAVILY_ENABLED_KEY)
+        .await?
+        .is_some_and(|value| value == "true"))
+}
+
+async fn set_key(
+    pool: &Pool,
+    crypto: &Crypto,
+    setting: &str,
+    key: &str,
+    provider: &str,
+) -> Result<(), DbError> {
     let key = key.trim();
     if key.is_empty() {
-        return app_settings::delete(pool, BRAVE_KEY_KEY).await;
+        return app_settings::delete(pool, setting).await;
     }
     let Ok(stored) = crypto.seal_to_string(key) else {
-        // Sealing only fails if the cipher itself fails, which means the
-        // at-rest key is unusable — a deployment problem the operator has to
-        // see rather than a silently dropped write.
-        tracing::error!("could not seal the Brave API key — at-rest encryption is unavailable");
+        tracing::error!(
+            provider,
+            "could not seal the search API key — at-rest encryption is unavailable"
+        );
         return Ok(());
     };
-    app_settings::set(pool, BRAVE_KEY_KEY, &stored).await
+    app_settings::set(pool, setting, &stored).await
 }
 
 /// The legacy environment variables, read once.
@@ -196,7 +247,7 @@ async fn import_once(
             (Some(_), Some(_)) => warn_ignored("SEARCH_PROVIDER"),
             (None, _) => tracing::warn!(
                 value = %raw,
-                "SEARCH_PROVIDER is not `searxng` or `brave` — ignoring it"
+                "SEARCH_PROVIDER is not `searxng`, `brave`, or `tavily` — ignoring it"
             ),
         }
     }
@@ -226,7 +277,7 @@ fn warn_ignored(var: &str) {
     tracing::warn!(
         env_var = %var,
         "web-search settings now live in the database (configure them at \
-         /admin/models); the environment variable is ignored"
+         /admin/settings?tab=web-search); the environment variable is ignored"
     );
 }
 
@@ -237,18 +288,20 @@ fn normalized_url(stored: Option<String>) -> Option<String> {
         .filter(|u| !u.is_empty())
 }
 
-async fn open_brave_key(pool: &Pool, crypto: &Crypto) -> Result<Option<String>, DbError> {
-    let Some(stored) = app_settings::get(pool, BRAVE_KEY_KEY).await? else {
+async fn open_key(
+    pool: &Pool,
+    crypto: &Crypto,
+    setting: &str,
+    provider: &str,
+) -> Result<Option<String>, DbError> {
+    let Some(stored) = app_settings::get(pool, setting).await? else {
         return Ok(None);
     };
     let opened = crypto.open_from_string(&stored);
     if opened.is_none() {
-        // Almost always: AIPLANE_ENCRYPTION_KEY changed. Say so once here;
-        // the tool then reports "not configured", which is the actionable
-        // truth from the model's side.
         tracing::warn!(
-            "stored Brave API key could not be decrypted (at-rest key changed?); \
-             re-enter it in the admin UI"
+            provider,
+            "stored search API key could not be decrypted (at-rest key changed?); re-enter it in the admin UI"
         );
     }
     Ok(opened)
@@ -269,7 +322,11 @@ mod tests {
 
     #[test]
     fn provider_wire_names_round_trip() {
-        for p in [SearchProvider::Searxng, SearchProvider::Brave] {
+        for p in [
+            SearchProvider::Searxng,
+            SearchProvider::Brave,
+            SearchProvider::Tavily,
+        ] {
             assert_eq!(SearchProvider::from_wire(p.as_str()), Some(p));
         }
         // Tolerant of case and padding, strict about the value.
@@ -358,11 +415,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tavily_key_is_sealed_and_can_be_cleared() {
+        let (pool, crypto) = fresh().await;
+        set_tavily_key(&pool, &crypto, "tvly-secret").await.unwrap();
+        let raw = app_settings::get(&pool, TAVILY_KEY_KEY)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!raw.contains("tvly-secret"));
+        assert_eq!(
+            load(&pool, &crypto)
+                .await
+                .unwrap()
+                .tavily_api_key
+                .as_deref(),
+            Some("tvly-secret")
+        );
+        assert!(view(&pool, &crypto).await.unwrap().tavily_key_set);
+
+        set_tavily_key(&pool, &crypto, "").await.unwrap();
+        assert!(load(&pool, &crypto).await.unwrap().tavily_api_key.is_none());
+        assert!(!view(&pool, &crypto).await.unwrap().tavily_key_set);
+    }
+
+    #[tokio::test]
+    async fn tavily_is_inactive_until_enabled_with_a_key() {
+        let (pool, crypto) = fresh().await;
+        assert!(!load(&pool, &crypto).await.unwrap().tavily_enabled);
+        assert!(!view(&pool, &crypto).await.unwrap().tavily_active);
+
+        set_tavily_enabled(&pool, true).await.unwrap();
+        assert!(load(&pool, &crypto).await.unwrap().tavily_enabled);
+        assert!(!view(&pool, &crypto).await.unwrap().tavily_active);
+
+        set_tavily_key(&pool, &crypto, "tvly-test").await.unwrap();
+        assert!(view(&pool, &crypto).await.unwrap().tavily_active);
+        assert!(
+            !view(&pool, &Crypto::ephemeral())
+                .await
+                .unwrap()
+                .tavily_active
+        );
+
+        set_tavily_enabled(&pool, false).await.unwrap();
+        assert!(!view(&pool, &crypto).await.unwrap().tavily_active);
+    }
+
+    #[tokio::test]
     async fn view_never_exposes_the_key_but_reports_whether_it_is_set() {
         let (pool, crypto) = fresh().await;
-        assert!(!view(&pool).await.unwrap().brave_key_set);
+        assert!(!view(&pool, &crypto).await.unwrap().brave_key_set);
         set_brave_key(&pool, &crypto, "token").await.unwrap();
-        let v = view(&pool).await.unwrap();
+        let v = view(&pool, &crypto).await.unwrap();
         assert!(v.brave_key_set);
         // Nothing on the view type can carry the secret — checked structurally
         // by the absence of a field, and here by the debug output.

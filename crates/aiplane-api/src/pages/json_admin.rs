@@ -496,10 +496,11 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             "available": available,
         }));
     }
-    let search = match aiplane_features::server::search_settings::view(&state.db).await {
-        Ok(v) => v,
-        Err(err) => return internal(err),
-    };
+    let search =
+        match aiplane_features::server::search_settings::view(&state.db, &state.crypto).await {
+            Ok(v) => v,
+            Err(err) => return internal(err),
+        };
     json_ok(
         StatusCode::OK,
         serde_json::json!({
@@ -511,6 +512,9 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 "provider": search.provider.as_str(),
                 "searxng_url": search.searxng_url,
                 "brave_key_set": search.brave_key_set,
+                "tavily_key_set": search.tavily_key_set,
+                "tavily_enabled": search.tavily_enabled,
+                "tavily_active": search.tavily_active,
             },
         }),
     )
@@ -765,6 +769,11 @@ pub struct SearchSettingsBody {
     pub brave_api_key: String,
     #[serde(default)]
     pub clear_brave_key: bool,
+    #[serde(default)]
+    pub tavily_api_key: String,
+    #[serde(default)]
+    pub clear_tavily_key: bool,
+    pub tavily_enabled: Option<bool>,
 }
 
 /// PUT /api/v0/admin/search-settings — the web-search provider settings.
@@ -798,6 +807,21 @@ pub async fn models_search_save(State(state): State<Arc<RamaState>>, req: Reques
             return internal(err);
         }
     } else if let Err(err) = search_settings::set_brave_key(&state.db, &state.crypto, key).await {
+        return internal(err);
+    }
+    let key = parsed.tavily_api_key.trim();
+    if key.is_empty() {
+        if parsed.clear_tavily_key
+            && let Err(err) = search_settings::set_tavily_key(&state.db, &state.crypto, "").await
+        {
+            return internal(err);
+        }
+    } else if let Err(err) = search_settings::set_tavily_key(&state.db, &state.crypto, key).await {
+        return internal(err);
+    }
+    if let Some(enabled) = parsed.tavily_enabled
+        && let Err(err) = search_settings::set_tavily_enabled(&state.db, enabled).await
+    {
         return internal(err);
     }
     json_ok(StatusCode::OK, serde_json::json!({ "ok": true }))

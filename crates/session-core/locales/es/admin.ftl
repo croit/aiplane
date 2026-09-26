@@ -45,10 +45,13 @@ admin-search-heading = Búsqueda web
 admin-search-provider-label = Proveedor
 admin-search-provider-searxng = SearXNG (autoalojado)
 admin-search-provider-brave = Brave Search API
+admin-search-provider-tavily = Tavily Search API
 admin-search-searxng-url-label = URL base de SearXNG
 admin-search-searxng-url-placeholder = https://searxng.example.com
 admin-search-brave-key-label = Clave de API de Brave
 admin-search-brave-key-placeholder = déjalo vacío para conservar la clave actual
+admin-search-tavily-key-label = Clave de API de Tavily
+admin-search-tavily-key-placeholder = déjalo vacío para conservar la clave actual
 admin-search-save = Guardar búsqueda web
 admin-search-saved = ajustes de búsqueda web guardados
 
@@ -251,13 +254,19 @@ admin-cap-fallback-vision = Reserva para visión
 
 admin-cap-fallback-tools = Reserva para herramientas
 
-admin-search-intro = Qué backend responde a la herramienta `search_web` del asistente. SearXNG solo necesita una URL base y no cuesta nada por consulta si ejecutas tu propia instancia; Brave necesita una clave de API. La clave se cifra en reposo.
+admin-search-intro = Elige el backend para `search_web`. SearXNG necesita una URL base; Brave y Tavily necesitan claves de API cifradas al almacenarse. Si se agota la cuota de un proveedor, se intenta con otro proveedor configurado.
 
 admin-search-brave-key-set = Hay una clave almacenada (cifrada).
 
 admin-search-brave-key-unset = No hay clave almacenada.
 
 admin-search-brave-key-clear = Eliminar la clave almacenada
+admin-search-tavily-key-set = Hay una clave de Tavily almacenada (cifrada).
+admin-search-tavily-key-unset = No hay clave de Tavily almacenada.
+admin-search-tavily-key-clear = Eliminar la clave de Tavily almacenada
+admin-search-tavily-enabled = Activar Tavily
+admin-search-status-active = Activo
+admin-search-status-inactive = Inactivo
 
 # Procedencia de la ventana de contexto.
 admin-context-detected = Detectado: { $window } tokens

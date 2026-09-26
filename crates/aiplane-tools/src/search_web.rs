@@ -8,14 +8,12 @@
 //!   (e.g. `https://searxng.example.com`). No API key, no per-query cost if
 //!   the operator runs their own instance. Hits
 //!   `<url>/search?q=...&format=json`.
-//! - **brave**: Brave Search API. Needs a subscription token, which is
-//!   sealed at rest. Has a free tier (~2 k q/month) and a clean JSON shape.
+//! - **brave**: Brave Search API. Needs a subscription token, sealed at rest.
+//! - **tavily**: Tavily Search API. Needs an API key, sealed at rest.
 //!
-//! If the chosen backend isn't configured the tool fails closed with a clear
-//! message naming the admin page — the operator sees it in the model's
-//! response and fixes it. (We deliberately don't fall back between backends;
-//! ambiguity about *which* engine answered a query makes debugging
-//! miserable.)
+//! If the chosen backend isn't configured the tool fails with a clear
+//! message. A provider's confirmed exhausted quota can use another configured
+//! provider; the result names the one that answered.
 //!
 //! The legacy `SEARCH_PROVIDER` / `SEARXNG_URL` / `BRAVE_SEARCH_API_KEY`
 //! environment variables are imported into the database once at boot and
@@ -56,8 +54,7 @@ struct SearchArgs {
     freshness: Option<Freshness>,
 }
 
-/// Recency window. Both providers support this natively, with different
-/// spellings — see [`Freshness::brave`] / [`Freshness::searxng`].
+/// Recency window. Providers support this natively with different spellings.
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 enum Freshness {
@@ -189,8 +186,8 @@ impl Tool for SearchWeb {
                 .clamp(1, MAX_N_RESULTS);
             let sites = normalize_sites(args.site)?;
 
-            // Settings come from the DB. Without a crypto handle a sealed
-            // Brave key can't be opened; the searxng path is unaffected, so
+            // Settings come from the DB. Without a crypto handle sealed
+            // provider keys can't be opened; the searxng path is unaffected, so
             // we degrade rather than refuse outright.
             let settings = match ctx.crypto.as_ref() {
                 Some(crypto) => search_settings::load(&ctx.db, crypto)
@@ -200,6 +197,8 @@ impl Tool for SearchWeb {
                     provider: search_settings::SearchProvider::default(),
                     searxng_url: None,
                     brave_api_key: None,
+                    tavily_api_key: None,
+                    tavily_enabled: false,
                 },
             };
 
@@ -219,17 +218,17 @@ impl Tool for SearchWeb {
                 sites: &sites,
                 freshness: args.freshness,
             };
-            let results = match settings.provider {
-                SearchProvider::Searxng => {
-                    searxng(&client, settings.searxng_url.as_deref(), query).await?
-                }
-                SearchProvider::Brave => {
-                    brave(&client, settings.brave_api_key.as_deref(), query).await?
-                }
-            };
+            let (provider, results) = search_selected(
+                &client,
+                &settings,
+                query,
+                "https://api.search.brave.com/res/v1/web/search",
+                "https://api.tavily.com/search",
+            )
+            .await?;
 
             Ok(json!({
-                "provider": settings.provider.as_str(),
+                "provider": provider.as_str(),
                 "query": args.query,
                 "site": sites,
                 "freshness": args.freshness.map(|f| f.searxng()),
@@ -246,6 +245,85 @@ struct Query<'a> {
     n: usize,
     sites: &'a [String],
     freshness: Option<Freshness>,
+}
+
+#[derive(Debug)]
+enum SearchFailure {
+    Quota(ToolError),
+    Other(ToolError),
+}
+
+impl From<ToolError> for SearchFailure {
+    fn from(error: ToolError) -> Self {
+        Self::Other(error)
+    }
+}
+
+async fn search_selected(
+    client: &reqwest::Client,
+    settings: &SearchSettings,
+    query: Query<'_>,
+    brave_endpoint: &str,
+    tavily_endpoint: &str,
+) -> Result<(SearchProvider, Vec<Value>), ToolError> {
+    if settings.provider == SearchProvider::Tavily && !settings.tavily_enabled {
+        return Err(ToolError::Failed(
+            "Tavily web search is inactive. An admin can enable it under Web search on /admin/settings?tab=web-search."
+                .into(),
+        ));
+    }
+    let mut last_quota_error = None;
+    let order = [
+        settings.provider,
+        SearchProvider::Tavily,
+        SearchProvider::Searxng,
+        SearchProvider::Brave,
+    ];
+    for (index, provider) in order.into_iter().enumerate() {
+        if provider != settings.provider && !provider_configured(settings, provider) {
+            continue;
+        }
+        if order[..index].contains(&provider) {
+            continue;
+        }
+        let result = match provider {
+            SearchProvider::Searxng => searxng(client, settings.searxng_url.as_deref(), query)
+                .await
+                .map_err(SearchFailure::from),
+            SearchProvider::Brave => {
+                brave(
+                    client,
+                    brave_endpoint,
+                    settings.brave_api_key.as_deref(),
+                    query,
+                )
+                .await
+            }
+            SearchProvider::Tavily => {
+                tavily(
+                    client,
+                    tavily_endpoint,
+                    settings.tavily_api_key.as_deref(),
+                    query,
+                )
+                .await
+            }
+        };
+        match result {
+            Ok(results) => return Ok((provider, results)),
+            Err(SearchFailure::Quota(error)) => last_quota_error = Some(error),
+            Err(SearchFailure::Other(error)) => return Err(error),
+        }
+    }
+    Err(last_quota_error.expect("at least the selected provider was attempted"))
+}
+
+fn provider_configured(settings: &SearchSettings, provider: SearchProvider) -> bool {
+    match provider {
+        SearchProvider::Searxng => settings.searxng_url.is_some(),
+        SearchProvider::Brave => settings.brave_api_key.is_some(),
+        SearchProvider::Tavily => settings.tavily_enabled && settings.tavily_api_key.is_some(),
+    }
 }
 
 impl Query<'_> {
@@ -282,7 +360,7 @@ async fn searxng(
     let base = base.ok_or_else(|| {
         ToolError::Failed(
             "web search is not configured: no SearXNG URL is set. An admin \
-             sets it (or switches to Brave) under Web search on /admin/models."
+             sets it (or switches to Brave or Tavily) under Web search on /admin/settings?tab=web-search."
                 .into(),
         )
     })?;
@@ -331,14 +409,15 @@ async fn searxng(
 /// for parity with searxng.
 async fn brave(
     client: &reqwest::Client,
+    endpoint: &str,
     api_key: Option<&str>,
     query: Query<'_>,
-) -> Result<Vec<Value>, ToolError> {
+) -> Result<Vec<Value>, SearchFailure> {
     let api_key = api_key.ok_or_else(|| {
         ToolError::Failed(
             "web search is not configured: no Brave API key is set. An admin \
-             sets it (or switches to SearXNG) under Web search on \
-             /admin/models; keys come from \
+             sets it (or switches to SearXNG or Tavily) under Web search on \
+             /admin/settings?tab=web-search; keys come from \
              https://api.search.brave.com/app/dashboard."
                 .into(),
         )
@@ -351,7 +430,7 @@ async fn brave(
         params.push(("freshness", f.brave().into()));
     }
     let resp = client
-        .get("https://api.search.brave.com/res/v1/web/search")
+        .get(endpoint)
         .query(&params)
         .header("X-Subscription-Token", api_key)
         .header("Accept", "application/json")
@@ -359,11 +438,26 @@ async fn brave(
         .await
         .map_err(|e| ToolError::Failed(format!("brave request failed: {e}")))?;
     if !resp.status().is_success() {
-        return Err(ToolError::Failed(format!(
-            "brave returned {}: {}",
-            resp.status(),
-            resp.text().await.unwrap_or_default()
-        )));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let error = ToolError::Failed(format!("brave returned {status}: {body}"));
+        return Err(
+            if status.as_u16() == 402
+                && serde_json::from_str::<Value>(&body)
+                    .ok()
+                    .and_then(|body| {
+                        body.pointer("/error/code")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .as_deref()
+                    == Some("USAGE_LIMIT_EXCEEDED")
+            {
+                SearchFailure::Quota(error)
+            } else {
+                SearchFailure::Other(error)
+            },
+        );
     }
     let body: Value = resp
         .json()
@@ -381,6 +475,67 @@ async fn brave(
                 "title": item.get("title").cloned().unwrap_or(Value::Null),
                 "url":   item.get("url").cloned().unwrap_or(Value::Null),
                 "snippet": item.get("description").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect())
+}
+
+async fn tavily(
+    client: &reqwest::Client,
+    endpoint: &str,
+    api_key: Option<&str>,
+    query: Query<'_>,
+) -> Result<Vec<Value>, SearchFailure> {
+    let api_key = api_key.ok_or_else(|| {
+        ToolError::Failed(
+            "web search is not configured: no Tavily API key is set. An admin sets it under Web search on /admin/settings?tab=web-search."
+                .into(),
+        )
+    })?;
+    let mut body = json!({
+        "query": query.text,
+        "search_depth": "basic",
+        "max_results": query.n,
+    });
+    if !query.sites.is_empty() {
+        body["include_domains"] = json!(query.sites);
+    }
+    if let Some(freshness) = query.freshness {
+        body["time_range"] = json!(freshness.searxng());
+    }
+    let resp = client
+        .post(endpoint)
+        .bearer_auth(api_key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| ToolError::Failed(format!("tavily request failed: {e}")))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let error = ToolError::Failed(format!("tavily returned {status}: {body}"));
+        return Err(if matches!(status.as_u16(), 432 | 433) {
+            SearchFailure::Quota(error)
+        } else {
+            SearchFailure::Other(error)
+        });
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| ToolError::Failed(format!("tavily response is not JSON: {e}")))?;
+    let items = body
+        .get("results")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ToolError::Failed("tavily response missing `results` array".into()))?;
+    Ok(items
+        .iter()
+        .take(query.n)
+        .map(|item| {
+            json!({
+                "title": item.get("title").cloned().unwrap_or(Value::Null),
+                "url": item.get("url").cloned().unwrap_or(Value::Null),
+                "snippet": item.get("content").cloned().unwrap_or(Value::Null),
             })
         })
         .collect())
@@ -460,7 +615,7 @@ mod tests {
             .await
             .unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("/admin/models"), "{msg}");
+        assert!(msg.contains("/admin/settings?tab=web-search"), "{msg}");
         assert!(
             !msg.contains("SEARXNG_URL"),
             "must not name an env var: {msg}"
@@ -483,8 +638,252 @@ mod tests {
             "{}",
             SearchWeb.run(ctx, json!({"query": "x"})).await.unwrap_err()
         );
-        assert!(msg.contains("/admin/models"), "{msg}");
+        assert!(msg.contains("/admin/settings?tab=web-search"), "{msg}");
         assert!(!msg.contains("BRAVE_SEARCH_API_KEY"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn tavily_without_a_key_names_the_admin_page() {
+        let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        search_settings::set_provider(&pool, SearchProvider::Tavily)
+            .await
+            .unwrap();
+        let ctx = ToolContext {
+            crypto: Some(Arc::new(Crypto::ephemeral())),
+            ..ToolContext::for_test(pool)
+        };
+        let msg = format!(
+            "{}",
+            SearchWeb.run(ctx, json!({"query": "x"})).await.unwrap_err()
+        );
+        assert!(msg.contains("Tavily"), "{msg}");
+        assert!(msg.contains("/admin/settings?tab=web-search"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn tavily_request_maps_filters_and_results() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/search"))
+            .and(wiremock::matchers::header(
+                "authorization",
+                "Bearer tvly-test",
+            ))
+            .and(wiremock::matchers::body_json(json!({
+                "query": "rust",
+                "search_depth": "basic",
+                "max_results": 3,
+                "include_domains": ["rust-lang.org"],
+                "time_range": "week"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "results": [
+                    {"title": "Rust", "url": "https://rust-lang.org", "content": "systems language"}
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let sites = vec!["rust-lang.org".to_string()];
+        let query = Query {
+            text: "rust",
+            n: 3,
+            sites: &sites,
+            freshness: Some(Freshness::Week),
+        };
+        let results = tavily(
+            &reqwest::Client::new(),
+            &format!("{}/search", server.uri()),
+            Some("tvly-test"),
+            query,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            results,
+            vec![
+                json!({"title": "Rust", "url": "https://rust-lang.org", "snippet": "systems language"})
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn brave_monthly_limit_uses_configured_tavily() {
+        let brave_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .respond_with(ResponseTemplate::new(402).set_body_json(json!({
+                "error": {"code": "USAGE_LIMIT_EXCEEDED", "meta": {"usage_limit_type": "monthly"}}
+            })))
+            .mount(&brave_server)
+            .await;
+        let tavily_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "results": [{"title": "Rust", "url": "https://rust-lang.org", "content": "systems"}]
+            })))
+            .mount(&tavily_server)
+            .await;
+        let settings = SearchSettings {
+            provider: SearchProvider::Brave,
+            searxng_url: None,
+            brave_api_key: Some("brave-test".into()),
+            tavily_api_key: Some("tavily-test".into()),
+            tavily_enabled: true,
+        };
+        let query = Query {
+            text: "rust",
+            n: 5,
+            sites: &[],
+            freshness: None,
+        };
+        let (provider, results) = search_selected(
+            &reqwest::Client::new(),
+            &settings,
+            query,
+            &format!("{}/search", brave_server.uri()),
+            &format!("{}/search", tavily_server.uri()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(provider, SearchProvider::Tavily);
+        assert_eq!(results[0]["snippet"], "systems");
+    }
+
+    #[tokio::test]
+    async fn brave_auth_error_does_not_use_tavily() {
+        let brave_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&brave_server)
+            .await;
+        let tavily_server = MockServer::start().await;
+        let settings = SearchSettings {
+            provider: SearchProvider::Brave,
+            searxng_url: None,
+            brave_api_key: Some("brave-test".into()),
+            tavily_api_key: Some("tavily-test".into()),
+            tavily_enabled: true,
+        };
+        let query = Query {
+            text: "rust",
+            n: 5,
+            sites: &[],
+            freshness: None,
+        };
+        let err = search_selected(
+            &reqwest::Client::new(),
+            &settings,
+            query,
+            &format!("{}/search", brave_server.uri()),
+            &format!("{}/search", tavily_server.uri()),
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{err}").contains("401"));
+        assert!(tavily_server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn disabled_tavily_is_not_used_as_fallback() {
+        let brave_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .respond_with(ResponseTemplate::new(402).set_body_json(json!({
+                "error": {"code": "USAGE_LIMIT_EXCEEDED"}
+            })))
+            .mount(&brave_server)
+            .await;
+        let tavily_server = MockServer::start().await;
+        let settings = SearchSettings {
+            provider: SearchProvider::Brave,
+            searxng_url: None,
+            brave_api_key: Some("brave-test".into()),
+            tavily_api_key: Some("tavily-test".into()),
+            tavily_enabled: false,
+        };
+        let query = Query {
+            text: "rust",
+            n: 5,
+            sites: &[],
+            freshness: None,
+        };
+        let err = search_selected(
+            &reqwest::Client::new(),
+            &settings,
+            query,
+            &format!("{}/search", brave_server.uri()),
+            &format!("{}/search", tavily_server.uri()),
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{err}").contains("402"));
+        assert!(tavily_server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn selected_tavily_must_be_enabled() {
+        let settings = SearchSettings {
+            provider: SearchProvider::Tavily,
+            searxng_url: None,
+            brave_api_key: None,
+            tavily_api_key: Some("tavily-test".into()),
+            tavily_enabled: false,
+        };
+        let query = Query {
+            text: "rust",
+            n: 5,
+            sites: &[],
+            freshness: None,
+        };
+        let err = search_selected(
+            &reqwest::Client::new(),
+            &settings,
+            query,
+            "http://127.0.0.1:1/brave",
+            "http://127.0.0.1:1/tavily",
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{err}").contains("inactive"));
+    }
+
+    #[tokio::test]
+    async fn tavily_exhausted_quota_uses_configured_searxng() {
+        let tavily_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/search"))
+            .respond_with(ResponseTemplate::new(432).set_body_json(json!({
+                "detail": {"error": "This request exceeds your plan's set usage limit."}
+            })))
+            .mount(&tavily_server)
+            .await;
+        let searxng_server = searxng_server().await;
+        let settings = SearchSettings {
+            provider: SearchProvider::Tavily,
+            searxng_url: Some(searxng_server.uri()),
+            brave_api_key: None,
+            tavily_api_key: Some("tavily-test".into()),
+            tavily_enabled: true,
+        };
+        let query = Query {
+            text: "rust",
+            n: 5,
+            sites: &[],
+            freshness: None,
+        };
+        let (provider, results) = search_selected(
+            &reqwest::Client::new(),
+            &settings,
+            query,
+            "https://unused.invalid/search",
+            &format!("{}/search", tavily_server.uri()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(provider, SearchProvider::Searxng);
+        assert_eq!(results[0]["snippet"], "systems language");
     }
 
     #[tokio::test]

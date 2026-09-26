@@ -868,6 +868,45 @@ async fn feature_defaults_and_search_settings_round_trip() {
         listed["search"]["searxng_url"],
         "https://search.example.test"
     );
+
+    let tavily = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/search-settings",
+            &cookie,
+            Some(r#"{"provider":"tavily","searxng_url":"https://search.example.test","tavily_api_key":"tvly-test","tavily_enabled":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(tavily.status(), StatusCode::OK);
+    let listed = app
+        .serve(req(Method::GET, "/api/v0/admin/models", &cookie, None))
+        .await
+        .unwrap();
+    let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+    assert_eq!(listed["search"]["provider"], "tavily");
+    assert_eq!(listed["search"]["tavily_key_set"], true);
+    assert_eq!(listed["search"]["tavily_enabled"], true);
+    assert_eq!(listed["search"]["tavily_active"], true);
+    assert!(!listed.to_string().contains("tvly-test"));
+
+    let cleared = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/search-settings",
+            &cookie,
+            Some(r#"{"provider":"tavily","searxng_url":"https://search.example.test","clear_tavily_key":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(cleared.status(), StatusCode::OK);
+    let listed = app
+        .serve(req(Method::GET, "/api/v0/admin/models", &cookie, None))
+        .await
+        .unwrap();
+    let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+    assert_eq!(listed["search"]["tavily_key_set"], false);
+    assert_eq!(listed["search"]["tavily_active"], false);
 }
 
 #[tokio::test]

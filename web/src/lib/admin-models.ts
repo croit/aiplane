@@ -118,7 +118,7 @@ export interface AdminModelsData {
 	all_models: string[];
 	currency: string;
 	feature_defaults: FeatureDefault[];
-	search: { provider: string; searxng_url: string | null; brave_key_set: boolean };
+	search: { provider: string; searxng_url: string | null; brave_key_set: boolean; tavily_key_set: boolean; tavily_enabled: boolean; tavily_active: boolean };
 }
 
 export function matchesModelFilter(model: AdminModel, filter: ModelFilter, query: string): boolean {

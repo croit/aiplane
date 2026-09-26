@@ -44,10 +44,13 @@ admin-search-heading = 网页搜索
 admin-search-provider-label = 提供方
 admin-search-provider-searxng = SearXNG（自建）
 admin-search-provider-brave = Brave Search API
+admin-search-provider-tavily = Tavily Search API
 admin-search-searxng-url-label = SearXNG 基础 URL
 admin-search-searxng-url-placeholder = https://searxng.example.com
 admin-search-brave-key-label = Brave API 密钥
 admin-search-brave-key-placeholder = 留空以保留当前密钥
+admin-search-tavily-key-label = Tavily API 密钥
+admin-search-tavily-key-placeholder = 留空以保留当前密钥
 admin-search-save = 保存网页搜索
 admin-search-saved = 网页搜索设置已保存
 
@@ -248,13 +251,19 @@ admin-cap-fallback-vision = 视觉回退
 
 admin-cap-fallback-tools = 工具回退
 
-admin-search-intro = 由哪个后端响应助手的 `search_web` 工具。SearXNG 只需一个基础 URL，如果你自建实例则每次查询不产生费用；Brave 需要 API 密钥。密钥会加密存储。
+admin-search-intro = 选择 `search_web` 的搜索后端。SearXNG 需要基础 URL；Brave 和 Tavily 需要 API 密钥，密钥会加密存储。如果某个服务商的额度已用尽，系统会尝试其他已配置的服务商。
 
 admin-search-brave-key-set = 已存储密钥（加密）。
 
 admin-search-brave-key-unset = 未存储密钥。
 
 admin-search-brave-key-clear = 删除已存储的密钥
+admin-search-tavily-key-set = 已存储 Tavily 密钥（已加密）。
+admin-search-tavily-key-unset = 未存储 Tavily 密钥。
+admin-search-tavily-key-clear = 删除已存储的 Tavily 密钥
+admin-search-tavily-enabled = 启用 Tavily
+admin-search-status-active = 已启用
+admin-search-status-inactive = 未启用
 
 # 上下文窗口的来源。
 admin-context-detected = 已检测：{ $window } 词元

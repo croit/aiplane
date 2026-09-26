@@ -53,10 +53,13 @@ admin-search-heading = Web search
 admin-search-provider-label = Provider
 admin-search-provider-searxng = SearXNG (self-hosted)
 admin-search-provider-brave = Brave Search API
+admin-search-provider-tavily = Tavily Search API
 admin-search-searxng-url-label = SearXNG base URL
 admin-search-searxng-url-placeholder = https://searxng.example.com
 admin-search-brave-key-label = Brave API key
 admin-search-brave-key-placeholder = leave blank to keep the current key
+admin-search-tavily-key-label = Tavily API key
+admin-search-tavily-key-placeholder = leave blank to keep the current key
 admin-search-save = Save web search
 admin-search-saved = web-search settings saved
 
@@ -258,13 +261,19 @@ admin-cap-fallback-vision = Fallback for vision
 
 admin-cap-fallback-tools = Fallback for tools
 
-admin-search-intro = Which backend answers the assistant's `search_web` tool. SearXNG needs only a base URL and costs nothing per query if you run your own instance; Brave needs an API key. The key is encrypted at rest.
+admin-search-intro = Choose the backend for `search_web`. SearXNG needs a base URL; Brave and Tavily need API keys, which are encrypted at rest. If a provider's quota is exhausted, another configured provider is tried.
 
 admin-search-brave-key-set = A key is stored (encrypted).
 
 admin-search-brave-key-unset = No key stored.
 
 admin-search-brave-key-clear = Remove the stored key
+admin-search-tavily-key-set = A Tavily key is stored (encrypted).
+admin-search-tavily-key-unset = No Tavily key stored.
+admin-search-tavily-key-clear = Remove the stored Tavily key
+admin-search-tavily-enabled = Enable Tavily
+admin-search-status-active = Active
+admin-search-status-inactive = Inactive
 
 # Context window provenance. The value is discovered from the serving backend
 # where the backend reports one; an operator may still override it, and may

@@ -53,10 +53,13 @@ admin-search-heading = Websuche
 admin-search-provider-label = Anbieter
 admin-search-provider-searxng = SearXNG (selbst gehostet)
 admin-search-provider-brave = Brave Search API
+admin-search-provider-tavily = Tavily Search API
 admin-search-searxng-url-label = SearXNG-Basis-URL
 admin-search-searxng-url-placeholder = https://searxng.example.com
 admin-search-brave-key-label = Brave-API-Key
 admin-search-brave-key-placeholder = leer lassen, um den aktuellen Key zu behalten
+admin-search-tavily-key-label = Tavily-API-Key
+admin-search-tavily-key-placeholder = leer lassen, um den aktuellen Key zu behalten
 admin-search-save = Websuche speichern
 admin-search-saved = Websuche-Einstellungen gespeichert
 
@@ -258,13 +261,19 @@ admin-cap-fallback-vision = Fallback für Vision
 
 admin-cap-fallback-tools = Fallback für Tools
 
-admin-search-intro = Welches Backend das `search_web`-Tool des Assistenten beantwortet. SearXNG braucht nur eine Basis-URL und kostet pro Anfrage nichts, wenn du eine eigene Instanz betreibst; Brave braucht einen API-Key. Der Key wird verschlüsselt gespeichert.
+admin-search-intro = Wähle das Backend für `search_web`. SearXNG braucht eine Basis-URL; Brave und Tavily brauchen API-Keys, die verschlüsselt gespeichert werden. Ist das Kontingent eines Anbieters aufgebraucht, wird ein anderer eingerichteter Anbieter versucht.
 
 admin-search-brave-key-set = Ein Key ist gespeichert (verschlüsselt).
 
 admin-search-brave-key-unset = Kein Key gespeichert.
 
 admin-search-brave-key-clear = Gespeicherten Key entfernen
+admin-search-tavily-key-set = Ein Tavily-Key ist gespeichert (verschlüsselt).
+admin-search-tavily-key-unset = Kein Tavily-Key gespeichert.
+admin-search-tavily-key-clear = Gespeicherten Tavily-Key entfernen
+admin-search-tavily-enabled = Tavily einschalten
+admin-search-status-active = Aktiv
+admin-search-status-inactive = Inaktiv
 
 # Herkunft des Kontextfensters. Der Wert wird vom Backend ermittelt, sofern es
 # ihn meldet; überschreiben bleibt erlaubt, auch nach unten. Nur ein höherer

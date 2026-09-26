@@ -45,10 +45,13 @@ admin-search-heading = Веб-поиск
 admin-search-provider-label = Провайдер
 admin-search-provider-searxng = SearXNG (самостоятельный хостинг)
 admin-search-provider-brave = Brave Search API
+admin-search-provider-tavily = Tavily Search API
 admin-search-searxng-url-label = Базовый URL SearXNG
 admin-search-searxng-url-placeholder = https://searxng.example.com
 admin-search-brave-key-label = Ключ API Brave
 admin-search-brave-key-placeholder = оставьте пустым, чтобы сохранить текущий ключ
+admin-search-tavily-key-label = Ключ API Tavily
+admin-search-tavily-key-placeholder = оставьте пустым, чтобы сохранить текущий ключ
 admin-search-save = Сохранить веб-поиск
 admin-search-saved = настройки веб-поиска сохранены
 
@@ -250,13 +253,19 @@ admin-cap-fallback-vision = Резерв для зрения
 
 admin-cap-fallback-tools = Резерв для инструментов
 
-admin-search-intro = Какой бэкенд отвечает на инструмент `search_web`. SearXNG требует только базовый URL и не стоит ничего за запрос, если вы поднимаете свой экземпляр; Brave требует ключ API. Ключ шифруется при хранении.
+admin-search-intro = Выберите бэкенд для `search_web`. SearXNG требует базовый URL; Brave и Tavily требуют ключи API, которые шифруются при хранении. Если квота провайдера исчерпана, используется другой настроенный провайдер.
 
 admin-search-brave-key-set = Ключ сохранён (в зашифрованном виде).
 
 admin-search-brave-key-unset = Ключ не сохранён.
 
 admin-search-brave-key-clear = Удалить сохранённый ключ
+admin-search-tavily-key-set = Ключ Tavily сохранён (в зашифрованном виде).
+admin-search-tavily-key-unset = Ключ Tavily не сохранён.
+admin-search-tavily-key-clear = Удалить сохранённый ключ Tavily
+admin-search-tavily-enabled = Включить Tavily
+admin-search-status-active = Активен
+admin-search-status-inactive = Неактивен
 
 # Источник значения окна контекста.
 admin-context-detected = Определено: { $window } токенов
