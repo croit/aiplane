@@ -357,6 +357,7 @@ export const fr: Catalog = {
  "chat-error-bad-filename": "nom de fichier invalide",
  "chat-error-db-error": "erreur de base de données",
  "chat-error-no-such-turn": "ce message n'existe pas",
+ "chat-error-turn-interrupted": "Une erreur interne a interrompu cette réponse. Veuillez réessayer.",
  "chat-list-empty": "Aucune conversation pour l'instant. Lancez-en une ci-dessus.",
  "chat-prompt-answer": "Répondre",
  "chat-prompt-heading": "L'assistant demande",

@@ -11,6 +11,7 @@ chat-error-db-error = db error
 chat-error-attachments-not-configured = chat attachments not configured
 chat-error-bad-filename = bad filename
 chat-error-attachment-not-found = not found
+chat-error-turn-interrupted = An internal error interrupted this response. Please try again.
 
 # SPA-only chat chrome (`web/src/routes/chat/*`): the conversation list,
 # the conversation header, the assistant's ask-back card, and the

@@ -28,9 +28,13 @@
 //!     subscribers send their final patch and close.
 
 use std::sync::atomic::Ordering;
+use std::{any::Any, panic::AssertUnwindSafe};
+
+use rama::futures::FutureExt;
 
 use crate::db::{self, Pool, TurnStatus};
 use crate::driver::{SessionContext, SessionDriver};
+use crate::i18n::{Lang, t};
 use crate::workers::TurnUpdate;
 
 /// Drive the lifecycle around one `SessionDriver::run_turn` call.
@@ -39,7 +43,9 @@ use crate::workers::TurnUpdate;
 /// owned (clones are cheap — sqlx pools are `Arc` internally) so the
 /// future can outlive the request scope.
 pub async fn run_session_turn(pool: Pool, driver: Box<dyn SessionDriver>, ctx: SessionContext) {
-    let result = driver.run_turn(ctx.clone()).await;
+    let result = AssertUnwindSafe(driver.run_turn(ctx.clone()))
+        .catch_unwind()
+        .await;
 
     let SessionContext {
         session_id,
@@ -48,20 +54,21 @@ pub async fn run_session_turn(pool: Pool, driver: Box<dyn SessionDriver>, ctx: S
         broadcast,
         ..
     } = ctx;
+    let result_is_panic = result.is_err();
 
     // Cancel-vs-natural-finish disambiguation. The driver's `Ok(())`
     // covers both natural finishes and clean cancels (the contract
     // is that drivers don't surface cancel as an error); the cancel
     // flag tells us which it was.
     let (status, error_message) = match result {
-        Ok(_) if cancel.load(Ordering::SeqCst) => (TurnStatus::Cancelled, None),
+        Ok(Ok(_)) if cancel.load(Ordering::SeqCst) => (TurnStatus::Cancelled, None),
         // A finished turn may still carry a notice — see `TurnOutcome`. It goes
         // in the same column an error would, and the renderer tells them apart
         // by the row's status, so a turn that produced a real answer stays
         // `Completed` (replayable, webhook-ok, compactable) while still saying
         // out loud how it ended.
-        Ok(outcome) => (TurnStatus::Completed, outcome.notice),
-        Err(err) => {
+        Ok(Ok(outcome)) => (TurnStatus::Completed, outcome.notice),
+        Ok(Err(err)) => {
             // The top-level `Display` often hides the real cause (e.g.
             // `DbError::Query`'s source sqlx error). Walk the full
             // `source()` chain into the log so a terse UI message like
@@ -85,6 +92,14 @@ pub async fn run_session_turn(pool: Pool, driver: Box<dyn SessionDriver>, ctx: S
                 "turn failed"
             );
             (TurnStatus::Errored, Some(err.to_string()))
+        }
+        Err(panic) => {
+            let detail = panic_message(panic.as_ref());
+            tracing::error!(%session_id, %assistant_turn_id, detail, "turn panicked");
+            (
+                TurnStatus::Errored,
+                Some(t(Lang::En, "chat-error-turn-interrupted")),
+            )
         }
     };
 
@@ -112,7 +127,114 @@ pub async fn run_session_turn(pool: Pool, driver: Box<dyn SessionDriver>, ctx: S
         }
     }
 
-    let _ = db::finalize_turn(&pool, &assistant_turn_id, status, error_message.as_deref()).await;
+    let finalized = if result_is_panic {
+        db::error_interrupted_turn(
+            &pool,
+            &assistant_turn_id,
+            error_message.as_deref().unwrap_or_default(),
+        )
+        .await
+        .map(|_| ())
+    } else {
+        db::finalize_turn(&pool, &assistant_turn_id, status, error_message.as_deref()).await
+    };
+    if let Err(err) = finalized {
+        tracing::error!(%session_id, %assistant_turn_id, error = %err, "finalizing turn failed");
+    }
     let _ = db::touch_session(&pool, &session_id).await;
     let _ = broadcast.send(TurnUpdate::Finalized);
+}
+
+fn panic_message(panic: &(dyn Any + Send)) -> &str {
+    panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&'static str>().copied())
+        .unwrap_or("non-string panic payload")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::driver::{TurnError, TurnOutcome};
+    use crate::workers::{RegisterOutcome, SessionWorkers, SteerInbox};
+
+    struct PanickingDriver {
+        pool: Pool,
+    }
+
+    #[async_trait::async_trait]
+    impl SessionDriver for PanickingDriver {
+        async fn run_turn(&self, ctx: SessionContext) -> Result<TurnOutcome, TurnError> {
+            db::insert_running_tool_call(
+                &self.pool,
+                &ctx.assistant_turn_id,
+                "call-1",
+                "fetch_url",
+                "{}",
+            )
+            .await
+            .unwrap();
+            panic!("tool failed unexpectedly");
+        }
+    }
+
+    #[tokio::test]
+    async fn panicking_driver_finalizes_turn_and_releases_worker_slot() {
+        let pool = db::tests::pool().await;
+        let session = db::create_session(&pool, "u1").await.unwrap();
+        db::create_assistant_turn_in_progress(&pool, &session.id, "turn-1", "model")
+            .await
+            .unwrap();
+        let workers = Arc::new(SessionWorkers::default());
+        let RegisterOutcome::Registered { worker } =
+            workers.register("u1", "turn-1", &session.id, 1)
+        else {
+            panic!("expected worker registration");
+        };
+        let mut updates = worker.broadcast.subscribe();
+        let ctx = SessionContext {
+            user_id: Some("u1".into()),
+            session_id: session.id.clone(),
+            assistant_turn_id: "turn-1".into(),
+            model: "model".into(),
+            cancel: worker.cancel.clone(),
+            broadcast: worker.broadcast.clone(),
+            steers: SteerInbox::default(),
+        };
+        let worker_pool = pool.clone();
+        let driver_pool = pool.clone();
+        let worker_registry = workers.clone();
+        tokio::spawn(async move {
+            run_session_turn(
+                worker_pool,
+                Box::new(PanickingDriver { pool: driver_pool }),
+                ctx,
+            )
+            .await;
+            worker_registry.clear("u1", &worker);
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(updates.try_recv().unwrap(), TurnUpdate::Finalized);
+        let turns = db::list_turns(&pool, &session.id).await.unwrap();
+        assert_eq!(turns[0].turn.status, TurnStatus::Errored);
+        assert!(
+            turns[0]
+                .turn
+                .error_message
+                .as_deref()
+                .unwrap()
+                .contains("internal error")
+        );
+        assert_eq!(turns[0].tool_calls[0].status, db::ToolCallStatus::Errored);
+        assert_eq!(workers.active_count(), 0);
+        assert!(matches!(
+            workers.register("u1", "turn-2", &session.id, 1),
+            RegisterOutcome::Registered { .. }
+        ));
+    }
 }

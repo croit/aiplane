@@ -357,6 +357,7 @@ export const zh: Catalog = {
  "chat-error-bad-filename": "文件名无效",
  "chat-error-db-error": "数据库错误",
  "chat-error-no-such-turn": "没有此消息",
+ "chat-error-turn-interrupted": "内部错误中断了此次回复。请重试。",
  "chat-list-empty": "还没有对话。在上方开始一个吧。",
  "chat-prompt-answer": "回答",
  "chat-prompt-heading": "助手提问",

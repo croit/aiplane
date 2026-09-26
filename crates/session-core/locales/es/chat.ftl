@@ -12,6 +12,7 @@ chat-error-db-error = error de base de datos
 chat-error-attachments-not-configured = los adjuntos del chat no están configurados
 chat-error-bad-filename = nombre de archivo no válido
 chat-error-attachment-not-found = no encontrado
+chat-error-turn-interrupted = Un error interno interrumpió esta respuesta. Inténtalo de nuevo.
 
 # SPA-only chat chrome (`web/src/routes/chat/*`): the conversation list,
 # the conversation header, the assistant's ask-back card, and the

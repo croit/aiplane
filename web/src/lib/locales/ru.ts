@@ -357,6 +357,7 @@ export const ru: Catalog = {
  "chat-error-bad-filename": "недопустимое имя файла",
  "chat-error-db-error": "ошибка базы данных",
  "chat-error-no-such-turn": "такого сообщения не существует",
+ "chat-error-turn-interrupted": "Внутренняя ошибка прервала этот ответ. Попробуйте ещё раз.",
  "chat-list-empty": "Пока нет бесед. Начните новую выше.",
  "chat-prompt-answer": "Ответить",
  "chat-prompt-heading": "Ассистент спрашивает",

@@ -555,7 +555,7 @@ const MAX_ENTITY_LEN: usize = 32;
 fn decode_one_entity(s: &str) -> Option<(String, usize)> {
     debug_assert!(s.starts_with('&'));
     let limit = s.len().min(MAX_ENTITY_LEN);
-    let semi = s[..limit].find(';')?;
+    let semi = s.as_bytes()[..limit].iter().position(|&b| b == b';')?;
     let body = &s[1..semi];
     if body.is_empty() {
         return None;
@@ -720,6 +720,13 @@ mod tests {
     #[test]
     fn bare_ampersand_is_kept() {
         assert_eq!(extract("<p>Tom & Jerry</p>"), "Tom & Jerry");
+    }
+
+    #[test]
+    fn stray_ampersand_with_utf8_at_entity_limit_is_kept() {
+        let text = format!("&{}„ prose", "a".repeat(MAX_ENTITY_LEN - 2));
+        assert_eq!(text.as_bytes()[MAX_ENTITY_LEN - 1], 0xe2);
+        assert_eq!(extract(&format!("<p>{text}</p>")), text);
     }
 
     #[test]

@@ -37,6 +37,7 @@ use super::{
 };
 use crate::pages::{bad_request, internal, json_error, json_ok as ok_json, not_found, read_json};
 use session_core::db as chat;
+use session_core::i18n::{Lang, t};
 
 /// The request facts a turn needs, read off the request while it is intact.
 ///
@@ -663,11 +664,11 @@ pub async fn session_events(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    match readable_session(&state, &user.id, &session_id).await {
-        Ok(Some(_)) => {}
+    let owns_session = match readable_session(&state, &user.id, &session_id).await {
+        Ok(Some(session)) => session.user_id == user.id,
         Ok(None) => return not_found_conversation(),
         Err(resp) => return resp,
-    }
+    };
 
     // Subscribe to worker starts BEFORE looking for one. The two steps have a
     // gap, and the worker this viewer is waiting for may be registered inside
@@ -678,7 +679,15 @@ pub async fn session_events(
     // Owners attach to their own live worker; a shared-session viewer finds
     // none (workers are keyed by owner) and reads the static snapshot —
     // same behaviour as the legacy tail.
-    let live = state.chats.get(&user.id, &session_id);
+    let mut live = state.chats.get(&user.id, &session_id);
+    let mut prior_turns = Vec::new();
+    if live.is_none() {
+        prior_turns = match chat::list_turns(&state.db, &session_id).await {
+            Ok(turns) => turns,
+            Err(err) => return internal(err),
+        };
+        live = state.chats.get(&user.id, &session_id);
+    }
 
     match live {
         Some(worker) => {
@@ -712,10 +721,25 @@ pub async fn session_events(
             session_core::chat_json::json_stream_response(rx)
         }
         None => {
-            let turns = match chat::list_turns(&state.db, &session_id).await {
-                Ok(t) => t,
-                Err(err) => {
+            let orphan_ids: Vec<_> = prior_turns
+                .iter()
+                .filter(|turn| owns_session && turn.turn.status == chat::TurnStatus::InProgress)
+                .map(|turn| turn.turn.id.clone())
+                .collect();
+            let error_message = t(Lang::En, "chat-error-turn-interrupted");
+            for turn_id in &orphan_ids {
+                if let Err(err) =
+                    chat::error_interrupted_turn(&state.db, turn_id, &error_message).await
+                {
                     return internal(err);
+                }
+            }
+            let turns = if orphan_ids.is_empty() {
+                prior_turns
+            } else {
+                match chat::list_turns(&state.db, &session_id).await {
+                    Ok(turns) => turns,
+                    Err(err) => return internal(err),
                 }
             };
             // Is anything here sent but not started? Ask the work queue, not
@@ -727,7 +751,7 @@ pub async fn session_events(
             // Only for the owner. Workers are keyed by owner, so a viewer of a
             // shared conversation could never match one — they would wait out
             // the full deadline and then be told `idle`.
-            let waiting = user_owns(&state, &user.id, &session_id).await
+            let waiting = owns_session
                 && !chat::list_pending_for_session(&state.db, &session_id)
                     .await
                     .unwrap_or_default()

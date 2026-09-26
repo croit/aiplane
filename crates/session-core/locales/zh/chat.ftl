@@ -12,6 +12,7 @@ chat-error-db-error = 数据库错误
 chat-error-attachments-not-configured = 聊天附件未配置
 chat-error-bad-filename = 文件名无效
 chat-error-attachment-not-found = 未找到
+chat-error-turn-interrupted = 内部错误中断了此次回复。请重试。
 
 # SPA-only chat chrome (`web/src/routes/chat/*`): the conversation list,
 # the conversation header, the assistant's ask-back card, and the

@@ -314,6 +314,44 @@ pub async fn finalize_turn(
     Ok(())
 }
 
+/// Recover one abandoned assistant turn and any tool calls it left running.
+/// Returns whether the turn was still in progress and was changed.
+pub async fn error_interrupted_turn(
+    pool: &Pool,
+    turn_id: &str,
+    message: &str,
+) -> Result<bool, DbError> {
+    let now = Timestamp::now().to_string();
+    let output_json = serde_json::Value::String(message.to_string()).to_string();
+    let mut tx = pool.begin().await?;
+    let changed = sqlx::query(
+        r#"UPDATE chat_turns
+           SET status = 'errored', error_message = ?, completed_at = ?
+           WHERE id = ? AND role = 'assistant' AND status = 'in_progress'"#,
+    )
+    .bind(message)
+    .bind(&now)
+    .bind(turn_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        > 0;
+    if changed {
+        sqlx::query(
+            r#"UPDATE chat_tool_calls
+               SET status = 'errored', output_json = COALESCE(output_json, ?), completed_at = ?
+               WHERE turn_id = ? AND status = 'running'"#,
+        )
+        .bind(output_json)
+        .bind(&now)
+        .bind(turn_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(changed)
+}
+
 /// All turns in a session, oldest first, each carrying its tool calls
 /// (also oldest first). Used by the renderer for both initial page
 /// load and the reconnect-tail path.

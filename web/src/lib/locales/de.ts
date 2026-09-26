@@ -357,6 +357,7 @@ export const de: Catalog = {
  "chat-error-bad-filename": "ungültiger Dateiname",
  "chat-error-db-error": "Datenbankfehler",
  "chat-error-no-such-turn": "keine solche Nachricht",
+ "chat-error-turn-interrupted": "Ein interner Fehler hat diese Antwort unterbrochen. Bitte versuche es erneut.",
  "chat-list-empty": "Noch keine Unterhaltungen. Starte oben eine neue.",
  "chat-prompt-answer": "Antworten",
  "chat-prompt-heading": "Der Assistent fragt",

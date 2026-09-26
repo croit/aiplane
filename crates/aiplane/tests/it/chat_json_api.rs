@@ -638,6 +638,75 @@ async fn an_idle_session_answers_snapshot_then_idle_and_closes() {
     );
 }
 
+#[tokio::test]
+async fn attaching_to_orphaned_turn_recovers_turn_and_running_tool_call() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    chat::create_assistant_turn_in_progress(&state.db, &session.id, "orphan", "model-a")
+        .await
+        .unwrap();
+    chat::insert_running_tool_call(&state.db, "orphan", "call-1", "fetch_url", "{}")
+        .await
+        .unwrap();
+
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/events", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let frames = sse_frames(&body_string(resp).await);
+    assert_eq!(frames[0].0, "snapshot");
+    assert_eq!(frames[0].1["turns"][0]["turn"]["status"], "errored");
+    assert_eq!(
+        frames[0].1["turns"][0]["tool_calls"][0]["status"],
+        "errored"
+    );
+    assert_eq!(frames[1].0, "idle");
+
+    let turns = chat::list_turns(&state.db, &session.id).await.unwrap();
+    assert_eq!(turns[0].turn.status, chat::TurnStatus::Errored);
+    assert_eq!(turns[0].tool_calls[0].status, chat::ToolCallStatus::Errored);
+}
+
+#[tokio::test]
+async fn shared_viewer_does_not_recover_owners_live_turn() {
+    let (state, _alice) = setup("http://unused.invalid").await;
+    let bob = common::seed_session(&state, "bob", "bob@example.com").await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    chat::set_shared(&state.db, "alice", &session.id, true)
+        .await
+        .unwrap();
+    chat::create_assistant_turn_in_progress(&state.db, &session.id, "live", "model-a")
+        .await
+        .unwrap();
+
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/events", session.id),
+            &bob,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let frames = sse_frames(&body_string(resp).await);
+    assert_eq!(frames[0].1["turns"][0]["turn"]["status"], "in_progress");
+    assert_eq!(
+        chat::list_turns(&state.db, &session.id).await.unwrap()[0]
+            .turn
+            .status,
+        chat::TurnStatus::InProgress
+    );
+}
+
 /// A second message during a turn is not refused: it belongs to the answer
 /// being written, so it goes into that turn's prompt at its next round.
 #[tokio::test]

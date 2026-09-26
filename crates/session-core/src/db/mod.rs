@@ -306,7 +306,7 @@ pub use tool_calls::*;
 pub use turns::*;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};
     use std::str::FromStr;
@@ -348,7 +348,7 @@ mod tests {
     /// tables this module actually manages. Kept in lock-step with
     /// `crates/aiplane-core/migrations/0005_chat_persistence.sql`; if that
     /// file changes shape, mirror the change here.
-    async fn pool() -> Pool {
+    pub(crate) async fn pool() -> Pool {
         let opts = SqliteConnectOptions::from_str("sqlite::memory:")
             .unwrap()
             .synchronous(SqliteSynchronous::Off)
@@ -1193,6 +1193,60 @@ mod tests {
         let got = &list_turns(&pool, &s.id).await.unwrap()[0].turn;
         assert_eq!(got.status, TurnStatus::Errored);
         assert_eq!(got.error_message.as_deref(), Some("upstream 502"));
+    }
+
+    #[tokio::test]
+    async fn error_interrupted_turn_finishes_only_its_running_calls() {
+        let pool = pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        let interrupted = create_assistant_turn_in_progress(&pool, &session.id, "interrupted", "m")
+            .await
+            .unwrap();
+        insert_running_tool_call(&pool, &interrupted.id, "running", "fetch_url", "{}")
+            .await
+            .unwrap();
+        insert_running_tool_call(&pool, &interrupted.id, "done", "echo", "{}")
+            .await
+            .unwrap();
+        complete_tool_call(
+            &pool,
+            &interrupted.id,
+            "done",
+            "\"ok\"",
+            ToolCallStatus::Completed,
+        )
+        .await
+        .unwrap();
+        let other = create_assistant_turn_in_progress(&pool, &session.id, "other", "m")
+            .await
+            .unwrap();
+        insert_running_tool_call(&pool, &other.id, "running", "fetch_url", "{}")
+            .await
+            .unwrap();
+
+        assert!(
+            error_interrupted_turn(&pool, &interrupted.id, "interrupted")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !error_interrupted_turn(&pool, &interrupted.id, "new message")
+                .await
+                .unwrap()
+        );
+        let turns = list_turns(&pool, &session.id).await.unwrap();
+        assert_eq!(turns[0].turn.status, TurnStatus::Errored);
+        assert_eq!(turns[0].turn.error_message.as_deref(), Some("interrupted"));
+        assert!(turns[0].turn.completed_at.is_some());
+        assert_eq!(turns[0].tool_calls[0].status, ToolCallStatus::Errored);
+        assert_eq!(
+            turns[0].tool_calls[0].output_json.as_deref(),
+            Some("\"interrupted\"")
+        );
+        assert!(turns[0].tool_calls[0].completed_at.is_some());
+        assert_eq!(turns[0].tool_calls[1].status, ToolCallStatus::Completed);
+        assert_eq!(turns[1].turn.status, TurnStatus::InProgress);
+        assert_eq!(turns[1].tool_calls[0].status, ToolCallStatus::Running);
     }
 
     #[tokio::test]
