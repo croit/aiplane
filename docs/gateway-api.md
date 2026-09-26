@@ -80,7 +80,7 @@ Model access on proxy paths has two cumulative gates:
 - A pool's `allowed_groups` controls which gateway groups can discover and route its models. Admins bypass this operator policy. A model available only through an inaccessible pool is hidden as `404 model_not_found` in both routing and model discovery.
 - A bearer token's model allowlist can narrow its owner's access further. Admin status does not bypass a credential's own allowlist. An excluded model is omitted from `/v1/models` and direct routing returns `403 model_not_allowed`.
 
-RBAC also applies to *tools*: together with the user's `/tools` toggles and the token's per-capability switches, it decides which gateway tools get advertised and injected into a chat completion. A denied tool is simply never offered; it does not itself produce a `403`.
+RBAC also applies to *tools*: together with the user's `/tools` toggles and the token's Off / Auto / On capability settings, it decides which gateway tools can be advertised and executed. Missing built-in settings default to Auto, while MCP connectors and skills default to Off. Auto contributes only `search_gateway_tools` initially; matching tools join a later model round. Off excludes a tool from both disclosure and execution. MCP tools also require an explicit group grant (`mcp__<server>`, a specific tool id, or `*`) and the connector's ACL. A denied tool is simply never offered; it does not itself produce a `403`.
 
 ## Model field and alias resolution
 

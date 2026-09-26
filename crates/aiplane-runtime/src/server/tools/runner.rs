@@ -271,6 +271,8 @@ where
             TOOL_OUTPUT_STUB_THRESHOLD,
         );
 
+        inject_tools(&mut request_body, tools, &tools.ids())?;
+
         rounds += 1;
     }
 }

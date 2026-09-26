@@ -253,12 +253,19 @@ MCP is gated twice, and the two do different jobs:
    checked in `layer_for_user`.
 2. **How much of a reached connector** they see — `Resolver::mcp_grant`.
 
-The second only ever *subtracts*. A caller whose groups contain no `mcp__…`
-grant at all (or `*`, or who is admin) is `McpGrant::Unscoped` and sees every
-tool their connectors allow — which is how every deployment behaved before
-per-tool grants existed, so enabling this takes nothing away. The moment any
-`mcp__…` grant appears, the caller is `Scoped` and a tool survives only if its
-own id or its `mcp__<server>` key is named.
+The second only ever narrows the connector ACL. A caller whose groups contain
+no `mcp__…` grant is denied MCP tools. A `*` grant or an admin group permits
+all tools of a connector the caller can reach. Otherwise a tool survives only
+if its own id or its `mcp__<server>` key is granted. A token owner can then
+choose Off, Auto, or On for that connector in the token picker.
+
+Per-user MCP connections and their cached tool definitions are keyed by
+`(user_id, connector_key)`. Two users can see the same tool id while receiving
+different definitions and executing with their own OAuth credentials. The
+shared `mcp_connector_tools` cache below is only for the admin grant editor;
+request-time schemas and execution come from the caller's live user layer.
+Global connectors intentionally use one shared credential, but still apply
+each user's RBAC, connector ACL, tool modes, and token states separately.
 
 Authoring per-tool grants needs a tool list, and an MCP server's tools are only
 visible while connected on some user's behalf — which an admin editing a group
@@ -269,8 +276,11 @@ editor says so), and a stale row is harmless because grants are matched against
 the live tool id at call time.
 - **Per-user toggles** — each user turns their granted tools on and off on
   `/tools`.
-- **Per-token scoping** — a `gwk_…` token can be scoped to a subset of its
-  owner's tools.
+- **Per-token scoping** — a `gwk_…` token has the same Off / Auto / On
+  capability picker as chat. It includes connected MCP integrations and
+  permitted skills. Missing built-in tools default to Auto; missing MCP
+  integrations and skills default to Off. Explicit Auto is stored for the
+  latter two families. The token's master tool switch remains an outer gate.
 - **Skills** — a role's `skills` list plus a per-skill grant editor in the UI;
   `read_skill` rides along for any role granted a skill.
 
@@ -292,7 +302,7 @@ subtract.
 
 ## Tool injection
 
-On `POST /v1/chat/completions`:
+On `POST /v1/chat/completions` and `/v1/messages`:
 
 1. Compute the caller's allowed set (roles → ids → resolvable in the
    `ToolSource`).
@@ -300,12 +310,20 @@ On `POST /v1/chat/completions`:
    so advertising those would hand the model a guaranteed error instead of a
    completion. It is a single source of truth precisely so the advertise filter
    can't drift from the runtime gate; it has drifted before.
-3. If the request body already carries `tools`, **union** with the allowed set,
+3. Apply the token's capability states to built-in tools, MCP connector families,
+   and skills. **Off** is excluded from schema lookup and execution. **On** is
+   advertised immediately. **Auto** is reachable through the small
+   `search_gateway_tools` definition; a matching search exposes at most five
+   schemas in the next model round. The search and all tools it activates are
+   confined to the token's RBAC and per-user grants. A token with its master
+   switch off takes the byte-dumb path.
+4. If the request body already carries `tools`, **union** with the offered set,
    de-duped by `function.name`. Client-supplied tools are never executed here —
    they round-trip to the client like normal OpenAI tools, so gateway tools and
    client tools coexist in one completion.
-4. Leave `tool_choice` alone when it is `"required"` or names a tool.
-5. Forward upstream.
+5. Leave `tool_choice` alone when it is `"required"` or names a tool.
+6. Forward upstream. Every returned gateway tool call is resolved through the
+   same offered source, so a known but disallowed tool cannot run.
 
 `requires_chat_session` covers two different reasons a tool needs the chat path,
 and it is worth keeping them apart when deciding whether a new tool belongs

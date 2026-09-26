@@ -36,7 +36,7 @@
 		if (!trimmed || busy) return;
 		busy = true;
 		try {
-			const response = await api.createToken({ name: trimmed, ttl_days: ttlDays, tools_enabled: false, disabled_tools: [] });
+			const response = await api.createToken({ name: trimmed, ttl_days: ttlDays, tools_enabled: false, tool_states: {} });
 			minted = { name: response.token.name, plaintext: response.plaintext };
 			creating = false;
 			await refresh();
@@ -49,8 +49,8 @@
 		catch (caught) { notice = String(caught); }
 	}
 
-	async function updateTools(token: ManagedToken, enabled: boolean, disabled: string[]) {
-		await mutate(async () => { await api.updateTokenTools(token.id, { tools_enabled: enabled, disabled_tools: disabled }); await refresh(); });
+	async function updateTools(token: ManagedToken, enabled: boolean, states: Record<string, 'on' | 'auto' | 'off'>) {
+		await mutate(async () => { await api.updateTokenTools(token.id, { tools_enabled: enabled, tool_states: states }); await refresh(); });
 	}
 	async function updateModels(token: ManagedToken, restrict: boolean, models: string[]) {
 		await mutate(async () => { await adminPut(`/api/v0/tokens/${token.id}/models`, { restrict, models });
@@ -100,8 +100,8 @@
 		</div>
 		{#if !details}<div class="skeleton h-24 w-full"></div>{:else if details.tokens.length === 0}<p class="text-sm text-base-content/60">{t('tokens-list-empty')}</p>{:else}
 			<ul class="flex flex-col divide-y divide-base-300">{#each details.tokens as token (token.id)}
-				<ManagedTokenRow {token} tools={details.tools} models={details.models} currency={details.currency} timezone={details.timezone} usageEnabled={details.usage_enabled}
-					ontools={(enabled, disabled) => updateTools(token, enabled, disabled)} onmodels={(restrict, models) => updateModels(token, restrict, models)}
+				<ManagedTokenRow {token} capabilities={details.capabilities} models={details.models} currency={details.currency} timezone={details.timezone} usageEnabled={details.usage_enabled}
+					ontools={(enabled, states) => updateTools(token, enabled, states)} onmodels={(restrict, models) => updateModels(token, restrict, models)}
 					onquota={(dimension, window, value) => addQuota(token, dimension, window, value)} onremovequota={(id) => removeQuota(token, id)}
 					onmcp={(allow) => setMcpPolicy(token, allow)} onrotate={() => rotate(token)} onrevoke={() => revoke(token)} onremove={() => remove(token)} />
 			{/each}</ul>

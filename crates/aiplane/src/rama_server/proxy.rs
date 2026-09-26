@@ -332,6 +332,7 @@ fn prefer_positive(primary: Option<f64>, fallback: Option<f64>) -> Option<f64> {
 fn proxy_tool_ctx(
     state: &Arc<RamaState>,
     user_id: String,
+    token_id: String,
     roles: Vec<String>,
     // The caller's resolved access, built once per request from the bearer
     // token (`pool_access_for_token`). Passed in rather than rebuilt from
@@ -343,6 +344,7 @@ fn proxy_tool_ctx(
 ) -> ToolContext {
     ToolContext {
         user_id,
+        token_id: Some(token_id),
         roles,
         pool_access,
         db: state.db.clone(),
@@ -712,7 +714,7 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
     // `api_tool_layer`): what to advertise, and the overlay that dispatches it.
     // Empty when the token's master tool switch is off (the default), which is
     // what selects the byte-dumb passthrough below.
-    let (allowed_tools, user_mcp) = state.api_tool_layer(&user).await;
+    let (allowed_tools, auto_tools, user_mcp) = state.api_tool_layer(&user).await;
 
     // Byte-dumb proxy: only when the user has no gateway tool grants.
     // There's nothing to inject, so route bytes 1:1 and leave any
@@ -731,7 +733,7 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
         &request_value,
         &access,
         &parts.headers,
-        !allowed_tools.is_empty(),
+        !allowed_tools.is_empty() || !auto_tools.is_empty(),
     )
     .await
     {
@@ -748,7 +750,7 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
     {
         return with_automatic_route_headers(response, automatic_decision.as_ref());
     }
-    if allowed_tools.is_empty() {
+    if allowed_tools.is_empty() && auto_tools.is_empty() {
         let response = chat_bytedumb(
             &state,
             &user,
@@ -814,6 +816,7 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
             client_ip.clone(),
             request_body,
             allowed_tools,
+            auto_tools,
             user_mcp,
             Box::new(OpenAiSink),
         )
@@ -830,6 +833,7 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
         client_ip,
         request_body,
         &allowed_tools,
+        &auto_tools,
         &user_mcp,
     )
     .await;
@@ -2694,11 +2698,13 @@ pub(crate) async fn buffered_with_tools(
     client_ip: Option<String>,
     request_body: Value,
     allowed_tools: &[String],
+    auto_tools: &[String],
     user_mcp: &aiplane_runtime::server::tools::mcp::manager::UserMcpLayer,
 ) -> Result<runner::LoopOutput, LoopError> {
     let tool_ctx = proxy_tool_ctx(
         state,
         user.user_id.clone(),
+        user.token_id.clone(),
         user.roles.clone(),
         access.clone(),
         client_ip,
@@ -2728,6 +2734,12 @@ pub(crate) async fn buffered_with_tools(
         user_mcp,
     )
     .with_comfyui(comfyui.as_ref());
+    let tool_source = aiplane_runtime::server::tools::discovery::DiscoverableToolSource::new(
+        &tool_source,
+        allowed_tools,
+        auto_tools,
+    );
+    let offered = tool_source.offered_ids();
 
     let round_state = state.clone();
     let round_model = real_model.to_string();
@@ -2740,7 +2752,7 @@ pub(crate) async fn buffered_with_tools(
     let round_served_by = Arc::clone(&served_by);
     let outcome = runner::run_with_tools(
         &tool_source,
-        allowed_tools,
+        &offered,
         &tool_ctx,
         request_body,
         move |body_value| {
@@ -2811,6 +2823,7 @@ pub(crate) async fn stream_with_tools(
     client_ip: Option<String>,
     mut request_body: Value,
     allowed_tools: Vec<String>,
+    auto_tools: Vec<String>,
     user_mcp: aiplane_runtime::server::tools::mcp::manager::UserMcpLayer,
     mut sink: Box<dyn StreamSink>,
 ) -> Response {
@@ -2830,7 +2843,16 @@ pub(crate) async fn stream_with_tools(
     .with_comfyui(comfyui.as_ref());
     // Inject gateway tools, force stream:true. `stream_options` can
     // stay (vLLM accepts it with stream:true).
-    if let Err(err) = runner::inject_tools(&mut request_body, &tool_source, &allowed_tools) {
+    let discoverable = aiplane_runtime::server::tools::discovery::DiscoverableToolSource::new(
+        &tool_source,
+        &allowed_tools,
+        &auto_tools,
+    );
+    if let Err(err) = runner::inject_tools(
+        &mut request_body,
+        &discoverable,
+        &discoverable.offered_ids(),
+    ) {
         return loop_error_response(err);
     }
     if let Some(obj) = request_body.as_object_mut() {
@@ -2842,6 +2864,7 @@ pub(crate) async fn stream_with_tools(
     let tool_ctx = proxy_tool_ctx(
         &state,
         user.user_id.clone(),
+        user.token_id.clone(),
         user.roles.clone(),
         access.clone(),
         client_ip,
@@ -2887,6 +2910,8 @@ pub(crate) async fn stream_with_tools(
             state,
             model,
             request_body,
+            allowed_tools,
+            auto_tools,
             client_headers,
             tool_ctx,
             rec,
@@ -3014,6 +3039,8 @@ async fn drive_streaming_tool_loop(
     state: Arc<RamaState>,
     model: String,
     request_body: Value,
+    allowed_tools: Vec<String>,
+    auto_tools: Vec<String>,
     client_headers: HeaderMap,
     tool_ctx: ToolContext,
     rec: RecordParams,
@@ -3032,6 +3059,8 @@ async fn drive_streaming_tool_loop(
         state,
         model,
         request_body,
+        allowed_tools,
+        auto_tools,
         client_headers,
         tool_ctx,
         rec,
@@ -3055,6 +3084,8 @@ async fn drive_streaming_tool_loop_inner(
     state: Arc<RamaState>,
     model: String,
     mut request_body: Value,
+    allowed_tools: Vec<String>,
+    auto_tools: Vec<String>,
     client_headers: HeaderMap,
     tool_ctx: ToolContext,
     rec: RecordParams,
@@ -3079,6 +3110,11 @@ async fn drive_streaming_tool_loop_inner(
         &user_mcp,
     )
     .with_comfyui(comfyui.as_ref());
+    let tool_source = aiplane_runtime::server::tools::discovery::DiscoverableToolSource::new(
+        &tool_source,
+        &allowed_tools,
+        &auto_tools,
+    );
 
     // Force a trailing usage frame each round so token/cost accounting works
     // even when the client didn't opt in; hide it from the client stream
@@ -3398,6 +3434,8 @@ async fn drive_streaming_tool_loop_inner(
                 "content": output_str,
             }));
         }
+        runner::inject_tools(&mut request_body, &tool_source, &tool_source.offered_ids())
+            .map_err(|err| err.to_string())?;
     }
 
     Err(format!("tool-call loop exhausted after {STREAM_TOOL_LOOP_MAX_ROUNDS} rounds").into())

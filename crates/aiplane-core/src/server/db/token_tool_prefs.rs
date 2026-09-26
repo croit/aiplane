@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! Per-token tool on/off preferences — the rows behind the per-token
-//! capability toggles on the `/tokens` page.
+//! Per-token Off / Auto / On preferences for the shared capability picker.
 //!
-//! A layer on top of the per-user grant: a row can only ever *subtract*
-//! a tool the owning user's roles already grant (and that they haven't
-//! already turned off globally on `/tools`). Default is enabled, so we
-//! only store explicit choices and a tool with no row is on. `tool_key`
+//! A layer on top of the per-user grant: a row can only ever expose a
+//! tool the owning user's roles already grant. An enabled row means Always On,
+//! a disabled row means Off, and value 2 means explicit Auto. Missing rows
+//! default to Auto for built-in tools and Off for MCP connectors and skills. `tool_key`
 //! is the UI toggle key (the per-template `typst_<id>` tools collapse to
 //! a single `typst` key — see `server::tools::catalog`).
 //!
@@ -15,9 +14,10 @@
 //! is on; while it's off the request path skips tool injection entirely
 //! (see `RamaState::allowed_tools_for_token`).
 //!
-//! Schema lives in `migrations/0019_token_tool_prefs.sql`.
+//! Schema lives in `migrations/0019_token_tool_prefs.sql`; migration 0075
+//! clears old implicit enabled rows so existing built-in tools default to Auto.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use jiff::Timestamp;
 use sqlx::Row;
@@ -46,6 +46,62 @@ pub async fn set(
     .bind(now)
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// Remove a token override so the capability returns to automatic discovery.
+pub async fn clear(pool: &Pool, token_id: &str, tool_key: &str) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM token_tool_prefs WHERE token_id = ? AND tool_key = ?")
+        .bind(token_id)
+        .bind(tool_key)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Explicit per-token states: 0 = Off, 1 = On, 2 = Auto.
+pub async fn states_for_token(
+    pool: &Pool,
+    token_id: &str,
+) -> Result<HashMap<String, i64>, DbError> {
+    let rows = sqlx::query("SELECT tool_key, enabled FROM token_tool_prefs WHERE token_id = ?")
+        .bind(token_id)
+        .fetch_all(pool)
+        .await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get::<String, _>("tool_key")?,
+                row.try_get::<i64, _>("enabled")?,
+            ))
+        })
+        .collect()
+}
+
+/// Replace every explicit override atomically. Missing keys use the family default.
+pub async fn replace(
+    pool: &Pool,
+    token_id: &str,
+    states: &HashMap<String, i64>,
+) -> Result<(), DbError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM token_tool_prefs WHERE token_id = ?")
+        .bind(token_id)
+        .execute(&mut *tx)
+        .await?;
+    let now = Timestamp::now().to_string();
+    for (key, enabled) in states {
+        sqlx::query(
+            "INSERT INTO token_tool_prefs (token_id, tool_key, enabled, updated_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(token_id)
+        .bind(key)
+        .bind(enabled)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -126,6 +182,41 @@ mod tests {
         let disabled = disabled_for_token(&pool, "tok-1").await.unwrap();
         assert!(disabled.contains("rag_search"));
         assert_eq!(disabled.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_row_is_auto_and_explicit_rows_are_on_or_off() {
+        let pool = fresh().await;
+        set(&pool, "tok-1", "search_web", true).await.unwrap();
+        set(&pool, "tok-1", "mcp__discord", false).await.unwrap();
+        let states = states_for_token(&pool, "tok-1").await.unwrap();
+        assert_eq!(states.get("search_web"), Some(&1));
+        assert_eq!(states.get("mcp__discord"), Some(&0));
+        assert_eq!(states.get("read_skill"), None);
+        clear(&pool, "tok-1", "search_web").await.unwrap();
+        assert!(
+            !states_for_token(&pool, "tok-1")
+                .await
+                .unwrap()
+                .contains_key("search_web")
+        );
+    }
+
+    #[tokio::test]
+    async fn replace_persists_explicit_auto_and_removes_stale_states() {
+        let pool = fresh().await;
+        set(&pool, "tok-1", "search_web", true).await.unwrap();
+        replace(
+            &pool,
+            "tok-1",
+            &HashMap::from([("mcp__discord".into(), 2), ("skill:brand".into(), 0)]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            states_for_token(&pool, "tok-1").await.unwrap(),
+            HashMap::from([("mcp__discord".into(), 2), ("skill:brand".into(), 0)])
+        );
     }
 
     #[tokio::test]

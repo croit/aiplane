@@ -92,7 +92,11 @@ const ATTACH_KEY: &str = "upload_attachment";
 /// be inert — and it rendered with its model-facing description, since
 /// internal plumbing has no hand-written display copy. `capability_domains`
 /// already skipped it; `entries` did not.
-const HIDDEN: &[&str] = &["company_echo", BOOTSTRAP_TOOL_ID];
+const HIDDEN: &[&str] = &[
+    "company_echo",
+    BOOTSTRAP_TOOL_ID,
+    crate::server::tools::discovery::SEARCH_TOOL_ID,
+];
 
 /// Display grouping for the tool list. Ordered by [`Category::order`]
 /// so the page renders sections deterministically.

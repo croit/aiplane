@@ -1028,6 +1028,8 @@ mod tests {
     use aiplane_core::server::crypto::Crypto;
     use aiplane_core::server::db;
     use aiplane_core::server::db::mcp_catalog::{AuthKind, Scope};
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     async fn manager() -> Arc<McpConnectionManager> {
         let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
@@ -1060,6 +1062,104 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[tokio::test]
+    async fn same_connector_tool_uses_each_users_own_oauth_connection() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(|request: &wiremock::Request| {
+                let bearer = request
+                    .headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("");
+                let principal = match bearer {
+                    "Bearer alice-secret" => "alice",
+                    "Bearer bob-secret" => "bob",
+                    other => panic!("unexpected MCP credential: {other}"),
+                };
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                let result = match body["method"].as_str() {
+                    Some("initialize") => serde_json::json!({
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "fixture", "version": "1"},
+                    }),
+                    Some("tools/list") => serde_json::json!({
+                        "tools": [{"name": "lookup", "description": principal,
+                            "inputSchema": {"type": "object"}}]
+                    }),
+                    Some("tools/call") => serde_json::json!({
+                        "content": [{"type": "text", "text": principal}], "isError": false
+                    }),
+                    Some("notifications/initialized") => return ResponseTemplate::new(202),
+                    other => panic!("unexpected MCP method: {other:?}"),
+                };
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/json")
+                    .set_body_json(serde_json::json!({
+                        "jsonrpc": "2.0", "id": body["id"], "result": result
+                    }))
+            })
+            .mount(&server)
+            .await;
+        let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let crypto = Arc::new(Crypto::ephemeral());
+        let mgr = McpConnectionManager::new(pool.clone(), crypto.clone());
+        let mut connector = global_connector(AuthKind::OAuth2);
+        connector.scope = Scope::PerUser;
+        connector.url = server.uri();
+        for (user, secret) in [("alice", "alice-secret"), ("bob", "bob-secret")] {
+            sqlx::query("INSERT INTO users (id, email, roles_json, created_at, updated_at) VALUES (?, ?, '[]', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')")
+                .bind(user)
+                .bind(format!("{user}@example.com"))
+                .execute(&pool)
+                .await
+                .unwrap();
+            let sealed = crypto.seal_str(secret).unwrap();
+            user_mcp::upsert_connection(
+                &pool,
+                user_mcp::NewConnection {
+                    user_id: user.into(),
+                    connector_key: connector.key.clone(),
+                    access_token_ct: sealed.ciphertext,
+                    access_token_nonce: sealed.nonce,
+                    refresh_token_ct: None,
+                    refresh_token_nonce: None,
+                    token_expires_at: None,
+                    scopes: vec![],
+                    dcr_client_id: None,
+                    dcr_client_secret_ct: None,
+                    dcr_client_secret_nonce: None,
+                    token_url: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let alice = mgr.ensure("alice", &connector).await.unwrap();
+        let bob = mgr.ensure("bob", &connector).await.unwrap();
+        assert_eq!(alice[0].schema().function.description, "alice");
+        assert_eq!(bob[0].schema().function.description, "bob");
+        assert_eq!(
+            mgr.ensure("alice", &connector).await.unwrap()[0]
+                .schema()
+                .function
+                .description,
+            "alice"
+        );
+        let mut alice_ctx = ToolContext::for_test(pool.clone());
+        alice_ctx.user_id = "alice".into();
+        let mut bob_ctx = ToolContext::for_test(pool);
+        bob_ctx.user_id = "bob".into();
+        let alice_result = alice[0]
+            .run(alice_ctx, serde_json::json!({}))
+            .await
+            .unwrap();
+        let bob_result = bob[0].run(bob_ctx, serde_json::json!({})).await.unwrap();
+        assert!(alice_result.to_string().contains("alice"), "{alice_result}");
+        assert!(bob_result.to_string().contains("bob"), "{bob_result}");
     }
 
     #[tokio::test]
@@ -1107,6 +1207,7 @@ mod tests {
     async fn audited_tool_records_ok_and_error() {
         let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
         let ctx = |db: Pool| ToolContext {
+            token_id: None,
             user_id: "u".into(),
             roles: vec![],
             pool_access: aiplane_core::server::upstreams::PoolAccess::all(),

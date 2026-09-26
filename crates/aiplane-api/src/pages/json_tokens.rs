@@ -8,7 +8,7 @@ use jiff::Timestamp;
 use rama::http::service::web::extract::State;
 use rama::http::{Request, Response, StatusCode};
 
-use super::{entries_for_roles, internal, json_ok};
+use super::{internal, json_ok};
 use aiplane_core::server::db::{limits, token_models, token_tool_prefs, tokens, usage, user_mcp};
 use aiplane_runtime::rama_server::state::RamaState;
 
@@ -59,25 +59,25 @@ pub async fn details(State(state): State<Arc<RamaState>>, req: Request) -> Respo
         HashMap::new()
     };
 
-    let entries = entries_for_roles(&state, &user.roles);
-    let tools = entries
-        .iter()
-        .map(|entry| {
-            serde_json::json!({
-                "key": entry.key,
-                "title": entry.title,
-                "tech": entry.tech,
-                "description": entry.description,
-                "category": entry.category.key(),
-            })
-        })
-        .collect::<Vec<_>>();
+    let capabilities =
+        super::tool_toggles::capabilities_for_user(&state, &user.roles, &user.id).await;
     let mut token_details = Vec::with_capacity(token_rows.len());
     for token in token_rows {
         let lists = model_lists.get(&token.id).cloned().unwrap_or_default();
-        let disabled_tools = match token_tool_prefs::disabled_for_token(&state.db, &token.id).await
-        {
-            Ok(keys) => keys,
+        let tool_states = match token_tool_prefs::states_for_token(&state.db, &token.id).await {
+            Ok(states) => states
+                .into_iter()
+                .map(|(key, mode)| {
+                    (
+                        key,
+                        match mode {
+                            1 => "on",
+                            2 => "auto",
+                            _ => "off",
+                        },
+                    )
+                })
+                .collect::<HashMap<_, _>>(),
             Err(err) => return internal(err),
         };
         let mcp_allow = match user_mcp::token_ask_policy(&state.db, &token.id, "*").await {
@@ -95,7 +95,7 @@ pub async fn details(State(state): State<Arc<RamaState>>, req: Request) -> Respo
             "expires_at": token.expires_at,
             "revoked": token.revoked_at.is_some(),
             "tools_enabled": token.tools_enabled,
-            "disabled_tools": disabled_tools,
+            "tool_states": tool_states,
             "owner_models": lists.owner,
             "admin_models": lists.admin,
             "mcp_allow": mcp_allow,
@@ -122,7 +122,7 @@ pub async fn details(State(state): State<Arc<RamaState>>, req: Request) -> Respo
         StatusCode::OK,
         serde_json::json!({
             "tokens": token_details,
-            "tools": tools,
+            "capabilities": capabilities,
             "models": models,
             "usage_enabled": state.usage.is_enabled(),
         "currency": state.config().usage.currency,

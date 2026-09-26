@@ -6,9 +6,12 @@
 	import { toolCategoryLabel } from '$lib/tools';
 	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 
-	let { capabilities, onset }: {
+	let { capabilities, onset, triggerLabel = null, dialogId = 'tool-selector-title', showActive = true }: {
 		capabilities: ChatCapability[];
 		onset: (capability: ChatCapability, state: ChatCapability['state']) => Promise<void>;
+		triggerLabel?: string | null;
+		dialogId?: string;
+		showActive?: boolean;
 	} = $props();
 
 	let dialog: HTMLDialogElement;
@@ -56,7 +59,9 @@
 	async function setMany(rows: ChatCapability[], state: ChatCapability['state']) {
 		busy = true;
 		try {
-			await Promise.all(rows.map((row) => onset(row, state === 'off' && !row.can_disable ? 'auto' : state)));
+			for (const row of rows) {
+				await onset(row, state === 'off' && !row.can_disable ? 'auto' : state);
+			}
 		} finally {
 			busy = false;
 		}
@@ -81,22 +86,22 @@
 
 <div class="relative flex flex-wrap items-center gap-1.5">
 	<button type="button" class="btn btn-ghost btn-sm gap-1 rounded-full" title={t('chat-render-tools-tooltip')} onclick={openPicker} aria-expanded={open}>
-		<span aria-hidden="true">+</span> {t('chat-render-tools-label')}
+		<span aria-hidden="true">+</span> {triggerLabel ?? t('chat-render-tools-label')}
 	</button>
-	{#if active.length > 0}
+	{#if showActive && active.length > 0}
 		<button type="button" class="badge badge-outline gap-1 sm:hidden" title={t('chat-render-active-count-title')} onclick={openPicker}>⌁ {active.length}</button>
 	{/if}
-	{#each active as capability (`${capability.kind}:${capability.key}`)}
+	{#each showActive ? active : [] as capability (`${capability.kind}:${capability.key}`)}
 		<button type="button" class="badge badge-outline hidden gap-1 sm:inline-flex" title={t('chat-render-unpin-title')} onclick={() => onset(capability, 'auto')}>
 			{capability.title} <span class="opacity-60">×</span>
 		</button>
 	{/each}
 
-	<dialog bind:this={dialog} class="modal p-0" aria-labelledby="tool-selector-title" onclose={() => (open = false)} oncancel={(event) => { event.preventDefault(); closePicker(); }}>
+	<dialog bind:this={dialog} class="modal p-0" aria-labelledby={dialogId} onclose={() => (open = false)} oncancel={(event) => { event.preventDefault(); closePicker(); }}>
 		<div class="modal-box flex h-dvh max-h-dvh w-screen max-w-none flex-col rounded-none border-0 bg-base-100 p-0">
 			<header class="flex min-h-16 items-center gap-3 border-b border-base-300 px-4 sm:px-6">
 				<div class="min-w-0 flex-1">
-					<h2 class="text-xl font-semibold" id="tool-selector-title">{t('chat-render-tools-label')}</h2>
+					<h2 class="text-xl font-semibold" id={dialogId}>{t('chat-render-tools-label')}</h2>
 					<p class="text-sm text-base-content/60">{t('chat-render-tools-summary', counts)}</p>
 				</div>
 				<button type="button" class="btn btn-ghost btn-circle" aria-label={t('chat-render-close')} onclick={closePicker}>×</button>
@@ -127,7 +132,7 @@
 						</ul>
 					</nav>
 
-					<section class="flex min-h-0 min-w-0 flex-col" aria-labelledby="tool-selector-title">
+					<section class="flex min-h-0 min-w-0 flex-col" aria-labelledby={dialogId}>
 						<div class="border-b border-base-300 p-3 md:hidden">
 							<SearchableSelect options={groupOptions} bind:value={selectedGroup} onchange={() => (query = '')} ariaLabel={t('chat-render-tools-category-label')} class="w-full" />
 						</div>

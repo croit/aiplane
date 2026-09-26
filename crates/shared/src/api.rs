@@ -44,10 +44,10 @@ pub struct TokenSummary {
     /// gets no gateway tools (pure passthrough).
     #[serde(default)]
     pub tools_enabled: bool,
-    /// Toggle keys this token has explicitly disabled (only meaningful
-    /// when `tools_enabled`). A capability not listed is on by default.
+    /// Explicit per-capability states. Missing built-ins use Auto;
+    /// missing MCP connectors and skills use Off.
     #[serde(default)]
-    pub disabled_tools: Vec<String>,
+    pub tool_states: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,21 +59,19 @@ pub struct CreateTokenRequest {
     /// `false` (off) — a token is born without tool access until opted in.
     #[serde(default)]
     pub tools_enabled: Option<bool>,
-    /// Toggle keys to disable up-front (only meaningful when
-    /// `tools_enabled`). Lets a caller mint a locked-down token in one
-    /// call, e.g. `["rag_search"]` for a "no RAG" token.
+    /// Explicit `on`, `auto`, or `off` states; missing keys use the family default.
     #[serde(default)]
-    pub disabled_tools: Vec<String>,
+    pub tool_states: std::collections::BTreeMap<String, String>,
 }
 
 /// Set a token's tool configuration wholesale — the master switch plus
-/// the full set of disabled toggle keys. Replaces any previous per-token
+/// the full set of explicit capability states. Replaces any previous per-token
 /// tool prefs. Backs `PUT /api/v0/tokens/{id}/tools`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateTokenToolsRequest {
     pub tools_enabled: bool,
     #[serde(default)]
-    pub disabled_tools: Vec<String>,
+    pub tool_states: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

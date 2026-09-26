@@ -1,17 +1,18 @@
 <script lang="ts">
 	import EditModal from '$lib/components/EditModal.svelte';
+	import CapabilityPicker from '$lib/components/chat/CapabilityPicker.svelte';
 	import { n, t } from '$lib/i18n.svelte';
 	import { tokenDate, type ManagedToken } from '$lib/tokens';
-	import type { ToolEntry } from '$lib/tools';
+	import type { ChatCapability } from '$lib/api';
 
-	let { token, tools, models, currency, timezone, usageEnabled, ontools, onmodels, onquota, onremovequota, onmcp, onrotate, onrevoke, onremove }: {
+	let { token, capabilities, models, currency, timezone, usageEnabled, ontools, onmodels, onquota, onremovequota, onmcp, onrotate, onrevoke, onremove }: {
 		token: ManagedToken;
-		tools: Omit<ToolEntry, 'enabled'>[];
+		capabilities: Omit<ChatCapability, 'state'>[];
 		models: string[];
 		currency: string;
 		timezone: string;
 		usageEnabled: boolean;
-		ontools: (enabled: boolean, disabled: string[]) => Promise<void>;
+		ontools: (enabled: boolean, states: Record<string, 'on' | 'auto' | 'off'>) => Promise<void>;
 		onmodels: (restrict: boolean, models: string[]) => Promise<void>;
 		onquota: (dimension: string, window: string, value: number) => Promise<void>;
 		onremovequota: (id: string) => Promise<void>;
@@ -27,13 +28,14 @@
 	let windowKind = $state('day');
 	let quotaValue = $state<number | null>(null);
 	let busy = $state(false);
-	let editingTools = $state(false);
 	let editingModels = $state(false);
 	let editingQuotas = $state(false);
+	let draftToolStates = $state<Record<string, 'on' | 'auto' | 'off'>>({});
 
 	$effect(() => {
 		restrict = token.owner_models !== null;
 		selectedModels = token.owner_models ?? [];
+		draftToolStates = { ...token.tool_states };
 	});
 
 	let modelsSummary = $derived(token.owner_models === null
@@ -53,11 +55,18 @@
 		selectedModels = checked ? [...selectedModels, model] : selectedModels.filter((entry) => entry !== model);
 	}
 
-	function toolChanged(key: string, checked: boolean) {
-		const disabled = checked
-			? token.disabled_tools.filter((entry) => entry !== key)
-			: [...new Set([...token.disabled_tools, key])];
-		void run(() => ontools(true, disabled));
+	const pickerCapabilities = $derived(capabilities.map((capability): ChatCapability => ({
+		...capability,
+		state: token.tool_states[capability.kind === 'skill' ? `skill:${capability.key}` : capability.key] ?? (capability.kind === 'skill' || capability.group === 'integrations' ? 'off' : 'auto')
+	})));
+
+	async function setCapability(capability: ChatCapability, state: ChatCapability['state']) {
+		const key = capability.kind === 'skill' ? `skill:${capability.key}` : capability.key;
+		const states = { ...draftToolStates };
+		if (state === 'auto' && capability.kind === 'tool' && capability.group !== 'integrations') delete states[key];
+		else states[key] = state;
+		draftToolStates = states;
+		await run(() => ontools(true, states));
 	}
 </script>
 
@@ -92,25 +101,14 @@
 
 	{#if !token.revoked}
 		<label class="mt-3 flex items-center gap-3 text-sm">
-			<input type="checkbox" class="toggle toggle-primary toggle-sm" checked={token.tools_enabled} onchange={(event) => run(() => ontools(event.currentTarget.checked, token.disabled_tools))} disabled={busy} aria-label={t('tokens-tool-use-aria')} />
+			<input type="checkbox" class="toggle toggle-primary toggle-sm" checked={token.tools_enabled} onchange={(event) => run(() => ontools(event.currentTarget.checked, token.tool_states))} disabled={busy} aria-label={t('tokens-tool-use-aria')} />
 			<span><span class="font-medium">{t('tokens-tool-use-label')}</span><span class="ml-2 text-xs text-base-content/60">{t('tokens-tool-use-description')}</span></span>
 		</label>
 
 		{#if token.tools_enabled}
 			<div class="mt-2 flex items-center gap-2 border-t border-base-300 pt-3">
-				<span class="text-sm font-medium">{t('tokens-capabilities-summary')}</span>
-				<button type="button" class="btn btn-ghost btn-xs" onclick={() => (editingTools = true)}>{t('tokens-edit-button')}</button>
+				<CapabilityPicker capabilities={pickerCapabilities} onset={setCapability} triggerLabel={t('tokens-capabilities-summary')} dialogId={`token-tool-selector-${token.id}`} showActive={false} />
 			</div>
-			<EditModal bind:open={editingTools} wide footer="close" title={t('tokens-capabilities-summary')} description={token.name} cancellabel={t('tokens-panel-close')}>
-				<div class="max-h-[60vh] divide-y divide-base-300 overflow-y-auto">
-					{#each tools as tool (tool.key)}
-						<label class="flex items-center gap-4 py-2">
-							<span class="min-w-0 flex-1"><span class="text-sm">{tool.title}</span> <code class="text-xs text-base-content/50">{tool.tech}</code><span class="block text-xs text-base-content/60">{tool.description}</span></span>
-							<input type="checkbox" class="toggle toggle-primary toggle-sm" checked={!token.disabled_tools.includes(tool.key)} onchange={(event) => toolChanged(tool.key, event.currentTarget.checked)} disabled={busy} aria-label={t('tools-toggle-aria', { name: tool.title })} />
-						</label>
-					{/each}
-				</div>
-			</EditModal>
 			<label class="mt-3 flex items-start gap-3">
 				<input type="checkbox" class="checkbox checkbox-sm" checked={token.mcp_allow} onchange={(event) => run(() => onmcp(event.currentTarget.checked))} disabled={busy} aria-label={t('tokens-mcp-allow-aria')} />
 				<span><span class="text-sm font-medium">{t('tokens-mcp-allow-label')}</span><span class="block text-xs text-base-content/60">{t('tokens-mcp-allow-description')}</span></span>

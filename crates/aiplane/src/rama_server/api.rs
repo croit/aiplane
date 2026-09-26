@@ -32,7 +32,7 @@ use shared::api::{
 };
 use uuid::Uuid;
 
-use aiplane_api::pages::{entries_for_roles, valid_keys};
+use aiplane_api::pages::capabilities_for_user;
 use aiplane_core::rama_server::session::Session;
 use aiplane_core::server::auth::token;
 use aiplane_core::server::db::{token_tool_prefs, tokens, users};
@@ -134,8 +134,8 @@ pub async fn list_tokens(State(state): State<Arc<RamaState>>, req: Request) -> R
     };
     let mut out: Vec<TokenSummary> = Vec::with_capacity(list.len());
     for t in list {
-        let disabled = disabled_tools_for(&state, &t.id).await;
-        out.push(to_summary(t, disabled));
+        let states = tool_states_for(&state, &t.id).await;
+        out.push(to_summary(t, states));
     }
     json_ok(&out)
 }
@@ -177,13 +177,10 @@ pub async fn create_token(State(state): State<Arc<RamaState>>, req: Request) -> 
             return internal_error("user lookup failed");
         }
     };
-    let allowed_keys = valid_keys(&entries_for_roles(&state, &user.roles));
-    let mut disabled: Vec<String> = body.disabled_tools.clone();
-    disabled.sort();
-    disabled.dedup();
-    if let Some(bad) = disabled.iter().find(|k| !allowed_keys.contains(*k)) {
-        return invalid_request(&format!("unknown tool key `{bad}`"));
-    }
+    let states = match validate_token_states(&state, &user, &body.tool_states).await {
+        Ok(states) => states,
+        Err(message) => return invalid_request(&message),
+    };
 
     let now = Timestamp::now();
     let expires_at = now + SignedDuration::from_hours(24 * ttl_days);
@@ -203,13 +200,11 @@ pub async fn create_token(State(state): State<Arc<RamaState>>, req: Request) -> 
         tracing::warn!(error = %err, "storing token");
         return internal_error("storing token failed");
     }
-    for key in &disabled {
-        if let Err(err) = token_tool_prefs::set(&state.db, &row.id, key, false).await {
-            tracing::warn!(error = %err, token_id = %row.id, tool_key = %key, "token tool pref save");
-            return internal_error("storing token tool prefs failed");
-        }
+    if let Err(err) = token_tool_prefs::replace(&state.db, &row.id, &states).await {
+        tracing::warn!(error = %err, token_id = %row.id, "token tool pref save");
+        return internal_error("storing token tool prefs failed");
     }
-    let summary = to_summary(row, disabled);
+    let summary = to_summary(row, body.tool_states);
     json_ok(&CreateTokenResponse {
         token: summary,
         plaintext,
@@ -249,13 +244,10 @@ pub async fn update_token_tools(
             return internal_error("user lookup failed");
         }
     };
-    let allowed_keys = valid_keys(&entries_for_roles(&state, &user.roles));
-    let mut disabled: Vec<String> = body.disabled_tools.clone();
-    disabled.sort();
-    disabled.dedup();
-    if let Some(bad) = disabled.iter().find(|k| !allowed_keys.contains(*k)) {
-        return invalid_request(&format!("unknown tool key `{bad}`"));
-    }
+    let states = match validate_token_states(&state, &user, &body.tool_states).await {
+        Ok(states) => states,
+        Err(message) => return invalid_request(&message),
+    };
 
     // Master switch, scoped to the owner — a non-owned/missing id is a 404.
     match tokens::set_tools_enabled(&state.db, &session.user_id, &token_id, body.tools_enabled)
@@ -269,18 +261,13 @@ pub async fn update_token_tools(
         }
     }
 
-    // Replace prefs: write an explicit on/off for every key the user can
-    // see, so a key dropped from `disabled_tools` flips back on.
-    let disabled_set: std::collections::HashSet<&String> = disabled.iter().collect();
-    for key in &allowed_keys {
-        let enabled = !disabled_set.contains(key);
-        if let Err(err) = token_tool_prefs::set(&state.db, &token_id, key, enabled).await {
-            tracing::warn!(error = %err, %token_id, tool_key = %key, "token tool pref save");
-            return internal_error("storing token tool prefs failed");
-        }
+    if let Err(err) = token_tool_prefs::replace(&state.db, &token_id, &states).await {
+        tracing::warn!(error = %err, %token_id, "token tool pref save");
+        return internal_error("storing token tool prefs failed");
     }
-
-    json_ok(&json!({ "ok": true, "tools_enabled": body.tools_enabled, "disabled_tools": disabled }))
+    json_ok(
+        &json!({ "ok": true, "tools_enabled": body.tools_enabled, "tool_states": body.tool_states }),
+    )
 }
 
 /// POST /api/v0/tokens/{id}/revoke — flip `revoked_at` on an owned active row.
@@ -358,10 +345,10 @@ pub async fn rotate_token(
     }
 
     // Re-read so the returned summary reflects the rotated row exactly.
-    let disabled = disabled_tools_for(&state, &token_id).await;
+    let states = tool_states_for(&state, &token_id).await;
     let summary = match tokens::list_for_user(&state.db, &session.user_id).await {
         Ok(l) => match l.into_iter().find(|t| t.id == token_id) {
-            Some(t) => to_summary(t, disabled),
+            Some(t) => to_summary(t, states),
             None => return internal_error("rotated token vanished"),
         },
         Err(err) => {
@@ -1250,7 +1237,10 @@ pub async fn push_unsubscribe(State(state): State<Arc<RamaState>>, req: Request)
 // ---------------------------------------------------------------------------
 // Shared helpers (response builders + utilities)
 
-fn to_summary(t: tokens::Token, disabled_tools: Vec<String>) -> TokenSummary {
+fn to_summary(
+    t: tokens::Token,
+    tool_states: std::collections::BTreeMap<String, String>,
+) -> TokenSummary {
     TokenSummary {
         id: t.id,
         name: t.name,
@@ -1259,19 +1249,68 @@ fn to_summary(t: tokens::Token, disabled_tools: Vec<String>) -> TokenSummary {
         expires_at: t.expires_at,
         revoked: t.revoked_at.is_some(),
         tools_enabled: t.tools_enabled,
-        disabled_tools,
+        tool_states,
     }
 }
 
-/// The token's disabled toggle keys, sorted for a stable response.
-async fn disabled_tools_for(state: &RamaState, token_id: &str) -> Vec<String> {
-    let mut keys: Vec<String> = token_tool_prefs::disabled_for_token(&state.db, token_id)
+async fn tool_states_for(
+    state: &RamaState,
+    token_id: &str,
+) -> std::collections::BTreeMap<String, String> {
+    token_tool_prefs::states_for_token(&state.db, token_id)
         .await
         .unwrap_or_default()
         .into_iter()
-        .collect();
-    keys.sort();
-    keys
+        .map(|(key, mode)| {
+            (
+                key,
+                match mode {
+                    1 => "on",
+                    2 => "auto",
+                    _ => "off",
+                }
+                .into(),
+            )
+        })
+        .collect()
+}
+
+async fn validate_token_states(
+    state: &RamaState,
+    user: &users::User,
+    requested: &std::collections::BTreeMap<String, String>,
+) -> Result<std::collections::HashMap<String, i64>, String> {
+    let allowed: std::collections::HashSet<String> =
+        capabilities_for_user(state, &user.roles, &user.id)
+            .await
+            .into_iter()
+            .map(|entry| {
+                if entry.kind == "skill" {
+                    format!("skill:{}", entry.key)
+                } else {
+                    entry.key
+                }
+            })
+            .collect();
+    let mut states = std::collections::HashMap::new();
+    for (key, mode) in requested {
+        if !allowed.contains(key) {
+            return Err(format!("unknown capability key `{key}`"));
+        }
+        match mode.as_str() {
+            "on" => {
+                states.insert(key.clone(), 1);
+            }
+            "off" => {
+                states.insert(key.clone(), 0);
+            }
+            "auto" => {
+                states.insert(key.clone(), 2);
+            }
+            _ => return Err(format!("invalid capability state `{mode}`")),
+        }
+    }
+    Ok(states)
 }
 
 /// Validate a browser-reported lat/lon pair. On success returns a

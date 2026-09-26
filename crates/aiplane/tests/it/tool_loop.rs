@@ -38,6 +38,10 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// role "engineering" maps to "engineer", and the chat pool points at
 /// `upstream_uri`.
 async fn state_with_tools(upstream_uri: &str) -> RamaState {
+    state_with_tool_grants(upstream_uri, vec!["company_echo".into()]).await
+}
+
+async fn state_with_tool_grants(upstream_uri: &str, granted_tools: Vec<String>) -> RamaState {
     let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let mut pools = HashMap::new();
     pools.insert(
@@ -88,7 +92,7 @@ async fn state_with_tools(upstream_uri: &str) -> RamaState {
             id: "engineer".into(),
             admin: false,
             models: vec!["*".into()],
-            tools: vec!["company_echo".into()],
+            tools: granted_tools,
             skills: vec![],
         }],
     )
@@ -111,6 +115,10 @@ async fn state_with_tools(upstream_uri: &str) -> RamaState {
 
 /// Seed a user with the OIDC role + a bearer token.
 async fn seed_engineer_with_bearer(state: &RamaState) -> String {
+    seed_engineer_with_bearer_mode(state, true).await
+}
+
+async fn seed_engineer_with_bearer_mode(state: &RamaState, always_on: bool) -> String {
     use aiplane_core::server::auth::token;
     let now = Timestamp::now();
     users::upsert(
@@ -129,10 +137,11 @@ async fn seed_engineer_with_bearer(state: &RamaState) -> String {
     .await
     .unwrap();
     let (plaintext, hash) = token::mint();
+    let token_id = Uuid::new_v4().to_string();
     tokens::insert(
         &state.db,
         &tokens::Token {
-            id: Uuid::new_v4().to_string(),
+            id: token_id.clone(),
             user_id: "alice".into(),
             name: "test".into(),
             hash,
@@ -145,7 +154,207 @@ async fn seed_engineer_with_bearer(state: &RamaState) -> String {
     )
     .await
     .unwrap();
+    if always_on {
+        db::token_tool_prefs::set(&state.db, &token_id, "company_echo", true)
+            .await
+            .unwrap();
+    }
     plaintext
+}
+
+#[tokio::test]
+async fn token_capability_route_persists_auto_and_rejects_ungranted_keys() {
+    let state = state_with_tool_grants(
+        "http://unused.invalid",
+        vec!["get_current_timestamp".into()],
+    )
+    .await;
+    seed_engineer_with_bearer(&state).await;
+    let token_id = tokens::list_for_user(&state.db, "alice").await.unwrap()[0]
+        .id
+        .clone();
+    let session = state.sessions.create("alice").await.unwrap();
+    let cookie = state.sessions.sign(&session.id);
+    let app = common::app(state);
+    let uri = format!("/api/v0/tokens/{token_id}/tools");
+    let request = |states: serde_json::Value| {
+        Request::builder()
+            .method(Method::PUT)
+            .uri(&uri)
+            .header("cookie", format!("id={cookie}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"tools_enabled": true, "tool_states": states}).to_string(),
+            ))
+            .unwrap()
+    };
+    let saved = app
+        .serve(request(json!({"get_current_timestamp": "auto"})))
+        .await
+        .unwrap();
+    let saved_status = saved.status();
+    let saved_body = common::read_body(saved).await;
+    assert_eq!(
+        saved_status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&saved_body)
+    );
+    let details = app
+        .serve(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/v0/tokens/details")
+                .header("cookie", format!("id={cookie}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body: serde_json::Value =
+        serde_json::from_slice(&common::read_body(details).await).unwrap();
+    assert_eq!(
+        body["tokens"][0]["tool_states"]["get_current_timestamp"],
+        "auto"
+    );
+    assert_eq!(
+        app.serve(request(json!({"company_echo": "on"})))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[derive(Default)]
+struct DiscoveryResponder(std::sync::atomic::AtomicUsize);
+
+#[derive(Default)]
+struct StreamingDiscoveryResponder(std::sync::atomic::AtomicUsize);
+
+impl wiremock::Respond for StreamingDiscoveryResponder {
+    fn respond(&self, _req: &wiremock::Request) -> ResponseTemplate {
+        let round = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let frames = match round {
+            0 | 1 => {
+                let (name, arguments) = if round == 0 {
+                    ("search_gateway_tools", r#"{"query":"echo"}"#)
+                } else {
+                    ("company_echo", r#"{"message":"hello"}"#)
+                };
+                vec![
+                    json!({"id": format!("s-{round}"), "object": "chat.completion.chunk", "created": 1, "model": "model-a",
+                        "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": format!("call-{round}"), "type": "function", "function": {"name": name, "arguments": arguments}}]}, "finish_reason": null}]}),
+                    json!({"id": format!("s-{round}"), "object": "chat.completion.chunk", "created": 1, "model": "model-a",
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}),
+                ]
+            }
+            _ => vec![
+                json!({"id": "s-final", "object": "chat.completion.chunk", "created": 1, "model": "model-a",
+                "choices": [{"index": 0, "delta": {"content": "done"}, "finish_reason": "stop"}]}),
+            ],
+        };
+        ResponseTemplate::new(200).set_body_raw(sse_body(&frames), "text/event-stream")
+    }
+}
+
+impl wiremock::Respond for DiscoveryResponder {
+    fn respond(&self, _req: &wiremock::Request) -> ResponseTemplate {
+        let round = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let call = match round {
+            0 => Some(("search_gateway_tools", r#"{"query":"echo"}"#)),
+            1 => Some(("company_echo", r#"{"message":"hello"}"#)),
+            _ => None,
+        };
+        ResponseTemplate::new(200).set_body_json(match call {
+            Some((name, args)) => json!({
+                "choices": [{"message": {"role": "assistant", "content": null,
+                    "tool_calls": [{"id": format!("call-{round}"), "type": "function",
+                        "function": {"name": name, "arguments": args}}]},
+                    "finish_reason": "tool_calls"}]
+            }),
+            None => json!({"choices": [{"message": {"role": "assistant", "content": "done"}, "finish_reason": "stop"}]}),
+        })
+    }
+}
+
+#[tokio::test]
+async fn auto_token_discovers_only_the_tool_it_needs() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(DiscoveryResponder::default())
+        .mount(&upstream)
+        .await;
+    let state = state_with_tools(&upstream.uri()).await;
+    let bearer = seed_engineer_with_bearer_mode(&state, false).await;
+    let app = router(Arc::new(state));
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"model": "model-a", "messages": [{"role": "user", "content": "echo hello"}]})
+                .to_string(),
+        ))
+        .unwrap();
+    let response = app.serve(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = upstream.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 3);
+    let first: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let second: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    let first_names = first["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    let second_names = second["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(first_names, vec!["search_gateway_tools"]);
+    assert_eq!(second_names, vec!["search_gateway_tools", "company_echo"]);
+}
+
+#[tokio::test]
+async fn streaming_auto_token_discovers_only_the_tool_it_needs() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(StreamingDiscoveryResponder::default())
+        .mount(&upstream)
+        .await;
+    let state = state_with_tools(&upstream.uri()).await;
+    let bearer = seed_engineer_with_bearer_mode(&state, false).await;
+    let app = router(Arc::new(state));
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"model": "model-a", "stream": true, "messages": [{"role": "user", "content": "echo hello"}]}).to_string()))
+        .unwrap();
+    let response = app.serve(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = String::from_utf8(common::read_body(response).await.to_vec()).unwrap();
+    assert!(body.contains("done"));
+    let requests = upstream.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 3);
+    let first: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let second: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert_eq!(first["tools"].as_array().unwrap().len(), 1);
+    assert!(
+        second["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["function"]["name"] == "company_echo")
+    );
 }
 
 #[tokio::test]

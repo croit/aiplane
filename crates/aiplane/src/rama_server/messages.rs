@@ -99,7 +99,7 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
     // The same tool surface `/v1/chat/completions` resolves, from the same
     // place: gateway tools ride along only when the token has tool use
     // enabled, and this endpoint is pure translation when it doesn't.
-    let (allowed_tools, user_mcp) = state.api_tool_layer(&user).await;
+    let (allowed_tools, auto_tools, user_mcp) = state.api_tool_layer(&user).await;
 
     // Resolve aliases + the unknown-model fallback once, up front. This is
     // what makes `claude-sonnet-4-6` (a name no self-hosted backend serves)
@@ -112,7 +112,7 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
         &translated.body,
         &access,
         &parts.headers,
-        !allowed_tools.is_empty(),
+        !allowed_tools.is_empty() || !auto_tools.is_empty(),
     )
     .await
     {
@@ -191,6 +191,7 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
             client_ip,
             request_body,
             allowed_tools,
+            auto_tools,
             user_mcp,
             Box::new(AnthropicSink::new(&requested_model)),
         )
@@ -206,6 +207,7 @@ pub async fn messages(State(state): State<Arc<RamaState>>, req: Request) -> Resp
             client_ip,
             request_body,
             allowed_tools,
+            auto_tools,
             user_mcp,
         )
         .await
@@ -438,6 +440,7 @@ async fn buffered(
     client_ip: Option<String>,
     request_body: Value,
     allowed_tools: Vec<String>,
+    auto_tools: Vec<String>,
     user_mcp: aiplane_runtime::server::tools::mcp::manager::UserMcpLayer,
 ) -> Response {
     let outcome = match proxy::buffered_with_tools(
@@ -449,6 +452,7 @@ async fn buffered(
         client_ip,
         request_body,
         &allowed_tools,
+        &auto_tools,
         &user_mcp,
     )
     .await

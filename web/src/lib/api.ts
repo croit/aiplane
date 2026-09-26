@@ -76,15 +76,15 @@ export interface TokenSummary {
 	revoked: boolean;
 	/** Master tool switch; false (default) means pure passthrough. */
 	tools_enabled: boolean;
-	/** Toggle keys disabled for this token; unlisted capabilities are on. */
-	disabled_tools: string[];
+	/** Explicit capability states; unlisted capabilities use discovery. */
+	tool_states: Record<string, 'on' | 'auto' | 'off'>;
 }
 
 export interface CreateTokenRequest {
 	name: string;
 	ttl_days?: number | null;
 	tools_enabled?: boolean | null;
-	disabled_tools?: string[];
+	tool_states?: Record<string, 'on' | 'auto' | 'off'>;
 }
 
 /** The token summary plus its plaintext secret, shown exactly once. */
@@ -105,7 +105,7 @@ export interface DeleteResponse {
 
 export interface UpdateTokenToolsRequest {
 	tools_enabled: boolean;
-	disabled_tools: string[];
+	tool_states: Record<string, 'on' | 'auto' | 'off'>;
 }
 
 export class ApiError extends Error {
@@ -459,7 +459,7 @@ export const api = {
 
 	/** PUT /api/v0/tokens/{id}/tools — replace the token's tool config. */
 	updateTokenTools: (id: string, body: UpdateTokenToolsRequest) =>
-		request<{ ok: boolean; tools_enabled: boolean; disabled_tools: string[] }>(
+		request<{ ok: boolean; tools_enabled: boolean; tool_states: Record<string, 'on' | 'auto' | 'off'> }>(
 			`/api/v0/tokens/${encodeURIComponent(id)}/tools`,
 			{ method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
 		),

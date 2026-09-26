@@ -925,6 +925,7 @@ mod tests {
 
     fn ctx_with(indexer: Indexer) -> ToolContext {
         ToolContext {
+            token_id: None,
             user_id: "u".into(),
             roles: vec![],
             pool_access: aiplane_core::server::upstreams::PoolAccess::all(),

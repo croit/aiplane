@@ -21,6 +21,7 @@ use shared::api::ToolDef;
 use thiserror::Error;
 
 pub mod catalog;
+pub mod discovery;
 pub mod echo;
 pub mod feedback;
 pub mod mcp;
@@ -38,6 +39,8 @@ pub use registry::{ToolRegistry, ToolSource};
 #[derive(Clone)]
 pub struct ToolContext {
     pub user_id: String,
+    /// Bearer-token id on `/v1`; absent for browser chat and internal turns.
+    pub token_id: Option<String>,
     pub roles: Vec<String>,
     /// The caller's resolved upstream access — pool `allowed_groups` plus, on
     /// a bearer request, the calling API token's model allowlist.
@@ -169,6 +172,7 @@ impl ToolContext {
     pub fn for_test(db: aiplane_core::server::db::Pool) -> Self {
         Self {
             user_id: "u".into(),
+            token_id: None,
             roles: vec![],
             // Unrestricted: a test that cares about scoping sets it.
             pool_access: aiplane_core::server::upstreams::PoolAccess::all(),

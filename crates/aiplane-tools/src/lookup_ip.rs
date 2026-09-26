@@ -176,6 +176,7 @@ mod tests {
     async fn ctx(geoip: Option<aiplane_features::server::geoip::GeoIp>) -> ToolContext {
         let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
         ToolContext {
+            token_id: None,
             user_id: "u".into(),
             roles: vec![],
             pool_access: aiplane_core::server::upstreams::PoolAccess::all(),

@@ -210,11 +210,10 @@ mod token_gate_tests {
     }
 
     #[tokio::test]
-    async fn master_on_with_no_prefs_grants_the_full_user_set() {
+    async fn master_on_with_no_prefs_leaves_tools_for_discovery() {
         let state = star_state().await;
         let got = state.allowed_tools_for_token(&ctx("tok", true)).await;
-        assert!(got.contains(&"search_web".to_string()));
-        assert!(got.contains(&"get_current_timestamp".to_string()));
+        assert!(got.is_empty());
     }
 
     #[tokio::test]
@@ -222,6 +221,9 @@ mod token_gate_tests {
         let state = star_state().await;
         seed_token(&state, "tok").await;
         token_tool_prefs::set(&state.db, "tok", "search_web", false)
+            .await
+            .unwrap();
+        token_tool_prefs::set(&state.db, "tok", "get_current_timestamp", true)
             .await
             .unwrap();
         let got = state.allowed_tools_for_token(&ctx("tok", true)).await;
@@ -243,8 +245,28 @@ mod token_gate_tests {
         token_tool_prefs::set(&state.db, "tok-a", "search_web", false)
             .await
             .unwrap();
+        seed_token(&state, "tok-b").await;
+        token_tool_prefs::set(&state.db, "tok-b", "search_web", true)
+            .await
+            .unwrap();
         let other = state.allowed_tools_for_token(&ctx("tok-b", true)).await;
         assert!(other.contains(&"search_web".to_string()));
+    }
+
+    #[tokio::test]
+    async fn api_tool_layer_splits_always_auto_and_off() {
+        let state = star_state().await;
+        seed_token(&state, "tok").await;
+        token_tool_prefs::set(&state.db, "tok", "search_web", true)
+            .await
+            .unwrap();
+        token_tool_prefs::set(&state.db, "tok", "get_current_timestamp", false)
+            .await
+            .unwrap();
+        let (always, auto, _) = state.api_tool_layer(&ctx("tok", true)).await;
+        assert!(always.contains(&"search_web".to_string()));
+        assert!(!always.contains(&"get_current_timestamp".to_string()));
+        assert!(!auto.contains(&"get_current_timestamp".to_string()));
     }
 }
 

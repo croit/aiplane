@@ -570,6 +570,7 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
     let pool_access = pool_access.unwrap_or_else(|| state.pool_access_for(&roles));
     ToolContext {
         user_id,
+        token_id: None,
         roles,
         pool_access,
         db: state.db.clone(),

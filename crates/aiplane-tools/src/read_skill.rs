@@ -143,7 +143,16 @@ impl Tool for ReadSkill {
             // non-existent one get the identical answer. Snapshot the live
             // combined registry (global + this user's private) once so it stays
             // alive for the borrows below.
-            let allowed = self.allowed_for(&ctx);
+            let mut allowed = self.allowed_for(&ctx);
+            if let Some(token_id) = &ctx.token_id {
+                let states =
+                    aiplane_core::server::db::token_tool_prefs::states_for_token(&ctx.db, token_id)
+                        .await
+                        .map_err(|err| {
+                            ToolError::Failed(format!("reading token skill permissions: {err}"))
+                        })?;
+                allowed.retain(|name| matches!(states.get(&format!("skill:{name}")), Some(1 | 2)));
+            }
             let registry = self.registry_for(&ctx);
             let skill = match registry.get(&args.name) {
                 Some(s) if allowed.iter().any(|n| n == &args.name) => s,
@@ -260,6 +269,7 @@ mod tests {
 
     fn ctx_with(pool: aiplane_core::server::db::Pool, session_id: Option<String>) -> ToolContext {
         ToolContext {
+            token_id: None,
             user_id: "u1".into(),
             roles: vec!["user".into()],
             pool_access: aiplane_core::server::upstreams::PoolAccess::all(),
@@ -405,6 +415,62 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ToolError::Failed(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn token_requires_explicit_skill_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = aiplane_core::server::db::open(Path::new(":memory:"))
+            .await
+            .unwrap();
+        seed_session(&pool, "s1").await;
+        let now = jiff::Timestamp::now();
+        aiplane_core::server::db::tokens::insert(
+            &pool,
+            &aiplane_core::server::db::tokens::Token {
+                id: "tok".into(),
+                user_id: "u1".into(),
+                name: "test".into(),
+                hash: "hash".into(),
+                created_at: now,
+                last_used_at: None,
+                expires_at: now + jiff::SignedDuration::from_hours(1),
+                revoked_at: None,
+                tools_enabled: true,
+            },
+        )
+        .await
+        .unwrap();
+        let tool = ReadSkill::new(
+            store(dir.path(), &["brand"]),
+            user_store_in(dir.path()),
+            rbac_granting(&["brand"]),
+        );
+        let mut context = ctx_with(pool.clone(), None);
+        context.token_id = Some("tok".into());
+        assert!(matches!(
+            tool.run(context.clone(), json!({"name": "brand"})).await,
+            Err(ToolError::Failed(_))
+        ));
+        aiplane_core::server::db::token_tool_prefs::replace(
+            &pool,
+            "tok",
+            &std::collections::HashMap::from([("skill:brand".into(), 2)]),
+        )
+        .await
+        .unwrap();
+        assert!(
+            tool.run(context.clone(), json!({"name": "brand"}))
+                .await
+                .is_ok()
+        );
+        aiplane_core::server::db::token_tool_prefs::set(&pool, "tok", "skill:brand", false)
+            .await
+            .unwrap();
+        assert!(matches!(
+            tool.run(context, json!({"name": "brand"})).await,
+            Err(ToolError::Failed(_))
+        ));
     }
 
     #[tokio::test]

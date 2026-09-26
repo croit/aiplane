@@ -1114,6 +1114,7 @@ mod tests {
     /// need any.
     fn ctx_no_s3(pool: aiplane_core::server::db::Pool) -> ToolContext {
         ToolContext {
+            token_id: None,
             user_id: "u1".into(),
             roles: vec![],
             pool_access: aiplane_core::server::upstreams::PoolAccess::all(),
@@ -1158,6 +1159,7 @@ mod tests {
             .await
             .unwrap();
         let ctx = ToolContext {
+            token_id: None,
             user_id: "u".into(),
             roles: vec![],
             pool_access: aiplane_core::server::upstreams::PoolAccess::all(),

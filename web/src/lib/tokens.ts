@@ -1,4 +1,4 @@
-import type { ToolEntry } from './tools';
+import type { ChatCapability } from './api';
 
 export interface TokenQuota {
 	id: string;
@@ -23,7 +23,7 @@ export interface ManagedToken {
 	expires_at: string;
 	revoked: boolean;
 	tools_enabled: boolean;
-	disabled_tools: string[];
+	tool_states: Record<string, 'on' | 'auto' | 'off'>;
 	owner_models: string[] | null;
 	admin_models: string[] | null;
 	mcp_allow: boolean;
@@ -33,7 +33,7 @@ export interface ManagedToken {
 
 export interface TokenManagementDetails {
 	tokens: ManagedToken[];
-	tools: Omit<ToolEntry, 'enabled'>[];
+	capabilities: Omit<ChatCapability, 'state'>[];
 	models: string[];
 	usage_enabled: boolean;
 	currency: string;

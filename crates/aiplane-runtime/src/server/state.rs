@@ -475,24 +475,8 @@ impl AppState {
         }
     }
 
-    /// The tool ids an **API token** may use this request — the per-token
-    /// overlay on top of [`Self::allowed_tools_for_user`]:
-    ///
-    /// ```text
-    /// effective = (rbac_allowed − user_global_disabled − token_disabled)  if tools_enabled
-    ///           = ∅                                                       otherwise (DEFAULT)
-    /// ```
-    ///
-    /// The master `tools_enabled` flag defaults off, so a token sees no
-    /// gateway tools until its owner opts in; an empty result makes the
-    /// proxy take its byte-dumb 1:1 passthrough. Once on, the
-    /// `token_tool_prefs` rows subtract individual capabilities (same
-    /// toggle-key semantics as the `/tools` page). RBAC + the user's
-    /// global toggles stay the outer bound — a token can only ever
-    /// *narrow*, never grant. A DB hiccup on the per-token lookup degrades
-    /// to "nothing disabled" rather than failing the request. This is the
-    /// single home every bearer (`/v1`) path resolves through, so buffered,
-    /// streaming, and passthrough can't drift.
+    /// Static tool ids explicitly pinned On for this token. Missing prefs
+    /// are Auto and are resolved through [`Self::api_tool_layer`].
     pub async fn allowed_tools_for_token(
         &self,
         ctx: &aiplane_core::server::auth::UserCtx,
@@ -501,14 +485,12 @@ impl AppState {
             return Vec::new();
         }
         let mut allowed = self.allowed_tools_for_user(&ctx.roles, &ctx.user_id).await;
-        let disabled =
-            aiplane_core::server::db::token_tool_prefs::disabled_for_token(&self.db, &ctx.token_id)
+        let states =
+            aiplane_core::server::db::token_tool_prefs::states_for_token(&self.db, &ctx.token_id)
                 .await
                 .unwrap_or_default();
-        crate::server::tools::catalog::retain_enabled(&mut allowed, &disabled);
-        // NB: per-user MCP connector tool ids are unioned in by the caller from
-        // a once-per-request `UserMcpLayer` (see `union_mcp_tool_ids`), so the
-        // advertised set and the executing `CompositeToolSource` never diverge.
+        allowed
+            .retain(|id| states.get(crate::server::tools::catalog::entry_key_for(id)) == Some(&1));
         allowed
     }
 
@@ -980,28 +962,41 @@ impl AppState {
     /// already-resolved registry `allowed` set. Keeping the layer the *single*
     /// source of both the advertised ids and the executing
     /// `CompositeToolSource` is what guarantees they can't diverge.
-    /// The complete tool surface a bearer (`/v1`) request may use: the ids to
-    /// advertise, and the caller's connected-connector overlay that can
-    /// dispatch them.
+    /// The complete bearer surface: Always On ids, Auto ids, and the caller's
+    /// connected-connector overlay.
     ///
-    /// Four coupled steps whose order is load-bearing — RBAC-and-toggles,
-    /// then the caller's MCP layer, then the union so advertise and execute
-    /// can't drift, then the session-only filter. Every `/v1` surface needs
-    /// all four, and stating them per endpoint is how the fourth one (the
-    /// policy that a sessionless request must not be offered a chat-only
-    /// tool) ends up fixed in one copy and not the other.
+    /// RBAC and user toggles bound the MCP union; token states then partition
+    /// that set for immediate disclosure or search-based disclosure.
     pub async fn api_tool_layer(
         &self,
         user: &aiplane_core::server::auth::UserCtx,
     ) -> (
         Vec<String>,
+        Vec<String>,
         crate::server::tools::mcp::manager::UserMcpLayer,
     ) {
-        let mut allowed = self.allowed_tools_for_token(user).await;
-        // Built once per request so the ids advertised are exactly the ids the
-        // composite source can dispatch. Empty and cheap when the token's
-        // master tool switch is off, which is the default.
-        let layer = if user.tools_enabled {
+        if !user.tools_enabled {
+            return (Vec::new(), Vec::new(), Default::default());
+        }
+        let mut allowed = self
+            .allowed_tools_for_user(&user.roles, &user.user_id)
+            .await;
+        let states = match aiplane_core::server::db::token_tool_prefs::states_for_token(
+            &self.db,
+            &user.token_id,
+        )
+        .await
+        {
+            Ok(states) => states,
+            Err(err) => {
+                tracing::warn!(error = %err, token_id = %user.token_id, "loading token tool permissions failed");
+                return (Vec::new(), Vec::new(), Default::default());
+            }
+        };
+        let mcp_enabled = states.iter().any(|(key, mode)| {
+            key.starts_with(crate::server::tools::mcp::MCP_ID_PREFIX) && matches!(mode, 1 | 2)
+        });
+        let layer = if mcp_enabled {
             let role_ids = self.role_ids_for(&user.roles);
             let is_admin = self.rbac.is_admin(&role_ids);
             self.mcp
@@ -1018,12 +1013,43 @@ impl AppState {
             crate::server::tools::mcp::manager::UserMcpLayer::default()
         };
         self.union_mcp_tool_ids(&mut allowed, &layer, &self.mcp_grant_for(&user.roles));
-        // No chat session on a `/v1` path, so the typst family, the
-        // document-canvas tools and `upload_attachment` can't run: advertising
-        // one only lets the model pick it and get an error instead of an
-        // answer.
         allowed.retain(|id| !crate::server::tools::catalog::requires_chat_session(id));
-        (allowed, layer)
+        allowed.retain(|id| id != crate::server::tools::catalog::BOOTSTRAP_TOOL_ID);
+        let skill_modes = self
+            .allowed_skills_for(&user.roles, &user.user_id)
+            .into_iter()
+            .map(|name| states.get(&format!("skill:{name}")).copied())
+            .collect::<Vec<_>>();
+        let mut always = Vec::new();
+        let mut auto = Vec::new();
+        for id in allowed {
+            let mode = if id == crate::server::tools::catalog::READ_SKILL_ID {
+                if skill_modes.contains(&Some(1)) {
+                    1
+                } else if skill_modes.contains(&Some(2)) {
+                    2
+                } else {
+                    0
+                }
+            } else {
+                states
+                    .get(crate::server::tools::catalog::entry_key_for(&id))
+                    .copied()
+                    .unwrap_or(
+                        if id.starts_with(crate::server::tools::mcp::MCP_ID_PREFIX) {
+                            0
+                        } else {
+                            2
+                        },
+                    )
+            };
+            match mode {
+                1 => always.push(id),
+                2 => auto.push(id),
+                _ => {}
+            }
+        }
+        (always, auto, layer)
     }
 
     pub fn union_mcp_tool_ids(

@@ -117,6 +117,7 @@ async fn seed(pool: &db::Pool, user_turn: &str, asst_turn: &str, deck: &[u8]) {
 fn ctx(pool: db::Pool, asst_turn: &str) -> ToolContext {
     ToolContext {
         user_id: "u1".into(),
+        token_id: None,
         roles: vec![],
         pool_access: aiplane_core::server::upstreams::PoolAccess::all(),
         db: pool,

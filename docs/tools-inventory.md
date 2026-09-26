@@ -38,6 +38,7 @@ message rather than being absent.
 | Tool | Chat-only | Toggle key | What it does |
 |---|---|---|---|
 | `enable_tools` | — | *(hidden, always on)* | The lazy-disclosure bootstrap: turns other tool groups on for the rest of the conversation. Not presented as a toggle — `allowed_tools_for_session` force-keeps `BOOTSTRAP_TOOL_ID`, so a switch for it would be inert. |
+| `search_gateway_tools` | — | *(hidden, `/v1` only)* | Searches the Auto capabilities allowed by an API token and exposes at most five matching tool schemas in the next model round. |
 | `company_echo` | — | *(hidden)* | Smoke test for the tool-call loop. Hidden from `/tools` and from `enable_tools` via `is_hidden`; still RBAC-grantable. |
 | `get_current_timestamp` | — | `get_current_timestamp` | Timezone-aware current date/time, from the caller's `users.timezone`. |
 | `convert_currency` | — | `convert_currency` | Currency conversion at daily ECB reference rates. |

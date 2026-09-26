@@ -1577,88 +1577,37 @@ fn tool_state(value: Option<&bool>) -> &'static str {
 }
 
 async fn capability_views(state: &RamaState, user: &User, session_id: &str) -> Vec<CapabilityView> {
-    use aiplane_runtime::server::tools::catalog::Category;
-
     let states =
         aiplane_core::server::db::chat_session_tools::states_for_session(&state.db, session_id)
             .await
             .unwrap_or_default();
-    let mut views = crate::pages::tool_toggles::entries_for_roles(state, &user.roles)
-        .into_iter()
-        .filter(|entry| entry.category != Category::Integrations)
-        .map(|entry| CapabilityView {
-            state: tool_state(states.get(&entry.key)),
-            key: entry.key,
-            kind: "tool",
-            title: entry.title,
-            description: entry.description,
-            group: entry.category.key().to_string(),
-            order: entry.category.order(),
-            can_disable: true,
-            icon: None,
-        })
-        .collect::<Vec<_>>();
-
-    let role_ids = state.role_ids_for(&user.roles);
-    let admin = state.rbac.is_admin(&role_ids);
-    let connected = aiplane_core::server::db::user_mcp::connected_keys(&state.db, &user.id)
-        .await
-        .unwrap_or_default();
-    for connector_key in connected {
-        let Ok(Some(connector)) =
-            aiplane_core::server::db::mcp_catalog::get(&state.db, &connector_key).await
-        else {
-            continue;
-        };
-        if !connector.enabled || !connector.allows(&role_ids, admin) {
-            continue;
-        }
-        let key = format!(
-            "{}{connector_key}",
-            aiplane_runtime::server::tools::mcp::MCP_ID_PREFIX
-        );
-        views.push(CapabilityView {
-            state: tool_state(states.get(&key)),
-            key,
-            kind: "tool",
-            title: connector.name,
-            description: connector.description.unwrap_or_default(),
-            group: Category::Integrations.key().to_string(),
-            order: Category::Integrations.order(),
-            can_disable: true,
-            icon: connector.icon,
-        });
-    }
-
     let loaded =
         aiplane_core::server::db::chat_session_skills::loaded_for_session(&state.db, session_id)
             .await
             .unwrap_or_default();
-    let registry = state.combined_skills_for(&user.id);
-    for name in state.allowed_skills_for(&user.roles, &user.id) {
-        let (title, description) = registry
-            .as_ref()
-            .and_then(|skills| skills.get(&name))
-            .map(|skill| (skill.title.clone(), skill.description.clone()))
-            .unwrap_or_else(|| (name.clone(), String::new()));
-        views.push(CapabilityView {
-            state: if loaded.contains(&name) { "on" } else { "auto" },
-            key: name,
-            kind: "skill",
-            title,
-            description,
-            group: "skills".to_string(),
-            order: u8::MAX,
-            can_disable: false,
-            icon: None,
-        });
-    }
-    views.sort_by(|left, right| {
-        left.order
-            .cmp(&right.order)
-            .then_with(|| left.title.cmp(&right.title))
-    });
-    views
+    crate::pages::tool_toggles::capabilities_for_user(state, &user.roles, &user.id)
+        .await
+        .into_iter()
+        .map(|entry| CapabilityView {
+            state: if entry.kind == "skill" {
+                if loaded.contains(&entry.key) {
+                    "on"
+                } else {
+                    "auto"
+                }
+            } else {
+                tool_state(states.get(&entry.key))
+            },
+            key: entry.key,
+            kind: entry.kind,
+            title: entry.title,
+            description: entry.description,
+            group: entry.group,
+            order: entry.order,
+            can_disable: entry.kind != "skill",
+            icon: entry.icon,
+        })
+        .collect()
 }
 
 #[derive(serde::Deserialize)]

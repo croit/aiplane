@@ -322,6 +322,7 @@ mod tests {
             .await
             .unwrap();
         let ctx = ToolContext {
+            token_id: None,
             user_id: "u1".into(),
             roles: vec![],
             pool_access: aiplane_core::server::upstreams::PoolAccess::all(),

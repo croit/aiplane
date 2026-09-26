@@ -340,13 +340,10 @@ impl Resolver {
     /// How the caller's grants narrow their MCP tools.
     ///
     /// Connector `allowed_groups` decides which connectors a caller reaches;
-    /// this decides how much of a reached connector they see. A deployment that
-    /// has never granted an `mcp__…` id is [`McpGrant::Unscoped`] and behaves
-    /// exactly as it did before per-tool grants existed, so turning this on
-    /// takes nothing away from anyone.
+    /// an explicit grant decides which tools may be used. No grant denies MCP.
     pub fn mcp_grant(&self, role_ids: &[String], mcp_prefix: &str) -> McpGrant {
         let Ok(snap) = self.inner.read() else {
-            return McpGrant::Unscoped;
+            return McpGrant::Scoped(Vec::new());
         };
         let mut scoped: Vec<String> = Vec::new();
         for role_id in role_ids {
@@ -366,7 +363,7 @@ impl Resolver {
             }
         }
         if scoped.is_empty() {
-            McpGrant::Unscoped
+            McpGrant::Scoped(Vec::new())
         } else {
             McpGrant::Scoped(scoped)
         }
@@ -452,9 +449,8 @@ fn build_snapshot(snap: &GroupSnapshot, bootstrap: &[String]) -> Snapshot {
 /// MCP tools their connectors already allow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpGrant {
-    /// Nothing in the caller's grants mentions MCP, so the connector's
-    /// `allowed_groups` stays the only gate — the behaviour before per-tool
-    /// grants existed, and what an admin or a `*` grant also produces.
+    /// A wildcard grant or administrator group permits every tool of a
+    /// connector that the caller can reach.
     Unscoped,
     /// The caller's grants name MCP explicitly, so only tools whose own id or
     /// whose `mcp__<server>` key appears here survive. Never widens: the
@@ -598,13 +594,11 @@ mod tests {
         }
     }
 
-    // The point of the default: a deployment that has never written an `mcp__`
-    // grant must keep seeing every tool its connectors allow.
     #[test]
-    fn mcp_is_unscoped_when_no_grant_mentions_it() {
+    fn mcp_is_denied_when_no_grant_mentions_it() {
         let r =
             Resolver::build(RbacConfig::default(), vec![role("staff", &["search_web"])]).unwrap();
-        assert_eq!(r.mcp_grant(&ids(&["staff"]), MCP), McpGrant::Unscoped);
+        assert_eq!(r.mcp_grant(&ids(&["staff"]), MCP), McpGrant::Scoped(vec![]));
     }
 
     #[test]

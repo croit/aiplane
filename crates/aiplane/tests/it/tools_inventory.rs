@@ -55,6 +55,7 @@ const EXPECTED_UTILITY: &[&str] = &[
     "company_echo",
     "convert_currency",
     "enable_tools",
+    "search_gateway_tools",
     "get_current_timestamp",
     "get_user_location",
 ];
