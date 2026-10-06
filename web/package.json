@@ -30,7 +30,7 @@
 	"dependencies": {
 		"@zumer/snapdom": "^3.1.1",
 		"dompurify": "^3.4.16",
-		"marked": "^18.0.12"
+		"marked": "^18.0.14"
 	},
 	"//overrides": "@sveltejs/kit still declares cookie ^0.6.0, which pins the tree to a version with GHSA-pxg6-pf52-xh8x (out-of-bounds characters accepted in cookie name/path/domain). No published kit release relaxes that range, so force the patched line here. Drop this once kit's own dependency moves past 0.7.",
 	"overrides": {
