@@ -134,21 +134,6 @@ async fn handing_off_with(llm: &MockServer, spec: Value) -> Embed {
 }
 
 impl Embed {
-    async fn quiet(&self, token: &str) -> chat::Turn {
-        let session = self.conversation_of(token).await;
-        for _ in 0..500 {
-            let turns = chat::list_turns(&self.fx.state.db, &session).await.unwrap();
-            let last = turns.last().unwrap().turn.clone();
-            let running = last.status == chat::TurnStatus::InProgress
-                || self.fx.state.chats.get(&self.agent, &session).is_some();
-            if !running && last.role == chat::TurnRole::Assistant {
-                return last;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("the conversation never settled");
-    }
-
     async fn stream(&self, token: &str) -> Vec<(String, Value)> {
         let resp = self
             .raw(
@@ -186,7 +171,7 @@ async fn a_responder_answers_a_handoff_from_the_inbox_and_the_visitor_receives_i
         e.say(&token, "I was billed twice for RE-1.").await.status,
         StatusCode::ACCEPTED
     );
-    let paused = e.quiet(&token).await;
+    let paused = e.settled(&token).await;
     assert_eq!(paused.status, chat::TurnStatus::Suspended);
     let waiting = e.stream(&token).await;
     let (event, frame) = waiting.last().unwrap();
@@ -217,7 +202,7 @@ async fn a_responder_answers_a_handoff_from_the_inbox_and_the_visitor_receives_i
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
-    let done = e.quiet(&token).await;
+    let done = e.settled(&token).await;
     assert_eq!(done.status, chat::TurnStatus::Completed);
     assert_eq!(done.content.as_deref(), Some(RELAYED));
 
@@ -298,7 +283,7 @@ async fn a_german_responder_resumes_an_english_visitor_in_english() {
     let token = e.visitor().await;
     let said = e.say_in(&token, "I was billed twice for RE-1.", "en").await;
     assert_eq!(said.status, StatusCode::ACCEPTED);
-    assert_eq!(e.quiet(&token).await.status, chat::TurnStatus::Suspended);
+    assert_eq!(e.settled(&token).await.status, chat::TurnStatus::Suspended);
     let (_, inbox) = e.fx.get(&people.sam, "/api/v0/agents/inbox").await;
     let id = inbox["items"][0]["id"].as_str().unwrap().to_string();
 
@@ -314,7 +299,7 @@ async fn a_german_responder_resumes_an_english_visitor_in_english() {
         .unwrap();
     let resp = common::app(e.fx.state.clone()).serve(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let done = e.quiet(&token).await;
+    let done = e.settled(&token).await;
     assert_eq!(
         done.content.as_deref(),
         Some(session_core::i18n::t(session_core::i18n::Lang::En, "agent-output-withheld").as_str())
@@ -334,7 +319,7 @@ async fn a_responder_sees_the_item_and_nothing_else_of_the_agent() {
         .await;
     let token = e.visitor().await;
     e.say(&token, "Refund please.").await;
-    e.quiet(&token).await;
+    e.settled(&token).await;
     let session = e.conversation_of(&token).await;
     let turns = chat::list_turns(&e.fx.state.db, &session).await.unwrap();
     let turn = &turns.last().unwrap().turn.id;
@@ -387,7 +372,7 @@ async fn a_manager_with_a_respond_share_answers_but_cannot_open_the_agent() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let token = e.visitor().await;
     e.say(&token, "Refund please.").await;
-    e.quiet(&token).await;
+    e.settled(&token).await;
     let session = e.conversation_of(&token).await;
     let turns = chat::list_turns(&e.fx.state.db, &session).await.unwrap();
     let turn = &turns.last().unwrap().turn.id;
@@ -448,7 +433,7 @@ async fn someone_who_may_not_answer_sees_nothing_and_cannot_answer() {
     let people = staff(&e.fx).await;
     let token = e.visitor().await;
     e.say(&token, "Refund please.").await;
-    e.quiet(&token).await;
+    e.settled(&token).await;
 
     let (_, alice) = e.fx.get(&e.fx.alice, "/api/v0/agents/inbox").await;
     assert_eq!(
@@ -469,7 +454,7 @@ async fn someone_who_may_not_answer_sees_nothing_and_cannot_answer() {
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
         assert_eq!(body["error"]["code"], "inbox_item_not_found");
     }
-    assert_eq!(e.quiet(&token).await.status, chat::TurnStatus::Suspended);
+    assert_eq!(e.settled(&token).await.status, chat::TurnStatus::Suspended);
 
     let (status, body) =
         e.fx.post(

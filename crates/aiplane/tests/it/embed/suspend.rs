@@ -137,13 +137,21 @@ impl Embed {
 
     /// Wait until the conversation's latest turn is no longer running and no
     /// runner holds the conversation.
+    ///
+    /// The claim is looked at before the turn is read: a run finishes its row
+    /// and only then lets the output filter overwrite it, releasing the claim
+    /// last. A row read after a free claim is the delivered one; read the
+    /// other way round, it can be the unfiltered answer of a run whose claim
+    /// dropped in between.
     pub(super) async fn settled(&self, token: &str) -> chat::Turn {
         let session = self.conversation_of(token).await;
         for _ in 0..500 {
+            let held = self.fx.state.chats.get(&self.agent, &session).is_some();
             let t = self.last_turn(token).await;
-            let running = t.status == chat::TurnStatus::InProgress
-                || self.fx.state.chats.get(&self.agent, &session).is_some();
-            if !running && t.role == chat::TurnRole::Assistant {
+            if !held
+                && t.status != chat::TurnStatus::InProgress
+                && t.role == chat::TurnRole::Assistant
+            {
                 return t;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
