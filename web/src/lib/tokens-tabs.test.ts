@@ -12,6 +12,8 @@ test('tokens page defaults to management and accepts only known tabs', () => {
 test('guides default to OpenCode and accept only known clients', () => {
 	assert.equal(selectedGuideTab(''), 'opencode');
 	assert.equal(selectedGuideTab('?client=claude'), 'claude');
+	assert.equal(selectedGuideTab('?client=pi'), 'pi');
+	assert.equal(selectedGuideTab('?client=omp'), 'omp');
 	assert.equal(selectedGuideTab('?client=python'), 'python');
 	assert.equal(selectedGuideTab('?client=openwebui'), 'opencode');
 	assert.equal(selectedGuideTab('?client=unknown'), 'opencode');

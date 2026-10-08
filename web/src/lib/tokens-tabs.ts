@@ -1,7 +1,7 @@
 export const TOKEN_TABS = ['tokens', 'guides'] as const;
 export type TokenTab = (typeof TOKEN_TABS)[number];
 
-export const GUIDE_TABS = ['opencode', 'claude', 'python'] as const;
+export const GUIDE_TABS = ['opencode', 'claude', 'pi', 'omp', 'python'] as const;
 export type GuideTab = (typeof GUIDE_TABS)[number];
 
 export function selectedTokenTab(search: string): TokenTab {

@@ -12,6 +12,8 @@
 	const labels = {
 		opencode: 'tokens-guide-opencode',
 		claude: 'tokens-guide-claude',
+		pi: 'tokens-guide-pi',
+		omp: 'tokens-guide-omp',
 		python: 'tokens-guide-python'
 	} as const;
 
@@ -27,6 +29,17 @@
 		}
 	}, null, 2));
 	let claudeConfig = $derived(`export ANTHROPIC_BASE_URL=${origin}\nexport ANTHROPIC_AUTH_TOKEN=gwk_PASTE_YOUR_TOKEN\nexport ANTHROPIC_MODEL=YOUR_MODEL_ID\nexport ANTHROPIC_DEFAULT_HAIKU_MODEL=YOUR_MODEL_ID\nclaude`);
+	let piConfig = $derived(JSON.stringify({
+		providers: {
+			aiplane: {
+				baseUrl: `${origin}/v1`,
+				api: 'openai-completions',
+				apiKey: 'gwk_PASTE_YOUR_TOKEN',
+				models: [{ id: 'YOUR_MODEL_ID' }]
+			}
+		}
+	}, null, 2));
+	let ompConfig = $derived(`providers:\n  aiplane:\n    baseUrl: ${origin}/v1\n    api: openai-completions\n    apiKey: gwk_PASTE_YOUR_TOKEN\n    models:\n      - id: YOUR_MODEL_ID\n        contextWindow: 128000\n        maxTokens: 16384`);
 	const pythonShell = 'python -m pip install openai\nexport OPENAI_API_KEY=gwk_PASTE_YOUR_TOKEN';
 	let pythonConfig = $derived(`from openai import OpenAI\n\nclient = OpenAI(base_url="${origin}/v1")\nresponse = client.chat.completions.create(\n    model="YOUR_MODEL_ID",\n    messages=[{"role": "user", "content": "Hello!"}],\n)\nprint(response.choices[0].message.content)`);
 </script>
@@ -64,6 +77,26 @@
 			</ol>
 			<pre class="w-full overflow-x-auto rounded-box bg-base-200 p-4 text-xs"><code>{claudeConfig}</code></pre>
 			<p class="text-sm text-base-content/70">{t('tokens-claude-finish')}</p>
+		</div></article>
+	{:else if client === 'pi'}
+		<article class="card"><div class="card-body gap-4">
+			<h3 class="card-title">{t('tokens-guide-pi')}</h3>
+			<ol class="list-decimal space-y-3 pl-5 text-sm">
+				<li>{t('tokens-pi-step-1')}</li>
+				<li>{t('tokens-pi-step-2')}</li>
+			</ol>
+			<pre class="w-full overflow-x-auto rounded-box bg-base-200 p-4 text-xs"><code>{piConfig}</code></pre>
+			<p class="text-sm text-base-content/70">{t('tokens-pi-finish')}</p>
+		</div></article>
+	{:else if client === 'omp'}
+		<article class="card"><div class="card-body gap-4">
+			<h3 class="card-title">{t('tokens-guide-omp')}</h3>
+			<ol class="list-decimal space-y-3 pl-5 text-sm">
+				<li>{t('tokens-omp-step-1')}</li>
+				<li>{t('tokens-omp-step-2')}</li>
+			</ol>
+			<pre class="w-full overflow-x-auto rounded-box bg-base-200 p-4 text-xs"><code>{ompConfig}</code></pre>
+			<p class="text-sm text-base-content/70">{t('tokens-omp-finish')}</p>
 		</div></article>
 	{:else}
 		<article class="card"><div class="card-body gap-4">

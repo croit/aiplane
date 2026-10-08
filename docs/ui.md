@@ -171,7 +171,7 @@ the selection reaches a model without GDPR or NDA cover. The data comes from
 `quota_status` its quotas with what has been spent against them. A newly minted or rotated secret stays above
 these inner tabs until the page is left, so switching to a guide does not hide
 the one-time value. The guide's `client` query parameter selects OpenCode,
-Claude Code, or Python; code examples use the browser's current origin so they
+Claude Code, Pi, Oh My Pi, or Python; code examples use the browser's current origin so they
 also work on self-hosted domains. All guide instructions live in the six Fluent
 catalogs.
 
