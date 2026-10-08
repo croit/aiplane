@@ -26,10 +26,11 @@ chat-render-effort-tooltip = Denkaufwand: höher = mehr Reasoning und mehr Tool-
 # so the control is disabled rather than silently inert.
 chat-render-effort-unsupported = Dieses Modell hat keine Reasoning-Steuerung — der Denkaufwand würde hier nichts ändern.
 chat-render-effort-label-prefix = Denkaufwand:
-chat-render-effort-fast = Schnell
-chat-render-effort-standard = Standard
-chat-render-effort-deep = Tief
-chat-render-effort-max = Maximal
+chat-render-effort-off = off
+chat-render-effort-low = low
+chat-render-effort-medium = medium
+chat-render-effort-high = high
+chat-render-effort-xhigh = xhigh
 
 chat-render-tools-tooltip = Tools, Integrationen & Skills für diese Unterhaltung
 chat-render-tools-label = Tools

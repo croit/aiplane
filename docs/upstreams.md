@@ -92,7 +92,33 @@ The operator never configures a profile and never picks a server name from a lis
 
 Only Ollama dictates a spelling. Every other server passes model-specific parameters through untouched, so there the model family really is the right signal and name detection keeps deciding. An explicit `reasoning_style` on `/admin/models` still beats both.
 
-Ollama gets its own style rather than reusing OpenAI's for one reason that shows up in the UI: its scale has an off switch. OpenAI's reasoning models always reason, so that style maps *Fast* to the cheapest `"low"` — correct there, but on Ollama it would mean the control labelled *Fast* still makes the model think. `none` is what lets *Fast* mean fast.
+Ollama gets its own style rather than reusing OpenAI's for one reason that shows up in the UI: its scale has an off switch. OpenAI's reasoning models always reason, so that style offers no *off* level and maps a `/v1` client's `off` to the cheapest `"low"`; on Ollama, `none` is what lets *off* mean off.
+
+### Effort levels on the wire
+
+One scale everywhere — `off · low · medium · high · xhigh`, the default `low`:
+
+| level | Qwen (`chat_template_kwargs`) | OpenAI `reasoning_effort` | Ollama `reasoning_effort` | GLM | Anthropic `budget_tokens` |
+|---|---|---|---|---|---|
+| off | `enable_thinking: false` | `low` (no off; not offered) | `none` | `thinking.type: disabled` | thinking disabled |
+| low | `enable_thinking: true`, `reasoning_effort: low` | `low` | `low` | `low` | 2048 |
+| medium | `reasoning_effort: medium` | `medium` | `medium` | `medium` | 4096 |
+| high | `reasoning_effort: xhigh` | `high` | `high` | `high` | 16384 |
+| xhigh | `reasoning_effort: xhigh` | `high` | `max` | `max` | 32768 |
+
+Qwen3.8's chat template knows `low`, `medium` and `xhigh` and thinks at `xhigh` when the variable is missing, so every thinking level names one; templates of earlier Qwen generations ignore it. `high` and `xhigh` differ for Qwen by their tool-round cap and by the per-level token budget an admin sets.
+
+### Thinking budgets
+
+A per-level token budget (`/admin/models`) caps how long a model may think. Anthropic's budget is part of its own request format. For an open-weight model the *server* has to enforce it, and a server that does not know the parameter drops it without an error, so identification records whether and how each backend enforces one (`backend_detected.thinking_budget`):
+
+| server | spelling | enforced when |
+|---|---|---|
+| vLLM | top-level `thinking_token_budget` | the server runs a `--reasoning-parser` (needed for reasoning output anyway) |
+| SGLang | `custom_params.thinking_budget` | the server was started with `--enable-strict-thinking`, which its `/server_info` reports |
+| others | — | never: no budget is sent and the admin page hides the fields |
+
+A model is offered budget fields only when every backend serving it enforces the same spelling; a pool where one replica would ignore the cap gets none. The answer is read at identification, so after relaunching an SGLang with or without the flag, apply the topology again (or restart AIplane) to re-identify it. Budgets below 1024 tokens are refused: measured on Qwen3.8 under SGLang, a 300-token cap made the model carry on thinking in its visible answer (90 KB of it), while 1000 and more ended cleanly.
 
 `tool_choice` is the third consequence. The final tool round normally keeps the tool definitions in the request and sends `tool_choice: "none"`, because some templates need the definitions present to render an explicit no-tools turn. Ollama has no `tool_choice` field, so on that profile the definitions are **withheld** instead — cruder, and the only thing that actually stops a model calling a tool on the round meant to end the turn.
 

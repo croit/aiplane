@@ -28,6 +28,8 @@ settings-s-chat-compaction = 会话压缩
 settings-s-chat-compaction-blurb = 概括长会话中较早的一半，使其继续能放进模型的上下文窗口。
 settings-s-chat-turns = 并行会话
 settings-s-chat-turns-blurb = 同一位用户可以同时有多少个会话在作答。
+settings-s-chat-loops = 循环时重试
+settings-s-chat-loops-blurb = 模型开始重复自身时，对话如何处理。
 settings-s-chat-s3 = 附件存储（S3）
 settings-s-chat-s3-blurb = 聊天附件的对象存储。没有它，上传会被拒绝。
 settings-s-sandbox = 代码沙箱
@@ -120,6 +122,8 @@ settings-f-chat-compaction-summary_max_tokens-help = 用于替换被压缩轮次
 
 settings-f-chat-turns-max_parallel = 同时进行的会话
 settings-f-chat-turns-max_parallel-help = 一位用户可以在不同会话中并行进行的回答数量。设为 1 保持原有行为：第二个会话需要等待。
+settings-f-chat-loops-retries = 重试次数
+settings-f-chat-loops-retries-help = 模型陷入重复时，以低一级的思考强度重新生成回答，最多重试此次数（0–5）。0 表示第一次循环即停止。
 
 settings-f-chat-s3-enabled = 将附件存入 S3
 settings-f-chat-s3-enabled-help = 关闭时聊天附件不可用。

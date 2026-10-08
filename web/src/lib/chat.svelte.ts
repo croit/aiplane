@@ -45,6 +45,7 @@ const EVENT_NAMES = [
 	'turn_finalized',
 	'suspended',
 	'steer',
+	'attempt',
 	'sidebar_changed',
 	'info',
 	'tool_prompt',

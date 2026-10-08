@@ -109,9 +109,9 @@ pub async fn fork_session(
             r#"INSERT INTO chat_turns
                   (id, session_id, seq, role, user_content, model, content,
                    reasoning, reasoning_elapsed_ms, reasoning_started_at,
-                   status, error_message,
+                   status, error_message, error_code,
                    created_at, completed_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(new_turn_id)
         .bind(&new_session.id)
@@ -125,6 +125,7 @@ pub async fn fork_session(
         .bind(turn.reasoning_started_at.map(|t| t.to_string()))
         .bind(status.as_str())
         .bind(turn.error_message.as_deref())
+        .bind(turn.error_code.as_deref())
         .bind(turn.created_at.to_string())
         .bind(completed_at.map(|t| t.to_string()))
         .execute(&mut *tx)
@@ -151,6 +152,9 @@ pub async fn fork_session(
             .bind(tc.completed_at.map(|t| t.to_string()))
             .execute(&mut *tx)
             .await?;
+        }
+        for attempt in &tw.attempts {
+            crate::db::attempts::insert_attempt(&mut tx, new_turn_id, attempt).await?;
         }
     }
     tx.commit().await?;

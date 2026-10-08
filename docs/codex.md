@@ -82,15 +82,16 @@ request: the model never sees them. Use AIplane's own tools for those jobs.
 ## Reasoning
 
 Codex's `model_reasoning_effort` setting (sent as `reasoning.effort`) is mapped
-onto AIplane's Fast / Standard / Deep / Max levels and from there onto the
-serving model's own reasoning parameter, per `/admin/models`:
+onto AIplane's effort level of the same name and from there onto the serving
+model's own reasoning parameter, per `/admin/models`:
 
 | `reasoning.effort` | AIplane level |
 |---|---|
-| `none`, `minimal`, `low` | Fast |
-| `medium` | Standard |
-| `high` | Deep |
-| `xhigh` | Max |
+| `none`, `minimal` | off |
+| `low` | low |
+| `medium` (and unknown values) | medium |
+| `high` | high |
+| `xhigh`, `max` | xhigh |
 
 The model's reasoning streams back as a `reasoning` item with `reasoning_text`
 content. It is the model's own reasoning, not a summary, so the item's

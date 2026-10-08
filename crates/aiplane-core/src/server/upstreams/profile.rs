@@ -44,7 +44,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::server::reasoning::ReasoningStyle;
+use crate::server::reasoning::{ReasoningStyle, ThinkingBudget};
 
 /// How long any single identification request may take.
 ///
@@ -226,6 +226,13 @@ pub struct Detected {
     /// so. llama.cpp reports its slot count; nothing else we know of does.
     /// `None` means the configured `max_inflight` stands unchallenged.
     pub max_parallel: Option<u32>,
+    /// How this server caps thinking tokens per request, if it can. vLLM
+    /// enforces `thinking_token_budget` with the reasoning parser it needs for
+    /// reasoning output anyway; SGLang only when started with
+    /// `--enable-strict-thinking`, which its `/server_info` states. `None`
+    /// means a budget would be dropped in silence, so none is sent and the
+    /// admin page offers none.
+    pub thinking_budget: Option<ThinkingBudget>,
     /// The server's own version string, purely for the admin UI. Never parsed
     /// or compared — behaviour is decided by the profile, not by a version.
     pub version: Option<String>,
@@ -355,9 +362,26 @@ pub async fn detect(
             .any(|key| v.get(*key).is_some())
     });
     if sglang_identified {
+        // Asked only once SGLang is known: its launch flags decide whether a
+        // per-request thinking budget is enforced, and it is the one server
+        // that says so.
+        let info = get_json(http, &format!("{root}/server_info"), api_key)
+            .await
+            .body;
+        let strict_thinking = info
+            .as_ref()
+            .and_then(|i| i.get("enable_strict_thinking"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         return Some(Detected {
             profile: BackendProfile::SgLang,
             context_windows: models_windows,
+            thinking_budget: strict_thinking.then_some(ThinkingBudget::CustomParams),
+            version: info
+                .as_ref()
+                .and_then(|i| i.get("version"))
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
             ..Detected::default()
         });
     }
@@ -369,6 +393,7 @@ pub async fn detect(
         return Some(Detected {
             profile: BackendProfile::VLlm,
             context_windows: models_windows,
+            thinking_budget: Some(ThinkingBudget::TokenBudget),
             ..Detected::default()
         });
     }
@@ -852,6 +877,47 @@ mod detect_tests {
         format!("{}/v1", server.uri())
     }
 
+    /// SGLang enforces a per-request thinking budget only when it was started
+    /// with `--enable-strict-thinking`, and says which on `/server_info`.
+    /// Shapes taken from a live SGLang 0.5.19.
+    #[tokio::test]
+    async fn sglang_states_whether_it_enforces_a_thinking_budget() {
+        for (strict, expected) in [(true, Some(ThinkingBudget::CustomParams)), (false, None)] {
+            let server = MockServer::start().await;
+            route(
+                &server,
+                "/get_model_info",
+                json!({"model_path": "RadixArk/Qwen3.8-27B-NVFP4", "is_generation": true}),
+            )
+            .await;
+            route(
+                &server,
+                "/server_info",
+                json!({"enable_strict_thinking": strict, "version": "0.5.19"}),
+            )
+            .await;
+            let detected = detect(&reqwest::Client::new(), &base(&server), None)
+                .await
+                .expect("the server answered");
+            assert_eq!(detected.profile, BackendProfile::SgLang);
+            assert_eq!(detected.thinking_budget, expected, "strict={strict}");
+            assert_eq!(detected.version.as_deref(), Some("0.5.19"));
+        }
+    }
+
+    /// An SGLang that does not answer `/server_info` enforces nothing we can
+    /// rely on.
+    #[tokio::test]
+    async fn an_sglang_without_server_info_gets_no_budget() {
+        let server = MockServer::start().await;
+        route(&server, "/get_model_info", json!({"model_path": "m"})).await;
+        let detected = detect(&reqwest::Client::new(), &base(&server), None)
+            .await
+            .expect("the server answered");
+        assert_eq!(detected.profile, BackendProfile::SgLang);
+        assert_eq!(detected.thinking_budget, None);
+    }
+
     /// Ollama is identified by `/api/version`. Its `/v1/models` carries no
     /// window — the context is a server setting, not a model attribute — but
     /// `/api/ps` states what the running instance actually allocated, and that
@@ -971,6 +1037,7 @@ mod detect_tests {
         assert_eq!(detected.profile, BackendProfile::VLlm);
         assert_eq!(detected.context_windows.get("Qwen/Qwen3"), Some(&262_144));
         assert_eq!(detected.context_cap, None);
+        assert_eq!(detected.thinking_budget, Some(ThinkingBudget::TokenBudget));
     }
 
     /// Identification keys on a field only that server emits, never on "the

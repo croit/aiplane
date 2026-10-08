@@ -197,7 +197,7 @@ This adds an entry to `/model` rather than replacing the built-in aliases.
 | `tool_result` blocks in a user turn | One OpenAI `role: "tool"` message each, ahead of the remaining user content |
 | `tool_use` blocks in an assistant turn | `tool_calls[]`, with the input object stringified into `arguments` |
 | `thinking: {"type": "adaptive"}` | Translates to the *serving model's* reasoning parameter — `enable_thinking`, `reasoning_effort`, or a token budget, per `/admin/models`. The field itself never reaches the backend. |
-| `output_config.effort` | Same, mapped onto AIplane's Fast / Standard / Deep / Max levels |
+| `output_config.effort` | Same, mapped onto AIplane's effort level of the same name (`low`, `medium`, `high`, `xhigh`; `max` → `xhigh`). `thinking` alone means `medium`, `thinking: {"type": "disabled"}` means `off`. |
 | `cache_control` markers | Dropped. Upstream prefix caching still happens; it just isn't reported, so `usage.cache_read_input_tokens` is always `0`. |
 | `context_management`, `mcp_servers`, `container`, `output_config.format`, unknown future fields | Dropped, not rejected — forwarding them would `400` an OpenAI-compatible backend, and rejecting them would break on the next client release |
 | Anthropic-hosted server tools (`web_search_…`, `code_execution_…`) | Skipped: they can only run on Anthropic's infrastructure |

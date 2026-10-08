@@ -26,10 +26,11 @@ chat-render-effort-tooltip = 思考强度：越高 = 推理越多、工具调用
 # so the control is disabled rather than silently inert.
 chat-render-effort-unsupported = 此模型没有推理控制，思考强度设置不会产生任何效果。
 chat-render-effort-label-prefix = 思考：
-chat-render-effort-fast = 快速
-chat-render-effort-standard = 标准
-chat-render-effort-deep = 深度
-chat-render-effort-max = 最大
+chat-render-effort-off = off
+chat-render-effort-low = low
+chat-render-effort-medium = medium
+chat-render-effort-high = high
+chat-render-effort-xhigh = xhigh
 
 chat-render-tools-tooltip = 本次对话的工具、集成与技能
 chat-render-tools-label = 工具

@@ -1606,6 +1606,64 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
     )
     .await?;
 
+    // --- Loop retries ---------------------------------------------------
+    //
+    // Both shapes a looping turn ends in: one retried at a lower effort that
+    // then answered (one collapsed attempt above the answer), and one that
+    // looped on every try (two attempts and the translated warning).
+    let loop_text = "Wait — is the OSD id the same after the swap? Let me check again. ".repeat(12);
+    let s = chatdb::create_session(&state.db, "dev").await?;
+    chatdb::set_session_title(&state.db, &s.id, "A loop retried at a lower effort").await?;
+    let u = uuid::Uuid::new_v4().to_string();
+    chatdb::create_user_turn(
+        &state.db,
+        &s.id,
+        &u,
+        "Which ceph OSD id does a replaced disk get?",
+    )
+    .await?;
+    let a = uuid::Uuid::new_v4().to_string();
+    chatdb::create_assistant_turn_in_progress(&state.db, &s.id, &a, "demo-model").await?;
+    chatdb::append_reasoning(&state.db, &a, &loop_text).await?;
+    let stop = |effort, retry_effort| chatdb::AttemptStop {
+        effort,
+        retry_effort,
+        stop_reason: "loop",
+    };
+    chatdb::stash_attempt(&state.db, &a, (0, 0), stop("low", Some("off"))).await?;
+    chatdb::append_content(
+        &state.db,
+        &a,
+        "With `ceph osd destroy` followed by `ceph-volume lvm create --osd-id <id>`, the replacement keeps the old id.",
+    )
+    .await?;
+    chatdb::finalize_turn(&state.db, &a, TurnStatus::Completed, None).await?;
+
+    let s = chatdb::create_session(&state.db, "dev").await?;
+    chatdb::set_session_title(&state.db, &s.id, "A loop on every retry").await?;
+    let u = uuid::Uuid::new_v4().to_string();
+    chatdb::create_user_turn(
+        &state.db,
+        &s.id,
+        &u,
+        "Explain every ceph config option in detail.",
+    )
+    .await?;
+    let a = uuid::Uuid::new_v4().to_string();
+    chatdb::create_assistant_turn_in_progress(&state.db, &s.id, &a, "demo-model").await?;
+    chatdb::append_reasoning(&state.db, &a, &loop_text).await?;
+    chatdb::stash_attempt(&state.db, &a, (0, 0), stop("low", Some("off"))).await?;
+    chatdb::append_content(&state.db, &a, &"The option is the option. ".repeat(20)).await?;
+    chatdb::stash_attempt(&state.db, &a, (0, 0), stop("off", None)).await?;
+    chatdb::set_error_code(&state.db, &a, "loop_exhausted").await?;
+    chatdb::finalize_turn(
+        &state.db,
+        &a,
+        TurnStatus::Errored,
+        Some("The model kept repeating itself on all 2 attempts, even with less thinking."),
+    )
+    .await?;
+
     // --- Scheduled actions, with the run history behind them -------------
     //
     // The three shapes /scheduled has to render, one each: a schedule that
@@ -2259,6 +2317,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             principal_kind: aiplane_core::server::principal::PrincipalKind::User,
             agent_id: None,
             chain: None,
+            stop_reason: None,
         });
     }
     // A couple of rows from other users so the admin "All users" view has more
@@ -2288,6 +2347,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             principal_kind: aiplane_core::server::principal::PrincipalKind::User,
             agent_id: None,
             chain: None,
+            stop_reason: None,
         });
     }
     // Price the two demo chat models BEFORE inserting usage, so the batched

@@ -19,12 +19,14 @@ const model: AdminModel = {
 		input_price: 1,
 		output_price: null,
 		pricing_unit: 'tokens',
-		budget_standard: 1024,
-		budget_deep: null,
-		budget_max: null,
-		effort_standard: null,
-		effort_deep: null,
-		effort_max: null,
+		budget_low: null,
+		budget_medium: 1024,
+		budget_high: null,
+		budget_xhigh: null,
+		effort_low: null,
+		effort_medium: null,
+		effort_high: null,
+		effort_xhigh: null,
 		capabilities: { vision: true, tools: null }
 	}
 };

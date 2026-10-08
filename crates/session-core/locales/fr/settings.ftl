@@ -28,6 +28,8 @@ settings-s-chat-compaction = Compactage des conversations
 settings-s-chat-compaction-blurb = Résumer la moitié la plus ancienne d'une longue conversation pour qu'elle continue de tenir dans la fenêtre de contexte du modèle.
 settings-s-chat-turns = Conversations en parallèle
 settings-s-chat-turns-blurb = Combien de discussions d'une même personne peuvent répondre en même temps.
+settings-s-chat-loops = Relances après une boucle
+settings-s-chat-loops-blurb = Ce que fait une conversation quand le modèle se met à se répéter.
 settings-s-chat-s3 = Stockage des pièces jointes (S3)
 settings-s-chat-s3-blurb = Stockage objet pour les pièces jointes du chat. Sans lui, les envois sont refusés.
 settings-s-sandbox = Bac à sable de code
@@ -121,6 +123,8 @@ settings-f-chat-compaction-summary_max_tokens-help = Budget de jetons pour le r�
 
 settings-f-chat-turns-max_parallel = Conversations simultanées
 settings-f-chat-turns-max_parallel-help = Réponses qu'une personne peut avoir en cours en parallèle, dans des conversations différentes. 1 conserve le comportement actuel : la deuxième discussion attend.
+settings-f-chat-loops-retries = Relances
+settings-f-chat-loops-retries-help = Quand le modèle se met à se répéter, la réponse est relancée avec un niveau de réflexion en moins, au plus ce nombre de fois (0–5). 0 s’arrête dès la première boucle.
 
 settings-f-chat-s3-enabled = Stocker les pièces jointes dans S3
 settings-f-chat-s3-enabled-help = Désactivé, les pièces jointes du chat sont indisponibles.

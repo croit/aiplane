@@ -242,11 +242,17 @@ async fn apply_effort(
     // reasoning against an Ollama backend has to get the spelling that server
     // understands, or its request translates into a parameter that is silently
     // dropped.
-    let dialect = state
+    let serving = state
         .upstreams
-        .serving_profile(real_model, PoolKind::Chat, access)
-        .dialect;
+        .serving_profile(real_model, PoolKind::Chat, access);
     let (style, overrides) =
-        aiplane_core::server::reasoning::resolve_for_model(&state.db, real_model, dialect).await;
-    aiplane_core::server::reasoning::apply_effort(style, effort, &overrides, body);
+        aiplane_core::server::reasoning::resolve_for_model(&state.db, real_model, serving.dialect)
+            .await;
+    aiplane_core::server::reasoning::apply_effort(
+        style,
+        effort,
+        &overrides,
+        serving.thinking_budget,
+        body,
+    );
 }

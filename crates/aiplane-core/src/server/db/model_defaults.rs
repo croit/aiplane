@@ -30,17 +30,19 @@ pub struct ModelDefaults {
     /// auto-detect from the model name at request time. Drives
     /// [`crate::server::reasoning::apply_effort`].
     pub reasoning_style: Option<String>,
-    /// Per-effort token budgets for token-budget styles (Qwen, Anthropic).
+    /// Per-level token budgets for token-budget styles (Qwen, Anthropic).
     /// `None` = use the built-in default for that level. Stored as SQLite
-    /// INTEGER; see migration 0030.
-    pub thinking_budget_standard: Option<i64>,
-    pub thinking_budget_deep: Option<i64>,
-    pub thinking_budget_max: Option<i64>,
-    /// Per-effort `reasoning_effort` levels for effort-level styles (OpenAI,
-    /// GLM). `None` = use the built-in default for that level.
-    pub reasoning_effort_standard: Option<String>,
-    pub reasoning_effort_deep: Option<String>,
-    pub reasoning_effort_max: Option<String>,
+    /// INTEGER; see migrations 0030 and 0079.
+    pub thinking_budget_low: Option<i64>,
+    pub thinking_budget_medium: Option<i64>,
+    pub thinking_budget_high: Option<i64>,
+    pub thinking_budget_xhigh: Option<i64>,
+    /// Per-level `reasoning_effort` values for effort-level styles (OpenAI,
+    /// GLM, Ollama). `None` = use the built-in default for that level.
+    pub reasoning_effort_low: Option<String>,
+    pub reasoning_effort_medium: Option<String>,
+    pub reasoning_effort_high: Option<String>,
+    pub reasoning_effort_xhigh: Option<String>,
     /// The model's context window in tokens. Drives the auto-compaction
     /// trigger threshold (a fraction of this window). `None` = fall back
     /// to the global `[chat.compaction] default_context_window`. See
@@ -114,12 +116,14 @@ fn map_row(row: &SqliteRow) -> Result<ModelDefaults, DbError> {
     let model_name: String = row.try_get("model_name")?;
     let defaults_toml: String = row.try_get("defaults_toml")?;
     let reasoning_style: Option<String> = row.try_get("reasoning_style")?;
-    let thinking_budget_standard: Option<i64> = row.try_get("thinking_budget_standard")?;
-    let thinking_budget_deep: Option<i64> = row.try_get("thinking_budget_deep")?;
-    let thinking_budget_max: Option<i64> = row.try_get("thinking_budget_max")?;
-    let reasoning_effort_standard: Option<String> = row.try_get("reasoning_effort_standard")?;
-    let reasoning_effort_deep: Option<String> = row.try_get("reasoning_effort_deep")?;
-    let reasoning_effort_max: Option<String> = row.try_get("reasoning_effort_max")?;
+    let thinking_budget_low: Option<i64> = row.try_get("thinking_budget_low")?;
+    let thinking_budget_medium: Option<i64> = row.try_get("thinking_budget_medium")?;
+    let thinking_budget_high: Option<i64> = row.try_get("thinking_budget_high")?;
+    let thinking_budget_xhigh: Option<i64> = row.try_get("thinking_budget_xhigh")?;
+    let reasoning_effort_low: Option<String> = row.try_get("reasoning_effort_low")?;
+    let reasoning_effort_medium: Option<String> = row.try_get("reasoning_effort_medium")?;
+    let reasoning_effort_high: Option<String> = row.try_get("reasoning_effort_high")?;
+    let reasoning_effort_xhigh: Option<String> = row.try_get("reasoning_effort_xhigh")?;
     let context_window: Option<i64> = row.try_get("context_window")?;
     let input_price: Option<f64> = row.try_get("input_price")?;
     let output_price: Option<f64> = row.try_get("output_price")?;
@@ -136,12 +140,14 @@ fn map_row(row: &SqliteRow) -> Result<ModelDefaults, DbError> {
         model_name,
         defaults_toml,
         reasoning_style,
-        thinking_budget_standard,
-        thinking_budget_deep,
-        thinking_budget_max,
-        reasoning_effort_standard,
-        reasoning_effort_deep,
-        reasoning_effort_max,
+        thinking_budget_low,
+        thinking_budget_medium,
+        thinking_budget_high,
+        thinking_budget_xhigh,
+        reasoning_effort_low,
+        reasoning_effort_medium,
+        reasoning_effort_high,
+        reasoning_effort_xhigh,
         context_window,
         input_price,
         output_price,
@@ -173,8 +179,10 @@ fn map_capabilities(row: &SqliteRow) -> Result<ModelCapabilities, DbError> {
 pub async fn get(pool: &Pool, model_name: &str) -> Result<Option<ModelDefaults>, DbError> {
     let row = sqlx::query(
         r#"SELECT model_name, defaults_toml, reasoning_style,
-                  thinking_budget_standard, thinking_budget_deep, thinking_budget_max,
-                  reasoning_effort_standard, reasoning_effort_deep, reasoning_effort_max,
+                  thinking_budget_low, thinking_budget_medium,
+                  thinking_budget_high, thinking_budget_xhigh,
+                  reasoning_effort_low, reasoning_effort_medium,
+                  reasoning_effort_high, reasoning_effort_xhigh,
                    context_window, input_price, output_price, pricing_unit,
                   cap_vision, cap_audio_input, cap_pdf_input,
                   cap_tools, cap_parallel_tools, cap_structured_output,
@@ -372,22 +380,25 @@ impl CapabilityField {
     }
 }
 
-/// The six per-effort override columns, grouped so the setter signature stays
-/// small. `None` in any field clears that level (falls back to the built-in
-/// default). Budgets are token counts; efforts are `reasoning_effort` levels.
+/// The eight per-level override columns, grouped so the setter signature
+/// stays small. `None` in any field clears that level (falls back to the
+/// built-in default). Budgets are token counts; efforts are `reasoning_effort`
+/// levels.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ReasoningOverrideCols {
-    pub budget_standard: Option<i64>,
-    pub budget_deep: Option<i64>,
-    pub budget_max: Option<i64>,
-    pub effort_standard: Option<String>,
-    pub effort_deep: Option<String>,
-    pub effort_max: Option<String>,
+    pub budget_low: Option<i64>,
+    pub budget_medium: Option<i64>,
+    pub budget_high: Option<i64>,
+    pub budget_xhigh: Option<i64>,
+    pub effort_low: Option<String>,
+    pub effort_medium: Option<String>,
+    pub effort_high: Option<String>,
+    pub effort_xhigh: Option<String>,
 }
 
 /// Set the per-effort reasoning overrides for a model without touching its
 /// sampling defaults or reasoning style. Inserts a row with empty defaults if
-/// none exists yet; on conflict only the six override columns are updated, so
+/// none exists yet; on conflict only the eight override columns are updated, so
 /// it composes with [`upsert`] and [`set_reasoning_style`] in either order.
 pub async fn set_reasoning_overrides(
     pool: &Pool,
@@ -398,26 +409,32 @@ pub async fn set_reasoning_overrides(
     sqlx::query(
         r#"INSERT INTO model_defaults
              (model_name, defaults_toml,
-              thinking_budget_standard, thinking_budget_deep, thinking_budget_max,
-              reasoning_effort_standard, reasoning_effort_deep, reasoning_effort_max,
+              thinking_budget_low, thinking_budget_medium,
+              thinking_budget_high, thinking_budget_xhigh,
+              reasoning_effort_low, reasoning_effort_medium,
+              reasoning_effort_high, reasoning_effort_xhigh,
               updated_at)
-           VALUES (?, '', ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(model_name) DO UPDATE SET
-             thinking_budget_standard  = excluded.thinking_budget_standard,
-             thinking_budget_deep      = excluded.thinking_budget_deep,
-             thinking_budget_max       = excluded.thinking_budget_max,
-             reasoning_effort_standard = excluded.reasoning_effort_standard,
-             reasoning_effort_deep     = excluded.reasoning_effort_deep,
-             reasoning_effort_max      = excluded.reasoning_effort_max,
-             updated_at                = excluded.updated_at"#,
+             thinking_budget_low = excluded.thinking_budget_low,
+             thinking_budget_medium = excluded.thinking_budget_medium,
+             thinking_budget_high = excluded.thinking_budget_high,
+             thinking_budget_xhigh = excluded.thinking_budget_xhigh,
+             reasoning_effort_low = excluded.reasoning_effort_low,
+             reasoning_effort_medium = excluded.reasoning_effort_medium,
+             reasoning_effort_high = excluded.reasoning_effort_high,
+             reasoning_effort_xhigh = excluded.reasoning_effort_xhigh,
+             updated_at = excluded.updated_at"#,
     )
     .bind(model_name)
-    .bind(cols.budget_standard)
-    .bind(cols.budget_deep)
-    .bind(cols.budget_max)
-    .bind(cols.effort_standard.as_deref())
-    .bind(cols.effort_deep.as_deref())
-    .bind(cols.effort_max.as_deref())
+    .bind(cols.budget_low)
+    .bind(cols.budget_medium)
+    .bind(cols.budget_high)
+    .bind(cols.budget_xhigh)
+    .bind(cols.effort_low.as_deref())
+    .bind(cols.effort_medium.as_deref())
+    .bind(cols.effort_high.as_deref())
+    .bind(cols.effort_xhigh.as_deref())
     .bind(now)
     .execute(pool)
     .await?;
@@ -471,23 +488,27 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
     sqlx::query(
         r#"INSERT INTO model_defaults
               (model_name, defaults_toml, reasoning_style,
-               thinking_budget_standard, thinking_budget_deep, thinking_budget_max,
-               reasoning_effort_standard, reasoning_effort_deep, reasoning_effort_max,
-                context_window, input_price, output_price, pricing_unit,
+               thinking_budget_low, thinking_budget_medium,
+               thinking_budget_high, thinking_budget_xhigh,
+               reasoning_effort_low, reasoning_effort_medium,
+               reasoning_effort_high, reasoning_effort_xhigh,
+               context_window, input_price, output_price, pricing_unit,
                cap_vision, cap_audio_input, cap_pdf_input,
                cap_tools, cap_parallel_tools, cap_structured_output,
                fallback_vision, fallback_tools,
                cap_updated_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(model_name) DO UPDATE SET
                defaults_toml             = excluded.defaults_toml,
                reasoning_style           = excluded.reasoning_style,
-               thinking_budget_standard  = excluded.thinking_budget_standard,
-               thinking_budget_deep      = excluded.thinking_budget_deep,
-               thinking_budget_max       = excluded.thinking_budget_max,
-               reasoning_effort_standard = excluded.reasoning_effort_standard,
-               reasoning_effort_deep     = excluded.reasoning_effort_deep,
-               reasoning_effort_max      = excluded.reasoning_effort_max,
+               thinking_budget_low = excluded.thinking_budget_low,
+               thinking_budget_medium = excluded.thinking_budget_medium,
+               thinking_budget_high = excluded.thinking_budget_high,
+               thinking_budget_xhigh = excluded.thinking_budget_xhigh,
+               reasoning_effort_low = excluded.reasoning_effort_low,
+               reasoning_effort_medium = excluded.reasoning_effort_medium,
+               reasoning_effort_high = excluded.reasoning_effort_high,
+               reasoning_effort_xhigh = excluded.reasoning_effort_xhigh,
                 context_window            = excluded.context_window,
                 input_price               = excluded.input_price,
                 output_price              = excluded.output_price,
@@ -506,12 +527,14 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
     .bind(model_name)
     .bind(&f.defaults_toml)
     .bind(f.reasoning_style.as_deref())
-    .bind(f.overrides.budget_standard)
-    .bind(f.overrides.budget_deep)
-    .bind(f.overrides.budget_max)
-    .bind(f.overrides.effort_standard.as_deref())
-    .bind(f.overrides.effort_deep.as_deref())
-    .bind(f.overrides.effort_max.as_deref())
+    .bind(f.overrides.budget_low)
+    .bind(f.overrides.budget_medium)
+    .bind(f.overrides.budget_high)
+    .bind(f.overrides.budget_xhigh)
+    .bind(f.overrides.effort_low.as_deref())
+    .bind(f.overrides.effort_medium.as_deref())
+    .bind(f.overrides.effort_high.as_deref())
+    .bind(f.overrides.effort_xhigh.as_deref())
     .bind(f.context_window)
     .bind(f.input_price)
     .bind(f.output_price)
@@ -580,8 +603,10 @@ pub async fn all_prices(
 pub async fn all(pool: &Pool) -> Result<Vec<ModelDefaults>, DbError> {
     let rows = sqlx::query(
         r#"SELECT model_name, defaults_toml, reasoning_style,
-                  thinking_budget_standard, thinking_budget_deep, thinking_budget_max,
-                  reasoning_effort_standard, reasoning_effort_deep, reasoning_effort_max,
+                  thinking_budget_low, thinking_budget_medium,
+                  thinking_budget_high, thinking_budget_xhigh,
+                  reasoning_effort_low, reasoning_effort_medium,
+                  reasoning_effort_high, reasoning_effort_xhigh,
                    context_window, input_price, output_price, pricing_unit,
                   cap_vision, cap_audio_input, cap_pdf_input,
                   cap_tools, cap_parallel_tools, cap_structured_output,
@@ -653,21 +678,25 @@ mod tests {
     async fn reasoning_overrides_round_trip() {
         let pool = fresh().await;
         let cols = ReasoningOverrideCols {
-            budget_standard: Some(1_024),
-            budget_deep: Some(4_096),
-            budget_max: None,
-            effort_standard: Some("medium".into()),
-            effort_deep: None,
-            effort_max: Some("max".into()),
+            budget_low: Some(1_024),
+            budget_medium: Some(2_048),
+            budget_high: Some(4_096),
+            budget_xhigh: None,
+            effort_low: Some("low".into()),
+            effort_medium: Some("medium".into()),
+            effort_high: None,
+            effort_xhigh: Some("max".into()),
         };
         set_reasoning_overrides(&pool, "m", &cols).await.unwrap();
         let row = get(&pool, "m").await.unwrap().unwrap();
-        assert_eq!(row.thinking_budget_standard, Some(1_024));
-        assert_eq!(row.thinking_budget_deep, Some(4_096));
-        assert_eq!(row.thinking_budget_max, None);
-        assert_eq!(row.reasoning_effort_standard.as_deref(), Some("medium"));
-        assert_eq!(row.reasoning_effort_deep, None);
-        assert_eq!(row.reasoning_effort_max.as_deref(), Some("max"));
+        assert_eq!(row.thinking_budget_low, Some(1_024));
+        assert_eq!(row.thinking_budget_medium, Some(2_048));
+        assert_eq!(row.thinking_budget_high, Some(4_096));
+        assert_eq!(row.thinking_budget_xhigh, None);
+        assert_eq!(row.reasoning_effort_low.as_deref(), Some("low"));
+        assert_eq!(row.reasoning_effort_medium.as_deref(), Some("medium"));
+        assert_eq!(row.reasoning_effort_high, None);
+        assert_eq!(row.reasoning_effort_xhigh.as_deref(), Some("max"));
     }
 
     /// The three setters touch disjoint columns and compose in any order.
@@ -675,7 +704,7 @@ mod tests {
     async fn overrides_style_and_toml_are_independent() {
         let pool = fresh().await;
         let cols = ReasoningOverrideCols {
-            budget_deep: Some(8_192),
+            budget_high: Some(8_192),
             ..Default::default()
         };
         set_reasoning_overrides(&pool, "m", &cols).await.unwrap();
@@ -683,7 +712,7 @@ mod tests {
         upsert(&pool, "m", "temperature = 0.5").await.unwrap();
 
         let row = get(&pool, "m").await.unwrap().unwrap();
-        assert_eq!(row.thinking_budget_deep, Some(8_192));
+        assert_eq!(row.thinking_budget_high, Some(8_192));
         assert_eq!(row.reasoning_style.as_deref(), Some("qwen"));
         assert_eq!(row.defaults_toml, "temperature = 0.5");
     }
@@ -757,9 +786,9 @@ mod tests {
             defaults_toml: "temperature = 0.7".into(),
             reasoning_style: Some("qwen".into()),
             overrides: ReasoningOverrideCols {
-                budget_standard: Some(4_096),
-                budget_deep: Some(16_384),
-                budget_max: None,
+                budget_medium: Some(4_096),
+                budget_high: Some(16_384),
+                budget_xhigh: None,
                 ..Default::default()
             },
             context_window: Some(262_144),
@@ -778,9 +807,9 @@ mod tests {
         let row = get(&pool, "m").await.unwrap().unwrap();
         assert_eq!(row.defaults_toml, "temperature = 0.7");
         assert_eq!(row.reasoning_style.as_deref(), Some("qwen"));
-        assert_eq!(row.thinking_budget_standard, Some(4_096));
-        assert_eq!(row.thinking_budget_deep, Some(16_384));
-        assert_eq!(row.thinking_budget_max, None);
+        assert_eq!(row.thinking_budget_medium, Some(4_096));
+        assert_eq!(row.thinking_budget_high, Some(16_384));
+        assert_eq!(row.thinking_budget_xhigh, None);
         assert_eq!(row.context_window, Some(262_144));
         assert_eq!(row.input_price, Some(0.15));
         assert_eq!(row.output_price, Some(0.60));

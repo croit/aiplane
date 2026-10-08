@@ -8,7 +8,7 @@ Use a conversation for a continuing task: its messages, attachments, generated a
 
 Choose the model from the header before sending a message. The available list is filtered by permissions. Configuration can also expose automatic routes or aliases through the shared model list. Compliance indicators in the picker describe the installation's configured model metadata; they are not a certification produced by AIplane.
 
-The composer offers **Fast**, **Standard**, **Deep** and **Max** effort levels. Effort is disabled when the selected model has no supported reasoning parameter. It is a model request setting, not a guaranteed response time or quality level.
+The composer offers the effort levels **off**, **low**, **medium**, **high** and **xhigh**. A new conversation starts at **low**, which is enough for most questions; choose a higher level for hard multi-step problems. Higher levels also allow more tool rounds per answer (off 8, low and medium 16, high 32, xhigh 64). The picker lists only the levels the selected model can express — a model that always reasons offers no **off** — and is disabled when the model has no supported reasoning parameter. It is a model request setting, not a guaranteed response time or quality level.
 
 Select **Tools** in the composer to inspect capabilities available to this conversation. Search or browse groups and select their state:
 
@@ -25,6 +25,8 @@ Changing a conversation's capability state does not grant a capability your acco
 Write text, add any attachments, then press Enter or Send. Shift+Enter inserts a newline. Replies stream into the transcript. You can expand tool-call details to inspect what the assistant did and what the tool returned. Reasoning displays depend on what the upstream provides.
 
 While a reply is running, you can still send another message. The server decides whether it joins the running work or waits as a later turn. A queued message is shown as waiting and can be cancelled before it starts.
+
+Occasionally a model collapses into repeating itself — the same sentence in its thinking, or the same tool call, over and over. AIplane stops such a call and, when the installation allows retries, tries it again one thinking level lower. The stopped attempt stays in the answer, folded away under **Attempt 1 stopped: …**, and a note says which level the next try uses. If every try loops, the answer ends with a warning to ask the question differently or split it up; the attempts stay readable above it.
 
 For a deliberate change of direction, type the new instruction and select **Interrupt**. This sends the instruction and stops the current answer so the instruction can start as new work. **Stop** cancels the current turn without sending a new instruction.
 

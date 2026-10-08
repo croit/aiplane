@@ -24,7 +24,7 @@ This reference describes the field structures. Use [Create an agent](create.md),
 | `main.budget.seconds` | Elapsed run budget |
 | `main.budget.tokens` | Token budget |
 
-The main run's omitted rounds use the standard effort's round budget. Omitted seconds/tokens do not introduce a ceiling at this spec field. Operator resource limits still apply.
+The main run's omitted rounds use the default effort's (`low`) round budget. Omitted seconds/tokens do not introduce a ceiling at this spec field. Operator resource limits still apply.
 
 ### Tool resource settings
 

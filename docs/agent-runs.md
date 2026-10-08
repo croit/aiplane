@@ -114,7 +114,7 @@ turn-discipline rule as its system message and every grant as its offer.
     (`agents::defaults::main_model`). The principal must hold a `model` grant
     on it (`ModelNotGranted` otherwise); the run's access is narrowed to it
     (`PoolAccess::for_system_models`, [`agents.md`](agents.md#models)).
-  - *Budget:* `main.budget`, rounds defaulting to the `standard` effort cap
+  - *Budget:* `main.budget`, rounds defaulting to the default (`low`) effort cap
     ([run budgets](tools-rbac.md#run-budgets)). A sub-agent's budget is its
     own, never a share of its parent's.
   - *Finish:* none for the main agent, which ends its turn with text. A

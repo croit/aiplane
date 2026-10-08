@@ -226,11 +226,11 @@ pub struct RunBudget {
 }
 
 impl RunBudget {
-    /// The run's budget; rounds default to the standard effort's.
+    /// The run's budget; rounds default to the default effort's.
     pub fn budget(&self) -> Budget {
         Budget::new(
             self.rounds
-                .unwrap_or_else(|| aiplane_core::server::reasoning::Effort::Standard.max_rounds()),
+                .unwrap_or_else(|| aiplane_core::server::reasoning::Effort::default().max_rounds()),
             self.seconds,
             self.tokens,
         )

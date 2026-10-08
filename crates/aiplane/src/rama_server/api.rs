@@ -605,7 +605,10 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
                         .unwrap_or_else(|| choice.id.clone()),
                 ],
             };
-            let reasoning = targets.iter().any(|target| {
+            // Only levels every reasoning target can express: a level one of
+            // them would quietly turn into another is not offered at all.
+            let mut efforts: Option<Vec<aiplane_core::server::reasoning::Effort>> = None;
+            for target in &targets {
                 let dialect = state
                     .upstreams
                     .serving_profile(
@@ -614,17 +617,29 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
                         &access,
                     )
                     .dialect;
-                aiplane_core::server::reasoning::ReasoningStyle::resolve(
+                let own = aiplane_core::server::reasoning::ReasoningStyle::resolve(
                     stored.get(target).and_then(Option::as_deref),
                     dialect,
                     target,
-                ) != aiplane_core::server::reasoning::ReasoningStyle::None
-            });
+                )
+                .efforts();
+                if own.is_empty() {
+                    continue;
+                }
+                efforts = Some(match efforts {
+                    None => own.to_vec(),
+                    Some(seen) => seen.into_iter().filter(|e| own.contains(e)).collect(),
+                });
+            }
             ChatModel {
                 id: choice.id,
                 gdpr: choice.compliance.gdpr,
                 nda: choice.compliance.nda,
-                reasoning,
+                efforts: efforts
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|e| e.as_str())
+                    .collect(),
             }
         })
         .collect();
@@ -643,8 +658,9 @@ pub struct ChatModel {
     pub gdpr: bool,
     /// Whether the model's backend is flagged as covered by an NDA.
     pub nda: bool,
-    /// Whether the effort control changes anything for this model.
-    pub reasoning: bool,
+    /// The effort levels the composer offers for this model, least thinking
+    /// first; empty when the effort control would change nothing.
+    pub efforts: Vec<&'static str>,
 }
 
 pub async fn transcription_models(State(state): State<Arc<RamaState>>, req: Request) -> Response {

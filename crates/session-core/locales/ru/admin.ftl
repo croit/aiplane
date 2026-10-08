@@ -185,19 +185,13 @@ admin-reasoning-glm = GLM / z.AI
 admin-reasoning-anthropic = Anthropic
 admin-reasoning-ollama = Ollama
 
-admin-effort-standard = Стандартный
-
-admin-effort-deep = Глубокий
-
-admin-effort-max = Макс
-
 admin-budget-placeholder = по умолчанию
 
-admin-budget-hint = Максимум токенов на размышления для каждого уровня. Пусто = значение бэкенда по умолчанию (без ограничений). «Fast» отключает рассуждения.
+admin-budget-hint = Максимум токенов на размышления для каждого уровня, не меньше { $min }. Пусто = без ограничений. «off» отключает рассуждения.
 
 admin-effort-default-option = (по умолчанию)
 
-admin-effort-hint = Уровень усилий для рассуждений по каждому уровню. Пусто = встроенное значение по умолчанию. «Fast» отключает рассуждения.
+admin-effort-hint = Уровень усилий для рассуждений по каждому уровню. Пусто = встроенное значение по умолчанию. «off» отключает рассуждения.
 
 admin-saved-model = `{ $model }` сохранено — вступает в силу немедленно
 

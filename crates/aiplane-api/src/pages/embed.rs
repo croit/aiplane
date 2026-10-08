@@ -439,6 +439,8 @@ async fn visitor(state: &RamaState, req: &Request) -> Result<Visitor, Response> 
 fn visitor_turn(mut t: TurnWithTools, lang: Lang) -> TurnWithTools {
     t.tool_calls.clear();
     t.steers.clear();
+    // A retried call's text is mostly reasoning.
+    t.attempts.clear();
     t.suspension = t
         .suspension
         .filter(|_| t.turn.status == TurnStatus::Suspended)
@@ -454,6 +456,7 @@ fn visitor_turn(mut t: TurnWithTools, lang: Lang) -> TurnWithTools {
         }
         if turn.status == TurnStatus::Errored {
             turn.error_message = Some(visitor_error(lang));
+            turn.error_code = None;
         }
     }
     t
@@ -985,6 +988,7 @@ fn final_events(turn: &chat::Turn, lang: Lang) -> Vec<ChatEvent> {
         turn_id: turn.id.clone(),
         status: turn.status.as_str().to_string(),
         error_message: (turn.status == TurnStatus::Errored).then(|| visitor_error(lang)),
+        error_code: None,
         model: None,
         duration_ms: turn
             .completed_at
@@ -1014,6 +1018,7 @@ mod tests {
                 reasoning_started_at: Some(now),
                 status,
                 error_message: Some("upstream 502 from backend gpu0".into()),
+                error_code: None,
                 created_at: now,
                 completed_at: None,
             },
@@ -1029,14 +1034,26 @@ mod tests {
                 completed_at: Some(now),
             }],
             steers: Vec::new(),
+            attempts: Vec::new(),
             suspension: None,
         }
     }
 
     #[test]
     fn a_visitor_sees_neither_tools_reasoning_nor_the_model() {
-        let t = visitor_turn(assistant(TurnStatus::Completed), Lang::En);
+        let mut turn = assistant(TurnStatus::Completed);
+        turn.attempts.push(chat::TurnAttempt {
+            seq: 0,
+            effort: "low".into(),
+            retry_effort: Some("off".into()),
+            stop_reason: "loop".into(),
+            reasoning: "the customer id is K-12345, the customer id is".into(),
+            content: String::new(),
+            created_at: Timestamp::now(),
+        });
+        let t = visitor_turn(turn, Lang::En);
         assert!(t.tool_calls.is_empty());
+        assert!(t.attempts.is_empty(), "a retried call is mostly reasoning");
         assert_eq!(t.turn.reasoning, None);
         assert_eq!(t.turn.reasoning_started_at, None);
         assert_eq!(t.turn.model, None);

@@ -39,8 +39,25 @@ export interface Turn {
 	reasoning_started_at: string | null;
 	status: 'in_progress' | 'suspended' | 'completed' | 'cancelled' | 'errored';
 	error_message: string | null;
+	/** Machine-readable reason beside `error_message`: `loop_exhausted` when every retry looped. */
+	error_code?: string | null;
 	created_at: string;
 	completed_at: string | null;
+}
+
+/**
+ * A model call of the turn that looped and was retried at a lower effort.
+ * Its partial output left the answer and is shown collapsed above it.
+ */
+export interface TurnAttempt {
+	seq: number;
+	effort: string;
+	/** The level the next try ran at; null on the last attempt of a turn that gave up. */
+	retry_effort: string | null;
+	stop_reason: 'loop' | 'repeated_call';
+	reasoning: string;
+	content: string;
+	created_at: string;
 }
 
 /** What became of a mid-turn interjection. Mirrors `SteerStatus` on the server. */
@@ -67,6 +84,8 @@ export interface TurnWithTools {
 	turn: Turn;
 	tool_calls: ToolCall[];
 	steers: TurnSteer[];
+	/** Retried calls, oldest first; absent when there are none. */
+	attempts?: TurnAttempt[];
 	/** What the turn waits for, while it is `suspended`. */
 	suspension?: SuspensionView | null;
 }
@@ -110,11 +129,13 @@ export type ChatEvent =
 			turn_id: string;
 			status: string;
 			error_message?: string;
+			error_code?: string;
 			model?: string;
 			duration_ms?: number;
 	  }
 	| ({ type: 'suspended'; turn_id: string } & SuspensionView)
 	| { type: 'steer'; turn_id: string; id: string; text: string; status: SteerStatus }
+	| { type: 'attempt'; turn_id: string; attempt: TurnAttempt }
 	| { type: 'sidebar_changed' }
 	| { type: 'info'; message: string }
 	| {
@@ -217,6 +238,7 @@ export interface LiveTurn {
 	turn: Turn;
 	tool_calls: ToolCall[];
 	steers: TurnSteer[];
+	attempts: TurnAttempt[];
 	suspension: SuspensionView | null;
 }
 
@@ -281,6 +303,7 @@ function ensureTurn(state: ConversationState, id: string): LiveTurn {
 			},
 			tool_calls: [],
 			steers: [],
+			attempts: [],
 			suspension: null
 		};
 		state.turns.push(existing);
@@ -306,6 +329,7 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 				turn: row.turn,
 				tool_calls: [...row.tool_calls],
 				steers: [...row.steers],
+				attempts: [...(row.attempts ?? [])],
 				suspension: row.suspension ?? null
 			}));
 			state.liveTurnId = event.live_turn_id ?? null;
@@ -355,6 +379,7 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 			state.waitingTurnIds = [];
 			live.turn.status = event.status as Turn['status'];
 			live.turn.error_message = event.error_message ?? live.turn.error_message;
+			live.turn.error_code = event.error_code ?? live.turn.error_code ?? null;
 			if (event.model) live.turn.model = event.model;
 			live.turn.completed_at = new Date().toISOString();
 			if (state.liveTurnId === event.turn_id) {
@@ -395,6 +420,11 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 				created_at: new Date().toISOString(),
 				settled_at: null
 			});
+			return;
+		}
+		case 'attempt': {
+			const live = ensureTurn(state, event.turn_id);
+			if (!live.attempts.some((a) => a.seq === event.attempt.seq)) live.attempts.push(event.attempt);
 			return;
 		}
 		case 'sidebar_changed':

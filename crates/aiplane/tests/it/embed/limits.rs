@@ -296,6 +296,7 @@ async fn spend(e: &Embed, tokens: i64) {
             principal_kind: PrincipalKind::System,
             agent_id: Some(e.agent.clone()),
             chain: None,
+            stop_reason: None,
         }],
     )
     .await

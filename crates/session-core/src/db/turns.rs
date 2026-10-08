@@ -69,6 +69,7 @@ pub async fn create_user_turn(
         reasoning_started_at: None,
         status: TurnStatus::Completed,
         error_message: None,
+        error_code: None,
         created_at: now,
         completed_at: Some(now),
     };
@@ -119,6 +120,7 @@ pub async fn create_assistant_turn_in_progress(
         reasoning_started_at: None,
         status: TurnStatus::InProgress,
         error_message: None,
+        error_code: None,
         created_at: now,
         completed_at: None,
     };
@@ -359,7 +361,7 @@ pub async fn list_turns(pool: &Pool, session_id: &str) -> Result<Vec<TurnWithToo
     let turn_rows = sqlx::query(
         r#"SELECT id, session_id, seq, role, user_content, model, content,
                   reasoning, reasoning_elapsed_ms, reasoning_started_at,
-                  status, error_message,
+                  status, error_message, error_code,
                   created_at, completed_at
            FROM chat_turns
            WHERE session_id = ?
@@ -395,6 +397,8 @@ pub async fn list_turns(pool: &Pool, session_id: &str) -> Result<Vec<TurnWithToo
 
     // Same one-query-then-bucket treatment for mid-turn interjections.
     let mut steers_by_turn = crate::db::steers::list_steers_for_session(pool, session_id).await?;
+    let mut attempts_by_turn =
+        crate::db::attempts::list_attempts_for_session(pool, session_id).await?;
     let mut suspensions =
         crate::db::suspensions::suspension_views_for_session(pool, session_id).await?;
 
@@ -403,6 +407,7 @@ pub async fn list_turns(pool: &Pool, session_id: &str) -> Result<Vec<TurnWithToo
         .map(|turn| TurnWithTools {
             tool_calls: by_turn.remove(&turn.id).unwrap_or_default(),
             steers: steers_by_turn.remove(&turn.id).unwrap_or_default(),
+            attempts: attempts_by_turn.remove(&turn.id).unwrap_or_default(),
             suspension: suspensions.remove(&turn.id),
             turn,
         })
@@ -416,7 +421,7 @@ pub async fn in_flight_turn(pool: &Pool, session_id: &str) -> Result<Option<Turn
     let row = sqlx::query(
         r#"SELECT id, session_id, seq, role, user_content, model, content,
                   reasoning, reasoning_elapsed_ms, reasoning_started_at,
-                  status, error_message,
+                  status, error_message, error_code,
                   created_at, completed_at
            FROM chat_turns
            WHERE session_id = ? AND status = 'in_progress'
@@ -440,7 +445,7 @@ pub async fn get_turn(
     let row = sqlx::query(
         r#"SELECT id, session_id, seq, role, user_content, model, content,
                   reasoning, reasoning_elapsed_ms, reasoning_started_at,
-                  status, error_message,
+                  status, error_message, error_code,
                   created_at, completed_at
            FROM chat_turns
            WHERE session_id = ? AND id = ?"#,
@@ -458,7 +463,7 @@ pub async fn turn_before(pool: &Pool, session_id: &str, seq: i64) -> Result<Opti
     let row = sqlx::query(
         r#"SELECT id, session_id, seq, role, user_content, model, content,
                   reasoning, reasoning_elapsed_ms, reasoning_started_at,
-                  status, error_message,
+                  status, error_message, error_code,
                   created_at, completed_at
            FROM chat_turns
            WHERE session_id = ? AND seq < ?
@@ -489,7 +494,7 @@ pub async fn get_turn_with_tools(
     // every coalesced streaming flush, for every attached viewer, so the
     // second read costs a round trip it does not have to: the queries are
     // independent and neither depends on the other's result.
-    let (tool_rows, steers) = tokio::try_join!(
+    let (tool_rows, steers, attempts) = tokio::try_join!(
         sqlx::query(
             r#"SELECT id, turn_id, seq, name, arguments_json, output_json,
                       status, created_at, completed_at
@@ -500,7 +505,12 @@ pub async fn get_turn_with_tools(
         .bind(turn_id)
         .fetch_all(pool),
         crate::db::steers::list_steers_query(pool, turn_id),
+        crate::db::attempts::list_attempts_query(pool, turn_id),
     )?;
+    let attempts: Vec<TurnAttempt> = attempts
+        .iter()
+        .map(crate::db::attempts::map_attempt)
+        .collect::<Result<_, _>>()?;
     let tool_calls: Vec<ToolCall> = tool_rows
         .iter()
         .map(map_tool_call)
@@ -518,6 +528,7 @@ pub async fn get_turn_with_tools(
         turn,
         tool_calls,
         steers,
+        attempts,
         suspension,
     }))
 }

@@ -169,6 +169,15 @@ pub async fn session_get(
             return internal(err);
         }
     };
+    let effort =
+        match aiplane_core::server::db::chat_session_settings::get_effort(&state.db, &session_id)
+            .await
+        {
+            Ok(stored) => {
+                aiplane_core::server::reasoning::Effort::from_db(stored.as_deref()).as_str()
+            }
+            Err(err) => return internal(err),
+        };
     let compacted_up_to_seq =
         match aiplane_core::server::db::chat_compactions::get(&state.db, &session_id).await {
             Ok(compaction) => compaction.map(|value| value.up_to_seq),
@@ -201,6 +210,7 @@ pub async fn session_get(
         SessionDetail {
             session,
             turns,
+            effort,
             compacted_up_to_seq,
             assets,
         },
@@ -211,6 +221,9 @@ pub async fn session_get(
 pub struct SessionDetail {
     pub session: chat::Session,
     pub turns: Vec<chat::TurnWithTools>,
+    /// The conversation's effort level — the stored one, or the default
+    /// (`low`) when none was chosen.
+    pub effort: &'static str,
     /// The highest turn `seq` a compaction summary replaces when the
     /// conversation is replayed to the model; `null` when nothing was compacted.
     pub compacted_up_to_seq: Option<i64>,
@@ -1415,7 +1428,7 @@ pub struct Shared {
 
 #[derive(serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct EffortBody {
-    /// fast | standard | deep | max
+    /// off | low | medium | high | xhigh
     pub effort: String,
 }
 
@@ -1435,8 +1448,11 @@ pub async fn session_effort(
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    if !matches!(parsed.effort.as_str(), "fast" | "standard" | "deep" | "max") {
-        return bad_request("effort must be fast | standard | deep | max");
+    if aiplane_core::server::reasoning::Effort::parse(&parsed.effort).is_none() {
+        return bad_request(format!(
+            "unknown effort {:?}: use off, low, medium, high or xhigh",
+            parsed.effort
+        ));
     }
     match aiplane_core::server::db::chat_session_settings::set_effort(
         &state.db,

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
 	import { untrack } from 'svelte';
-	import { contextWindowHint, pricingUnitFor } from '#lib/admin-models.js';
-	import type { AdminModel } from '#lib/admin-models.js';
+	import { contextWindowHint, MIN_THINKING_BUDGET, pricingUnitFor, TUNED_EFFORTS } from '#lib/admin-models.js';
+	import type { AdminModel, TunedEffort } from '#lib/admin-models.js';
 	import { n, t } from '#lib/i18n.svelte.js';
 
 	/**
@@ -27,12 +27,12 @@
 	let outputPrice = $state(defaults?.output_price?.toString() ?? '');
 	let contextWindow = $state(defaults?.context_window?.toString() ?? '');
 	let reasoningStyle = $state(defaults?.reasoning_style ?? '');
-	let budgetStandard = $state(defaults?.budget_standard?.toString() ?? '');
-	let budgetDeep = $state(defaults?.budget_deep?.toString() ?? '');
-	let budgetMax = $state(defaults?.budget_max?.toString() ?? '');
-	let effortStandard = $state(defaults?.effort_standard ?? '');
-	let effortDeep = $state(defaults?.effort_deep ?? '');
-	let effortMax = $state(defaults?.effort_max ?? '');
+	let budgets = $state(
+		Object.fromEntries(TUNED_EFFORTS.map((level) => [level, defaults?.[`budget_${level}`]?.toString() ?? ''])) as Record<TunedEffort, string>
+	);
+	let efforts = $state(
+		Object.fromEntries(TUNED_EFFORTS.map((level) => [level, defaults?.[`effort_${level}`] ?? ''])) as Record<TunedEffort, string>
+	);
 	let capVision = $state(triValue(defaults?.capabilities.vision));
 	let capTools = $state(triValue(defaults?.capabilities.tools));
 	let capStructured = $state(triValue(defaults?.capabilities.structured_output));
@@ -65,12 +65,8 @@
 				price_only: priceOnly ? '1' : '',
 				context_window: contextWindow,
 				reasoning_style: reasoningStyle,
-				budget_standard: budgetStandard,
-				budget_deep: budgetDeep,
-				budget_max: budgetMax,
-				effort_standard: effortStandard,
-				effort_deep: effortDeep,
-				effort_max: effortMax,
+				...Object.fromEntries(TUNED_EFFORTS.map((level) => [`budget_${level}`, budgets[level]])),
+				...Object.fromEntries(TUNED_EFFORTS.map((level) => [`effort_${level}`, efforts[level]])),
 				cap_vision: capVision,
 				cap_tools: capTools,
 				cap_structured_output: capStructured,
@@ -116,15 +112,15 @@
 			{/if}
 		</div>
 		{#if isChat && model.uses_token_budget}
-			<div class="flex flex-col gap-2 border-t border-base-300 pt-3"><span class="text-xs text-base-content/60">{t('admin-budget-hint')}</span><div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-				<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-effort-standard')}</span><input type="number" min="1" class="input" bind:value={budgetStandard} placeholder={t('admin-budget-placeholder')} /></label>
-				<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-effort-deep')}</span><input type="number" min="1" class="input" bind:value={budgetDeep} placeholder={t('admin-budget-placeholder')} /></label>
-				<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-effort-max')}</span><input type="number" min="1" class="input" bind:value={budgetMax} placeholder={t('admin-budget-placeholder')} /></label>
+			<div class="flex flex-col gap-2 border-t border-base-300 pt-3"><span class="text-xs text-base-content/60">{t('admin-budget-hint', { min: MIN_THINKING_BUDGET })}</span><div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+				{#each TUNED_EFFORTS as level (level)}
+					<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t(`chat-render-effort-${level}`)}</span><input type="number" min={MIN_THINKING_BUDGET} class="input" bind:value={budgets[level]} placeholder={t('admin-budget-placeholder')} /></label>
+				{/each}
 			</div></div>
 		{:else if isChat && model.effort_levels.length > 0}
-			<div class="flex flex-col gap-2 border-t border-base-300 pt-3"><span class="text-xs text-base-content/60">{t('admin-effort-hint')}</span><div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-				{#each [['admin-effort-standard', effortStandard], ['admin-effort-deep', effortDeep], ['admin-effort-max', effortMax]] as control, index}
-					<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t(control[0])}</span><select class="select" value={control[1]} onchange={(event) => { if (index === 0) effortStandard = event.currentTarget.value; else if (index === 1) effortDeep = event.currentTarget.value; else effortMax = event.currentTarget.value; }}><option value="">{t('admin-effort-default-option')}</option>{#each model.effort_levels as level}<option value={level}>{level}</option>{/each}</select></label>
+			<div class="flex flex-col gap-2 border-t border-base-300 pt-3"><span class="text-xs text-base-content/60">{t('admin-effort-hint')}</span><div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+				{#each TUNED_EFFORTS as level (level)}
+					<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t(`chat-render-effort-${level}`)}</span><select class="select" bind:value={efforts[level]}><option value="">{t('admin-effort-default-option')}</option>{#each model.effort_levels as option (option)}<option value={option}>{option}</option>{/each}</select></label>
 				{/each}
 			</div></div>
 		{/if}

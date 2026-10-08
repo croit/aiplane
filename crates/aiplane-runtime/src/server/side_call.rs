@@ -172,6 +172,7 @@ impl Payer {
                 principal_kind: self.principal.kind(),
                 agent_id: None,
                 chain: None,
+                stop_reason: None,
             }
             .in_run(self.run.as_deref()),
         );

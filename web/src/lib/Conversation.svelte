@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api, ApiError } from '#lib/api.js';
-	import type { CanvasDocument, ChatAsset, ChatCapability } from '#lib/api.js';
+	import { api, ApiError, EFFORTS } from '#lib/api.js';
+	import type { CanvasDocument, ChatAsset, ChatCapability, ChatModelChoice, Effort } from '#lib/api.js';
 	import { createConversationController } from '#lib/chat.svelte.js';
 	import { extensionStatus, onExtensionState, requestActivation } from '#lib/browser-bridge.js';
 	import type { ExtensionStatus } from '#lib/browser-bridge.js';
@@ -38,7 +38,7 @@
 	let controller = $state<ReturnType<typeof createConversationController> | null>(null);
 	let session = $state<ChatSession | null>(null);
 	let model = $state('');
-	let models = $state<{ id: string; gdpr: boolean; nda: boolean; reasoning: boolean }[]>([]);
+	let models = $state<ChatModelChoice[]>([]);
 	let transcriptionModels = $state<string[]>([]);
 	let transcriptionModel = $state('');
 	let speechAvailable = $state(false);
@@ -47,10 +47,8 @@
 	let draft = $state('');
 	let files = $state<File[]>([]);
 	let tools = $state<ChatCapability[]>([]);
-	let effort = $state('standard');
-	// Levels, not labels: the option text is looked up in the template so a
-	// language switch re-renders the picker (same reason as the layout's nav).
-	const EFFORTS = ['fast', 'standard', 'deep', 'max'] as const;
+	// Until the snapshot says otherwise; `low` is also the server's default.
+	let effort = $state<Effort>('low');
 	let sending = $state(false);
 	/**
 	 * The composer's textarea, so the actions that empty it can hand the
@@ -174,7 +172,17 @@
 	 * Free-typed model names are not in the list, and there we do not know, so
 	 * the control stays enabled rather than being wrongly greyed out.
 	 */
-	const effortApplies = $derived(selectedModel?.reasoning ?? true);
+	const effortApplies = $derived(selectedModel ? selectedModel.efforts.length > 0 : true);
+	// Levels, not labels: the option text is looked up in the template so a
+	// language switch re-renders the picker (same reason as the layout's nav).
+	// The stored level stays listed even where this model does not offer it
+	// (`off` on an OpenAI model), or the select would show a level that is not
+	// the one the conversation has.
+	const offeredEfforts = $derived<readonly Effort[]>(
+		selectedModel && selectedModel.efforts.length > 0
+			? EFFORTS.filter((level) => selectedModel.efforts.includes(level) || level === effort)
+			: EFFORTS
+	);
 	const hasCanvas = $derived(documents.length > 0 || assets.length > 0);
 	// The composer's feedback button captures the page before the dialog opens,
 	// so it needs the same busy state the floating button has elsewhere.
@@ -210,6 +218,7 @@
 			if (request !== metaRequest) return;
 			session = snap.session;
 			compactedUpToSeq = snap.compacted_up_to_seq;
+			effort = snap.effort;
 			assets = snap.assets;
 			if (snap.assets.length > 0 && window.innerWidth >= 768) canvasOpen = true;
 			// Prefill the model picker from the conversation's last assistant
@@ -891,6 +900,30 @@
 			<div class="chat chat-start">
 				<div class="chat-bubble w-full max-w-[min(90vw,48rem)] border border-base-300/60 bg-base-200/35 p-0 backdrop-blur-sm">
 					<div class="p-3 flex min-w-0 flex-col gap-2">
+						{#each entry.attempts as attempt (attempt.seq)}
+							<!-- A call that looped and was retried lower: its text
+							     left the answer, and is kept here, folded away. -->
+							<details class="collapse collapse-arrow text-sm -ms-2" data-attempt={attempt.seq}>
+								<summary class="collapse-title cursor-pointer text-base-content/60 py-1 min-h-0 h-7">
+									{t('chat-attempt-summary', {
+										n: attempt.seq + 1,
+										reason: t(`chat-attempt-reason-${attempt.stop_reason}`),
+										effort: attempt.effort
+									})}
+								</summary>
+								<div class="collapse-content whitespace-pre-wrap text-xs text-base-content/70 max-h-64 overflow-y-auto">
+									{attempt.reasoning}{attempt.content ? `\n\n${attempt.content}` : ''}
+								</div>
+							</details>
+						{/each}
+						{#if entry.turn.status === 'in_progress' && entry.attempts.at(-1)?.retry_effort}
+							<div class="alert alert-info alert-soft py-1 text-xs" role="status">
+								{t('chat-attempt-retry', {
+									effort: entry.attempts.at(-1)?.retry_effort ?? '',
+									n: entry.attempts.length + 1
+								})}
+							</div>
+						{/if}
 						{#if entry.turn.reasoning}
 							<details class="collapse collapse-arrow text-sm -ms-2">
 								<summary class="collapse-title cursor-pointer text-base-content/60 py-1 min-h-0 h-7">
@@ -950,7 +983,9 @@
 							hiddenImageUrls={new Set(shownAttachments.map((attachment) => attachment.url))}
 						/>
 
-						{#if entry.turn.status === 'errored'}
+						{#if entry.turn.status === 'errored' && entry.turn.error_code === 'loop_exhausted'}
+							<div class="alert alert-warning py-2"><span>{t('chat-loop-exhausted', { attempts: entry.attempts.length })}</span></div>
+						{:else if entry.turn.status === 'errored'}
 							<div class="alert alert-error py-2"><span>{entry.turn.error_message}</span></div>
 						{:else if entry.turn.status === 'cancelled'}
 							<div class="text-xs text-base-content/50">{t('chat-turn-stopped')}</div>
@@ -1071,7 +1106,7 @@
 				bind:value={effort}
 				onchange={saveEffort}
 			>
-				{#each EFFORTS as level (level)}
+				{#each offeredEfforts as level (level)}
 					<option value={level}>
 						{t('chat-render-effort-label-prefix')} {t(`chat-render-effort-${level}`)}
 					</option>

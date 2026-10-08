@@ -9,7 +9,7 @@
 //! `chat_session_tools` / `chat_session_skills` pattern. A missing row means
 //! "the default" — callers parse the stored string via
 //! [`crate::server::reasoning::Effort::from_db`], which maps `None` to
-//! `Standard`.
+//! `Low`.
 //!
 //! Schema lives in `migrations/0024_session_settings.sql`.
 
@@ -85,16 +85,16 @@ mod tests {
     async fn set_then_read_back_and_overwrite() {
         let pool = open(Path::new(":memory:")).await.unwrap();
         seed_session(&pool, "s1").await;
-        set_effort(&pool, "s1", "deep").await.unwrap();
+        set_effort(&pool, "s1", "high").await.unwrap();
         assert_eq!(
             get_effort(&pool, "s1").await.unwrap().as_deref(),
-            Some("deep")
+            Some("high")
         );
         // Idempotent upsert overwrites.
-        set_effort(&pool, "s1", "fast").await.unwrap();
+        set_effort(&pool, "s1", "off").await.unwrap();
         assert_eq!(
             get_effort(&pool, "s1").await.unwrap().as_deref(),
-            Some("fast")
+            Some("off")
         );
     }
 

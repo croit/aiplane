@@ -148,6 +148,15 @@ async fn setup(upstream_uri: &str) -> (Arc<RamaState>, String) {
 }
 
 async fn setup_with_location_tool(upstream_uri: &str) -> (Arc<RamaState>, String) {
+    setup_with_location_tool_metered(upstream_uri, false).await
+}
+
+/// [`setup_with_location_tool`], optionally with a live usage sink so a test
+/// can read the rows a turn wrote.
+async fn setup_with_location_tool_metered(
+    upstream_uri: &str,
+    metered: bool,
+) -> (Arc<RamaState>, String) {
     let tools = Arc::new(ToolRegistry::new().with(GetUserLocation));
     let rbac = Arc::new(
         Resolver::build(
@@ -165,7 +174,11 @@ async fn setup_with_location_tool(upstream_uri: &str) -> (Arc<RamaState>, String
         )
         .unwrap(),
     );
-    let state = state_with_chat_access(upstream_uri, tools, rbac).await;
+    let mut state = state_with_chat_access(upstream_uri, tools, rbac).await;
+    if metered {
+        let usage = aiplane_core::server::usage::spawn(state.db.clone(), 90);
+        state = state.with_usage(usage);
+    }
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
     (Arc::new(state), cookie)
 }
@@ -1938,6 +1951,145 @@ async fn automatic_route_stays_in_model_picker_while_selector_is_unavailable() {
     );
 }
 
+/// The streamed round request a turn sent upstream (title calls are not
+/// streamed).
+async fn round_request(upstream: &MockServer) -> serde_json::Value {
+    wait_for_first_round(upstream).await;
+    upstream
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap())
+        .find(|body| body["stream"] == true)
+        .expect("a streamed round")
+}
+
+/// A conversation nobody set an effort for thinks at `low`, and says so in
+/// Qwen's own template variable: left out, Qwen3.8's template thinks at
+/// `xhigh`, which is what made every chat turn think for minutes.
+#[tokio::test]
+async fn a_new_conversation_asks_qwen_to_think_at_low() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["ok"], 0).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    aiplane_core::server::db::model_defaults::set_reasoning_style(
+        &state.db,
+        "model-a",
+        Some("qwen"),
+    )
+    .await
+    .unwrap();
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let resp = router(state.clone())
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"hi"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let sent = round_request(&upstream).await;
+    assert_eq!(
+        sent["chat_template_kwargs"],
+        serde_json::json!({"enable_thinking": true, "reasoning_effort": "low"})
+    );
+    assert!(
+        sent.get("custom_params").is_none(),
+        "no budget is configured"
+    );
+}
+
+/// An admin's thinking budget reaches an SGLang that enforces one in the
+/// spelling it enforces — `custom_params.thinking_budget` — never as vLLM's
+/// `thinking_token_budget`, which SGLang drops without a word.
+#[tokio::test]
+async fn a_thinking_budget_reaches_a_strict_sglang_as_custom_params() {
+    use aiplane_core::server::reasoning::ThinkingBudget;
+    use aiplane_core::server::upstreams::profile::{BackendProfile, Detected};
+
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["ok"], 0).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    for pool in state.upstreams.pools() {
+        for backend in &pool.backends {
+            backend.set_detected(&Detected {
+                profile: BackendProfile::SgLang,
+                thinking_budget: Some(ThinkingBudget::CustomParams),
+                ..Detected::default()
+            });
+        }
+    }
+    let defaults = aiplane_core::server::db::model_defaults::ReasoningOverrideCols {
+        budget_high: Some(4_096),
+        ..Default::default()
+    };
+    aiplane_core::server::db::model_defaults::set_reasoning_overrides(
+        &state.db, "model-a", &defaults,
+    )
+    .await
+    .unwrap();
+    aiplane_core::server::db::model_defaults::set_reasoning_style(
+        &state.db,
+        "model-a",
+        Some("qwen"),
+    )
+    .await
+    .unwrap();
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let app = router(state.clone());
+    let effort = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/effort", session.id),
+            &cookie,
+            Some(r#"{"effort":"high"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(effort.status(), StatusCode::OK);
+    app.serve(json_req(
+        Method::POST,
+        format!("/api/v0/chat/sessions/{}/messages", session.id),
+        &cookie,
+        Some(r#"{"model":"model-a","message":"hi"}"#.into()),
+    ))
+    .await
+    .unwrap();
+
+    let sent = round_request(&upstream).await;
+    assert_eq!(
+        sent["custom_params"],
+        serde_json::json!({"thinking_budget": 4_096})
+    );
+    assert!(sent.get("thinking_token_budget").is_none());
+    assert_eq!(sent["chat_template_kwargs"]["reasoning_effort"], "xhigh");
+}
+
+/// The old scale's names are refused with the new ones spelled out.
+#[tokio::test]
+async fn an_effort_outside_the_scale_is_refused() {
+    let upstream = MockServer::start().await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let resp = router(state)
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/effort", session.id),
+            &cookie,
+            Some(r#"{"effort":"standard"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_string(resp).await;
+    assert!(body.contains("off, low, medium, high or xhigh"), "{body}");
+}
+
 /// An alias inherits its target's reasoning support.
 ///
 /// The picker lists aliases as models of their own, and `default` — the name
@@ -1964,20 +2116,22 @@ async fn an_alias_reports_the_reasoning_support_of_the_model_behind_it() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
     let models = body["models"].as_array().unwrap();
-    let reasoning = |id: &str| -> bool {
+    let efforts = |id: &str| {
         models
             .iter()
             .find(|m| m["id"] == id)
-            .unwrap_or_else(|| panic!("`{id}` must be listed: {models:?}"))["reasoning"]
-            .as_bool()
-            .expect("reasoning is a boolean")
+            .unwrap_or_else(|| panic!("`{id}` must be listed: {models:?}"))["efforts"]
+            .clone()
     };
-    assert!(
-        reasoning("Qwen/Qwen3-8B"),
+    let every_level = serde_json::json!(["off", "low", "medium", "high", "xhigh"]);
+    assert_eq!(
+        efforts("Qwen/Qwen3-8B"),
+        every_level,
         "the real id detects as Qwen: {models:?}"
     );
-    assert!(
-        reasoning("default"),
+    assert_eq!(
+        efforts("default"),
+        every_level,
         "the alias must answer for its target, not for its own name: {models:?}"
     );
 }
@@ -2006,7 +2160,7 @@ async fn a_model_with_no_reasoning_parameter_is_listed_as_such() {
             .iter()
             .find(|m| m["id"] == id)
             .unwrap_or_else(|| panic!("`{id}` must be listed: {models:?}"));
-        assert_eq!(m["reasoning"], serde_json::json!(false), "{models:?}");
+        assert_eq!(m["efforts"], serde_json::json!([]), "{models:?}");
     }
 }
 
@@ -2750,6 +2904,191 @@ async fn a_chat_turn_whose_model_writes_out_a_call_on_its_final_round_ends_on_an
     );
 }
 
+/// A Qwen-style chat model that loops in its reasoning whenever it thinks, and
+/// answers when thinking is off — the shape a reasoning loop has, and what a
+/// retry one effort level lower is for. Title calls (not streamed) get a
+/// title.
+struct LoopsWhileThinking {
+    /// Loop at every level, so every retry loops too.
+    always: bool,
+}
+
+impl LoopsWhileThinking {
+    fn looped() -> String {
+        let frame = serde_json::json!({"choices": [{"index": 0, "delta": {"reasoning_content": "Wait, I'll check again. "}}]});
+        let mut sse = String::new();
+        for _ in 0..600 {
+            sse.push_str(&format!("data: {frame}\n\n"));
+        }
+        sse.push_str("data: [DONE]\n\n");
+        sse
+    }
+}
+
+impl wiremock::Respond for LoopsWhileThinking {
+    fn respond(&self, req: &wiremock::Request) -> ResponseTemplate {
+        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+        if body["stream"] != true {
+            return ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": "Title"}}],
+            }));
+        }
+        let thinking = body["chat_template_kwargs"]["enable_thinking"] == true;
+        let sse = if thinking || self.always {
+            Self::looped()
+        } else {
+            let frame =
+                serde_json::json!({"choices": [{"index": 0, "delta": {"content": "Answer."}}]});
+            format!("data: {frame}\n\ndata: [DONE]\n\n")
+        };
+        ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream")
+    }
+}
+
+/// A conversation on a Qwen-style model, sent one message, run to its end.
+async fn looping_turn(
+    always: bool,
+    retries: Option<usize>,
+) -> (Arc<RamaState>, chat::TurnWithTools, Vec<serde_json::Value>) {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(LoopsWhileThinking { always })
+        .mount(&upstream)
+        .await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    aiplane_core::server::db::model_defaults::set_reasoning_style(
+        &state.db,
+        "model-a",
+        Some("qwen"),
+    )
+    .await
+    .unwrap();
+    if let Some(retries) = retries {
+        aiplane_core::server::db::app_settings::set(
+            &state.db,
+            "settings.chat.loops.retries",
+            &retries.to_string(),
+        )
+        .await
+        .unwrap();
+        state.reload_settings().await;
+        assert_eq!(state.config().chat.loops.retries, retries);
+    }
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let resp = router(state.clone())
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"hi"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_for_idle(&state, "alice").await;
+    let assistant = chat::list_turns(&state.db, &session.id)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    let rounds = upstream
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap())
+        .filter(|b| b["stream"] == true)
+        .collect();
+    (state, assistant, rounds)
+}
+
+/// The model loops at `low`; the round runs again at `off` and answers. The
+/// loop leaves the answer — it sits collapsed in an attempt — and the model
+/// never sees it.
+#[tokio::test]
+async fn a_loop_is_retried_one_level_lower_and_the_answer_stands() {
+    let (_, turn, rounds) = looping_turn(false, None).await;
+    assert_eq!(
+        turn.turn.status,
+        chat::TurnStatus::Completed,
+        "{:?}",
+        turn.turn.error_message
+    );
+    assert_eq!(turn.turn.content.as_deref(), Some("Answer."));
+    assert_eq!(
+        turn.turn.reasoning, None,
+        "the looped reasoning left the answer"
+    );
+    assert_eq!(turn.attempts.len(), 1);
+    let attempt = &turn.attempts[0];
+    assert_eq!(
+        (attempt.effort.as_str(), attempt.retry_effort.as_deref()),
+        ("low", Some("off"))
+    );
+    assert_eq!(attempt.stop_reason, "loop");
+    assert!(
+        attempt.reasoning.starts_with("Wait, I'll check again."),
+        "{}",
+        attempt.reasoning
+    );
+
+    assert_eq!(rounds.len(), 2);
+    assert_eq!(rounds[0]["chat_template_kwargs"]["reasoning_effort"], "low");
+    assert_eq!(
+        rounds[1]["chat_template_kwargs"],
+        serde_json::json!({"enable_thinking": false})
+    );
+    assert_eq!(
+        rounds[1]["messages"], rounds[0]["messages"],
+        "the retry asks the same question, without the loop in it"
+    );
+}
+
+/// Every try loops: the turn gives up after the last level it can go down
+/// to, says so in a code the SPA can translate, and keeps every attempt.
+#[tokio::test]
+async fn a_turn_that_loops_on_every_retry_gives_up_with_its_attempts() {
+    let (_, turn, rounds) = looping_turn(true, None).await;
+    assert_eq!(turn.turn.status, chat::TurnStatus::Errored);
+    assert_eq!(turn.turn.error_code.as_deref(), Some("loop_exhausted"));
+    let message = turn.turn.error_message.clone().unwrap_or_default();
+    assert!(message.contains("all 2 attempts"), "{message}");
+    let efforts: Vec<_> = turn
+        .attempts
+        .iter()
+        .map(|a| (a.effort.as_str(), a.retry_effort.as_deref()))
+        .collect();
+    // `low` → `off`, and `off` has nothing below it: two tries, not three.
+    assert_eq!(efforts, vec![("low", Some("off")), ("off", None)]);
+    assert_eq!(rounds.len(), 2);
+}
+
+/// With retries switched off a loop ends the turn as it always did: the
+/// partial output stays where it streamed, and nothing is moved.
+#[tokio::test]
+async fn with_no_retries_a_loop_ends_the_turn_in_place() {
+    let (_, turn, rounds) = looping_turn(false, Some(0)).await;
+    assert_eq!(turn.turn.status, chat::TurnStatus::Errored);
+    assert_eq!(turn.turn.error_code, None);
+    assert!(turn.attempts.is_empty());
+    assert!(
+        turn.turn
+            .reasoning
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("Wait")
+    );
+    assert!(
+        turn.turn
+            .error_message
+            .as_deref()
+            .unwrap_or("")
+            .contains("loop detected")
+    );
+    assert_eq!(rounds.len(), 1);
+}
+
 /// A chat model that calls `get_user_location` with the same arguments on
 /// every round and never answers.
 struct StuckChatResponder;
@@ -2774,7 +3113,7 @@ async fn a_chat_turn_repeating_one_identical_call_is_stopped_with_a_reason() {
         .respond_with(StuckChatResponder)
         .mount(&upstream)
         .await;
-    let (state, cookie) = setup_with_location_tool(&upstream.uri()).await;
+    let (state, cookie) = setup_with_location_tool_metered(&upstream.uri(), true).await;
     let app = router(state.clone());
     let session = chat::create_session(&state.db, "alice").await.unwrap();
 
@@ -2807,6 +3146,226 @@ async fn a_chat_turn_repeating_one_identical_call_is_stopped_with_a_reason() {
     assert!(
         upstream_calls < 10,
         "stopped long before the round budget: {upstream_calls}"
+    );
+    // The round whose calls were refused for good is the one recorded as
+    // stopped; every round before it ran normally.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    let reasons: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT stop_reason FROM usage_events WHERE kind = 'chat' ORDER BY created_at",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        reasons.iter().filter(|r| r.is_some()).collect::<Vec<_>>(),
+        vec![&Some("repeated_call".to_string())],
+        "{reasons:?}"
+    );
+}
+
+/// Calls `get_user_location` over and over while it thinks, answers when it
+/// does not.
+struct StuckWhileThinking;
+
+impl wiremock::Respond for StuckWhileThinking {
+    fn respond(&self, req: &wiremock::Request) -> ResponseTemplate {
+        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+        if body["stream"] != true {
+            return ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": "Title"}}],
+            }));
+        }
+        if body["chat_template_kwargs"]["enable_thinking"] == true {
+            return StuckChatResponder.respond(req);
+        }
+        let frame = serde_json::json!({"choices": [{"index": 0, "delta": {"content": "You are in Munich."}}]});
+        ResponseTemplate::new(200).set_body_raw(
+            format!("data: {frame}\n\ndata: [DONE]\n\n"),
+            "text/event-stream",
+        )
+    }
+}
+
+/// The other kind of loop: the same tool call again and again. It is retried
+/// one level lower like a text loop, with the call counts starting over.
+#[tokio::test]
+async fn a_repeated_tool_call_is_retried_one_level_lower() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(StuckWhileThinking)
+        .mount(&upstream)
+        .await;
+    let (state, cookie) = setup_with_location_tool(&upstream.uri()).await;
+    aiplane_core::server::db::model_defaults::set_reasoning_style(
+        &state.db,
+        "model-a",
+        Some("qwen"),
+    )
+    .await
+    .unwrap();
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let resp = router(state.clone())
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"where am I"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_for_idle(&state, "alice").await;
+
+    let turn = chat::list_turns(&state.db, &session.id)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(
+        turn.turn.status,
+        chat::TurnStatus::Completed,
+        "{:?}",
+        turn.turn.error_message
+    );
+    assert_eq!(turn.turn.content.as_deref(), Some("You are in Munich."));
+    assert_eq!(turn.attempts.len(), 1);
+    assert_eq!(turn.attempts[0].stop_reason, "repeated_call");
+    assert_eq!(turn.attempts[0].retry_effort.as_deref(), Some("off"));
+}
+
+/// A retry after a repeated tool call does not hand the call a fresh
+/// allowance: a tool with side effects runs no more often than without
+/// retries, however many there are.
+#[tokio::test]
+async fn a_retry_does_not_rerun_a_call_that_used_up_its_allowance() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(StuckChatResponder)
+        .mount(&upstream)
+        .await;
+    let (state, cookie) = setup_with_location_tool(&upstream.uri()).await;
+    aiplane_core::server::db::model_defaults::set_reasoning_style(
+        &state.db,
+        "model-a",
+        Some("qwen"),
+    )
+    .await
+    .unwrap();
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    router(state.clone())
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"where am I"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    wait_for_idle(&state, "alice").await;
+
+    let turn = chat::list_turns(&state.db, &session.id)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(turn.turn.status, chat::TurnStatus::Errored);
+    let ran = turn
+        .tool_calls
+        .iter()
+        .filter(|c| {
+            c.status == chat::ToolCallStatus::Completed
+                && c.output_json
+                    .as_deref()
+                    .is_some_and(|o| !o.contains("already made this exact call"))
+        })
+        .count();
+    assert!(
+        ran <= aiplane_runtime::repeated_calls::MAX_IDENTICAL_CALLS as usize,
+        "the call ran {ran} times"
+    );
+}
+
+/// Loops in a first round when it thinks, calls a tool when it does not, and
+/// loops whenever it has a tool result to read.
+struct LoopsAfterATool;
+
+impl wiremock::Respond for LoopsAfterATool {
+    fn respond(&self, req: &wiremock::Request) -> ResponseTemplate {
+        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+        if body["stream"] != true {
+            return ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": "Title"}}],
+            }));
+        }
+        let has_result = body["messages"]
+            .as_array()
+            .is_some_and(|m| m.iter().any(|m| m["role"] == "tool"));
+        let thinking = body["chat_template_kwargs"]["enable_thinking"] == true;
+        if has_result || thinking {
+            return ResponseTemplate::new(200)
+                .set_body_raw(LoopsWhileThinking::looped(), "text/event-stream");
+        }
+        let delta = serde_json::json!({"tool_calls": [{"index": 0, "id": "call-1", "type": "function",
+            "function": {"name": "get_user_location", "arguments": "{}"}}]});
+        let frame = serde_json::json!({"choices": [{"index": 0, "delta": delta}]});
+        ResponseTemplate::new(200).set_body_raw(
+            format!("data: {frame}\n\ndata: [DONE]\n\n"),
+            "text/event-stream",
+        )
+    }
+}
+
+/// The retry allowance is the turn's, the count of attempts the round's: once
+/// it is spent on round 0, a loop in round 1 ends the turn the way a first
+/// loop does, not as "every attempt looped".
+#[tokio::test]
+async fn a_later_rounds_loop_is_its_own_first_attempt() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(LoopsAfterATool)
+        .mount(&upstream)
+        .await;
+    let (state, cookie) = setup_with_location_tool(&upstream.uri()).await;
+    aiplane_core::server::db::model_defaults::set_reasoning_style(
+        &state.db,
+        "model-a",
+        Some("qwen"),
+    )
+    .await
+    .unwrap();
+    aiplane_core::server::db::app_settings::set(&state.db, "settings.chat.loops.retries", "1")
+        .await
+        .unwrap();
+    state.reload_settings().await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    router(state.clone())
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"where am I"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    wait_for_idle(&state, "alice").await;
+
+    let turn = chat::list_turns(&state.db, &session.id)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(turn.turn.status, chat::TurnStatus::Errored);
+    assert_eq!(turn.turn.error_code, None, "{:?}", turn.turn.error_message);
+    assert_eq!(turn.attempts.len(), 1, "only round 0's loop was retried");
+    assert!(
+        turn.turn
+            .error_message
+            .as_deref()
+            .unwrap_or("")
+            .contains("loop detected")
     );
 }
 

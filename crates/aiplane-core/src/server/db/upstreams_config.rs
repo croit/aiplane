@@ -420,13 +420,15 @@ pub async fn save_detected(
     let mut tx = db.begin().await?;
     sqlx::query(
         r#"INSERT INTO backend_detected
-               (backend_id, base_url, profile, context_cap, max_parallel, version, detected_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+               (backend_id, base_url, profile, context_cap, max_parallel, thinking_budget,
+                version, detected_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(backend_id) DO UPDATE SET
                base_url = excluded.base_url,
                profile = excluded.profile,
                context_cap = excluded.context_cap,
                max_parallel = excluded.max_parallel,
+               thinking_budget = excluded.thinking_budget,
                version = excluded.version,
                detected_at = excluded.detected_at"#,
     )
@@ -435,6 +437,7 @@ pub async fn save_detected(
     .bind(detected.profile.as_str())
     .bind(detected.context_cap)
     .bind(detected.max_parallel.map(i64::from))
+    .bind(detected.thinking_budget.map(|b| b.as_str()))
     .bind(detected.version.as_deref())
     .bind(detected.detected_at.as_deref().unwrap_or(&now))
     .execute(&mut *tx)
@@ -472,7 +475,7 @@ pub async fn load_detected(
 
     let rows = sqlx::query(
         r#"SELECT b.name AS backend_name, d.profile, d.context_cap, d.max_parallel,
-                     d.version, d.detected_at
+                     d.thinking_budget, d.version, d.detected_at
               FROM backend_detected d JOIN backends b ON b.id = d.backend_id
              WHERE d.base_url = b.base_url"#,
     )
@@ -484,6 +487,7 @@ pub async fn load_detected(
         let profile: String = row.try_get("profile")?;
         let context_cap: Option<i64> = row.try_get("context_cap")?;
         let max_parallel: Option<i64> = row.try_get("max_parallel")?;
+        let thinking_budget: Option<String> = row.try_get("thinking_budget")?;
         let version: Option<String> = row.try_get("version")?;
         let detected_at: Option<String> = row.try_get("detected_at")?;
         out.insert(
@@ -493,6 +497,9 @@ pub async fn load_detected(
                 context_windows: HashMap::new(),
                 context_cap,
                 max_parallel: max_parallel.and_then(|n| u32::try_from(n).ok()),
+                thinking_budget: crate::server::reasoning::ThinkingBudget::parse(
+                    thinking_budget.as_deref(),
+                ),
                 version,
                 detected_at,
             },
@@ -1091,6 +1098,31 @@ mod tests {
     /// a backend is down would otherwise read it back as `generic` with no
     /// context, and every model on it would silently fall to the global 32768
     /// guess — the failure profiles exist to remove.
+    /// Whether a server enforces a thinking budget survives a restart: a
+    /// gateway booting while the SGLang box is down must not forget it and
+    /// stop sending the admin's cap.
+    #[tokio::test]
+    async fn a_thinking_budget_spelling_round_trips() {
+        use crate::server::reasoning::ThinkingBudget;
+        use crate::server::upstreams::profile::{BackendProfile, Detected};
+
+        let pool = test_pool().await;
+        upsert_backend(&pool, &bare_backend("sg")).await.unwrap();
+        let detected = Detected {
+            profile: BackendProfile::SgLang,
+            thinking_budget: Some(ThinkingBudget::CustomParams),
+            ..Detected::default()
+        };
+        save_detected(&pool, "sg", "http://host:11434/v1", &detected)
+            .await
+            .unwrap();
+        let loaded = load_detected(&pool).await.unwrap();
+        assert_eq!(
+            loaded["sg"].thinking_budget,
+            Some(ThinkingBudget::CustomParams)
+        );
+    }
+
     #[tokio::test]
     async fn detected_profile_round_trips() {
         use crate::server::upstreams::profile::{BackendProfile, Detected};
@@ -1106,6 +1138,7 @@ mod tests {
             ]),
             context_cap: Some(8_192),
             max_parallel: Some(4),
+            thinking_budget: None,
             version: Some("b1234".into()),
             detected_at: None,
         };
@@ -1184,6 +1217,7 @@ mod tests {
                 context_windows: HashMap::from([("old".to_string(), 131_072)]),
                 context_cap: Some(65_536),
                 max_parallel: Some(8),
+                thinking_budget: None,
                 version: Some("b1".into()),
                 detected_at: None,
             },
@@ -1196,6 +1230,7 @@ mod tests {
             context_windows: HashMap::new(),
             context_cap: None,
             max_parallel: None,
+            thinking_budget: None,
             version: Some("0.13.3".into()),
             detected_at: None,
         };

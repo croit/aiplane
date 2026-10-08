@@ -20,6 +20,7 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use aiplane_core::server::reasoning::Effort;
 use async_trait::async_trait;
 use rama::futures::StreamExt;
 use session_core::db::{self as chat, ToolCallStatus, Turn, TurnRole, TurnStatus};
@@ -32,7 +33,7 @@ use crate::finish::{IncompleteReason, RunOutcome, gateway_summary};
 use crate::rama_server::state::RamaState;
 use crate::server::tools::{ToolContext, ToolPhase, ToolSource, runner};
 use aiplane_core::server::capped_read;
-use aiplane_core::server::db::usage::{UsageKind, UsageRecord, UsageSource};
+use aiplane_core::server::db::usage::{StopReason, UsageKind, UsageRecord, UsageSource};
 use aiplane_core::server::db::user_memories::KindCounts;
 use aiplane_core::server::tool_naming::RECALL_TOOL_ID;
 
@@ -778,6 +779,131 @@ fn incomplete_on_final_round(
     })
 }
 
+/// Shown when every retry of a looping turn looped too. The SPA says it in
+/// the reader's language from [`LOOP_EXHAUSTED_CODE`]; this is what every
+/// other reader — a webhook, a scheduled run's log — gets.
+fn loop_exhausted_message(attempts: usize) -> String {
+    format!(
+        "The model kept repeating itself on all {attempts} attempts, even with less thinking. \
+         Ask the question differently, or split it into smaller parts."
+    )
+}
+
+/// `chat_turns.error_code` of a turn whose every retry looped.
+pub const LOOP_EXHAUSTED_CODE: &str = "loop_exhausted";
+
+/// What a turn does after a model call looped.
+enum LoopRetry {
+    /// Run the round again at this lower level.
+    Again(Effort),
+    /// Every retry looped too: end the turn with this.
+    GiveUp(TurnError),
+    /// No retry was armed, or no lower level exists for a first loop: end the
+    /// turn the way a loop always ended it.
+    Stop,
+}
+
+/// The retries a turn may still spend on loops, and how many the current
+/// round spent.
+///
+/// The allowance is the turn's; the count is the round's. A loop in a later
+/// round, after an earlier one was retried and went on, is that round's first
+/// try — not the last of the earlier round's.
+struct LoopRetries {
+    left: usize,
+    /// The round the last retry was spent on, and how many it has spent.
+    spent: Option<(u32, usize)>,
+}
+
+impl LoopRetries {
+    fn new(retries: usize) -> Self {
+        Self {
+            left: retries,
+            spent: None,
+        }
+    }
+
+    fn spent_in(&self, round: u32) -> usize {
+        match self.spent {
+            Some((r, n)) if r == round => n,
+            _ => 0,
+        }
+    }
+
+    /// Whether a loop in `round` could change anything: a retry is left, or
+    /// one was spent on this round and its attempts have to be completed.
+    fn armed(&self, round: u32) -> bool {
+        self.left > 0 || self.spent_in(round) > 0
+    }
+
+    /// Decide what follows a loop in `round`, moving the looped call's output
+    /// out of the answer into a collapsed attempt whenever a retry is or was
+    /// involved.
+    #[allow(clippy::too_many_arguments)]
+    async fn after(
+        &mut self,
+        d: &OpenAiDriver,
+        ctx: &SessionContext,
+        round: u32,
+        marks: Option<(i64, i64)>,
+        effort: Effort,
+        reasoning: (
+            aiplane_core::server::reasoning::ReasoningStyle,
+            &aiplane_core::server::reasoning::ReasoningOverrides,
+            Option<aiplane_core::server::reasoning::ThinkingBudget>,
+        ),
+        reason: StopReason,
+    ) -> Result<LoopRetry, TurnError> {
+        let Some(marks) = marks else {
+            return Ok(LoopRetry::Stop);
+        };
+        let (style, overrides, budget) = reasoning;
+        let spent = self.spent_in(round);
+        let lower = (self.left > 0)
+            .then(|| effort.retry_level(style, overrides, budget))
+            .flatten();
+        if lower.is_none() && spent == 0 {
+            return Ok(LoopRetry::Stop);
+        }
+        chat::stash_attempt(
+            &d.state.db,
+            &ctx.assistant_turn_id,
+            marks,
+            chat::AttemptStop {
+                effort: effort.as_str(),
+                retry_effort: lower.map(Effort::as_str),
+                stop_reason: reason.as_str(),
+            },
+        )
+        .await
+        .map_err(persist_err("stash_attempt", &ctx.assistant_turn_id))?;
+        let _ = ctx.broadcast.send(TurnUpdate::Tick);
+        match lower {
+            Some(lower) => {
+                self.left -= 1;
+                self.spent = Some((round, spent + 1));
+                tracing::info!(
+                    model = %ctx.model,
+                    from = effort.as_str(),
+                    to = lower.as_str(),
+                    stop_reason = reason.as_str(),
+                    retries_left = self.left,
+                    "the model looped; retrying the round at a lower effort"
+                );
+                Ok(LoopRetry::Again(lower))
+            }
+            None => {
+                chat::set_error_code(&d.state.db, &ctx.assistant_turn_id, LOOP_EXHAUSTED_CODE)
+                    .await
+                    .map_err(persist_err("set_error_code", &ctx.assistant_turn_id))?;
+                Ok(LoopRetry::GiveUp(TurnError::Aborted {
+                    message: loop_exhausted_message(spent + 1),
+                }))
+            }
+        }
+    }
+}
+
 /// How one turn's round loop ended. [`SessionDriver::run_turn`] reads an
 /// agent run's [`RunOutcome`] from it ([`run_outcome`]) — the one place that
 /// conversion happens, so no exit path has to settle the run itself — and
@@ -1137,7 +1263,7 @@ async fn run_one_turn(
         )
         .unwrap_or_else(|| routing_model.to_string());
 
-    let effort = aiplane_core::server::reasoning::Effort::from_db(
+    let effort = Effort::from_db(
         aiplane_core::server::db::chat_session_settings::get_effort(&d.state.db, &ctx.session_id)
             .await
             .ok()
@@ -1294,7 +1420,17 @@ async fn run_one_turn(
             .is_some_and(|content| !content.trim().is_empty());
     }
 
-    for round in start_round..=max_rounds {
+    // The level this turn's rounds run at, and the retries a loop may still
+    // spend lowering it (`chat.loops.retries`).
+    let mut effort = effort;
+    let mut loops = LoopRetries::new(d.state.config().chat.loops.retries());
+
+    // A round normally runs once. One that looped runs again at a lower
+    // effort (`next_round = round`), which is why this is not a `for`.
+    let mut next_round = start_round;
+    while next_round <= max_rounds {
+        let round = next_round;
+        next_round = round + 1;
         if round == max_rounds && !closing {
             break;
         }
@@ -1327,6 +1463,18 @@ async fn run_one_turn(
                 .refresh_system_message(d, &ctx.session_id, &user_mcp, summary, &mut messages)
                 .await;
         }
+
+        // Where this round's text starts in the turn, so a call that loops
+        // can be moved out of the answer and tried again.
+        let marks = if loops.armed(round) {
+            Some(
+                chat::text_marks(&d.state.db, &ctx.assistant_turn_id)
+                    .await
+                    .map_err(persist_err("text_marks", &ctx.assistant_turn_id))?,
+            )
+        } else {
+            None
+        };
 
         // On the final allowed round, withhold tools so the model is forced
         // to answer from what it already gathered. Without this, a model that
@@ -1400,6 +1548,7 @@ async fn run_one_turn(
             reasoning_style,
             effort,
             &reasoning_overrides,
+            serving.thinking_budget,
             &mut request_body,
         );
         let serialized = serde_json::to_vec(&request_body).map_err(upstream_err)?;
@@ -1561,6 +1710,9 @@ async fn run_one_turn(
         let mut round_reasoning = String::new();
         let keep_reasoning = d.agent().is_some();
         let mut upstream_stream = upstream.bytes_stream();
+        // Set when a repetition guard ends the stream, which `loops` may
+        // answer with a retry rather than an error.
+        let mut looped = false;
 
         // The stream, as one block: every way out of it — the end, a stall,
         // a loop, a cancel, a failed write — comes back here, so the round is
@@ -1686,7 +1838,7 @@ async fn run_one_turn(
                             // with a clear message. The partial reasoning
                             // already streamed stays visible. The backend
                             // call was real, so still record it.
-                            emit_usage(
+                            emit_loop_usage(
                                 d,
                                 &user_email,
                                 &ctx.model,
@@ -1695,6 +1847,7 @@ async fn run_one_turn(
                                 started,
                                 round_tokens,
                             );
+                            looped = true;
                             return Err(TurnError::Aborted {
                                 message: crate::loop_guard::LOOP_MESSAGE.into(),
                             });
@@ -1731,7 +1884,7 @@ async fn run_one_turn(
                                 .map_err(persist_err("append_content", &ctx.assistant_turn_id))?;
                             let _ = ctx.broadcast.send(TurnUpdate::Tick);
                             if content_guard.push(&emit) {
-                                emit_usage(
+                                emit_loop_usage(
                                     d,
                                     &user_email,
                                     &ctx.model,
@@ -1740,6 +1893,7 @@ async fn run_one_turn(
                                     started,
                                     round_tokens,
                                 );
+                                looped = true;
                                 return Err(TurnError::Aborted {
                                     message: crate::loop_guard::LOOP_MESSAGE.into(),
                                 });
@@ -1785,12 +1939,50 @@ async fn run_one_turn(
                 )
                 .await;
         }
+        if looped {
+            match loops
+                .after(
+                    d,
+                    &ctx,
+                    round,
+                    marks,
+                    effort,
+                    (
+                        reasoning_style,
+                        &reasoning_overrides,
+                        serving.thinking_budget,
+                    ),
+                    StopReason::Loop,
+                )
+                .await?
+            {
+                LoopRetry::Again(lower) => {
+                    // The looped call was real and is metered (as stopped);
+                    // it counts against the turn's token budget too.
+                    let spent = round_tokens
+                        .2
+                        .or_else(|| Some(round_tokens.0.unwrap_or(0) + round_tokens.1.unwrap_or(0)))
+                        .map_or(0, |t| t.max(0) as u64);
+                    tokens_used += spent;
+                    policy.record_spend(spent);
+                    effort = lower;
+                    wrote_any_content = marks.is_some_and(|(content, _)| content > 0);
+                    frozen_reasoning_elapsed &= wrote_any_content;
+                    next_round = round;
+                    continue;
+                }
+                LoopRetry::GiveUp(err) => return Err(err),
+                LoopRetry::Stop => {}
+            }
+        }
         if let Some(end) = streamed? {
             return Ok(end);
         }
 
         // One usage row per upstream round (a tool-using turn emits several).
-        emit_usage(
+        // Held until the round ends, so a round whose calls turn out to be a
+        // repeated tool call is recorded as stopped.
+        let mut round_usage = d.state.usage.defer(usage_record(
             d,
             &user_email,
             &ctx.model,
@@ -1798,7 +1990,7 @@ async fn run_one_turn(
             status_code,
             started,
             round_tokens,
-        );
+        ));
         let spent = round_tokens
             .2
             .or_else(|| Some(round_tokens.0.unwrap_or(0) + round_tokens.1.unwrap_or(0)))
@@ -2025,6 +2217,7 @@ async fn run_one_turn(
         {
             Ok(results) => results,
             Err(stop) => {
+                round_usage.stopped(StopReason::RepeatedCall);
                 let message = stop.message();
                 tracing::warn!(
                     model = %ctx.model,
@@ -2044,12 +2237,45 @@ async fn run_one_turn(
                     .map_err(persist_err("complete_tool_call", &ctx.assistant_turn_id))?;
                 }
                 let _ = ctx.broadcast.send(TurnUpdate::Tick);
+                let turn = match loops
+                    .after(
+                        d,
+                        &ctx,
+                        round,
+                        marks,
+                        effort,
+                        (
+                            reasoning_style,
+                            &reasoning_overrides,
+                            serving.thinking_budget,
+                        ),
+                        StopReason::RepeatedCall,
+                    )
+                    .await?
+                {
+                    LoopRetry::Again(lower) => {
+                        // The guard keeps its counts: the call already ran its
+                        // allowance, and a tool with side effects must not run
+                        // it again on every retry. A retry that makes the same
+                        // call is stopped at once; one that changes course
+                        // goes on.
+                        effort = lower;
+                        wrote_any_content = marks.is_some_and(|(content, _)| content > 0);
+                        frozen_reasoning_elapsed &= wrote_any_content;
+                        next_round = round;
+                        continue;
+                    }
+                    LoopRetry::GiveUp(err) => Err(err),
+                    LoopRetry::Stop => Err(TurnError::Aborted {
+                        message: message.clone(),
+                    }),
+                };
                 return Ok(TurnEnd::CutShort(CutShort {
                     reason: IncompleteReason::RepeatedToolCall {
                         tool: stop.tool.clone(),
                     },
-                    summary: message.clone(),
-                    turn: Err(TurnError::Aborted { message }),
+                    summary: message,
+                    turn,
                 }));
             }
         };
@@ -3383,35 +3609,65 @@ fn emit_usage(
     started: std::time::Instant,
     tokens: (Option<i64>, Option<i64>, Option<i64>),
 ) {
+    d.state.usage.emit(usage_record(
+        d, user_email, model, backend, status, started, tokens,
+    ));
+}
+
+/// The usage row of a round the loop guard stopped.
+fn emit_loop_usage(
+    d: &OpenAiDriver,
+    user_email: &str,
+    model: &str,
+    backend: &str,
+    status: u16,
+    started: std::time::Instant,
+    tokens: (Option<i64>, Option<i64>, Option<i64>),
+) {
+    d.state.usage.emit(UsageRecord {
+        stop_reason: Some(StopReason::Loop),
+        ..usage_record(d, user_email, model, backend, status, started, tokens)
+    });
+}
+
+/// The usage row of one upstream round, as the gateway saw it end.
+fn usage_record(
+    d: &OpenAiDriver,
+    user_email: &str,
+    model: &str,
+    backend: &str,
+    status: u16,
+    started: std::time::Instant,
+    tokens: (Option<i64>, Option<i64>, Option<i64>),
+) -> UsageRecord {
     let (prompt_tokens, completion_tokens, total_tokens) = tokens;
-    d.state.usage.emit(
-        UsageRecord {
-            created_at: jiff::Timestamp::now(),
-            user_id: d.tool_ctx.principal.subject_id().to_string(),
-            user_email: (!user_email.is_empty()).then(|| user_email.to_string()),
-            token_id: None,
-            token_name: None,
-            source: d.source,
-            kind: UsageKind::Chat,
-            backend: backend.to_string(),
-            model: model.to_string(),
-            status,
-            duration_ms: started.elapsed().as_millis() as i64,
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-            input_units: None,
-            output_units: None,
-            enforce_limits: d
-                .state
-                .upstreams
-                .enforce_limits_for_model(model, aiplane_core::server::upstreams::PoolKind::Chat),
-            principal_kind: d.tool_ctx.principal.kind(),
-            agent_id: None,
-            chain: None,
-        }
-        .in_run(d.tool_ctx.chain()),
-    );
+    UsageRecord {
+        created_at: jiff::Timestamp::now(),
+        user_id: d.tool_ctx.principal.subject_id().to_string(),
+        user_email: (!user_email.is_empty()).then(|| user_email.to_string()),
+        token_id: None,
+        token_name: None,
+        source: d.source,
+        kind: UsageKind::Chat,
+        backend: backend.to_string(),
+        model: model.to_string(),
+        status,
+        duration_ms: started.elapsed().as_millis() as i64,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        input_units: None,
+        output_units: None,
+        enforce_limits: d
+            .state
+            .upstreams
+            .enforce_limits_for_model(model, aiplane_core::server::upstreams::PoolKind::Chat),
+        principal_kind: d.tool_ctx.principal.kind(),
+        agent_id: None,
+        chain: None,
+        stop_reason: None,
+    }
+    .in_run(d.tool_ctx.chain())
 }
 
 fn emit_selector_usage(
@@ -3453,6 +3709,7 @@ fn emit_selector_usage(
             principal_kind: d.tool_ctx.principal.kind(),
             agent_id: None,
             chain: None,
+            stop_reason: None,
         }
         .in_run(d.tool_ctx.chain()),
     );
@@ -3746,6 +4003,7 @@ mod tests {
             reasoning_started_at: None,
             status: TurnStatus::Completed,
             error_message: None,
+            error_code: None,
             created_at: jiff::Timestamp::UNIX_EPOCH,
             completed_at: None,
         };
@@ -3846,6 +4104,7 @@ mod tests {
             reasoning_started_at: None,
             status: TurnStatus::Completed,
             error_message: Some("cut off at the ceiling".into()),
+            error_code: None,
             created_at: jiff::Timestamp::UNIX_EPOCH,
             completed_at: None,
         };
@@ -3884,6 +4143,7 @@ mod tests {
             reasoning_started_at: None,
             status: TurnStatus::Cancelled,
             error_message: None,
+            error_code: None,
             created_at: jiff::Timestamp::UNIX_EPOCH,
             completed_at: None,
         };
@@ -3914,6 +4174,7 @@ mod tests {
             reasoning_started_at: None,
             status: TurnStatus::Cancelled,
             error_message: None,
+            error_code: None,
             created_at: jiff::Timestamp::UNIX_EPOCH,
             completed_at: None,
         };
@@ -4073,11 +4334,13 @@ mod tests {
                     reasoning_started_at: None,
                     status: TurnStatus::Completed,
                     error_message: None,
+                    error_code: None,
                     created_at: now,
                     completed_at: Some(now),
                 },
                 tool_calls: vec![],
                 steers: vec![],
+                attempts: Vec::new(),
                 suspension: None,
             }
         }

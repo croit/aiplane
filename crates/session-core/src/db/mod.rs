@@ -209,6 +209,11 @@ pub struct Turn {
     pub reasoning_started_at: Option<Timestamp>,
     pub status: TurnStatus,
     pub error_message: Option<String>,
+    /// A machine-readable reason beside `error_message`, so a client can say
+    /// it in the reader's language: `loop_exhausted` when every retry of a
+    /// looping turn looped too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
     pub created_at: Timestamp,
     pub completed_at: Option<Timestamp>,
 }
@@ -234,6 +239,9 @@ pub struct TurnWithTools {
     pub turn: Turn,
     pub tool_calls: Vec<ToolCall>,
     pub steers: Vec<TurnSteer>,
+    /// Model calls of this turn that looped and were retried, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attempts: Vec<TurnAttempt>,
     /// The decision this turn waits for, when it is `Suspended`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suspension: Option<SuspensionView>,
@@ -287,6 +295,7 @@ fn map_turn(row: &SqliteRow) -> Result<Turn, DbError> {
         )?,
         status: TurnStatus::parse(&status)?,
         error_message: row.try_get("error_message")?,
+        error_code: row.try_get("error_code")?,
         created_at: parse_ts(row.try_get("created_at")?, "created_at")?,
         completed_at: parse_optional_ts(row.try_get("completed_at")?, "completed_at")?,
     })
@@ -310,6 +319,7 @@ fn map_tool_call(row: &SqliteRow) -> Result<ToolCall, DbError> {
 // ---------------------------------------------------------------------------
 // Sessions
 
+mod attempts;
 mod fork;
 mod pending;
 mod search;
@@ -319,6 +329,7 @@ pub mod suspensions;
 mod tool_calls;
 mod turns;
 
+pub use attempts::*;
 pub use fork::*;
 pub use pending::*;
 pub use search::*;
@@ -436,10 +447,22 @@ pub(crate) mod tests {
                 reasoning_started_at  TEXT,
                 status                TEXT NOT NULL,
                 error_message         TEXT,
+                error_code            TEXT,
                 created_at            TEXT NOT NULL,
                 completed_at          TEXT,
                 FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
                 UNIQUE (session_id, seq)
+            )"#,
+            r#"CREATE TABLE chat_turn_attempts (
+                turn_id      TEXT NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
+                seq          INTEGER NOT NULL,
+                effort       TEXT NOT NULL,
+                retry_effort TEXT,
+                stop_reason  TEXT NOT NULL,
+                reasoning    TEXT NOT NULL,
+                content      TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                PRIMARY KEY (turn_id, seq)
             )"#,
             r#"CREATE TABLE chat_tool_calls (
                 id              TEXT NOT NULL,
@@ -849,6 +872,77 @@ pub(crate) mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    /// A looped call's text leaves the answer and lands in an attempt, cut at
+    /// character offsets — `ß` and `—` are several bytes each and must not
+    /// be split — and a turn that had nothing before the call is empty
+    /// again, not an empty string.
+    #[tokio::test]
+    async fn a_stashed_attempt_takes_exactly_the_calls_text() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&pool, &s.id, "a", "m")
+            .await
+            .unwrap();
+        append_content(&pool, "a", "Größe — ").await.unwrap();
+        let marks = text_marks(&pool, "a").await.unwrap();
+        assert_eq!(marks, (8, 0));
+        append_content(&pool, "a", "ß ß ß").await.unwrap();
+        append_reasoning(&pool, "a", "Wait. Wait.").await.unwrap();
+
+        let stop = AttemptStop {
+            effort: "low",
+            retry_effort: Some("off"),
+            stop_reason: "loop",
+        };
+        let attempt = stash_attempt(&pool, "a", marks, stop).await.unwrap();
+        assert_eq!(attempt.seq, 0);
+        assert_eq!(attempt.content, "ß ß ß");
+        assert_eq!(attempt.reasoning, "Wait. Wait.");
+
+        let turn = get_turn_with_tools(&pool, &s.id, "a")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(turn.turn.content.as_deref(), Some("Größe — "));
+        assert_eq!(turn.turn.reasoning, None);
+        assert_eq!(turn.attempts, vec![attempt]);
+
+        let next = stash_attempt(&pool, "a", marks, stop).await.unwrap();
+        assert_eq!(next.seq, 1, "attempts number themselves per turn");
+        assert_eq!(list_turns(&pool, &s.id).await.unwrap()[0].attempts.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_fork_keeps_a_turns_attempts_and_error_code() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &s.id, "u", "hi").await.unwrap();
+        create_assistant_turn_in_progress(&pool, &s.id, "a", "m")
+            .await
+            .unwrap();
+        append_reasoning(&pool, "a", "loop loop").await.unwrap();
+        let stop = AttemptStop {
+            effort: "off",
+            retry_effort: None,
+            stop_reason: "loop",
+        };
+        stash_attempt(&pool, "a", (0, 0), stop).await.unwrap();
+        set_error_code(&pool, "a", "loop_exhausted").await.unwrap();
+        finalize_turn(&pool, "a", TurnStatus::Errored, Some("gave up"))
+            .await
+            .unwrap();
+
+        let (fork, _) = fork_session(&pool, &s, "u1").await.unwrap();
+        let turns = list_turns(&pool, &fork.id).await.unwrap();
+        let copied = turns
+            .iter()
+            .find(|t| t.turn.role == TurnRole::Assistant)
+            .unwrap();
+        assert_eq!(copied.turn.error_code.as_deref(), Some("loop_exhausted"));
+        assert_eq!(copied.attempts.len(), 1);
+        assert_eq!(copied.attempts[0].reasoning, "loop loop");
     }
 
     /// The transcript reads interjections back with the turn they belong to,
