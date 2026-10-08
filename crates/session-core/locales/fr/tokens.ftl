@@ -103,6 +103,14 @@ tokens-python-step-1 = Créez un jeton dans l’onglet Jetons et copiez-le.
 tokens-python-step-2 = Installez le paquet Python OpenAI avec python -m pip install openai, puis définissez OPENAI_API_KEY avec votre jeton dans le terminal.
 tokens-python-step-3 = Enregistrez cet exemple dans chat.py. Remplacez YOUR_MODEL_ID par l’identifiant d’un modèle de chat accessible.
 tokens-python-finish = Exécutez python chat.py. Gardez le jeton dans une variable d’environnement, pas dans le script.
+tokens-guide-omp = Oh My Pi
+tokens-guide-pi = Pi
+tokens-omp-finish = Lancez omp, puis utilisez /model pour choisir aiplane/YOUR_MODEL_ID.
+tokens-omp-step-1 = Créez un jeton dans l’onglet Jetons et copiez-le.
+tokens-omp-step-2 = Enregistrez cette configuration dans ~/.omp/agent/models.yml. Remplacez d’abord le jeton et YOUR_MODEL_ID, puis réglez contextWindow sur la taille de contexte du modèle.
+tokens-pi-finish = Lancez pi, puis utilisez /model pour choisir aiplane/YOUR_MODEL_ID.
+tokens-pi-step-1 = Créez un jeton dans l’onglet Jetons et copiez-le.
+tokens-pi-step-2 = Enregistrez cette configuration dans ~/.pi/agent/models.json. Remplacez d’abord le jeton et YOUR_MODEL_ID.
 tokens-guides-model-note = Besoin d’un identifiant de modèle ? Les modèles accessibles sont dans le sélecteur du chat ou via GET /v1/models avec votre jeton.
 
 notifications-loading = Chargement des paramètres de notification…

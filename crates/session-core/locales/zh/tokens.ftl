@@ -103,6 +103,14 @@ tokens-python-step-1 = 在“令牌”标签页创建并复制令牌。
 tokens-python-step-2 = 运行 python -m pip install openai 安装 OpenAI Python 包，然后在终端将 OPENAI_API_KEY 设为你的令牌。
 tokens-python-step-3 = 将示例保存为 chat.py。把 YOUR_MODEL_ID 替换为可用的聊天模型 ID。
 tokens-python-finish = 运行 python chat.py。请将令牌保存在环境变量中，不要写入脚本。
+tokens-guide-omp = Oh My Pi
+tokens-guide-pi = Pi
+tokens-omp-finish = 运行 omp，然后使用 /model 选择 aiplane/YOUR_MODEL_ID。
+tokens-omp-step-1 = 在“令牌”标签页创建并复制令牌。
+tokens-omp-step-2 = 将此配置保存到 ~/.omp/agent/models.yml。请先替换令牌和 YOUR_MODEL_ID，并将 contextWindow 设为模型的上下文大小。
+tokens-pi-finish = 运行 pi，然后使用 /model 选择 aiplane/YOUR_MODEL_ID。
+tokens-pi-step-1 = 在“令牌”标签页创建并复制令牌。
+tokens-pi-step-2 = 将此配置保存到 ~/.pi/agent/models.json。请先替换令牌和 YOUR_MODEL_ID。
 tokens-guides-model-note = 需要模型 ID？可在聊天模型选择器中查看可用模型，也可以带上令牌请求 GET /v1/models。
 
 notifications-loading = 正在加载通知设置…

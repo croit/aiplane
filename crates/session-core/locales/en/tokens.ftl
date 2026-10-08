@@ -106,6 +106,14 @@ tokens-python-step-1 = Create a token in the Tokens tab and copy it.
 tokens-python-step-2 = Install the OpenAI Python package with python -m pip install openai, then set OPENAI_API_KEY to your token in your terminal.
 tokens-python-step-3 = Save this example as chat.py. Replace YOUR_MODEL_ID with a chat model ID you can use.
 tokens-python-finish = Run python chat.py. Keep the token in an environment variable, not in the script.
+tokens-guide-omp = Oh My Pi
+tokens-guide-pi = Pi
+tokens-omp-finish = Run omp, then use /model to choose aiplane/YOUR_MODEL_ID.
+tokens-omp-step-1 = Create a token in the Tokens tab and copy it.
+tokens-omp-step-2 = Save this configuration in ~/.omp/agent/models.yml. Replace the token and YOUR_MODEL_ID first, and set contextWindow to the model's context size.
+tokens-pi-finish = Run pi, then use /model to choose aiplane/YOUR_MODEL_ID.
+tokens-pi-step-1 = Create a token in the Tokens tab and copy it.
+tokens-pi-step-2 = Save this configuration in ~/.pi/agent/models.json. Replace the token and YOUR_MODEL_ID first.
 tokens-guides-model-note = Need a model ID? Your available models are shown in the chat model picker or by GET /v1/models with your token.
 
 notifications-loading = Loading notification settings…
