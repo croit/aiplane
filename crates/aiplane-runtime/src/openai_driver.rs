@@ -32,7 +32,7 @@ use crate::finish::{IncompleteReason, RunOutcome, gateway_summary};
 use crate::rama_server::state::RamaState;
 use crate::server::tools::{ToolContext, ToolPhase, ToolSource, runner};
 use aiplane_core::server::capped_read;
-use aiplane_core::server::db::usage::{UsageKind, UsageRecord, UsageSource};
+use aiplane_core::server::db::usage::{StopReason, UsageKind, UsageRecord, UsageSource};
 use aiplane_core::server::db::user_memories::KindCounts;
 use aiplane_core::server::tool_naming::RECALL_TOOL_ID;
 
@@ -1687,7 +1687,7 @@ async fn run_one_turn(
                             // with a clear message. The partial reasoning
                             // already streamed stays visible. The backend
                             // call was real, so still record it.
-                            emit_usage(
+                            emit_loop_usage(
                                 d,
                                 &user_email,
                                 &ctx.model,
@@ -1732,7 +1732,7 @@ async fn run_one_turn(
                                 .map_err(persist_err("append_content", &ctx.assistant_turn_id))?;
                             let _ = ctx.broadcast.send(TurnUpdate::Tick);
                             if content_guard.push(&emit) {
-                                emit_usage(
+                                emit_loop_usage(
                                     d,
                                     &user_email,
                                     &ctx.model,
@@ -1791,7 +1791,9 @@ async fn run_one_turn(
         }
 
         // One usage row per upstream round (a tool-using turn emits several).
-        emit_usage(
+        // Held until the round ends, so a round whose calls turn out to be a
+        // repeated tool call is recorded as stopped.
+        let mut round_usage = d.state.usage.defer(usage_record(
             d,
             &user_email,
             &ctx.model,
@@ -1799,7 +1801,7 @@ async fn run_one_turn(
             status_code,
             started,
             round_tokens,
-        );
+        ));
         let spent = round_tokens
             .2
             .or_else(|| Some(round_tokens.0.unwrap_or(0) + round_tokens.1.unwrap_or(0)))
@@ -2026,6 +2028,7 @@ async fn run_one_turn(
         {
             Ok(results) => results,
             Err(stop) => {
+                round_usage.stopped(StopReason::RepeatedCall);
                 let message = stop.message();
                 tracing::warn!(
                     model = %ctx.model,
@@ -3384,35 +3387,65 @@ fn emit_usage(
     started: std::time::Instant,
     tokens: (Option<i64>, Option<i64>, Option<i64>),
 ) {
+    d.state.usage.emit(usage_record(
+        d, user_email, model, backend, status, started, tokens,
+    ));
+}
+
+/// The usage row of a round the loop guard stopped.
+fn emit_loop_usage(
+    d: &OpenAiDriver,
+    user_email: &str,
+    model: &str,
+    backend: &str,
+    status: u16,
+    started: std::time::Instant,
+    tokens: (Option<i64>, Option<i64>, Option<i64>),
+) {
+    d.state.usage.emit(UsageRecord {
+        stop_reason: Some(StopReason::Loop),
+        ..usage_record(d, user_email, model, backend, status, started, tokens)
+    });
+}
+
+/// The usage row of one upstream round, as the gateway saw it end.
+fn usage_record(
+    d: &OpenAiDriver,
+    user_email: &str,
+    model: &str,
+    backend: &str,
+    status: u16,
+    started: std::time::Instant,
+    tokens: (Option<i64>, Option<i64>, Option<i64>),
+) -> UsageRecord {
     let (prompt_tokens, completion_tokens, total_tokens) = tokens;
-    d.state.usage.emit(
-        UsageRecord {
-            created_at: jiff::Timestamp::now(),
-            user_id: d.tool_ctx.principal.subject_id().to_string(),
-            user_email: (!user_email.is_empty()).then(|| user_email.to_string()),
-            token_id: None,
-            token_name: None,
-            source: d.source,
-            kind: UsageKind::Chat,
-            backend: backend.to_string(),
-            model: model.to_string(),
-            status,
-            duration_ms: started.elapsed().as_millis() as i64,
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-            input_units: None,
-            output_units: None,
-            enforce_limits: d
-                .state
-                .upstreams
-                .enforce_limits_for_model(model, aiplane_core::server::upstreams::PoolKind::Chat),
-            principal_kind: d.tool_ctx.principal.kind(),
-            agent_id: None,
-            chain: None,
-        }
-        .in_run(d.tool_ctx.chain()),
-    );
+    UsageRecord {
+        created_at: jiff::Timestamp::now(),
+        user_id: d.tool_ctx.principal.subject_id().to_string(),
+        user_email: (!user_email.is_empty()).then(|| user_email.to_string()),
+        token_id: None,
+        token_name: None,
+        source: d.source,
+        kind: UsageKind::Chat,
+        backend: backend.to_string(),
+        model: model.to_string(),
+        status,
+        duration_ms: started.elapsed().as_millis() as i64,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        input_units: None,
+        output_units: None,
+        enforce_limits: d
+            .state
+            .upstreams
+            .enforce_limits_for_model(model, aiplane_core::server::upstreams::PoolKind::Chat),
+        principal_kind: d.tool_ctx.principal.kind(),
+        agent_id: None,
+        chain: None,
+        stop_reason: None,
+    }
+    .in_run(d.tool_ctx.chain())
 }
 
 fn emit_selector_usage(
@@ -3454,6 +3487,7 @@ fn emit_selector_usage(
             principal_kind: d.tool_ctx.principal.kind(),
             agent_id: None,
             chain: None,
+            stop_reason: None,
         }
         .in_run(d.tool_ctx.chain()),
     );

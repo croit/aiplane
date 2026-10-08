@@ -138,7 +138,7 @@ A turn that calls a client-owned tool is handed back to the client as always, an
 
 `POST /v1/chat/completions` with `"stream": true` returns `text/event-stream`:
 
-- Upstream SSE frames are relayed 1:1 — AIplane does not reframe `data:` lines. The deltas are tapped in parallel through a repetition-based loop guard; a model that collapses into a loop is cut off with a terminating error chunk and `[DONE]`, while a long-but-progressing answer streams through untouched.
+- Upstream SSE frames are relayed 1:1 — AIplane does not reframe `data:` lines. The deltas are tapped in parallel through a repetition-based loop guard; a model that collapses into a loop is cut off with a terminating error chunk (`type: loop_detected`) and `[DONE]`, while a long-but-progressing answer streams through untouched. The cut-off call is metered with `stop_reason = loop` ([counting loops](operations/troubleshooting.md#count-loops)).
 - The gateway-owned tool loop opens an upstream stream for each round. It accumulates tool-call deltas, suppresses gateway-owned calls from the client stream, executes them and continues with their results. Client-owned calls are handed back to the client. A budget-closing final round can be held until complete so ignored tool calls cannot leak into its answer.
 - This is distinct from the web UI's chat, which posts to `POST /api/v0/chat/sessions/{id}/messages` and reads `GET /api/v0/chat/sessions/{id}/events` — SSE carrying AIplane's own JSON event protocol (`snapshot`, `turn_delta`, `tool_call_done`, …), not OpenAI SSE. See [`ui.md`](ui.md#chat-streaming-the-json-event-protocol).
 

@@ -82,6 +82,44 @@ impl UsageHandle {
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
     }
+
+    /// Hold `record` back until the returned guard is dropped, so the row can
+    /// still learn how its call ended ([`DeferredUsage::stopped`]).
+    pub fn defer(&self, record: UsageRecord) -> DeferredUsage {
+        DeferredUsage {
+            handle: self.clone(),
+            record: Some(record),
+        }
+    }
+}
+
+/// A usage record emitted when it is dropped.
+///
+/// The chat driver learns that a round's tool calls were the same call over
+/// and over only after it has looked at them, well after the stream closed and
+/// the round was metered — and between the two lie a dozen ways out of the
+/// round. Emitting on drop records the call exactly once on every one of
+/// them, the way the `Acquired` guard releases an in-flight slot.
+pub struct DeferredUsage {
+    handle: UsageHandle,
+    record: Option<UsageRecord>,
+}
+
+impl DeferredUsage {
+    /// Record that the gateway stopped this call.
+    pub fn stopped(&mut self, reason: crate::server::db::usage::StopReason) {
+        if let Some(record) = self.record.as_mut() {
+            record.stop_reason = Some(reason);
+        }
+    }
+}
+
+impl Drop for DeferredUsage {
+    fn drop(&mut self) {
+        if let Some(record) = self.record.take() {
+            self.handle.emit(record);
+        }
+    }
 }
 
 /// Build the handle and spawn the writer + maintenance tasks. Returns a
@@ -201,6 +239,7 @@ mod tests {
             principal_kind: crate::server::principal::PrincipalKind::User,
             agent_id: None,
             chain: None,
+            stop_reason: None,
         }
     }
 
@@ -219,6 +258,25 @@ mod tests {
             .unwrap();
         assert_eq!(n, 3);
         assert_eq!(handle.dropped(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_deferred_record_lands_once_with_how_its_call_ended() {
+        use crate::server::db::usage::StopReason;
+        let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let handle = spawn(pool.clone(), 90);
+        {
+            let mut stopped = handle.defer(sample());
+            stopped.stopped(StopReason::RepeatedCall);
+            let _plain = handle.defer(sample());
+        }
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let reasons: Vec<Option<String>> =
+            sqlx::query_scalar("SELECT stop_reason FROM usage_events ORDER BY stop_reason")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(reasons, vec![None, Some("repeated_call".to_string())]);
     }
 
     #[test]

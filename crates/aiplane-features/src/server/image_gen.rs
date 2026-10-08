@@ -521,6 +521,7 @@ impl ImageGenerator {
             principal_kind: aiplane_core::server::principal::PrincipalKind::User,
             agent_id: None,
             chain: None,
+            stop_reason: None,
         });
     }
 }

@@ -135,6 +135,28 @@ pub struct UsageRecord {
     pub agent_id: Option<String>,
     /// That run's serialized call chain.
     pub chain: Option<String>,
+    /// Why the gateway cut the call short, if it did.
+    pub stop_reason: Option<StopReason>,
+}
+
+/// Why the gateway stopped a model call before the model finished. Stored in
+/// `usage_events.stop_reason`, so loops can be counted on every path that
+/// meters a call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopReason {
+    /// The streamed text collapsed into a repetition (`loop_guard`).
+    Loop,
+    /// The model kept making the same tool call (`repeated_calls`).
+    RepeatedCall,
+}
+
+impl StopReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Loop => "loop",
+            Self::RepeatedCall => "repeated_call",
+        }
+    }
 }
 
 impl UsageRecord {
@@ -260,8 +282,8 @@ pub async fn insert_batch(pool: &Pool, recs: &[UsageRecord]) -> Result<(), DbErr
                (id, created_at, user_id, user_email, token_id, token_name,
                 source, kind, backend, model, status, duration_ms,
                  prompt_tokens, completion_tokens, total_tokens, input_units, output_units,
-                 cost, enforce_limits, principal_kind, agent_id, chain)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 cost, enforce_limits, principal_kind, agent_id, chain, stop_reason)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(Uuid::new_v4().to_string())
         .bind(&created)
@@ -285,6 +307,7 @@ pub async fn insert_batch(pool: &Pool, recs: &[UsageRecord]) -> Result<(), DbErr
         .bind(r.principal_kind.as_str())
         .bind(r.agent_id.as_deref())
         .bind(r.chain.as_deref())
+        .bind(r.stop_reason.map(StopReason::as_str))
         .execute(&mut *tx)
         .await?;
 
@@ -981,6 +1004,7 @@ mod tests {
             principal_kind: crate::server::principal::PrincipalKind::User,
             agent_id: None,
             chain: None,
+            stop_reason: None,
         }
     }
 
@@ -1403,6 +1427,7 @@ mod tests {
                 principal_kind: crate::server::principal::PrincipalKind::User,
                 agent_id: None,
                 chain: None,
+                stop_reason: None,
             }],
         )
         .await
@@ -1451,6 +1476,7 @@ mod tests {
                 principal_kind: crate::server::principal::PrincipalKind::User,
                 agent_id: None,
                 chain: None,
+                stop_reason: None,
             }],
         )
         .await

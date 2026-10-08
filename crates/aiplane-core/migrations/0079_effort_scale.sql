@@ -27,3 +27,9 @@ ALTER TABLE model_defaults ADD COLUMN reasoning_effort_low TEXT;
 -- 'custom_params' for SGLang started with --enable-strict-thinking), learned
 -- at identification. NULL = it cannot, and no budget is sent.
 ALTER TABLE backend_detected ADD COLUMN thinking_budget TEXT;
+
+-- Why the gateway stopped a model call: 'loop' (repeated text) or
+-- 'repeated_call' (the same tool call over and over). NULL = it was not
+-- stopped. Recorded on the chat and the /v1 path alike, so loops can be
+-- counted wherever they happen.
+ALTER TABLE usage_events ADD COLUMN stop_reason TEXT;

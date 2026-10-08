@@ -842,6 +842,7 @@ async fn spend(a: &A2a, tokens: i64) {
             principal_kind: PrincipalKind::System,
             agent_id: Some(a.agent.clone()),
             chain: None,
+            stop_reason: None,
         }],
     )
     .await

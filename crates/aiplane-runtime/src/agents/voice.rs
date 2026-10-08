@@ -342,6 +342,7 @@ async fn finish<T>(
                 principal_kind: PrincipalKind::System,
                 agent_id: None,
                 chain: None,
+                stop_reason: None,
             }
             .in_run(Some(&chain)),
         );

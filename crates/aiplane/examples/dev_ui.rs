@@ -2259,6 +2259,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             principal_kind: aiplane_core::server::principal::PrincipalKind::User,
             agent_id: None,
             chain: None,
+            stop_reason: None,
         });
     }
     // A couple of rows from other users so the admin "All users" view has more
@@ -2288,6 +2289,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             principal_kind: aiplane_core::server::principal::PrincipalKind::User,
             agent_id: None,
             chain: None,
+            stop_reason: None,
         });
     }
     // Price the two demo chat models BEFORE inserting usage, so the batched

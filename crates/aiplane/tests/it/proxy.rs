@@ -293,6 +293,57 @@ async fn v1_chat_completion_records_a_usage_row() {
     assert_eq!(agg.by_user[0].label, "alice@example.com");
 }
 
+/// A model that collapses into repeating itself on `/v1` is cut off with an
+/// in-band `loop_detected` error, and the call is recorded as stopped — the
+/// only trace a `/v1` loop leaves, since the client keeps no turn row.
+#[tokio::test]
+async fn a_v1_stream_that_loops_is_stopped_and_recorded_as_a_loop() {
+    let looped: String = (0..800)
+        .map(|_| "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"I'll send it. \"}}]}\n\n")
+        .collect();
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(format!("{looped}data: [DONE]\n\n")),
+        )
+        .mount(&upstream)
+        .await;
+    let state = common::state_with_chat_pool(&upstream.uri()).await;
+    let metered = aiplane_core::server::usage::spawn(state.db.clone(), 90);
+    let state = state.with_usage(metered);
+    let db = state.db.clone();
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"model": "model-a", "messages": [], "stream": true}).to_string(),
+        ))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = String::from_utf8_lossy(&common::read_body(resp).await).to_string();
+    assert!(body.contains("loop_detected"), "{body}");
+    assert!(
+        body.ends_with("data: [DONE]\n\n"),
+        "the stream still terminates"
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    let reasons: Vec<Option<String>> = sqlx::query_scalar("SELECT stop_reason FROM usage_events")
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    assert_eq!(reasons, vec![Some("loop".to_string())]);
+}
+
 #[tokio::test]
 async fn v1_embeddings_relays_through_upstream() {
     let upstream = MockServer::start().await;

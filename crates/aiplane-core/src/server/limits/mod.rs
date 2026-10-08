@@ -385,6 +385,7 @@ mod tests {
             principal_kind: crate::server::principal::PrincipalKind::User,
             agent_id: None,
             chain: None,
+            stop_reason: None,
         }
     }
 

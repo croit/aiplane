@@ -471,6 +471,7 @@ async fn a_spent_budget_silences_voice_too() {
             principal_kind: PrincipalKind::System,
             agent_id: Some(e.agent.clone()),
             chain: None,
+            stop_reason: None,
         }],
     )
     .await

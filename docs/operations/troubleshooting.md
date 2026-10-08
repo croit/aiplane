@@ -22,6 +22,7 @@ document content in a public issue.
 | Knowledge answer incomplete | Collection sync status, indexing errors, grants and search results | Check the actual indexed corpus; sync and retry |
 | Voice unavailable | Browser microphone access and configured transcription/speech models | Enable permission and check the relevant model pools |
 | Sandbox fails | Runner URL, token, isolation runtime and runner logs | Repair the isolated runner before enabling its tools |
+| Users report the model “looping” | `usage_events.stop_reason` and the `loop detected` / `repeated identical tool call` log lines; the model's thinking length | See [counting loops](#count-loops); a model that thinks for minutes without repeating itself is over-thinking, which a lower effort level fixes |
 | UI/static manual missing | `AIPLANE_STATIC_DIR` and deployed frontend artifact | Install the full artifact for the application's build |
 
 ## Collect logs
@@ -33,6 +34,27 @@ kubectl -n aiplane logs aiplane-0 -c gateway --tail=200
 
 Use the command matching your deployment. Connector, OCR and sandbox services
 have separate logs. A healthy gateway probe does not prove those services work.
+
+## Count loops
+
+Every model call the gateway cuts short is recorded with a reason in
+`usage_events.stop_reason`: `loop` when the streamed text collapsed into a
+repetition, `repeated_call` when the model kept making the same tool call. Chat
+turns, scheduled and agent runs and streamed `/v1` requests all record it; a
+`/v1` loop additionally logs `the model started repeating itself; stopping the
+stream (loop detected)` with the model, backend and token name.
+
+```sql
+SELECT substr(created_at, 1, 10) AS day, source, model, stop_reason, count(*)
+  FROM usage_events
+ WHERE stop_reason IS NOT NULL
+ GROUP BY day, source, model, stop_reason
+ ORDER BY day DESC;
+```
+
+The buffered (non-streamed) `/v1` tool loop logs a repeated tool call but does
+not mark the row, and a buffered response is not watched for repetition at all:
+there is no stream to cut.
 
 ## Report a reproducible problem
 

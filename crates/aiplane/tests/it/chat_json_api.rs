@@ -148,6 +148,15 @@ async fn setup(upstream_uri: &str) -> (Arc<RamaState>, String) {
 }
 
 async fn setup_with_location_tool(upstream_uri: &str) -> (Arc<RamaState>, String) {
+    setup_with_location_tool_metered(upstream_uri, false).await
+}
+
+/// [`setup_with_location_tool`], optionally with a live usage sink so a test
+/// can read the rows a turn wrote.
+async fn setup_with_location_tool_metered(
+    upstream_uri: &str,
+    metered: bool,
+) -> (Arc<RamaState>, String) {
     let tools = Arc::new(ToolRegistry::new().with(GetUserLocation));
     let rbac = Arc::new(
         Resolver::build(
@@ -165,7 +174,11 @@ async fn setup_with_location_tool(upstream_uri: &str) -> (Arc<RamaState>, String
         )
         .unwrap(),
     );
-    let state = state_with_chat_access(upstream_uri, tools, rbac).await;
+    let mut state = state_with_chat_access(upstream_uri, tools, rbac).await;
+    if metered {
+        let usage = aiplane_core::server::usage::spawn(state.db.clone(), 90);
+        state = state.with_usage(usage);
+    }
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
     (Arc::new(state), cookie)
 }
@@ -2915,7 +2928,7 @@ async fn a_chat_turn_repeating_one_identical_call_is_stopped_with_a_reason() {
         .respond_with(StuckChatResponder)
         .mount(&upstream)
         .await;
-    let (state, cookie) = setup_with_location_tool(&upstream.uri()).await;
+    let (state, cookie) = setup_with_location_tool_metered(&upstream.uri(), true).await;
     let app = router(state.clone());
     let session = chat::create_session(&state.db, "alice").await.unwrap();
 
@@ -2948,6 +2961,20 @@ async fn a_chat_turn_repeating_one_identical_call_is_stopped_with_a_reason() {
     assert!(
         upstream_calls < 10,
         "stopped long before the round budget: {upstream_calls}"
+    );
+    // The round whose calls were refused for good is the one recorded as
+    // stopped; every round before it ran normally.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    let reasons: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT stop_reason FROM usage_events WHERE kind = 'chat' ORDER BY created_at",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        reasons.iter().filter(|r| r.is_some()).collect::<Vec<_>>(),
+        vec![&Some("repeated_call".to_string())],
+        "{reasons:?}"
     );
 }
 

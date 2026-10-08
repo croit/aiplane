@@ -33,7 +33,9 @@ use aiplane_core::server::auth::UserCtx;
 use aiplane_core::server::automatic_routing::{
     AutomaticRouteAffinity, AutomaticRouteDecision, AutomaticRoutingError, SelectorGate,
 };
-use aiplane_core::server::db::usage::{self, UnitUsage, UsageKind, UsageRecord, UsageSource};
+use aiplane_core::server::db::usage::{
+    self, StopReason, UnitUsage, UsageKind, UsageRecord, UsageSource,
+};
 use aiplane_core::server::upstreams::registry::{Acquired, RouteError};
 use aiplane_core::server::upstreams::{PoolAccess, PoolKind};
 use aiplane_core::server::usage::UsageHandle;
@@ -102,8 +104,41 @@ impl RecordParams {
         started: Instant,
         tokens: (Option<i64>, Option<i64>, Option<i64>),
     ) {
-        let (prompt_tokens, completion_tokens, total_tokens) = tokens;
+        sink.emit(self.record(backend, status, started, tokens));
+    }
+
+    /// [`Self::emit`] for a call the loop guard cut off, logged as well so a
+    /// `/v1` loop is as visible as a chat one: the client only ever sees an
+    /// error chunk.
+    fn emit_loop(
+        &self,
+        sink: &UsageHandle,
+        backend: &str,
+        status: u16,
+        started: Instant,
+        tokens: (Option<i64>, Option<i64>, Option<i64>),
+    ) {
+        tracing::warn!(
+            model = %self.model,
+            backend,
+            token = self.token_name.as_deref().unwrap_or("-"),
+            "the model started repeating itself; stopping the stream (loop detected)"
+        );
         sink.emit(UsageRecord {
+            stop_reason: Some(StopReason::Loop),
+            ..self.record(backend, status, started, tokens)
+        });
+    }
+
+    fn record(
+        &self,
+        backend: &str,
+        status: u16,
+        started: Instant,
+        tokens: (Option<i64>, Option<i64>, Option<i64>),
+    ) -> UsageRecord {
+        let (prompt_tokens, completion_tokens, total_tokens) = tokens;
+        UsageRecord {
             created_at: Timestamp::now(),
             user_id: self.user_id.clone(),
             user_email: Some(self.user_email.clone()).filter(|s| !s.is_empty()),
@@ -124,7 +159,8 @@ impl RecordParams {
             principal_kind: self.principal_kind,
             agent_id: None,
             chain: None,
-        });
+            stop_reason: None,
+        }
     }
 }
 
@@ -1110,6 +1146,7 @@ fn record_selector_usage(state: &RamaState, user: &UserCtx, decision: &Automatic
         principal_kind: user.principal.kind(),
         agent_id: None,
         chain: None,
+        stop_reason: None,
     });
 }
 
@@ -2476,7 +2513,11 @@ async fn forward_streaming(
             }
             let _ = tx.unbounded_send(Ok(Bytes::from(std::mem::take(&mut buf))));
         }
-        rec.emit(&usage_sink, &backend_name, status.as_u16(), started, tokens);
+        if looped {
+            rec.emit_loop(&usage_sink, &backend_name, status.as_u16(), started, tokens);
+        } else {
+            rec.emit(&usage_sink, &backend_name, status.as_u16(), started, tokens);
+        }
     });
     let body = rama::http::Body::from_stream(rx);
 
@@ -3331,14 +3372,17 @@ async fn drive_streaming_tool_loop_inner(
                         }
                     }
                     let delta = aiplane_core::server::sse::ChatDelta::new(&v);
-                    if let Some(t) = delta.content()
-                        && content_guard.push(t)
-                    {
-                        return Err(aiplane_runtime::loop_guard::LOOP_MESSAGE.to_string().into());
-                    }
-                    if let Some(t) = delta.reasoning()
-                        && reasoning_guard.push(t)
-                    {
+                    let looped = delta.content().is_some_and(|t| content_guard.push(t))
+                        | delta.reasoning().is_some_and(|t| reasoning_guard.push(t));
+                    if looped {
+                        // The call was real: meter it, as stopped.
+                        rec.emit_loop(
+                            &state.usage,
+                            &backend_name,
+                            status_code,
+                            started,
+                            round_tokens,
+                        );
                         return Err(aiplane_runtime::loop_guard::LOOP_MESSAGE.to_string().into());
                     }
                     if let Some(tcs) = delta.tool_calls() {
@@ -3369,13 +3413,12 @@ async fn drive_streaming_tool_loop_inner(
                 relay(tx, sink.visible_chunk(parsed.as_ref(), event_bytes))?;
             }
         }
-        rec.emit(
-            &state.usage,
-            &backend_name,
-            status_code,
-            started,
-            round_tokens,
-        );
+        // Held until the round ends, so a round whose calls turn out to be a
+        // repeated tool call is recorded as stopped.
+        let mut round_usage =
+            state
+                .usage
+                .defer(rec.record(&backend_name, status_code, started, round_tokens));
         // The same numbers the row above was billed on, so a re-encoding sink's
         // client-visible usage report can't drift from the accounting.
         sink.round_usage(round_tokens);
@@ -3456,6 +3499,7 @@ async fn drive_streaming_tool_loop_inner(
         )
         .await
         .map_err(|stop| {
+            round_usage.stopped(StopReason::RepeatedCall);
             tracing::warn!(tool = %stop.tool, tool_rounds = rounds, "repeated identical tool call; stopping the stream");
             stop.message()
         })?;
