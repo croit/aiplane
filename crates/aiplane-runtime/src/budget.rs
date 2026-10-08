@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn chat_derives_its_budget_from_effort() {
-        for effort in [Effort::Fast, Effort::Standard, Effort::Deep, Effort::Max] {
+        for effort in Effort::ALL {
             let b = Budget::from_effort(effort);
             assert_eq!(b.rounds(), effort.max_rounds());
             assert_eq!((b.seconds(), b.tokens()), (None, None));

@@ -28,7 +28,7 @@
 
 use aiplane_core::server::db::model_defaults as db;
 use aiplane_core::server::model_defaults as merge;
-use aiplane_core::server::reasoning::ReasoningStyle;
+use aiplane_core::server::reasoning::{MIN_THINKING_BUDGET, ReasoningStyle};
 use aiplane_runtime::rama_server::state::RamaState;
 
 // ---------------------------------------------------------------------------
@@ -113,8 +113,12 @@ pub(crate) async fn apply_model_form(
             return Ok(None);
         }
         match s.parse::<i64>() {
-            Ok(n) if n >= 1 => Ok(Some(n)),
-            _ => Err(format!("budget must be a whole number ≥ 1: {s}")),
+            Ok(n) if n >= i64::from(MIN_THINKING_BUDGET) => Ok(Some(n)),
+            _ => Err(format!(
+                "a thinking budget must be a whole number of at least {MIN_THINKING_BUDGET} \
+                 tokens, got {s} — a model cut off sooner keeps thinking in its answer; \
+                 leave the field blank for no cap"
+            )),
         }
     };
     let effort = |s: &str| -> Result<Option<String>, String> {
@@ -130,12 +134,14 @@ pub(crate) async fn apply_model_form(
     };
     let overrides = match (|| -> Result<db::ReasoningOverrideCols, String> {
         Ok(db::ReasoningOverrideCols {
-            budget_standard: budget(&form.budget_standard)?,
-            budget_deep: budget(&form.budget_deep)?,
-            budget_max: budget(&form.budget_max)?,
-            effort_standard: effort(&form.effort_standard)?,
-            effort_deep: effort(&form.effort_deep)?,
-            effort_max: effort(&form.effort_max)?,
+            budget_low: budget(&form.budget_low)?,
+            budget_medium: budget(&form.budget_medium)?,
+            budget_high: budget(&form.budget_high)?,
+            budget_xhigh: budget(&form.budget_xhigh)?,
+            effort_low: effort(&form.effort_low)?,
+            effort_medium: effort(&form.effort_medium)?,
+            effort_high: effort(&form.effort_high)?,
+            effort_xhigh: effort(&form.effort_xhigh)?,
         })
     })() {
         Ok(c) => c,
@@ -207,17 +213,21 @@ pub(crate) struct SaveForm {
     #[serde(default)]
     pub(crate) reasoning_style: String,
     #[serde(default)]
-    pub(crate) budget_standard: String,
+    pub(crate) budget_low: String,
     #[serde(default)]
-    pub(crate) budget_deep: String,
+    pub(crate) budget_medium: String,
     #[serde(default)]
-    pub(crate) budget_max: String,
+    pub(crate) budget_high: String,
     #[serde(default)]
-    pub(crate) effort_standard: String,
+    pub(crate) budget_xhigh: String,
     #[serde(default)]
-    pub(crate) effort_deep: String,
+    pub(crate) effort_low: String,
     #[serde(default)]
-    pub(crate) effort_max: String,
+    pub(crate) effort_medium: String,
+    #[serde(default)]
+    pub(crate) effort_high: String,
+    #[serde(default)]
+    pub(crate) effort_xhigh: String,
     #[serde(default)]
     pub(crate) cap_vision: String,
     #[serde(default)]

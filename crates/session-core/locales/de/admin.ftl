@@ -193,19 +193,13 @@ admin-reasoning-glm = GLM / z.AI
 admin-reasoning-anthropic = Anthropic
 admin-reasoning-ollama = Ollama
 
-admin-effort-standard = Standard
-
-admin-effort-deep = Tief
-
-admin-effort-max = Max
-
 admin-budget-placeholder = Standard
 
-admin-budget-hint = Maximale Denk-Token pro Stufe. Leer = Backend-Standard (unbegrenzt). „Fast“ deaktiviert das Reasoning.
+admin-budget-hint = Maximale Denk-Token pro Stufe, mindestens { $min }. Leer = keine Begrenzung. „off“ schaltet das Denken ab.
 
 admin-effort-default-option = (Standard)
 
-admin-effort-hint = Reasoning-Aufwand pro Stufe. Leer = eingebauter Standard. „Fast“ deaktiviert das Reasoning.
+admin-effort-hint = Reasoning-Aufwand pro Stufe. Leer = eingebauter Standard. „off“ schaltet das Denken ab.
 
 admin-saved-model = `{ $model }` gespeichert — sofort wirksam
 

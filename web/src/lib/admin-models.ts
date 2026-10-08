@@ -27,14 +27,23 @@ export interface ModelDefaults {
 	input_price: number | null;
 	output_price: number | null;
 	pricing_unit: PricingUnit;
-	budget_standard: number | null;
-	budget_deep: number | null;
-	budget_max: number | null;
-	effort_standard: string | null;
-	effort_deep: string | null;
-	effort_max: string | null;
+	budget_low: number | null;
+	budget_medium: number | null;
+	budget_high: number | null;
+	budget_xhigh: number | null;
+	effort_low: string | null;
+	effort_medium: string | null;
+	effort_high: string | null;
+	effort_xhigh: string | null;
 	capabilities: ModelCapabilities;
 }
+
+/** The effort levels a model's reasoning can be tuned for — every one but `off`. */
+export const TUNED_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
+export type TunedEffort = (typeof TUNED_EFFORTS)[number];
+
+/** The smallest thinking budget the server accepts (`MIN_THINKING_BUDGET`). */
+export const MIN_THINKING_BUDGET = 1024;
 
 export interface AdminModel {
 	name: string;
@@ -134,7 +143,7 @@ export function configuredFacets(model: AdminModel): string[] {
 	const facets: string[] = [];
 	if (defaults.input_price !== null || defaults.output_price !== null) facets.push('price');
 	if (defaults.context_window !== null) facets.push('context');
-	if ([defaults.budget_standard, defaults.budget_deep, defaults.budget_max, defaults.effort_standard, defaults.effort_deep, defaults.effort_max].some((value) => value !== null)) facets.push('budget');
+	if (TUNED_EFFORTS.some((level) => defaults[`budget_${level}`] !== null || defaults[`effort_${level}`] !== null)) facets.push('budget');
 	if (Object.values(capabilities).some((value) => value !== null && value !== undefined && value !== '')) facets.push('capabilities');
 	if (defaults.defaults_toml.trim()) facets.push('toml');
 	return facets;

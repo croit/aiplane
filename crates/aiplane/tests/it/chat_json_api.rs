@@ -1938,6 +1938,145 @@ async fn automatic_route_stays_in_model_picker_while_selector_is_unavailable() {
     );
 }
 
+/// The streamed round request a turn sent upstream (title calls are not
+/// streamed).
+async fn round_request(upstream: &MockServer) -> serde_json::Value {
+    wait_for_first_round(upstream).await;
+    upstream
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap())
+        .find(|body| body["stream"] == true)
+        .expect("a streamed round")
+}
+
+/// A conversation nobody set an effort for thinks at `low`, and says so in
+/// Qwen's own template variable: left out, Qwen3.8's template thinks at
+/// `xhigh`, which is what made every chat turn think for minutes.
+#[tokio::test]
+async fn a_new_conversation_asks_qwen_to_think_at_low() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["ok"], 0).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    aiplane_core::server::db::model_defaults::set_reasoning_style(
+        &state.db,
+        "model-a",
+        Some("qwen"),
+    )
+    .await
+    .unwrap();
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let resp = router(state.clone())
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"hi"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let sent = round_request(&upstream).await;
+    assert_eq!(
+        sent["chat_template_kwargs"],
+        serde_json::json!({"enable_thinking": true, "reasoning_effort": "low"})
+    );
+    assert!(
+        sent.get("custom_params").is_none(),
+        "no budget is configured"
+    );
+}
+
+/// An admin's thinking budget reaches an SGLang that enforces one in the
+/// spelling it enforces — `custom_params.thinking_budget` — never as vLLM's
+/// `thinking_token_budget`, which SGLang drops without a word.
+#[tokio::test]
+async fn a_thinking_budget_reaches_a_strict_sglang_as_custom_params() {
+    use aiplane_core::server::reasoning::ThinkingBudget;
+    use aiplane_core::server::upstreams::profile::{BackendProfile, Detected};
+
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["ok"], 0).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    for pool in state.upstreams.pools() {
+        for backend in &pool.backends {
+            backend.set_detected(&Detected {
+                profile: BackendProfile::SgLang,
+                thinking_budget: Some(ThinkingBudget::CustomParams),
+                ..Detected::default()
+            });
+        }
+    }
+    let defaults = aiplane_core::server::db::model_defaults::ReasoningOverrideCols {
+        budget_high: Some(4_096),
+        ..Default::default()
+    };
+    aiplane_core::server::db::model_defaults::set_reasoning_overrides(
+        &state.db, "model-a", &defaults,
+    )
+    .await
+    .unwrap();
+    aiplane_core::server::db::model_defaults::set_reasoning_style(
+        &state.db,
+        "model-a",
+        Some("qwen"),
+    )
+    .await
+    .unwrap();
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let app = router(state.clone());
+    let effort = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/effort", session.id),
+            &cookie,
+            Some(r#"{"effort":"high"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(effort.status(), StatusCode::OK);
+    app.serve(json_req(
+        Method::POST,
+        format!("/api/v0/chat/sessions/{}/messages", session.id),
+        &cookie,
+        Some(r#"{"model":"model-a","message":"hi"}"#.into()),
+    ))
+    .await
+    .unwrap();
+
+    let sent = round_request(&upstream).await;
+    assert_eq!(
+        sent["custom_params"],
+        serde_json::json!({"thinking_budget": 4_096})
+    );
+    assert!(sent.get("thinking_token_budget").is_none());
+    assert_eq!(sent["chat_template_kwargs"]["reasoning_effort"], "xhigh");
+}
+
+/// The old scale's names are refused with the new ones spelled out.
+#[tokio::test]
+async fn an_effort_outside_the_scale_is_refused() {
+    let upstream = MockServer::start().await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let resp = router(state)
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/effort", session.id),
+            &cookie,
+            Some(r#"{"effort":"standard"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_string(resp).await;
+    assert!(body.contains("off, low, medium, high or xhigh"), "{body}");
+}
+
 /// An alias inherits its target's reasoning support.
 ///
 /// The picker lists aliases as models of their own, and `default` — the name
@@ -1964,20 +2103,22 @@ async fn an_alias_reports_the_reasoning_support_of_the_model_behind_it() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
     let models = body["models"].as_array().unwrap();
-    let reasoning = |id: &str| -> bool {
+    let efforts = |id: &str| {
         models
             .iter()
             .find(|m| m["id"] == id)
-            .unwrap_or_else(|| panic!("`{id}` must be listed: {models:?}"))["reasoning"]
-            .as_bool()
-            .expect("reasoning is a boolean")
+            .unwrap_or_else(|| panic!("`{id}` must be listed: {models:?}"))["efforts"]
+            .clone()
     };
-    assert!(
-        reasoning("Qwen/Qwen3-8B"),
+    let every_level = serde_json::json!(["off", "low", "medium", "high", "xhigh"]);
+    assert_eq!(
+        efforts("Qwen/Qwen3-8B"),
+        every_level,
         "the real id detects as Qwen: {models:?}"
     );
-    assert!(
-        reasoning("default"),
+    assert_eq!(
+        efforts("default"),
+        every_level,
         "the alias must answer for its target, not for its own name: {models:?}"
     );
 }
@@ -2006,7 +2147,7 @@ async fn a_model_with_no_reasoning_parameter_is_listed_as_such() {
             .iter()
             .find(|m| m["id"] == id)
             .unwrap_or_else(|| panic!("`{id}` must be listed: {models:?}"));
-        assert_eq!(m["reasoning"], serde_json::json!(false), "{models:?}");
+        assert_eq!(m["efforts"], serde_json::json!([]), "{models:?}");
     }
 }
 

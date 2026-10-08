@@ -500,17 +500,17 @@ fn effort_for(obj: &Map<String, Value>) -> Option<Effort> {
         .and_then(Value::as_str)
     {
         return Some(match level {
-            "low" => Effort::Fast,
-            "medium" => Effort::Standard,
-            "xhigh" | "max" => Effort::Max,
+            "low" => Effort::Low,
+            "medium" => Effort::Medium,
+            "xhigh" | "max" => Effort::Xhigh,
             // "high" and anything newer.
-            _ => Effort::Deep,
+            _ => Effort::High,
         });
     }
     match obj.get("thinking")?.get("type").and_then(Value::as_str) {
-        Some("disabled") => Some(Effort::Fast),
+        Some("disabled") => Some(Effort::Off),
         // "adaptive", "enabled", or a mode we don't know yet: thinking on.
-        Some(_) => Some(Effort::Standard),
+        Some(_) => Some(Effort::Medium),
         None => None,
     }
 }
@@ -829,28 +829,28 @@ mod tests {
         assert_eq!(effort(json!({})), None);
         assert_eq!(
             effort(json!({"thinking": {"type": "adaptive"}})),
-            Some(Effort::Standard)
+            Some(Effort::Medium)
         );
         assert_eq!(
             effort(json!({"thinking": {"type": "disabled"}})),
-            Some(Effort::Fast)
+            Some(Effort::Off)
         );
         assert_eq!(
             effort(json!({"thinking": {"type": "enabled", "budget_tokens": 4096}})),
-            Some(Effort::Standard)
+            Some(Effort::Medium)
         );
         assert_eq!(
             effort(json!({"output_config": {"effort": "low"}})),
-            Some(Effort::Fast)
+            Some(Effort::Low)
         );
         assert_eq!(
             effort(json!({"output_config": {"effort": "max"}})),
-            Some(Effort::Max)
+            Some(Effort::Xhigh)
         );
         // output_config wins over thinking: it is the more specific statement.
         assert_eq!(
             effort(json!({"thinking": {"type": "disabled"}, "output_config": {"effort": "high"}})),
-            Some(Effort::Deep)
+            Some(Effort::High)
         );
     }
 

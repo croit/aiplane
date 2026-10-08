@@ -185,19 +185,13 @@ admin-reasoning-glm = GLM / z.AI
 admin-reasoning-anthropic = Anthropic
 admin-reasoning-ollama = Ollama
 
-admin-effort-standard = Standard
-
-admin-effort-deep = Approfondi
-
-admin-effort-max = Max
-
 admin-budget-placeholder = par défaut
 
-admin-budget-hint = Nombre maximal de jetons de réflexion par niveau. Vide = valeur par défaut du backend (illimité). « Fast » désactive le raisonnement.
+admin-budget-hint = Nombre maximal de jetons de réflexion par niveau, au moins { $min }. Vide = sans limite. « off » désactive la réflexion.
 
 admin-effort-default-option = (par défaut)
 
-admin-effort-hint = Effort de raisonnement par niveau. Vide = valeur par défaut intégrée. « Fast » désactive le raisonnement.
+admin-effort-hint = Effort de raisonnement par niveau. Vide = valeur par défaut intégrée. « off » désactive la réflexion.
 
 admin-saved-model = `{ $model }` enregistré — effet immédiat
 

@@ -1400,6 +1400,7 @@ async fn run_one_turn(
             reasoning_style,
             effort,
             &reasoning_overrides,
+            serving.thinking_budget,
             &mut request_body,
         );
         let serialized = serde_json::to_vec(&request_body).map_err(upstream_err)?;

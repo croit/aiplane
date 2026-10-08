@@ -183,19 +183,13 @@ admin-reasoning-glm = GLM / z.AI
 admin-reasoning-anthropic = Anthropic
 admin-reasoning-ollama = Ollama
 
-admin-effort-standard = 标准
-
-admin-effort-deep = 深度
-
-admin-effort-max = 最大
-
 admin-budget-placeholder = 默认
 
-admin-budget-hint = 每个强度级别的最大思考 token 数。留空 = 后端默认值（不设上限）。“Fast” 会禁用推理。
+admin-budget-hint = 每个级别的最大思考 token 数，至少 { $min }。留空 = 不设上限。“off” 会关闭思考。
 
 admin-effort-default-option = （默认）
 
-admin-effort-hint = 每个强度级别的推理强度。留空 = 内置默认值。“Fast” 会禁用推理。
+admin-effort-hint = 每个级别的推理强度。留空 = 内置默认值。“off” 会关闭思考。
 
 admin-saved-model = 已保存 `{ $model }` —— 立即生效
 

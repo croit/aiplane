@@ -420,6 +420,11 @@ impl Backend {
             .unwrap_or(BackendProfile::Generic)
     }
 
+    /// How this server caps thinking tokens per request, if it can.
+    pub fn thinking_budget(&self) -> Option<crate::server::reasoning::ThinkingBudget> {
+        self.detected.read().ok().and_then(|g| g.thinking_budget)
+    }
+
     /// The context this server says it allocated, if it reports one. Refreshed
     /// by the probe — see [`Detected::context_cap`].
     pub fn context_cap(&self) -> Option<i64> {
@@ -1442,6 +1447,10 @@ pub struct ServingProfile {
     /// Whether `tool_choice: "none"` can be trusted to end a tool loop here.
     /// `false` means the caller must withhold the tool definitions instead.
     pub honors_tool_choice: bool,
+    /// How a thinking budget is enforced here, when every candidate enforces
+    /// it the same way. A pool where one replica would drop it gets none: a
+    /// cap that holds on some turns and not others is not a cap.
+    pub thinking_budget: Option<crate::server::reasoning::ThinkingBudget>,
 }
 
 impl Default for ServingProfile {
@@ -1450,6 +1459,7 @@ impl Default for ServingProfile {
         Self {
             dialect: None,
             honors_tool_choice: true,
+            thinking_budget: None,
         }
     }
 }
@@ -1735,6 +1745,7 @@ impl UpstreamRegistry {
         let mut agreed: Option<BackendProfile> = None;
         let mut unanimous = true;
         let mut honors_tool_choice = true;
+        let mut budget: Option<Option<crate::server::reasoning::ThinkingBudget>> = None;
         for backend in data
             .pools
             .values()
@@ -1749,6 +1760,12 @@ impl UpstreamRegistry {
         {
             let profile = backend.profile();
             honors_tool_choice &= profile.honors_tool_choice();
+            let own = backend.thinking_budget();
+            budget = Some(match budget {
+                None => own,
+                Some(seen) if seen == own => seen,
+                Some(_) => None,
+            });
             match agreed {
                 None => agreed = Some(profile),
                 Some(seen) if seen != profile => unanimous = false,
@@ -1761,6 +1778,7 @@ impl UpstreamRegistry {
                 .flatten()
                 .and_then(BackendProfile::reasoning_dialect),
             honors_tool_choice,
+            thinking_budget: budget.flatten(),
         }
     }
 
@@ -3310,6 +3328,35 @@ mod tests {
             !serving.honors_tool_choice,
             "one backend that ignores tool_choice is enough to stop trusting it"
         );
+    }
+
+    /// The production case: two SGLang replicas, one started with
+    /// `--enable-strict-thinking` and one without. A budget only half the
+    /// turns honour is not a cap, so none is reported until both enforce it.
+    #[test]
+    fn a_thinking_budget_holds_only_when_every_replica_enforces_it() {
+        use crate::server::reasoning::ThinkingBudget;
+        let registry =
+            registry_with_profiles("m", &[BackendProfile::SgLang, BackendProfile::SgLang]);
+        let backends: Vec<_> = registry
+            .pools()
+            .into_iter()
+            .flat_map(|p| p.backends.clone())
+            .collect();
+        let strict = Detected {
+            profile: BackendProfile::SgLang,
+            thinking_budget: Some(ThinkingBudget::CustomParams),
+            ..Detected::default()
+        };
+        backends[0].set_detected(&strict);
+        let serving = |r: &UpstreamRegistry| {
+            r.serving_profile("m", PoolKind::Chat, &PoolAccess::all())
+                .thinking_budget
+        };
+        assert_eq!(serving(&registry), None, "one replica would drop it");
+
+        backends[1].set_detected(&strict);
+        assert_eq!(serving(&registry), Some(ThinkingBudget::CustomParams));
     }
 
     /// A model nothing serves resolves to the pre-profile defaults rather than

@@ -26,10 +26,11 @@ chat-render-effort-tooltip = Уровень размышлений: выше = �
 # so the control is disabled rather than silently inert.
 chat-render-effort-unsupported = У этой модели нет управления рассуждением — уровень усилий ничего не изменит.
 chat-render-effort-label-prefix = Размышления:
-chat-render-effort-fast = Быстро
-chat-render-effort-standard = Стандарт
-chat-render-effort-deep = Глубоко
-chat-render-effort-max = Максимум
+chat-render-effort-off = off
+chat-render-effort-low = low
+chat-render-effort-medium = medium
+chat-render-effort-high = high
+chat-render-effort-xhigh = xhigh
 
 chat-render-tools-tooltip = Инструменты, интеграции и скиллы для этой беседы
 chat-render-tools-label = Инструменты

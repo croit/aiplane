@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api, ApiError } from '#lib/api.js';
-	import type { CanvasDocument, ChatAsset, ChatCapability } from '#lib/api.js';
+	import { api, ApiError, EFFORTS } from '#lib/api.js';
+	import type { CanvasDocument, ChatAsset, ChatCapability, ChatModelChoice, Effort } from '#lib/api.js';
 	import { createConversationController } from '#lib/chat.svelte.js';
 	import { extensionStatus, onExtensionState, requestActivation } from '#lib/browser-bridge.js';
 	import type { ExtensionStatus } from '#lib/browser-bridge.js';
@@ -38,7 +38,7 @@
 	let controller = $state<ReturnType<typeof createConversationController> | null>(null);
 	let session = $state<ChatSession | null>(null);
 	let model = $state('');
-	let models = $state<{ id: string; gdpr: boolean; nda: boolean; reasoning: boolean }[]>([]);
+	let models = $state<ChatModelChoice[]>([]);
 	let transcriptionModels = $state<string[]>([]);
 	let transcriptionModel = $state('');
 	let speechAvailable = $state(false);
@@ -47,10 +47,8 @@
 	let draft = $state('');
 	let files = $state<File[]>([]);
 	let tools = $state<ChatCapability[]>([]);
-	let effort = $state('standard');
-	// Levels, not labels: the option text is looked up in the template so a
-	// language switch re-renders the picker (same reason as the layout's nav).
-	const EFFORTS = ['fast', 'standard', 'deep', 'max'] as const;
+	// Until the snapshot says otherwise; `low` is also the server's default.
+	let effort = $state<Effort>('low');
 	let sending = $state(false);
 	/**
 	 * The composer's textarea, so the actions that empty it can hand the
@@ -174,7 +172,12 @@
 	 * Free-typed model names are not in the list, and there we do not know, so
 	 * the control stays enabled rather than being wrongly greyed out.
 	 */
-	const effortApplies = $derived(selectedModel?.reasoning ?? true);
+	const effortApplies = $derived(selectedModel ? selectedModel.efforts.length > 0 : true);
+	// Levels, not labels: the option text is looked up in the template so a
+	// language switch re-renders the picker (same reason as the layout's nav).
+	const offeredEfforts = $derived<readonly Effort[]>(
+		selectedModel && selectedModel.efforts.length > 0 ? selectedModel.efforts : EFFORTS
+	);
 	const hasCanvas = $derived(documents.length > 0 || assets.length > 0);
 	// The composer's feedback button captures the page before the dialog opens,
 	// so it needs the same busy state the floating button has elsewhere.
@@ -210,6 +213,7 @@
 			if (request !== metaRequest) return;
 			session = snap.session;
 			compactedUpToSeq = snap.compacted_up_to_seq;
+			effort = snap.effort;
 			assets = snap.assets;
 			if (snap.assets.length > 0 && window.innerWidth >= 768) canvasOpen = true;
 			// Prefill the model picker from the conversation's last assistant
@@ -1071,7 +1075,7 @@
 				bind:value={effort}
 				onchange={saveEffort}
 			>
-				{#each EFFORTS as level (level)}
+				{#each offeredEfforts as level (level)}
 					<option value={level}>
 						{t('chat-render-effort-label-prefix')} {t(`chat-render-effort-${level}`)}
 					</option>

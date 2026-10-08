@@ -628,17 +628,16 @@ fn response_format(text: Option<&Value>) -> Option<Value> {
     }
 }
 
-/// `reasoning.effort` onto the gateway's effort levels. A request that says
-/// nothing about reasoning leaves the backend's reasoning parameters alone,
-/// as `/v1/chat/completions` does.
+/// `reasoning.effort` onto the gateway's effort level of the same name. A
+/// request that says nothing about reasoning leaves the backend's reasoning
+/// parameters alone, as `/v1/chat/completions` does.
 fn effort_for(obj: &Map<String, Value>) -> Option<Effort> {
     let level = obj.get("reasoning")?.get("effort")?.as_str()?;
     Some(match level {
-        "none" | "minimal" | "low" => Effort::Fast,
-        "high" => Effort::Deep,
-        "xhigh" | "max" => Effort::Max,
+        "none" | "minimal" => Effort::Off,
+        "max" => Effort::Xhigh,
         // "medium" and anything newer.
-        _ => Effort::Standard,
+        other => Effort::parse(other).unwrap_or(Effort::Medium),
     })
 }
 
@@ -941,11 +940,13 @@ mod tests {
                 .unwrap()
                 .effort
         };
-        assert_eq!(effort("minimal"), Some(Effort::Fast));
-        assert_eq!(effort("low"), Some(Effort::Fast));
-        assert_eq!(effort("medium"), Some(Effort::Standard));
-        assert_eq!(effort("high"), Some(Effort::Deep));
-        assert_eq!(effort("xhigh"), Some(Effort::Max));
+        assert_eq!(effort("none"), Some(Effort::Off));
+        assert_eq!(effort("minimal"), Some(Effort::Off));
+        assert_eq!(effort("low"), Some(Effort::Low));
+        assert_eq!(effort("medium"), Some(Effort::Medium));
+        assert_eq!(effort("high"), Some(Effort::High));
+        assert_eq!(effort("xhigh"), Some(Effort::Xhigh));
+        assert_eq!(effort("ludicrous"), Some(Effort::Medium));
         assert_eq!(
             ResponsesRequest::parse(json!({"model": "m"}))
                 .unwrap()

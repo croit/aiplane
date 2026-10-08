@@ -11,6 +11,19 @@
  * to do with it (the layout redirects to the OIDC login).
  */
 
+/** The reasoning-effort scale, least thinking first. */
+export const EFFORTS = ['off', 'low', 'medium', 'high', 'xhigh'] as const;
+export type Effort = (typeof EFFORTS)[number];
+
+/** One entry of `GET /api/v0/models`. */
+export interface ChatModelChoice {
+	id: string;
+	gdpr: boolean;
+	nda: boolean;
+	/** The effort levels this model offers; empty when effort changes nothing. */
+	efforts: Effort[];
+}
+
 export interface ToolSummary {
 	id: string;
 	name: string;
@@ -261,6 +274,7 @@ export const api = {
 		request<{
 			session: import('./chat-protocol.js').ChatSession;
 			turns: import('./chat-protocol.js').TurnWithTools[];
+			effort: Effort;
 			compacted_up_to_seq: number | null;
 			assets: ChatAsset[];
 		}>(`/api/v0/chat/sessions/${encodeURIComponent(id)}`),
@@ -420,7 +434,7 @@ export const api = {
 
 	/** GET /api/v0/models — the caller's chat models (compliance flags included). */
 	listChatModels: () =>
-		request<{ models: { id: string; gdpr: boolean; nda: boolean; reasoning: boolean }[] }>('/api/v0/models'),
+		request<{ models: ChatModelChoice[] }>('/api/v0/models'),
 
 	/** Voice input and spoken-reply choices available to this user. */
 	chatVoiceConfig: () =>
@@ -464,7 +478,7 @@ export const api = {
 		),
 
 	/** POST /api/v0/chat/sessions/{id}/effort — reasoning effort knob. */
-	setChatEffort: (id: string, effort: string) =>
+	setChatEffort: (id: string, effort: Effort) =>
 		request<{ effort: string }>(`/api/v0/chat/sessions/${encodeURIComponent(id)}/effort`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },

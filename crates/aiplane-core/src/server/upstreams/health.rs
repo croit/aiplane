@@ -1363,8 +1363,9 @@ mod detection_wiring {
         let mut body = serde_json::json!({"model": "qwen3:0.6b", "messages": []});
         apply_effort(
             style,
-            Effort::Max,
+            Effort::Xhigh,
             &ReasoningOverrides::default(),
+            None,
             &mut body,
         );
         assert_eq!(body["reasoning_effort"], serde_json::json!("max"));
@@ -1385,8 +1386,9 @@ mod detection_wiring {
         let mut body = serde_json::json!({"model": "gemma3:270m", "messages": []});
         apply_effort(
             style,
-            Effort::Max,
+            Effort::Xhigh,
             &ReasoningOverrides::default(),
+            None,
             &mut body,
         );
         assert_eq!(

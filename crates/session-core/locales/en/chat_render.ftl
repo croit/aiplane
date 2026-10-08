@@ -25,10 +25,11 @@ chat-render-effort-tooltip = Thinking effort: higher = more reasoning and more t
 # so the control is disabled rather than silently inert.
 chat-render-effort-unsupported = This model has no reasoning control, so the effort setting would change nothing.
 chat-render-effort-label-prefix = Thinking:
-chat-render-effort-fast = Fast
-chat-render-effort-standard = Standard
-chat-render-effort-deep = Deep
-chat-render-effort-max = Max
+chat-render-effort-off = off
+chat-render-effort-low = low
+chat-render-effort-medium = medium
+chat-render-effort-high = high
+chat-render-effort-xhigh = xhigh
 
 chat-render-tools-tooltip = Tools, integrations & skills for this conversation
 chat-render-tools-label = Tools

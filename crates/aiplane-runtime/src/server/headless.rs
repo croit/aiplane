@@ -715,7 +715,7 @@ mod tests {
         let r = run(
             vec![finish_call("c1", json!({"result": {"status": "resolved"}}))],
             Some(contract()),
-            "standard",
+            "medium",
         )
         .await;
         assert_eq!(r.outcome, finished(json!({"status": "resolved"})));
@@ -740,7 +740,7 @@ mod tests {
                 finish_call("c2", json!({"result": {"status": "escalated"}})),
             ],
             Some(contract()),
-            "standard",
+            "medium",
         )
         .await;
         assert_eq!(r.outcome, finished(json!({"status": "escalated"})));
@@ -768,7 +768,7 @@ mod tests {
                 finish_call("c1", json!({"result": {"status": "resolved"}})),
             ],
             Some(contract()),
-            "standard",
+            "medium",
         )
         .await;
         assert_eq!(r.outcome, finished(json!({"status": "resolved"})));
@@ -793,10 +793,10 @@ mod tests {
         let r = run(
             vec![text("Still looking into it.")],
             Some(contract()),
-            "fast",
+            "off",
         )
         .await;
-        let rounds = aiplane_core::server::reasoning::Effort::Fast.max_rounds();
+        let rounds = aiplane_core::server::reasoning::Effort::Off.max_rounds();
         assert_eq!(
             r.outcome,
             Some(RunOutcome::Incomplete {
@@ -817,13 +817,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_valid_finish_on_the_final_round_still_finishes() {
-        let rounds = aiplane_core::server::reasoning::Effort::Fast.max_rounds() as usize;
+        let rounds = aiplane_core::server::reasoning::Effort::Off.max_rounds() as usize;
         let mut script = vec![text("Working."); rounds - 1];
         script.push(finish_call(
             "last",
             json!({"result": {"status": "resolved"}}),
         ));
-        let r = run(script, Some(contract()), "fast").await;
+        let r = run(script, Some(contract()), "off").await;
         assert_eq!(r.outcome, finished(json!({"status": "resolved"})));
         assert_eq!(r.requests.len(), rounds);
         assert_eq!(r.turn.turn.error_message, None);
@@ -844,7 +844,7 @@ mod tests {
                 finish_call("c3", json!({"result": {"status": "resolved"}})),
             ],
             Some(contract()),
-            "standard",
+            "medium",
         )
         .await;
         assert_eq!(r.outcome, finished(json!({"status": "resolved"})));
@@ -866,7 +866,7 @@ mod tests {
     async fn a_repeated_call_stop_ends_the_run_incomplete() {
         let echo = json!({"tool_calls": [{"index": 0, "id": "", "type": "function",
             "function": {"name": "company_echo", "arguments": r#"{"message":"hi"}"#}}]});
-        let r = run(vec![echo], Some(contract()), "standard").await;
+        let r = run(vec![echo], Some(contract()), "medium").await;
         let Some(RunOutcome::Incomplete {
             reason: IncompleteReason::RepeatedToolCall { tool },
             summary,
@@ -878,7 +878,7 @@ mod tests {
         assert!(summary.contains("identical"), "{summary}");
         assert!(
             r.requests.len()
-                < aiplane_core::server::reasoning::Effort::Standard.max_rounds() as usize,
+                < aiplane_core::server::reasoning::Effort::Medium.max_rounds() as usize,
             "the guard, not the budget, ended the run"
         );
     }
@@ -894,7 +894,7 @@ mod tests {
                 finish_call("c2", json!({"result": {"status": "resolved"}})),
             ],
             Some(contract()),
-            "standard",
+            "medium",
             |run| run.with_injection(InjectionScan::new(policy)),
         )
         .await
@@ -942,7 +942,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_final_round_that_writes_nothing_gets_a_gateway_account() {
-        let r = run(vec![text("")], Some(contract()), "fast").await;
+        let r = run(vec![text("")], Some(contract()), "off").await;
         let Some(RunOutcome::Incomplete { reason, summary }) = r.outcome else {
             panic!("expected an incomplete outcome, got {:?}", r.outcome);
         };
@@ -955,7 +955,7 @@ mod tests {
 
     #[tokio::test]
     async fn without_a_contract_a_run_behaves_as_before() {
-        let r = run(vec![text("Done.")], None, "standard").await;
+        let r = run(vec![text("Done.")], None, "medium").await;
         assert_eq!(r.outcome, None);
         assert_eq!(r.requests.len(), 1);
         assert!(offered_tools(&r.requests[0]).is_empty());
@@ -975,7 +975,7 @@ mod tests {
             .mount(&upstream)
             .await;
         let state = state_for(&upstream.uri()).await;
-        let (session_id, turn_id) = open(&state, "standard").await;
+        let (session_id, turn_id) = open(&state, "medium").await;
         let actor = actor_for(&state, &session_id, Some(contract()), |run| run).await;
         let outcome = drive(&state, params(&session_id, &turn_id, actor)).await;
         let Some(RunOutcome::Incomplete {
@@ -1001,7 +1001,7 @@ mod tests {
             .mount(&upstream)
             .await;
         let state = state_for(&upstream.uri()).await;
-        let (session_id, turn_id) = open(&state, "standard").await;
+        let (session_id, turn_id) = open(&state, "medium").await;
         let run = triage(&state, &session_id, contract()).await;
         let agent = run.chain().agent().principal_id.clone();
         let claim =
@@ -1053,7 +1053,7 @@ mod tests {
             .mount(&upstream)
             .await;
         let state = state_for(&upstream.uri()).await;
-        let (session_id, turn_id) = open(&state, "max").await;
+        let (session_id, turn_id) = open(&state, "xhigh").await;
         let actor = actor_for(&state, &session_id, Some(contract()), |run| {
             run.with_budget(budget)
         })
@@ -1209,7 +1209,7 @@ mod tests {
             .mount(&upstream)
             .await;
         let state = state_for(&upstream.uri()).await;
-        let (_owner_session, _) = open(&state, "standard").await;
+        let (_owner_session, _) = open(&state, "medium").await;
         aiplane_core::server::db::user_memories::insert(
             &state.db,
             "u1",
@@ -1327,7 +1327,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_persons_run_does_carry_their_identity() {
-        let r = run(vec![text("ok")], None, "standard").await;
+        let r = run(vec![text("ok")], None, "medium").await;
         assert!(
             r.requests[0].to_string().contains("u1@example.com"),
             "the control for the agent-run assertion above"
@@ -1388,7 +1388,7 @@ mod tests {
         agent_run(vec![calls(&[("c1", "company_echo")]), text("done")]).await;
         assert_eq!(reads(), before, "an agent run read a chat-only overlay");
 
-        run(vec![text("ok")], None, "standard").await;
+        run(vec![text("ok")], None, "medium").await;
         assert!(
             reads() > before,
             "the control: a person's turn does read it"
@@ -1452,7 +1452,7 @@ mod tests {
         let r = run(
             vec![calls(&[("c1", "company_echo")]), text("done")],
             None,
-            "standard",
+            "medium",
         )
         .await;
         assert_eq!(r.turn.tool_calls.len(), 1);

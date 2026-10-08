@@ -8,7 +8,7 @@ Use a conversation for a continuing task: its messages, attachments, generated a
 
 Choose the model from the header before sending a message. The available list is filtered by permissions. Configuration can also expose automatic routes or aliases through the shared model list. Compliance indicators in the picker describe the installation's configured model metadata; they are not a certification produced by AIplane.
 
-The composer offers **Fast**, **Standard**, **Deep** and **Max** effort levels. Effort is disabled when the selected model has no supported reasoning parameter. It is a model request setting, not a guaranteed response time or quality level.
+The composer offers the effort levels **off**, **low**, **medium**, **high** and **xhigh**. A new conversation starts at **low**, which is enough for most questions; choose a higher level for hard multi-step problems. Higher levels also allow more tool rounds per answer (off 8, low and medium 16, high 32, xhigh 64). The picker lists only the levels the selected model can express — a model that always reasons offers no **off** — and is disabled when the model has no supported reasoning parameter. It is a model request setting, not a guaranteed response time or quality level.
 
 Select **Tools** in the composer to inspect capabilities available to this conversation. Search or browse groups and select their state:
 

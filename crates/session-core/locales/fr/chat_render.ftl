@@ -26,10 +26,11 @@ chat-render-effort-tooltip = Effort de réflexion : plus élevé = plus de raiso
 # so the control is disabled rather than silently inert.
 chat-render-effort-unsupported = Ce modèle n'a pas de contrôle de raisonnement : le niveau d'effort ne changerait rien.
 chat-render-effort-label-prefix = Réflexion :
-chat-render-effort-fast = Rapide
-chat-render-effort-standard = Standard
-chat-render-effort-deep = Approfondi
-chat-render-effort-max = Maximal
+chat-render-effort-off = off
+chat-render-effort-low = low
+chat-render-effort-medium = medium
+chat-render-effort-high = high
+chat-render-effort-xhigh = xhigh
 
 chat-render-tools-tooltip = Outils, intégrations et skills pour cette conversation
 chat-render-tools-label = Outils

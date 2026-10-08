@@ -546,18 +546,16 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             // name suggests. On an Ollama backend that is the visible
             // difference between "qwen" (dropped in silence) and "openai"
             // (understood).
+            let serving = state.upstreams.serving_profile(
+                &name,
+                kind,
+                &aiplane_core::server::upstreams::PoolAccess::all(),
+            );
             let reasoning = aiplane_core::server::reasoning::ReasoningStyle::resolve(
                 defaults
                     .as_ref()
                     .and_then(|value| value.reasoning_style.as_deref()),
-                state
-                    .upstreams
-                    .serving_profile(
-                        &name,
-                        kind,
-                        &aiplane_core::server::upstreams::PoolAccess::all(),
-                    )
-                    .dialect,
+                serving.dialect,
                 &name,
             );
             models.push(ModelView {
@@ -572,7 +570,7 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 alias_target,
                 configured: defaults.is_some(),
                 resolved_reasoning_style: reasoning.as_str(),
-                uses_token_budget: reasoning.uses_token_budget(),
+                uses_token_budget: reasoning.budget_enforced(serving.thinking_budget),
                 effort_levels: reasoning.effort_levels(),
                 defaults: defaults.map(|d| model_defaults_view(&d)),
             });
@@ -594,7 +592,9 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             alias_target: None,
             configured: true,
             resolved_reasoning_style: reasoning.as_str(),
-            uses_token_budget: reasoning.uses_token_budget(),
+            // Nothing serves this model, so only a budget in the model's own
+            // wire format can hold.
+            uses_token_budget: reasoning.budget_enforced(None),
             effort_levels: reasoning.effort_levels(),
             // Nothing serves this model, so nothing has reported a window.
             detected_context_window: None,
@@ -661,6 +661,9 @@ pub struct ModelView {
     /// The model has stored overrides.
     pub configured: bool,
     pub resolved_reasoning_style: &'static str,
+    /// Whether a thinking-token budget for this model would be enforced: the
+    /// model's wire format carries one (Anthropic), or every serving backend
+    /// enforces one (vLLM, SGLang with `--enable-strict-thinking`).
     pub uses_token_budget: bool,
     pub effort_levels: &'static [&'static str],
     /// The context window the serving backend reports.
@@ -677,12 +680,14 @@ pub struct ModelDefaultsView {
     pub input_price: Option<f64>,
     pub output_price: Option<f64>,
     pub pricing_unit: &'static str,
-    pub budget_standard: Option<i64>,
-    pub budget_deep: Option<i64>,
-    pub budget_max: Option<i64>,
-    pub effort_standard: Option<String>,
-    pub effort_deep: Option<String>,
-    pub effort_max: Option<String>,
+    pub budget_low: Option<i64>,
+    pub budget_medium: Option<i64>,
+    pub budget_high: Option<i64>,
+    pub budget_xhigh: Option<i64>,
+    pub effort_low: Option<String>,
+    pub effort_medium: Option<String>,
+    pub effort_high: Option<String>,
+    pub effort_xhigh: Option<String>,
     pub capabilities: ModelCapabilitiesView,
 }
 
@@ -727,12 +732,15 @@ fn model_defaults_view(d: &db::model_defaults::ModelDefaults) -> ModelDefaultsVi
         input_price: d.input_price,
         output_price: d.output_price,
         pricing_unit: d.pricing_unit.as_str(),
-        budget_standard: d.thinking_budget_standard,
-        budget_deep: d.thinking_budget_deep,
-        budget_max: d.thinking_budget_max,
-        effort_standard: d.reasoning_effort_standard.clone(),
-        effort_deep: d.reasoning_effort_deep.clone(),
-        effort_max: d.reasoning_effort_max.clone(),
+        budget_low: d.thinking_budget_low,
+        budget_medium: d.thinking_budget_medium,
+        budget_high: d.thinking_budget_high,
+        budget_xhigh: d.thinking_budget_xhigh,
+        effort_low: d.reasoning_effort_low.clone(),
+        effort_medium: d.reasoning_effort_medium.clone(),
+        effort_high: d.reasoning_effort_high.clone(),
+        effort_xhigh: d.reasoning_effort_xhigh.clone(),
+
         capabilities: ModelCapabilitiesView {
             vision: d.capabilities.vision,
             audio_input: d.capabilities.audio_input,
@@ -773,12 +781,15 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
         price_only: form_field(raw.price_only),
         context_window: form_field(raw.context_window),
         reasoning_style: form_field(raw.reasoning_style),
-        budget_standard: form_field(raw.budget_standard),
-        budget_deep: form_field(raw.budget_deep),
-        budget_max: form_field(raw.budget_max),
-        effort_standard: form_field(raw.effort_standard),
-        effort_deep: form_field(raw.effort_deep),
-        effort_max: form_field(raw.effort_max),
+        budget_low: form_field(raw.budget_low),
+        budget_medium: form_field(raw.budget_medium),
+        budget_high: form_field(raw.budget_high),
+        budget_xhigh: form_field(raw.budget_xhigh),
+        effort_low: form_field(raw.effort_low),
+        effort_medium: form_field(raw.effort_medium),
+        effort_high: form_field(raw.effort_high),
+        effort_xhigh: form_field(raw.effort_xhigh),
+
         cap_vision: form_field(raw.cap_vision),
         cap_audio_input: form_field(raw.cap_audio_input),
         cap_pdf_input: form_field(raw.cap_pdf_input),
@@ -829,22 +840,28 @@ pub struct ModelSaveBody {
     reasoning_style: Option<serde_json::Value>,
     #[serde(default)]
     #[schemars(with = "Option<String>")]
-    budget_standard: Option<serde_json::Value>,
+    budget_low: Option<serde_json::Value>,
     #[serde(default)]
     #[schemars(with = "Option<String>")]
-    budget_deep: Option<serde_json::Value>,
+    budget_medium: Option<serde_json::Value>,
     #[serde(default)]
     #[schemars(with = "Option<String>")]
-    budget_max: Option<serde_json::Value>,
+    budget_high: Option<serde_json::Value>,
     #[serde(default)]
     #[schemars(with = "Option<String>")]
-    effort_standard: Option<serde_json::Value>,
+    budget_xhigh: Option<serde_json::Value>,
     #[serde(default)]
     #[schemars(with = "Option<String>")]
-    effort_deep: Option<serde_json::Value>,
+    effort_low: Option<serde_json::Value>,
     #[serde(default)]
     #[schemars(with = "Option<String>")]
-    effort_max: Option<serde_json::Value>,
+    effort_medium: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    effort_high: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    effort_xhigh: Option<serde_json::Value>,
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     cap_vision: Option<serde_json::Value>,

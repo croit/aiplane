@@ -154,7 +154,7 @@ A turn that calls a client-owned tool is handed back to the client as always, an
 | `custom` (freeform) tools | A function taking one string `input`; a grammar, if any, is added to the description. The call comes back as a `custom_tool_call` item |
 | Hosted tools (`web_search`, `file_search`, `code_interpreter`, …) | Dropped: they only run on OpenAI's platform |
 | `max_output_tokens`, `temperature`, `top_p`, `parallel_tool_calls`, `tool_choice`, `text.format` | `max_tokens`, `temperature`, `top_p`, `parallel_tool_calls`, `tool_choice`, `response_format` |
-| `reasoning.effort` | The serving model's reasoning parameter, via the Fast / Standard / Deep / Max levels (`none`/`minimal`/`low` → Fast, `medium` → Standard, `high` → Deep, `xhigh` → Max) |
+| `reasoning.effort` | The serving model's reasoning parameter, via the effort level of the same name (`none`/`minimal` → off, `low`, `medium`, `high`, `xhigh`/`max` → xhigh) |
 | `input_file` parts | Replaced by a note naming the file: the backends accept text and images only |
 | `include`, `prompt_cache_key`, `text.verbosity`, other unknown fields | Dropped, not rejected |
 | `background: true`, `conversation`, `prompt`, `item_reference`, an `input_image` by `file_id` | `400 invalid_request_error` naming the `param`: AIplane has no background mode, Conversations API, stored prompts or Files API, and answering without them would answer a different request |

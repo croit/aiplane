@@ -522,7 +522,7 @@ client tool in one turn.
 - **Rounds per turn** — `MAX_TOOL_ROUNDS` = **16** for both `/v1` loops
   (buffered and streaming, as a `runner::RoundBudget`). This is a compile-time
   constant and not configurable. The chat-UI driver takes its cap from the
-  conversation's effort level instead (`Effort::max_rounds`; Standard = 16).
+  conversation's effort level instead (`Effort::max_rounds`; the default, low = 16).
   All three close the budget the same way, through
   `runner::prepare_final_round`. The last round tells the model in the system
   message to answer from what it has. It then either sends `tool_choice:
@@ -581,8 +581,8 @@ seconds, tokens }`. A chat turn derives it from the conversation's effort level
 (`Budget::from_effort`: the `Effort::max_rounds` cap, no time or token limit). An agent run may carry one
 (`AgentRun::with_budget`); `Budget::new` clamps its rounds to `1..=HARD_ROUND_CAP`.
 `seconds` and `tokens` are optional (`None` = unlimited). An agent run takes
-its budget from `main.budget` in its spec (rounds default to the `standard`
-effort cap). A sub-agent run gets its own budget from its own spec, never a
+its budget from `main.budget` in its spec (rounds default to the cap of the
+default effort, `low`). A sub-agent run gets its own budget from its own spec, never a
 share of its parent's: the parent's `forward_request` call waits for the
 sub-agent while the sub-agent's rounds count against the sub-agent alone.
 
