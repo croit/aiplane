@@ -26,6 +26,8 @@ Write text, add any attachments, then press Enter or Send. Shift+Enter inserts a
 
 While a reply is running, you can still send another message. The server decides whether it joins the running work or waits as a later turn. A queued message is shown as waiting and can be cancelled before it starts.
 
+Occasionally a model collapses into repeating itself — the same sentence in its thinking, or the same tool call, over and over. AIplane stops such a call and, when the installation allows retries, tries it again one thinking level lower. The stopped attempt stays in the answer, folded away under **Attempt 1 stopped: …**, and a note says which level the next try uses. If every try loops, the answer ends with a warning to ask the question differently or split it up; the attempts stay readable above it.
+
 For a deliberate change of direction, type the new instruction and select **Interrupt**. This sends the instruction and stops the current answer so the instruction can start as new work. **Stop** cancels the current turn without sending a new instruction.
 
 ## Answer questions and approvals

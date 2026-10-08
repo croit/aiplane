@@ -51,9 +51,9 @@ use std::path::PathBuf;
 use crate::server::config::AllowedIps;
 use crate::server::config::{
     ChatConfig, ComfyuiConfig, CompactionConfig, Config, ContentGuardConfig, ContentGuardMode,
-    ContentGuardPolicy, FeedbackConfig, GatewayConfig, GeoipConfig, LimitsConfig, MetricsConfig,
-    OcrConfig, PushConfig, RagConfig, S3Config, SandboxConfig, SkillsConfig, TurnsConfig,
-    TypstConfig, UsageConfig,
+    ContentGuardPolicy, FeedbackConfig, GatewayConfig, GeoipConfig, LimitsConfig, LoopsConfig,
+    MetricsConfig, OcrConfig, PushConfig, RagConfig, S3Config, SandboxConfig, SkillsConfig,
+    TurnsConfig, TypstConfig, UsageConfig,
 };
 use crate::server::crypto::Crypto;
 use crate::server::db::{DbError, Pool, app_settings};
@@ -503,6 +503,12 @@ pub static SECTIONS: &[SectionSpec] = &[
         fields: &[f("chat.turns.max_parallel", Kind::Int)],
     },
     SectionSpec {
+        name: "chat.loops",
+        category: Category::Chat,
+        user_feature: true,
+        fields: &[f("chat.loops.retries", Kind::Int)],
+    },
+    SectionSpec {
         name: "chat.s3",
         category: Category::Data,
         user_feature: true,
@@ -942,6 +948,7 @@ pub fn apply(settings: &Settings, config: &mut Config) {
         ocr: ocr(settings),
         compaction: compaction(settings),
         turns: turns(settings),
+        loops: loops(settings),
         s3: settings
             .bool("chat.s3.enabled", false)
             .then(|| s3(settings)),
@@ -1032,6 +1039,13 @@ fn turns(s: &Settings) -> TurnsConfig {
     let d = TurnsConfig::default();
     TurnsConfig {
         max_parallel: s.int("chat.turns.max_parallel", d.max_parallel),
+    }
+}
+
+fn loops(s: &Settings) -> LoopsConfig {
+    let d = LoopsConfig::default();
+    LoopsConfig {
+        retries: s.int("chat.loops.retries", d.retries),
     }
 }
 
@@ -1336,6 +1350,7 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
         "chat.turns.max_parallel",
         c.chat.turns.max_parallel.to_string(),
     );
+    put("chat.loops.retries", c.chat.loops.retries.to_string());
 
     put("chat.s3.enabled", s3.is_some().to_string());
     put("chat.s3.endpoint", opt(s3.map(|v| v.endpoint.clone())));

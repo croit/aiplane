@@ -43,3 +43,11 @@ chat-steer-discarded = Añadido durante esta respuesta — llegó tarde y se des
 linked-chat-label = Continuar en
 linked-chat-fresh = Un chat nuevo, abierto por la próxima ejecución
 linked-chat-help = Cada ejecución añade su prompt y su respuesta a este chat. Elige una de tus conversaciones para mantener un único hilo.
+
+# A model call that looped and was retried at a lower thinking level, shown
+# collapsed above the answer. $effort is a level name (off/low/medium/high/xhigh).
+chat-attempt-summary = Intento { $n } detenido: { $reason } (razonamiento: { $effort })
+chat-attempt-reason-loop = el modelo se repitió
+chat-attempt-reason-repeated_call = la misma llamada a herramienta una y otra vez
+chat-attempt-retry = Nuevo intento con razonamiento { $effort } (intento { $n })
+chat-loop-exhausted = El modelo se repitió en los { $attempts } intentos, incluso con menos razonamiento. Formula la pregunta de otra manera o divídela en partes más pequeñas.

@@ -59,6 +59,14 @@ Category: **Chat**.
 |---|---|---|---|
 | `chat.turns.max_parallel` | Integer | Turns one user may have running in parallel in different conversations. With 1, a second chat waits. | No |
 
+### chat.loops
+
+Category: **Chat**.
+
+| Key | Input / choices | Meaning | Restart |
+|---|---|---|---|
+| `chat.loops.retries` | Integer | How many times a chat answer is tried again, one thinking level lower each time, after the model collapsed into repeating itself. Default 2, at most 5 (higher values count as 5); 0 stops at the first loop. | No |
+
 ### chat.s3
 
 Category: **Data**.

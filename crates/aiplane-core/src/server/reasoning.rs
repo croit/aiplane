@@ -37,7 +37,7 @@
 use serde_json::{Value, json};
 
 /// Hard ceiling on the per-turn tool-round cap, regardless of effort. Matches
-/// the most-headroom effort level ([`Effort::Max`]) and bounds the blast radius
+/// the most-headroom effort level ([`Effort::Xhigh`]) and bounds the blast radius
 /// of a runaway tool loop.
 pub const HARD_ROUND_CAP: u32 = 64;
 
@@ -127,6 +127,34 @@ impl Effort {
             Self::High => Some(Self::Medium),
             Self::Xhigh => Some(Self::High),
         }
+    }
+
+    /// The level a round that looped at `self` is retried at: the next one
+    /// down that `style` offers *and* that puts a different request on the
+    /// wire. OpenAI sends `high` for both `high` and `xhigh`, and Qwen sends
+    /// `xhigh` for both unless a budget tells them apart; a retry at such a
+    /// level would resend the request that just looped. `None` when nothing
+    /// lower changes anything.
+    pub fn retry_level(
+        self,
+        style: ReasoningStyle,
+        overrides: &ReasoningOverrides,
+        budget: Option<ThinkingBudget>,
+    ) -> Option<Self> {
+        let wire = |effort| {
+            let mut body = json!({});
+            apply_effort(style, effort, overrides, budget, &mut body);
+            body
+        };
+        let current = wire(self);
+        let mut next = self.lower();
+        while let Some(level) = next {
+            if style.efforts().contains(&level) && wire(level) != current {
+                return Some(level);
+            }
+            next = level.lower();
+        }
+        None
     }
 
     /// Whether reasoning is enabled at all at this level.
@@ -648,6 +676,40 @@ mod tests {
         assert_eq!(Effort::Medium.lower(), Some(Effort::Low));
         assert_eq!(Effort::Low.lower(), Some(Effort::Off));
         assert_eq!(Effort::Off.lower(), None);
+    }
+
+    #[test]
+    fn a_retry_steps_down_only_to_a_level_that_changes_the_request() {
+        let none = ReasoningOverrides::default();
+        let retry = |effort: Effort, style, overrides: &ReasoningOverrides| {
+            effort.retry_level(style, overrides, Some(ThinkingBudget::CustomParams))
+        };
+        assert_eq!(
+            retry(Effort::Low, ReasoningStyle::Qwen, &none),
+            Some(Effort::Off)
+        );
+        // Qwen sends `xhigh` for both: `high` would resend the same request.
+        assert_eq!(
+            retry(Effort::Xhigh, ReasoningStyle::Qwen, &none),
+            Some(Effort::Medium)
+        );
+        // A budget on `high` tells them apart.
+        let capped = ReasoningOverrides {
+            budget_high: Some(4_096),
+            ..Default::default()
+        };
+        assert_eq!(
+            retry(Effort::Xhigh, ReasoningStyle::Qwen, &capped),
+            Some(Effort::High)
+        );
+        // OpenAI cannot stop reasoning, and sends `high` for `xhigh` too.
+        assert_eq!(retry(Effort::Low, ReasoningStyle::OpenAi, &none), None);
+        assert_eq!(
+            retry(Effort::Xhigh, ReasoningStyle::OpenAi, &none),
+            Some(Effort::Medium)
+        );
+        // A model without a reasoning control has no lower level at all.
+        assert_eq!(retry(Effort::Xhigh, ReasoningStyle::None, &none), None);
     }
 
     #[test]

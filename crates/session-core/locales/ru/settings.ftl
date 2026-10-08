@@ -28,6 +28,8 @@ settings-s-chat-compaction = Сжатие переписки
 settings-s-chat-compaction-blurb = Пересказ более старой половины длинного разговора, чтобы он и дальше помещался в контекстное окно модели.
 settings-s-chat-turns = Параллельные разговоры
 settings-s-chat-turns-blurb = Сколько чатов одного пользователя могут отвечать одновременно.
+settings-s-chat-loops = Перезапуск при зацикливании
+settings-s-chat-loops-blurb = Что делает чат, когда модель начинает повторяться.
 settings-s-chat-s3 = Хранилище вложений (S3)
 settings-s-chat-s3-blurb = Объектное хранилище для вложений чата. Без него загрузка файлов отклоняется.
 settings-s-sandbox = Песочница для кода
@@ -120,6 +122,8 @@ settings-f-chat-compaction-summary_max_tokens-help = Бюджет токенов
 
 settings-f-chat-turns-max_parallel = Разговоров одновременно
 settings-f-chat-turns-max_parallel-help = Сколько ответов пользователь может получать параллельно, в разных разговорах. 1 сохраняет прежнее поведение: второй чат ждёт.
+settings-f-chat-loops-retries = Перезапуски
+settings-f-chat-loops-retries-help = Если модель зацикливается на повторах, ответ перезапускается с уровнем размышлений на ступень ниже, не больше указанного числа раз (0–5). 0 — остановка при первом зацикливании.
 
 settings-f-chat-s3-enabled = Хранить вложения в S3
 settings-f-chat-s3-enabled-help = Выключено — вложения в чате недоступны.

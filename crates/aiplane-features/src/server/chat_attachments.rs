@@ -1053,11 +1053,13 @@ mod tests {
                 reasoning_started_at: None,
                 status: chat_db::TurnStatus::Completed,
                 error_message: None,
+                error_code: None,
                 created_at: now,
                 completed_at: Some(now),
             },
             tool_calls: vec![],
             steers: vec![],
+            attempts: Vec::new(),
             suspension: None,
         }
     }

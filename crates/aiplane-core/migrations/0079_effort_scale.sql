@@ -33,3 +33,23 @@ ALTER TABLE backend_detected ADD COLUMN thinking_budget TEXT;
 -- stopped. Recorded on the chat and the /v1 path alike, so loops can be
 -- counted wherever they happen.
 ALTER TABLE usage_events ADD COLUMN stop_reason TEXT;
+
+-- A model call of a chat turn that looped and was retried at a lower effort.
+-- Its partial output moves here so the turn shows it collapsed above the
+-- answer and the model never sees it again. `retry_effort` is the level the
+-- next try ran at; NULL on the last attempt of a turn that gave up.
+CREATE TABLE chat_turn_attempts (
+    turn_id      TEXT NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
+    seq          INTEGER NOT NULL,
+    effort       TEXT NOT NULL,
+    retry_effort TEXT,
+    stop_reason  TEXT NOT NULL,
+    reasoning    TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (turn_id, seq)
+) STRICT;
+
+-- A machine-readable reason next to `error_message`, so the SPA can say it in
+-- the reader's language. 'loop_exhausted' = every retry looped too.
+ALTER TABLE chat_turns ADD COLUMN error_code TEXT;

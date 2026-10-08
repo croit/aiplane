@@ -36,6 +36,8 @@ settings-s-chat-compaction = Conversation compaction
 settings-s-chat-compaction-blurb = Summarising the older half of a long conversation so it keeps fitting in the model's context window.
 settings-s-chat-turns = Parallel conversations
 settings-s-chat-turns-blurb = How many of a user's chats may be answering at the same time.
+settings-s-chat-loops = Loop retries
+settings-s-chat-loops-blurb = What a chat does when the model starts repeating itself.
 settings-s-chat-s3 = Attachment storage (S3)
 settings-s-chat-s3-blurb = Object storage for chat attachments. Without it, uploads are refused.
 settings-s-sandbox = Code sandbox
@@ -129,6 +131,8 @@ settings-f-chat-compaction-summary_max_tokens-help = Token budget for the summar
 
 settings-f-chat-turns-max_parallel = Conversations at once
 settings-f-chat-turns-max_parallel-help = Turns one user may have running in parallel, in different conversations. 1 keeps the old behaviour: a second chat waits.
+settings-f-chat-loops-retries = Retries
+settings-f-chat-loops-retries-help = When the model collapses into repeating itself, the answer is tried again one thinking level lower, up to this many times (0–5). 0 stops at the first loop.
 
 settings-f-chat-s3-enabled = Store attachments in S3
 settings-f-chat-s3-enabled-help = Off means chat attachments are unavailable.

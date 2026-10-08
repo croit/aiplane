@@ -125,7 +125,8 @@
 							{#if live.turn.status === 'in_progress'}
 								<span class="flex items-center gap-2 text-sm text-base-content/60"><span class="loading loading-dots loading-sm"></span>{t(live.turn.content ? 'render-still-working-spinner' : 'render-thinking-spinner')}</span>
 							{/if}
-							{#if live.turn.error_message}<p class="m-0 text-sm text-error whitespace-pre-wrap">{live.turn.error_message}</p>{/if}
+							{#if live.turn.error_code === 'loop_exhausted'}<p class="m-0 text-sm text-warning whitespace-pre-wrap">{t('chat-loop-exhausted', { attempts: live.attempts.length })}</p>
+							{:else if live.turn.error_message}<p class="m-0 text-sm text-error whitespace-pre-wrap">{live.turn.error_message}</p>{/if}
 							{@render inside?.(live)}
 						</div>
 						{@render below?.(live)}

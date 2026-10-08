@@ -42,7 +42,10 @@ Every model call the gateway cuts short is recorded with a reason in
 repetition, `repeated_call` when the model kept making the same tool call. Chat
 turns, scheduled and agent runs and streamed `/v1` requests all record it; a
 `/v1` loop additionally logs `the model started repeating itself; stopping the
-stream (loop detected)` with the model, backend and token name.
+stream (loop detected)` with the model, backend and token name. A chat retry
+after a loop ([loop retries](../admin/settings.md#chat-and-documents)) is a
+call of its own, so every try is counted; the retry itself logs `the model
+looped; retrying the round at a lower effort`.
 
 ```sql
 SELECT substr(created_at, 1, 10) AS day, source, model, stop_reason, count(*)

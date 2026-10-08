@@ -76,6 +76,38 @@ test('a flagged full-text delta replaces instead of appending', () => {
 	assert.equal(state.turns.find((t) => t.turn.id === 'a1')?.turn.content, 'short + more');
 });
 
+test('a retried call joins its turn once, and the rewind replaces the answer', () => {
+	const state = newConversationState();
+	applyEvent(state, {
+		type: 'snapshot',
+		live_turn_id: 'a1',
+		turns: [turn('a1', 'assistant', { status: 'in_progress', reasoning: 'Wait. Wait.' })]
+	});
+	const attempt = {
+		seq: 0,
+		effort: 'low',
+		retry_effort: 'off',
+		stop_reason: 'loop' as const,
+		reasoning: 'Wait. Wait.',
+		content: '',
+		created_at: '2026-01-01T00:00:00Z'
+	};
+	applyEvent(state, { type: 'attempt', turn_id: 'a1', attempt });
+	applyEvent(state, { type: 'attempt', turn_id: 'a1', attempt });
+	applyEvent(state, { type: 'reasoning_delta', turn_id: 'a1', text_delta: '', full: true });
+	assert.equal(state.turns[0].attempts.length, 1);
+	assert.equal(state.turns[0].turn.reasoning, '');
+
+	applyEvent(state, {
+		type: 'turn_finalized',
+		turn_id: 'a1',
+		status: 'errored',
+		error_message: 'gave up',
+		error_code: 'loop_exhausted'
+	});
+	assert.equal(state.turns[0].turn.error_code, 'loop_exhausted');
+});
+
 test('tool calls announce, update, and never duplicate', () => {
 	const state = newConversationState();
 	applyEvent(state, {

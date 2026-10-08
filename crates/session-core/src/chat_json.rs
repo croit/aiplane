@@ -107,6 +107,9 @@ pub enum ChatEvent {
         status: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         error_message: Option<String>,
+        /// See [`crate::db::Turn::error_code`].
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error_code: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         /// Wall-clock span of the turn, from row creation to completion.
@@ -120,6 +123,13 @@ pub enum ChatEvent {
         turn_id: String,
         #[serde(flatten)]
         suspension: crate::db::SuspensionView,
+    },
+    /// A model call of the turn looped and was retried; its partial output
+    /// moved out of the answer into `attempt`. Sent before the deltas that
+    /// rewind the answer, so a client never shows the text in neither place.
+    Attempt {
+        turn_id: String,
+        attempt: crate::db::TurnAttempt,
     },
     /// A mid-turn interjection appeared, or the one already on screen
     /// reached its outcome.
@@ -167,6 +177,7 @@ impl ChatEvent {
             Self::TurnFinalized { .. } => "turn_finalized",
             Self::Suspended { .. } => "suspended",
             Self::Steer { .. } => "steer",
+            Self::Attempt { .. } => "attempt",
             Self::SidebarChanged => "sidebar_changed",
             Self::Info { .. } => "info",
             Self::ToolPrompt(_) => "tool_prompt",
@@ -214,6 +225,8 @@ pub struct JsonTurnFeed {
     /// Interjections already announced, with the status last sent — same
     /// shape and same reason as `tools_sent`.
     steers_sent: Vec<(String, String)>,
+    /// How many of the turn's attempts this subscriber has been sent.
+    attempts_sent: usize,
     /// Whether [`ChatEvent::TurnFinalized`] has been emitted. The feed is
     /// done afterwards; the stream loop closes on it.
     finalized: bool,
@@ -227,6 +240,7 @@ impl JsonTurnFeed {
             reasoning_sent: String::new(),
             tools_sent: Vec::new(),
             steers_sent: Vec::new(),
+            attempts_sent: 0,
             finalized: false,
         }
     }
@@ -247,6 +261,14 @@ impl JsonTurnFeed {
             return Vec::new();
         }
         let mut events = Vec::new();
+
+        for attempt in current.attempts.iter().skip(self.attempts_sent) {
+            events.push(ChatEvent::Attempt {
+                turn_id: turn.id.clone(),
+                attempt: attempt.clone(),
+            });
+        }
+        self.attempts_sent = self.attempts_sent.max(current.attempts.len());
 
         let content = turn.content.as_deref().unwrap_or("");
         emit_append(
@@ -345,6 +367,7 @@ impl JsonTurnFeed {
                 turn_id: turn.id.clone(),
                 status: turn.status.as_str().to_string(),
                 error_message: turn.error_message.clone(),
+                error_code: turn.error_code.clone(),
                 model: turn.model.clone(),
                 duration_ms: turn
                     .completed_at
@@ -744,11 +767,13 @@ mod tests {
                 reasoning_started_at: None,
                 status,
                 error_message: None,
+                error_code: None,
                 created_at: Timestamp::now(),
                 completed_at: None,
             },
             tool_calls: Vec::new(),
             steers: Vec::new(),
+            attempts: Vec::new(),
             suspension: None,
         }
     }
@@ -1062,6 +1087,39 @@ mod tests {
         assert_eq!(data["request_id"], "req-1");
         assert_eq!(data["kind"], "approval");
         assert_eq!(data["options"], serde_json::json!(["allow_once", "deny"]));
+    }
+
+    /// A retried call's text arrives as an `attempt` *before* the rewind of
+    /// the answer, so a client never draws it in neither place.
+    #[test]
+    fn an_attempt_is_announced_once_and_before_the_answer_rewinds() {
+        let mut feed = JsonTurnFeed::new("t1");
+        let mut row = turn(TurnStatus::InProgress, "Hello", "loop loop");
+        feed.diff(&row);
+
+        row.turn.content = Some("He".into());
+        row.turn.reasoning = None;
+        row.attempts = vec![crate::db::TurnAttempt {
+            seq: 0,
+            effort: "low".into(),
+            retry_effort: Some("off".into()),
+            stop_reason: "loop".into(),
+            reasoning: "loop loop".into(),
+            content: "llo".into(),
+            created_at: Timestamp::now(),
+        }];
+        let events = feed.diff(&row);
+        assert!(
+            matches!(&events[0], ChatEvent::Attempt { attempt, .. } if attempt.content == "llo")
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, ChatEvent::TurnDelta { full: true, text_delta, .. } if text_delta == "He")),
+            "{events:?}"
+        );
+        assert!(
+            feed.diff(&row).is_empty(),
+            "an attempt already sent is not sent again"
+        );
     }
 
     #[test]

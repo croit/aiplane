@@ -476,11 +476,13 @@ mod tests {
                 reasoning_started_at: None,
                 status: TurnStatus::Completed,
                 error_message: None,
+                error_code: None,
                 created_at: ts,
                 completed_at: Some(ts),
             },
             tool_calls: vec![],
             steers: vec![],
+            attempts: vec![],
             suspension: None,
         }
     }

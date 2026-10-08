@@ -43,3 +43,11 @@ chat-steer-discarded = 在本条回答期间补充 — 送达太晚，已丢弃
 linked-chat-label = 继续于
 linked-chat-fresh = 下次运行时打开的新对话
 linked-chat-help = 每次运行都会把提示和回复追加到此对话。选择你的一个对话，即可让所有内容保持在同一线程中。
+
+# A model call that looped and was retried at a lower thinking level, shown
+# collapsed above the answer. $effort is a level name (off/low/medium/high/xhigh).
+chat-attempt-summary = 第 { $n } 次尝试已停止：{ $reason }（思考：{ $effort }）
+chat-attempt-reason-loop = 模型开始重复自身
+chat-attempt-reason-repeated_call = 反复进行同一个工具调用
+chat-attempt-retry = 以思考强度 { $effort } 重新尝试（第 { $n } 次）
+chat-loop-exhausted = 模型在全部 { $attempts } 次尝试中都在重复，即使降低了思考强度。请换一种方式提问，或将问题拆分成更小的部分。

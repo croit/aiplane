@@ -29,6 +29,8 @@ settings-s-chat-compaction = Compactación de conversaciones
 settings-s-chat-compaction-blurb = Resumir la mitad más antigua de una conversación larga para que siga cabiendo en la ventana de contexto del modelo.
 settings-s-chat-turns = Conversaciones en paralelo
 settings-s-chat-turns-blurb = Cuántos chats de una persona pueden estar respondiendo a la vez.
+settings-s-chat-loops = Reintentos tras un bucle
+settings-s-chat-loops-blurb = Qué hace un chat cuando el modelo empieza a repetirse.
 settings-s-chat-s3 = Almacenamiento de adjuntos (S3)
 settings-s-chat-s3-blurb = Almacenamiento de objetos para los adjuntos del chat. Sin él, las subidas se rechazan.
 settings-s-sandbox = Sandbox de código
@@ -122,6 +124,8 @@ settings-f-chat-compaction-summary_max_tokens-help = Presupuesto de tokens para 
 
 settings-f-chat-turns-max_parallel = Conversaciones a la vez
 settings-f-chat-turns-max_parallel-help = Respuestas que una persona puede tener en curso en paralelo, en conversaciones distintas. 1 mantiene el comportamiento anterior: el segundo chat espera.
+settings-f-chat-loops-retries = Reintentos
+settings-f-chat-loops-retries-help = Si el modelo entra en un bucle de repeticiones, la respuesta se reintenta con un nivel de razonamiento menos, como máximo este número de veces (0–5). 0 se detiene en el primer bucle.
 
 settings-f-chat-s3-enabled = Guardar los adjuntos en S3
 settings-f-chat-s3-enabled-help = Desactivado, los adjuntos del chat no están disponibles.

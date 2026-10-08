@@ -784,6 +784,40 @@ pub struct ChatConfig {
     /// How turns may overlap: parallel conversations per user.
     #[serde(default)]
     pub turns: TurnsConfig,
+    /// What a chat turn does when its model starts repeating itself.
+    #[serde(default)]
+    pub loops: LoopsConfig,
+}
+
+/// Retries for a chat turn whose model collapsed into a loop.
+///
+/// A loop is cut off either way (`loop_guard`, `repeated_calls`); this decides
+/// whether the turn then gives up or tries the call again one effort level
+/// lower. Thinking less is what gets a model out of a reasoning loop most
+/// often, and a turn that only ever stops leaves the user with nothing.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LoopsConfig {
+    /// How many times a turn is retried after a loop, each time one effort
+    /// level lower. 0 gives up on the first loop. Read through
+    /// [`LoopsConfig::retries`], which caps it.
+    pub retries: usize,
+}
+
+impl LoopsConfig {
+    /// The most retries a turn may make: each one is a full model call the
+    /// user waits for.
+    pub const MAX_RETRIES: usize = 5;
+
+    pub fn retries(&self) -> usize {
+        self.retries.min(Self::MAX_RETRIES)
+    }
+}
+
+impl Default for LoopsConfig {
+    fn default() -> Self {
+        Self { retries: 2 }
+    }
 }
 
 /// How many turns one user may have in flight at once.
