@@ -690,6 +690,14 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
     );
     let state = Arc::new(state);
     let app = router(state.clone());
+    let user_preference = aiplane_core::server::db::user_memories::insert(
+        &state.db,
+        "alice",
+        aiplane_core::server::db::user_memories::MemoryKind::Preference,
+        "prefers concise replies",
+    )
+    .await
+    .unwrap();
     let accepted = app
         .serve(json_req(
             Method::POST,
@@ -752,6 +760,10 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
         .map(|message| message["content"].as_str().unwrap_or_default())
         .collect::<String>();
     assert!(system.contains("named \"memory-dot\""), "{system}");
+    assert!(
+        system.contains("prefers concise replies"),
+        "the Dot receives the user's shared preference: {system}"
+    );
     let memories =
         aiplane_agents::db::dot_memories::list(&state.db, "alice", &dot.principal.id, 10)
             .await
@@ -759,12 +771,78 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
             .expect("the Dot remains owned by alice");
     assert_eq!(memories.len(), 1);
     assert_eq!(memories[0].content, "avoid the verified deployment pitfall");
-    assert!(
-        aiplane_core::server::db::user_memories::recall_recent(&state.db, "alice", None, 10)
+    assert_eq!(
+        aiplane_core::server::db::user_memories::get(&state.db, "alice", &user_preference.id)
             .await
             .unwrap()
-            .is_empty()
+            .unwrap()
+            .content,
+        "prefers concise replies"
     );
+
+    let next_session = chat::create_session(&state.db, "alice").await.unwrap();
+    assert!(
+        aiplane_agents::db::dot_sessions::link(
+            &state.db,
+            "alice",
+            &dot.principal.id,
+            &next_session.id,
+        )
+        .await
+        .unwrap()
+    );
+    let accepted = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", next_session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"What did you learn?"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+    let events = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/events", next_session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let frames = sse_frames(&body_string(events).await);
+    assert!(
+        frames
+            .iter()
+            .any(|(name, frame)| { name == "turn_finalized" && frame["status"] == "completed" }),
+        "the next Dot chat should complete: {frames:?}"
+    );
+    let requests = upstream.received_requests().await.unwrap();
+    let next_turn = requests
+        .iter()
+        .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
+        .find(|body| {
+            body["stream"] == true
+                && body["messages"].as_array().is_some_and(|messages| {
+                    messages.iter().any(|message| {
+                        message["role"] == "system"
+                            && message["content"].as_str().is_some_and(|content| {
+                                content.contains("avoid the verified deployment pitfall")
+                                    && content.contains("prefers concise replies")
+                            })
+                    })
+                })
+        })
+        .expect("a later chat with the same Dot receives its saved memory");
+    let system = next_turn["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "system")
+        .map(|message| message["content"].as_str().unwrap_or_default())
+        .collect::<String>();
+    assert!(system.contains("avoid the verified deployment pitfall"));
+    assert!(system.contains("prefers concise replies"));
 }
 
 /// Attaching with nothing live: snapshot + idle, and the stream ends —
