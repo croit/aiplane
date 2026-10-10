@@ -313,12 +313,17 @@ async fn settled_without_running(
     status: &str,
     result: Value,
 ) {
-    if !ctx.agent_active() {
+    if !ctx.agent_active() && ctx.personal_dot.is_none() {
         return;
     }
-    ctx.audit_event(
-        AuditKind::ToolResult,
-        None,
+    let detail = if ctx.personal_dot.is_some() {
+        json!({
+            "tool": call.name,
+            "call_id": call.id,
+            "status": status,
+            "resumed": true,
+        })
+    } else {
         json!({
             "tool": call.name,
             "arguments": serde_json::from_str::<Value>(&call.arguments_raw)
@@ -326,9 +331,9 @@ async fn settled_without_running(
             "status": status,
             "result": result,
             "resumed": true,
-        }),
-    )
-    .await;
+        })
+    };
+    ctx.audit_event(AuditKind::ToolResult, None, detail).await;
 }
 
 /// Every tool-call id the replayed `messages` already used, so a resumed

@@ -14,8 +14,10 @@ permission. Each Dot card has a lazily loaded memory panel with separate
 preference, project and fact entries. Owners can add, edit and delete those
 notes; they remain separate from user-wide memory. A second lazily loaded
 panel shows the Dot's recent audited events and can page through older ones.
-Starting a Dot chat adds a session-start event to that activity feed without
-copying the conversation text into the event.
+Starting a Dot chat adds a session-start event without copying conversation
+text. Personal Dot tool decisions and outcomes appear in the same feed with
+the acting user and Dot attribution; their activity detail contains the tool,
+decision and status, but not arguments or tool results.
 Dot memory has a separate store and owner-scoped API, but automatic memory
 curation is not implemented. A personal Dot can start a private chat that
 reads bounded Dot memory and the user's existing profile context. Its chat

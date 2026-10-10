@@ -1021,7 +1021,11 @@ async fn classify_and_dispatch_tool_calls(
             granted && disabled_keys.contains(key),
             allowed_tools.contains(&acc.name),
         );
-        call_policy::audit(&d.tool_ctx, &acc.id, &acc.name, policy).await;
+        if !call_policy::audit(&d.tool_ctx, &acc.id, &acc.name, policy).await {
+            return Err(TurnError::Upstream {
+                message: crate::agents::audit::LOG_UNAVAILABLE.into(),
+            });
+        }
         let refusal = match policy {
             CallPolicy::Granted
                 if !alone && tool_source.phase(&acc.name) == ToolPhase::Terminal =>

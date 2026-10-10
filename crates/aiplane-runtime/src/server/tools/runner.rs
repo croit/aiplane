@@ -1029,9 +1029,9 @@ async fn run_one(
             )
         }
     };
-    // Only an agent run keeps the tool's own answer for its log: the
-    // screened body is what the model reads.
-    let raw = journal.agent.is_some().then(|| body.clone());
+    // Keep the tool's own answer only long enough to record agent-run details
+    // or the minimal personal-Dot outcome; the model reads the screened body.
+    let raw = (journal.agent.is_some() || journal.personal_dot.is_some()).then(|| body.clone());
     let screened = screen_result(scan, &journal, &call, body).await;
     if let Some(raw) = &raw {
         let result = CallResult {
@@ -1073,6 +1073,34 @@ async fn record_call(
     result: CallResult<'_>,
 ) {
     let Some(run) = ctx.agent.as_deref() else {
+        if ctx.personal_dot.is_some() {
+            let status = if crate::suspend::extract_suspend(result.body).is_some() {
+                "awaiting_approval"
+            } else {
+                result.status
+            };
+            let approval = match &ctx.suspend {
+                crate::suspend::Suspend::Decided(
+                    session_core::db::SuspensionKind::Approval,
+                    session_core::db::Decision::AllowOnce,
+                ) => Some("approved"),
+                _ => None,
+            };
+            let mut detail = json!({
+                "tool": call.name,
+                "call_id": call.id,
+                "status": status,
+            });
+            if let Some(approval) = approval {
+                detail["approval"] = json!(approval);
+            }
+            ctx.audit_event(
+                AuditKind::ToolResult,
+                Some(u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX)),
+                detail,
+            )
+            .await;
+        }
         return;
     };
     if sensitive {

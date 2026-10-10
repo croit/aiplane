@@ -300,6 +300,9 @@ pub struct NewEvent<'a> {
     pub principal_id: &'a str,
     /// The person who caused it, when one did.
     pub actor_id: Option<&'a str>,
+    /// An agent attribution for a user's conversation event, such as a
+    /// personal Dot acting under the user's principal.
+    pub agent_id: Option<&'a str>,
     pub chain: Option<&'a RunChain>,
     pub at: Correlation,
     pub duration_ms: Option<u64>,
@@ -314,6 +317,7 @@ impl<'a> NewEvent<'a> {
             kind,
             principal_id,
             actor_id: None,
+            agent_id: None,
             chain: None,
             at: Correlation::default(),
             duration_ms: None,
@@ -329,6 +333,11 @@ impl<'a> NewEvent<'a> {
 
     pub fn by(mut self, actor_id: Option<&'a str>) -> Self {
         self.actor_id = actor_id;
+        self
+    }
+
+    pub fn for_agent(mut self, agent_id: &'a str) -> Self {
+        self.agent_id = Some(agent_id);
         self
     }
 
@@ -680,8 +689,8 @@ pub async fn append(conn: &mut WriteTx, mut event: NewEvent<'_>) -> Result<Appen
         actor_id: event.actor_id.map(str::to_string),
         agent_id: Some(
             event
-                .chain
-                .map(|c| c.agent().principal_id.as_str())
+                .agent_id
+                .or_else(|| event.chain.map(|c| c.agent().principal_id.as_str()))
                 .or_else(|| root.as_ref().and_then(|(_, owner)| owner.as_deref()))
                 .unwrap_or(event.principal_id)
                 .to_string(),

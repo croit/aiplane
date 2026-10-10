@@ -293,6 +293,9 @@ impl ToolContext {
             .in_run(self.chain())
             .at(self.correlation())
             .redacted(self.redaction());
+        if let Some(dot) = self.personal_dot.as_ref() {
+            event = event.by(Some(&dot.owner_user_id)).for_agent(&dot.dot_id);
+        }
         event.duration_ms = duration_ms;
         record_for_run(&self.db, self.agent.as_deref(), event).await
     }

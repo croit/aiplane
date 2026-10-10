@@ -779,6 +779,37 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
             .content,
         "prefers concise replies"
     );
+    let activity_response = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/dots/{}/activity", dot.principal.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(activity_response.status(), StatusCode::OK);
+    let activity: Value = serde_json::from_str(&body_string(activity_response).await).unwrap();
+    let activity_events = activity["events"].as_array().unwrap();
+    let call = activity_events
+        .iter()
+        .find(|event| event["kind"] == "tool_call" && event["detail"]["tool"] == "remember")
+        .expect("the personal Dot activity feed includes the tool decision");
+    assert_eq!(call["principal_id"], "alice");
+    assert_eq!(call["actor_id"], "alice");
+    assert_eq!(call["agent_id"], dot.principal.id);
+    assert_eq!(call["detail"]["decision"], "allowed");
+    let result = activity_events
+        .iter()
+        .find(|event| event["kind"] == "tool_result" && event["detail"]["tool"] == "remember")
+        .expect("the personal Dot activity feed includes the tool outcome");
+    assert_eq!(result["agent_id"], dot.principal.id);
+    assert_eq!(result["detail"]["status"], "completed");
+    assert!(
+        !result["detail"]
+            .to_string()
+            .contains("avoid the verified deployment pitfall")
+    );
 
     let next_session = chat::create_session(&state.db, "alice").await.unwrap();
     assert!(
