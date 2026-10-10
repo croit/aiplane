@@ -65,10 +65,14 @@ constructor and returns `MismatchedRun` when the chain's running frame is not
 that principal, so a run that acts as one agent and audits as another cannot
 be built.
 
-A turn's `Actor` is `Person { id, roles }` or `Agent(Arc<AgentRun>)`.
-`DriveParams` and `TurnFacts` take one, and `build_tool_context` derives
-`ToolContext.principal` from it, so the principal and the run cannot disagree.
-The run then lives in `ToolContext.agent` (the driver reads it back through
+A turn's `Actor` is `Person { id, roles }`, `PersonalDot { id, roles, dot }`,
+or `Agent(Arc<AgentRun>)`. A personal Dot retains the owner's user principal
+and carries its Dot id alongside it; `build_tool_context` puts that attribution
+in `ToolContext.personal_dot`. This scopes Dot-owned data without changing the
+user's existing grants. `DriveParams` and `TurnFacts` take one, and
+`build_tool_context` derives `ToolContext.principal` from it, so the principal
+and the run cannot disagree. An agent run then lives in `ToolContext.agent`
+(the driver reads it back through
 `OpenAiDriver::agent()`), and every question "is this an agent run" asks that
 one value: the call policy, the injection audit, the usage row's chain
 (`ctx.chain()`), and whether `headless::drive` announces a person's pause.

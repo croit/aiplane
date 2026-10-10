@@ -557,12 +557,14 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
     } = facts;
     let principal = actor.principal();
     let agent = actor.agent().cloned();
+    let personal_dot = actor.personal_dot_identity().cloned();
     // Session paths: whatever the user's groups reach. Bearer paths hand in
     // their own, already narrowed by the token's allowlist.
     let pool_access = pool_access.unwrap_or_else(|| state.pool_access_for_principal(&principal));
     ToolContext {
         principal,
         agent,
+        personal_dot,
         call_id: None,
         token_id: None,
         pool_access,

@@ -402,8 +402,12 @@ loads Dot and user memory but exposes no tools until action policy is in place.
 
 ### Slice 2: Delegated personal execution
 
-- Add explicit `PersonalDot` run context and enforce user grants intersected
-  with Dot policy.
+- Carry explicit `PersonalDot { user_id, dot_id }` attribution from the chat
+  actor into `ToolContext`, while keeping the effective principal as the user.
+  This establishes a scope for Dot-owned data; it does not yet grant tools or
+  enforce a Dot action policy.
+- Enforce user grants intersected with Dot policy before offering or executing
+  a tool.
 - Attribute every action to user and Dot in usage and audit.
 - Keep sessions owner-scoped and private.
 

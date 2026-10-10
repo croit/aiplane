@@ -246,8 +246,22 @@ pub enum Actor {
     /// A person, gated by their roles: their real roles offer their normal
     /// tools, an empty list offers none (the scheduler's "tools off").
     Person { id: String, roles: Vec<String> },
+    /// A personal Dot is named separately, but exercises the owner's user
+    /// principal. The Dot identity travels beside that principal for scoped
+    /// data and audit attribution.
+    PersonalDot {
+        id: String,
+        roles: Vec<String>,
+        dot: PersonalDotIdentity,
+    },
     /// An agent's run, offered exactly its principal's grants.
     Agent(Arc<AgentRun>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonalDotIdentity {
+    pub owner_user_id: String,
+    pub dot_id: String,
 }
 
 impl Actor {
@@ -258,9 +272,29 @@ impl Actor {
         }
     }
 
+    pub fn personal_dot(
+        owner_user_id: impl Into<String>,
+        roles: Vec<String>,
+        dot_id: impl Into<String>,
+    ) -> Self {
+        let owner_user_id = owner_user_id.into();
+        Self::PersonalDot {
+            id: owner_user_id.clone(),
+            roles,
+            dot: PersonalDotIdentity {
+                owner_user_id,
+                dot_id: dot_id.into(),
+            },
+        }
+    }
+
     pub fn principal(&self) -> Principal {
         match self {
             Self::Person { id, roles } => Principal::User {
+                id: id.clone(),
+                roles: roles.clone(),
+            },
+            Self::PersonalDot { id, roles, .. } => Principal::User {
                 id: id.clone(),
                 roles: roles.clone(),
             },
@@ -270,7 +304,7 @@ impl Actor {
 
     pub fn agent(&self) -> Option<&Arc<AgentRun>> {
         match self {
-            Self::Person { .. } => None,
+            Self::Person { .. } | Self::PersonalDot { .. } => None,
             Self::Agent(run) => Some(run),
         }
     }
@@ -278,8 +312,15 @@ impl Actor {
     /// The person behind the turn; `None` for an agent's run.
     pub fn person_id(&self) -> Option<&str> {
         match self {
-            Self::Person { id, .. } => Some(id),
+            Self::Person { id, .. } | Self::PersonalDot { id, .. } => Some(id),
             Self::Agent(_) => None,
+        }
+    }
+
+    pub fn personal_dot_identity(&self) -> Option<&PersonalDotIdentity> {
+        match self {
+            Self::PersonalDot { dot, .. } => Some(dot),
+            Self::Person { .. } | Self::Agent(_) => None,
         }
     }
 }
@@ -312,6 +353,24 @@ mod tests {
         let run = AgentRun::new(billing.clone(), chain_of(&billing)).unwrap();
         assert_eq!(run.principal(), Principal::System(billing));
         assert_eq!(run.chain().current().principal_id, "p2");
+    }
+
+    #[test]
+    fn a_personal_dot_keeps_the_users_principal_and_the_dots_attribution() {
+        let actor = Actor::personal_dot("u1", vec!["staff".into()], "dot-7");
+        assert_eq!(
+            actor.principal(),
+            Principal::User {
+                id: "u1".into(),
+                roles: vec!["staff".into()],
+            }
+        );
+        assert_eq!(actor.person_id(), Some("u1"));
+        assert_eq!(
+            actor.personal_dot_identity().map(|dot| dot.dot_id.as_str()),
+            Some("dot-7")
+        );
+        assert!(actor.agent().is_none());
     }
 
     #[test]

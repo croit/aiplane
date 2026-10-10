@@ -860,10 +860,20 @@ async fn spawn_assistant_worker(
     // uses the unfiltered per-user set. Everything but the two interactive
     // handles below is shared with the headless scheduler via
     // `build_tool_context`.
+    let dot_link =
+        aiplane_agents::db::dot_sessions::for_session(&state.db, &user.id, session_id).await;
+    let actor = match &dot_link {
+        Ok(Some(link)) if link.active => aiplane_runtime::agent_run::Actor::personal_dot(
+            user.id.clone(),
+            user.roles.clone(),
+            link.dot_id.clone(),
+        ),
+        _ => aiplane_runtime::agent_run::Actor::person(user.id.clone(), user.roles.clone()),
+    };
     let tool_ctx = aiplane_runtime::openai_driver::build_tool_context(
         state,
         aiplane_runtime::openai_driver::TurnFacts {
-            actor: aiplane_runtime::agent_run::Actor::person(user.id.clone(), user.roles.clone()),
+            actor,
             session_id: session_id.to_string(),
             assistant_turn_id: assistant_turn_id.to_string(),
             client_ip: req.client_ip,
@@ -885,11 +895,7 @@ async fn spawn_assistant_worker(
             suspendable: true,
         },
     );
-    let persona = match aiplane_agents::db::dot_sessions::for_session(
-        &state.db, &user.id, session_id,
-    )
-    .await
-    {
+    let persona = match dot_link {
         Ok(Some(link)) => Some(personal_dot_persona(state, user, &link).await),
         Ok(None) => crate::pages::architect::persona_for(state, user, session_id).await,
         Err(error) => {

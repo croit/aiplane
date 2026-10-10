@@ -175,6 +175,9 @@ pub struct ToolContext {
     /// scheduled action or a `/v1` request. `principal` is then its
     /// principal; see [`Self::agent_active`].
     pub agent: Option<std::sync::Arc<crate::agent_run::AgentRun>>,
+    /// Personal Dot identity carried beside the user's principal. It scopes
+    /// Dot-owned data without changing the permissions of the user.
+    pub personal_dot: Option<crate::agent_run::PersonalDotIdentity>,
     /// The id of the tool call this run answers. The runner sets it on the
     /// copy of the context it hands each call; `None` outside a call. A
     /// sub-agent dispatch records it as the call site of the run it starts.
@@ -218,6 +221,7 @@ impl ToolContext {
             suspend: crate::suspend::Suspend::Unavailable,
             granted_tools: None,
             agent: None,
+            personal_dot: None,
             call_id: None,
         }
     }

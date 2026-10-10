@@ -515,6 +515,7 @@ mod tests {
                 granted.iter().map(|id| id.to_string()).collect(),
             )),
             agent: None,
+            personal_dot: None,
             call_id: None,
         }
     }
