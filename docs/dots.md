@@ -161,6 +161,25 @@ requirements; they do not determine AIplane's implementation.
 | Operator settings | declarative settings API and SPA | Dot creation permission and active-Dot limit (default 4); define organization scope |
 | Usage controls | user/agent spend and usage limits | Attribute background usage to its owner and Dot; no separate parallel-run cap is requested |
 
+### Shared mechanisms: personal Dot access and approvals
+
+The current code establishes these reuse points and the remaining runtime seam:
+
+| Need | Existing mechanism | Dot-specific work |
+|---|---|---|
+| Resolve the signed-in user's current tool ceiling | `AppState::allowed_tools_for_session`, `UserMcpLayer`, and `CompositeToolSource` | Resolve the ceiling on each Dot turn and compose only the connectors selected for that Dot. Do not treat a tool name from the model as a grant. |
+| Store a Dot's tool allowlist and approval settings | The Dot already has an `agents.draft_spec`; `AgentSpec.main.tools` and `main.tool_resources` represent tool selection and per-tool permission | Add an owner-scoped update/read path that validates against the user's current grants. The ordinary agent spec validator assumes grants belong to the agent principal, so it cannot be called with the Dot's empty principal grants unchanged. Do not add a parallel action-policy table. |
+| Enforce tool rules before execution | `Agents::profile::RunToolSource` and `Permissions::gate` reuse `AskFirst` for agent runs | Add a tested Dot source/policy seam that filters against both owner grants and Dot selection, then applies the existing approval wrapper. The current `TurnPolicy::Persona` returns only persona tools and drops the dynamic user/MCP source. |
+| Pause and resume a decision | `chat_turn_suspensions`, `AskFirst`, the user Inbox, and `resume_turn` | The chat resume path reloads the session's `personal_dot_sessions` link before constructing the driver. Keep that resolution and re-check the live owner grant and Dot rule when resuming. |
+| Attribute tool activity | `agent_audit` and the personal-Dot attribution on `ToolContext` | Already records the acting user, Dot, tool, decision and outcome for personal Dot calls. Extend it with connector identity when per-Dot connector credentials are available. |
+
+`Tool::changes_state()` is the existing default for agent approval and an MCP
+tool reports a state change from its server's destructive and read-only
+annotations. A personal Dot needs a stricter default: missing or incomplete
+read-only metadata must not silently turn an external action into an
+unreviewed write. This stricter resolution belongs in the Dot policy seam; it
+must not change permission defaults for ordinary chat or existing agents.
+
 The connector boundary is especially important. Current personal MCP
 connections and OAuth tokens are user-keyed. A system-principal run only sees
 shared-identity connectors; it deliberately does not read a person's OAuth
