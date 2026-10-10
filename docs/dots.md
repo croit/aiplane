@@ -404,6 +404,52 @@ Dots have no Chat action. Sessions remain private to their user and Dot, and
 deactivation prevents new messages from starting. This first execution slice
 loads Dot and user memory but exposes no tools until action policy is in place.
 
+### Tool access and approvals walkthrough for review
+
+The next personal-Dot settings surface extends each existing Dot card with an
+`Access and approvals` disclosure. It uses the signed-in user's currently
+available tools and connectors as the ceiling; it does not show tools the user
+cannot use. The tool list comes from the runtime registry after user RBAC and
+per-user tool settings are applied. MCP rows come from the existing connector
+tool inventory, including each server's read-only annotation and the user's
+current connector mode.
+
+```text
+Harald                                      Active
+[Chat] [Memory] [Activity] [Access and approvals]
+
+Access and approvals
+Only tools already available to you can be enabled for Harald.
+
+Tool label and description from catalog                  Dot rule             Identity
+AIplane read-only tool from the user's catalog            Allow                AIplane
+Read-only tool from connected Gira MCP                    Allow                My account
+Write tool from connected Workspace MCP                  Ask before each call My account
+
+Changes to these rules apply to new calls. A request already waiting in the
+Inbox keeps the rule and arguments it was created with.
+```
+
+The list contains only tool IDs returned by the user's allowed-tool resolution
+and connected MCP layers; display names and descriptions come from their
+existing catalogs. `Allow` and `Ask before each call` map to the existing
+`AgentSpec.main.tools` and `main.tool_resources[tool].permission` fields.
+Omitting a tool from `main.tools` denies it to that Dot. The personal Dot's
+effective set remains the intersection of this Dot selection and the user's
+current grants and enabled settings. MCP `readOnlyHint` supplies the default
+for read calls; a write or a tool without a read-only annotation defaults to
+approval. The owner may change that default per tool within the user's grants.
+The selected connector identity is resolved separately from this action rule;
+a Dot-owned identity is offered only after that connector has a Dot-owned
+credential.
+
+An approval pauses the interactive Dot turn through the existing
+`AskFirst`/`chat_turn_suspensions`/Inbox path. Approve-once resumes the pending
+call; a saved `Allow` rule changes future calls. Background runs remain
+fail-closed for approval-required actions until their workers can resume a
+durably suspended run. The walkthrough does not add a parallel policy table or
+approval mechanism.
+
 ## Delivery plan
 
 ### Slice 1: Dot ownership and active lifecycle
