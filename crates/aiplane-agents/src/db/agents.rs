@@ -969,7 +969,9 @@ pub async fn delete(pool: &Pool, id: &str, actor_id: &str) -> Result<bool, DbErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aiplane_core::server::db::users::{self, User};
     use aiplane_core::server::principal::GrantKind;
+    use jiff::Timestamp;
     use std::path::Path;
 
     async fn pool() -> Pool {
@@ -997,6 +999,24 @@ mod tests {
     #[tokio::test]
     async fn personal_dots_enforce_active_capacity_and_can_be_reactivated() {
         let pool = pool().await;
+        for (id, email) in [("alice", "alice@example.com"), ("bob", "bob@example.com")] {
+            let now = Timestamp::now();
+            users::upsert(
+                &pool,
+                &User {
+                    id: id.into(),
+                    email: email.into(),
+                    name: None,
+                    roles: vec![],
+                    created_at: now,
+                    updated_at: now,
+                    timezone: None,
+                    speech_voice: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
         let first = create_personal_dot(
             &pool,
             &NewPrincipal {
