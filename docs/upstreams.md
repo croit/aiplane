@@ -348,3 +348,7 @@ We do **not** transcode audio in AIplane — upstreams handle the formats they s
 - Drop a model → it disappears from routing within 5 s (next probe).
 - Want to verify? Check `tracing` output: every model-set change logs `advertised models updated added=[...] removed=[...] total=N`, and every apply logs one `identified backend profile=… context_windows=N` per *enabled* backend (drained ones keep what they had).
 - Adding an Ollama or llama.cpp backend needs nothing special: point `base_url` at `…/v1`, apply, and the context window and effort spelling are worked out for you. A model shows no window until it has been used once — Ollama loads on demand — and then gets one within five seconds. A detected **4096** is Ollama's small-VRAM default and worth raising with `OLLAMA_CONTEXT_LENGTH`, not working around in AIplane.
+
+## Request priority
+
+When `gateway.priority_enabled` is enabled in the DB-backed operator settings, `route_or_wait` orders executable waiting requests High → Medium → Low, FIFO within each class. It retains `PoolAccess`, fallback routing and prefix affinity, and releases canceled queue entries and assigned slots. The queue belongs to one gateway process. Backend configurations use `priority = { mode = "auto" }`, `{ mode = "gateway" }`, or `{ mode = "custom", mapping = { field = "priority", low = 1, medium = 0, high = -1 } }`. Manual mappings require the upstream scheduler to be enabled. See [Request priority](request-priority.md) for capability detection and flags.

@@ -187,6 +187,7 @@ pub async fn create_token(State(state): State<Arc<RamaState>>, req: Request) -> 
 
     let (plaintext, hash) = token::mint();
     let row = tokens::Token {
+        priority: None,
         id: Uuid::new_v4().to_string(),
         user_id: session.user_id.clone(),
         name: name.to_string(),

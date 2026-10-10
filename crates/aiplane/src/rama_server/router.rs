@@ -473,6 +473,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             "/api/v0/admin/tokens/{id}/models",
             pages::json_admin::tokens_models,
         )
+        .with_put(
+            "/api/v0/admin/tokens/{id}/priority",
+            pages::json_admin::tokens_priority,
+        )
         .with_get("/api/v0/admin/upstreams", pages::json_admin::topology_list)
         .with_get(
             "/api/v0/admin/upstreams/events",

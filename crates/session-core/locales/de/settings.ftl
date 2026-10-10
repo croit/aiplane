@@ -273,3 +273,11 @@ settings-invalid-ip-network-prefix-not-number = die Präfixlänge ist keine Zahl
 settings-invalid-ip-network-address = die Adresse ist ungültig
 settings-invalid-ip-network-mapped-prefix = ein IPv4-gemapptes Netz braucht ein Präfix von mindestens 96
 settings-invalid-ip-network-prefix-too-long = die Präfixlänge ist größer als { $max }
+
+settings-f-gateway-priority_enabled = Anfragepriorisierung aktivieren
+settings-f-gateway-priority_enabled-help = Strikte Priorität: Hohe Anfragen erhalten den nächsten freien Slot vor mittleren und niedrigen. Innerhalb einer Stufe gilt die Eingangsreihenfolge. Niedrigere Prioritäten können bei dauerhafter höherer Last das Zeitlimit erreichen.
+settings-f-gateway-default_priority = Standardpriorität für Anfragen
+settings-f-gateway-default_priority-help = Gilt, wenn weder Token noch Gruppe eine ausdrückliche Priorität besitzen.
+settings-f-gateway-default_priority-opt-low = Niedrig
+settings-f-gateway-default_priority-opt-medium = Mittel
+settings-f-gateway-default_priority-opt-high = Hoch

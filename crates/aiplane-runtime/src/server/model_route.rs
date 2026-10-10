@@ -8,7 +8,7 @@
 //! ([`AutomaticRouter::select`]); any other name routes as it is.
 
 use aiplane_core::server::automatic_routing::{
-    AutomaticRouteAffinity, AutomaticRouteDecision, AutomaticRoutingError, Ungated,
+    AutomaticRouteAffinity, AutomaticRouteDecision, AutomaticRoutingError, SelectorGate,
 };
 use aiplane_core::server::upstreams::PoolAccess;
 use serde_json::Value;
@@ -34,9 +34,10 @@ pub async fn route_target(
     access: &PoolAccess,
     affinity: Option<AutomaticRouteAffinity<'_>>,
 ) -> Result<RouteTarget, AutomaticRoutingError> {
+    let gate = PriorityGate { state, access };
     let decision = state
         .automatic_router
-        .select(model, routing_state, access, affinity, &Ungated)
+        .select(model, routing_state, access, affinity, &gate)
         .await?;
     Ok(match decision {
         Some(decision) => RouteTarget {
@@ -50,4 +51,25 @@ pub async fn route_target(
             decision: None,
         },
     })
+}
+
+struct PriorityGate<'a> {
+    state: &'a AppState,
+    access: &'a PoolAccess,
+}
+impl SelectorGate for PriorityGate<'_> {
+    async fn admit(&self, _: &str) -> Result<(), aiplane_core::server::limits::LimitExceeded> {
+        Ok(())
+    }
+    fn priority(&self) -> Option<aiplane_core::server::priority::Priority> {
+        self.state.config().gateway.priority_enabled.then(|| {
+            self.state.rbac.priority_for_roles(
+                &self.access.role_ids,
+                self.state.config().gateway.default_priority,
+            )
+        })
+    }
+    fn wait_budget(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.state.config().gateway.upstream_wait_secs)
+    }
 }

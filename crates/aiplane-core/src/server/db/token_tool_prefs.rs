@@ -151,6 +151,7 @@ mod tests {
             tokens::insert(
                 &pool,
                 &tokens::Token {
+                    priority: None,
                     id: id.into(),
                     user_id: "alice".into(),
                     name: id.into(),

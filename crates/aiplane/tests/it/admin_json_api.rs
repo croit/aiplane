@@ -102,6 +102,7 @@ async fn admin_routes_gate_with_json_envelopes() {
         (Method::GET, "/api/v0/admin/settings"),
         (Method::POST, "/api/v0/admin/settings"),
         (Method::GET, "/api/v0/admin/tokens"),
+        (Method::PUT, "/api/v0/admin/tokens/example/priority"),
         (Method::GET, "/api/v0/admin/upstreams"),
         (Method::PUT, "/api/v0/admin/backends"),
         (Method::POST, "/api/v0/admin/backends/test"),
@@ -351,6 +352,7 @@ async fn admin_tokens_include_dates_and_preserve_the_independent_operator_allowl
     tokens::insert(
         &state.db,
         &tokens::Token {
+            priority: None,
             id: "token-one".into(),
             user_id: "boss".into(),
             name: "Build agent".into(),
@@ -365,6 +367,33 @@ async fn admin_tokens_include_dates_and_preserve_the_independent_operator_allowl
     .await
     .unwrap();
     let app = common::app((*state).clone());
+    for priority in [Some("high"), Some("low"), None] {
+        let response = app
+            .serve(req(
+                Method::PUT,
+                "/api/v0/admin/tokens/token-one/priority",
+                &cookie,
+                Some(serde_json::json!({"priority": priority}).to_string()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let saved = tokens::find_by_id(&state.db, "token-one")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.priority.map(|p| p.as_str()), priority);
+    }
+    let response = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/tokens/token-one/priority",
+            &cookie,
+            Some(serde_json::json!({"priority": "urgent"}).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     let response = app
         .serve(req(Method::GET, "/api/v0/admin/tokens", &cookie, None))
@@ -502,7 +531,7 @@ async fn groups_round_trip() {
             "/api/v0/admin/groups",
             &cookie,
             Some(
-                r#"{"name":"vpn-users","description":"VPN folk","is_admin":false,"is_default":true,"oidc_values":["vpn","remote"],"tools":["search_web"],"skills":["incident-response"]}"#
+                r#"{"name":"vpn-users","priority":"high","description":"VPN folk","is_admin":false,"is_default":true,"oidc_values":["vpn","remote"],"tools":["search_web"],"skills":["incident-response"]}"#
                     .into(),
             ),
         ))
@@ -526,6 +555,14 @@ async fn groups_round_trip() {
         .iter()
         .find(|g| g["name"] == "vpn-users")
         .expect("saved group listed");
+    assert_eq!(group["priority"], "high");
+    assert_eq!(
+        state.rbac.request_priority(
+            &["vpn".into()],
+            aiplane_core::server::priority::Priority::Medium
+        ),
+        aiplane_core::server::priority::Priority::High
+    );
     assert_eq!(group["description"], "VPN folk");
     assert_eq!(group["is_admin"], false);
     assert_eq!(group["is_default"], true);
@@ -2665,5 +2702,71 @@ async fn unconfigured_features_and_missing_resources_refuse_by_meaning() {
         assert_eq!(got, status, "{method} {path}: {raw}");
         let refused: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(refused["error"]["code"], code, "{method} {path}: {raw}");
+    }
+}
+
+#[tokio::test]
+async fn backend_priority_mapping_round_trips_and_rejects_request_fields() {
+    let (state, cookie) = setup().await;
+    let app = router(state.clone());
+    for field in ["model", "input", "questions", "request_priority"] {
+        let mapping = serde_json::json!({"field":field, "low":-1, "medium":0, "high":1});
+        let response = app.serve(req(Method::PUT, "/api/v0/admin/backends", &cookie, Some(serde_json::json!({"name":"priority-backend", "base_url":"http://unused", "priority":{"mode":"custom", "mapping":mapping}}).to_string()))).await.unwrap();
+        if field == "request_priority" {
+            assert_eq!(response.status(), StatusCode::OK);
+            let response = app
+                .serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+                .await
+                .unwrap();
+            let value: serde_json::Value = serde_json::from_str(&body(response).await).unwrap();
+            assert_eq!(
+                value["backends"][0]["priority"],
+                serde_json::json!({"mode":"custom", "mapping":mapping})
+            );
+        } else {
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert!(
+                aiplane_core::server::db::upstreams_config::get_backend(
+                    &state.db,
+                    "priority-backend"
+                )
+                .await
+                .unwrap()
+                .is_none()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn priority_errors_use_the_selected_ui_language_over_browser_language() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+    for (uri, payload, expected) in [
+        (
+            "/api/v0/admin/tokens/missing/priority",
+            serde_json::json!({"priority":"urgent"}),
+            "Invalid priority request.",
+        ),
+        (
+            "/api/v0/admin/backends",
+            serde_json::json!({"name":"b","base_url":"http://unused","priority":{"mode":"custom","mapping":{"field":"priority","low":0,"medium":0,"high":0}}}),
+            "Invalid priority mapping.",
+        ),
+    ] {
+        let mut request = req(
+            Method::PUT,
+            uri,
+            &format!("{cookie}; lang=en"),
+            Some(payload.to_string()),
+        );
+        request.headers_mut().insert(
+            rama::http::header::ACCEPT_LANGUAGE,
+            "de-DE".parse().unwrap(),
+        );
+        let response = app.serve(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response_body = body(response).await;
+        assert!(response_body.contains(expected), "{uri}: {response_body}");
     }
 }

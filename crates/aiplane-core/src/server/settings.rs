@@ -647,6 +647,11 @@ pub static SECTIONS: &[SectionSpec] = &[
             f("gateway.session_ttl_days", Kind::Int),
             f("gateway.session_absolute_max_days", Kind::Int),
             f("gateway.allow_impersonation", Kind::Bool),
+            f("gateway.priority_enabled", Kind::Bool),
+            f(
+                "gateway.default_priority",
+                Kind::Choice(&["low", "medium", "high"]),
+            ),
         ],
     },
     SectionSpec {
@@ -1012,6 +1017,11 @@ pub fn apply(settings: &Settings, config: &mut Config) {
         "gateway.session_absolute_max_days",
         d.session_absolute_max_days,
     );
+    g.priority_enabled = settings.bool("gateway.priority_enabled", false);
+    g.default_priority = serde_json::from_value(serde_json::Value::String(
+        settings.text_or("gateway.default_priority", "medium"),
+    ))
+    .unwrap_or_default();
     g.allow_impersonation = settings.bool("gateway.allow_impersonation", d.allow_impersonation);
 }
 
@@ -1535,6 +1545,14 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
         c.gateway.allow_impersonation.to_string(),
     );
 
+    put(
+        "gateway.priority_enabled",
+        c.gateway.priority_enabled.to_string(),
+    );
+    put(
+        "gateway.default_priority",
+        c.gateway.default_priority.as_str().into(),
+    );
     out
 }
 

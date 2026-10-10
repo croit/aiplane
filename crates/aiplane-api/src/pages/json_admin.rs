@@ -15,6 +15,7 @@
 //!   dirty reset for topology applies.
 
 use aiplane_core::server::capped_read;
+use aiplane_core::server::priority::{BackendPriority, Priority, PriorityMapping};
 use std::sync::Arc;
 
 use rama::http::service::web::extract::{Path, State};
@@ -55,6 +56,7 @@ pub async fn groups_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             .await
             .unwrap_or_default();
         groups.push(GroupView {
+            priority: g.priority,
             name: g.name,
             description: g.description,
             is_admin: g.is_admin,
@@ -139,6 +141,7 @@ pub struct GroupsView {
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct GroupView {
+    pub priority: Option<Priority>,
     pub name: String,
     pub description: String,
     pub is_admin: bool,
@@ -177,6 +180,8 @@ pub struct GrantableMcpTool {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 pub struct GroupSaveBody {
+    #[serde(default)]
+    pub priority: Option<Priority>,
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -240,6 +245,9 @@ pub async fn groups_save(State(state): State<Arc<RamaState>>, req: Request) -> R
     }
     if let Err(err) = db::skill_grants::set_skills_for_role(&state.db, &name, &parsed.skills).await
     {
+        return internal(err);
+    }
+    if let Err(err) = db::gateway_groups::set_priority(&state.db, &name, parsed.priority).await {
         return internal(err);
     }
     state.reload_rbac().await;
@@ -1796,6 +1804,7 @@ pub async fn tokens_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 .map(|l| (l.owner.clone(), l.admin.clone()))
                 .unwrap_or_default();
             AdminTokenView {
+                priority: t.priority,
                 limits: limits.get(&t.id).cloned().unwrap_or_default(),
                 usage_this_month: usage_by_token.get(&t.id).cloned().unwrap_or_default(),
                 id: t.id,
@@ -1815,6 +1824,7 @@ pub async fn tokens_list(State(state): State<Arc<RamaState>>, req: Request) -> R
     json_ok(
         StatusCode::OK,
         AdminTokensView {
+            priority_enabled: state.config().gateway.priority_enabled,
             tokens: out,
             models,
             usage_enabled: state.usage.is_enabled(),
@@ -1826,6 +1836,7 @@ pub async fn tokens_list(State(state): State<Arc<RamaState>>, req: Request) -> R
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct AdminTokensView {
+    pub priority_enabled: bool,
     pub tokens: Vec<AdminTokenView>,
     /// Every model a token's allowlist can name.
     pub models: Vec<super::json_tokens::CatalogModelView>,
@@ -1837,6 +1848,7 @@ pub struct AdminTokensView {
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct AdminTokenView {
+    pub priority: Option<Priority>,
     pub id: String,
     pub name: String,
     pub owner_id: String,
@@ -1914,6 +1926,50 @@ pub async fn tokens_models(
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdminTokenPriority {
+    pub priority: Option<Priority>,
+}
+
+pub async fn tokens_priority(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let lang = session_core::i18n::Lang::from_headers(req.headers());
+    let Some(id) = raw_path_segment(&req, 1) else {
+        return bad_request(session_core::i18n::t(lang, "priority-error-body"));
+    };
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(bytes) => bytes,
+        Err(_) => return bad_request(session_core::i18n::t(lang, "priority-error-body")),
+    };
+    let parsed: AdminTokenPriority = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(_) => return bad_request(session_core::i18n::t(lang, "priority-error-body")),
+    };
+    match db::tokens::find_by_id(&state.db, &id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return json_error(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                &session_core::i18n::t(lang, "priority-error-not-found"),
+            );
+        }
+        Err(err) => {
+            tracing::error!(%err, "reading token priority");
+            return internal(session_core::i18n::t(lang, "priority-error-internal"));
+        }
+    }
+    match db::tokens::set_priority(&state.db, &id, parsed.priority).await {
+        Ok(()) => json_ok(StatusCode::OK, parsed),
+        Err(err) => {
+            tracing::error!(%err, "saving token priority");
+            internal(session_core::i18n::t(lang, "priority-error-internal"))
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Upstream topology (backends + pools + fallbacks + apply + live health)
 
@@ -1947,6 +2003,7 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
             let models = backend.models_snapshot();
             let detected = backend.detected();
             let entry = LiveBackendView {
+                detected_priority: detected.priority_mapping,
                 healthy: backend.is_healthy(),
                 enabled: backend.is_enabled(),
                 auth_failed: backend.auth_failed(),
@@ -2030,6 +2087,7 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
         .backends
         .values()
         .map(|b| BackendView {
+            priority: b.priority.clone(),
             name: b.name.clone(),
             base_url: b.base_url.clone(),
             api_key_env: b.api_key_env.clone(),
@@ -2141,6 +2199,7 @@ pub struct PoolVoiceView {
 /// A stored backend. Its API key is never returned.
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct BackendView {
+    pub priority: BackendPriority,
     pub name: String,
     pub base_url: String,
     /// The environment variable the API key is read from.
@@ -2168,6 +2227,7 @@ pub struct BackendAliasView {
 
 #[derive(Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct LiveBackendView {
+    pub detected_priority: Option<PriorityMapping>,
     pub healthy: bool,
     pub enabled: bool,
     pub auth_failed: bool,
@@ -2198,6 +2258,9 @@ pub struct ModelCoverage {
 #[derive(serde::Serialize, schemars::JsonSchema)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum PendingChange {
+    BackendPriority {
+        backend: String,
+    },
     PoolAdded {
         pool: String,
     },
@@ -2322,6 +2385,11 @@ fn topology_pending_changes(
                     inflight: backend.max_inflight.max(1),
                 });
             }
+            if backend.priority != live_backend.priority {
+                changes.push(PendingChange::BackendPriority {
+                    backend: live_backend.name.clone(),
+                });
+            }
             if backend.health_path != live_backend.health_path {
                 changes.push(PendingChange::BackendHealthPath {
                     backend: live_backend.name.clone(),
@@ -2352,6 +2420,8 @@ fn picker_strategy_key(strategy: aiplane_core::server::upstreams::PickerStrategy
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 pub struct BackendSaveBody {
+    #[serde(default)]
+    pub priority: BackendPriority,
     pub name: String,
     pub base_url: String,
     #[serde(default)]
@@ -2708,6 +2778,7 @@ fn deepest_error(err: &(dyn std::error::Error + 'static)) -> String {
 /// dirty; the registry picks it up on the apply.
 pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
+    let lang = session_core::i18n::Lang::from_headers(req.headers());
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -2717,6 +2788,11 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
         Ok(p) => p,
         Err(err) => return bad_request(format!("parsing the backend body: {err}")),
     };
+    if let BackendPriority::Custom(mapping) = &parsed.priority
+        && mapping.validate().is_err()
+    {
+        return bad_request(session_core::i18n::t(lang, "priority-error-mapping"));
+    }
     let name = parsed.name.trim().to_string();
     if name.is_empty() {
         return bad_request("a backend needs a name");
@@ -2756,6 +2832,7 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
         _ => true,
     };
     let row = BackendRow {
+        priority: parsed.priority,
         name: name.clone(),
         base_url: parsed.base_url.trim().to_string(),
         api_key_env: (!parsed.api_key_env.trim().is_empty())

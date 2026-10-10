@@ -452,10 +452,27 @@ async fn send(
     if let Some(exceeded) = payer.over_budget(state, &target.model).await {
         return Err(SideCallError::OverBudget(exceeded));
     }
-    let acquired = state
-        .upstreams
-        .route_access(&target.model, PoolKind::Chat, &target.access)
-        .map_err(failed)?;
+    let priority = state.config().gateway.priority_enabled.then(|| {
+        state.rbac.request_priority(
+            payer.principal.user_roles().unwrap_or_default(),
+            state.config().gateway.default_priority,
+        )
+    });
+    let acquired = aiplane_core::server::upstreams::route_or_wait(
+        &state.upstreams,
+        &target.model,
+        PoolKind::Chat,
+        &target.access,
+        if priority.is_some() {
+            state.upstream_wait()
+        } else {
+            std::time::Duration::ZERO
+        },
+        None,
+        priority,
+    )
+    .await
+    .map_err(failed)?;
     let backend = acquired.backend();
     let mut body = json!({
         "model": acquired.resolved_model(),
@@ -470,6 +487,9 @@ async fn send(
     if let Some(format) = format {
         body["response_format"] = format;
     }
+    state
+        .upstreams
+        .apply_priority(&acquired, &mut body, priority);
     exchange.backend = Some(backend.name.clone());
     exchange.request = body.clone();
     let mut req = state

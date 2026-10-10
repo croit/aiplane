@@ -63,3 +63,7 @@ Use Disable to stop this device's subscription. If browser permission was denied
 ## Report a problem
 
 Use the feedback button in the composer, or the floating feedback button on other pages. The dialog lets you describe the problem, attach images and review or annotate a screenshot. Review diagnostic and conversation-sharing consent controls before submitting. The public-tracker confirmation matters: do not submit confidential material to a public issue.
+
+## Request priority
+
+Your administrator can prioritize interactive chat and ERP API tokens using Low, Medium and High. Tokens inherit your groups unless an administrator sets a token-specific priority. Higher-priority waiting requests receive the next available model slot; already running requests finish normally. Sustained higher-priority load may cause a lower-priority request to time out. Priority does not change model permissions or usage limits.

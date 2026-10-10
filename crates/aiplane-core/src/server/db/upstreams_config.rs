@@ -24,6 +24,7 @@ use super::{DbError, Pool};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BackendRow {
+    pub priority: crate::server::priority::BackendPriority,
     pub name: String,
     pub base_url: String,
     /// Optional env-var NAME holding the API key — a fallback resolved from the
@@ -138,7 +139,7 @@ pub async fn is_empty(db: &Pool) -> Result<bool, DbError> {
 async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbError> {
     let rows = sqlx::query(
         r#"SELECT name, base_url, api_key_env, api_key_ct, api_key_nonce, weight, max_inflight,
-                  health_path, supports_edit, enabled, created_at, updated_at
+                  health_path, supports_edit, enabled, priority, created_at, updated_at
              FROM backends ORDER BY name"#,
     )
     .fetch_all(db)
@@ -152,6 +153,12 @@ async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbE
         backends.insert(
             name.clone(),
             BackendRow {
+                priority: serde_json::from_str(&row.try_get::<String, _>("priority")?).map_err(
+                    |source| DbError::Decode {
+                        column: "priority",
+                        source: source.into(),
+                    },
+                )?,
                 name: name.clone(),
                 base_url: row.try_get("base_url")?,
                 api_key_env: row.try_get("api_key_env")?,
@@ -493,6 +500,7 @@ pub async fn load_detected(
         out.insert(
             backend_name,
             Detected {
+                priority_mapping: None,
                 profile: BackendProfile::parse(Some(&profile)),
                 context_windows: HashMap::new(),
                 context_cap,
@@ -594,8 +602,8 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
     sqlx::query(
         r#"INSERT INTO backends
                (name, base_url, api_key_env, api_key_ct, api_key_nonce, weight, max_inflight,
-                health_path, supports_edit, enabled, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                health_path, supports_edit, enabled, priority, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(name) DO UPDATE SET
                base_url      = excluded.base_url,
                api_key_env   = excluded.api_key_env,
@@ -606,6 +614,7 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
                health_path   = excluded.health_path,
                supports_edit = excluded.supports_edit,
                enabled       = excluded.enabled,
+               priority      = excluded.priority,
                updated_at    = excluded.updated_at"#,
     )
     .bind(&row.name)
@@ -618,6 +627,12 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
     .bind(&row.health_path)
     .bind(row.supports_edit as i64)
     .bind(row.enabled as i64)
+    .bind(
+        serde_json::to_string(&row.priority).map_err(|source| DbError::Decode {
+            column: "priority",
+            source: source.into(),
+        })?,
+    )
     .bind(&now)
     .bind(&now)
     .execute(db)
@@ -1077,6 +1092,7 @@ mod tests {
     /// A backend with nothing else set, for the detection tests.
     fn bare_backend(name: &str) -> BackendRow {
         BackendRow {
+            priority: Default::default(),
             name: name.into(),
             base_url: "http://host:11434/v1".into(),
             api_key_env: None,
@@ -1131,6 +1147,7 @@ mod tests {
         upsert_backend(&pool, &bare_backend("llama")).await.unwrap();
 
         let detected = Detected {
+            priority_mapping: None,
             profile: BackendProfile::LlamaCpp,
             context_windows: HashMap::from([
                 ("gemma".to_string(), 131_072),
@@ -1153,6 +1170,7 @@ mod tests {
         assert!(back.detected_at.is_some(), "the write must stamp a time");
         assert_eq!(
             Detected {
+                priority_mapping: None,
                 detected_at: None,
                 ..back.clone()
             },
@@ -1187,6 +1205,7 @@ mod tests {
 
         // The operator repoints it somewhere else.
         let moved = BackendRow {
+            priority: Default::default(),
             base_url: "https://api.example.com/v1".into(),
             ..bare_backend("moved")
         };
@@ -1213,6 +1232,7 @@ mod tests {
             "b",
             "http://host:11434/v1",
             &Detected {
+                priority_mapping: None,
                 profile: BackendProfile::LlamaCpp,
                 context_windows: HashMap::from([("old".to_string(), 131_072)]),
                 context_cap: Some(65_536),
@@ -1226,6 +1246,7 @@ mod tests {
         .unwrap();
 
         let now = Detected {
+            priority_mapping: None,
             profile: BackendProfile::Ollama,
             context_windows: HashMap::new(),
             context_cap: None,
@@ -1242,6 +1263,7 @@ mod tests {
         let back = loaded.get("b").expect("row was written");
         assert_eq!(
             Detected {
+                priority_mapping: None,
                 detected_at: None,
                 ..back.clone()
             },
@@ -1253,6 +1275,7 @@ mod tests {
     async fn backend_round_trip() {
         let pool = test_pool().await;
         let backend = BackendRow {
+            priority: Default::default(),
             name: "gpu-01".into(),
             base_url: "http://gpu-01:8000/v1".into(),
             api_key_env: Some("GPU01_KEY".into()),
@@ -1341,6 +1364,7 @@ mod tests {
     async fn renaming_a_backend_moves_every_row_that_names_it() {
         let pool = test_pool().await;
         let backend = BackendRow {
+            priority: Default::default(),
             name: "voxtral".into(),
             base_url: "http://llm01:8002/v1".into(),
             api_key_env: None,
@@ -1431,6 +1455,7 @@ mod tests {
             upsert_backend(
                 &pool,
                 &BackendRow {
+                    priority: Default::default(),
                     name: name.into(),
                     base_url: "http://x/v1".into(),
                     api_key_env: None,
@@ -1501,6 +1526,7 @@ mod tests {
             upsert_backend(
                 &pool,
                 &BackendRow {
+                    priority: Default::default(),
                     name: name.into(),
                     base_url: "http://x/v1".into(),
                     api_key_env: None,
@@ -1541,6 +1567,7 @@ mod tests {
     async fn backend_delete_cascades() {
         let pool = test_pool().await;
         let backend = BackendRow {
+            priority: Default::default(),
             name: "tmp".into(),
             base_url: "http://tmp".into(),
             api_key_env: None,
@@ -1578,6 +1605,7 @@ mod tests {
         let pool = test_pool().await;
 
         let backend = BackendRow {
+            priority: Default::default(),
             name: "b1".into(),
             base_url: "http://b1".into(),
             api_key_env: None,
@@ -1646,6 +1674,7 @@ mod tests {
         upsert_backend(
             &pool,
             &BackendRow {
+                priority: Default::default(),
                 name: "tts".into(),
                 base_url: "http://tts".into(),
                 api_key_env: None,
@@ -1771,6 +1800,7 @@ mod tests {
         upsert_backend(
             &pool,
             &BackendRow {
+                priority: Default::default(),
                 name: "b".into(),
                 base_url: "http://b".into(),
                 api_key_env: None,

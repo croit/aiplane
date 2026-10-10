@@ -106,6 +106,7 @@ async fn the_login_only_endpoint_mints_a_session_without_touching_tokens() {
     aiplane_core::server::db::tokens::insert(
         &pool,
         &aiplane_core::server::db::tokens::Token {
+            priority: None,
             id: "preexisting".into(),
             user_id: "alice".into(),
             name: "Pre-existing".into(),

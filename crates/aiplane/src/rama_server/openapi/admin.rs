@@ -71,6 +71,10 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<admin::AdminTokenModelsBody>())
             .ok(json::<admin::AdminTokenModels>())
             .errors(&[400, 404]),
+        put("/api/v0/admin/tokens/{id}/priority", Access::Admin)
+            .body(json::<admin::AdminTokenPriority>())
+            .ok(json::<admin::AdminTokenPriority>())
+            .errors(&[400, 404]),
         get("/api/v0/admin/upstreams", Access::Admin).ok(json::<admin::TopologyView>()),
         get("/api/v0/admin/upstreams/events", Access::Admin).ok(sse::<admin::BackendStatus>()),
         put("/api/v0/admin/backends", Access::Admin)

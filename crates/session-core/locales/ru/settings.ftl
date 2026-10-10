@@ -272,3 +272,11 @@ settings-invalid-ip-network-prefix-not-number = длина префикса не
 settings-invalid-ip-network-address = адрес не распознан
 settings-invalid-ip-network-mapped-prefix = для сети IPv4-mapped нужен префикс не меньше 96
 settings-invalid-ip-network-prefix-too-long = длина префикса больше { $max }
+
+settings-f-gateway-priority_enabled = Включить приоритизацию запросов
+settings-f-gateway-priority_enabled-help = Строгий приоритет: высокий получает следующий свободный слот раньше среднего и низкого. Внутри уровня — порядок поступления. При постоянной высокой нагрузке запросы низших уровней могут истечь.
+settings-f-gateway-default_priority = Приоритет по умолчанию
+settings-f-gateway-default_priority-help = Используется, если у токена и групп нет явно заданного приоритета.
+settings-f-gateway-default_priority-opt-low = Низкий
+settings-f-gateway-default_priority-opt-medium = Средний
+settings-f-gateway-default_priority-opt-high = Высокий

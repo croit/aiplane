@@ -63,6 +63,7 @@ nav:
       - Runs and decisions: agent-guide/run-observe.md
       - Advanced spec: agent-guide/spec-reference.md
   - Administration:
+      - Request priority: request-priority.md
       - Models and routing: admin/models.md
       - Access: admin/access.md
       - Operator settings: admin/settings.md

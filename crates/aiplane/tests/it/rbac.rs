@@ -45,6 +45,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// A backend pointed at the mock, optionally advertising image-edit support.
 fn backend(name: &str, base_url: &str, supports_edit: bool) -> BackendConfig {
     BackendConfig {
+        priority: Default::default(),
         alias: None,
         supports_edit,
         enabled: true,
@@ -281,6 +282,7 @@ async fn seed_principal(state: &RamaState, id: &str, roles: &[&str]) -> Principa
     tokens::insert(
         &state.db,
         &tokens::Token {
+            priority: None,
             id: Uuid::new_v4().to_string(),
             user_id: id.into(),
             name: "t".into(),

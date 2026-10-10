@@ -71,6 +71,7 @@ pub struct AliasStatus {
 
 /// A single upstream backend with the runtime state we need to schedule it.
 pub struct Backend {
+    pub priority: crate::server::priority::BackendPriority,
     pub name: String,
     pub base_url: String,
     pub api_key: Option<String>,
@@ -182,6 +183,7 @@ impl Backend {
             fallback.iter().filter(|s| !s.is_empty()).cloned().collect();
         let aliases = cfg.alias.as_ref().map(|a| a.into_map()).unwrap_or_default();
         let backend = Self {
+            priority: cfg.priority.clone(),
             name: cfg.name.clone(),
             base_url: cfg.base_url.trim_end_matches('/').to_string(),
             api_key: cfg.api_key(),
@@ -888,6 +890,7 @@ pub struct LivePool {
 /// operator needs spelled out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveBackend {
+    pub priority: crate::server::priority::BackendPriority,
     pub name: String,
     pub base_url: String,
     pub weight: u32,
@@ -1347,6 +1350,21 @@ impl Acquired {
             .map(String::as_str)
     }
 
+    fn apply_priority(
+        &self,
+        body: &mut serde_json::Value,
+        priority: Option<crate::server::priority::Priority>,
+    ) -> bool {
+        let detected = self.backend.detected();
+        if let Some(priority) = priority {
+            self.backend
+                .priority
+                .apply(body, priority, detected.priority_mapping.as_ref())
+        } else {
+            crate::server::priority::BackendPriority::Gateway.apply(body, Default::default(), None)
+        }
+    }
+
     pub fn backend(&self) -> &Backend {
         &self.backend
     }
@@ -1371,6 +1389,7 @@ impl Drop for Acquired {
 /// hot-swap the entire topology via [`Self::reload`] without restarting.
 /// Every method call is a single lock-free atomic load.
 pub struct UpstreamRegistry {
+    pub(super) scheduler: Arc<super::scheduler::Scheduler>,
     inner: ArcSwap<RegistryData>,
     /// Bumped on every [`Self::reload`]. Each health-probe loop is tagged with
     /// the generation it was spawned for and retires itself once this moves past
@@ -1397,6 +1416,10 @@ impl std::fmt::Debug for UpstreamRegistry {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum BuildError {
+    #[error(
+        "invalid priority mapping on backend `{0}` — choose a separate parameter and three ordered integers"
+    )]
+    InvalidPriority(String),
     #[error("duplicate pool name `{0}`")]
     DuplicatePool(String),
     #[error(
@@ -1426,6 +1449,13 @@ fn build_data(
     fallback: FallbackConfig,
 ) -> Result<RegistryData, BuildError> {
     validate_aliases(pool_configs)?;
+    for backend in pool_configs.values().flat_map(|pool| &pool.backend) {
+        if let crate::server::priority::BackendPriority::Custom(mapping) = &backend.priority
+            && mapping.validate().is_err()
+        {
+            return Err(BuildError::InvalidPriority(backend.name.clone()));
+        }
+    }
     let mut pools: HashMap<String, Arc<Pool>> = HashMap::new();
     for (name, cfg) in pool_configs {
         if pools.contains_key(name) {
@@ -1465,6 +1495,26 @@ impl Default for ServingProfile {
 }
 
 impl UpstreamRegistry {
+    pub fn apply_priority(
+        &self,
+        acquired: &Acquired,
+        body: &mut serde_json::Value,
+        priority: Option<crate::server::priority::Priority>,
+    ) -> bool {
+        let mut changed = false;
+        if let Some(object) = body.as_object_mut() {
+            changed |= object.remove("priority").is_some();
+            for backend in self.data().pools.values().flat_map(|pool| &pool.backends) {
+                if let crate::server::priority::BackendPriority::Custom(mapping) = &backend.priority
+                {
+                    changed |= object.remove(&mapping.field).is_some();
+                }
+            }
+        }
+        let mapped = acquired.apply_priority(body, priority);
+        changed || mapped
+    }
+
     /// Build with no unknown-model fallback. Used by tests and any caller that
     /// doesn't route `[fallback]` (RAG embeddings, etc.).
     pub fn new(
@@ -1504,6 +1554,7 @@ impl UpstreamRegistry {
         Ok(Arc::new(Self {
             inner: ArcSwap::new(Arc::new(data)),
             generation: AtomicU64::new(0),
+            scheduler: Default::default(),
         }))
     }
 
@@ -1598,6 +1649,7 @@ impl UpstreamRegistry {
                     .backends
                     .iter()
                     .map(|b| LiveBackend {
+                        priority: b.priority.clone(),
                         name: b.name.clone(),
                         base_url: b.base_url.clone(),
                         weight: b.weight,
@@ -2549,6 +2601,37 @@ impl RouteError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn priority_mapping_removes_stale_fields_when_dispatch_changes_backend() {
+        use crate::server::priority::Priority;
+        let pool: super::super::config::UpstreamPoolConfig = toml::from_str(r#"
+kind = "chat"
+[[backend]]
+name = "custom"
+base_url = "http://unused"
+models = ["first"]
+priority = { mode = "custom", mapping = { field = "request_priority", low = 1, medium = 0, high = -1 } }
+[[backend]]
+name = "generic"
+base_url = "http://unused"
+models = ["second"]
+"#).unwrap();
+        let registry =
+            super::UpstreamRegistry::new(&std::collections::HashMap::from([("p".into(), pool)]))
+                .unwrap();
+        let mut body =
+            serde_json::json!({"model":"first", "priority": -999, "request_priority": -999});
+        let first = registry.route("first", super::PoolKind::Chat).unwrap();
+        registry.apply_priority(&first, &mut body, Some(Priority::High));
+        assert_eq!(body["request_priority"], -1);
+        assert!(body.get("priority").is_none());
+        drop(first);
+        let second = registry.route("second", super::PoolKind::Chat).unwrap();
+        registry.apply_priority(&second, &mut body, Some(Priority::High));
+        assert!(body.get("request_priority").is_none());
+        assert!(body.get("priority").is_none());
+    }
+
     use super::*;
 
     /// An exact-key hint, as the `x-aiplane-affinity` header or the chat UI's
@@ -3246,6 +3329,7 @@ mod tests {
 
     fn backend(name: &str, max_inflight: u32) -> BackendConfig {
         BackendConfig {
+            priority: Default::default(),
             name: name.into(),
             base_url: format!("http://{name}:8000/v1"),
             api_key_env: None,
@@ -3477,6 +3561,7 @@ mod tests {
     /// Backend with a static fallback model list (no probe needed to route).
     fn backend_with_models(name: &str, models: &[&str]) -> BackendConfig {
         BackendConfig {
+            priority: Default::default(),
             models: models.iter().map(|s| (*s).to_string()).collect(),
             ..backend(name, 16)
         }
@@ -4943,6 +5028,7 @@ mod tests {
 
     fn backend_alias(name: &str, spec: AliasSpec) -> BackendConfig {
         BackendConfig {
+            priority: Default::default(),
             alias: Some(spec),
             ..backend(name, 16)
         }
@@ -5344,6 +5430,7 @@ mod tests {
             snap.backends.insert(
                 "b".into(),
                 BackendRow {
+                    priority: Default::default(),
                     name: "b".into(),
                     base_url: "http://b".into(),
                     api_key_env: None,

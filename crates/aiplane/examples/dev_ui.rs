@@ -226,6 +226,7 @@ async fn main() -> anyhow::Result<()> {
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: false,
                 enabled: true,
@@ -253,6 +254,7 @@ async fn main() -> anyhow::Result<()> {
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: false,
                 enabled: true,
@@ -280,6 +282,7 @@ async fn main() -> anyhow::Result<()> {
             strategy: PickerStrategy::RoundRobin,
             models: vec!["demo-selector".into()],
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: false,
                 enabled: true,
@@ -312,6 +315,7 @@ async fn main() -> anyhow::Result<()> {
             strategy: PickerStrategy::RoundRobin,
             models: vec!["demo-tts".into()],
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: false,
                 enabled: true,
@@ -341,6 +345,7 @@ async fn main() -> anyhow::Result<()> {
             strategy: PickerStrategy::RoundRobin,
             models: vec!["demo-image".into()],
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: true,
                 enabled: true,
@@ -366,6 +371,7 @@ async fn main() -> anyhow::Result<()> {
             db::upstreams_config::upsert_backend(
                 &pool,
                 &db::upstreams_config::BackendRow {
+                    priority: Default::default(),
                     name: backend.name.clone(),
                     base_url: backend.base_url.clone(),
                     api_key_env: backend.api_key_env.clone(),
@@ -2042,6 +2048,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
         tokens::insert(
             &state.db,
             &tokens::Token {
+                priority: None,
                 id: id.clone(),
                 user_id: "dev".into(),
                 name: name.into(),

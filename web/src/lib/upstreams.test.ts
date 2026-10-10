@@ -13,6 +13,7 @@ import {
 
 const backends: Backend[] = [
 	{
+		priority: { mode: 'auto' },
 		name: 'gpu-0',
 		base_url: 'http://gpu-0/v1',
 		api_key_env: null,
@@ -26,6 +27,7 @@ const backends: Backend[] = [
 		models: [],
 		aliases: [{ alias: 'default', target: 'model-a' }],
 		live: {
+			detected_priority: null,
 			healthy: true,
 			enabled: true,
 			auth_failed: false,
@@ -40,6 +42,7 @@ const backends: Backend[] = [
 		}
 	},
 	{
+		priority: { mode: 'auto' },
 		name: 'gpu-1',
 		base_url: 'http://gpu-1/v1',
 		api_key_env: null,
@@ -53,6 +56,7 @@ const backends: Backend[] = [
 		models: [],
 		aliases: [{ alias: 'default', target: 'model-b' }],
 		live: {
+			detected_priority: null,
 			healthy: true,
 			enabled: true,
 			auth_failed: false,
@@ -67,6 +71,7 @@ const backends: Backend[] = [
 		}
 	},
 	{
+		priority: { mode: 'auto' },
 		name: 'orphan',
 		base_url: 'http://orphan/v1',
 		api_key_env: null,

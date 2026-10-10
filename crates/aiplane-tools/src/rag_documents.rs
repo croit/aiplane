@@ -670,6 +670,7 @@ mod tests {
                 models: Vec::new(),
                 fallback_offline: None,
                 backend: vec![BackendConfig {
+                    priority: Default::default(),
                     name: "unused".into(),
                     base_url: "http://127.0.0.1:1".into(),
                     api_key_env: None,

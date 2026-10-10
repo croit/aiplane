@@ -206,6 +206,7 @@ async fn seed_user_with_roles(state: &RamaState, user_id: &str, roles: &[&str]) 
     tokens::insert(
         &state.db,
         &tokens::Token {
+            priority: None,
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.into(),
             name: "test".into(),

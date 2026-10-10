@@ -23,6 +23,7 @@ use super::{DbError, Pool};
 /// `group_tool_grants` / `skill_role_grants` / per-resource tables).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupRow {
+    pub priority: Option<crate::server::priority::Priority>,
     pub name: String,
     pub description: String,
     pub is_admin: bool,
@@ -45,6 +46,7 @@ pub struct GroupSnapshot {
 
 fn map_group(row: &sqlx::sqlite::SqliteRow) -> Result<GroupRow, DbError> {
     Ok(GroupRow {
+        priority: decode_priority(row.try_get("priority")?)?,
         name: row.try_get("name")?,
         description: row.try_get("description")?,
         is_admin: row.try_get::<i64, _>("is_admin")? != 0,
@@ -57,7 +59,7 @@ fn map_group(row: &sqlx::sqlite::SqliteRow) -> Result<GroupRow, DbError> {
 /// group-picker `<datalist>` reused on every resource form.
 pub async fn list_groups(pool: &Pool) -> Result<Vec<GroupRow>, DbError> {
     let rows = sqlx::query(
-        "SELECT name, description, is_admin, is_default, can_manage_agents
+        "SELECT name, description, is_admin, is_default, can_manage_agents, priority
            FROM gateway_groups ORDER BY name",
     )
     .fetch_all(pool)
@@ -428,6 +430,34 @@ pub async fn seed_roles(
         .await?;
     }
     Ok(())
+}
+
+pub async fn set_priority(
+    pool: &Pool,
+    name: &str,
+    priority: Option<crate::server::priority::Priority>,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE gateway_groups SET priority = ? WHERE name = ?")
+        .bind(priority.map(|p| p.as_str()))
+        .bind(name)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub(super) fn decode_priority(
+    value: Option<String>,
+) -> Result<Option<crate::server::priority::Priority>, DbError> {
+    value
+        .map(|value| {
+            serde_json::from_value(serde_json::Value::String(value)).map_err(|source| {
+                DbError::Decode {
+                    column: "priority",
+                    source: source.into(),
+                }
+            })
+        })
+        .transpose()
 }
 
 #[cfg(test)]

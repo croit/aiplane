@@ -306,3 +306,7 @@ gateway; the credential for the external agent lives sealed in the route's
 ## What's intentionally out of scope
 
 - **Refresh tokens between CLI and gateway** — re-login is acceptable for a 90-day TTL.
+
+## Request priority
+
+Administrators can assign Low, Medium or High to existing gateway groups and API tokens. A token inherits the highest explicit priority of its owner’s groups unless it has an override; an override may also lower priority. The default is Medium. Changes to token priority are administrator-only through `/api/v0/admin/tokens/{id}/priority`. Token creation and secret rotation do not let owners elevate priority; rotation preserves the existing override. [Request priority](request-priority.md) explains scheduling and backend forwarding.

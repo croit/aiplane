@@ -87,6 +87,7 @@ fn pool(kind: PoolKind, url: &str, model: &str, name: &str) -> UpstreamPoolConfi
         strategy: PickerStrategy::RoundRobin,
         models: Vec::new(),
         backend: vec![BackendConfig {
+            priority: Default::default(),
             alias: None,
             supports_edit: false,
             enabled: true,

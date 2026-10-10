@@ -44,14 +44,16 @@ use super::registry::{AcquireError, Acquired, PoolAccess, RouteError, UpstreamRe
 
 /// How often to re-attempt routing while parked. Short enough that recovery is
 /// bounded by the probe cadence rather than by this, cheap enough to run per
-/// parked request (one lock-free registry read).
-const POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// parked request. Prioritized requests also inspect the shared admission queue.
+pub(super) const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// [`UpstreamRegistry::route_access`], but a pool-outage failure parks and
 /// retries until `budget` is spent instead of failing the request.
 ///
 /// Returns exactly what `route_access` would: `Ok` with an acquired slot, or
-/// the last `RouteError`. A zero `budget` makes this a plain `route_access`.
+/// the last `RouteError`. A zero `budget` allows one admission attempt.
+/// `priority` enables strict ordering through the registry-owned queue;
+/// `None` uses the independent retry loop.
 /// `affinity` is passed straight through (see
 /// [`crate::server::upstreams::affinity`]) — a request released after a wait
 /// should still land on the replica holding its cache.
@@ -62,7 +64,19 @@ pub async fn route_or_wait(
     access: &PoolAccess,
     budget: Duration,
     affinity: Option<&super::affinity::AffinityHint>,
+    priority: Option<crate::server::priority::Priority>,
 ) -> Result<Acquired, RouteError> {
+    if let Some(priority) = priority {
+        let ticket = registry
+            .scheduler
+            .register(model, kind, access, affinity, priority, budget);
+        loop {
+            if let Some(result) = ticket.poll(registry) {
+                return result;
+            }
+            sleep(POLL_INTERVAL).await;
+        }
+    }
     let deadline = Instant::now() + budget;
     let mut parked_since: Option<Instant> = None;
     loop {
@@ -123,6 +137,7 @@ mod tests {
 
     fn pool_with_one_backend() -> HashMap<String, UpstreamPoolConfig> {
         let backend = BackendConfig {
+            priority: Default::default(),
             name: "b1".into(),
             base_url: "http://b1:8000/v1".into(),
             api_key_env: None,
@@ -165,6 +180,7 @@ mod tests {
             &PoolAccess::all(),
             Duration::from_secs(5),
             None,
+            None,
         )
         .await
         .unwrap_err();
@@ -189,6 +205,7 @@ mod tests {
             PoolKind::Chat,
             &PoolAccess::all(),
             Duration::from_millis(600),
+            None,
             None,
         )
         .await
@@ -231,6 +248,7 @@ mod tests {
             PoolKind::Chat,
             &PoolAccess::all(),
             Duration::from_secs(10),
+            None,
             None,
         )
         .await

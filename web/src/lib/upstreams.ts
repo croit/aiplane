@@ -1,4 +1,6 @@
+import type { BackendPriority, PriorityMapping } from './priority.js';
 export interface LiveBackend {
+	detected_priority: PriorityMapping | null;
 	healthy: boolean;
 	enabled: boolean;
 	auth_failed: boolean;
@@ -48,6 +50,7 @@ export interface BackendAlias {
 }
 
 export interface Backend {
+	priority: BackendPriority;
 	name: string;
 	base_url: string;
 	api_key_env: string | null;
@@ -143,7 +146,7 @@ export function backendTestFailure(body: string | undefined): BackendTestResult 
 }
 
 export interface PendingChange {
-	code: 'pool_added' | 'pool_removed' | 'pool_kind' | 'pool_strategy' | 'backend_joins' | 'backend_leaves' | 'backend_url' | 'backend_limits' | 'backend_health_path';
+	code: 'pool_added' | 'pool_removed' | 'pool_kind' | 'pool_strategy' | 'backend_joins' | 'backend_leaves' | 'backend_url' | 'backend_limits' | 'backend_health_path' | 'backend_priority';
 	pool?: string;
 	backend?: string;
 	from?: string;

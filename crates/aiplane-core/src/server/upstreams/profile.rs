@@ -193,6 +193,7 @@ impl BackendProfile {
 /// applied on top of this.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Detected {
+    pub priority_mapping: Option<crate::server::priority::PriorityMapping>,
     pub profile: BackendProfile,
     /// Context windows this round read, by model id.
     ///
@@ -374,6 +375,7 @@ pub async fn detect(
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         return Some(Detected {
+            priority_mapping: info.as_ref().and_then(sglang_priority_mapping),
             profile: BackendProfile::SgLang,
             context_windows: models_windows,
             thinking_budget: strict_thinking.then_some(ThinkingBudget::CustomParams),
@@ -645,6 +647,25 @@ fn props_n_ctx(props: &serde_json::Value) -> Option<i64> {
         .filter(|n| *n > 0)
 }
 
+fn sglang_priority_mapping(
+    info: &serde_json::Value,
+) -> Option<crate::server::priority::PriorityMapping> {
+    let args = info.get("server_args").unwrap_or(info);
+    if !args.get("enable_priority_scheduling")?.as_bool()? {
+        return None;
+    }
+    if !matches!(args.get("schedule_policy")?.as_str()?, "fcfs" | "lof") {
+        return None;
+    }
+    let lower_first = args.get("schedule_low_priority_values_first")?.as_bool()?;
+    let mut mapping = crate::server::priority::PriorityMapping::lower_first();
+    if !lower_first {
+        mapping.low = -1;
+        mapping.high = 1;
+    }
+    Some(mapping)
+}
+
 #[cfg(test)]
 // Tests build plain clients and drain bodies to talk to their in-process
 // mocks; the outbound and body rules are about production paths.
@@ -902,6 +923,42 @@ mod detect_tests {
             assert_eq!(detected.profile, BackendProfile::SgLang);
             assert_eq!(detected.thinking_budget, expected, "strict={strict}");
             assert_eq!(detected.version.as_deref(), Some("0.5.19"));
+        }
+    }
+
+    #[tokio::test]
+    async fn sglang_priority_requires_enabled_scheduler_and_reported_direction() {
+        for (info, expected) in [
+            (
+                json!({"enable_priority_scheduling": false, "schedule_low_priority_values_first": false, "schedule_policy": "fcfs"}),
+                None,
+            ),
+            (json!({"enable_priority_scheduling": true}), None),
+            (
+                json!({"enable_priority_scheduling": true, "schedule_low_priority_values_first": false, "schedule_policy": "lpm"}),
+                None,
+            ),
+            (
+                json!({"server_args": {"enable_priority_scheduling": true, "schedule_low_priority_values_first": true, "schedule_policy": "fcfs"}}),
+                Some(crate::server::priority::PriorityMapping::lower_first()),
+            ),
+            (
+                json!({"enable_priority_scheduling": true, "schedule_low_priority_values_first": false, "schedule_policy": "lof"}),
+                Some(crate::server::priority::PriorityMapping {
+                    field: "priority".into(),
+                    low: -1,
+                    medium: 0,
+                    high: 1,
+                }),
+            ),
+        ] {
+            let server = MockServer::start().await;
+            route(&server, "/get_model_info", json!({"model_path": "m"})).await;
+            route(&server, "/server_info", info).await;
+            let detected = detect(&reqwest::Client::new(), &base(&server), None)
+                .await
+                .unwrap();
+            assert_eq!(detected.priority_mapping, expected);
         }
     }
 

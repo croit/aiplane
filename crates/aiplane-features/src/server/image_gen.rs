@@ -568,6 +568,7 @@ mod tests {
 
     fn image_backend(base_url: &str) -> BackendConfig {
         BackendConfig {
+            priority: Default::default(),
             name: "img".into(),
             base_url: base_url.into(),
             api_key_env: None,

@@ -795,6 +795,7 @@ mod tests {
                 kind: PoolKind::Ocr,
                 strategy: PickerStrategy::LeastInflight,
                 backend: vec![BackendConfig {
+                    priority: Default::default(),
                     name: "ocr".into(),
                     base_url: format!("{url}/v1"),
                     api_key_env: None,

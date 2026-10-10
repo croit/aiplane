@@ -10,6 +10,7 @@ use super::{DbError, Pool};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Token {
+    pub priority: Option<crate::server::priority::Priority>,
     pub id: String,
     pub user_id: String,
     pub name: String,
@@ -60,6 +61,7 @@ fn map_row(row: &SqliteRow) -> Result<Token, DbError> {
     let tools_enabled: i64 = row.try_get("tools_enabled")?;
 
     Ok(Token {
+        priority: super::gateway_groups::decode_priority(row.try_get("priority")?)?,
         id,
         user_id,
         name,
@@ -75,8 +77,8 @@ fn map_row(row: &SqliteRow) -> Result<Token, DbError> {
 pub async fn insert(pool: &Pool, t: &Token) -> Result<(), DbError> {
     sqlx::query(
         r#"INSERT INTO tokens
-               (id, user_id, name, hash, created_at, expires_at, tools_enabled)
-           VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+               (id, user_id, name, hash, created_at, expires_at, tools_enabled, priority)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&t.id)
     .bind(&t.user_id)
@@ -85,6 +87,7 @@ pub async fn insert(pool: &Pool, t: &Token) -> Result<(), DbError> {
     .bind(t.created_at.to_string())
     .bind(t.expires_at.to_string())
     .bind(i64::from(t.tools_enabled))
+    .bind(t.priority.map(crate::server::priority::Priority::as_str))
     .execute(pool)
     .await?;
     Ok(())
@@ -196,6 +199,7 @@ pub async fn list_for_user(pool: &Pool, user_id: &str) -> Result<Vec<Token>, DbE
 /// owner's identity added.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenWithOwner {
+    pub priority: Option<crate::server::priority::Priority>,
     pub id: String,
     pub name: String,
     pub user_id: String,
@@ -227,7 +231,7 @@ pub async fn list_all_with_owner(pool: &Pool) -> Result<Vec<TokenWithOwner>, DbE
     // possible failure mode for this page.
     let rows = sqlx::query(
         "SELECT t.id, t.user_id, t.name, t.created_at, t.last_used_at, t.expires_at,
-                t.revoked_at, t.tools_enabled, u.email AS user_email
+                t.revoked_at, t.tools_enabled, t.priority, u.email AS user_email
            FROM tokens t
            LEFT JOIN users u ON u.id = t.user_id
           ORDER BY t.created_at DESC",
@@ -239,6 +243,7 @@ pub async fn list_all_with_owner(pool: &Pool) -> Result<Vec<TokenWithOwner>, DbE
             let user_id: String = r.try_get("user_id")?;
             let email: Option<String> = r.try_get("user_email")?;
             Ok(TokenWithOwner {
+                priority: super::gateway_groups::decode_priority(r.try_get("priority")?)?,
                 id: r.try_get("id")?,
                 name: r.try_get("name")?,
                 user_email: email.unwrap_or_else(|| user_id.clone()),
@@ -336,6 +341,19 @@ pub async fn touch(pool: &Pool, token_id: &str) -> Result<(), DbError> {
     sqlx::query("UPDATE tokens SET last_used_at = ? WHERE id = ?")
         .bind(Timestamp::now().to_string())
         .bind(token_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_priority(
+    pool: &Pool,
+    id: &str,
+    priority: Option<crate::server::priority::Priority>,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE tokens SET priority = ? WHERE id = ?")
+        .bind(priority.map(|p| p.as_str()))
+        .bind(id)
         .execute(pool)
         .await?;
     Ok(())
@@ -522,6 +540,7 @@ mod tests {
     fn fixture(user_id: &str, id: &str, hash: &str) -> Token {
         let now = Timestamp::now();
         Token {
+            priority: None,
             id: id.into(),
             user_id: user_id.into(),
             name: format!("token-{id}"),
@@ -740,6 +759,7 @@ mod tests {
         let (pool, uid) = setup().await;
         let now = Timestamp::now();
         let mut t = fixture(&uid, "t-rot", "hash-old");
+        t.priority = Some(crate::server::priority::Priority::High);
         t.tools_enabled = true;
         insert(&pool, &t).await.unwrap();
         // The old secret authenticates; the new one doesn't exist yet.
@@ -769,6 +789,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+        assert_eq!(got.priority, Some(crate::server::priority::Priority::High));
         assert_eq!(got.id, "t-rot");
         assert_eq!(got.name, "token-t-rot");
         assert!(got.tools_enabled, "tool-use flag is preserved");

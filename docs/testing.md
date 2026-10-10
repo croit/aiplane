@@ -215,3 +215,9 @@ Preserve these known-answer vectors unchanged. Other round-trip fixtures use
 ephemeral keys; production entropy failure must never substitute a fixed key.
 Any dismissal should cite the individual rationale above, not suppress the
 rule or the source file.
+
+## Request priority coverage
+
+Request priority regression tests cover shared capacity retry passes, cancellation before GPU admission, selected UI language for admin errors, and browser-visible save failures. The chat cancellation case holds every backend slot until the cancelled worker has finished, then verifies that no model request was sent.
+
+Priority tests cover group inheritance and reload, token overrides and rotation, strict ordering with FIFO ties, cancellation before and after slot assignment, expired waiters, and independent model availability. Backend tests use wiremock to check SGLang scheduling flags and real gateway dispatch bodies, including ignored client priority and unsupported or disabled forwarding. Administrator routes cover priority writes, validation, access gates and published OpenAPI schemas. Migration 0080 tests preservation of existing groups, tokens and backend data.

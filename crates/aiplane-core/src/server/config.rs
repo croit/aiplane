@@ -1021,6 +1021,8 @@ fn resolve_secret(direct: Option<&str>, env_name: Option<&str>) -> Option<String
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GatewayConfig {
+    pub priority_enabled: bool,
+    pub default_priority: crate::server::priority::Priority,
     /// Public URL the gateway is reachable at, e.g. `https://aiplane.example.com`.
     ///
     /// **Never read this directly** — call
@@ -1106,6 +1108,8 @@ impl Default for GatewayConfig {
             allow_impersonation: false,
             bootstrap_admin_groups: Vec::new(),
             upstream_wait_secs: default_upstream_wait_secs(),
+            priority_enabled: false,
+            default_priority: Default::default(),
         }
     }
 }

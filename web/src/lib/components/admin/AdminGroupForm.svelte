@@ -1,4 +1,6 @@
 <script lang="ts">
+	import type { Priority } from '#lib/priority.js';
+	import PrioritySelect from '#lib/components/PrioritySelect.svelte';
 	import { untrack } from 'svelte';
 	import { t } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
@@ -7,6 +9,7 @@
 
 	export interface AdminGroup {
 		name: string;
+		priority: Priority | null;
 		description: string;
 		is_admin: boolean;
 		is_default: boolean;
@@ -44,6 +47,7 @@
 
 	let name = $state(untrack(() => group?.name ?? ''));
 	let description = $state(untrack(() => group?.description ?? ''));
+	let priority = $state<Priority | null>(untrack(() => group?.priority ?? null));
 	let isAdmin = $state(untrack(() => group?.is_admin ?? false));
 	let isDefault = $state(untrack(() => group?.is_default ?? false));
 	let canManageAgents = $state(untrack(() => group?.can_manage_agents ?? false));
@@ -112,6 +116,7 @@
 		try {
 			await onsave({
 				name: name.trim(),
+				priority,
 				description,
 				is_admin: isAdmin,
 				is_default: isDefault,
@@ -122,6 +127,7 @@
 			});
 			if (!group) {
 				name = '';
+				priority = null;
 				description = '';
 				isAdmin = false;
 				isDefault = false;
@@ -153,6 +159,8 @@
 					<input class="input w-full" bind:value={description} />
 				</label>
 			</div>
+			<PrioritySelect bind:value={priority} inheritLabel={t('priority-system-default')} />
+			<p class="text-xs text-base-content/60">{t('priority-group-help')}</p>
 			<div class="flex flex-wrap gap-4">
 				<label class="label cursor-pointer justify-start gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={isAdmin} /><span>{t('groups-field-admin')}</span></label>
 				<label class="label cursor-pointer justify-start gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={isDefault} /><span>{t('groups-field-default')}</span></label>

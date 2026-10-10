@@ -1,4 +1,6 @@
 <script lang="ts">
+	import PrioritySelect from '#lib/components/PrioritySelect.svelte';
+	import type { Priority } from '#lib/priority.js';
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
 	import EditModal from '#lib/components/EditModal.svelte';
 	import { tokenState, visibleTokenModels } from '#lib/admin-tokens.js';
@@ -9,14 +11,25 @@
 	import { tokenDate } from '#lib/tokens.js';
 	import { usageCost, usageInteger } from '#lib/usage.js';
 
-	let { token, models, usageEnabled, currency, timezone, onsave }: {
+	let { token, models, usageEnabled, currency, timezone, onsave, onpriority }: {
 		token: AdminToken;
 		models: TokenModel[];
 		usageEnabled: boolean;
 		currency: string;
 		timezone: string;
+		onpriority: (id: string, priority: Priority | null) => Promise<void>;
 		onsave: (id: string, restrict: boolean, models: string[]) => Promise<void>;
 	} = $props();
+	let priorityDraft = $state<Priority | null>(null);
+	$effect(() => { priorityDraft = token.priority; });
+	let prioritySaving = $state(false);
+	let priorityError = $state<string | null>(null);
+	async function savePriority(priority: Priority | null) {
+		prioritySaving = true; priorityError = null;
+		try { await onpriority(token.id, priority); }
+		catch (caught) { priorityError = String(caught); priorityDraft = token.priority; }
+		finally { prioritySaving = false; }
+	}
 	let editing = $state(false);
 	let restrict = $state(false);
 	let selected = $state<string[]>([]);
@@ -76,6 +89,7 @@
 		{:else if credentialState === 'expired'}<StatusPill tone="warn">{t('admin-tokens-badge-expired')}</StatusPill>
 		{:else}<StatusPill tone="ok">{t('tokens-badge-active')}</StatusPill>{/if}
 	</td>
+	<td class="min-w-48"><PrioritySelect bind:value={priorityDraft} inheritLabel={t('priority-inherit')} disabled={prioritySaving} onchange={(value) => void savePriority(value)} />{#if priorityError}<p class="text-error text-xs" role="alert">{priorityError}</p>{/if}</td>
 	<td class="w-64 text-xs leading-relaxed text-base-content/70">
 		{t('tokens-row-meta', {
 			created: tokenDate(token.created_at, timezone),

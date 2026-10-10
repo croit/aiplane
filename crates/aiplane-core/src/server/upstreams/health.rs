@@ -289,6 +289,7 @@ async fn detect_all(http: &reqwest::Client, targets: &[ProbeTarget], db: Option<
                 // admin page reads the registry, and was showing `null`
                 // for every backend it had actually identified.
                 .map(|d| profile::Detected {
+                    priority_mapping: None,
                     detected_at: Some(jiff::Timestamp::now().to_string()),
                     ..d
                 });
@@ -829,6 +830,7 @@ mod tests {
 
     fn image_backend(base_url: &str) -> BackendConfig {
         BackendConfig {
+            priority: Default::default(),
             name: "img".into(),
             base_url: base_url.into(),
             api_key_env: None,
@@ -931,6 +933,7 @@ mod tests {
     /// one pool view each.
     fn shared_backend_registry(base_url: &str) -> std::sync::Arc<UpstreamRegistry> {
         let backend = |models: Vec<String>| BackendConfig {
+            priority: Default::default(),
             name: "openrouter".into(),
             models,
             ..image_backend(base_url)
@@ -1042,6 +1045,7 @@ mod tests {
         upstreams_config::upsert_backend(
             &db,
             &BackendRow {
+                priority: Default::default(),
                 name: "openrouter".into(),
                 base_url: server.uri(),
                 api_key_env: None,
@@ -1255,6 +1259,7 @@ mod detection_wiring {
                 offer_voices: Vec::new(),
                 allowed_groups: Vec::new(),
                 backend: vec![BackendConfig {
+                    priority: Default::default(),
                     name: "ollama".into(),
                     // As an operator writes it: the OpenAI base.
                     base_url: format!("{}/v1", server.uri()),

@@ -59,6 +59,12 @@ pub enum AutomaticRoutingError {
 /// model it is about to be routed to. The router knows no caller, so whoever
 /// selects on a caller's behalf supplies their limits.
 pub trait SelectorGate: Sync {
+    fn priority(&self) -> Option<crate::server::priority::Priority> {
+        None
+    }
+    fn wait_budget(&self) -> Duration {
+        Duration::ZERO
+    }
     fn admit(&self, selector_model: &str)
     -> impl Future<Output = Result<(), LimitExceeded>> + Send;
 }
@@ -309,6 +315,7 @@ impl AutomaticRouter {
                     &selector_state(state),
                     &eligible,
                     &candidate_facts,
+                    gate.priority(),
                 )
                 .await
             }
@@ -498,14 +505,24 @@ impl AutomaticRouter {
         gate.admit(&checked)
             .await
             .map_err(AutomaticRoutingError::SelectorLimited)?;
-        let acquired =
-            match self
-                .upstreams
-                .route_access(&route.selector_model, PoolKind::SystemOne, access)
-            {
-                Ok(acquired) => acquired,
-                Err(error) => return Ok(Err(routing_failed(error))),
-            };
+        let acquired = match crate::server::upstreams::route_or_wait(
+            &self.upstreams,
+            &route.selector_model,
+            PoolKind::SystemOne,
+            access,
+            if gate.priority().is_some() {
+                gate.wait_budget()
+            } else {
+                Duration::ZERO
+            },
+            None,
+            gate.priority(),
+        )
+        .await
+        {
+            Ok(acquired) => acquired,
+            Err(error) => return Ok(Err(routing_failed(error))),
+        };
         // A backend's health can change between resolving and acquiring; what
         // is asked is what must have passed the gate.
         if acquired.resolved_model() != checked {
@@ -523,6 +540,7 @@ impl AutomaticRouter {
         state: &Value,
         eligible: &[&AutomaticRouteCandidate],
         candidate_facts: &HashMap<String, String>,
+        priority: Option<crate::server::priority::Priority>,
     ) -> Result<SelectorAnswer, String> {
         let selector_model = acquired.resolved_model().to_string();
         let selector_backend = acquired.backend().name.clone();
@@ -549,7 +567,7 @@ impl AutomaticRouter {
             "Choose the best candidate for the request. Optimization objective: {}. {}\nCandidates:\n{}",
             route.objective, route.instructions, candidates
         );
-        let body = json!({
+        let mut body = json!({
             "model": selector_model,
             "state": state,
             "questions": {
@@ -560,6 +578,8 @@ impl AutomaticRouter {
                 }
             }
         });
+        self.upstreams
+            .apply_priority(&acquired, &mut body, priority);
         let mut request = self.http.post(url).json(&body);
         if let Some(api_key) = acquired.backend().api_key.as_deref() {
             request = request.bearer_auth(api_key);

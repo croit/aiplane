@@ -177,6 +177,7 @@ mod tests {
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: false,
                 enabled: true,

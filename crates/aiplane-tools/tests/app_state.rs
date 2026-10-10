@@ -161,6 +161,7 @@ mod token_gate_tests {
 
     fn ctx(token_id: &str, tools_enabled: bool) -> UserCtx {
         UserCtx {
+            priority: Default::default(),
             principal: Principal::User {
                 id: "alice".into(),
                 roles: vec![], // empty → default role "all" applies
@@ -184,6 +185,7 @@ mod token_gate_tests {
             )),
         };
         UserCtx {
+            priority: Default::default(),
             user_email: principal.name.clone(),
             principal: Principal::System(principal),
             token_id: "st1".into(),
@@ -260,6 +262,7 @@ mod token_gate_tests {
         db::tokens::insert(
             &state.db,
             &db::tokens::Token {
+                priority: None,
                 id: token_id.into(),
                 user_id: "alice".into(),
                 name: token_id.into(),

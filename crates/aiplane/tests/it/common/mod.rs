@@ -42,6 +42,7 @@ pub const TEST_SECRET: [u8; 32] = [7u8; 32];
 /// uri, or `http://unused.invalid` when no request should be forwarded).
 pub fn mock_backend(name: &str, base_url: &str) -> BackendConfig {
     BackendConfig {
+        priority: Default::default(),
         alias: None,
         supports_edit: false,
         enabled: true,
@@ -552,6 +553,7 @@ pub async fn state_with_admin_rbac_and_comfyui(upstream_url: &str) -> RamaState 
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: false,
                 enabled: true,
@@ -638,6 +640,7 @@ async fn state_with_admin_rbac_cfg(upstream_url: &str, allow_impersonation: bool
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: false,
                 enabled: true,
@@ -961,6 +964,7 @@ pub async fn seed_user_with_token_id(state: &RamaState, user_id: &str) -> (Strin
     tokens::insert(
         &state.db,
         &tokens::Token {
+            priority: None,
             id: token_id.clone(),
             user_id: user_id.into(),
             name: "test".into(),

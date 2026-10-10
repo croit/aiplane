@@ -243,3 +243,7 @@ changing behaviour, read the [testing strategy](docs/testing.md).
 ## License
 
 GNU Affero General Public License v3.0 only. See [LICENSE](LICENSE).
+
+### Prioritize interactive and ERP requests
+
+Enable request prioritization under **Administration → Settings → Access → Gateway** and set the ERP token to **High** in Access → Tokens. Groups and tokens use Low, Medium and High across all backends. For forwarding into vLLM enable `--scheduling-policy priority` and configure the backend mapping `priority`: Low 1, Medium 0, High -1. SGLang can report enabled scheduling for automatic forwarding; start it with `--enable-priority-scheduling --schedule-policy fcfs`. Running calls finish normally; lower priorities may time out during sustained higher-priority traffic. See [Request priority](docs/request-priority.md).

@@ -21,6 +21,7 @@ pub mod token;
 /// [`Principal::System`]; see `docs/agents.md` → "Principals".
 #[derive(Debug, Clone)]
 pub struct UserCtx {
+    pub priority: Option<crate::server::priority::Priority>,
     pub principal: crate::server::principal::Principal,
     /// Resolved during auth: the user's email, or a system principal's name.
     /// Denormalised onto usage rows so the metrics page needs no join and

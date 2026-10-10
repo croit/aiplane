@@ -100,6 +100,14 @@ Two habits that cost more than any tooling change:
   `target/` and one lock; `Blocking waiting for file lock` is normal, and
   killing one of them fails its sibling task and buys another full run.
 
+When worktrees share `CARGO_TARGET_DIR`, a cached `session-core` artifact can
+omit locale files added in the other worktree. A response containing a Fluent
+key rather than its text indicates a missing compiled message. After checking
+that the key exists in all six catalogs, touch
+`crates/session-core/src/i18n.rs` and rerun the affected mise test task to rebuild
+the embedded catalogs. Do not edit the translation to compensate for a stale
+artifact.
+
 ## Delegating work to an agent
 
 Parallel agents are how the agent builder grew three capped body

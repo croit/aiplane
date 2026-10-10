@@ -57,6 +57,7 @@ async fn state_with_tool_grants(upstream_uri: &str, granted_tools: Vec<String>) 
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: false,
                 enabled: true,
@@ -146,6 +147,7 @@ async fn seed_engineer_with_bearer_mode(state: &RamaState, always_on: bool) -> S
     tokens::insert(
         &state.db,
         &tokens::Token {
+            priority: None,
             id: token_id.clone(),
             user_id: "alice".into(),
             name: "test".into(),

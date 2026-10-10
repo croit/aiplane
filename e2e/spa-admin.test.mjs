@@ -35,6 +35,52 @@ after(async () => {
     if (browser) await browser.close();
 });
 
+test("a failed token priority save clears the earlier success notice", async () => {
+    const ctx = await browser.newContext({ locale: "en-US" });
+    await ctx.addCookies([{ name: "id", value: cookie, url: BASE }, { name: "lang", value: "en", url: BASE }]);
+    const page = await ctx.newPage();
+    let token;
+    try {
+        const tokens = await (await ctx.request.get(`${BASE}/api/v0/admin/tokens`)).json();
+        token = tokens.tokens.find((entry) => entry.name === "Production API");
+        assert.ok(token);
+        await page.goto(`${BASE}/admin/tokens`);
+        const row = page.getByRole("row").filter({ hasText: "Production API" });
+        await row.getByLabel("Priority", { exact: true }).selectOption("high");
+        await page.getByText("Priority saved.", { exact: true }).waitFor();
+        await page.route("**/api/v0/admin/tokens/*/priority", (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { message: "Synthetic save failure", code: "internal" } }) }));
+        await row.getByLabel("Priority", { exact: true }).selectOption("low");
+        await row.getByRole("alert").waitFor();
+        assert.equal(await page.getByText("Priority saved.", { exact: true }).count(), 0);
+        assert.equal(await row.getByLabel("Priority", { exact: true }).inputValue(), "high");
+    } finally {
+        if (token) await ctx.request.put(`${BASE}/api/v0/admin/tokens/${token.id}/priority`, { data: { priority: token.priority } });
+        await ctx.close();
+    }
+});
+
+test("backend priority errors are focused, visible and use the chosen UI language", async () => {
+    const ctx = await browser.newContext({ locale: "de-DE", viewport: { width: 1400, height: 950 } });
+    await ctx.addCookies([{ name: "id", value: cookie, url: BASE }, { name: "lang", value: "en", url: BASE }]);
+    try {
+        const page = await ctx.newPage();
+        await page.goto(`${BASE}/admin/models?tab=upstreams`);
+        await page.getByRole("button", { name: "Edit backend", exact: true }).first().click();
+        const modal = page.locator("dialog[open]");
+        await modal.getByLabel("Backend prioritization", { exact: true }).selectOption("custom");
+        for (const label of ["Low", "Medium", "High"]) await modal.getByLabel(label, { exact: true }).fill("0");
+        const rejected = page.waitForResponse((response) => response.url().endsWith("/api/v0/admin/backends") && response.request().method() === "PUT");
+        await modal.getByRole("button", { name: "Save backend", exact: true }).click();
+        assert.equal((await rejected).status(), 400);
+        const alert = modal.getByRole("alert");
+        await alert.waitFor();
+        assert.match(await alert.innerText(), /Invalid priority mapping/);
+        await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "alert");
+        const box = await alert.boundingBox();
+        assert.ok(box.y >= 0 && box.y + box.height <= 950, "the focused error must be inside the viewport");
+    } finally { await ctx.close(); }
+});
+
 test("non-admin gets the 403 envelope; the admin API answers", async () => {
     // The fixture user has no admin role in dev-ui's RBAC → 403 JSON.
     const denied = await fetch(`${BASE}/api/v0/admin/groups`, {

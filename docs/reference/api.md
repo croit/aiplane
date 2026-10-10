@@ -279,6 +279,7 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/admin/skills/{name}/archive` |
 | `GET /api/v0/admin/tokens` |
 | `PUT /api/v0/admin/tokens/{id}/models` |
+| `PUT /api/v0/admin/tokens/{id}/priority` |
 | `GET /api/v0/admin/upstreams` |
 | `GET /api/v0/admin/upstreams/events` |
 | `PUT /api/v0/admin/upstreams/fallback` |
@@ -495,3 +496,5 @@ Debug fixture routes exist only in development builds.
 | `GET /v1/sandbox/files/{run}/{filename}` |
 | `POST /v1/systemone` |
 | `GET /{*name}` |
+
+Admin token priority accepts `{"priority":"high"}`, `"medium"`, `"low"` or `null` (inherit). It requires an administrator session and returns the saved priority. Group and backend save schemas include their priority settings. See [Request priority](../request-priority.md).

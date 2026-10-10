@@ -442,6 +442,7 @@ mod tests {
         aiplane_core::server::db::tokens::insert(
             &pool,
             &aiplane_core::server::db::tokens::Token {
+                priority: None,
                 id: "tok".into(),
                 user_id: "u1".into(),
                 name: "test".into(),

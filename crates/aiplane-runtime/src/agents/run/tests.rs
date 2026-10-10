@@ -291,6 +291,7 @@ impl World {
                     strategy: PickerStrategy::RoundRobin,
                     models: Vec::new(),
                     backend: vec![BackendConfig {
+                        priority: Default::default(),
                         alias,
                         supports_edit: false,
                         enabled: true,

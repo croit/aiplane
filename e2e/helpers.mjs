@@ -15,6 +15,7 @@ export { chromium };
 /// Wraps `chromium.launch` so every test file picks up the same options.
 export async function launchBrowser() {
     return chromium.launch({
+        executablePath: process.env.CHROME_EXE,
         // Honour CHROMIUM_HEADED=1 when iterating locally; defaults to headless.
         headless: process.env.CHROMIUM_HEADED !== "1",
         // The SPA picks its language from the `lang` cookie, then from

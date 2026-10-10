@@ -21,6 +21,8 @@ That runs every `e2e/*.test.mjs`:
 
 The `e2e` mise task finds Playwright in the mise-installed `npm:@playwright/cli` package; export `PLAYWRIGHT_DIR` only to override it.
 
+Set `CHROME_EXE` to an installed Chrome executable to use that browser instead of Playwright's bundled Chromium. The admin suite checks token priority save failures, backend error focus and visibility, and priority validation in the selected UI language with a different browser language.
+
 Set `CHROMIUM_HEADED=1` to watch the browser locally:
 
 ```bash

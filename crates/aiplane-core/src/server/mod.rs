@@ -24,6 +24,7 @@ pub mod net_guard;
 pub mod oidc_settings;
 pub mod outbound_guard;
 pub mod principal;
+pub mod priority;
 pub mod rbac;
 pub mod reasoning;
 pub mod run_chain;

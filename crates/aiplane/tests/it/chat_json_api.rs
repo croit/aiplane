@@ -67,6 +67,7 @@ async fn state_with_chat_access(
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: false,
                 enabled: true,
@@ -110,6 +111,7 @@ async fn state_with_aliased_chat_model(model: &str, alias: &str) -> RamaState {
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: Some(AliasSpec::Names(vec![alias.to_string()])),
                 supports_edit: false,
                 enabled: true,
@@ -819,6 +821,69 @@ async fn wait_for_idle(state: &Arc<RamaState>, user_id: &str) {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     panic!("a turn was still running after 5s");
+}
+
+#[tokio::test]
+async fn cancelling_a_chat_waiting_for_backend_capacity_sends_no_model_request() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["unexpected"], 0).await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    aiplane_core::server::db::app_settings::set(
+        &state.db,
+        "settings.gateway.priority_enabled",
+        "true",
+    )
+    .await
+    .unwrap();
+    state.reload_settings().await;
+    let held: Vec<_> = (0..16)
+        .map(|_| state.upstreams.route("model-a", PoolKind::Chat).unwrap())
+        .collect();
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    chat::set_session_title(&state.db, &session.id, "Queued request")
+        .await
+        .unwrap();
+    let app = router(state.clone());
+    let submitted = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"cancel before admission"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(submitted.status(), StatusCode::ACCEPTED);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let cancelled = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/cancel", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert!(body_string(cancelled).await.contains("\"cancelled\":true"));
+    for _ in 0..40 {
+        if state.chats.running_for_user("alice") == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(
+        state.chats.running_for_user("alice"),
+        0,
+        "a cancelled waiter must finish while every GPU slot is still held"
+    );
+    let turns = chat::list_turns(&state.db, &session.id).await.unwrap();
+    assert_eq!(
+        turns.last().unwrap().turn.status,
+        chat::TurnStatus::Cancelled
+    );
+    drop(held);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(upstream.received_requests().await.unwrap().is_empty());
 }
 
 /// Raise the operator's parallel-turn ceiling the way the admin UI does —

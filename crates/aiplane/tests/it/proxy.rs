@@ -1111,6 +1111,7 @@ async fn state_with_backend_api_key(
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: false,
                 enabled: true,
@@ -1172,6 +1173,7 @@ async fn state_with_alias_pool(
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: Some(AliasSpec::Names(vec!["qwen".into()])),
                 supports_edit: false,
                 enabled: true,
@@ -2130,5 +2132,79 @@ async fn a_caller_within_budget_is_still_checked_by_the_content_guard() {
         let body = String::from_utf8_lossy(&common::read_body(resp).await).into_owned();
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
         assert_eq!(guard_calls(&upstream).await, asked_before + 1, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn token_priority_is_trusted_and_translated_at_dispatch() {
+    use aiplane_core::server::upstreams::{UpstreamRegistry, config::UpstreamPoolConfig};
+    use aiplane_core::server::{
+        db,
+        priority::{BackendPriority, Priority, PriorityMapping},
+    };
+    for (enabled, custom, expected) in [
+        (true, true, Some(1)),
+        (true, false, None),
+        (false, true, None),
+    ] {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                json!({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}),
+            ))
+            .mount(&upstream)
+            .await;
+        let mut pool: UpstreamPoolConfig =
+            serde_json::from_value(json!({"kind":"chat", "backend":[]})).unwrap();
+        let mut backend = common::mock_backend("priority-test", &upstream.uri());
+        backend.models = vec!["model-a".into()];
+        backend.priority = if custom {
+            BackendPriority::Custom(PriorityMapping::lower_first())
+        } else {
+            BackendPriority::Auto
+        };
+        pool.backend.push(backend);
+        let registry =
+            UpstreamRegistry::new(&std::collections::HashMap::from([("chat".into(), pool)]))
+                .unwrap();
+        let mut config = common::test_config();
+        config.gateway.priority_enabled = enabled;
+        config.gateway.default_priority = Priority::High;
+        let state = common::state_from_registry_with_config(
+            db::open(std::path::Path::new(":memory:")).await.unwrap(),
+            registry,
+            config,
+        );
+        let (bearer, token_id) = common::seed_user_with_token_id(&state, "erp").await;
+        db::tokens::set_priority(&state.db, &token_id, Some(Priority::Low))
+            .await
+            .unwrap();
+        let app = common::app(state);
+        for stream in [false, true] {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {bearer}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"model":"model-a", "messages":[], "stream":stream, "priority":-9999})
+                        .to_string(),
+                ))
+                .unwrap();
+            let response = app.serve(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            common::read_body(response).await;
+        }
+        let sent = upstream.received_requests().await.unwrap();
+        assert_eq!(sent.len(), 2);
+        for request in sent {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(
+                body.get("priority").and_then(serde_json::Value::as_i64),
+                expected
+            );
+            assert_eq!(body["model"], "model-a");
+        }
     }
 }

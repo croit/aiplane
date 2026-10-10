@@ -261,3 +261,7 @@ for every consumer (`RamaState::client_ip`): the TCP peer unless it is a trusted
 proxy, then the rightmost untrusted `X-Forwarded-For` hop.
 
 See the per-subsystem docs for what each screen controls.
+
+## Request priority admission
+
+The existing registry owns a strict priority queue behind `route_or_wait`. The authenticated effective Low/Medium/High class comes from the existing group resolver and the token override. Queue entries retain the caller’s `PoolAccess`, model kind, deadline and prefix-affinity hint. Only executable requests acquire `Acquired` guards. Cancellation drops queued entries and reserved guards. At dispatch the registry removes configured priority fields from earlier backends and applies only the selected backend’s mapping. See [Request priority](request-priority.md).

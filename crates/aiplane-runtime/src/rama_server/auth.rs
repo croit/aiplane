@@ -99,6 +99,13 @@ pub async fn require_bearer(
     });
 
     Ok(UserCtx {
+        priority: state.config().gateway.priority_enabled.then(|| {
+            token_row.priority.unwrap_or_else(|| {
+                state
+                    .rbac
+                    .request_priority(&user.roles, state.config().gateway.default_priority)
+            })
+        }),
         principal: Principal::User {
             id: user.id,
             roles: user.roles,
@@ -161,6 +168,11 @@ async fn require_system_bearer(state: &RamaState, bearer: &str) -> Result<UserCt
     }
 
     Ok(UserCtx {
+        priority: state
+            .config()
+            .gateway
+            .priority_enabled
+            .then_some(state.config().gateway.default_priority),
         user_email: principal.name.clone(),
         principal: Principal::System(principal),
         token_id: token_row.id,

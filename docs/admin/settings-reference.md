@@ -196,6 +196,8 @@ Category: **Access**.
 
 | Key | Input / choices | Meaning | Restart |
 |---|---|---|---|
+| `gateway.priority_enabled` | Boolean | Enable strict High → Medium → Low admission; disabled by default. Lower priorities can time out. | No |
+| `gateway.default_priority` | Choice: `low`, `medium`, `high` | Priority when neither a token nor a group sets one; Medium by default. | No |
 | `gateway.token_ttl_days` | Integer | How many days a freshly minted gwk_… token stays valid. | No |
 | `gateway.session_ttl_days` | Integer | Sliding idle timeout for a browser login, in days: every request pushes it forward, so it is how long someone may stay away before signing in again. | No |
 | `gateway.session_absolute_max_days` | Integer | Hard cap in days on a browser login since sign-in, which no amount of activity extends. It also forces a periodic trip through the identity provider, the only point at which group claims are re-read. | No |

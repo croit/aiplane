@@ -77,3 +77,5 @@ under `/docs/`; the public website carries the same formats. See
 The manual uses the application's actual behaviour. Optional capabilities
 require their configured services and grants; screenshots use synthetic data
 from the real application, including prerequisites, permissions and limits.
+
+Request scheduling for ERP tokens and interactive workloads is described in [Request priority](request-priority.md).

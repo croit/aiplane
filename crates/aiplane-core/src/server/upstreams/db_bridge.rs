@@ -115,6 +115,7 @@ fn backend_row_to_config(row: &BackendRow, crypto: &Crypto) -> BackendConfig {
     };
 
     BackendConfig {
+        priority: row.priority.clone(),
         name: row.name.clone(),
         base_url: row.base_url.clone(),
         api_key_env: row.api_key_env.clone(),
@@ -191,6 +192,7 @@ mod tests {
         snap.backends.insert(
             "gpu-01".into(),
             BackendRow {
+                priority: Default::default(),
                 name: "gpu-01".into(),
                 base_url: "http://gpu-01:8000/v1".into(),
                 api_key_env: Some("GPU_KEY".into()),
@@ -252,6 +254,7 @@ mod tests {
         snap.backends.insert(
             "b".into(),
             BackendRow {
+                priority: Default::default(),
                 name: "b".into(),
                 base_url: "http://b".into(),
                 api_key_env: None,
@@ -312,6 +315,7 @@ mod tests {
         snap.backends.insert(
             "b".into(),
             BackendRow {
+                priority: Default::default(),
                 name: "b".into(),
                 base_url: "http://b".into(),
                 api_key_env: None,

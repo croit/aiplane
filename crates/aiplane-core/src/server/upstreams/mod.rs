@@ -51,6 +51,7 @@ pub mod health;
 pub mod prefix_index;
 pub mod profile;
 pub mod registry;
+mod scheduler;
 pub mod wait;
 
 pub use config::{

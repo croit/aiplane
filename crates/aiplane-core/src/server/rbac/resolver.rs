@@ -20,6 +20,7 @@ pub const BOOTSTRAP_ADMIN_GROUP: &str = "__bootstrap_admin__";
 /// makes the group apply to every authenticated user.
 #[derive(Debug, Clone, Default)]
 struct GroupDef {
+    priority: Option<crate::server::priority::Priority>,
     is_admin: bool,
     is_default: bool,
     can_manage_agents: bool,
@@ -117,6 +118,7 @@ impl Resolver {
             groups.insert(
                 role.id.clone(),
                 GroupDef {
+                    priority: None,
                     is_admin: role.admin,
                     is_default,
                     can_manage_agents: false,
@@ -235,6 +237,30 @@ impl Resolver {
             }
         }
         out
+    }
+
+    pub fn request_priority(
+        &self,
+        oidc_values: &[String],
+        default: crate::server::priority::Priority,
+    ) -> crate::server::priority::Priority {
+        let groups = self.role_ids_for(oidc_values);
+        self.priority_for_roles(&groups, default)
+    }
+
+    pub fn priority_for_roles(
+        &self,
+        groups: &[String],
+        default: crate::server::priority::Priority,
+    ) -> crate::server::priority::Priority {
+        let snap = self.inner.read().unwrap();
+        crate::server::priority::Priority::effective(
+            None,
+            groups
+                .iter()
+                .filter_map(|id| snap.groups.get(id).and_then(|group| group.priority)),
+            default,
+        )
     }
 
     /// Whether `group` is a group id this resolver knows, wherever it was
@@ -500,6 +526,7 @@ fn build_snapshot(snap: &GroupSnapshot, bootstrap: &[String]) -> Snapshot {
         groups.insert(
             g.name.clone(),
             GroupDef {
+                priority: g.priority,
                 is_admin: g.is_admin,
                 is_default: g.is_default,
                 can_manage_agents: g.can_manage_agents,
@@ -566,6 +593,7 @@ fn apply_bootstrap(snapshot: &mut Snapshot, bootstrap: &[String]) {
     snapshot.groups.insert(
         BOOTSTRAP_ADMIN_GROUP.to_string(),
         GroupDef {
+            priority: None,
             is_admin: true,
             is_default: false,
             can_manage_agents: true,
@@ -587,6 +615,53 @@ fn apply_bootstrap(snapshot: &mut Snapshot, bootstrap: &[String]) {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn group_priority_uses_mapped_membership_and_reloads_live() {
+        use crate::server::{db, priority::Priority};
+        let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        for (name, priority) in [
+            ("batch", Some(Priority::Low)),
+            ("erp", Some(Priority::High)),
+            ("base", None),
+        ] {
+            db::gateway_groups::upsert_group(&pool, name, "", false, name == "base")
+                .await
+                .unwrap();
+            db::gateway_groups::set_priority(&pool, name, priority)
+                .await
+                .unwrap();
+            db::gateway_groups::set_mappings_for_group(&pool, name, &[format!("oidc-{name}")])
+                .await
+                .unwrap();
+        }
+        let resolver = super::Resolver::empty();
+        resolver.reload(db::gateway_groups::load_snapshot(&pool).await.unwrap());
+        assert_eq!(
+            resolver.request_priority(&[], Priority::Medium),
+            Priority::Medium
+        );
+        assert_eq!(
+            resolver.request_priority(&["oidc-batch".into()], Priority::Medium),
+            Priority::Low
+        );
+        assert_eq!(
+            resolver.request_priority(&["oidc-batch".into(), "oidc-erp".into()], Priority::Medium),
+            Priority::High
+        );
+        assert_eq!(
+            resolver.priority_for_roles(&["erp".into()], Priority::Medium),
+            Priority::High
+        );
+        db::gateway_groups::set_priority(&pool, "erp", None)
+            .await
+            .unwrap();
+        resolver.reload(db::gateway_groups::load_snapshot(&pool).await.unwrap());
+        assert_eq!(
+            resolver.request_priority(&["oidc-erp".into()], Priority::Medium),
+            Priority::Medium
+        );
+    }
+
     use super::super::config::{RbacConfig, RoleConfig, RoleMapping};
     use super::*;
 
@@ -1054,6 +1129,7 @@ mod tests {
         assert!(r.role_ids_for(&["g-dev".into()]).is_empty());
         r.reload(GroupSnapshot {
             groups: vec![GroupRow {
+                priority: Default::default(),
                 name: "developers".into(),
                 description: String::new(),
                 is_admin: false,
@@ -1085,6 +1161,7 @@ mod tests {
                 .iter()
                 .map(
                     |&(name, is_admin, is_default, can_manage_agents)| GroupRow {
+                        priority: Default::default(),
                         name: name.into(),
                         description: String::new(),
                         is_admin,

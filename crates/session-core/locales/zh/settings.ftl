@@ -272,3 +272,11 @@ settings-invalid-ip-network-prefix-not-number = 前缀长度不是数字
 settings-invalid-ip-network-address = 地址无法解析
 settings-invalid-ip-network-mapped-prefix = IPv4 映射网段的前缀至少需要 96
 settings-invalid-ip-network-prefix-too-long = 前缀长度超过 { $max }
+
+settings-f-gateway-priority_enabled = 启用请求优先级调度
+settings-f-gateway-priority_enabled-help = 严格优先级：下一个可用槽位优先分配给高优先级，其次为中和低。同级按到达顺序处理。持续的高优先级负载可能使较低优先级请求超时。
+settings-f-gateway-default_priority = 默认请求优先级
+settings-f-gateway-default_priority-help = 当令牌和用户组均未明确设置优先级时使用。
+settings-f-gateway-default_priority-opt-low = 低
+settings-f-gateway-default_priority-opt-medium = 中
+settings-f-gateway-default_priority-opt-high = 高

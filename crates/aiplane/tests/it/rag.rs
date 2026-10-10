@@ -93,6 +93,7 @@ fn registry_pointed_at(upstream_url: &str) -> Arc<UpstreamRegistry> {
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                priority: Default::default(),
                 alias: None,
                 supports_edit: false,
                 enabled: true,

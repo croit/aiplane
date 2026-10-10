@@ -106,3 +106,7 @@ The Web search category has its own provider card. Choose the provider, set the 
 | Content guard rejects everything | Guard service error, enforce mode and System One availability |
 | Confirm action fails without a prompt | Connected browser chat versus API caller; three-minute deadline |
 | New RAG path has no indexed data | Indexes do not move with a settings change |
+
+## Request prioritization
+
+Under **Access → Gateway**, enable `gateway.priority_enabled` and choose `gateway.default_priority` (Low, Medium or High; initially Medium). Saved settings apply to new admissions. High-priority requests take the next available slot before Medium and Low; arrival order applies within each class. Sustained high traffic can cause lower classes to reach the existing upstream wait timeout. Running requests retain their slots. Assign group and token priorities in [Access](access.md), and configure backend forwarding in [Models and routing](models.md). See [Request priority](../request-priority.md).

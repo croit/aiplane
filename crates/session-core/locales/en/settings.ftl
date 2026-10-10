@@ -284,3 +284,11 @@ settings-invalid-ip-network-prefix-not-number = the prefix length is not a numbe
 settings-invalid-ip-network-address = the address does not parse
 settings-invalid-ip-network-mapped-prefix = an IPv4-mapped network needs a prefix of 96 or more
 settings-invalid-ip-network-prefix-too-long = the prefix length exceeds { $max }
+
+settings-f-gateway-priority_enabled = Enable request prioritization
+settings-f-gateway-priority_enabled-help = Strict priority: high requests take the next available slot before medium and low. Within a priority, arrival order applies. Lower priorities may time out under sustained higher-priority load.
+settings-f-gateway-default_priority = Default request priority
+settings-f-gateway-default_priority-help = Used when neither a token nor a group has an explicit priority.
+settings-f-gateway-default_priority-opt-low = Low
+settings-f-gateway-default_priority-opt-medium = Medium
+settings-f-gateway-default_priority-opt-high = High

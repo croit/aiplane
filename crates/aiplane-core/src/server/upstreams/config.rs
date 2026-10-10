@@ -232,6 +232,8 @@ impl PickerStrategy {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackendConfig {
+    #[serde(default)]
+    pub priority: crate::server::priority::BackendPriority,
     pub name: String,
     pub base_url: String,
     pub api_key_env: Option<String>,

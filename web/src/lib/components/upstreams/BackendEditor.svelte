@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { BackendPriority } from '#lib/priority.js';
 	import { tick, untrack } from 'svelte';
 	import { adminDelete, adminPost, adminPut } from '#lib/admin-client.js';
 	import { ApiError, request } from '#lib/api.js';
@@ -29,10 +30,16 @@
 		untrack(() => backend?.aliases.map(({ alias, target }) => (target ? `${alias}=${target}` : alias)).join('\n') ?? '')
 	);
 	let supportsEdit = $state(untrack(() => backend?.supports_edit ?? false));
+	let priorityMode = $state<BackendPriority['mode']>(untrack(() => backend?.priority.mode ?? 'auto'));
+	let priorityField = $state(untrack(() => backend?.priority.mode === 'custom' ? backend.priority.mapping.field : 'priority'));
+	let priorityLow = $state(untrack(() => backend?.priority.mode === 'custom' ? backend.priority.mapping.low : 1));
+	let priorityMedium = $state(untrack(() => backend?.priority.mode === 'custom' ? backend.priority.mapping.medium : 0));
+	let priorityHigh = $state(untrack(() => backend?.priority.mode === 'custom' ? backend.priority.mapping.high : -1));
 	let overwrite = $state(untrack(() => backend !== null));
 	let deleting = $state(false);
 	let busy = $state(false);
 	let error = $state<string | null>(null);
+	let errorAlert: HTMLDivElement | undefined = $state();
 	let testing = $state(false);
 	let testResult = $state<BackendTestResult | null>(null);
 	let aliasesInput: HTMLTextAreaElement;
@@ -57,6 +64,7 @@
 				base_url: baseUrl,
 				api_key_env: apiKeyEnv,
 				api_key: apiKey,
+				priority: priorityMode === 'custom' ? { mode: priorityMode, mapping: { field: priorityField, low: priorityLow, medium: priorityMedium, high: priorityHigh } } : { mode: priorityMode },
 				weight,
 				max_inflight: maxInflight,
 				health_path: healthPath,
@@ -70,6 +78,8 @@
 			onCancel?.();
 		} catch (err) {
 			error = String(err);
+			await tick();
+			errorAlert?.focus();
 		} finally {
 			busy = false;
 		}
@@ -145,7 +155,7 @@
 </script>
 
 <form class="flex flex-col gap-3" onsubmit={(event) => { event.preventDefault(); void save(); }}>
-	{#if error}<div class="alert alert-error text-sm" role="alert"><span>{error}</span></div>{/if}
+	{#if error}<div class="alert alert-error text-sm" role="alert" tabindex="-1" bind:this={errorAlert}><span>{error}</span></div>{/if}
 	{#if nameTaken}
 		<div class="alert alert-warning text-sm" role="alert">
 			<span>{t('backends-name-taken')}</span>
@@ -190,6 +200,24 @@
 			<input class="input w-full" type="number" min="1" bind:value={maxInflight} />
 		</label>
 	</div>
+	<fieldset class="fieldset">
+		<legend class="fieldset-legend">{t('priority-backend-label')}</legend>
+		<select aria-label={t('priority-backend-label')} class="select w-full" bind:value={priorityMode}>
+			<option value="auto">{t('priority-mode-auto')}</option>
+			<option value="gateway">{t('priority-mode-gateway')}</option>
+			<option value="custom">{t('priority-mode-custom')}</option>
+		</select>
+		<p class="text-xs text-base-content/60">{t('priority-backend-help')}</p>
+		{#if priorityMode === 'auto'}<p class="text-xs text-base-content/60">{backend?.live?.detected_priority ? t('priority-detected') : t('priority-unreported')}</p>{/if}
+		{#if priorityMode === 'custom'}
+			<label class="fieldset"><span class="fieldset-legend">{t('priority-field')}</span><input class="input w-full font-mono" bind:value={priorityField} required /></label>
+			<div class="grid grid-cols-3 gap-2">
+				<label class="fieldset"><span class="fieldset-legend">{t('priority-low')}</span><input class="input w-full" type="number" step="1" bind:value={priorityLow} required /></label>
+				<label class="fieldset"><span class="fieldset-legend">{t('priority-medium')}</span><input class="input w-full" type="number" step="1" bind:value={priorityMedium} required /></label>
+				<label class="fieldset"><span class="fieldset-legend">{t('priority-high')}</span><input class="input w-full" type="number" step="1" bind:value={priorityHigh} required /></label>
+			</div>
+		{/if}
+	</fieldset>
 	<label class="flex flex-col gap-1">
 		<span class="text-xs text-base-content/70">{t('backends-field-models')}</span>
 		<input class="input font-mono w-full" bind:value={models} />

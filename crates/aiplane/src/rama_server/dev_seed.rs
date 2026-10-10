@@ -89,6 +89,7 @@ pub async fn reset_tokens(pool: &Pool) -> anyhow::Result<()> {
         tokens::insert(
             pool,
             &tokens::Token {
+                priority: None,
                 id: (*id).to_string(),
                 user_id: USER_ID.into(),
                 name: (*name).to_string(),
@@ -242,6 +243,7 @@ mod tests {
         tokens::insert(
             &pool,
             &tokens::Token {
+                priority: None,
                 id: "bobs".into(),
                 user_id: "bob".into(),
                 name: "Bobs token".into(),

@@ -14,6 +14,7 @@ import type { AdminGroup } from './components/admin/AdminGroupForm.svelte';
 
 function group(name: string, tools: string[], skills: string[] = [], oidc: string[] = []): AdminGroup {
 	return {
+		priority: null,
 		name,
 		description: '',
 		is_admin: false,

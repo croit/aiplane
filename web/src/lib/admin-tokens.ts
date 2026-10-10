@@ -1,3 +1,4 @@
+import type { Priority } from './priority.js';
 export type AdminTokenState = 'active' | 'expired' | 'revoked';
 
 export interface AdminTokenLimit {
@@ -9,6 +10,7 @@ export interface AdminTokenLimit {
 }
 
 export interface AdminToken {
+	priority: Priority | null;
 	id: string;
 	name: string;
 	owner_id: string;

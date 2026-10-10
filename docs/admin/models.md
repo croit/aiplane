@@ -112,3 +112,11 @@ The selector receives request content. Treat its provider as another processor o
 | Automatic route cannot be added | Available selector and at least two eligible candidate models |
 | Route repeatedly uses fallback | Decision reason, confidence, selector timeout and candidate availability |
 | Cost appears incomplete | Input/output price overrides and the Usage unpriced-model warning |
+
+## Backend priority forwarding
+
+When saving a backend fails, the error receives keyboard focus and scrolls into view. Priority validation messages follow the selected UI language.
+
+![A focused backend priority validation error, using synthetic demo data.](../img/guide/request-priority-error.png)
+
+The backend editor offers **Automatic**, **Gateway only**, and **Custom mapping**. Automatic requires reported active scheduling, supported policy and integer ordering; otherwise the editor reports that forwarding is unreported. Gateway only uses AIplane’s queue. Custom mapping specifies a top-level request parameter and ordered Low/Medium/High integer values, overriding detection. For vLLM enable `--scheduling-policy priority` and map `priority` to 1/0/-1. For SGLang enable `--enable-priority-scheduling` with `fcfs` or `lof`; its direction can be reported by `/server_info`. Save and **Apply**. Software detection alone does not enable forwarding. Unsupported backends keep the same three gateway priority levels. See [Request priority](../request-priority.md).

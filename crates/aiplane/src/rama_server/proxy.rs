@@ -57,6 +57,7 @@ use session_core::i18n::{Lang, t};
 /// `forward`/`forward_streaming` helpers are generic over the path.
 #[derive(Clone)]
 struct RecordParams {
+    priority: Option<aiplane_core::server::priority::Priority>,
     user_id: String,
     principal_kind: aiplane_core::server::principal::PrincipalKind,
     user_email: String,
@@ -79,6 +80,7 @@ impl RecordParams {
     /// the serving pool's flag (resolve via `upstreams.enforce_limits_for_model`).
     fn v1(user: &UserCtx, kind: UsageKind, model: String, enforce_limits: bool) -> Self {
         Self {
+            priority: user.priority,
             user_id: user.principal.subject_id().to_string(),
             principal_kind: user.principal.kind(),
             user_email: user.user_email.clone(),
@@ -284,10 +286,29 @@ async fn admit(
         .resolve_route_access(model, kind, access)
         .map_err(route_error_response)?;
     let mut enforce_limits = gate(&checked).await?;
-    let acquired = state
-        .upstreams
-        .route_access(model, kind, access)
-        .map_err(route_error_response)?;
+    let priority = match caller {
+        Caller::Bearer(user) => user.priority,
+        Caller::Session { role_ids, .. } => state.config().gateway.priority_enabled.then(|| {
+            state
+                .rbac
+                .priority_for_roles(role_ids, state.config().gateway.default_priority)
+        }),
+    };
+    let acquired = aiplane_core::server::upstreams::route_or_wait(
+        &state.upstreams,
+        model,
+        kind,
+        access,
+        if priority.is_some() {
+            state.upstream_wait()
+        } else {
+            std::time::Duration::ZERO
+        },
+        None,
+        priority,
+    )
+    .await
+    .map_err(route_error_response)?;
     let real_model = acquired.resolved_model().to_string();
     // A backend's health can change between resolving and acquiring; what
     // is dispatched is what must have passed the gate.
@@ -587,7 +608,7 @@ async fn forward_one_round_once(
     access: &aiplane_core::server::upstreams::PoolAccess,
     headers: &HeaderMap,
     rec: &RecordParams,
-    body_value: Value,
+    mut body_value: Value,
     // Where to record the backend this round picked, for the response header.
     // Only the *first* round writes: that is the round the affinity decision
     // was made for, and on a multi-round turn later rounds may differ.
@@ -600,10 +621,27 @@ async fn forward_one_round_once(
     // each round resends the whole (growing) conversation.
     let affinity =
         aiplane_core::server::upstreams::affinity::hint_for_request(headers, &body_value);
-    let acquired = state
+    let acquired = if rec.priority.is_some() {
+        aiplane_core::server::upstreams::route_or_wait(
+            &state.upstreams,
+            model,
+            PoolKind::Chat,
+            access,
+            state.upstream_wait(),
+            Some(&affinity),
+            rec.priority,
+        )
+        .await
+        .map_err(|e| LoopError::Upstream(e.to_string()))?
+    } else {
+        state
+            .upstreams
+            .acquire_for_access_affine(model, PoolKind::Chat, access, Some(&affinity))
+            .map_err(|e| LoopError::Upstream(e.to_string()))?
+    };
+    state
         .upstreams
-        .acquire_for_access_affine(model, PoolKind::Chat, access, Some(&affinity))
-        .map_err(|e| LoopError::Upstream(e.to_string()))?;
+        .apply_priority(&acquired, &mut body_value, rec.priority);
     let backend_name = acquired.backend().name.clone();
     if let Some(cell) = served_by
         && let Ok(mut slot) = cell.lock()
@@ -726,11 +764,22 @@ async fn chat_bytedumb(
             access,
             state.upstream_wait(),
             Some(&affinity),
+            user.priority,
         )
         .await
         {
             Ok(a) => a,
             Err(e) => return route_error_response(e),
+        };
+        let payload = match forwarded_priority_body(state, &acquired, body.clone(), user.priority) {
+            Ok(payload) => payload,
+            Err(_) => {
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "serialization_error",
+                    &t(Lang::from_request(&headers), "priority-error-internal"),
+                );
+            }
         };
         match forward_streaming(
             state,
@@ -738,7 +787,7 @@ async fn chat_bytedumb(
             Method::POST,
             "chat/completions",
             headers.clone(),
-            body.clone(),
+            payload,
             rec.clone(),
         )
         .await
@@ -990,6 +1039,13 @@ struct CallerGate<'a> {
 }
 
 impl SelectorGate for CallerGate<'_> {
+    fn priority(&self) -> Option<aiplane_core::server::priority::Priority> {
+        self.user.priority
+    }
+    fn wait_budget(&self) -> std::time::Duration {
+        self.state.upstream_wait()
+    }
+
     async fn admit(
         &self,
         selector_model: &str,
@@ -1308,6 +1364,11 @@ pub async fn transcribe_session(State(state): State<Arc<RamaState>>, req: Reques
     let access =
         state.pool_access_for(user_row.as_ref().map(|u| u.roles.as_slice()).unwrap_or(&[]));
     let rec = RecordParams {
+        priority: state.config().gateway.priority_enabled.then(|| {
+            state
+                .rbac
+                .priority_for_roles(&access.role_ids, state.config().gateway.default_priority)
+        }),
         user_id: session.user_id.clone(),
         principal_kind: aiplane_core::server::principal::PrincipalKind::User,
         user_email,
@@ -1894,6 +1955,11 @@ pub async fn speech_session(State(state): State<Arc<RamaState>>, req: Request) -
         String::new()
     };
     let rec = RecordParams {
+        priority: state.config().gateway.priority_enabled.then(|| {
+            state
+                .rbac
+                .priority_for_roles(&access.role_ids, state.config().gateway.default_priority)
+        }),
         user_id: session.user_id.clone(),
         principal_kind: aiplane_core::server::principal::PrincipalKind::User,
         user_email,
@@ -2134,6 +2200,25 @@ fn maybe_learn_capability(state: &RamaState, model: &str, status: u16, body: &[u
     });
 }
 
+fn forwarded_priority_body(
+    state: &RamaState,
+    acquired: &Acquired,
+    body: Bytes,
+    priority: Option<aiplane_core::server::priority::Priority>,
+) -> Result<Bytes, serde_json::Error> {
+    let Ok(mut value) = serde_json::from_slice::<Value>(&body) else {
+        return Ok(body);
+    };
+    if state
+        .upstreams
+        .apply_priority(acquired, &mut value, priority)
+    {
+        serde_json::to_vec(&value).map(Bytes::from)
+    } else {
+        Ok(body)
+    }
+}
+
 async fn forward(
     state: &RamaState,
     acquired: Acquired,
@@ -2149,6 +2234,19 @@ async fn forward(
     // outbound role too, but it needs `rama/rustls,tls` (which pulls
     // aws-lc-sys → cmake) and its concrete type is ugly enough as a
     // struct field that the maintenance cost doesn't pay for itself.
+    let body = match forwarded_priority_body(state, &acquired, body, rec.priority) {
+        Ok(body) => body,
+        Err(_) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "serialization_error",
+                &t(
+                    Lang::from_request(&client_headers),
+                    "priority-error-internal",
+                ),
+            );
+        }
+    };
     let backend = acquired.backend();
     let backend_name = backend.name.clone();
     let model_key = acquired.resolved_model().to_string();
@@ -3225,6 +3323,7 @@ async fn drive_streaming_tool_loop_inner(
                     &access,
                     state.upstream_wait(),
                     Some(&affinity),
+                    rec.priority,
                 )
                 .await
                 // No replica came back within the budget: the backend is
@@ -3234,7 +3333,11 @@ async fn drive_streaming_tool_loop_inner(
                 let backend_name = acquired.backend().name.clone();
                 let started = Instant::now();
                 let url = format!("{}/chat/completions", acquired.backend().base_url);
-                let serialized = serde_json::to_vec(&round_body).map_err(|e| e.to_string())?;
+                let mut outgoing_body = round_body.clone();
+                state
+                    .upstreams
+                    .apply_priority(&acquired, &mut outgoing_body, rec.priority);
+                let serialized = serde_json::to_vec(&outgoing_body).map_err(|e| e.to_string())?;
 
                 let mut http = state
                     .http

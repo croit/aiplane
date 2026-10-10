@@ -46,7 +46,8 @@
 			pool: status.pool, profile: previous?.profile ?? 'generic',
 			detected_version: previous?.detected_version ?? null,
 			detected_max_parallel: previous?.detected_max_parallel ?? null,
-			detected_at: previous?.detected_at ?? null
+			detected_at: previous?.detected_at ?? null,
+			detected_priority: previous?.detected_priority ?? null
 		};
 		data = { ...data, dirty: status.dirty, backends: data.backends.map((backend) => backend.name === status.name ? { ...backend, live } : backend), usage_last_hour: { ...data.usage_last_hour, [status.name]: status.usage } };
 	}
@@ -61,6 +62,7 @@
 			case 'backend_leaves': return t('upstreams-diff-backend-leaves', { backend: change.backend ?? '', pool: change.pool ?? '' });
 			case 'backend_url': return t('upstreams-diff-backend-url', { backend: change.backend ?? '', from: change.from ?? '', to: change.to ?? '' });
 			case 'backend_limits': return t('upstreams-diff-backend-limits', { backend: change.backend ?? '', weight: change.weight ?? 1, inflight: change.inflight ?? 1 });
+			case 'backend_priority': return t('priority-backend-changed', { backend: change.backend ?? '' });
 			case 'backend_health_path': return t('upstreams-diff-backend-health-path', { backend: change.backend ?? '', to: change.to ?? '' });
 		}
 	}

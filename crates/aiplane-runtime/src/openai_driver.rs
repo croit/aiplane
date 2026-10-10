@@ -1106,6 +1106,26 @@ async fn classify_and_dispatch_tool_calls(
     Ok((assistant_tool_calls, call_refs, refused))
 }
 
+async fn await_unless_cancelled<T>(
+    cancel: &std::sync::atomic::AtomicBool,
+    operation: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::pin!(operation);
+    let mut ticks = tokio::time::interval(std::time::Duration::from_millis(50));
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            biased;
+            _ = ticks.tick() => {
+                if cancel.load(Ordering::SeqCst) { return None; }
+            }
+            value = &mut operation => {
+                return (!cancel.load(Ordering::SeqCst)).then_some(value);
+            }
+        }
+    }
+}
+
 async fn run_one_turn(
     d: &OpenAiDriver,
     policy: TurnPolicy<'_>,
@@ -1213,20 +1233,26 @@ async fn run_one_turn(
         "messages": &messages,
         "tools": if routing_has_tools { serde_json::json!([{}]) } else { serde_json::json!([]) },
     });
-    let target = crate::server::model_route::route_target(
-        &d.state,
-        &ctx.model,
-        &routing_state,
-        &access,
-        Some(
-            aiplane_core::server::automatic_routing::AutomaticRouteAffinity {
-                principal: d.tool_ctx.principal.subject_id(),
-                session: &ctx.session_id,
-            },
+    let Some(target) = await_unless_cancelled(
+        &ctx.cancel,
+        crate::server::model_route::route_target(
+            &d.state,
+            &ctx.model,
+            &routing_state,
+            &access,
+            Some(
+                aiplane_core::server::automatic_routing::AutomaticRouteAffinity {
+                    principal: d.tool_ctx.principal.subject_id(),
+                    session: &ctx.session_id,
+                },
+            ),
         ),
     )
     .await
-    .map_err(upstream_err)?;
+    else {
+        return Ok(TurnOutcome::default().into());
+    };
+    let target = target.map_err(upstream_err)?;
     let (routing_model, access, automatic_decision) =
         (target.model.as_str(), target.access, target.decision);
     match crate::content_guard::evaluate_for_model(&d.state, &routing_state, routing_model, &access)
@@ -1551,7 +1577,6 @@ async fn run_one_turn(
             serving.thinking_budget,
             &mut request_body,
         );
-        let serialized = serde_json::to_vec(&request_body).map_err(upstream_err)?;
 
         // Prefix affinity, so a chat-UI conversation keeps landing on the
         // replica that holds its KV prefix instead of alternating between GPUs
@@ -1567,14 +1592,33 @@ async fn run_one_turn(
             real_model: &real_model,
             backend,
         };
-        let acquired = match d.state.upstreams.route_access_affine(
-            &real_model,
-            aiplane_core::server::upstreams::PoolKind::Chat,
-            &access,
-            Some(&affinity),
-        ) {
-            Ok(acquired) => acquired,
-            Err(err) => {
+        let priority = d.state.config().gateway.priority_enabled.then(|| {
+            d.state.rbac.request_priority(
+                tool_ctx.principal.user_roles().unwrap_or_default(),
+                d.state.config().gateway.default_priority,
+            )
+        });
+        let acquired = match await_unless_cancelled(
+            &ctx.cancel,
+            aiplane_core::server::upstreams::route_or_wait(
+                &d.state.upstreams,
+                &real_model,
+                aiplane_core::server::upstreams::PoolKind::Chat,
+                &access,
+                if priority.is_some() {
+                    d.state.upstream_wait()
+                } else {
+                    std::time::Duration::ZERO
+                },
+                Some(&affinity),
+                priority,
+            ),
+        )
+        .await
+        {
+            None => return Ok(TurnOutcome::default().into()),
+            Some(Ok(acquired)) => acquired,
+            Some(Err(err)) => {
                 let err = upstream_err(err);
                 let answer = exchange::Answer::from_error(&err);
                 exchange_log
@@ -1591,6 +1635,10 @@ async fn run_one_turn(
                 return Err(err);
             }
         };
+        d.state
+            .upstreams
+            .apply_priority(&acquired, &mut request_body, priority);
+        let serialized = serde_json::to_vec(&request_body).map_err(upstream_err)?;
         let backend = acquired.backend();
         let backend_name = backend.name.clone();
         let url = format!("{}/chat/completions", backend.base_url);
@@ -3778,6 +3826,35 @@ where
 /// rather than poisoning the request.
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn cancellable_admission_returns_ready_values_and_drops_cancelled_waits() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        assert_eq!(
+            super::await_unless_cancelled(&cancel, async { 7 }).await,
+            Some(7)
+        );
+        let flag = cancel.clone();
+        let setter = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            flag.store(true, Ordering::SeqCst);
+        });
+        let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            super::await_unless_cancelled(&cancel, receiver),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_none());
+        assert!(sender.is_closed());
+        setter.await.unwrap();
+        assert!(
+            super::await_unless_cancelled(&cancel, async { 7 })
+                .await
+                .is_none()
+        );
+    }
     use super::{
         STEER_PREFIX, SessionContext, THINK_TAGS, ToolCallAcc, ToolCallStatus,
         ensure_unique_tool_call_ids, fold_in_steers, inject_ocr_blocks, message_for_history,
