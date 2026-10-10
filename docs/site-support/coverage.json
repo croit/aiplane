@@ -69,6 +69,10 @@
       "documentation": "agent-guide/create.md"
     },
     {
+      "source": "web/src/routes/dots/+page.svelte",
+      "documentation": "dots.md"
+    },
+    {
       "source": "web/src/routes/agents/[id]/+page.svelte",
       "documentation": "agent-guide/create.md"
     },

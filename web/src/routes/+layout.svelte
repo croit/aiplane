@@ -150,6 +150,7 @@
 		['nav-scheduled', '/scheduled', 'clock'],
 		['nav-webhooks', '/webhooks', 'send'],
 		['nav-agents', '/agents', 'cpu'],
+		['nav-dots', '/dots', 'cube'],
 		['nav-tools', '/tools', 'sliders']
 	];
 	const accountLinks: NavLink[] = [
@@ -173,7 +174,9 @@
 	const visibleWorkspaceLinks = $derived(
 		visibleNavLinks(workspaceLinks, features).filter(
 			([, path]) =>
-				(path !== '/agents' || me.value?.can_manage_agents) && (path !== '/inbox' || inboxShown(inboxLive, isActive('/inbox')))
+				(path !== '/agents' || me.value?.can_manage_agents) &&
+				(path !== '/dots' || me.value?.can_manage_agents) &&
+				(path !== '/inbox' || inboxShown(inboxLive, isActive('/inbox')))
 		)
 	);
 	const visibleAccountLinks = $derived(visibleNavLinks(accountLinks, features));

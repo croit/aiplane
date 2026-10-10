@@ -90,6 +90,21 @@ pub struct AgentRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonalDotRow {
+    pub agent: AgentRow,
+    pub owner_user_id: String,
+    pub name: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersonalDotCreate {
+    Created,
+    NameTaken,
+    ActiveLimit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionRow {
     pub version: i64,
     pub spec: String,
@@ -201,6 +216,180 @@ pub async fn create(
     .await?;
     tx.commit().await?;
     get(pool, &id).await
+}
+
+/// Create a named personal Dot only when its owner has an active slot.
+/// Principal, agent, personal owner and lifecycle record are committed atomically.
+pub async fn create_personal_dot(
+    pool: &Pool,
+    new: &NewPrincipal<'_>,
+    draft_spec: &str,
+    owner_user_id: &str,
+    active_limit: u32,
+) -> Result<(PersonalDotCreate, Option<AgentRow>), DbError> {
+    let now = Timestamp::now().to_string();
+    let mut tx = WriteTx::begin(pool).await?;
+    let name_taken: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM personal_dots WHERE owner_user_id = ? AND name = ?)",
+    )
+    .bind(owner_user_id)
+    .bind(new.name)
+    .fetch_one(&mut *tx)
+    .await?;
+    if name_taken {
+        return Ok((PersonalDotCreate::NameTaken, None));
+    }
+    let active: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM personal_dots WHERE owner_user_id = ? AND active = 1",
+    )
+    .bind(owner_user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if active >= i64::from(active_limit) {
+        return Ok((PersonalDotCreate::ActiveLimit, None));
+    }
+    let principal_name = format!("personal-dot-{}", uuid::Uuid::new_v4());
+    let principal = NewPrincipal {
+        name: &principal_name,
+        display: new.display,
+        description: new.description,
+    };
+    let Some(id) = sp::insert(&mut tx, &principal, owner_user_id).await? else {
+        return Ok((PersonalDotCreate::NameTaken, None));
+    };
+    sqlx::query(
+        "INSERT INTO agents (principal_id, draft_spec, live_version, created_at, updated_at)
+         VALUES (?, ?, NULL, ?, ?)",
+    )
+    .bind(&id)
+    .bind(draft_spec)
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO personal_dots (principal_id, owner_user_id, name, active, created_at, updated_at)
+         VALUES (?, ?, ?, 1, ?, ?)",
+    )
+    .bind(&id)
+    .bind(owner_user_id)
+    .bind(new.name)
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
+    agent_audit::append(
+        &mut tx,
+        agent_audit::NewEvent::new(AuditKind::AgentCreated, &id, json!({ "name": new.name }))
+            .by(Some(owner_user_id)),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok((PersonalDotCreate::Created, get(pool, &id).await?))
+}
+
+/// Change a personal Dot's active state. Reactivation checks the owner's cap
+/// under SQLite's write lock; deactivation releases a slot immediately.
+pub async fn set_personal_dot_active(
+    pool: &Pool,
+    id: &str,
+    owner_user_id: &str,
+    active: bool,
+    active_limit: u32,
+) -> Result<bool, DbError> {
+    let mut tx = WriteTx::begin(pool).await?;
+    let current: Option<bool> = sqlx::query_scalar(
+        "SELECT active FROM personal_dots WHERE principal_id = ? AND owner_user_id = ?",
+    )
+    .bind(id)
+    .bind(owner_user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(current) = current else {
+        return Ok(false);
+    };
+    if current == active {
+        return Ok(true);
+    }
+    if active {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM personal_dots WHERE owner_user_id = ? AND active = 1",
+        )
+        .bind(owner_user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if count >= i64::from(active_limit) {
+            return Ok(false);
+        }
+    }
+    sqlx::query(
+        "UPDATE personal_dots SET active = ?, updated_at = ? WHERE principal_id = ? AND owner_user_id = ?",
+    )
+    .bind(active)
+    .bind(Timestamp::now().to_string())
+    .bind(id)
+    .bind(owner_user_id)
+    .execute(&mut *tx)
+    .await?;
+    agent_audit::append(
+        &mut tx,
+        agent_audit::NewEvent::new(
+            AuditKind::PersonalDotStateChanged,
+            id,
+            json!({ "active": active }),
+        )
+        .by(Some(owner_user_id)),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// List the personal Dots owned by one user, including inactive ones.
+pub async fn list_personal_dots(
+    pool: &Pool,
+    owner_user_id: &str,
+) -> Result<Vec<PersonalDotRow>, DbError> {
+    let rows = sqlx::query(&format!(
+        "SELECT {}, d.owner_user_id, d.name AS dot_name, d.active FROM agents a
+         JOIN system_principals p ON p.id = a.principal_id
+         JOIN personal_dots d ON d.principal_id = a.principal_id
+         WHERE d.owner_user_id = ? ORDER BY a.created_at, p.name",
+        agent_cols()
+    ))
+    .bind(owner_user_id)
+    .fetch_all(pool)
+    .await?;
+    rows.iter().map(map_personal_dot).collect()
+}
+
+fn map_personal_dot(row: &SqliteRow) -> Result<PersonalDotRow, DbError> {
+    Ok(PersonalDotRow {
+        agent: map_agent(row)?,
+        owner_user_id: row.try_get("owner_user_id")?,
+        name: row.try_get("dot_name")?,
+        active: row.try_get("active")?,
+    })
+}
+
+/// Load one personal Dot only when `owner_user_id` owns it.
+pub async fn get_personal_dot(
+    pool: &Pool,
+    owner_user_id: &str,
+    id: &str,
+) -> Result<Option<PersonalDotRow>, DbError> {
+    let row = sqlx::query(&format!(
+        "SELECT {}, d.owner_user_id, d.name AS dot_name, d.active FROM agents a
+         JOIN system_principals p ON p.id = a.principal_id
+         JOIN personal_dots d ON d.principal_id = a.principal_id
+         WHERE d.owner_user_id = ? AND d.principal_id = ?",
+        agent_cols()
+    ))
+    .bind(owner_user_id)
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    row.as_ref().map(map_personal_dot).transpose()
 }
 
 pub async fn get(pool: &Pool, id: &str) -> Result<Option<AgentRow>, DbError> {
@@ -803,6 +992,115 @@ mod tests {
         .await
         .unwrap()
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn personal_dots_enforce_active_capacity_and_can_be_reactivated() {
+        let pool = pool().await;
+        let first = create_personal_dot(
+            &pool,
+            &NewPrincipal {
+                name: "harald",
+                display: "Harald",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "alice",
+            1,
+        )
+        .await
+        .unwrap();
+        let (PersonalDotCreate::Created, Some(first)) = first else {
+            panic!("first Dot should be created")
+        };
+        assert_eq!(
+            create_personal_dot(
+                &pool,
+                &NewPrincipal {
+                    name: "research",
+                    display: "Research",
+                    description: ""
+                },
+                r#"{"main":{}}"#,
+                "alice",
+                1,
+            )
+            .await
+            .unwrap()
+            .0,
+            PersonalDotCreate::ActiveLimit
+        );
+        assert!(
+            set_personal_dot_active(&pool, &first.principal.id, "alice", false, 1)
+                .await
+                .unwrap()
+        );
+        let (PersonalDotCreate::Created, Some(second)) = create_personal_dot(
+            &pool,
+            &NewPrincipal {
+                name: "research",
+                display: "Research",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "alice",
+            1,
+        )
+        .await
+        .unwrap() else {
+            panic!("deactivation should free the slot")
+        };
+        assert!(
+            !set_personal_dot_active(&pool, &first.principal.id, "alice", true, 1)
+                .await
+                .unwrap()
+        );
+        assert_eq!(list_personal_dots(&pool, "alice").await.unwrap().len(), 2);
+        assert!(list_personal_dots(&pool, "bob").await.unwrap().is_empty());
+        assert_eq!(
+            create_personal_dot(
+                &pool,
+                &NewPrincipal {
+                    name: "harald",
+                    display: "Harald",
+                    description: "",
+                },
+                r#"{"main":{}}"#,
+                "bob",
+                1,
+            )
+            .await
+            .unwrap()
+            .0,
+            PersonalDotCreate::Created
+        );
+        assert_eq!(
+            create_personal_dot(
+                &pool,
+                &NewPrincipal {
+                    name: "harald",
+                    display: "Another Harald",
+                    description: "",
+                },
+                r#"{"main":{}}"#,
+                "alice",
+                2,
+            )
+            .await
+            .unwrap()
+            .0,
+            PersonalDotCreate::NameTaken
+        );
+        assert!(
+            set_personal_dot_active(&pool, &second.principal.id, "alice", false, 1)
+                .await
+                .unwrap()
+        );
+        assert!(
+            set_personal_dot_active(&pool, &first.principal.id, "alice", true, 1)
+                .await
+                .unwrap()
+        );
     }
 
     fn audit_kinds(events: &[agent_audit::AuditEvent]) -> Vec<&str> {

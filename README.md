@@ -102,6 +102,8 @@ connect company systems and define who can access models, tools and workflows.
 - 📊 **Agent insights and activity history.** Inspect run analytics and export
   agent activity records for review.
   [Observe agent runs](docs/agent-guide/run-observe.md).
+- 🤖 **Personal Dot capacity.** Set the active personal-Dot limit per user in
+  Administration → Settings → Access; the default is four.
 
 ### Ready to deploy and operate
 
@@ -216,6 +218,10 @@ scrape endpoint, `GET /metrics`, is off by default: switch it on with a scrape
 token, an allowed IP list or both under **Administration → Settings → Access**.
 Behind a reverse proxy the IP list needs `AIPLANE_TRUSTED_PROXIES` set to the
 proxy. See [monitoring](docs/operations/monitoring.md).
+
+Personal Dots use the existing `can_manage_agents` group permission in this
+initial API slice. Their active count defaults to four per user and is
+operator-configurable under **Administration → Settings → Access**.
 
 To build from source, install [mise](https://mise.jdx.dev/) and run:
 

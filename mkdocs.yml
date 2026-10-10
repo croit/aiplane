@@ -62,6 +62,8 @@ nav:
       - Test and publish: agent-guide/test-publish.md
       - Runs and decisions: agent-guide/run-observe.md
       - Advanced spec: agent-guide/spec-reference.md
+  - Dots:
+      - Product and architecture: dots.md
   - Administration:
       - Models and routing: admin/models.md
       - Access: admin/access.md

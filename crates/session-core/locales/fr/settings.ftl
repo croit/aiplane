@@ -48,6 +48,8 @@ settings-s-usage = Métriques d'utilisation
 settings-s-usage-blurb = Comptabilisation par requête derrière /usage.
 settings-s-limits = Limites de débit & quotas
 settings-s-limits-blurb = Interrupteur principal des règles configurées dans /admin/limits.
+settings-s-dots = AIplane Dots
+settings-s-dots-blurb = Capacité des Dots personnels.
 settings-s-content_guard = Contrôle du contenu
 settings-s-content_guard-blurb = Vérifie le contenu avant que le modèle sélectionné ne le reçoive.
 
@@ -196,6 +198,8 @@ settings-f-usage-currency-help = Devise dans laquelle les coûts sont indiqués.
 
 settings-f-limits-enabled = Appliquer les limites et quotas
 settings-f-limits-enabled-help = Désactivé, les règles de /admin/limits sont ignorées.
+settings-f-dots-max_active_per_user = Dots personnels actifs par utilisateur
+settings-f-dots-max_active_per_user-help = Nombre maximal de Dots personnels actifs par utilisateur. Valeur par défaut : 4.
 
 settings-f-feedback-enabled = Proposer le widget de retour
 settings-f-feedback-enabled-help = Interrupteur principal du bouton de retour intégré.

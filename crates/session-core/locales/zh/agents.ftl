@@ -2,6 +2,14 @@
 
 agent-output-withheld = 我无法提供该回答，因为其中提到了我无法为您核实的信息。请换一种方式提问，或联系支持人员。
 agent-output-redacted = [已移除]
+dot-error-name-taken = 你的账户中已有同名个人 Dot。请更换名称。
+dot-error-name-invalid = 请输入不超过 80 个字符且不含控制字符的名称。
+dot-error-active-limit = 已达到个人 Dot 启用数量上限。请先停用一个 Dot，再创建新的 Dot。
+dot-error-not-found = 你的账户中没有此个人 Dot。
+dot-error-id-missing = 请求中缺少 Dot ID。
+dot-memory-error-kind = 请选择偏好、项目或事实作为记忆类型。
+dot-memory-error-empty = 记忆内容不能为空。
+dot-memory-error-id-missing = 请求中缺少 Dot ID 或记忆 ID。
 
 # What a website visitor reads next to the secure field when an identity
 # verifier (#95) asks for the code it sent. Worded the same whether or not

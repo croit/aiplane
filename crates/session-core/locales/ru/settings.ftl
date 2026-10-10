@@ -48,6 +48,8 @@ settings-s-usage = Метрики использования
 settings-s-usage-blurb = Учёт по каждому запросу за страницей /usage.
 settings-s-limits = Ограничения и квоты
 settings-s-limits-blurb = Главный переключатель правил, настроенных на /admin/limits.
+settings-s-dots = AIplane Dots
+settings-s-dots-blurb = Лимит личных Dots.
 settings-s-content_guard = Проверка содержимого
 settings-s-content_guard-blurb = Проверяет содержимое перед отправкой выбранной модели.
 settings-f-content_guard-enabled = Включить проверку содержимого
@@ -195,6 +197,8 @@ settings-f-usage-currency-help = Валюта, в которой показыв�
 
 settings-f-limits-enabled = Применять ограничения и квоты
 settings-f-limits-enabled-help = Выключено — правила на /admin/limits игнорируются.
+settings-f-dots-max_active_per_user = Активные личные Dots на пользователя
+settings-f-dots-max_active_per_user-help = Максимальное количество активных личных Dots у пользователя. По умолчанию: 4.
 
 settings-f-feedback-enabled = Показывать виджет обратной связи
 settings-f-feedback-enabled-help = Главный переключатель кнопки обратной связи в приложении.

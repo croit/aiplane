@@ -161,6 +161,14 @@ Category: **Access**.
 |---|---|---|---|
 | `limits.enabled` | Boolean | Off means the rules at /admin/limits are ignored. | No |
 
+### dots
+
+Category: **Access**.
+
+| Key | Input / choices | Meaning | Restart |
+|---|---|---|---|
+| `dots.max_active_per_user` | Integer | Maximum active personal Dots one user may own. The default is 4; deactivated Dots do not count. Lowering the value leaves existing Dots active; new creation or reactivation is blocked until the owner is under the limit. | No |
+
 ### feedback
 
 Category: **Notifications**.

@@ -4,6 +4,27 @@
 
 agents-heading = 智能体
 agents-intro = 智能体是负责某项具体工作的 AI 助手，例如在您的网站上回答客户的问题。在这里设置、试用，满意后再发布。
+nav-dots = Dots
+dots-heading = 个人 Dots
+dots-intro = 创建和管理命名的个人 Dot。已启用的 Dot 计入账户数量上限。
+dots-active-count = 已启用 { $active } 个，共 { $limit } 个
+dots-create = 创建 Dot
+dots-create-dialog = 创建个人 Dot
+dots-create-name = 名称
+dots-create-name-placeholder = 例如 Harald
+dots-create-display = 显示名称
+dots-create-description = 描述
+dots-create-submit = 创建
+dots-create-cancel = 取消
+dots-empty = 尚无 Dot。创建一个即可开始。
+dots-status-active = 已启用
+dots-status-inactive = 已停用
+dots-action-deactivate = 停用
+dots-action-activate = 启用
+dots-limit-reached = 已达到启用 Dot 的数量上限。请先停用一个 Dot，再创建或启用其他 Dot。
+dots-toast-created = 已创建 Dot。
+dots-toast-state = Dot 状态已更新。
+dots-error-load = 无法加载你的 Dots。
 agents-create = 新建智能体
 agents-create-name = 名称
 agents-create-name-hint = 小写字母、数字和连字符。它同时也是该智能体的系统主体名称，之后无法更改。

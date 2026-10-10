@@ -54,6 +54,7 @@ integrations and features vary with each installation's configuration.*
 
 ## Build and publish agents
 
+- [AIplane Dots: product and architecture specification](dots.md).
 - [Create an agent](agent-guide/create.md).
 - [Configure permissions](agent-guide/permissions.md).
 - [Test and publish](agent-guide/test-publish.md).

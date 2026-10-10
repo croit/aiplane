@@ -287,6 +287,26 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         )
         .with_get("/api/v0/agents", pages::json_agents::list)
         .with_post("/api/v0/agents", pages::json_agents::create)
+        .with_get("/api/v0/dots", pages::json_dots::list)
+        .with_post("/api/v0/dots", pages::json_dots::create)
+        .with_put("/api/v0/dots/{id}/active", pages::json_dots::set_active)
+        .with_get(
+            "/api/v0/dots/{id}/memories",
+            pages::json_dots::memories_list,
+        )
+        .with_post(
+            "/api/v0/dots/{id}/memories",
+            pages::json_dots::memories_create,
+        )
+        .with_put(
+            "/api/v0/dots/{id}/memories/{memory_id}",
+            pages::json_dots::memories_update,
+        )
+        .with_delete(
+            "/api/v0/dots/{id}/memories/{memory_id}",
+            pages::json_dots::memories_delete,
+        )
+        .with_get("/api/v0/dots/{id}/activity", pages::json_dots::activity)
         .with_get("/api/v0/agents/{id}", pages::json_agents::detail)
         .with_delete("/api/v0/agents/{id}", pages::json_agents::delete)
         .with_put(

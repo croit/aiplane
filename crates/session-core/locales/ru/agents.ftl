@@ -2,6 +2,14 @@
 
 agent-output-withheld = Я не могу дать этот ответ, так как в нём упоминались данные, которые я не смог подтвердить для вас. Переформулируйте вопрос или обратитесь в службу поддержки.
 agent-output-redacted = [удалено]
+dot-error-name-taken = В вашей учётной записи уже есть личный Dot с таким именем. Выберите другое имя.
+dot-error-name-invalid = Введите имя длиной не более 80 символов без управляющих символов.
+dot-error-active-limit = Достигнут лимит активных личных Dots. Деактивируйте один Dot, прежде чем создавать следующий.
+dot-error-not-found = Этот личный Dot недоступен в вашей учётной записи.
+dot-error-id-missing = В запросе отсутствует идентификатор Dot.
+dot-memory-error-kind = Выберите для типа памяти: предпочтение, проект или факт.
+dot-memory-error-empty = Содержимое памяти не может быть пустым.
+dot-memory-error-id-missing = В запросе отсутствует идентификатор Dot или записи памяти.
 
 # What a website visitor reads next to the secure field when an identity
 # verifier (#95) asks for the code it sent. Worded the same whether or not

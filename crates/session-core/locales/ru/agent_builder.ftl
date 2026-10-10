@@ -4,6 +4,27 @@
 
 agents-heading = Агенты
 agents-intro = Агенты — это ИИ-помощники для конкретной задачи, например для ответов на вопросы клиентов на вашем сайте. Настройте агента здесь, проверьте его и опубликуйте, когда результат вас устроит.
+nav-dots = Dots
+dots-heading = Личные Dots
+dots-intro = Создавайте и управляйте личными Dots с именами. Активные Dots учитываются в лимите вашей учётной записи.
+dots-active-count = Активно: { $active } из { $limit }
+dots-create = Создать Dot
+dots-create-dialog = Создать личный Dot
+dots-create-name = Имя
+dots-create-name-placeholder = Например, Harald
+dots-create-display = Отображаемое имя
+dots-create-description = Описание
+dots-create-submit = Создать
+dots-create-cancel = Отмена
+dots-empty = Пока нет Dots. Создайте первый.
+dots-status-active = Активен
+dots-status-inactive = Неактивен
+dots-action-deactivate = Отключить
+dots-action-activate = Включить
+dots-limit-reached = Достигнут лимит активных Dots. Отключите Dot, прежде чем создавать или включать другой.
+dots-toast-created = Dot создан.
+dots-toast-state = Статус Dot обновлён.
+dots-error-load = Не удалось загрузить ваши Dots.
 agents-create = Новый агент
 agents-create-name = Имя
 agents-create-name-hint = Строчные буквы, цифры и дефисы. Это также имя системного принципала агента, позже его нельзя изменить.

@@ -72,6 +72,36 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<inbox::AnswerBody>())
             .accepted(json::<inbox::Resumed>())
             .errors(&[400, 403, 404, 409, 503]),
+        get("/api/v0/dots", Access::Session)
+            .ok(json::<aiplane_api::pages::json_dots::DotList>())
+            .errors(&[403]),
+        post("/api/v0/dots", Access::Session)
+            .body(json::<aiplane_api::pages::json_dots::CreateDotBody>())
+            .created(json::<serde_json::Value>())
+            .errors(&[400, 403, 409]),
+        put("/api/v0/dots/{id}/active", Access::Session)
+            .body(json::<aiplane_api::pages::json_dots::ActiveBody>())
+            .ok(json::<serde_json::Value>())
+            .errors(&[400, 403, 404, 409]),
+        get("/api/v0/dots/{id}/memories", Access::Session)
+            .ok(json::<aiplane_api::pages::json_dots::DotMemoryList>())
+            .errors(&[400, 404]),
+        post("/api/v0/dots/{id}/memories", Access::Session)
+            .body(json::<aiplane_api::pages::json_dots::DotMemoryBody>())
+            .created(json::<aiplane_api::pages::json_dots::DotMemoryView>())
+            .errors(&[400, 404]),
+        put("/api/v0/dots/{id}/memories/{memory_id}", Access::Session)
+            .body(json::<aiplane_api::pages::json_dots::DotMemoryBody>())
+            .ok(json::<aiplane_api::pages::json_dots::DotMemoryView>())
+            .errors(&[400, 404]),
+        delete("/api/v0/dots/{id}/memories/{memory_id}", Access::Session)
+            .no_content()
+            .errors(&[400, 404]),
+        get("/api/v0/dots/{id}/activity", Access::Session)
+            .ok(json::<
+                aiplane_api::pages::json_agent_activity::ActivityPageView,
+            >())
+            .errors(&[400, 404]),
         get("/api/v0/agents", Access::Session)
             .ok(json::<agents::AgentList>())
             .errors(&[403]),

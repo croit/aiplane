@@ -159,6 +159,7 @@ Examples of its task families:
 | `/api/v0/memories*`, `/api/v0/tools*`, `/api/v0/integrations*`, `/api/v0/skills*` | Personal capabilities, connections and memories; [tools](../guide/tools-and-integrations.md). |
 | `/api/v0/scheduled*`, `/api/v0/webhooks*`, `/api/v0/inbox*` | Automation and durable decisions; [automation guide](../guide/automation-and-inbox.md). |
 | `/api/v0/agents*` | Agent drafts, grants, evaluation, publication and observation; agent guides. |
+| `/api/v0/dots*` | Personal Dot lifecycle and owner-scoped Dot memory; [AIplane Dots](../dots.md). |
 | `/api/v0/rag*` | Knowledge collections, snapshots, indexing and profiles; [knowledge](../admin/knowledge.md). |
 | `/api/v0/admin/*` | Administrative models, grants, settings and catalogs; administration guides. |
 | `/api/v0/setup/*` | Verified setup/recovery state machine. |
@@ -289,6 +290,14 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/agent-resources` |
 | `GET /api/v0/agents` |
 | `POST /api/v0/agents` |
+| `GET /api/v0/dots` |
+| `POST /api/v0/dots` |
+| `PUT /api/v0/dots/{id}/active` |
+| `GET /api/v0/dots/{id}/memories` |
+| `POST /api/v0/dots/{id}/memories` |
+| `PUT /api/v0/dots/{id}/memories/{memory_id}` |
+| `DELETE /api/v0/dots/{id}/memories/{memory_id}` |
+| `GET /api/v0/dots/{id}/activity` |
 | `GET /api/v0/agents/inbox` |
 | `GET /api/v0/agents/inbox/events` |
 | `POST /api/v0/agents/inbox/{id}/answer` |

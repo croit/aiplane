@@ -51,9 +51,9 @@ use std::path::PathBuf;
 use crate::server::config::AllowedIps;
 use crate::server::config::{
     ChatConfig, ComfyuiConfig, CompactionConfig, Config, ContentGuardConfig, ContentGuardMode,
-    ContentGuardPolicy, FeedbackConfig, GatewayConfig, GeoipConfig, LimitsConfig, LoopsConfig,
-    MetricsConfig, OcrConfig, PushConfig, RagConfig, S3Config, SandboxConfig, SkillsConfig,
-    TurnsConfig, TypstConfig, UsageConfig,
+    ContentGuardPolicy, DotsConfig, FeedbackConfig, GatewayConfig, GeoipConfig, LimitsConfig,
+    LoopsConfig, MetricsConfig, OcrConfig, PushConfig, RagConfig, S3Config, SandboxConfig,
+    SkillsConfig, TurnsConfig, TypstConfig, UsageConfig,
 };
 use crate::server::crypto::Crypto;
 use crate::server::db::{DbError, Pool, app_settings};
@@ -610,6 +610,12 @@ pub static SECTIONS: &[SectionSpec] = &[
         fields: &[f("limits.enabled", Kind::Bool)],
     },
     SectionSpec {
+        name: "dots",
+        category: Category::Access,
+        user_feature: false,
+        fields: &[f("dots.max_active_per_user", Kind::Int)],
+    },
+    SectionSpec {
         name: "feedback",
         category: Category::Notifications,
         user_feature: true,
@@ -766,6 +772,7 @@ pub fn section_is_enabled(config: &Config, section: &SectionSpec) -> Option<bool
         "geoip" => config.geoip.is_some(),
         "usage" => config.usage.enabled,
         "limits" => config.limits.enabled,
+        "dots" => true,
         "content_guard" => config.content_guard.enabled,
         "feedback" => config.feedback.is_some(),
         "push" => config.push.enabled,
@@ -972,6 +979,9 @@ pub fn apply(settings: &Settings, config: &mut Config) {
     config.usage = usage(settings);
     config.limits = LimitsConfig {
         enabled: settings.bool("limits.enabled", true),
+    };
+    config.dots = DotsConfig {
+        max_active_per_user: settings.int("dots.max_active_per_user", 4),
     };
     config.content_guard = ContentGuardConfig {
         enabled: settings.bool("content_guard.enabled", false),
@@ -1429,6 +1439,10 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
     put("usage.currency", c.usage.currency.clone());
 
     put("limits.enabled", c.limits.enabled.to_string());
+    put(
+        "dots.max_active_per_user",
+        c.dots.max_active_per_user.to_string(),
+    );
 
     put("content_guard.enabled", c.content_guard.enabled.to_string());
     put("content_guard.model", c.content_guard.model.clone());

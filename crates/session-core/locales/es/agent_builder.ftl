@@ -4,6 +4,27 @@
 
 agents-heading = Agentes
 agents-intro = Los agentes son asistentes de IA para una tarea concreta, por ejemplo responder a las preguntas de los clientes en tu sitio web. Configura uno aquí, pruébalo y publícalo cuando estés satisfecho.
+nav-dots = Dots
+dots-heading = Dots personales
+dots-intro = Crea y administra Dots personales con nombre. Los Dots activos cuentan para el límite de tu cuenta.
+dots-active-count = { $active } de { $limit } activos
+dots-create = Crear Dot
+dots-create-dialog = Crear un Dot personal
+dots-create-name = Nombre
+dots-create-name-placeholder = p. ej., Harald
+dots-create-display = Nombre visible
+dots-create-description = Descripción
+dots-create-submit = Crear
+dots-create-cancel = Cancelar
+dots-empty = Aún no tienes Dots. Crea uno para empezar.
+dots-status-active = Activo
+dots-status-inactive = Inactivo
+dots-action-deactivate = Desactivar
+dots-action-activate = Activar
+dots-limit-reached = Has alcanzado el límite de Dots activos. Desactiva uno antes de crear o activar otro.
+dots-toast-created = Dot creado.
+dots-toast-state = Estado del Dot actualizado.
+dots-error-load = No se pudieron cargar tus Dots.
 agents-create = Nuevo agente
 agents-create-name = Nombre
 agents-create-name-hint = Minúsculas, dígitos y guiones. Es también el nombre del principal de sistema del agente y no se puede cambiar después.

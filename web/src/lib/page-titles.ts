@@ -10,6 +10,7 @@ const exactTitles: Record<string, PageTitleDescriptor> = {
 	'/scheduled': { key: 'scheduled-heading', branded: true },
 	'/webhooks': { key: 'webhooks-heading', branded: true },
 	'/agents': { key: 'agents-heading', branded: true },
+	'/dots': { key: 'dots-heading', branded: true },
 	'/inbox': { key: 'inbox-heading', branded: true },
 	'/tools/integrations': { key: 'integrations-heading', branded: true },
 	'/tools/skills': { key: 'my-skills-heading', branded: true },

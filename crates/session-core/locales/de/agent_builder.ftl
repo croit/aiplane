@@ -4,6 +4,27 @@
 
 agents-heading = Agenten
 agents-intro = Agenten sind KI-Assistenten für eine bestimmte Aufgabe, zum Beispiel Kundenfragen auf Ihrer Website zu beantworten. Richten Sie hier einen ein, testen Sie ihn und veröffentlichen Sie ihn, wenn er Ihnen gefällt.
+nav-dots = Dots
+dots-heading = Persönliche Dots
+dots-intro = Erstelle und verwalte benannte persönliche Dots. Aktive Dots zählen zu deinem Kontingent.
+dots-active-count = { $active } von { $limit } aktiv
+dots-create = Dot erstellen
+dots-create-dialog = Persönlichen Dot erstellen
+dots-create-name = Name
+dots-create-name-placeholder = z. B. Harald
+dots-create-display = Anzeigename
+dots-create-description = Beschreibung
+dots-create-submit = Erstellen
+dots-create-cancel = Abbrechen
+dots-empty = Noch keine Dots. Erstelle deinen ersten Dot.
+dots-status-active = Aktiv
+dots-status-inactive = Inaktiv
+dots-action-deactivate = Deaktivieren
+dots-action-activate = Aktivieren
+dots-limit-reached = Dein Limit für aktive Dots ist erreicht. Deaktiviere einen Dot, bevor du einen weiteren erstellst oder aktivierst.
+dots-toast-created = Dot erstellt.
+dots-toast-state = Dot-Status aktualisiert.
+dots-error-load = Deine Dots konnten nicht geladen werden.
 agents-create = Neuer Agent
 agents-create-name = Name
 agents-create-name-hint = Kleinbuchstaben, Ziffern und Bindestriche. Es ist zugleich der Name des Systemprinzipals des Agenten und lässt sich später nicht ändern.

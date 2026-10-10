@@ -1141,3 +1141,182 @@ async fn the_inbox_says_whether_its_viewer_answers_for_a_published_agent() {
         Some(true)
     );
 }
+
+#[tokio::test]
+async fn personal_dots_are_owner_scoped_and_deactivation_frees_capacity() {
+    let fx = fixture().await;
+    let (status, body) = fx.get(&fx.plain, "/api/v0/dots").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    let mut ids = Vec::new();
+    for n in 0..4 {
+        let (status, body) = fx
+            .post(
+                &fx.alice,
+                "/api/v0/dots",
+                json!({ "name": format!("alice-dot-{n}") }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        ids.push(body["dot"]["id"].as_str().unwrap().to_string());
+    }
+    let (status, body) = fx.get(&fx.alice, "/api/v0/dots").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["active_limit"], 4);
+    assert_eq!(body["dots"].as_array().unwrap().len(), 4);
+    assert!(
+        fx.get(&fx.bob, "/api/v0/dots").await.1["dots"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let (status, body) = fx
+        .post(&fx.bob, "/api/v0/dots", json!({ "name": "alice-dot-0" }))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "same name is scoped to its owner: {body}"
+    );
+
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/dots",
+            json!({ "name": "alice-dot-over-limit" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "active_dot_limit");
+
+    let (status, body) = fx
+        .send(
+            Some(&fx.alice),
+            Method::PUT,
+            &format!("/api/v0/dots/{}/active", ids[0]),
+            Some(json!({ "active": false })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/dots",
+            json!({ "name": "alice-dot-replacement" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    let (status, body) = fx
+        .send(
+            Some(&fx.bob),
+            Method::PUT,
+            &format!("/api/v0/dots/{}/active", ids[0]),
+            Some(json!({ "active": false })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn personal_dot_public_name_is_not_limited_to_a_principal_slug() {
+    let fx = fixture().await;
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/dots",
+            json!({ "name": "Harald", "description": "My personal assistant" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["dot"]["name"], "Harald");
+    assert_eq!(body["dot"]["display"], "Harald");
+    assert_eq!(body["dot"]["description"], "My personal assistant");
+
+    let dot_id = body["dot"]["id"].as_str().unwrap();
+    let (status, agent_list) = fx.get(&fx.alice, "/api/v0/agents").await;
+    assert_eq!(status, StatusCode::OK, "{agent_list}");
+    assert!(
+        !agent_list["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|agent| agent["id"] == dot_id)
+    );
+    let (status, body) = fx.get(&fx.alice, &format!("/api/v0/agents/{dot_id}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn personal_dot_memories_are_persistent_and_owner_scoped() {
+    let fx = fixture().await;
+    let (status, body) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "memory-dot" }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let dot_id = body["dot"]["id"].as_str().unwrap();
+    let memory_path = format!("/api/v0/dots/{dot_id}/memories");
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            &memory_path,
+            json!({ "kind": "fact", "content": "Avoid this recurring pitfall" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["kind"], "fact");
+    let memory_id = body["id"].as_str().unwrap();
+
+    let (status, body) = fx.get(&fx.bob, &memory_path).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = fx.get(&fx.alice, &memory_path).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["memories"][0]["content"],
+        "Avoid this recurring pitfall"
+    );
+
+    let memory_item_path = format!("{memory_path}/{memory_id}");
+    let (status, body) = fx
+        .send(
+            Some(&fx.bob),
+            Method::PUT,
+            &memory_item_path,
+            Some(json!({ "kind": "fact", "content": "unauthorized" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = fx
+        .send(
+            Some(&fx.alice),
+            Method::PUT,
+            &memory_item_path,
+            Some(json!({ "kind": "project", "content": "Keep this lesson" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["content"], "Keep this lesson");
+    let (status, body) = fx
+        .send(Some(&fx.alice), Method::DELETE, &memory_item_path, None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+}
+
+#[tokio::test]
+async fn personal_dot_activity_is_available_only_to_its_owner() {
+    let fx = fixture().await;
+    let (status, created) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "activity-dot" }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let dot_id = created["dot"]["id"].as_str().unwrap();
+    let path = format!("/api/v0/dots/{dot_id}/activity");
+
+    let (status, denied) = fx.get(&fx.bob, &path).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{denied}");
+    let (status, body) = fx.get(&fx.alice, &path).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let events = body["events"].as_array().unwrap();
+    assert!(!events.is_empty());
+    assert!(events.iter().any(|event| event["kind"] == "agent_created"));
+}

@@ -89,6 +89,7 @@ pub enum AuditKind {
     AgentShareSet,
     AgentShareRemoved,
     AgentDeleted,
+    PersonalDotStateChanged,
     /// A manager asked the prompt assistant to suggest a setup or improve a
     /// text: who, the scenario or text, pool, model, token counts, and
     /// which steps were offered or dropped. Nothing it suggests is applied.
@@ -169,6 +170,7 @@ impl AuditKind {
         Self::AgentShareSet,
         Self::AgentShareRemoved,
         Self::AgentDeleted,
+        Self::PersonalDotStateChanged,
         Self::AssistSuggested,
         Self::EmbedKeyCreated,
         Self::EmbedKeyRevoked,
@@ -216,6 +218,7 @@ impl AuditKind {
             Self::AgentShareSet => "agent_share_set",
             Self::AgentShareRemoved => "agent_share_removed",
             Self::AgentDeleted => "agent_deleted",
+            Self::PersonalDotStateChanged => "personal_dot_state_changed",
             Self::AssistSuggested => "assist_suggested",
             Self::EmbedKeyCreated => "embed_key_created",
             Self::EmbedKeyRevoked => "embed_key_revoked",
