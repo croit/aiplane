@@ -21,10 +21,13 @@ That runs every `e2e/*.test.mjs`:
 
 The `e2e` mise task finds Playwright in the mise-installed `npm:@playwright/cli` package; export `PLAYWRIGHT_DIR` only to override it.
 
-Set `CHROMIUM_HEADED=1` to watch the browser locally:
+Set `CHROMIUM_HEADED=1` to watch the browser locally. To use an installed
+Chrome instead of Playwright's bundled Chromium, set `CHROMIUM_CHANNEL=chrome`:
 
 ```bash
 CHROMIUM_HEADED=1 mise run e2e
+# Exercise the installed Chrome browser (headless by default):
+CHROMIUM_CHANNEL=chrome mise run e2e
 ```
 
 Set `AIPLANE_URL=https://gw.dev` to point at a remote gateway (note: the authed/SPA-signin tests need the seeding endpoints below, so a remote target must be a debug build — in practice that means a local `mise run dev`).
