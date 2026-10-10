@@ -128,8 +128,8 @@ pub fn extract_suspend(body: &Value) -> Option<SuspendRequest> {
 /// run again after one.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Suspend {
-    /// The path cannot pause: `/v1`, scheduled and webhook runs, tests. A tool
-    /// that needs a decision must refuse rather than proceed.
+    /// The caller cannot resume a pause. A tool that needs a decision must
+    /// refuse rather than proceed.
     #[default]
     Unavailable,
     /// The chat path and agent runs: returning [`tool_suspend`] pauses the

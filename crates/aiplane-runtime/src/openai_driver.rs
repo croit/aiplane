@@ -539,8 +539,9 @@ pub struct TurnFacts {
     /// model allowlist. `None` on the session paths, where access is exactly
     /// what the user's groups grant and is derived from `roles` below.
     pub pool_access: Option<aiplane_core::server::upstreams::PoolAccess>,
-    /// Whether a tool may pause this turn for a decision. Only where a turn
-    /// can be resumed later: the interactive chat path.
+    /// Whether a tool may pause this turn for a decision. Set only where a
+    /// durable resume path exists, such as interactive chat or a headless run
+    /// surfaced in the owner's Inbox.
     pub suspendable: bool,
 }
 

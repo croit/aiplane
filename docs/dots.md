@@ -151,7 +151,7 @@ requirements; they do not determine AIplane's implementation.
 | Agent definition and display name | `agents`, `AgentSpec`, drafts and published versions | Represent Dot ownership and personal-vs-organisation execution mode |
 | Identity and organization grants | system principals, `principal_grants`, agent shares | Personal Dot must act with the user's authority while retaining Dot attribution |
 | Chat, runs and streaming | `chat_sessions`, `chat_turns`, `SessionDriver`, JSON-SSE | Associate a personal Dot with user-owned sessions without turning it into a second chat engine |
-| Durable pause and approval | `chat_turn_suspensions`, `agents::approval`, Inbox | Interactive chat can pause and resume a tool call; headless schedule/webhook and `/v1` turns cannot currently suspend, so approval-required actions must fail closed there until those run paths gain a durable approval continuation |
+| Durable pause and approval | `chat_turn_suspensions`, `agents::approval`, Inbox | Interactive chat and user-owned scheduled/webhook turns can persist a pause and resume through the user's Inbox. Dot execution must retain its attribution and re-evaluate current owner grants and Dot rules when a paused turn resumes. |
 | Schedules | `scheduled_actions` and scheduled worker | Current schedules are user-owned; support Dot-owned, agent-context runs |
 | Event triggers | Webhooks and headless execution | Current webhooks are user-owned; support Dot identity, event policy and activity correlation |
 | MCP catalogue and execution | connector catalog, `McpConnectionManager`, `UserMcpLayer` | Personal delegated and Dot-owned credentials; organisation/Dot OAuth identity |
@@ -314,14 +314,14 @@ owner's authority, Dot policy, connector/tool policy and mandatory platform
 rules. The most restrictive applicable result wins. Approval is durable and
 uses the existing suspension and inbox flow.
 
-Interactive chat already persists a suspension in `chat_turn_suspensions`,
-releases its worker and resumes the same tool call after a decision. The
-headless scheduler and webhook workers build turns with suspension unavailable;
-the `/v1` path does the same. A tool that requires a decision refuses to run
-when nobody can resume it. Dot policy must preserve that fail-closed behavior:
-do not execute an approval-required action merely because a schedule enables
-tools or a webhook starts a run. Background Dot actions need a durable
-approval owner and continuation path before they can wait for approval.
+Interactive chat and the existing user-owned scheduler/webhook workers can
+persist a suspension in `chat_turn_suspensions`, release the worker and resume
+the same tool call through the user's Inbox. Dot execution can reuse this
+continuation when it keeps the Dot context attached to the user-owned session
+and verifies permissions again on resume. A tool that requires a decision
+must still refuse to run on a path where nobody can resume it; enabling tools
+on a schedule or webhook is not itself approval. Organization-owned runs need
+an explicitly authorized approval owner and continuation path.
 
 Exact built-in action categories, whether creating a draft is itself a write,
 and which organization members may approve are open design decisions. Until
