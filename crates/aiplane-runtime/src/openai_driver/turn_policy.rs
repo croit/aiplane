@@ -189,6 +189,11 @@ impl<'a> TurnPolicy<'a> {
             },
             Self::Persona(persona) => Leading {
                 own: vec![persona.instructions().to_string()],
+                context: if persona.includes_user_context() {
+                    build_request_context(d, user_mcp, Audience::Person).await
+                } else {
+                    None
+                },
                 summary,
                 ..Leading::default()
             },

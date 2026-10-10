@@ -27,3 +27,6 @@ agent-embed-not-waiting = Der Assistent wartet gerade nicht auf eine Antwort von
 agent-embed-message-waiting = Ihre vorherige Nachricht wartet noch auf den Assistenten. Bitte warten Sie seine Antwort ab, bevor Sie eine weitere senden.
 
 agent-a2a-input-required = Ein Partnerdienst benötigt noch eine Angabe, um fortzufahren. Geben Sie sie hier ein; sie geht nur an diesen Dienst.
+dot-error-inactive = Dieser Dot ist deaktiviert. Aktiviere ihn, bevor du eine Unterhaltung startest.
+dot-action-chat = Chat
+dot-action-chat-opening = Chat wird geöffnet …

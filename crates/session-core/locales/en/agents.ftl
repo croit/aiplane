@@ -32,3 +32,6 @@ agent-embed-message-waiting = Your previous message is still waiting for the ass
 # What a website visitor reads next to the secure field when an external
 # agent behind an A2A route (#101) asks for structured input to continue.
 agent-a2a-input-required = A partner service needs one more detail to continue. Enter it here; it goes to that service only.
+dot-error-inactive = This Dot is inactive. Activate it before starting a conversation.
+dot-action-chat = Chat
+dot-action-chat-opening = Opening chat…

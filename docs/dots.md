@@ -1,8 +1,8 @@
 # AIplane Dots: product and architecture specification
 
 Status: implementation in progress; personal Dot ownership, active lifecycle,
-the first web management page, manually managed Dot memory, recent activity
-view and owner-scoped memory/activity APIs are implemented.
+the first web management page, manually managed Dot memory, recent activity,
+owner-scoped memory/activity APIs, and private Dot chat sessions are implemented.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -14,8 +14,10 @@ permission. Each Dot card has a lazily loaded memory panel with separate
 preference, project and fact entries. Owners can add, edit and delete those
 notes; they remain separate from user-wide memory. A second lazily loaded
 panel shows the Dot's recent audited events and can page through older ones.
-Dot memory has a separate store and owner-scoped API, but no runtime execution
-path or automatic memory curation yet.
+Dot memory has a separate store and owner-scoped API, but automatic memory
+curation is not implemented. A personal Dot can start a private chat that
+reads bounded Dot memory and the user's existing profile context; the current
+chat has no tools or background execution.
 
 | Endpoint | Behavior |
 |---|---|
@@ -27,6 +29,7 @@ path or automatic memory curation yet.
 | `PUT /api/v0/dots/{id}/memories/{memory_id}` | Updates an owned Dot memory. |
 | `DELETE /api/v0/dots/{id}/memories/{memory_id}` | Deletes an owned Dot memory. |
 | `GET /api/v0/dots/{id}/activity` | Lists the owned Dot's audited activity, newest first; accepts `cursor` and `limit`. |
+| `POST /api/v0/dots/{id}/sessions` | Creates a private chat session owned by the user and associated with the active Dot. |
 
 Lifecycle routes require `can_manage_agents` today. Creation and active-state
 changes are recorded through the existing agent activity chain. The Dot
@@ -35,13 +38,15 @@ its run path. Lowering the configured active cap does not deactivate existing
 Dots; creation and reactivation remain blocked until the owner is below the
 new cap. Dot memories are separate from `user_memories`, reuse its kinds and
 duplicate handling, and can be managed under `/api/v0/dots/{id}/memories`.
-Dot runs do not yet read or write the new store; runtime integration and
-memory consolidation remain implementation work. The `/dots` page displays
-active usage against the operator limit, creates a personal Dot with a friendly
-name, and lets the owner deactivate or reactivate it. A deactivated Dot stays
-in the list and can be reactivated when a slot is available. The page does not
-yet offer permissions, connector selection, run setup or organisation-owned
-Dots.
+Dot chat sessions read bounded Dot memory and the user's existing profile
+context, and run without tools until action policy is implemented. Deactivating
+a Dot preserves its existing sessions but blocks new sessions and new turns;
+existing pending Dot turns remain paused while the Dot is inactive. The `/dots`
+page displays active usage against the operator limit, creates a personal Dot
+with a friendly name, starts a private chat, and lets the owner deactivate or
+reactivate it. A deactivated Dot stays in the list and can be reactivated when
+a slot is available. The page does not yet offer permission rules, connector
+selection, background run setup or organisation-owned Dots.
 
 ## Product goal
 
@@ -340,7 +345,7 @@ changes, per the repository working agreement.
 
 ### First web slice walkthrough for review
 
-This first view is a management surface for the lifecycle API above. It uses
+The management surface for the lifecycle API above uses
 only fields currently returned by that API:
 
 ```text
@@ -364,8 +369,19 @@ description and active state come from each returned Dot. The view does not
 invent a run status, last activity, or capabilities before those are backed by
 the execution and activity APIs. Creation validates the name server-side. The
 active row action calls the state endpoint and the count updates from a fresh
-list response. This slice does not yet open a Dot chat; that interaction lands
-with the personal execution slice.
+list response. The personal execution slice adds a conversation action to each
+active Dot:
+
+```text
+Name          Status       Actions
+Harald        Active       [Chat] [Deactivate] [Memory] [Activity]
+```
+
+Selecting Chat creates a private session owned by the signed-in user, associates
+it with Harald, and opens the existing `/chat/{session_id}` experience. Inactive
+Dots have no Chat action. Sessions remain private to their user and Dot, and
+deactivation prevents new messages from starting. This first execution slice
+loads Dot and user memory but exposes no tools until action policy is in place.
 
 ## Delivery plan
 

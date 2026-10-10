@@ -290,6 +290,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         .with_get("/api/v0/dots", pages::json_dots::list)
         .with_post("/api/v0/dots", pages::json_dots::create)
         .with_put("/api/v0/dots/{id}/active", pages::json_dots::set_active)
+        .with_post(
+            "/api/v0/dots/{id}/sessions",
+            pages::json_dots::create_session,
+        )
         .with_get(
             "/api/v0/dots/{id}/memories",
             pages::json_dots::memories_list,

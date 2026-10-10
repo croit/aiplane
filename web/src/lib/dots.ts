@@ -23,6 +23,12 @@ export const dotsApi = {
 			method: 'PUT',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ active })
+		}),
+	createSession: (id: string) =>
+		request<{ session: { id: string } }>(`/api/v0/dots/${encodeURIComponent(id)}/sessions`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({})
 		})
 };
 

@@ -298,6 +298,7 @@ Debug fixture routes exist only in development builds.
 | `PUT /api/v0/dots/{id}/memories/{memory_id}` |
 | `DELETE /api/v0/dots/{id}/memories/{memory_id}` |
 | `GET /api/v0/dots/{id}/activity` |
+| `POST /api/v0/dots/{id}/sessions` |
 | `GET /api/v0/agents/inbox` |
 | `GET /api/v0/agents/inbox/events` |
 | `POST /api/v0/agents/inbox/{id}/answer` |

@@ -172,6 +172,55 @@ pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Re
     }
 }
 
+pub async fn create_session(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
+    let Some(dot_id) = raw_path_segment(&req, 1) else {
+        return bad_request(t(lang, "dot-error-id-missing"));
+    };
+    let dot = match agents_db::get_personal_dot(&state.db, &user.id, &dot_id).await {
+        Ok(Some(dot)) if dot.active => dot,
+        Ok(Some(_)) => {
+            return json_error(
+                StatusCode::CONFLICT,
+                "dot_inactive",
+                &t(lang, "dot-error-inactive"),
+            );
+        }
+        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
+        Err(error) => return internal(error),
+    };
+    let session = match session_core::db::create_session(&state.db, &user.id).await {
+        Ok(session) => session,
+        Err(error) => return internal(error),
+    };
+    match aiplane_agents::db::dot_sessions::link(&state.db, &user.id, &dot_id, &session.id).await {
+        Ok(true) => {
+            if let Err(error) =
+                session_core::db::set_session_title(&state.db, &session.id, &dot.name).await
+            {
+                let _ = session_core::db::delete_session(&state.db, &user.id, &session.id).await;
+                return internal(error);
+            }
+            let mut session = session;
+            session.title = Some(dot.name);
+            json_ok(StatusCode::CREATED, json!({ "session": session }))
+        }
+        Ok(false) => {
+            let _ = session_core::db::delete_session(&state.db, &user.id, &session.id).await;
+            json_error(
+                StatusCode::CONFLICT,
+                "dot_inactive",
+                &t(lang, "dot-error-inactive"),
+            )
+        }
+        Err(error) => {
+            let _ = session_core::db::delete_session(&state.db, &user.id, &session.id).await;
+            internal(error)
+        }
+    }
+}
+
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct DotMemoryList {
     pub memories: Vec<DotMemoryView>,

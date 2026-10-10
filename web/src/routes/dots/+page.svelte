@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import Modal from '#lib/components/ui/Modal.svelte';
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
@@ -19,6 +20,7 @@
 	let createError = $state<string | null>(null);
 	let busy = $state(false);
 	let busyId = $state<string | null>(null);
+	let openingId = $state<string | null>(null);
 	let active = $derived(activeDotCount(dots));
 	let createAllowed = $derived(canCreateDot(active, activeLimit));
 
@@ -68,6 +70,19 @@
 			busyId = null;
 		}
 	}
+
+	async function openChat(dot: Dot) {
+		openingId = dot.id;
+		error = null;
+		try {
+			const result = await dotsApi.createSession(dot.id);
+			await goto(`/chat/${result.session.id}`);
+		} catch (caught) {
+			error = (caught as Error).message;
+		} finally {
+			openingId = null;
+		}
+	}
 </script>
 
 <div class="w-full space-y-6">
@@ -106,6 +121,7 @@
 						<DotMemoryPanel {dot} />
 						<DotActivityPanel {dot} />
 						<div class="card-actions justify-end">
+							{#if dot.active}<button class="btn btn-sm" type="button" disabled={openingId === dot.id} onclick={() => void openChat(dot)}>{openingId === dot.id ? t('dot-action-chat-opening') : t('dot-action-chat')}</button>{/if}
 							<button class="btn btn-sm" type="button" disabled={busyId === dot.id || (!dot.active && !createAllowed)} onclick={() => void setActive(dot)}>
 								{dot.active ? t('dots-action-deactivate') : t('dots-action-activate')}
 							</button>

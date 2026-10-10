@@ -83,6 +83,9 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<aiplane_api::pages::json_dots::ActiveBody>())
             .ok(json::<serde_json::Value>())
             .errors(&[400, 403, 404, 409]),
+        post("/api/v0/dots/{id}/sessions", Access::Session)
+            .created(json::<aiplane_api::pages::chat::json_api::SessionEnvelope>())
+            .errors(&[400, 403, 404, 409, 500]),
         get("/api/v0/dots/{id}/memories", Access::Session)
             .ok(json::<aiplane_api::pages::json_dots::DotMemoryList>())
             .errors(&[400, 404]),

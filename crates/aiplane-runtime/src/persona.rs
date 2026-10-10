@@ -20,6 +20,7 @@ use crate::server::tools::ToolSource;
 pub struct ChatPersona {
     instructions: String,
     tools: Arc<dyn ToolSource>,
+    user_context: bool,
 }
 
 impl ChatPersona {
@@ -27,7 +28,13 @@ impl ChatPersona {
         Self {
             instructions: instructions.into(),
             tools,
+            user_context: false,
         }
+    }
+
+    pub fn with_user_context(mut self) -> Self {
+        self.user_context = true;
+        self
     }
 
     /// What the system message says after the turn-discipline rule.
@@ -38,6 +45,10 @@ impl ChatPersona {
     /// The only source the turn's calls resolve against.
     pub fn tools(&self) -> &dyn ToolSource {
         self.tools.as_ref()
+    }
+
+    pub fn includes_user_context(&self) -> bool {
+        self.user_context
     }
 
     /// Every tool of the persona, offered on every round, in a stable order.
@@ -63,7 +74,15 @@ mod tests {
         );
         assert_eq!(persona.offer(), ["company_echo", "get_current_timestamp"]);
         assert_eq!(persona.instructions(), "You plan agents.");
+        assert!(!persona.includes_user_context());
         assert!(persona.tools().contains("company_echo"));
         assert!(!persona.tools().contains("fetch_url"));
+    }
+
+    #[test]
+    fn a_persona_can_include_the_signed_in_users_context() {
+        let persona = ChatPersona::new("You are a personal Dot.", Arc::new(ToolRegistry::new()))
+            .with_user_context();
+        assert!(persona.includes_user_context());
     }
 }

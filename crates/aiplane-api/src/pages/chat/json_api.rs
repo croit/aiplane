@@ -439,6 +439,7 @@ pub async fn message_send(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     // Two request shapes, one code path: JSON `{model, message}` for plain
     // text, multipart/form-data (like the legacy composer) when attachments
     // ride along — they must upload under the user-turn's S3 prefix, which
@@ -467,9 +468,13 @@ pub async fn message_send(
         }
     };
 
+    if let Err(error) = super::refuse_if_dot_inactive(&state, &user.id, &active.id).await {
+        return submit_refusal(error, lang);
+    }
+
     // Before the body too: a refused message must not upload attachments.
     if let Err(err) = super::refuse_while_paused(&state, &active.id).await {
-        return submit_refusal(err);
+        return submit_refusal(err, lang);
     }
 
     let user_turn_id = uuid::Uuid::new_v4().to_string();
@@ -538,7 +543,7 @@ pub async fn message_send(
         Ok(SubmitOutcome::Queued { user_turn_id }) => {
             ok_json(StatusCode::ACCEPTED, Submitted::Queued { user_turn_id })
         }
-        Err(err) => submit_refusal(err),
+        Err(err) => submit_refusal(err, lang),
     }
 }
 
@@ -547,9 +552,14 @@ pub async fn message_send(
 /// Short, now: a busy conversation and a full set of parallel slots are no
 /// longer refusals — a message sent into either is accepted and answered
 /// later. What is left is the caller having no budget, and storage failing.
-fn submit_refusal(err: SubmitTurnError) -> Response {
+fn submit_refusal(err: SubmitTurnError, lang: Lang) -> Response {
     match err {
         SubmitTurnError::RateLimited(exceeded) => over_budget(&exceeded),
+        SubmitTurnError::DotInactive => json_error(
+            StatusCode::CONFLICT,
+            "dot_inactive",
+            &t(lang, "dot-error-inactive"),
+        ),
         SubmitTurnError::DecisionPending(message) => {
             json_error(StatusCode::CONFLICT, "decision_pending", &message)
         }
@@ -618,8 +628,12 @@ pub async fn session_steer(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
+    }
+    if let Err(error) = super::refuse_if_dot_inactive(&state, &user.id, &session_id).await {
+        return submit_refusal(error, lang);
     }
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
@@ -669,7 +683,7 @@ pub async fn session_steer(
         )
         .await
     {
-        return submit_refusal(SubmitTurnError::RateLimited(exceeded));
+        return submit_refusal(SubmitTurnError::RateLimited(exceeded), lang);
     }
 
     // The insert is conditional on the turn still running, so the answer

@@ -27,3 +27,6 @@ agent-embed-not-waiting = 助手目前没有在等待您的回答。请重新加
 agent-embed-message-waiting = 您的上一条消息仍在等待助手处理。请等待其答复后再发送新消息。
 
 agent-a2a-input-required = 合作服务还需要一项信息才能继续。请在此输入；该信息只会发送给该服务。
+dot-error-inactive = 此 Dot 已停用。请先启用它，再开始对话。
+dot-action-chat = 聊天
+dot-action-chat-opening = 正在打开聊天…

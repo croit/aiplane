@@ -1303,6 +1303,75 @@ async fn personal_dot_memories_are_persistent_and_owner_scoped() {
 }
 
 #[tokio::test]
+async fn personal_dot_chat_sessions_are_private_and_remain_dot_owned_when_deactivated() {
+    let fx = fixture().await;
+    let (status, body) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "chat-dot" }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let dot_id = body["dot"]["id"].as_str().unwrap();
+
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/dots/{dot_id}/sessions"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let session_id = body["session"]["id"].as_str().unwrap();
+    assert_eq!(body["session"]["user_id"], "alice");
+    assert_eq!(body["session"]["title"], "chat-dot");
+    assert_eq!(
+        aiplane_agents::db::dot_sessions::for_session(&fx.state.db, "alice", session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .dot_id,
+        dot_id
+    );
+    assert_eq!(
+        fx.get(&fx.bob, &format!("/api/v0/chat/sessions/{session_id}"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+
+    fx.send(
+        Some(&fx.alice),
+        Method::PUT,
+        &format!("/api/v0/dots/{dot_id}/active"),
+        Some(json!({ "active": false })),
+    )
+    .await;
+    assert!(
+        !aiplane_agents::db::dot_sessions::for_session(&fx.state.db, "alice", session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .active
+    );
+    assert_eq!(
+        fx.post(
+            &fx.alice,
+            &format!("/api/v0/dots/{dot_id}/sessions"),
+            json!({})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/chat/sessions/{session_id}/messages"),
+            json!({ "model": "model-a", "message": "Continue" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+}
+
+#[tokio::test]
 async fn personal_dot_activity_is_available_only_to_its_owner() {
     let fx = fixture().await;
     let (status, created) = fx
