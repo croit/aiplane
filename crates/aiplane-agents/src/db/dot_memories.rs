@@ -163,10 +163,28 @@ mod tests {
     use crate::db::system_principals::NewPrincipal;
     use aiplane_core::server::db::open;
     use aiplane_core::server::db::user_memories;
+    use aiplane_core::server::db::users::{self, User};
+    use jiff::Timestamp;
     use std::path::Path;
 
     async fn fixture() -> (Pool, String) {
         let pool = open(Path::new(":memory:")).await.unwrap();
+        let now = Timestamp::now();
+        users::upsert(
+            &pool,
+            &User {
+                id: "alice".into(),
+                email: "alice@example.com".into(),
+                name: Some("Alice".into()),
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
         let (result, dot) = agents::create_personal_dot(
             &pool,
             &NewPrincipal {
@@ -241,5 +259,43 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn deleting_a_dot_owner_removes_the_dot_principal_and_private_memory() {
+        let (pool, dot) = fixture().await;
+        insert(&pool, "alice", &dot, MemoryKind::Fact, "private note")
+            .await
+            .unwrap()
+            .unwrap();
+
+        sqlx::query("DELETE FROM users WHERE id = ?")
+            .bind("alice")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let principals: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM system_principals WHERE id = ?")
+                .bind(&dot)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let dots: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM personal_dots WHERE principal_id = ?")
+                .bind(&dot)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let memories: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM personal_dot_memories WHERE dot_id = ?")
+                .bind(&dot)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(principals, 0);
+        assert_eq!(dots, 0);
+        assert_eq!(memories, 0);
     }
 }

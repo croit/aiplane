@@ -81,6 +81,8 @@ requirements; they do not determine AIplane's implementation.
 - The initial default active-Dot limit is four. Deactivating a Dot frees an
   active slot; the requirement limits active Dots, not the historical number
   of disabled Dots.
+- Deleting a user removes that user's personal Dot principals, definitions,
+  memories, grants and tokens through the existing principal cascade.
 
 ### Work and channels
 
