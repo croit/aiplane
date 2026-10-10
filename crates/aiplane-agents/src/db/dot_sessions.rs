@@ -4,6 +4,7 @@
 use jiff::Timestamp;
 use sqlx::Row;
 
+use super::agent_audit::{AuditKind, Correlation, NewEvent};
 use super::{DbError, Pool, WriteTx};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +59,20 @@ pub async fn link(
     .bind(dot_id)
     .bind(Timestamp::now().to_string())
     .execute(&mut *tx)
+    .await?;
+    super::agent_audit::append(
+        &mut tx,
+        NewEvent::new(
+            AuditKind::PersonalDotSessionStarted,
+            dot_id,
+            serde_json::json!({}),
+        )
+        .by(Some(owner_user_id))
+        .at(Correlation {
+            session_id: Some(session_id.to_string()),
+            ..Correlation::default()
+        }),
+    )
     .await?;
     tx.commit().await?;
     Ok(true)

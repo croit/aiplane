@@ -30,3 +30,4 @@ agent-a2a-input-required = 合作服务还需要一项信息才能继续。请�
 dot-error-inactive = 此 Dot 已停用。请先启用它，再开始对话。
 dot-action-chat = 聊天
 dot-action-chat-opening = 正在打开聊天…
+dot-activity-session-started = 已开始与 Dot 聊天。

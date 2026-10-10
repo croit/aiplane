@@ -30,3 +30,4 @@ agent-a2a-input-required = Ein Partnerdienst benötigt noch eine Angabe, um fort
 dot-error-inactive = Dieser Dot ist deaktiviert. Aktiviere ihn, bevor du eine Unterhaltung startest.
 dot-action-chat = Chat
 dot-action-chat-opening = Chat wird geöffnet …
+dot-activity-session-started = Dot-Chat gestartet.

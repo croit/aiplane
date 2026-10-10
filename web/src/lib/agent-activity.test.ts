@@ -124,3 +124,10 @@ test('a long message is clipped and a kind without a line has none', () => {
 	assert.equal(summarize(event({ kind: 'grant_added' })), null);
 	assert.equal(summarize(event({ kind: 'turn_started', detail: { resumed: true } }))?.key, 'agents-act-sum-resumed');
 });
+
+test('a personal Dot chat start has a localized activity summary', () => {
+	assert.deepEqual(summarize(event({ kind: 'personal_dot_session_started' })), {
+		key: 'dot-activity-session-started',
+		args: {}
+	});
+});

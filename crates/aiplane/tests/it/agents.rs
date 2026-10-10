@@ -1322,6 +1322,19 @@ async fn personal_dot_chat_sessions_are_private_and_remain_dot_owned_when_deacti
     let session_id = body["session"]["id"].as_str().unwrap();
     assert_eq!(body["session"]["user_id"], "alice");
     assert_eq!(body["session"]["title"], "chat-dot");
+    let (status, activity) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{dot_id}/activity"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{activity}");
+    let session_event = activity["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["kind"] == "personal_dot_session_started")
+        .expect("starting a Dot chat is recorded in Dot activity");
+    assert_eq!(session_event["principal_id"], dot_id);
+    assert_eq!(session_event["actor_id"], "alice");
+    assert_eq!(session_event["session_id"], session_id);
     assert_eq!(
         aiplane_agents::db::dot_sessions::for_session(&fx.state.db, "alice", session_id)
             .await

@@ -30,3 +30,4 @@ agent-a2a-input-required = Un servicio asociado necesita un dato más para conti
 dot-error-inactive = Este Dot está inactivo. Actívalo antes de iniciar una conversación.
 dot-action-chat = Chatear
 dot-action-chat-opening = Abriendo el chat…
+dot-activity-session-started = Se inició un chat con el Dot.

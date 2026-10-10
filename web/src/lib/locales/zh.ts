@@ -1344,6 +1344,7 @@ export const zh: Catalog = {
  "dot-activity-loading-more": "正在加载…",
  "dot-activity-more": "加载更多",
  "dot-activity-retry": "重试",
+ "dot-activity-session-started": "已开始与 Dot 聊天。",
  "dot-error-active-limit": "已达到个人 Dot 启用数量上限。请先停用一个 Dot，再创建新的 Dot。",
  "dot-error-id-missing": "请求中缺少 Dot ID。",
  "dot-error-inactive": "此 Dot 已停用。请先启用它，再开始对话。",

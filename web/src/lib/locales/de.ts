@@ -1359,6 +1359,7 @@ export const de: Catalog = {
  "dot-activity-loading-more": "Wird geladen …",
  "dot-activity-more": "Weitere laden",
  "dot-activity-retry": "Erneut versuchen",
+ "dot-activity-session-started": "Dot-Chat gestartet.",
  "dot-error-active-limit": "Das Limit für aktive persönliche Dots ist erreicht. Deaktiviere einen Dot, bevor du einen weiteren erstellst.",
  "dot-error-id-missing": "In der Anfrage fehlt eine Dot-ID.",
  "dot-error-inactive": "Dieser Dot ist deaktiviert. Aktiviere ihn, bevor du eine Unterhaltung startest.",

@@ -1375,6 +1375,7 @@ export const ru: Catalog = {
  "dot-activity-loading-more": "Загрузка…",
  "dot-activity-more": "Загрузить ещё",
  "dot-activity-retry": "Повторить",
+ "dot-activity-session-started": "Чат с Dot начат.",
  "dot-error-active-limit": "Достигнут лимит активных личных Dots. Деактивируйте один Dot, прежде чем создавать следующий.",
  "dot-error-id-missing": "В запросе отсутствует идентификатор Dot.",
  "dot-error-inactive": "Этот Dot отключён. Включите его, прежде чем начинать диалог.",

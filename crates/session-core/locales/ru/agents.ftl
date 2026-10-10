@@ -30,3 +30,4 @@ agent-a2a-input-required = Партнёрскому сервису нужна е
 dot-error-inactive = Этот Dot отключён. Включите его, прежде чем начинать диалог.
 dot-action-chat = Чат
 dot-action-chat-opening = Открываем чат…
+dot-activity-session-started = Чат с Dot начат.
