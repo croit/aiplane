@@ -29,10 +29,13 @@ use aiplane_core::server::upstreams::{
 };
 use aiplane_runtime::server::AppState;
 use aiplane_runtime::server::tools::ToolRegistry;
+use aiplane_runtime::server::tools::time::CurrentTimestamp;
 use aiplane_tools::location::GetUserLocation;
+use aiplane_tools::memory::{Forget, Recall, Remember, UpdateMemory};
 use common::Service as _;
 use rama::http::body::util::BodyExt;
 use rama::http::{Body, Method, Request, StatusCode, header};
+use serde_json::Value;
 use session_core::db as chat;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -615,6 +618,153 @@ async fn a_submitted_turn_streams_over_the_events_endpoint() {
     assert_eq!(finalized.1["status"], "completed");
     assert!(finalized.1["duration_ms"].is_i64());
     assert_eq!(finalized.1["turn_id"], accepted["assistant_turn_id"]);
+}
+
+#[tokio::test]
+async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(RemembersDotMemory {
+            rounds: std::sync::atomic::AtomicUsize::new(0),
+        })
+        .mount(&upstream)
+        .await;
+    let tools = Arc::new(
+        ToolRegistry::new()
+            .with(Remember)
+            .with(Recall)
+            .with(UpdateMemory)
+            .with(Forget)
+            .with(CurrentTimestamp),
+    );
+    let memory_ids = ["remember", "recall", "update_memory", "forget"];
+    let rbac = Arc::new(
+        Resolver::build(
+            RbacConfig {
+                default_role: Some("member".into()),
+                mappings: vec![],
+            },
+            vec![RoleConfig {
+                id: "member".into(),
+                admin: false,
+                models: vec![],
+                tools: memory_ids
+                    .iter()
+                    .map(|id| (*id).to_string())
+                    .chain(std::iter::once("get_current_timestamp".into()))
+                    .collect(),
+                skills: vec![],
+            }],
+        )
+        .unwrap(),
+    );
+    let state = state_with_chat_access(&upstream.uri(), tools, rbac).await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let allowed = state.allowed_tools_for_user(&[], "alice").await;
+    assert!(
+        memory_ids
+            .iter()
+            .all(|id| allowed.contains(&id.to_string())),
+        "memory grants and the user setting should allow these tools: {allowed:?}"
+    );
+    let (_, dot) = aiplane_agents::db::agents::create_personal_dot(
+        &state.db,
+        &aiplane_agents::db::system_principals::NewPrincipal {
+            name: "memory-dot",
+            display: "Memory Dot",
+            description: "",
+        },
+        r#"{"main":{}}"#,
+        "alice",
+        4,
+    )
+    .await
+    .unwrap();
+    let dot = dot.unwrap();
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    assert!(
+        aiplane_agents::db::dot_sessions::link(&state.db, "alice", &dot.principal.id, &session.id,)
+            .await
+            .unwrap()
+    );
+    let state = Arc::new(state);
+    let app = router(state.clone());
+    let accepted = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"Remember this lesson."}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+    let events = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/events", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let frames = sse_frames(&body_string(events).await);
+    assert!(
+        frames
+            .iter()
+            .any(|(name, frame)| { name == "turn_finalized" && frame["status"] == "completed" }),
+        "unexpected Dot chat frames: {frames:?}"
+    );
+
+    let requests = upstream.received_requests().await.unwrap();
+    let body = requests
+        .iter()
+        .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
+        .find(|body| {
+            body["tools"].as_array().is_some_and(|tools| {
+                tools
+                    .iter()
+                    .any(|tool| tool["function"]["name"] == "remember")
+            })
+        })
+        .expect("the Dot turn sent its offered memory tools to the configured model upstream");
+    let offered: Vec<&str> = body["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        offered.len(),
+        4,
+        "only the four memory tools are offered: {offered:?}"
+    );
+    for id in memory_ids {
+        assert!(offered.contains(&id), "missing {id}: {offered:?}");
+    }
+    assert!(!offered.contains(&"get_current_timestamp"));
+    let system = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "system")
+        .map(|message| message["content"].as_str().unwrap_or_default())
+        .collect::<String>();
+    assert!(system.contains("named \"memory-dot\""), "{system}");
+    let memories =
+        aiplane_agents::db::dot_memories::list(&state.db, "alice", &dot.principal.id, 10)
+            .await
+            .unwrap()
+            .expect("the Dot remains owned by alice");
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].content, "avoid the verified deployment pitfall");
+    assert!(
+        aiplane_core::server::db::user_memories::recall_recent(&state.db, "alice", None, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 /// Attaching with nothing live: snapshot + idle, and the stream ends —
@@ -3374,6 +3524,35 @@ async fn a_later_rounds_loop_is_its_own_first_attempt() {
 struct CallsByName {
     tool: &'static str,
     rounds: std::sync::atomic::AtomicUsize,
+}
+
+struct RemembersDotMemory {
+    rounds: std::sync::atomic::AtomicUsize,
+}
+
+impl wiremock::Respond for RemembersDotMemory {
+    fn respond(&self, req: &wiremock::Request) -> ResponseTemplate {
+        let body: Value = serde_json::from_slice(&req.body).unwrap();
+        if body["stream"] != true {
+            return ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": "Dot chat"}}]
+            }));
+        }
+        let round = self
+            .rounds
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let delta = if round == 0 {
+            serde_json::json!({"tool_calls": [{"index": 0, "id": "call-memory", "type": "function",
+                "function": {"name": "remember", "arguments": "{\"content\":\"avoid the verified deployment pitfall\"}"}}]})
+        } else {
+            serde_json::json!({"content": "I will remember that."})
+        };
+        let sse = format!(
+            "data: {}\n\ndata: [DONE]\n\n",
+            serde_json::json!({"choices": [{"index": 0, "delta": delta}]})
+        );
+        ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream")
+    }
 }
 
 impl CallsByName {

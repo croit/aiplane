@@ -15,6 +15,7 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 
 | Crate | Used in | Why |
 |---|---|---|
+| `aiplane-agents` | `aiplane-tools` | Existing memory tools route personal-Dot writes through the owner-scoped Dot-memory accessors, without duplicating their SQL or adding a new store. |
 | `rama` | `gateway` | HTTP framework + proxying primitives. Features `http-full` + `tower`; rustls deliberately off (aws-lc-sys is cmake-only). |
 | `serde_urlencoded` | `gateway`, `aiplane-api` | Query-string encode/decode: building the `return_to` parameter on the sign-in redirect and parsing the OIDC callback's query. (It used to parse form bodies for the page POST handlers; those are gone.) |
 | `tokio` | `gateway`, `cli` | Async runtime. |

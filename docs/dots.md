@@ -18,8 +18,10 @@ Starting a Dot chat adds a session-start event to that activity feed without
 copying the conversation text into the event.
 Dot memory has a separate store and owner-scoped API, but automatic memory
 curation is not implemented. A personal Dot can start a private chat that
-reads bounded Dot memory and the user's existing profile context; the current
-chat has no tools or background execution.
+reads bounded Dot memory and the user's existing profile context. Its chat
+exposes only the existing memory tools when the user's memory capability is
+granted and enabled; external and MCP tools remain unavailable until action
+policy is implemented. There is no background execution yet.
 
 | Endpoint | Behavior |
 |---|---|
@@ -40,8 +42,12 @@ its run path. Lowering the configured active cap does not deactivate existing
 Dots; creation and reactivation remain blocked until the owner is below the
 new cap. Dot memories are separate from `user_memories`, reuse its kinds and
 duplicate handling, and can be managed under `/api/v0/dots/{id}/memories`.
-Dot chat sessions read bounded Dot memory and the user's existing profile
-context, and run without tools until action policy is implemented. Deactivating
+a Dot chat session reads bounded Dot memory and the user's existing profile
+context. It exposes only `remember`, `recall`, `update_memory` and `forget`,
+subject to the user's existing memory grant and setting. Writes go to that
+Dot's own store; recall returns both Dot and user memories with explicit
+scopes, and user-wide memory is read-only from a Dot chat. Other tools remain
+unavailable until action policy is implemented. Deactivating
 a Dot preserves its existing sessions but blocks new sessions and new turns;
 existing pending Dot turns remain paused while the Dot is inactive. The `/dots`
 page displays active usage against the operator limit, creates a personal Dot
@@ -207,9 +213,13 @@ approval for external writes. Webhook payloads retain their untrusted-input
 framing.
 
 Memory has the same split in the current code. `user_memories` is keyed only
-by `user_id`; its four memory tools require `ToolContext::person()`, and the
-driver injects the user's preferences only when the shared `recall` tool is
-granted and enabled. Agent `agent_state` is a different store keyed by
+by `user_id`; the four existing memory tools use the acting user's identity
+and personal Dot context to route writes into `personal_dot_memories`. Dot
+chats expose them only when the user's existing memory capability is granted
+and enabled. `recall` combines both scopes and marks each result; correction
+and deletion operate only on Dot-scoped memories from a Dot chat. The driver
+injects the user's preferences only when the shared `recall` tool is granted
+and enabled. Agent `agent_state` is a different store keyed by
 conversation session and is used for typed orchestration slots, so it cannot
 serve as persistent Dot memory. A personal Dot turn must get user-profile
 memory under the user's existing memory grant and switch, plus a distinct

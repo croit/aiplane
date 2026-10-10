@@ -35,7 +35,7 @@ const TYPST_VARIANT_SUFFIXES: &[&str] = &["_edit", "_read", "_pptx"];
 /// `remember`: a user who turns memory off must not be left with tools that
 /// can still mutate the store, and one who turns it on needs the store to be
 /// correctable, not append-only.
-const MEMORY_IDS: &[&str] = &["remember", RECALL_TOOL_ID, "update_memory", "forget"];
+pub const MEMORY_TOOL_IDS: &[&str] = &["remember", RECALL_TOOL_ID, "update_memory", "forget"];
 const MEMORY_KEY: &str = "memory";
 
 /// The document-canvas tools are one capability — building up and editing
@@ -255,7 +255,7 @@ pub fn entry_key_for(tool_id: &str) -> &str {
             .iter()
             .find_map(|s| tool_id.strip_suffix(s))
             .unwrap_or(tool_id)
-    } else if MEMORY_IDS.contains(&tool_id) {
+    } else if MEMORY_TOOL_IDS.contains(&tool_id) {
         MEMORY_KEY
     } else if ATTACH_IDS.contains(&tool_id) {
         ATTACH_KEY
@@ -393,7 +393,7 @@ pub fn category_for(tool_id: &str) -> Category {
         // Against the list, not literals: adding a fifth memory tool must not
         // be able to categorise it as Utility by omission. (It could, until
         // `update_memory` and `forget` landed and the drift guard said so.)
-        _ if MEMORY_IDS.contains(&tool_id) => Category::Memory,
+        _ if MEMORY_TOOL_IDS.contains(&tool_id) => Category::Memory,
         _ if SCHEDULE_IDS.contains(&tool_id) => Category::Scheduling,
         _ if tool_id.starts_with(crate::server::tools::mcp::MCP_ID_PREFIX) => {
             Category::Integrations
@@ -740,13 +740,13 @@ pub fn entries(
             }
             continue;
         }
-        if MEMORY_IDS.contains(&id.as_str()) {
+        if MEMORY_TOOL_IDS.contains(&id.as_str()) {
             if !memory_seen {
                 memory_seen = true;
                 out.push(ToolEntry {
                     key: MEMORY_KEY.to_string(),
                     title: "Memory".to_string(),
-                    tech: MEMORY_IDS.join(" + "),
+                    tech: MEMORY_TOOL_IDS.join(" + "),
                     description: "Lets the assistant remember durable facts about you \
                                   (preferences, ongoing projects), recall them in later \
                                   conversations, and correct or delete one when it changes. \
@@ -1016,14 +1016,14 @@ mod tests {
     /// `forget` left them in `Utility` and outside the switch.
     #[test]
     fn every_memory_tool_shares_the_toggle_and_the_category() {
-        for id in MEMORY_IDS {
+        for id in MEMORY_TOOL_IDS {
             assert_eq!(entry_key_for(id), MEMORY_KEY, "`{id}` toggle key");
             assert_eq!(category_for(id), Category::Memory, "`{id}` category");
         }
         // And the mutating pair is really in the list — a toggle that leaves
         // them on would let a user who disabled memory still have it written.
-        assert!(MEMORY_IDS.contains(&"forget"));
-        assert!(MEMORY_IDS.contains(&"update_memory"));
+        assert!(MEMORY_TOOL_IDS.contains(&"forget"));
+        assert!(MEMORY_TOOL_IDS.contains(&"update_memory"));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! Per-user durable memory: `remember`, `recall`, `update_memory`, `forget`.
+//! Durable memory: `remember`, `recall`, `update_memory`, `forget`.
 //!
 //! `remember` stores a short free-text fact about the caller; `recall` pulls
 //! those facts back in a later conversation, each with its `id`;
@@ -24,8 +24,54 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use shared::api::ToolDef;
 
-use aiplane_core::server::db::user_memories::{self, MemoryKind};
+use aiplane_core::server::db::user_memories::{self, Memory, MemoryKind};
 use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture};
+
+fn personal_dot_scope<'a>(
+    ctx: &'a ToolContext,
+    tool: &str,
+) -> Result<Option<(&'a str, &'a str)>, ToolError> {
+    let user_id = ctx.person(tool)?;
+    match ctx.personal_dot.as_ref() {
+        Some(dot) if dot.owner_user_id == user_id => Ok(Some((&dot.owner_user_id, &dot.dot_id))),
+        Some(_) => Err(ToolError::Failed(format!(
+            "`{tool}` refused: the personal Dot owner does not match the acting user."
+        ))),
+        None => Ok(None),
+    }
+}
+
+fn scope_name(scope: Option<(&str, &str)>) -> &'static str {
+    if scope.is_some() { "dot" } else { "user" }
+}
+
+fn resolve_scope(
+    requested: Option<&str>,
+    dot_scope: Option<(&str, &str)>,
+) -> Result<&'static str, ToolError> {
+    match requested {
+        None => Ok(scope_name(dot_scope)),
+        Some("dot") if dot_scope.is_some() => Ok("dot"),
+        Some("user") if dot_scope.is_none() => Ok("user"),
+        Some("dot") => Err(ToolError::InvalidArgs(
+            "Dot memory is available only in a personal Dot chat".into(),
+        )),
+        Some("user") => Ok("user"),
+        Some(other) => Err(ToolError::InvalidArgs(format!(
+            "unknown memory scope `{other}` — use `dot` or `user`"
+        ))),
+    }
+}
+
+fn memory_value(memory: Memory, scope: &'static str) -> Value {
+    json!({
+        "id": memory.id,
+        "scope": scope,
+        "kind": memory.kind.as_str(),
+        "content": memory.content,
+        "remembered_at": memory.created_at.to_string(),
+    })
+}
 
 /// Parse a caller-supplied `kind` string into a [`MemoryKind`].
 /// `None`/absent → `Fact` (the generic bucket); an unrecognised string
@@ -118,12 +164,24 @@ impl Tool for Remember {
                     content.len()
                 )));
             }
-            let row = user_memories::insert(&ctx.db, ctx.person(self.id())?, kind, content)
-                .await
-                .map_err(|e| ToolError::Failed(format!("storing memory: {e}")))?;
+            let dot_scope = personal_dot_scope(&ctx, self.id())?;
+            let row = match dot_scope {
+                Some((owner, dot)) => {
+                    aiplane_agents::db::dot_memories::insert(&ctx.db, owner, dot, kind, content)
+                        .await
+                        .map_err(|e| ToolError::Failed(format!("storing Dot memory: {e}")))?
+                        .ok_or_else(|| {
+                            ToolError::Failed("the personal Dot is no longer available".into())
+                        })?
+                }
+                None => user_memories::insert(&ctx.db, ctx.person(self.id())?, kind, content)
+                    .await
+                    .map_err(|e| ToolError::Failed(format!("storing memory: {e}")))?,
+            };
             Ok(json!({
                 "status": "remembered",
                 "id": row.id,
+                "scope": scope_name(dot_scope),
                 "kind": row.kind.as_str(),
                 "content": row.content,
             }))
@@ -164,28 +222,33 @@ impl Tool for Recall {
             // full memory set (newest first, bounded by a safety cap).
             // No filtering — the model reasons over everything rather
             // than guessing a query that has to lexically match.
-            let rows = user_memories::recall_recent(
+            let dot_scope = personal_dot_scope(&ctx, self.id())?;
+            let mut rows: Vec<(Memory, &'static str)> = user_memories::recall_recent(
                 &ctx.db,
                 ctx.person(self.id())?,
                 None,
                 MAX_RECALL_LIMIT,
             )
             .await
-            .map_err(|e| ToolError::Failed(format!("recalling memories: {e}")))?;
-
+            .map_err(|e| ToolError::Failed(format!("recalling user memories: {e}")))?
+            .into_iter()
+            .map(|memory| (memory, "user"))
+            .collect();
+            if let Some((owner, dot)) = dot_scope {
+                let dot_rows =
+                    aiplane_agents::db::dot_memories::list(&ctx.db, owner, dot, MAX_RECALL_LIMIT)
+                        .await
+                        .map_err(|e| ToolError::Failed(format!("recalling Dot memories: {e}")))?
+                        .ok_or_else(|| {
+                            ToolError::Failed("the personal Dot is no longer available".into())
+                        })?;
+                rows.extend(dot_rows.into_iter().map(|memory| (memory, "dot")));
+            }
+            rows.sort_by(|(a, _), (b, _)| b.created_at.cmp(&a.created_at));
+            rows.truncate(MAX_RECALL_LIMIT as usize);
             let memories: Vec<Value> = rows
                 .into_iter()
-                .map(|m| {
-                    json!({
-                        // The id is what makes a memory correctable: `forget`
-                        // and `update_memory` address one by id, and recall is
-                        // the only place the model ever learns them.
-                        "id": m.id,
-                        "kind": m.kind.as_str(),
-                        "content": m.content,
-                        "remembered_at": m.created_at.to_string(),
-                    })
-                })
+                .map(|(memory, scope)| memory_value(memory, scope))
                 .collect();
             Ok(json!({
                 "count": memories.len(),
@@ -206,6 +269,8 @@ struct UpdateArgs {
     content: String,
     #[serde(default)]
     kind: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
 }
 
 impl Tool for UpdateMemory {
@@ -241,6 +306,11 @@ impl Tool for UpdateMemory {
                         "description": "Optional new classification. Omit to keep the \
                                         memory's current one — correcting the wording of a \
                                         preference should not silently refile it as a fact."
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["dot", "user"],
+                        "description": "Scope reported by `recall`; a personal Dot may change only `dot`."
                     }
                 }
             }),
@@ -265,13 +335,32 @@ impl Tool for UpdateMemory {
                 )));
             }
 
+            let dot_scope = personal_dot_scope(&ctx, self.id())?;
+            let scope = resolve_scope(args.scope.as_deref(), dot_scope)?;
+            if scope == "user" && dot_scope.is_some() {
+                return Err(ToolError::Failed(
+                    "user-wide memories are read-only in a personal Dot chat".into(),
+                ));
+            }
+            if scope == "dot" && dot_scope.is_none() {
+                return Err(ToolError::Failed(
+                    "Dot memory can only be changed from that Dot's chat".into(),
+                ));
+            }
             // Read the existing row first, scoped to this user: it gives us
             // the current `kind` to preserve, and it turns "someone else's id"
             // into the same not-found answer as "no such id" (no existence
             // leak across users).
-            let existing = user_memories::get(&ctx.db, ctx.person(self.id())?, &args.id)
-                .await
-                .map_err(|e| ToolError::Failed(format!("looking up memory: {e}")))?;
+            let existing = match (scope, dot_scope) {
+                ("dot", Some((owner, dot))) => {
+                    aiplane_agents::db::dot_memories::get(&ctx.db, owner, dot, &args.id)
+                        .await
+                        .map_err(|e| ToolError::Failed(format!("looking up Dot memory: {e}")))?
+                }
+                _ => user_memories::get(&ctx.db, ctx.person(self.id())?, &args.id)
+                    .await
+                    .map_err(|e| ToolError::Failed(format!("looking up memory: {e}")))?,
+            };
             let Some(existing) = existing else {
                 return Ok(not_found(&args.id));
             };
@@ -280,14 +369,23 @@ impl Tool for UpdateMemory {
                 None => existing.kind,
             };
 
-            let updated =
-                user_memories::update(&ctx.db, ctx.person(self.id())?, &args.id, kind, content)
-                    .await
-                    .map_err(|e| ToolError::Failed(format!("updating memory: {e}")))?;
+            let updated = match (scope, dot_scope) {
+                ("dot", Some((owner, dot))) => aiplane_agents::db::dot_memories::update(
+                    &ctx.db, owner, dot, &args.id, kind, content,
+                )
+                .await
+                .map_err(|e| ToolError::Failed(format!("updating Dot memory: {e}")))?,
+                _ => {
+                    user_memories::update(&ctx.db, ctx.person(self.id())?, &args.id, kind, content)
+                        .await
+                        .map_err(|e| ToolError::Failed(format!("updating memory: {e}")))?
+                }
+            };
             match updated {
                 Some(row) => Ok(json!({
                     "status": "updated",
                     "id": row.id,
+                    "scope": scope,
                     "kind": row.kind.as_str(),
                     "content": row.content,
                     "previous_content": existing.content,
@@ -307,6 +405,8 @@ pub struct Forget;
 #[derive(Deserialize)]
 struct ForgetArgs {
     id: String,
+    #[serde(default)]
+    scope: Option<String>,
 }
 
 impl Tool for Forget {
@@ -331,6 +431,11 @@ impl Tool for Forget {
                         "type": "string",
                         "description": "Id of the memory to delete, exactly as `recall` \
                                         returned it."
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["dot", "user"],
+                        "description": "Scope reported by `recall`; a personal Dot may change only `dot`."
                     }
                 }
             }),
@@ -342,24 +447,51 @@ impl Tool for Forget {
             let args: ForgetArgs = serde_json::from_value(args)
                 .map_err(|e| ToolError::InvalidArgs(format!("expected {{id: string}}: {e}")))?;
 
+            let dot_scope = personal_dot_scope(&ctx, self.id())?;
+            let scope = resolve_scope(args.scope.as_deref(), dot_scope)?;
+            if scope == "user" && dot_scope.is_some() {
+                return Err(ToolError::Failed(
+                    "user-wide memories are read-only in a personal Dot chat".into(),
+                ));
+            }
+            if scope == "dot" && dot_scope.is_none() {
+                return Err(ToolError::Failed(
+                    "Dot memory can only be changed from that Dot's chat".into(),
+                ));
+            }
             // Fetch before deleting so the result can echo *what* was
             // forgotten — the model needs that to confirm to the user, and
             // after the delete it's gone.
-            let existing = user_memories::get(&ctx.db, ctx.person(self.id())?, &args.id)
-                .await
-                .map_err(|e| ToolError::Failed(format!("looking up memory: {e}")))?;
+            let existing = match (scope, dot_scope) {
+                ("dot", Some((owner, dot))) => {
+                    aiplane_agents::db::dot_memories::get(&ctx.db, owner, dot, &args.id)
+                        .await
+                        .map_err(|e| ToolError::Failed(format!("looking up Dot memory: {e}")))?
+                }
+                _ => user_memories::get(&ctx.db, ctx.person(self.id())?, &args.id)
+                    .await
+                    .map_err(|e| ToolError::Failed(format!("looking up memory: {e}")))?,
+            };
             let Some(existing) = existing else {
                 return Ok(not_found(&args.id));
             };
-            let deleted = user_memories::delete(&ctx.db, ctx.person(self.id())?, &args.id)
-                .await
-                .map_err(|e| ToolError::Failed(format!("deleting memory: {e}")))?;
+            let deleted = match (scope, dot_scope) {
+                ("dot", Some((owner, dot))) => {
+                    aiplane_agents::db::dot_memories::delete(&ctx.db, owner, dot, &args.id)
+                        .await
+                        .map_err(|e| ToolError::Failed(format!("deleting Dot memory: {e}")))?
+                }
+                _ => user_memories::delete(&ctx.db, ctx.person(self.id())?, &args.id)
+                    .await
+                    .map_err(|e| ToolError::Failed(format!("deleting memory: {e}")))?,
+            };
             if !deleted {
                 return Ok(not_found(&args.id));
             }
             Ok(json!({
                 "status": "forgotten",
                 "id": args.id,
+                "scope": scope,
                 "content": existing.content,
             }))
         })
@@ -385,7 +517,10 @@ fn not_found(id: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aiplane_agents::db::{agents, system_principals::NewPrincipal};
     use aiplane_core::server::db;
+    use aiplane_core::server::db::users::{self, User};
+    use jiff::Timestamp;
 
     async fn ctx(pool: &db::Pool, user_id: &str) -> ToolContext {
         ToolContext {
@@ -399,6 +534,46 @@ mod tests {
 
     async fn fresh() -> db::Pool {
         db::open(std::path::Path::new(":memory:")).await.unwrap()
+    }
+
+    async fn personal_dot_ctx(pool: &db::Pool, user_id: &str) -> ToolContext {
+        let now = Timestamp::now();
+        users::upsert(
+            pool,
+            &User {
+                id: user_id.to_string(),
+                email: format!("{user_id}@example.com"),
+                name: None,
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        let (_, dot) = agents::create_personal_dot(
+            pool,
+            &NewPrincipal {
+                name: "memory-dot",
+                display: "Memory Dot",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            user_id,
+            4,
+        )
+        .await
+        .unwrap();
+        let dot_id = dot.unwrap().principal.id;
+        ToolContext {
+            personal_dot: Some(aiplane_runtime::agent_run::PersonalDotIdentity {
+                owner_user_id: user_id.to_string(),
+                dot_id,
+            }),
+            ..ctx(pool, user_id).await
+        }
     }
 
     /// A system principal has no person to remember things about. Its subject
@@ -651,6 +826,103 @@ mod tests {
             .unwrap();
         assert_eq!(out["count"], 1);
         assert_eq!(out["memories"][0]["content"], "prefers metric units");
+    }
+
+    #[tokio::test]
+    async fn personal_dot_memory_tools_keep_dot_and_user_memory_scopes_separate() {
+        let pool = fresh().await;
+        let dot_ctx = personal_dot_ctx(&pool, "alice").await;
+        let user_memory = user_memories::insert(
+            &pool,
+            "alice",
+            MemoryKind::Preference,
+            "prefers concise replies",
+        )
+        .await
+        .unwrap();
+        let saved = Remember
+            .run(
+                dot_ctx.clone(),
+                json!({"content": "avoid the same deployment pitfall"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(saved["scope"], "dot");
+
+        let recalled = Recall.run(dot_ctx.clone(), Value::Null).await.unwrap();
+        assert_eq!(recalled["count"], 2);
+        assert!(
+            recalled["memories"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| { m["id"] == user_memory.id && m["scope"] == "user" })
+        );
+        let dot_memory = recalled["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["scope"] == "dot")
+            .unwrap();
+        let dot_id = dot_memory["id"].as_str().unwrap();
+        let updated = UpdateMemory
+            .run(
+                dot_ctx.clone(),
+                json!({"id": dot_id, "scope": "dot", "content": "avoid the verified deployment pitfall"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated["status"], "updated");
+        assert_eq!(updated["scope"], "dot");
+        let forgotten = Forget
+            .run(dot_ctx.clone(), json!({"id": dot_id, "scope": "dot"}))
+            .await
+            .unwrap();
+        assert_eq!(forgotten["status"], "forgotten");
+        assert_eq!(forgotten["scope"], "dot");
+
+        let cannot_update_profile = UpdateMemory
+            .run(
+                dot_ctx.clone(),
+                json!({"id": user_memory.id, "scope": "user", "content": "changed"}),
+            )
+            .await
+            .unwrap_err();
+        assert!(cannot_update_profile.to_string().contains("read-only"));
+        let cannot_forget_profile = Forget
+            .run(
+                dot_ctx.clone(),
+                json!({"id": user_memory.id, "scope": "user"}),
+            )
+            .await
+            .unwrap_err();
+        assert!(cannot_forget_profile.to_string().contains("read-only"));
+        assert_eq!(
+            user_memories::get(&pool, "alice", &user_memory.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .content,
+            "prefers concise replies"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_personal_dot_cannot_use_an_identity_for_a_different_user() {
+        let pool = fresh().await;
+        let mut dot_ctx = personal_dot_ctx(&pool, "alice").await;
+        dot_ctx.personal_dot.as_mut().unwrap().owner_user_id = "bob".into();
+        let error = Remember
+            .run(dot_ctx, json!({"content": "a private lesson"}))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("does not match the acting user"));
+        assert!(
+            user_memories::recall_recent(&pool, "alice", None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

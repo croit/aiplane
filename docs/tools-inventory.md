@@ -71,10 +71,10 @@ message rather than being absent.
 | `rag_query_documents` | — | `rag_query_documents` | Filter, sort and total the documents of a collection by the fields its extraction profile pulled out (vendor, date, amount, project). The answer to any question about a *set* of documents — the latest, the largest, how many, how much — which top-k passage retrieval structurally cannot give: it returns five similar chunks and no way to know whether that was all of them. Always reports `total_matches` alongside the returned page, and surfaces the distinct values a text filter matched so `ACME` hitting both `ACME GmbH` and `ACME Deutschland AG` is visible rather than silently resolved. |
 | `rag_list_documents` | — | `rag_query_documents` | Folder-scoped document listing with the **stored** per-document summaries written at index time. Turns "find everything about project X and summarise it" into one call over ~200 tokens per document rather than re-reading every file. |
 | `rag_fetch_document` | — | `rag_query_documents` | Full extracted text of one indexed document by `document_id`. The drill-down after a hit; truncates long documents with a note rather than flooding the context. |
-| `remember` | — | `memory` | Persist a durable fact about the user. |
-| `recall` | — | `memory` | Retrieve everything remembered about the user, each with its `id`. |
-| `update_memory` | — | `memory` | Correct a stored fact in place, addressed by the id `recall` returned. |
-| `forget` | — | `memory` | Delete a stored fact by id. |
+| `remember` | — | `memory` | Persist a durable fact about the user, or the personal Dot in a Dot chat. |
+| `recall` | — | `memory` | Retrieve the user's memories and, in a Dot chat, the Dot's own memories with explicit scopes. |
+| `update_memory` | — | `memory` | Correct a stored fact in place, addressed by the id and scope `recall` returned. |
+| `forget` | — | `memory` | Delete a stored fact by id and scope. |
 
 The canvas tools, the four memory tools and the three scheduling tools
 collapse to the `document`, `memory` and `schedule` keys respectively — see

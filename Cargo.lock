@@ -275,6 +275,7 @@ dependencies = [
 name = "aiplane-tools"
 version = "0.1.0"
 dependencies = [
+ "aiplane-agents",
  "aiplane-core",
  "aiplane-features",
  "aiplane-runtime",

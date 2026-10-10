@@ -61,6 +61,26 @@ pub async fn list(
         .map(Some)
 }
 
+/// Read one memory only when `owner_user_id` owns the personal Dot.
+pub async fn get(
+    pool: &Pool,
+    owner_user_id: &str,
+    dot_id: &str,
+    id: &str,
+) -> Result<Option<Memory>, DbError> {
+    let row = sqlx::query(
+        "SELECT m.id, m.kind, m.content, m.created_at FROM personal_dot_memories m
+         JOIN personal_dots d ON d.principal_id = m.dot_id
+         WHERE m.id = ? AND d.owner_user_id = ? AND d.principal_id = ?",
+    )
+    .bind(id)
+    .bind(owner_user_id)
+    .bind(dot_id)
+    .fetch_optional(pool)
+    .await?;
+    row.as_ref().map(map_row).transpose()
+}
+
 /// Store Dot-scoped memory, collapsing exact duplicates within that Dot.
 pub async fn insert(
     pool: &Pool,

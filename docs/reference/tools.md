@@ -94,15 +94,15 @@ QR rendering needs no external model, but delivery still needs storage. Keep a r
 
 | Tool | Inputs | Result and rules |
 |---|---|---|
-| `remember` | **`content`**; optional `kind` (`preference`, `project`, `fact`). | Persists a durable fact for the caller. |
-| `recall` | No arguments. | All remembered facts and their IDs. |
-| `update_memory` | **`id`**, **`content`**; optional `kind`. | Corrects a stored fact in place; use an ID returned by `recall`. |
-| `forget` | **`id`**. | Deletes that stored fact. |
+| `remember` | **`content`**; optional `kind` (`preference`, `project`, `fact`). | Persists a durable fact for the caller. In a personal Dot chat it writes to the Dot's private memory; in ordinary chat it writes to the user's shared memory. |
+| `recall` | No arguments. | User memories and, in a personal Dot chat, that Dot's memories; each result includes its `id` and `scope`. |
+| `update_memory` | **`id`**, **`content`**; optional `kind`, `scope` (`dot`, `user`). | Corrects a stored fact in place; use the ID and scope returned by `recall`. A Dot can update only its own memory. |
+| `forget` | **`id`**; optional `scope` (`dot`, `user`). | Deletes a stored fact. A Dot can delete only its own memory. |
 | `schedule_action` | **`name`**, **`prompt`**, **`cron`**; optional `timezone`. | Proposes a recurring prompt using 5-field cron and IANA timezone (default caller timezone). Returns a human-readable schedule and next three run times. Requires the person's durable approval before creating it. Inherits the current turn's model; creates with tools off. |
 | `list_scheduled_actions` | No arguments. | The caller's actions with schedule previews. Read-only and usable outside chat. |
 | `delete_scheduled_action` | **`id`**. | Requires approval to delete the caller's action. Another person's ID is reported as missing. |
 
-Memory tools act for a person; they are not a general cross-user database. Scheduled work runs unattended as its owner. Configure additional capabilities in the [workspace](../guide/automation-and-inbox.md) after inspecting the schedule and prompt; a model's creation call cannot silently enable them. Approvals can be answered from chat or inbox and survive a restart.
+Memory tools act for the signed-in user and, in a personal Dot chat, use the Dot identity to scope Dot-owned writes. They are not a general cross-user database. User-wide memories are read-only from Dot chats. Scheduled work runs unattended as its owner. Configure additional capabilities in the [workspace](../guide/automation-and-inbox.md) after inspecting the schedule and prompt; a model's creation call cannot silently enable them. Approvals can be answered from chat or inbox and survive a restart.
 
 ## Retrieve indexed knowledge
 

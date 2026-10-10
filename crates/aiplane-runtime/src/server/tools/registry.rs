@@ -83,6 +83,20 @@ impl ToolRegistry {
         Self { tools }
     }
 
+    /// A registry containing only the requested tools that are registered.
+    pub fn with_only(&self, ids: &[&str]) -> Self {
+        Self {
+            tools: ids
+                .iter()
+                .filter_map(|id| {
+                    self.tools
+                        .get(*id)
+                        .map(|tool| ((*id).to_string(), tool.clone()))
+                })
+                .collect(),
+        }
+    }
+
     pub fn get(&self, id: &str) -> Option<&Arc<dyn Tool>> {
         self.tools.get(id)
     }
@@ -341,6 +355,18 @@ mod tests {
         assert!(r.contains(Echo.id()));
         assert!(r.contains(CurrentTimestamp.id()));
         assert!(!r.contains("nope"));
+    }
+
+    #[test]
+    fn with_only_copies_only_registered_requested_tools() {
+        let r = ToolRegistry::new().with(Echo).with(CurrentTimestamp);
+        let selected = r.with_only(&["get_current_timestamp", "missing"]);
+        assert_eq!(
+            selected.ids().collect::<Vec<_>>(),
+            ["get_current_timestamp"]
+        );
+        assert!(!selected.contains("company_echo"));
+        assert!(r.contains("company_echo"));
     }
 
     #[test]
