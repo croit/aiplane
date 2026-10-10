@@ -1,5 +1,6 @@
 import { request } from './api.js';
 import type { Dot } from './dot-state.js';
+import type { Memory, MemoryKind } from './memory.js';
 export { activeDotCount, canCreateDot } from './dot-state.js';
 export type { Dot } from './dot-state.js';
 
@@ -22,4 +23,29 @@ export const dotsApi = {
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ active })
 		})
+};
+
+export const dotMemoriesApi = {
+	list: async (dotId: string) =>
+		(await request<{ memories: Memory[] }>(`/api/v0/dots/${encodeURIComponent(dotId)}/memories`)).memories,
+	create: (dotId: string, body: { kind: MemoryKind; content: string }) =>
+		request<Memory>(`/api/v0/dots/${encodeURIComponent(dotId)}/memories`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		}),
+	update: (dotId: string, memoryId: string, body: { kind: MemoryKind; content: string }) =>
+		request<Memory>(
+			`/api/v0/dots/${encodeURIComponent(dotId)}/memories/${encodeURIComponent(memoryId)}`,
+			{
+				method: 'PUT',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(body)
+			}
+		),
+	delete: (dotId: string, memoryId: string) =>
+		request<void>(
+			`/api/v0/dots/${encodeURIComponent(dotId)}/memories/${encodeURIComponent(memoryId)}`,
+			{ method: 'DELETE' }
+		)
 };
