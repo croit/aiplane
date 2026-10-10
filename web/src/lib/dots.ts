@@ -1,5 +1,6 @@
 import { request } from './api.js';
 import type { Dot } from './dot-state.js';
+import type { ActivityPage } from './agent-activity.js';
 import type { Memory, MemoryKind } from './memory.js';
 export { activeDotCount, canCreateDot } from './dot-state.js';
 export type { Dot } from './dot-state.js';
@@ -48,4 +49,12 @@ export const dotMemoriesApi = {
 			`/api/v0/dots/${encodeURIComponent(dotId)}/memories/${encodeURIComponent(memoryId)}`,
 			{ method: 'DELETE' }
 		)
+};
+
+export const dotActivityApi = {
+	list: (dotId: string, cursor: number | null = null, limit = 20) => {
+		const query = new URLSearchParams({ limit: String(limit) });
+		if (cursor !== null) query.set('cursor', String(cursor));
+		return request<ActivityPage>(`/api/v0/dots/${encodeURIComponent(dotId)}/activity?${query}`);
+	}
 };

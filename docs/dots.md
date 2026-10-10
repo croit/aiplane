@@ -1,8 +1,8 @@
 # AIplane Dots: product and architecture specification
 
 Status: implementation in progress; personal Dot ownership, active lifecycle,
-the first web management page, manually managed Dot memory and owner-scoped
-memory/activity APIs are implemented.
+the first web management page, manually managed Dot memory, recent activity
+view and owner-scoped memory/activity APIs are implemented.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -12,9 +12,10 @@ four. The `/dots` page lists, creates, activates and deactivates personal Dots.
 Lifecycle endpoints currently reuse the existing `can_manage_agents` group
 permission. Each Dot card has a lazily loaded memory panel with separate
 preference, project and fact entries. Owners can add, edit and delete those
-notes; they remain separate from user-wide memory. Dot memory has a separate
-store and owner-scoped API, but no runtime execution path or automatic memory
-curation yet.
+notes; they remain separate from user-wide memory. A second lazily loaded
+panel shows the Dot's recent audited events and can page through older ones.
+Dot memory has a separate store and owner-scoped API, but no runtime execution
+path or automatic memory curation yet.
 
 | Endpoint | Behavior |
 |---|---|

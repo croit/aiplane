@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import Modal from '#lib/components/ui/Modal.svelte';
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
+	import DotActivityPanel from '#lib/components/dots/DotActivityPanel.svelte';
 	import DotMemoryPanel from '#lib/components/dots/DotMemoryPanel.svelte';
 	import { activeDotCount, canCreateDot, dotsApi, type Dot } from '#lib/dots.js';
 	import { t } from '#lib/i18n.svelte.js';
@@ -103,6 +104,7 @@
 						</div>
 						{#if dot.description}<p class="line-clamp-3 text-sm text-base-content/70">{dot.description}</p>{/if}
 						<DotMemoryPanel {dot} />
+						<DotActivityPanel {dot} />
 						<div class="card-actions justify-end">
 							<button class="btn btn-sm" type="button" disabled={busyId === dot.id || (!dot.active && !createAllowed)} onclick={() => void setActive(dot)}>
 								{dot.active ? t('dots-action-deactivate') : t('dots-action-activate')}
