@@ -30,7 +30,7 @@ pub struct CreateDotBody {
     pub description: String,
 }
 
-#[derive(Serialize, schemars::JsonSchema)]
+#[derive(Clone, Serialize, schemars::JsonSchema)]
 pub struct DotView {
     pub id: String,
     pub name: String,
@@ -45,7 +45,7 @@ pub struct DotList {
     pub active_limit: u32,
 }
 
-fn view(row: &agents_db::PersonalDotRow) -> DotView {
+pub(crate) fn view(row: &agents_db::PersonalDotRow) -> DotView {
     let p = &row.agent.principal;
     DotView {
         id: p.id.clone(),

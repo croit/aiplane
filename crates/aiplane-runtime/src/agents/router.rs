@@ -455,6 +455,7 @@ impl ForwardRequest {
                 prompt: child.task,
                 model: &profile.model,
                 existing_session: None,
+                dot_id: None,
             },
         )
         .await

@@ -57,6 +57,18 @@ impl Tool for LivePersonalDotTool {
             {
                 return Err(self.unavailable());
             }
+            if let Some(turn_id) = ctx.assistant_turn_id.as_deref()
+                && crate::server::background::for_turn(
+                    &self.state.db,
+                    &identity.owner_user_id,
+                    turn_id,
+                )
+                .await
+                .map_err(Self::load_error)?
+                .is_some_and(|context| !context.tools_enabled)
+            {
+                return Err(self.unavailable());
+            }
             let owner = users::find_by_id(&self.state.db, &identity.owner_user_id)
                 .await
                 .map_err(Self::load_error)?
@@ -325,6 +337,49 @@ mod tests {
             .unwrap();
         user.roles.clear();
         users::upsert(&tool.state.db, &user).await.unwrap();
+        assert!(tool.run(ctx, json!({})).await.is_err());
+    }
+    #[tokio::test]
+    async fn personal_dot_live_tool_rechecks_background_trigger_ceiling_and_binding() {
+        let (tool, mut ctx) = fixture().await;
+        let identity = ctx.personal_dot.clone().unwrap();
+        let session = session_core::db::create_session(&tool.state.db, "owner")
+            .await
+            .unwrap();
+        aiplane_agents::db::dot_sessions::link(
+            &tool.state.db,
+            "owner",
+            &identity.dot_id,
+            &session.id,
+        )
+        .await
+        .unwrap();
+        session_core::db::create_assistant_turn_in_progress(
+            &tool.state.db,
+            &session.id,
+            "live-turn",
+            "model",
+        )
+        .await
+        .unwrap();
+        let now = jiff::Timestamp::now().to_string();
+        sqlx::query("INSERT INTO scheduled_actions(id,user_id,dot_id,name,prompt,model,cron,timezone,tools_enabled,created_at,updated_at) VALUES('action','owner',?,'job','prompt','model','* * * * *','UTC',1,?,?)").bind(&identity.dot_id).bind(&now).bind(&now).execute(&tool.state.db).await.unwrap();
+        sqlx::query("INSERT INTO scheduled_runs(id,action_id,fired_at,session_id,assistant_turn_id,tools_enabled,created_at) VALUES('run','action',?,?,'live-turn',1,?)").bind(&now).bind(&session.id).bind(&now).execute(&tool.state.db).await.unwrap();
+        ctx.assistant_turn_id = Some("live-turn".into());
+        ctx.session_id = Some(session.id);
+        assert_eq!(
+            tool.run(ctx.clone(), json!({})).await.unwrap()["user"],
+            "owner"
+        );
+        sqlx::query("UPDATE scheduled_actions SET tools_enabled=0")
+            .execute(&tool.state.db)
+            .await
+            .unwrap();
+        assert!(tool.run(ctx.clone(), json!({})).await.is_err());
+        sqlx::query("UPDATE scheduled_actions SET tools_enabled=1,dot_id=NULL")
+            .execute(&tool.state.db)
+            .await
+            .unwrap();
         assert!(tool.run(ctx, json!({})).await.is_err());
     }
 }

@@ -1,6 +1,8 @@
 import type { ChatModelOption } from './model-option';
+import type { Dot } from './dot-state.ts';
+import type { DotBinding } from './dot-background.ts';
 
-export interface Webhook {
+export interface Webhook extends DotBinding {
 	id: string;
 	name: string;
 	prompt: string;
@@ -30,6 +32,7 @@ export interface WebhookRun {
 	fired_at: string;
 	source: string;
 	session_id: string | null;
+	assistant_turn_id: string | null;
 	/** The run opened a chat the owner has since deleted. */
 	chat_deleted: boolean;
 	prompt: string;
@@ -38,6 +41,7 @@ export interface WebhookRun {
 
 export interface WebhooksData {
 	webhooks: Webhook[];
+	dots: Dot[];
 	models: ChatModelOption[];
 }
 

@@ -154,6 +154,44 @@ The version-controlled pre-push git hook (`.githooks/pre-push`, enabled with `mi
 - **Not part of the CI default** — the browser suite needs a running gateway and Chromium, so it stays a local/opt-in loop.
 - Authenticated flows (`e2e/authed.test.mjs`, the `spa*` signed-in tests) don't need OIDC: they sign in through the debug-only `/__dev/*` seeding endpoints (`rama_server::dev_seed`), compiled in under `cfg(debug_assertions)` and never present in a release build. `/__dev/seed-session` resets the canonical fixture (user `alice@example.com` + her three tokens) and is reserved for the one file that asserts those counts; everything else uses the delete-free `/__dev/session`. Completing setup is also how the suite makes `/readyz` deterministic on a fresh dev database.
 
+## Personal Dot background coverage
+
+The background slice uses real registries, in-memory SQLite and mocked model
+upstreams. `crates/aiplane/tests/it/dots_background.rs` covers owner-bound
+schedule creation, same-Dot private linked conversations, ordinary versus
+Dot-filtered chat listings and retained inactive bindings. It also covers exact
+turn correlation, pending-run deletion conflicts and synchronous webhook
+fire/replay returning HTTP 202 when approval is required. Disabling an
+automation still permits its pending turn to settle.
+
+Runtime tests beside `server/background.rs` cover restoration of scheduled or
+webhook usage source, recorded history limits, original/current tools ceiling,
+owner and binding rejection, waiting/completed/cancelled reconciliation and
+protection of newer summaries from older continuations. Headless and shared
+worker/session-core tests cover atomic idle user/assistant insertion, refusal
+to append to running or suspended conversations, and background registration
+using the chat worker lifecycle. Atomic edit/retry tests verify that concurrent
+background admission cannot rewrite history or leave a partial prompt. Approval
+continuation uses actual suspension rows and a mocked upstream, asserting the
+resulting Dot memory and exact run state. A busy resume leaves the original
+approval unclaimed for retry; abandoned reservations clear their own worker.
+
+`web/src/lib/dot-background.test.ts` and `background-api.test.ts` cover real
+choice availability and query semantics. `e2e/spa-dots-background.test.mjs`
+exercises the existing schedule/webhook forms, preselected Dot links, scoped
+linked conversations, resulting Dot sessions, retained inactive edits and
+mobile layout against the seeded gateway. Its pending webhook case inspects the
+original arguments in Inbox, approves once and verifies exact-run completion,
+Dot-only memory writes and settlement after the automation is disabled. Run it through the existing E2E
+mise task and a real debug gateway; it is an opt-in browser suite.
+
+Before calling the slice complete, verify an approval-required Dot webhook
+reaches waiting, returns HTTP 202 for synchronous fire/rerun, appears in Inbox,
+resumes under unchanged recorded tools/history ceilings, updates its exact run
+and prevents deletion until the turn settles. Disabling the automation must
+still permit settlement; deactivating the Dot must pause continuation. The
+workspace proposal is not included in current runtime coverage.
+
 ## Performance / load tests
 
 Not part of the per-PR loop, and no benchmark suite exists yet. If one is added, the natural target is the per-request middleware overhead and the upstream picker (e.g. a no-op `/v1/chat/completions` against a mocked instant upstream), measured with `criterion`.

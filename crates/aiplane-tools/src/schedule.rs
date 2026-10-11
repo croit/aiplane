@@ -287,6 +287,8 @@ impl Tool for ScheduleAction {
             let action = scheduled::create(
                 &ctx.db,
                 NewAction {
+                    dot_id: ctx.personal_dot.as_ref().map(|dot| dot.dot_id.clone()),
+                    linked_session_id: None,
                     user_id: ctx.person(self.id())?.to_string(),
                     name: name.to_string(),
                     prompt: prompt.to_string(),
@@ -427,6 +429,11 @@ impl Tool for DeleteScheduledAction {
             let removed = scheduled::delete(&ctx.db, ctx.person(self.id())?, id)
                 .await
                 .map_err(|e| ToolError::Failed(format!("deleting the scheduled action: {e}")))?;
+            let removed = match removed {
+                scheduled::DeleteOutcome::Deleted => true,
+                scheduled::DeleteOutcome::Missing => false,
+                scheduled::DeleteOutcome::Pending => return Err(ToolError::Failed("The automation is running or waiting for approval; finish or stop its turn before deleting it".into())),
+            };
             Ok(json!({
                 "deleted": removed,
                 "id": action.id,
@@ -487,6 +494,8 @@ mod tests {
         scheduled::create(
             pool,
             NewAction {
+                dot_id: None,
+                linked_session_id: None,
                 user_id: "u1".into(),
                 name: "Nightly".into(),
                 prompt: "check".into(),
@@ -759,6 +768,8 @@ mod tests {
             scheduled::create(
                 &pool,
                 NewAction {
+                    dot_id: None,
+                    linked_session_id: None,
                     user_id: user.into(),
                     name: name.into(),
                     prompt: "p".into(),
@@ -816,6 +827,8 @@ mod tests {
         let theirs = scheduled::create(
             &pool,
             NewAction {
+                dot_id: None,
+                linked_session_id: None,
                 user_id: "u2".into(),
                 name: "Theirs".into(),
                 prompt: "p".into(),
@@ -843,5 +856,34 @@ mod tests {
             scheduled::list_for_user(&pool, "u2").await.unwrap().len(),
             1
         );
+    }
+    #[tokio::test]
+    async fn a_dot_created_schedule_keeps_its_dot_binding() {
+        let pool = seeded().await;
+        let (_, dot) = aiplane_agents::db::agents::create_personal_dot(
+            &pool,
+            &aiplane_agents::db::system_principals::NewPrincipal {
+                name: "Scheduler",
+                display: "Scheduler",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "u1",
+            4,
+        )
+        .await
+        .unwrap();
+        let dot_id = dot.unwrap().principal.id;
+        let mut context = ctx_with(&pool, approved());
+        context.personal_dot = Some(aiplane_runtime::agent_run::PersonalDotIdentity {
+            owner_user_id: "u1".into(),
+            dot_id: dot_id.clone(),
+        });
+        let result = ScheduleAction.run(context, create_args()).await.unwrap();
+        assert_eq!(result["created"], true);
+        let actions = scheduled::list_for_user(&pool, "u1").await.unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].dot_id.as_deref(), Some(dot_id.as_str()));
+        assert!(!actions[0].tools_enabled);
     }
 }

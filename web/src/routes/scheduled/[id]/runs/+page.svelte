@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import DotAssociation from '#lib/components/dots/DotAssociation.svelte';
 	import { page } from '$app/state';
 	import { adminJson } from '#lib/admin-client.js';
 	import { locale, t } from '#lib/i18n.svelte.js';
@@ -51,6 +52,7 @@
 	{#if loading}
 		<div class="skeleton mt-5 h-40 w-full"></div>
 	{:else if action}
+		<DotAssociation binding={action} />
 		<section class="card card-border mt-5">
 			<div class="card-body">
 				<ul class="flex flex-col divide-y divide-base-300">
@@ -59,13 +61,14 @@
 							<div class="min-w-0 flex-1">
 								<div class="flex flex-wrap items-center gap-2">
 									<strong class="text-sm">{runTime(run.fired_at)}</strong>
-									<span class="badge badge-sm {run.status === 'ok' ? 'badge-success' : run.status === 'error' ? 'badge-error' : 'badge-ghost'}">
-										{t(run.status === 'ok' ? 'scheduled-run-status-ok' : run.status === 'error' ? 'scheduled-run-status-error' : 'scheduled-run-status-pending')}
+									<span class="badge badge-sm {run.status === 'ok' ? 'badge-success' : run.status === 'error' ? 'badge-error' : run.status === 'waiting' ? 'badge-warning' : 'badge-ghost'}">
+										{t(run.status === 'ok' ? 'scheduled-run-status-ok' : run.status === 'error' ? 'scheduled-run-status-error' : run.status === 'waiting' ? 'dot-background-waiting' : 'scheduled-run-status-pending')}
 									</span>
 								</div>
 								{#if run.error}<p class="mt-0.5 text-xs text-error">{run.error}</p>{/if}
 							</div>
 							<div class="flex shrink-0 items-center gap-3 self-end text-sm sm:self-auto">
+								{#if run.status === 'waiting'}<a class="link link-hover" href="/inbox">{t('inbox-heading')}</a>{/if}
 								{#if run.chat_deleted}
 									<span class="badge badge-sm badge-outline text-base-content/60">{t('scheduled-run-chat-deleted')}</span>
 								{:else if run.session_id}

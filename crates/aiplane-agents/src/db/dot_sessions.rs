@@ -84,12 +84,12 @@ pub async fn for_session(
     session_id: &str,
 ) -> Result<Option<PersonalDotSession>, DbError> {
     let row = sqlx::query(
-        "SELECT p.session_id, p.owner_user_id, p.dot_id, d.active
+        "SELECT p.session_id, p.owner_user_id, p.dot_id, COALESCE(d.active, 0) AS active
          FROM personal_dot_sessions p
-         JOIN personal_dots d ON d.principal_id = p.dot_id
+         LEFT JOIN personal_dots d ON d.principal_id = p.dot_id AND d.owner_user_id = p.owner_user_id
          JOIN chat_sessions s ON s.id = p.session_id
          WHERE p.session_id = ? AND p.owner_user_id = ? AND s.user_id = ?
-           AND d.owner_user_id = p.owner_user_id",
+           AND s.principal_id IS NULL",
     )
     .bind(session_id)
     .bind(owner_user_id)
@@ -105,6 +105,61 @@ pub async fn for_session(
         })
     })
     .transpose()
+}
+
+pub async fn binding_valid(
+    connection: &mut sqlx::SqliteConnection,
+    owner_user_id: &str,
+    dot_id: Option<&str>,
+    previous_dot_id: Option<&str>,
+) -> Result<bool, DbError> {
+    if dot_id.is_none() || dot_id == previous_dot_id {
+        return Ok(true);
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM personal_dots WHERE principal_id = ? AND owner_user_id = ? AND active = 1)",
+    ).bind(dot_id).bind(owner_user_id).fetch_one(connection).await?)
+}
+
+pub async fn session_matches(
+    connection: &mut sqlx::SqliteConnection,
+    owner_user_id: &str,
+    session_id: &str,
+    dot_id: Option<&str>,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM chat_sessions s
+         LEFT JOIN personal_dot_sessions d ON d.session_id = s.id
+         WHERE s.id = ? AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
+           AND ((? IS NULL AND d.session_id IS NULL) OR (d.dot_id = ? AND d.owner_user_id = ?)))",
+    )
+    .bind(session_id)
+    .bind(owner_user_id)
+    .bind(dot_id)
+    .bind(dot_id)
+    .bind(owner_user_id)
+    .fetch_one(connection)
+    .await?)
+}
+
+pub async fn scoped_session_ids(
+    pool: &Pool,
+    owner_user_id: &str,
+    dot_id: Option<&str>,
+) -> Result<std::collections::HashSet<String>, DbError> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT s.id FROM chat_sessions s
+         LEFT JOIN personal_dot_sessions d ON d.session_id = s.id
+         WHERE s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
+           AND ((? IS NULL AND d.session_id IS NULL) OR (d.dot_id = ? AND d.owner_user_id = ?))",
+    )
+    .bind(owner_user_id)
+    .bind(dot_id)
+    .bind(dot_id)
+    .bind(owner_user_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(ids.into_iter().collect())
 }
 
 #[cfg(test)]
@@ -220,5 +275,79 @@ mod tests {
         assert!(link(&pool, "alice", &alice_dot, &session.id).await.unwrap());
         assert!(!link(&pool, "alice", &bob_dot, &session.id).await.unwrap());
         assert!(!link(&pool, "bob", &alice_dot, &session.id).await.unwrap());
+    }
+    #[tokio::test]
+    async fn scoped_bindings_preserve_deleted_dots_and_owner_isolation() {
+        let pool = open(Path::new(":memory:")).await.unwrap();
+        user(&pool, "alice").await;
+        user(&pool, "bob").await;
+        let dot_id = dot(&pool, "alice", "helper").await;
+        let bound = session_core::db::create_session(&pool, "alice")
+            .await
+            .unwrap();
+        let ordinary = session_core::db::create_session(&pool, "alice")
+            .await
+            .unwrap();
+        assert!(link(&pool, "alice", &dot_id, &bound.id).await.unwrap());
+        let mut connection = pool.acquire().await.unwrap();
+        assert!(
+            binding_valid(&mut connection, "alice", Some(&dot_id), None)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !binding_valid(&mut connection, "bob", Some(&dot_id), None)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !session_matches(&mut connection, "alice", &bound.id, None)
+                .await
+                .unwrap()
+        );
+        assert!(
+            session_matches(&mut connection, "alice", &bound.id, Some(&dot_id))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !session_matches(&mut connection, "bob", &bound.id, Some(&dot_id))
+                .await
+                .unwrap()
+        );
+        drop(connection);
+        assert_eq!(
+            scoped_session_ids(&pool, "alice", None).await.unwrap(),
+            std::collections::HashSet::from([ordinary.id])
+        );
+        assert_eq!(
+            scoped_session_ids(&pool, "alice", Some(&dot_id))
+                .await
+                .unwrap(),
+            std::collections::HashSet::from([bound.id.clone()])
+        );
+        assert!(agents::delete(&pool, &dot_id, "alice").await.unwrap());
+        let binding = for_session(&pool, "alice", &bound.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(binding.dot_id, dot_id);
+        assert!(!binding.active);
+        let mut connection = pool.acquire().await.unwrap();
+        assert!(
+            !binding_valid(&mut connection, "alice", Some(&dot_id), None)
+                .await
+                .unwrap()
+        );
+        assert!(
+            binding_valid(&mut connection, "alice", Some(&dot_id), Some(&dot_id))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !session_matches(&mut connection, "alice", &bound.id, None)
+                .await
+                .unwrap()
+        );
     }
 }

@@ -3892,6 +3892,7 @@ async fn an_agent_run_is_in_no_persons_chats() {
             prompt: "where is my zebra invoice",
             model: "model-a",
             existing_session: None,
+            dot_id: None,
         },
     )
     .await

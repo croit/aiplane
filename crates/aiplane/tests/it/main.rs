@@ -34,6 +34,8 @@ mod cors;
 mod dev_seed;
 mod docs_current;
 mod dot_access;
+mod dot_background_chat;
+mod dots_background;
 mod embed;
 mod feedback_extract;
 mod healthz;

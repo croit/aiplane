@@ -105,9 +105,8 @@ async fn run_action(state: Arc<RamaState>, action: ScheduledAction, next: Option
     let run_id = match super::record_run_start(&state.db, &action.id).await {
         Ok(id) => Some(id),
         Err(err) => {
-            // A failed insert must not cost the user the run itself.
             tracing::warn!(action = %action.id, error = %err, "opening scheduled run history row");
-            None
+            return;
         }
     };
     let (status, session_id, error) =
@@ -206,6 +205,38 @@ async fn record(
     next: Option<Timestamp>,
     error: Option<&str>,
 ) {
+    if let Some(run_id) = run_id {
+        let turn: Result<Option<String>, sqlx::Error> =
+            sqlx::query_scalar("SELECT assistant_turn_id FROM scheduled_runs WHERE id = ?")
+                .bind(run_id)
+                .fetch_optional(&state.db)
+                .await
+                .map(Option::flatten);
+        match turn {
+            Ok(Some(turn_id)) => {
+                if status == "error"
+                    && let Some(session_id) = session_id
+                    && let Ok(Some(turn)) = chat::get_turn(&state.db, session_id, &turn_id).await
+                    && turn.status == TurnStatus::InProgress
+                {
+                    let _ =
+                        chat::finalize_turn(&state.db, &turn_id, TurnStatus::Errored, error).await;
+                }
+                if let Err(err) =
+                    crate::server::background::reconcile_turn(&state.db, &action.user_id, &turn_id)
+                        .await
+                {
+                    tracing::warn!(action = %action.id, error = %err, "reconciling scheduled run history");
+                }
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(action = %action.id, error = %err, "reading scheduled run correlation");
+                return;
+            }
+        }
+    }
     if let Err(err) = super::mark_ran(&state.db, &action.id, status, session_id, next, error).await
     {
         tracing::warn!(action = %action.id, error = %err, "recording scheduled run");
@@ -234,8 +265,8 @@ async fn record(
 async fn open_run_session(
     db: &aiplane_core::server::db::Pool,
     action: &ScheduledAction,
-) -> Result<(String, String), super::DbError> {
-    let existing_session = reusable_session(db, action).await;
+) -> Result<(String, String), crate::server::headless::OpenError> {
+    let existing_session = reusable_session(db, action).await?;
     crate::server::headless::open_session(
         db,
         crate::server::headless::OpenParams {
@@ -244,6 +275,7 @@ async fn open_run_session(
             prompt: &action.prompt,
             model: &action.model,
             existing_session,
+            dot_id: action.dot_id.as_deref(),
         },
     )
     .await
@@ -255,17 +287,16 @@ async fn open_run_session(
 async fn reusable_session(
     db: &aiplane_core::server::db::Pool,
     action: &ScheduledAction,
-) -> Option<String> {
+) -> Result<Option<String>, super::DbError> {
     if !action.reuse_conversation {
-        return None;
+        return Ok(None);
     }
-    let last = action.last_session_id.as_deref()?;
-    match chat::get_session(db, &action.user_id, last).await {
-        Ok(Some(_)) => Some(last.to_string()),
-        // Missing (deleted) or a read error: fall back to a fresh session
-        // rather than failing the run on a stale pointer.
-        _ => None,
-    }
+    let Some(last) = action.last_session_id.as_deref() else {
+        return Ok(None);
+    };
+    Ok(chat::get_session(db, &action.user_id, last)
+        .await?
+        .map(|_| last.to_string()))
 }
 
 /// The fallible core of a run: everything up to and including driving the
@@ -276,33 +307,52 @@ async fn try_run_action(
     action: &ScheduledAction,
     user: &aiplane_core::server::db::users::User,
     run_id: Option<&str>,
-) -> Result<(String, String), super::DbError> {
+) -> Result<(String, String), crate::server::headless::OpenError> {
     let (session_id, assistant_turn_id) = open_run_session(&state.db, action).await?;
-    if let Some(run_id) = run_id
-        && let Err(err) = super::attach_run_session(&state.db, run_id, &session_id).await
-    {
-        tracing::warn!(action = %action.id, error = %err, "linking scheduled run to its chat");
-    }
-
-    // Tools follow the user's normal RBAC grant when enabled; an empty
-    // role set when disabled means the driver offers no tools at all.
-    let roles = if action.tools_enabled {
-        user.roles.clone()
-    } else {
-        Vec::new()
-    };
-    // In reuse mode, replay only the most recent `reuse_rounds` rounds
-    // (one round = the run's prompt + reply = 2 turns) so a long-lived
-    // action's context can't grow without bound. `None` = no cap, which is
-    // the default-mode (fresh-session) behaviour and matches interactive
-    // /chat.
     let history_limit = action
         .reuse_conversation
         .then(|| (action.reuse_rounds.max(0) as usize).saturating_mul(2));
+    let Some(run_id) = run_id else {
+        let error =
+            "The scheduled run has no persisted history. Retry after run history can be stored.";
+        chat::finalize_turn(
+            &state.db,
+            &assistant_turn_id,
+            TurnStatus::Errored,
+            Some(error),
+        )
+        .await
+        .map_err(super::DbError::from)?;
+        return Err(crate::server::headless::OpenError::Storage(
+            super::DbError::Decode {
+                column: "scheduled_run",
+                source: std::io::Error::other(error.to_string()).into(),
+            },
+        ));
+    };
+    if let Err(error) = super::attach_run_turn(
+        &state.db,
+        run_id,
+        &session_id,
+        &assistant_turn_id,
+        action.tools_enabled,
+        history_limit,
+    )
+    .await
+    {
+        let _ = chat::finalize_turn(
+            &state.db,
+            &assistant_turn_id,
+            TurnStatus::Errored,
+            Some(&error.to_string()),
+        )
+        .await;
+        return Err(error.into());
+    }
     crate::server::headless::drive(
         state,
         crate::server::headless::DriveParams {
-            actor: crate::agent_run::Actor::person(action.user_id.clone(), roles),
+            actor: crate::agent_run::Actor::person(action.user_id.clone(), user.roles.clone()),
             session_id: session_id.clone(),
             assistant_turn_id: assistant_turn_id.clone(),
             model: action.model.clone(),
@@ -380,6 +430,8 @@ mod tests {
             reuse_conversation,
             reuse_rounds: 5,
             next_run_at: None,
+            dot_id: None,
+            linked_session_id: None,
         }
     }
 
@@ -430,6 +482,9 @@ mod tests {
         let (s1, t1) = open_run_session(&pool, &action).await.unwrap();
         // The worker records the opened session on the action between fires.
         action.last_session_id = Some(s1.clone());
+        chat::finalize_turn(&pool, &t1, TurnStatus::Completed, None)
+            .await
+            .unwrap();
         let (s2, t2) = open_run_session(&pool, &action).await.unwrap();
 
         assert_eq!(s1, s2, "reuse mode keeps the same session across runs");
@@ -449,5 +504,25 @@ mod tests {
         assert_ne!(s, "does-not-exist", "stale pointer must not be reused");
         // The freshly minted session exists and is owned by the user.
         assert!(chat::get_session(&pool, "u1", &s).await.unwrap().is_some());
+    }
+    #[tokio::test]
+    async fn reuse_refuses_a_running_or_waiting_turn_without_adding_prompt() {
+        let pool = fresh_db().await;
+        seed_user(&pool, "u1").await;
+        let mut action = create(&pool, new_action(true)).await.unwrap();
+        let (session, turn) = open_run_session(&pool, &action).await.unwrap();
+        action.last_session_id = Some(session.clone());
+        assert!(matches!(
+            open_run_session(&pool, &action).await,
+            Err(crate::server::headless::OpenError::Busy)
+        ));
+        chat::finalize_turn(&pool, &turn, TurnStatus::Suspended, None)
+            .await
+            .unwrap();
+        assert!(matches!(
+            open_run_session(&pool, &action).await,
+            Err(crate::server::headless::OpenError::Busy)
+        ));
+        assert_eq!(chat::list_turns(&pool, &session).await.unwrap().len(), 2);
     }
 }

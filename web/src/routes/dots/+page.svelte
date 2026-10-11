@@ -109,7 +109,7 @@
 	{:else}
 		<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
 			{#each dots as dot (dot.id)}
-				<article class="card card-border">
+				<article id={`dot-${dot.id}`} class="card card-border">
 					<div class="card-body gap-3 p-4">
 						<div class="flex items-start justify-between gap-2">
 							<div class="min-w-0">
@@ -122,7 +122,8 @@
 						<DotMemoryPanel {dot} />
 						<DotActivityPanel {dot} />
 						<DotAccessPanel {dot} />
-						<div class="card-actions justify-end">
+						<div class="card-actions flex-wrap justify-end">
+							{#if dot.active}<a class="btn btn-sm" href={`/scheduled/new?dot_id=${encodeURIComponent(dot.id)}`}>{t('dot-background-add-schedule')}</a><a class="btn btn-sm" href={`/webhooks/new?dot_id=${encodeURIComponent(dot.id)}`}>{t('dot-background-add-webhook')}</a>{/if}
 							{#if dot.active}<button class="btn btn-sm" type="button" disabled={openingId === dot.id} onclick={() => void openChat(dot)}>{openingId === dot.id ? t('dot-action-chat-opening') : t('dot-action-chat')}</button>{/if}
 							<button class="btn btn-sm" type="button" disabled={busyId === dot.id || (!dot.active && !createAllowed)} onclick={() => void setActive(dot)}>
 								{dot.active ? t('dots-action-deactivate') : t('dots-action-activate')}

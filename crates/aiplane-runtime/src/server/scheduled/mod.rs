@@ -16,6 +16,7 @@
 pub mod cron;
 pub mod worker;
 
+use aiplane_agents::db::{WriteTx, dot_sessions};
 use jiff::Timestamp;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
@@ -28,6 +29,7 @@ use aiplane_core::server::db::{DbError, Pool, parse_optional_ts, parse_ts};
 pub struct ScheduledAction {
     pub id: String,
     pub user_id: String,
+    pub dot_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: String,
@@ -64,6 +66,7 @@ pub struct ScheduledAction {
 /// is computed by the caller from `cron` + `timezone`.
 pub struct NewAction {
     pub user_id: String,
+    pub dot_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: String,
@@ -73,11 +76,13 @@ pub struct NewAction {
     pub reuse_conversation: bool,
     pub reuse_rounds: i64,
     pub next_run_at: Option<Timestamp>,
+    pub linked_session_id: Option<String>,
 }
 
 /// The mutable fields of an existing action, as submitted by the edit
 /// form. `next_run_at` is recomputed by the caller from the new schedule.
 pub struct EditAction {
+    pub dot_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: String,
@@ -87,12 +92,14 @@ pub struct EditAction {
     pub reuse_conversation: bool,
     pub reuse_rounds: i64,
     pub next_run_at: Option<Timestamp>,
+    pub linked_session_id: Option<Option<String>>,
 }
 
 fn map_row(row: &SqliteRow) -> Result<ScheduledAction, DbError> {
     Ok(ScheduledAction {
         id: row.try_get("id")?,
         user_id: row.try_get("user_id")?,
+        dot_id: row.try_get("dot_id")?,
         name: row.try_get("name")?,
         prompt: row.try_get("prompt")?,
         model: row.try_get("model")?,
@@ -112,16 +119,38 @@ fn map_row(row: &SqliteRow) -> Result<ScheduledAction, DbError> {
     })
 }
 
-const COLS: &str = "id, user_id, name, prompt, model, cron, timezone, tools_enabled, \
+const COLS: &str = "id, user_id, dot_id, name, prompt, model, cron, timezone, tools_enabled, \
      reuse_conversation, reuse_rounds, enabled, next_run_at, last_run_at, last_status, \
      last_session_id, last_error, created_at, updated_at";
 
 /// Insert a new action. Returns the stored row.
 pub async fn create(pool: &Pool, new: NewAction) -> Result<ScheduledAction, DbError> {
+    let mut tx = WriteTx::begin(pool).await?;
+    if !dot_sessions::binding_valid(&mut tx, &new.user_id, new.dot_id.as_deref(), None).await? {
+        return Err(
+            sqlx::Error::Protocol("The selected Dot is not owned and active".into()).into(),
+        );
+    }
+    if let Some(session_id) = new.linked_session_id.as_deref()
+        && (!new.reuse_conversation
+            || !dot_sessions::session_matches(
+                &mut tx,
+                &new.user_id,
+                session_id,
+                new.dot_id.as_deref(),
+            )
+            .await?)
+    {
+        return Err(sqlx::Error::Protocol(
+            "The linked conversation does not match this automation".into(),
+        )
+        .into());
+    }
     let now = Timestamp::now();
     let row = ScheduledAction {
         id: Uuid::new_v4().to_string(),
         user_id: new.user_id,
+        dot_id: new.dot_id,
         name: new.name,
         prompt: new.prompt,
         model: new.model,
@@ -134,19 +163,20 @@ pub async fn create(pool: &Pool, new: NewAction) -> Result<ScheduledAction, DbEr
         next_run_at: new.next_run_at,
         last_run_at: None,
         last_status: None,
-        last_session_id: None,
+        last_session_id: new.linked_session_id,
         last_error: None,
         created_at: now,
         updated_at: now,
     };
     sqlx::query(
         r#"INSERT INTO scheduled_actions
-              (id, user_id, name, prompt, model, cron, timezone, tools_enabled,
+              (id, user_id, dot_id, name, prompt, model, cron, timezone, tools_enabled,
                reuse_conversation, reuse_rounds, enabled, next_run_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"#,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"#,
     )
     .bind(&row.id)
     .bind(&row.user_id)
+    .bind(&row.dot_id)
     .bind(&row.name)
     .bind(&row.prompt)
     .bind(&row.model)
@@ -158,8 +188,16 @@ pub async fn create(pool: &Pool, new: NewAction) -> Result<ScheduledAction, DbEr
     .bind(row.next_run_at.map(|t| t.to_string()))
     .bind(row.created_at.to_string())
     .bind(row.updated_at.to_string())
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    if row.last_session_id.is_some() {
+        sqlx::query("UPDATE scheduled_actions SET last_session_id = ? WHERE id = ?")
+            .bind(&row.last_session_id)
+            .bind(&row.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     Ok(row)
 }
 
@@ -191,13 +229,53 @@ pub async fn update(
     id: &str,
     edit: EditAction,
 ) -> Result<bool, DbError> {
+    let mut tx = WriteTx::begin(pool).await?;
+    let previous: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT dot_id, last_session_id FROM scheduled_actions WHERE id = ? AND user_id = ?",
+    )
+    .bind(id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((previous_dot, previous_session)) = previous else {
+        return Ok(false);
+    };
+    if !dot_sessions::binding_valid(
+        &mut tx,
+        user_id,
+        edit.dot_id.as_deref(),
+        previous_dot.as_deref(),
+    )
+    .await?
+    {
+        return Err(
+            sqlx::Error::Protocol("The selected Dot is not owned and active".into()).into(),
+        );
+    }
+    let linked = match edit.linked_session_id {
+        Some(linked) => linked,
+        None if previous_dot != edit.dot_id || !edit.reuse_conversation => None,
+        None => previous_session,
+    };
+    if let Some(session_id) = linked.as_deref()
+        && (!edit.reuse_conversation
+            || !dot_sessions::session_matches(&mut tx, user_id, session_id, edit.dot_id.as_deref())
+                .await?)
+    {
+        return Err(sqlx::Error::Protocol(
+            "The linked conversation does not match this automation".into(),
+        )
+        .into());
+    }
     let affected = sqlx::query(
         r#"UPDATE scheduled_actions
-           SET name = ?, prompt = ?, model = ?, cron = ?, timezone = ?,
+           SET dot_id = ?, last_session_id = ?, name = ?, prompt = ?, model = ?, cron = ?, timezone = ?,
                tools_enabled = ?, reuse_conversation = ?, reuse_rounds = ?,
                next_run_at = ?, updated_at = ?
            WHERE id = ? AND user_id = ?"#,
     )
+    .bind(&edit.dot_id)
+    .bind(&linked)
     .bind(&edit.name)
     .bind(&edit.prompt)
     .bind(&edit.model)
@@ -210,9 +288,10 @@ pub async fn update(
     .bind(Timestamp::now().to_string())
     .bind(id)
     .bind(user_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
+    tx.commit().await?;
     Ok(affected > 0)
 }
 
@@ -242,39 +321,40 @@ pub async fn set_enabled(
     Ok(affected > 0)
 }
 
-/// Point a reusing schedule at the chat its next run continues in — any
-/// existing conversation of the owner's, not only one a previous run opened —
-/// or, with `None`, let the next run open a fresh one. The caller checks the
-/// chat is the owner's. Owner-scoped; `false` if the action is not theirs.
-pub async fn set_linked_session(
-    pool: &Pool,
-    user_id: &str,
-    id: &str,
-    session_id: Option<&str>,
-) -> Result<bool, DbError> {
-    let affected = sqlx::query(
-        "UPDATE scheduled_actions SET last_session_id = ?, updated_at = ? \
-         WHERE id = ? AND user_id = ?",
-    )
-    .bind(session_id)
-    .bind(Timestamp::now().to_string())
-    .bind(id)
-    .bind(user_id)
-    .execute(pool)
-    .await?
-    .rows_affected();
-    Ok(affected > 0)
+/// Delete an idle action, scoped to the owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteOutcome {
+    Deleted,
+    Missing,
+    Pending,
 }
 
-/// Delete an action, scoped to the owner. Returns `true` if a row matched.
-pub async fn delete(pool: &Pool, user_id: &str, id: &str) -> Result<bool, DbError> {
-    let affected = sqlx::query("DELETE FROM scheduled_actions WHERE id = ? AND user_id = ?")
+pub async fn delete(pool: &Pool, user_id: &str, id: &str) -> Result<DeleteOutcome, DbError> {
+    let mut tx = WriteTx::begin(pool).await?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM scheduled_actions WHERE id = ? AND user_id = ?)",
+    )
+    .bind(id)
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !exists {
+        return Ok(DeleteOutcome::Missing);
+    }
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM scheduled_runs r LEFT JOIN chat_turns t ON t.id = r.assistant_turn_id
+         WHERE r.action_id = ? AND (t.status IN ('in_progress', 'suspended') OR (r.status IS NULL AND r.assistant_turn_id IS NULL)))",
+    ).bind(id).fetch_one(&mut *tx).await?;
+    if pending {
+        return Ok(DeleteOutcome::Pending);
+    }
+    sqlx::query("DELETE FROM scheduled_actions WHERE id = ? AND user_id = ?")
         .bind(id)
         .bind(user_id)
-        .execute(pool)
-        .await?
-        .rows_affected();
-    Ok(affected > 0)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(DeleteOutcome::Deleted)
 }
 
 /// Every enabled action whose `next_run_at` is at or before `now` —
@@ -359,6 +439,7 @@ pub struct ScheduledRun {
     /// `None` only while the run is in flight; `"ok"` or `"error"` once done.
     pub status: Option<String>,
     pub session_id: Option<String>,
+    pub assistant_turn_id: Option<String>,
     /// The run opened a chat that the user has since deleted. Kept apart from
     /// `session_id = None` (the run never opened one) so the history can say
     /// which of the two happened.
@@ -367,7 +448,7 @@ pub struct ScheduledRun {
     pub created_at: Timestamp,
 }
 
-const RUN_COLS: &str = "r.id, r.action_id, r.fired_at, r.status, r.session_id, r.error, r.created_at, \
+const RUN_COLS: &str = "r.id, r.action_id, r.fired_at, r.status, r.session_id, r.assistant_turn_id, r.error, r.created_at, \
      (r.session_id IS NOT NULL AND s.id IS NULL) AS chat_deleted";
 
 /// What a run left pending by a dead process is closed with at startup.
@@ -380,6 +461,7 @@ fn map_run(row: &SqliteRow) -> Result<ScheduledRun, DbError> {
         fired_at: parse_ts(row.try_get("fired_at")?, "fired_at")?,
         status: row.try_get("status")?,
         session_id: row.try_get("session_id")?,
+        assistant_turn_id: row.try_get("assistant_turn_id")?,
         chat_deleted: row.try_get("chat_deleted")?,
         error: row.try_get("error")?,
         created_at: parse_ts(row.try_get("created_at")?, "created_at")?,
@@ -408,14 +490,46 @@ pub async fn record_run_start(pool: &Pool, action_id: &str) -> Result<String, Db
 /// run that dies mid-turn still points at the conversation it was writing.
 /// The action's `last_session_id` moves with it: a reusing schedule continues
 /// in that chat next time even if this run never finishes.
-pub async fn attach_run_session(
+pub async fn attach_run_turn(
     pool: &Pool,
     run_id: &str,
     session_id: &str,
+    assistant_turn_id: &str,
+    tools_enabled: bool,
+    history_limit: Option<usize>,
 ) -> Result<(), DbError> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("UPDATE scheduled_runs SET session_id = ? WHERE id = ?")
+    let mut tx = WriteTx::begin(pool).await?;
+    let source: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT a.user_id, a.dot_id FROM scheduled_actions a JOIN scheduled_runs r ON r.action_id = a.id WHERE r.id = ? AND r.assistant_turn_id IS NULL AND r.status IS NULL",
+    ).bind(run_id).fetch_optional(&mut *tx).await?;
+    let Some((owner_id, dot_id)) = source else {
+        return Err(
+            sqlx::Error::Protocol("The pending scheduled run is unavailable".into()).into(),
+        );
+    };
+    if !dot_sessions::session_matches(&mut tx, &owner_id, session_id, dot_id.as_deref()).await? {
+        return Err(sqlx::Error::Protocol(
+            "The scheduled run conversation has a different owner or Dot".into(),
+        )
+        .into());
+    }
+    let valid_turn: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_turns WHERE id = ? AND session_id = ? AND role = 'assistant' AND status = 'in_progress')")
+        .bind(assistant_turn_id).bind(session_id).fetch_one(&mut *tx).await?;
+    if !valid_turn {
+        return Err(sqlx::Error::Protocol(
+            "The scheduled run assistant turn is unavailable".into(),
+        )
+        .into());
+    }
+    let history_limit = history_limit
+        .map(i64::try_from)
+        .transpose()
+        .map_err(|_| sqlx::Error::Protocol("The scheduled history limit is too large".into()))?;
+    sqlx::query("UPDATE scheduled_runs SET session_id = ?, assistant_turn_id = ?, tools_enabled = ?, history_limit = ? WHERE id = ?")
         .bind(session_id)
+        .bind(assistant_turn_id)
+        .bind(tools_enabled as i64)
+        .bind(history_limit)
         .bind(run_id)
         .execute(&mut *tx)
         .await?;
@@ -462,12 +576,17 @@ pub async fn sweep_interrupted_runs(pool: &Pool) -> Result<u64, DbError> {
             .execute(&mut *tx)
             .await?;
     tx.commit().await?;
-    Ok(done.rows_affected())
+    let reconciled = crate::server::background::reconcile_interrupted_waiting(
+        pool,
+        aiplane_core::server::db::usage::UsageSource::Scheduled,
+    )
+    .await?;
+    Ok(done.rows_affected() + reconciled)
 }
 
 /// Record the outcome of a run started by [`record_run_start`]. `session_id`
 /// is kept even on error so the user can inspect the partial conversation;
-/// `None` keeps the one [`attach_run_session`] already linked.
+/// `None` keeps the one [`attach_run_turn`] already linked.
 pub async fn finish_run(
     pool: &Pool,
     run_id: &str,
@@ -578,8 +697,40 @@ mod tests {
         .unwrap();
     }
 
+    async fn fixture_attach_run_turn(
+        pool: &Pool,
+        run_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        tools_enabled: bool,
+        history_limit: Option<usize>,
+    ) -> Result<(), DbError> {
+        let owner: String = sqlx::query_scalar("SELECT a.user_id FROM scheduled_actions a JOIN scheduled_runs r ON r.action_id = a.id WHERE r.id = ?").bind(run_id).fetch_one(pool).await?;
+        let session = session_core::db::create_session(pool, &owner).await?;
+        sqlx::query("UPDATE chat_sessions SET id = ? WHERE id = ?")
+            .bind(session_id)
+            .bind(&session.id)
+            .execute(pool)
+            .await?;
+        session_core::db::create_assistant_turn_in_progress(pool, session_id, turn_id, "qwen")
+            .await?;
+        attach_run_turn(
+            pool,
+            run_id,
+            session_id,
+            turn_id,
+            tools_enabled,
+            history_limit,
+        )
+        .await?;
+        session_core::db::delete_session(pool, &owner, session_id).await?;
+        Ok(())
+    }
+
     fn sample(user_id: &str, next: Option<Timestamp>) -> NewAction {
         NewAction {
+            dot_id: None,
+            linked_session_id: None,
             user_id: user_id.to_string(),
             name: "Daily digest".to_string(),
             prompt: "Summarize the news.".to_string(),
@@ -612,7 +763,10 @@ mod tests {
         seed_user(&pool, "u2").await;
         let created = create(&pool, sample("u1", None)).await.unwrap();
         assert!(get(&pool, "u2", &created.id).await.unwrap().is_none());
-        assert!(!delete(&pool, "u2", &created.id).await.unwrap());
+        assert_eq!(
+            delete(&pool, "u2", &created.id).await.unwrap(),
+            DeleteOutcome::Missing
+        );
         assert!(get(&pool, "u1", &created.id).await.unwrap().is_some());
     }
 
@@ -738,7 +892,9 @@ mod tests {
         let a = create(&pool, sample("u1", None)).await.unwrap();
         let run = record_run_start(&pool, &a.id).await.unwrap();
 
-        attach_run_session(&pool, &run, "sess-1").await.unwrap();
+        fixture_attach_run_turn(&pool, &run, "sess-1", "turn-sess-1", false, None)
+            .await
+            .unwrap();
 
         let runs = list_runs(&pool, &a.id, 50).await.unwrap();
         assert_eq!(runs[0].status, None);
@@ -810,7 +966,9 @@ mod tests {
             .await
             .unwrap();
         let orphan = record_run_start(&pool, &a.id).await.unwrap();
-        attach_run_session(&pool, &orphan, "sess-2").await.unwrap();
+        fixture_attach_run_turn(&pool, &orphan, "sess-2", "turn-sess-2", false, None)
+            .await
+            .unwrap();
         // An older orphan on an action whose later run finished: that list row
         // describes the later run and must stay as it is.
         let b = create(&pool, sample("u1", None)).await.unwrap();
@@ -895,50 +1053,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_linked_chat_is_where_the_next_run_continues() {
+    async fn linked_chat_updates_are_atomic_and_owner_scoped() {
         let pool = fresh_db().await;
         seed_user(&pool, "u1").await;
         seed_user(&pool, "u2").await;
-        let a = create(&pool, sample("u1", None)).await.unwrap();
-
-        assert!(
-            set_linked_session(&pool, "u1", &a.id, Some("chat-1"))
+        let chat = session_core::db::create_session(&pool, "u1").await.unwrap();
+        let mut new = sample("u1", None);
+        new.reuse_conversation = true;
+        new.linked_session_id = Some(chat.id.clone());
+        let source = create(&pool, new).await.unwrap();
+        assert_eq!(source.last_session_id.as_deref(), Some(chat.id.as_str()));
+        let edit = || EditAction {
+            dot_id: None,
+            linked_session_id: Some(None),
+            name: source.name.clone(),
+            prompt: source.prompt.clone(),
+            model: source.model.clone(),
+            tools_enabled: source.tools_enabled,
+            reuse_conversation: true,
+            reuse_rounds: source.reuse_rounds,
+            cron: source.cron.clone(),
+            timezone: source.timezone.clone(),
+            next_run_at: source.next_run_at,
+        };
+        assert!(!update(&pool, "u2", &source.id, edit()).await.unwrap());
+        assert_eq!(
+            get(&pool, "u1", &source.id)
                 .await
                 .unwrap()
+                .unwrap()
+                .last_session_id,
+            Some(chat.id)
         );
-        assert_eq!(
-            get(&pool, "u1", &a.id)
+        assert!(update(&pool, "u1", &source.id, edit()).await.unwrap());
+        assert!(
+            get(&pool, "u1", &source.id)
                 .await
                 .unwrap()
                 .unwrap()
                 .last_session_id
-                .as_deref(),
-            Some("chat-1")
-        );
-
-        assert!(set_linked_session(&pool, "u1", &a.id, None).await.unwrap());
-        assert_eq!(
-            get(&pool, "u1", &a.id)
-                .await
-                .unwrap()
-                .unwrap()
-                .last_session_id,
-            None
-        );
-
-        assert!(
-            !set_linked_session(&pool, "u2", &a.id, Some("chat-2"))
-                .await
-                .unwrap(),
-            "another user cannot repoint the action"
-        );
-        assert_eq!(
-            get(&pool, "u1", &a.id)
-                .await
-                .unwrap()
-                .unwrap()
-                .last_session_id,
-            None
+                .is_none()
         );
     }
 
@@ -951,7 +1105,95 @@ mod tests {
         finish_run(&pool, &run, "ok", Some("sess-1"), None)
             .await
             .unwrap();
-        assert!(delete(&pool, "u1", &a.id).await.unwrap());
+        assert_eq!(
+            delete(&pool, "u1", &a.id).await.unwrap(),
+            DeleteOutcome::Deleted
+        );
         assert!(list_runs(&pool, &a.id, 50).await.unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn correlation_is_owned_atomic_and_keeps_snapshots_until_terminal_delete() {
+        let pool = fresh_db().await;
+        seed_user(&pool, "u1").await;
+        seed_user(&pool, "u2").await;
+        let action = create(&pool, sample("u1", None)).await.unwrap();
+        let run = record_run_start(&pool, &action.id).await.unwrap();
+        assert_eq!(
+            delete(&pool, "u1", &action.id).await.unwrap(),
+            DeleteOutcome::Pending
+        );
+        let other = session_core::db::create_session(&pool, "u2").await.unwrap();
+        session_core::db::create_assistant_turn_in_progress(
+            &pool,
+            &other.id,
+            "foreign-turn",
+            "qwen",
+        )
+        .await
+        .unwrap();
+        assert!(
+            attach_run_turn(&pool, &run, &other.id, "foreign-turn", true, Some(4))
+                .await
+                .is_err()
+        );
+        assert!(
+            get(&pool, "u1", &action.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .last_session_id
+                .is_none()
+        );
+        let chat = session_core::db::create_session(&pool, "u1").await.unwrap();
+        session_core::db::create_assistant_turn_in_progress(&pool, &chat.id, "owned-turn", "qwen")
+            .await
+            .unwrap();
+        assert!(
+            attach_run_turn(&pool, "missing", &chat.id, "owned-turn", true, Some(4))
+                .await
+                .is_err()
+        );
+        assert!(
+            attach_run_turn(&pool, &run, &chat.id, "foreign-turn", true, Some(4))
+                .await
+                .is_err()
+        );
+        attach_run_turn(&pool, &run, &chat.id, "owned-turn", true, Some(4))
+            .await
+            .unwrap();
+        let snapshot: (String, i64, i64) = sqlx::query_as("SELECT assistant_turn_id, tools_enabled, history_limit FROM scheduled_runs WHERE id = ?")
+            .bind(&run).fetch_one(&pool).await.unwrap();
+        assert_eq!(snapshot, ("owned-turn".into(), 1, 4));
+        assert!(
+            attach_run_turn(&pool, &run, &chat.id, "owned-turn", true, None)
+                .await
+                .is_err()
+        );
+        for status in [
+            session_core::db::TurnStatus::InProgress,
+            session_core::db::TurnStatus::Suspended,
+        ] {
+            if status == session_core::db::TurnStatus::Suspended {
+                session_core::db::finalize_turn(&pool, "owned-turn", status, None)
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(
+                delete(&pool, "u1", &action.id).await.unwrap(),
+                DeleteOutcome::Pending
+            );
+        }
+        session_core::db::finalize_turn(
+            &pool,
+            "owned-turn",
+            session_core::db::TurnStatus::Cancelled,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            delete(&pool, "u1", &action.id).await.unwrap(),
+            DeleteOutcome::Deleted
+        );
     }
 }

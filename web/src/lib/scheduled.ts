@@ -9,7 +9,10 @@ export interface ScheduleFields {
 	advanced: string;
 }
 
-export interface ScheduledAction {
+import type { Dot } from './dot-state.ts';
+import type { DotBinding } from './dot-background.ts';
+
+export interface ScheduledAction extends DotBinding {
 	id: string;
 	name: string;
 	prompt: string;
@@ -41,6 +44,7 @@ export interface ScheduledRun {
 	/** `null` only while a run is still in flight. */
 	status: string | null;
 	session_id: string | null;
+	assistant_turn_id: string | null;
 	/** The run opened a chat the user has since deleted. */
 	chat_deleted: boolean;
 	error: string | null;
@@ -48,6 +52,7 @@ export interface ScheduledRun {
 
 export interface ScheduledData {
 	actions: ScheduledAction[];
+	dots: Dot[];
 	models: ChatModelOption[];
 	default_timezone: string;
 }

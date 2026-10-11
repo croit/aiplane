@@ -1623,13 +1623,29 @@ async fn workspace_surfaces_round_trip() {
     );
 
     // The owner still gets theirs.
+    let run_chat = session_core::db::create_session(&state.db, "boss")
+        .await
+        .unwrap();
+    let run_turn = session_core::db::create_assistant_turn_in_progress(
+        &state.db,
+        &run_chat.id,
+        "history-turn",
+        "mock",
+    )
+    .await
+    .unwrap();
     aiplane_runtime::server::webhooks::record_run_start(
         &state.db,
-        hook_id,
-        "session-1",
-        "summarise",
-        r#"{"event":"deploy"}"#,
-        "fire",
+        aiplane_runtime::server::webhooks::NewWebhookRun {
+            webhook_id: hook_id,
+            session_id: &run_chat.id,
+            prompt: "summarise",
+            payload: r#"{"event":"deploy"}"#,
+            source: "fire",
+            assistant_turn_id: &run_turn.id,
+            tools_enabled: false,
+            history_limit: None,
+        },
     )
     .await
     .unwrap();
@@ -2592,6 +2608,8 @@ async fn unconfigured_features_and_missing_resources_refuse_by_meaning() {
     let hook = aiplane_runtime::server::webhooks::create(
         &state.db,
         aiplane_runtime::server::webhooks::NewWebhook {
+            dot_id: None,
+            linked_session_id: None,
             user_id: "boss".into(),
             name: "never-called".into(),
             prompt: "summarise".into(),

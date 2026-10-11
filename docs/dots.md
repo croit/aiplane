@@ -3,7 +3,7 @@
 Status: implementation in progress; personal Dot ownership, active lifecycle,
 the first web management page, manually managed Dot memory, recent activity,
 owner-scoped memory/activity APIs, private Dot chat sessions, and personal
-tool selection with durable approvals are implemented.
+tool selection with durable approvals, and Dot-bound schedules and webhooks are implemented.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -25,7 +25,7 @@ reads bounded Dot memory and the user's existing profile context. Its chat
 uses the tools selected in its Access and approvals panel, intersected with
 the user's current grants, enabled settings and connected MCP tools. Existing
 memory tools are selected at creation when granted and enabled; their writes
-remain isolated to the Dot. There is no Dot background execution yet.
+remain isolated to the Dot. Schedules and webhooks can run with the same personal Dot context and durable approvals.
 
 | Endpoint | Behavior |
 |---|---|
@@ -62,8 +62,9 @@ reactivate it. A deactivated Dot stays in the list and can be reactivated when
 a slot is available. The Access and approvals disclosure offers selected tools
 with `Allow` or `Ask before each call`; unselected tools are denied. Connector
 account labels identify the existing user or shared connection. Dot-owned
-connector identities, background run setup and organisation-owned Dots remain
-unimplemented.
+connector identities and organisation-owned Dots remain unimplemented. Active
+Dot cards link to the existing schedule and webhook creation forms with that
+Dot selected.
 
 Access changes reuse the agent's draft spec, revisions and audited save path.
 The API accepts `{"tools":[{"id":"search_web","permission":"always_allow"}]}`;
@@ -81,6 +82,62 @@ owner can approve once or deny in chat or Inbox. Approval refers to the original
 arguments; resumption reloads Dot selection, current user grants, enabled
 settings and connected tools. Revoked selections and disabled tools cannot
 execute on an old approval. Dot deactivation leaves pending calls paused.
+
+## Implemented personal Dot background execution
+
+The existing schedule and webhook forms expose **Run as**, using the owner's
+actual Dots and the ordinary assistant option. Creating or changing a binding
+requires an active owned Dot. An unchanged inactive or unavailable binding
+remains visible and may be retained while editing unrelated configuration;
+it cannot execute until the binding is available and active. There is no
+independent Dot model selector: the existing model catalogue, cron/timezone,
+tools switch, synchronous mode and reuse settings remain the controls.
+
+Conversation reuse requires a private user-owned session with exactly the
+same Dot binding, or an ordinary private session for an ordinary automation.
+The linked-chat picker uses the existing chat listing with `dot_id` filtering:
+an absent filter lists all, an empty filter selects ordinary sessions, and a
+concrete ID selects that user's Dot sessions. Changing **Run as** clears the
+form's linked conversation; server validation repeats the ownership and
+binding checks. Webhook reruns replay an actual stored payload into a fresh
+conversation carrying the webhook's current binding.
+
+`headless::open_session` uses session-core's atomic idle turn-pair creation:
+it inserts the user prompt and assistant turn together only if the conversation
+has no running or suspended assistant turn. Background execution registers
+with the same worker registry as chat, so streaming and stopping use the shared
+session mechanisms. The substrate remains unaware of Dot ownership.
+
+Each run records the exact assistant turn ID, original tools switch and history
+window before model execution. Resume reloads that durable run context and
+checks its owner, private session and unchanged Dot binding. The tools ceiling
+is the original switch intersected with the current automation switch, owner
+grants, enabled settings and Dot rules. Enabling tools later cannot grant them
+to a turn that started without them. The recorded history window is restored
+on resume; later settings cannot broaden that turn's history. Usage retains
+its scheduled/webhook source and existing owner billing and limits. A separate
+per-Dot usage dashboard or billing budget is not implemented.
+
+Approval-required calls enter `waiting`, appear in Inbox and the linked chat,
+and release the execution worker. Approval applies only to the stored call
+arguments, with current access checked before execution. Resumed completion,
+denial or cancellation updates the exact run; an older continuation cannot
+overwrite the summary of a newer run. Synchronous webhook fires and reruns
+return HTTP 202 with `status: waiting` and the session ID when a decision is
+needed; waiting is distinct from a failed run.
+
+Pausing a schedule or webhook prevents future triggers and permits resolution
+of its existing pending turn. Deactivating the Dot preserves conversations
+and keeps pending Dot calls paused. Deletion of an automation returns a
+conflict while its run is executing or awaiting a decision: disable future
+triggers, then finish or stop the turn before deleting. The existing Dot UI
+provides deactivation, not a Dot-delete action.
+
+Persistent Dot computers are specified separately in
+[dots-workspace.md](dots-workspace.md) and are not implemented. Automatic
+memory curation, Dot-owned OAuth credentials and organization Dots remain
+planned. The user workflow is in
+[Schedules, webhooks and inbox](guide/automation-and-inbox.md).
 
 ## Product goal
 
@@ -124,6 +181,13 @@ requirements; they do not determine AIplane's implementation.
   memories, grants and tokens through the existing principal cascade.
 
 ### Work and channels
+
+- Dots must be able to communicate with one another under explicit permissions
+  in both directions. The first planned slice permits bounded internal
+  delegation between personal Dots with the same owner; receivers retain their
+  own tools and approval rules, and only explicit task data is shared. This is
+  not implemented; the reusable dispatch, consent and privacy design is in
+  [Dot communication](dots-communication.md).
 
 - The initial user interface is AIplane's web application only. Slack is out
   of scope. Voice and other channels are later work unless separately
@@ -176,8 +240,8 @@ requirements; they do not determine AIplane's implementation.
 | Identity and organization grants | system principals, `principal_grants`, agent shares | Personal Dot must act with the user's authority while retaining Dot attribution |
 | Chat, runs and streaming | `chat_sessions`, `chat_turns`, `SessionDriver`, JSON-SSE | Associate a personal Dot with user-owned sessions without turning it into a second chat engine |
 | Durable pause and approval | `chat_turn_suspensions`, `agents::approval`, Inbox | Interactive chat and user-owned scheduled/webhook turns can persist a pause and resume through the user's Inbox. Dot execution must retain its attribution and re-evaluate current owner grants and Dot rules when a paused turn resumes. |
-| Schedules | `scheduled_actions` and scheduled worker | Current schedules are user-owned; support Dot-owned, agent-context runs |
-| Event triggers | Webhooks and headless execution | Current webhooks are user-owned; support Dot identity, event policy and activity correlation |
+| Schedules | `scheduled_actions` and scheduled worker | Personal Dot binding is implemented; organization-owned execution remains planned |
+| Event triggers | Webhooks and headless execution | Personal Dot binding and durable assistant-turn correlation are implemented; organization ownership remains planned |
 | MCP catalogue and execution | connector catalog, `McpConnectionManager`, `UserMcpLayer` | Personal delegated and Dot-owned credentials; organisation/Dot OAuth identity |
 | Per-user memory | `user_memories`, memory tools, `personal_dot_memories` | Runtime reads/writes and background curation for isolated Dot memory |
 | Agent conversation state | `agent_state` | Session-scoped today; Dot workspace must persist independently across sessions |
@@ -247,15 +311,12 @@ policy, and apply the selected identity for each connector. Exposing both
 overlays wholesale and relying on the prompt to choose would exceed the
 confirmed permission boundary.
 
-The always-on mechanisms also have a specific gap. `scheduled_actions` and
-`webhooks` are user-owned today. Their headless workers open user-owned chat
-sessions and drive `Actor::Person`; a schedule has a broad tools-on/off switch,
-while webhooks default tools off and carry the request payload as untrusted
-input. A Dot-owned schedule or event trigger must keep the user as session
-owner while carrying Dot policy and attribution into the run. It must apply
-the per-tool/action rules instead of treating `tools_enabled` as sufficient
-approval for external writes. Webhook payloads retain their untrusted-input
-framing.
+Schedules and webhooks retain their user ownership and optionally bind to a
+personal Dot through `dot_id`. Their headless workers open private user-owned
+sessions carrying the Dot binding and resolve the same personal Dot persona
+as chat. `tools_enabled` is an additional ceiling, not approval for external
+writes. Webhook payloads retain their untrusted-input framing. Organization
+background ownership is not implemented.
 
 Memory has the same split in the current code. `user_memories` is keyed only
 by `user_id`; the four existing memory tools use the acting user's identity
@@ -373,9 +434,8 @@ write actions.
 
 ## Background work and memory curation
 
-AIplane already has scheduled runs and webhooks. The first Dot implementation
-should reuse those paths and introduce only the ownership/context bridge they
-lack. MCP calls may be used as event-driven work inputs where the connected
+AIplane schedules and webhooks use the existing workers with an optional
+personal Dot binding. MCP calls may be used as event-driven work inputs where the connected
 system supports them; the Dot feature itself does not implement ticket-system
 specific code.
 
@@ -490,9 +550,8 @@ credential.
 
 An approval pauses the interactive Dot turn through the existing
 `AskFirst`/`chat_turn_suspensions`/Inbox path. Approve-once resumes the pending
-call; a saved `Allow` rule changes future calls. Background runs remain
-fail-closed for approval-required actions until their workers can resume a
-durably suspended run. The walkthrough does not add a parallel policy table or
+call; a saved `Allow` rule changes future calls. Scheduled and webhook runs
+persist approval-required calls and resume through the same Inbox path. The walkthrough does not add a parallel policy table or
 approval mechanism. On resume, current ownership, active state and tool access
 are checked again even when the call was approved once.
 
@@ -598,6 +657,9 @@ product behavior and is implemented by the lifecycle API.
 
 ## Research references
 
+- [Grok Bot feature comparison and additional product gaps](dots-grok-comparison.md)
+- [xAI: Introducing Grok Bot](https://x.ai/news/introducing-grok-bot)
+- [xAI: Grok Bot product page and FAQ](https://x.ai/bot)
 - [OpenAI: Wir stellen dots vor](https://openai.com/de-DE/index/introducing-dots/)
 - [OpenAI: How we build safety, security, and privacy into dots](https://openai.com/index/how-we-build-safety-security-and-privacy-into-dots/)
 - [OpenAI Help Center: Getting started with your dot](https://help.openai.com/en/articles/20001530-getting-started-with-your-dot)

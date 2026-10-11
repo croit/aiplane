@@ -28,6 +28,7 @@ use serde_json::json;
 use session_core::chrome::read_body_prefix;
 use session_core::db as chat;
 use session_core::db::TurnStatus;
+use session_core::i18n::{Lang, t};
 
 use aiplane_core::server::auth::token;
 use aiplane_core::server::db::usage::UsageSource;
@@ -54,6 +55,7 @@ pub async fn webhook_trigger(
     Path(secret): Path<String>,
     req: Request,
 ) -> Response {
+    let lang = Lang::from_request(req.headers());
     // hex + `gwh_` is already lowercase, so rama's path-lowercasing is a
     // no-op here; the hashed lookup is exact regardless.
     let Some(hash) = token::hash_webhook_secret(&secret) else {
@@ -123,11 +125,16 @@ pub async fn webhook_trigger(
             prompt: &input,
             model: &hook.model,
             existing_session,
+            dot_id: hook.dot_id.as_deref(),
         },
     )
     .await
     {
         Ok(ids) => ids,
+        Err(headless::OpenError::Unavailable) => return trigger_not_found(),
+        Err(headless::OpenError::Busy) => {
+            return trigger_error(StatusCode::CONFLICT, &t(lang, "dot-background-error-busy"));
+        }
         Err(err) => {
             tracing::warn!(error = %err, "opening webhook run session");
             return trigger_error(StatusCode::INTERNAL_SERVER_ERROR, "could not start run");
@@ -137,18 +144,30 @@ pub async fn webhook_trigger(
     // Log this fire in the run history (status filled in when it finishes).
     let run_id = match webhooks::record_run_start(
         &state.db,
-        &hook.id,
-        &session_id,
-        &hook.prompt,
-        &payload,
-        "fire",
+        webhooks::NewWebhookRun {
+            webhook_id: &hook.id,
+            session_id: &session_id,
+            prompt: &hook.prompt,
+            payload: &payload,
+            source: "fire",
+            assistant_turn_id: &assistant_turn_id,
+            tools_enabled: hook.tools_enabled,
+            history_limit,
+        },
     )
     .await
     {
         Ok(id) => Some(id),
         Err(err) => {
             tracing::warn!(webhook = %hook.id, error = %err, "recording webhook run");
-            None
+            let _ = chat::finalize_turn(
+                &state.db,
+                &assistant_turn_id,
+                TurnStatus::Errored,
+                Some(&t(lang, "dot-background-error-recording")),
+            )
+            .await;
+            return trigger_error(StatusCode::INTERNAL_SERVER_ERROR, "could not record run");
         }
     };
 
@@ -167,12 +186,19 @@ pub async fn webhook_trigger(
         finalize_run(
             &state,
             &hook.id,
+            &hook.user_id,
             run_id.as_deref(),
             status,
             &session_id,
             error.as_deref(),
         )
         .await;
+        if status == "waiting" {
+            return super::json_ok(
+                StatusCode::ACCEPTED,
+                json!({"session_id":session_id,"status":"waiting"}),
+            );
+        }
         if status != "ok" {
             // A run that did not finish is a failed upstream; the conversation
             // it opened is named so the owner can look at what happened.
@@ -196,6 +222,7 @@ pub async fn webhook_trigger(
     } else {
         let state = state.clone();
         let hook_id = hook.id.clone();
+        let owner_id = hook.user_id.clone();
         let sess = session_id.clone();
         tokio::spawn(async move {
             headless::drive(&state, drive).await;
@@ -203,6 +230,7 @@ pub async fn webhook_trigger(
             finalize_run(
                 &state,
                 &hook_id,
+                &owner_id,
                 run_id.as_deref(),
                 status,
                 &sess,
@@ -278,38 +306,31 @@ pub(super) async fn outcome(
     }
 }
 
-/// Record a fire's outcome, logging (not failing) a DB error.
-async fn record_fire(
-    state: &RamaState,
-    hook_id: &str,
-    status: &str,
-    session_id: &str,
-    error: Option<&str>,
-) {
-    if let Err(err) =
-        webhooks::mark_fired(&state.db, hook_id, status, Some(session_id), error).await
-    {
-        tracing::warn!(webhook = %hook_id, error = %err, "recording webhook fire");
-    }
-}
-
-/// Finalize a run: stamp its outcome in the run history (when we have a run id)
-/// and update the webhook's denormalized last-fire summary. Errors are logged,
-/// never fatal.
 pub(super) async fn finalize_run(
     state: &RamaState,
     hook_id: &str,
+    owner_id: &str,
     run_id: Option<&str>,
-    status: &str,
-    session_id: &str,
-    error: Option<&str>,
+    _status: &str,
+    _session_id: &str,
+    _error: Option<&str>,
 ) {
-    if let Some(rid) = run_id
-        && let Err(err) = webhooks::finish_run(&state.db, rid, status, error).await
-    {
-        tracing::warn!(run = %rid, error = %err, "finishing webhook run");
+    let result = async {
+        let Some(run_id) = run_id else {
+            return Ok(());
+        };
+        let Some(run) = webhooks::get_run(&state.db, hook_id, run_id).await? else {
+            return Ok(());
+        };
+        let Some(turn_id) = run.assistant_turn_id else {
+            return Ok(());
+        };
+        aiplane_runtime::server::background::reconcile_turn(&state.db, owner_id, &turn_id).await
     }
-    record_fire(state, hook_id, status, session_id, error).await;
+    .await;
+    if let Err(error) = result {
+        tracing::warn!(webhook = %hook_id, %error, "reconciling webhook fire");
+    }
 }
 
 /// The session a reuse-enabled webhook should append into: the previous fire's

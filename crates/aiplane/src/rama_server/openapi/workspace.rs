@@ -112,7 +112,7 @@ pub(super) fn operations() -> Vec<Op> {
             .errors(&[400, 404]),
         delete("/api/v0/scheduled/{id}", Access::Session)
             .no_content()
-            .errors(&[404]),
+            .errors(&[404, 409]),
         get("/api/v0/scheduled/{id}/runs", Access::Session)
             .ok(json::<workspace::ScheduledRuns>())
             .errors(&[404]),
@@ -134,13 +134,14 @@ pub(super) fn operations() -> Vec<Op> {
             .errors(&[404]),
         delete("/api/v0/webhooks/{id}", Access::Session)
             .no_content()
-            .errors(&[404]),
+            .errors(&[404, 409]),
         get("/api/v0/webhooks/{id}/runs", Access::Session)
             .ok(json::<workspace::WebhookRuns>())
             .errors(&[404]),
         post("/api/v0/webhooks/{id}/rerun", Access::Session)
             .body(json::<workspace::RerunBody>())
             .ok(json::<workspace::RerunOutcome>())
+            .accepted(json::<workspace::RerunAccepted>())
             .errors(&[400, 404, 409, 502]),
     ]
 }

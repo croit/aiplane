@@ -17,6 +17,8 @@
 //!
 //! [`scheduled`]: crate::server::scheduled
 
+use super::scheduled::DeleteOutcome;
+use aiplane_agents::db::{WriteTx, dot_sessions};
 use jiff::Timestamp;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
@@ -29,6 +31,7 @@ use aiplane_core::server::db::{DbError, Pool, parse_optional_ts, parse_ts};
 pub struct Webhook {
     pub id: String,
     pub user_id: String,
+    pub dot_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: String,
@@ -68,6 +71,7 @@ pub struct Webhook {
 /// the secret and passes only its hash.
 pub struct NewWebhook {
     pub user_id: String,
+    pub dot_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: String,
@@ -76,11 +80,13 @@ pub struct NewWebhook {
     pub reuse_conversation: bool,
     pub reuse_rounds: i64,
     pub secret_hash: String,
+    pub linked_session_id: Option<String>,
 }
 
 /// The mutable fields of an existing webhook, as submitted by the edit form.
 /// The secret is rotated separately via [`rotate_secret`].
 pub struct EditWebhook {
+    pub dot_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: String,
@@ -88,12 +94,14 @@ pub struct EditWebhook {
     pub synchronous: bool,
     pub reuse_conversation: bool,
     pub reuse_rounds: i64,
+    pub linked_session_id: Option<Option<String>>,
 }
 
 fn map_row(row: &SqliteRow) -> Result<Webhook, DbError> {
     Ok(Webhook {
         id: row.try_get("id")?,
         user_id: row.try_get("user_id")?,
+        dot_id: row.try_get("dot_id")?,
         name: row.try_get("name")?,
         prompt: row.try_get("prompt")?,
         model: row.try_get("model")?,
@@ -113,16 +121,38 @@ fn map_row(row: &SqliteRow) -> Result<Webhook, DbError> {
     })
 }
 
-const COLS: &str = "id, user_id, name, prompt, model, tools_enabled, synchronous, secret_hash, \
+const COLS: &str = "id, user_id, dot_id, name, prompt, model, tools_enabled, synchronous, secret_hash, \
      enabled, last_fired_at, last_status, last_session_id, last_error, last_payload, \
      reuse_conversation, reuse_rounds, created_at, updated_at";
 
 /// Insert a new webhook. Returns the stored row.
 pub async fn create(pool: &Pool, new: NewWebhook) -> Result<Webhook, DbError> {
+    let mut tx = WriteTx::begin(pool).await?;
+    if !dot_sessions::binding_valid(&mut tx, &new.user_id, new.dot_id.as_deref(), None).await? {
+        return Err(
+            sqlx::Error::Protocol("The selected Dot is not owned and active".into()).into(),
+        );
+    }
+    if let Some(session_id) = new.linked_session_id.as_deref()
+        && (!new.reuse_conversation
+            || !dot_sessions::session_matches(
+                &mut tx,
+                &new.user_id,
+                session_id,
+                new.dot_id.as_deref(),
+            )
+            .await?)
+    {
+        return Err(sqlx::Error::Protocol(
+            "The linked conversation does not match this automation".into(),
+        )
+        .into());
+    }
     let now = Timestamp::now();
     let row = Webhook {
         id: Uuid::new_v4().to_string(),
         user_id: new.user_id,
+        dot_id: new.dot_id,
         name: new.name,
         prompt: new.prompt,
         model: new.model,
@@ -132,7 +162,7 @@ pub async fn create(pool: &Pool, new: NewWebhook) -> Result<Webhook, DbError> {
         enabled: true,
         last_fired_at: None,
         last_status: None,
-        last_session_id: None,
+        last_session_id: new.linked_session_id,
         last_error: None,
         last_payload: None,
         reuse_conversation: new.reuse_conversation,
@@ -142,12 +172,13 @@ pub async fn create(pool: &Pool, new: NewWebhook) -> Result<Webhook, DbError> {
     };
     sqlx::query(
         r#"INSERT INTO webhooks
-              (id, user_id, name, prompt, model, tools_enabled, synchronous, secret_hash,
+              (id, user_id, dot_id, name, prompt, model, tools_enabled, synchronous, secret_hash,
                enabled, reuse_conversation, reuse_rounds, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)"#,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)"#,
     )
     .bind(&row.id)
     .bind(&row.user_id)
+    .bind(&row.dot_id)
     .bind(&row.name)
     .bind(&row.prompt)
     .bind(&row.model)
@@ -158,8 +189,16 @@ pub async fn create(pool: &Pool, new: NewWebhook) -> Result<Webhook, DbError> {
     .bind(row.reuse_rounds)
     .bind(row.created_at.to_string())
     .bind(row.updated_at.to_string())
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    if row.last_session_id.is_some() {
+        sqlx::query("UPDATE webhooks SET last_session_id = ? WHERE id = ?")
+            .bind(&row.last_session_id)
+            .bind(&row.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     Ok(row)
 }
 
@@ -189,12 +228,51 @@ pub async fn update(
     id: &str,
     edit: EditWebhook,
 ) -> Result<bool, DbError> {
+    let mut tx = WriteTx::begin(pool).await?;
+    let previous: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT dot_id, last_session_id FROM webhooks WHERE id = ? AND user_id = ?")
+            .bind(id)
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((previous_dot, previous_session)) = previous else {
+        return Ok(false);
+    };
+    if !dot_sessions::binding_valid(
+        &mut tx,
+        user_id,
+        edit.dot_id.as_deref(),
+        previous_dot.as_deref(),
+    )
+    .await?
+    {
+        return Err(
+            sqlx::Error::Protocol("The selected Dot is not owned and active".into()).into(),
+        );
+    }
+    let linked = match edit.linked_session_id {
+        Some(linked) => linked,
+        None if previous_dot != edit.dot_id || !edit.reuse_conversation => None,
+        None => previous_session,
+    };
+    if let Some(session_id) = linked.as_deref()
+        && (!edit.reuse_conversation
+            || !dot_sessions::session_matches(&mut tx, user_id, session_id, edit.dot_id.as_deref())
+                .await?)
+    {
+        return Err(sqlx::Error::Protocol(
+            "The linked conversation does not match this automation".into(),
+        )
+        .into());
+    }
     let affected = sqlx::query(
         r#"UPDATE webhooks
-           SET name = ?, prompt = ?, model = ?, tools_enabled = ?, synchronous = ?,
+           SET dot_id = ?, last_session_id = ?, name = ?, prompt = ?, model = ?, tools_enabled = ?, synchronous = ?,
                reuse_conversation = ?, reuse_rounds = ?, updated_at = ?
            WHERE id = ? AND user_id = ?"#,
     )
+    .bind(&edit.dot_id)
+    .bind(&linked)
     .bind(&edit.name)
     .bind(&edit.prompt)
     .bind(&edit.model)
@@ -205,9 +283,10 @@ pub async fn update(
     .bind(Timestamp::now().to_string())
     .bind(id)
     .bind(user_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
+    tx.commit().await?;
     Ok(affected > 0)
 }
 
@@ -228,28 +307,6 @@ pub async fn set_enabled(
             .execute(pool)
             .await?
             .rows_affected();
-    Ok(affected > 0)
-}
-
-/// Point a reusing webhook at the chat its next fire continues in, or, with
-/// `None`, let the next fire open a fresh one. The caller checks the chat is
-/// the owner's. Owner-scoped; `false` if the webhook is not theirs.
-pub async fn set_linked_session(
-    pool: &Pool,
-    user_id: &str,
-    id: &str,
-    session_id: Option<&str>,
-) -> Result<bool, DbError> {
-    let affected = sqlx::query(
-        "UPDATE webhooks SET last_session_id = ?, updated_at = ? WHERE id = ? AND user_id = ?",
-    )
-    .bind(session_id)
-    .bind(Timestamp::now().to_string())
-    .bind(id)
-    .bind(user_id)
-    .execute(pool)
-    .await?
-    .rows_affected();
     Ok(affected > 0)
 }
 
@@ -274,15 +331,32 @@ pub async fn rotate_secret(
     Ok(affected > 0)
 }
 
-/// Delete a webhook, scoped to the owner. Returns `true` if a row matched.
-pub async fn delete(pool: &Pool, user_id: &str, id: &str) -> Result<bool, DbError> {
-    let affected = sqlx::query("DELETE FROM webhooks WHERE id = ? AND user_id = ?")
+/// Delete an idle webhook, scoped to the owner.
+pub async fn delete(pool: &Pool, user_id: &str, id: &str) -> Result<DeleteOutcome, DbError> {
+    let mut tx = WriteTx::begin(pool).await?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM webhooks WHERE id = ? AND user_id = ?)")
+            .bind(id)
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if !exists {
+        return Ok(DeleteOutcome::Missing);
+    }
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM webhook_runs r LEFT JOIN chat_turns t ON t.id = r.assistant_turn_id
+         WHERE r.webhook_id = ? AND (t.status IN ('in_progress', 'suspended') OR (r.status IS NULL AND r.assistant_turn_id IS NULL)))",
+    ).bind(id).fetch_one(&mut *tx).await?;
+    if pending {
+        return Ok(DeleteOutcome::Pending);
+    }
+    sqlx::query("DELETE FROM webhooks WHERE id = ? AND user_id = ?")
         .bind(id)
         .bind(user_id)
-        .execute(pool)
-        .await?
-        .rows_affected();
-    Ok(affected > 0)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(DeleteOutcome::Deleted)
 }
 
 /// The webhook a trigger secret's hash belongs to — but only when it's
@@ -357,6 +431,7 @@ pub struct WebhookRun {
     pub status: Option<String>,
     /// Chat session this run opened.
     pub session_id: Option<String>,
+    pub assistant_turn_id: Option<String>,
     /// The run's chat has since been deleted by its owner.
     pub chat_deleted: bool,
     pub error: Option<String>,
@@ -367,7 +442,7 @@ pub struct WebhookRun {
     pub created_at: Timestamp,
 }
 
-const RUN_COLS: &str = "r.id, r.webhook_id, r.fired_at, r.status, r.session_id, r.error, \
+const RUN_COLS: &str = "r.id, r.webhook_id, r.fired_at, r.status, r.session_id, r.assistant_turn_id, r.error, \
      r.prompt, r.payload, r.source, r.created_at, \
      (r.session_id IS NOT NULL AND s.id IS NULL) AS chat_deleted";
 
@@ -384,6 +459,7 @@ fn map_run(row: &SqliteRow) -> Result<WebhookRun, DbError> {
         fired_at: parse_ts(row.try_get("fired_at")?, "fired_at")?,
         status: row.try_get("status")?,
         session_id: row.try_get("session_id")?,
+        assistant_turn_id: row.try_get("assistant_turn_id")?,
         chat_deleted: row.try_get("chat_deleted")?,
         error: row.try_get("error")?,
         prompt: row.try_get("prompt")?,
@@ -396,20 +472,60 @@ fn map_run(row: &SqliteRow) -> Result<WebhookRun, DbError> {
 /// Record the start of a run (status left NULL until [`finish_run`]). Returns
 /// the new run id. Not owner-scoped — the caller has already resolved the
 /// webhook (by secret for a fire, by owner for a rerun).
-pub async fn record_run_start(
-    pool: &Pool,
-    webhook_id: &str,
-    session_id: &str,
-    prompt: &str,
-    payload: &str,
-    source: &str,
-) -> Result<String, DbError> {
+pub struct NewWebhookRun<'a> {
+    pub webhook_id: &'a str,
+    pub session_id: &'a str,
+    pub prompt: &'a str,
+    pub payload: &'a str,
+    pub source: &'a str,
+    pub assistant_turn_id: &'a str,
+    pub tools_enabled: bool,
+    pub history_limit: Option<usize>,
+}
+
+pub async fn record_run_start(pool: &Pool, new: NewWebhookRun<'_>) -> Result<String, DbError> {
+    let NewWebhookRun {
+        webhook_id,
+        session_id,
+        prompt,
+        payload,
+        source,
+        assistant_turn_id,
+        tools_enabled,
+        history_limit,
+    } = new;
+    let mut tx = WriteTx::begin(pool).await?;
+    let source_row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT user_id, dot_id FROM webhooks WHERE id = ?")
+            .bind(webhook_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((owner_id, dot_id)) = source_row else {
+        return Err(sqlx::Error::Protocol("The webhook is unavailable".into()).into());
+    };
+    if !dot_sessions::session_matches(&mut tx, &owner_id, session_id, dot_id.as_deref()).await? {
+        return Err(sqlx::Error::Protocol(
+            "The webhook run conversation has a different owner or Dot".into(),
+        )
+        .into());
+    }
+    let valid_turn: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_turns WHERE id = ? AND session_id = ? AND role = 'assistant' AND status = 'in_progress')")
+        .bind(assistant_turn_id).bind(session_id).fetch_one(&mut *tx).await?;
+    if !valid_turn {
+        return Err(
+            sqlx::Error::Protocol("The webhook assistant turn is unavailable".into()).into(),
+        );
+    }
+    let history_limit = history_limit
+        .map(i64::try_from)
+        .transpose()
+        .map_err(|_| sqlx::Error::Protocol("The webhook history limit is too large".into()))?;
     let id = Uuid::new_v4().to_string();
     let now = Timestamp::now().to_string();
     sqlx::query(
         r#"INSERT INTO webhook_runs
-              (id, webhook_id, fired_at, session_id, prompt, payload, source, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
+              (id, webhook_id, fired_at, session_id, prompt, payload, source, created_at, assistant_turn_id, tools_enabled, history_limit)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&id)
     .bind(webhook_id)
@@ -419,8 +535,12 @@ pub async fn record_run_start(
     .bind(payload)
     .bind(source)
     .bind(&now)
-    .execute(pool)
+    .bind(assistant_turn_id)
+    .bind(tools_enabled as i64)
+    .bind(history_limit)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(id)
 }
 
@@ -470,7 +590,12 @@ pub async fn sweep_interrupted_runs(pool: &Pool) -> Result<u64, DbError> {
             .execute(&mut *tx)
             .await?;
     tx.commit().await?;
-    Ok(done.rows_affected())
+    let reconciled = crate::server::background::reconcile_interrupted_waiting(
+        pool,
+        aiplane_core::server::db::usage::UsageSource::Webhook,
+    )
+    .await?;
+    Ok(done.rows_affected() + reconciled)
 }
 
 /// A webhook's most recent runs, newest first, capped at `limit`.
@@ -573,8 +698,65 @@ mod tests {
         .unwrap();
     }
 
+    async fn fixture_run_start(pool: &Pool, new: NewWebhookRun<'_>) -> Result<String, DbError> {
+        let NewWebhookRun {
+            webhook_id: hook_id,
+            session_id,
+            prompt,
+            payload,
+            source,
+            assistant_turn_id: turn_id,
+            tools_enabled,
+            history_limit,
+        } = new;
+        let owner: String = sqlx::query_scalar("SELECT user_id FROM webhooks WHERE id = ?")
+            .bind(hook_id)
+            .fetch_one(pool)
+            .await?;
+        let temporary = session_core::db::get_session(pool, &owner, session_id)
+            .await?
+            .is_none();
+        if temporary {
+            let session = session_core::db::create_session(pool, &owner).await?;
+            sqlx::query("UPDATE chat_sessions SET id = ? WHERE id = ?")
+                .bind(session_id)
+                .bind(&session.id)
+                .execute(pool)
+                .await?;
+        }
+        session_core::db::create_assistant_turn_in_progress(pool, session_id, turn_id, "qwen")
+            .await?;
+        let id = record_run_start(
+            pool,
+            NewWebhookRun {
+                webhook_id: hook_id,
+                session_id,
+                prompt,
+                payload,
+                source,
+                assistant_turn_id: turn_id,
+                tools_enabled,
+                history_limit,
+            },
+        )
+        .await?;
+        session_core::db::finalize_turn(
+            pool,
+            turn_id,
+            session_core::db::TurnStatus::Completed,
+            None,
+        )
+        .await?;
+        if temporary {
+            session_core::db::delete_session(pool, &owner, session_id).await?;
+        }
+        Ok(id)
+    }
+
     fn sample(user_id: &str, secret_hash: &str) -> NewWebhook {
         NewWebhook {
+            dot_id: None,
+            linked_session_id: None,
             user_id: user_id.to_string(),
             name: "Deploy digest".to_string(),
             prompt: "Summarize the incoming payload.".to_string(),
@@ -605,7 +787,10 @@ mod tests {
         seed_user(&pool, "u2").await;
         let created = create(&pool, sample("u1", "hash-bbb")).await.unwrap();
         assert!(get(&pool, "u2", &created.id).await.unwrap().is_none());
-        assert!(!delete(&pool, "u2", &created.id).await.unwrap());
+        assert_eq!(
+            delete(&pool, "u2", &created.id).await.unwrap(),
+            DeleteOutcome::Missing
+        );
         assert!(get(&pool, "u1", &created.id).await.unwrap().is_some());
     }
 
@@ -643,16 +828,40 @@ mod tests {
         seed_user(&pool, "u1").await;
         let hook = create(&pool, sample("u1", "hash-sweep")).await.unwrap();
         let chat = session_core::db::create_session(&pool, "u1").await.unwrap();
-        let done = record_run_start(&pool, &hook.id, &chat.id, "p", "{}", "fire")
-            .await
-            .unwrap();
+        let done = fixture_run_start(
+            &pool,
+            NewWebhookRun {
+                webhook_id: &hook.id,
+                session_id: &chat.id,
+                prompt: "p",
+                payload: "{}",
+                source: "fire",
+                assistant_turn_id: &uuid::Uuid::new_v4().to_string(),
+                tools_enabled: false,
+                history_limit: None,
+            },
+        )
+        .await
+        .unwrap();
         finish_run(&pool, &done, "ok", None).await.unwrap();
         mark_fired(&pool, &hook.id, "ok", Some(&chat.id), None)
             .await
             .unwrap();
-        let orphan = record_run_start(&pool, &hook.id, &chat.id, "p", "{}", "fire")
-            .await
-            .unwrap();
+        let orphan = fixture_run_start(
+            &pool,
+            NewWebhookRun {
+                webhook_id: &hook.id,
+                session_id: &chat.id,
+                prompt: "p",
+                payload: "{}",
+                source: "fire",
+                assistant_turn_id: &uuid::Uuid::new_v4().to_string(),
+                tools_enabled: false,
+                history_limit: None,
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(sweep_interrupted_runs(&pool).await.unwrap(), 1);
 
@@ -682,12 +891,36 @@ mod tests {
         seed_user(&pool, "u1").await;
         let hook = create(&pool, sample("u1", "hash-order")).await.unwrap();
         let chat = session_core::db::create_session(&pool, "u1").await.unwrap();
-        let earlier = record_run_start(&pool, &hook.id, &chat.id, "p", "{}", "fire")
-            .await
-            .unwrap();
-        let later = record_run_start(&pool, &hook.id, &chat.id, "p", "{}", "fire")
-            .await
-            .unwrap();
+        let earlier = fixture_run_start(
+            &pool,
+            NewWebhookRun {
+                webhook_id: &hook.id,
+                session_id: &chat.id,
+                prompt: "p",
+                payload: "{}",
+                source: "fire",
+                assistant_turn_id: &uuid::Uuid::new_v4().to_string(),
+                tools_enabled: false,
+                history_limit: None,
+            },
+        )
+        .await
+        .unwrap();
+        let later = fixture_run_start(
+            &pool,
+            NewWebhookRun {
+                webhook_id: &hook.id,
+                session_id: &chat.id,
+                prompt: "p",
+                payload: "{}",
+                source: "fire",
+                assistant_turn_id: &uuid::Uuid::new_v4().to_string(),
+                tools_enabled: false,
+                history_limit: None,
+            },
+        )
+        .await
+        .unwrap();
         for (run, at) in [
             (&earlier, "2026-10-04T10:00:00.1Z"),
             (&later, "2026-10-04T10:00:00.123Z"),
@@ -718,9 +951,21 @@ mod tests {
         seed_user(&pool, "u1").await;
         let hook = create(&pool, sample("u1", "hash-deleted")).await.unwrap();
         let chat = session_core::db::create_session(&pool, "u1").await.unwrap();
-        let run = record_run_start(&pool, &hook.id, &chat.id, "p", "{}", "fire")
-            .await
-            .unwrap();
+        let run = fixture_run_start(
+            &pool,
+            NewWebhookRun {
+                webhook_id: &hook.id,
+                session_id: &chat.id,
+                prompt: "p",
+                payload: "{}",
+                source: "fire",
+                assistant_turn_id: &uuid::Uuid::new_v4().to_string(),
+                tools_enabled: false,
+                history_limit: None,
+            },
+        )
+        .await
+        .unwrap();
         assert!(
             !get_run(&pool, &hook.id, &run)
                 .await
@@ -744,43 +989,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_linked_chat_is_where_the_next_fire_continues() {
+    async fn linked_chat_updates_are_atomic_and_owner_scoped() {
         let pool = fresh_db().await;
         seed_user(&pool, "u1").await;
         seed_user(&pool, "u2").await;
-        let hook = create(&pool, sample("u1", "hash-link")).await.unwrap();
-
-        assert!(
-            set_linked_session(&pool, "u1", &hook.id, Some("chat-1"))
-                .await
-                .unwrap()
-        );
+        let chat = session_core::db::create_session(&pool, "u1").await.unwrap();
+        let mut new = sample("u1", "hash-link");
+        new.reuse_conversation = true;
+        new.linked_session_id = Some(chat.id.clone());
+        let source = create(&pool, new).await.unwrap();
+        assert_eq!(source.last_session_id.as_deref(), Some(chat.id.as_str()));
+        let edit = || EditWebhook {
+            dot_id: None,
+            linked_session_id: Some(None),
+            name: source.name.clone(),
+            prompt: source.prompt.clone(),
+            model: source.model.clone(),
+            tools_enabled: source.tools_enabled,
+            reuse_conversation: true,
+            reuse_rounds: source.reuse_rounds,
+            synchronous: source.synchronous,
+        };
+        assert!(!update(&pool, "u2", &source.id, edit()).await.unwrap());
         assert_eq!(
-            get(&pool, "u1", &hook.id)
-                .await
-                .unwrap()
-                .unwrap()
-                .last_session_id
-                .as_deref(),
-            Some("chat-1")
-        );
-        assert!(
-            set_linked_session(&pool, "u1", &hook.id, None)
-                .await
-                .unwrap()
-        );
-        assert_eq!(
-            get(&pool, "u1", &hook.id)
+            get(&pool, "u1", &source.id)
                 .await
                 .unwrap()
                 .unwrap()
                 .last_session_id,
-            None
+            Some(chat.id)
         );
+        assert!(update(&pool, "u1", &source.id, edit()).await.unwrap());
         assert!(
-            !set_linked_session(&pool, "u2", &hook.id, Some("chat-2"))
+            get(&pool, "u1", &source.id)
                 .await
                 .unwrap()
+                .unwrap()
+                .last_session_id
+                .is_none()
         );
     }
 
@@ -853,24 +1099,34 @@ mod tests {
         seed_user(&pool, "u1").await;
         let hook = create(&pool, sample("u1", "hash-run")).await.unwrap();
 
-        let r1 = record_run_start(
+        let r1 = fixture_run_start(
             &pool,
-            &hook.id,
-            "sess-1",
-            "prompt one",
-            r#"{"a":1}"#,
-            "fire",
+            NewWebhookRun {
+                webhook_id: &hook.id,
+                session_id: "sess-1",
+                prompt: "prompt one",
+                payload: r#"{"a":1}"#,
+                source: "fire",
+                assistant_turn_id: &uuid::Uuid::new_v4().to_string(),
+                tools_enabled: false,
+                history_limit: None,
+            },
         )
         .await
         .unwrap();
         finish_run(&pool, &r1, "ok", None).await.unwrap();
-        let r2 = record_run_start(
+        let r2 = fixture_run_start(
             &pool,
-            &hook.id,
-            "sess-2",
-            "prompt two",
-            r#"{"b":2}"#,
-            "rerun",
+            NewWebhookRun {
+                webhook_id: &hook.id,
+                session_id: "sess-2",
+                prompt: "prompt two",
+                payload: r#"{"b":2}"#,
+                source: "rerun",
+                assistant_turn_id: &uuid::Uuid::new_v4().to_string(),
+                tools_enabled: false,
+                history_limit: None,
+            },
         )
         .await
         .unwrap();
@@ -909,22 +1165,58 @@ mod tests {
         let other_owner = create(&pool, sample("u2", "hash-c")).await.unwrap();
 
         for session in ["sess-a", "sess-b"] {
-            let run = record_run_start(&pool, &fresh_each_time.id, session, "p", "{}", "fire")
-                .await
-                .unwrap();
+            let run = fixture_run_start(
+                &pool,
+                NewWebhookRun {
+                    webhook_id: &fresh_each_time.id,
+                    session_id: session,
+                    prompt: "p",
+                    payload: "{}",
+                    source: "fire",
+                    assistant_turn_id: &uuid::Uuid::new_v4().to_string(),
+                    tools_enabled: false,
+                    history_limit: None,
+                },
+            )
+            .await
+            .unwrap();
             finish_run(&pool, &run, "ok", None).await.unwrap();
         }
         // A reusing webhook fires repeatedly into one conversation: three
         // runs, one chat. That is the distinction the list row's link makes.
         for _ in 0..3 {
-            let run = record_run_start(&pool, &reuses.id, "sess-shared", "p", "{}", "fire")
-                .await
-                .unwrap();
-            finish_run(&pool, &run, "ok", None).await.unwrap();
-        }
-        let run = record_run_start(&pool, &other_owner.id, "sess-other", "p", "{}", "fire")
+            let run = fixture_run_start(
+                &pool,
+                NewWebhookRun {
+                    webhook_id: &reuses.id,
+                    session_id: "sess-shared",
+                    prompt: "p",
+                    payload: "{}",
+                    source: "fire",
+                    assistant_turn_id: &uuid::Uuid::new_v4().to_string(),
+                    tools_enabled: false,
+                    history_limit: None,
+                },
+            )
             .await
             .unwrap();
+            finish_run(&pool, &run, "ok", None).await.unwrap();
+        }
+        let run = fixture_run_start(
+            &pool,
+            NewWebhookRun {
+                webhook_id: &other_owner.id,
+                session_id: "sess-other",
+                prompt: "p",
+                payload: "{}",
+                source: "fire",
+                assistant_turn_id: &uuid::Uuid::new_v4().to_string(),
+                tools_enabled: false,
+                history_limit: None,
+            },
+        )
+        .await
+        .unwrap();
         finish_run(&pool, &run, "ok", None).await.unwrap();
 
         let counts = run_counts_for_user(&pool, "u1").await.unwrap();
@@ -932,5 +1224,113 @@ mod tests {
         assert_eq!(counts.get(&reuses.id), Some(&(3, 1)));
         // Another user's webhook never appears in this user's counts.
         assert_eq!(counts.get(&other_owner.id), None);
+    }
+    #[tokio::test]
+    async fn correlation_validates_owner_and_turn_and_blocks_nonterminal_deletion() {
+        let pool = fresh_db().await;
+        seed_user(&pool, "u1").await;
+        seed_user(&pool, "u2").await;
+        let hook = create(&pool, sample("u1", "hash-correlation"))
+            .await
+            .unwrap();
+        let foreign = session_core::db::create_session(&pool, "u2").await.unwrap();
+        session_core::db::create_assistant_turn_in_progress(
+            &pool,
+            &foreign.id,
+            "foreign-turn",
+            "qwen",
+        )
+        .await
+        .unwrap();
+        assert!(
+            record_run_start(
+                &pool,
+                NewWebhookRun {
+                    webhook_id: &hook.id,
+                    session_id: &foreign.id,
+                    prompt: "p",
+                    payload: "{}",
+                    source: "fire",
+                    assistant_turn_id: "foreign-turn",
+                    tools_enabled: true,
+                    history_limit: Some(4)
+                }
+            )
+            .await
+            .is_err()
+        );
+        assert!(list_runs(&pool, &hook.id, 10).await.unwrap().is_empty());
+        let chat = session_core::db::create_session(&pool, "u1").await.unwrap();
+        session_core::db::create_assistant_turn_in_progress(&pool, &chat.id, "owned-turn", "qwen")
+            .await
+            .unwrap();
+        assert!(
+            record_run_start(
+                &pool,
+                NewWebhookRun {
+                    webhook_id: &hook.id,
+                    session_id: &chat.id,
+                    prompt: "p",
+                    payload: "{}",
+                    source: "fire",
+                    assistant_turn_id: "foreign-turn",
+                    tools_enabled: true,
+                    history_limit: Some(4)
+                }
+            )
+            .await
+            .is_err()
+        );
+        let run = record_run_start(
+            &pool,
+            NewWebhookRun {
+                webhook_id: &hook.id,
+                session_id: &chat.id,
+                prompt: "p",
+                payload: "{}",
+                source: "fire",
+                assistant_turn_id: "owned-turn",
+                tools_enabled: true,
+                history_limit: Some(4),
+            },
+        )
+        .await
+        .unwrap();
+        let snapshot: (String, i64, i64) = sqlx::query_as(
+            "SELECT assistant_turn_id, tools_enabled, history_limit FROM webhook_runs WHERE id = ?",
+        )
+        .bind(&run)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(snapshot, ("owned-turn".into(), 1, 4));
+        assert_eq!(
+            delete(&pool, "u1", &hook.id).await.unwrap(),
+            DeleteOutcome::Pending
+        );
+        session_core::db::finalize_turn(
+            &pool,
+            "owned-turn",
+            session_core::db::TurnStatus::Suspended,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            delete(&pool, "u1", &hook.id).await.unwrap(),
+            DeleteOutcome::Pending
+        );
+        session_core::db::finalize_turn(
+            &pool,
+            "owned-turn",
+            session_core::db::TurnStatus::Cancelled,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            delete(&pool, "u1", &hook.id).await.unwrap(),
+            DeleteOutcome::Deleted
+        );
     }
 }

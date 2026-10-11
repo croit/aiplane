@@ -11,14 +11,17 @@ use std::sync::Arc;
 use rama::http::service::web::extract::{Path, State};
 use rama::http::{Request, Response, StatusCode};
 
+use super::json_dots::{self, DotView};
+use aiplane_agents::db::{agents as dots_db, dot_sessions};
 use aiplane_core::server::auth::token as auth_token;
 use aiplane_core::server::db;
 use aiplane_runtime::openai_driver;
 use aiplane_runtime::rama_server::state::RamaState;
 use aiplane_runtime::server::scheduled::{self, cron::Cron};
 use aiplane_runtime::server::webhooks;
+use session_core::i18n::{Lang, t};
 
-use super::{bad_request, internal, json_error, json_ok};
+use super::{bad_request, internal, json_error, json_ok, not_found};
 
 // ---------------------------------------------------------------------------
 // Memories
@@ -197,6 +200,8 @@ pub struct ActionView {
     pub run_count: i64,
     pub chat_count: i64,
     pub id: String,
+    pub dot_id: Option<String>,
+    pub dot: Option<DotView>,
     pub name: String,
     pub prompt: String,
     pub model: String,
@@ -232,6 +237,7 @@ pub struct ModelOption {
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct ScheduledList {
+    pub dots: Vec<DotView>,
     pub actions: Vec<ActionView>,
     /// The chat models an action can run on.
     pub models: Vec<ModelOption>,
@@ -252,6 +258,7 @@ pub struct ScheduledRunView {
     pub fired_at: String,
     pub status: Option<String>,
     pub session_id: Option<String>,
+    pub assistant_turn_id: Option<String>,
     pub chat_deleted: bool,
     pub error: Option<String>,
 }
@@ -294,6 +301,8 @@ fn action_json_with_counts(
         run_count,
         chat_count,
         id: a.id.clone(),
+        dot_id: a.dot_id.clone(),
+        dot: None,
         name: a.name.clone(),
         prompt: a.prompt.clone(),
         model: a.model.clone(),
@@ -342,6 +351,16 @@ pub async fn scheduled_list(State(state): State<Arc<RamaState>>, req: Request) -
         .iter()
         .map(|a| action_json_with_counts(a, counts.get(&a.id).copied().unwrap_or((0, 0))))
         .collect();
+    let dots = match dots_db::list_personal_dots(&state.db, &user.id).await {
+        Ok(dots) => dots.iter().map(json_dots::view).collect::<Vec<_>>(),
+        Err(error) => return internal(error),
+    };
+    for row in &mut actions {
+        row.dot = dots
+            .iter()
+            .find(|dot| Some(&dot.id) == row.dot_id.as_ref())
+            .cloned();
+    }
     if let Err(err) = flag_deleted_last_chats(
         &state.db,
         actions
@@ -355,6 +374,7 @@ pub async fn scheduled_list(State(state): State<Arc<RamaState>>, req: Request) -
     json_ok(
         StatusCode::OK,
         ScheduledList {
+            dots,
             actions,
             models: chat_model_options(&state),
             default_timezone: user.timezone.as_deref().unwrap_or("UTC").to_string(),
@@ -379,11 +399,16 @@ pub async fn scheduled_runs(
         Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such action"),
         Err(err) => return internal(err),
     };
+    let mut action_view = action_json(&action);
+    action_view.dot = match bound_dot_view(&state.db, &user.id, action.dot_id.as_deref()).await {
+        Ok(dot) => dot,
+        Err(error) => return internal(error),
+    };
     match scheduled::list_runs(&state.db, &action.id, 50).await {
         Ok(runs) => json_ok(
             StatusCode::OK,
             ScheduledRuns {
-                action: action_json(&action),
+                action: action_view,
                 runs: runs.iter().map(scheduled_run_json).collect(),
             },
         ),
@@ -397,6 +422,7 @@ fn scheduled_run_json(r: &scheduled::ScheduledRun) -> ScheduledRunView {
         fired_at: r.fired_at.to_string(),
         status: r.status.clone(),
         session_id: r.session_id.clone(),
+        assistant_turn_id: r.assistant_turn_id.clone(),
         chat_deleted: r.chat_deleted,
         error: r.error.clone(),
     }
@@ -404,6 +430,8 @@ fn scheduled_run_json(r: &scheduled::ScheduledRun) -> ScheduledRunView {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 pub struct ScheduledBody {
+    #[serde(default)]
+    pub dot_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: String,
@@ -432,6 +460,7 @@ async fn compute_next(cron: &str, tz_name: &str) -> Result<Option<jiff::Timestam
 /// POST /api/v0/scheduled
 pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -444,11 +473,18 @@ pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request)
     if let Err(msg) = validate_scheduled(&parsed) {
         return bad_request(msg);
     }
+    if let Err(response) =
+        validate_dot_binding(&state.db, &user.id, parsed.dot_id.as_deref(), None, lang).await
+    {
+        return response;
+    }
     let link = match resolve_linked_session(
         &state.db,
         &user.id,
         parsed.reuse_conversation,
         parsed.linked_session_id.as_deref(),
+        parsed.dot_id.as_deref(),
+        lang,
     )
     .await
     {
@@ -465,6 +501,8 @@ pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request)
         Err(e) => return bad_request(e),
     };
     let new = scheduled::NewAction {
+        dot_id: parsed.dot_id.clone(),
+        linked_session_id: link.flatten(),
         user_id: user.id.clone(),
         name: parsed.name.trim().to_string(),
         prompt: parsed.prompt,
@@ -476,19 +514,17 @@ pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request)
         reuse_rounds: parsed.reuse_rounds,
         next_run_at: next,
     };
-    let mut a = match scheduled::create(&state.db, new).await {
+    let a = match scheduled::create(&state.db, new).await {
         Ok(a) => a,
         Err(err) => return internal(err),
     };
-    if let Some(Some(session_id)) = link {
-        if let Err(err) =
-            scheduled::set_linked_session(&state.db, &user.id, &a.id, Some(&session_id)).await
-        {
-            return internal(err);
-        }
-        a.last_session_id = Some(session_id);
-    }
-    json_ok(StatusCode::CREATED, action_json(&a))
+
+    let mut row = action_json(&a);
+    row.dot = match bound_dot_view(&state.db, &user.id, row.dot_id.as_deref()).await {
+        Ok(dot) => dot,
+        Err(error) => return internal(error),
+    };
+    json_ok(StatusCode::CREATED, row)
 }
 
 /// What a body's `linked_session_id` asks for: `None` leaves the link alone,
@@ -497,11 +533,41 @@ pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request)
 ///
 /// The chat must be the caller's own: the link is where a run writes, so
 /// naming someone else's chat would put a run's output into it.
+async fn validate_dot_binding(
+    pool: &db::Pool,
+    user_id: &str,
+    dot_id: Option<&str>,
+    previous_dot_id: Option<&str>,
+    lang: Lang,
+) -> Result<(), Response> {
+    let mut connection = pool.acquire().await.map_err(internal)?;
+    match dot_sessions::binding_valid(&mut connection, user_id, dot_id, previous_dot_id).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(bad_request(t(lang, "dot-background-error-binding"))),
+        Err(error) => Err(internal(error)),
+    }
+}
+
+async fn bound_dot_view(
+    pool: &db::Pool,
+    user_id: &str,
+    dot_id: Option<&str>,
+) -> Result<Option<DotView>, db::DbError> {
+    match dot_id {
+        Some(id) => Ok(dots_db::get_personal_dot(pool, user_id, id)
+            .await?
+            .map(|row| json_dots::view(&row))),
+        None => Ok(None),
+    }
+}
+
 async fn resolve_linked_session(
     db: &db::Pool,
     user_id: &str,
     reuse_conversation: bool,
     requested: Option<&str>,
+    dot_id: Option<&str>,
+    lang: Lang,
 ) -> Result<Option<Option<String>>, Response> {
     let Some(requested) = requested.map(str::trim) else {
         return Ok(None);
@@ -515,13 +581,11 @@ async fn resolve_linked_session(
              fresh chat, so there is none to continue in. Turn reuse on, or leave the field out.",
         ));
     }
-    match session_core::db::get_session(db, user_id, requested).await {
-        Ok(Some(_)) => Ok(Some(Some(requested.to_string()))),
-        Ok(None) => Err(bad_request(
-            "`linked_session_id` names no chat of yours — it may have been deleted. Pick \
-             another chat, or send an empty string to let the next run start a new one.",
-        )),
-        Err(err) => Err(internal(err)),
+    let mut connection = db.acquire().await.map_err(internal)?;
+    match dot_sessions::session_matches(&mut connection, user_id, requested, dot_id).await {
+        Ok(true) => Ok(Some(Some(requested.to_string()))),
+        Ok(false) => Err(bad_request(t(lang, "dot-background-error-linked"))),
+        Err(error) => Err(internal(error)),
     }
 }
 
@@ -553,6 +617,7 @@ pub async fn scheduled_update(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -565,11 +630,29 @@ pub async fn scheduled_update(
     if let Err(msg) = validate_scheduled(&parsed) {
         return bad_request(msg);
     }
+    let previous = match scheduled::get(&state.db, &user.id, &id).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
+        Err(error) => return internal(error),
+    };
+    if let Err(response) = validate_dot_binding(
+        &state.db,
+        &user.id,
+        parsed.dot_id.as_deref(),
+        previous.dot_id.as_deref(),
+        lang,
+    )
+    .await
+    {
+        return response;
+    }
     let link = match resolve_linked_session(
         &state.db,
         &user.id,
         parsed.reuse_conversation,
         parsed.linked_session_id.as_deref(),
+        parsed.dot_id.as_deref(),
+        lang,
     )
     .await
     {
@@ -588,6 +671,8 @@ pub async fn scheduled_update(
         Err(e) => return bad_request(e),
     };
     let edit = scheduled::EditAction {
+        dot_id: parsed.dot_id.clone(),
+        linked_session_id: link,
         name: parsed.name.trim().to_string(),
         prompt: parsed.prompt,
         model: parsed.model,
@@ -600,12 +685,6 @@ pub async fn scheduled_update(
     };
     match scheduled::update(&state.db, &user.id, &id, edit).await {
         Ok(true) => {
-            if let Some(link) = link
-                && let Err(err) =
-                    scheduled::set_linked_session(&state.db, &user.id, &id, link.as_deref()).await
-            {
-                return internal(err);
-            }
             let a = scheduled::get(&state.db, &user.id, &id)
                 .await
                 .ok()
@@ -620,6 +699,11 @@ pub async fn scheduled_update(
                         .and_then(|counts| counts.get(&a.id).copied())
                         .unwrap_or((0, 0));
                     let mut row = action_json_with_counts(&a, counts);
+                    row.dot = match bound_dot_view(&state.db, &user.id, row.dot_id.as_deref()).await
+                    {
+                        Ok(dot) => dot,
+                        Err(error) => return internal(error),
+                    };
                     if let Err(err) = flag_deleted_last_chats(
                         &state.db,
                         [(row.last_session_id.as_deref(), &mut row.last_chat_deleted)],
@@ -697,12 +781,20 @@ pub async fn scheduled_delete(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     match scheduled::delete(&state.db, &user.id, &id).await {
-        Ok(true) => Response::builder()
+        Ok(scheduled::DeleteOutcome::Deleted) => Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(rama::http::Body::empty())
             .expect("static empty response"),
-        Ok(false) => json_error(StatusCode::NOT_FOUND, "not_found", "no such action"),
+        Ok(scheduled::DeleteOutcome::Missing) => {
+            json_error(StatusCode::NOT_FOUND, "not_found", "no such action")
+        }
+        Ok(scheduled::DeleteOutcome::Pending) => json_error(
+            StatusCode::CONFLICT,
+            "run_pending",
+            &t(lang, "dot-background-error-pending-delete"),
+        ),
         Err(err) => internal(err),
     }
 }
@@ -763,6 +855,8 @@ pub struct WebhookView {
     pub run_count: i64,
     pub chat_count: i64,
     pub id: String,
+    pub dot_id: Option<String>,
+    pub dot: Option<DotView>,
     pub name: String,
     pub prompt: String,
     pub model: String,
@@ -786,6 +880,7 @@ pub struct WebhookView {
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct WebhookList {
+    pub dots: Vec<DotView>,
     pub webhooks: Vec<WebhookView>,
     /// The chat models a webhook can run on.
     pub models: Vec<ModelOption>,
@@ -819,6 +914,7 @@ pub struct WebhookRunView {
     /// What fired the run, e.g. a live trigger or `rerun`.
     pub source: String,
     pub session_id: Option<String>,
+    pub assistant_turn_id: Option<String>,
     pub chat_deleted: bool,
     pub prompt: String,
     /// The raw request body the run processed.
@@ -830,6 +926,12 @@ pub struct RerunOutcome {
     /// The conversation the rerun ran in. A run that failed is a 502
     /// `run_failed` naming it instead.
     pub session_id: String,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct RerunAccepted {
+    pub session_id: String,
+    pub status: String,
 }
 
 fn webhook_json(w: &webhooks::Webhook) -> WebhookView {
@@ -847,6 +949,8 @@ fn webhook_json_with_counts(
         run_count,
         chat_count,
         id: w.id.clone(),
+        dot_id: w.dot_id.clone(),
+        dot: None,
         name: w.name.clone(),
         prompt: w.prompt.clone(),
         model: w.model.clone(),
@@ -880,6 +984,16 @@ pub async fn webhooks_list(State(state): State<Arc<RamaState>>, req: Request) ->
         .iter()
         .map(|w| webhook_json_with_counts(w, counts.get(&w.id).copied().unwrap_or((0, 0))))
         .collect();
+    let dots = match dots_db::list_personal_dots(&state.db, &user.id).await {
+        Ok(dots) => dots.iter().map(json_dots::view).collect::<Vec<_>>(),
+        Err(error) => return internal(error),
+    };
+    for row in &mut hooks {
+        row.dot = dots
+            .iter()
+            .find(|dot| Some(&dot.id) == row.dot_id.as_ref())
+            .cloned();
+    }
     if let Err(err) = flag_deleted_last_chats(
         &state.db,
         hooks
@@ -893,6 +1007,7 @@ pub async fn webhooks_list(State(state): State<Arc<RamaState>>, req: Request) ->
     json_ok(
         StatusCode::OK,
         WebhookList {
+            dots,
             webhooks: hooks,
             models: chat_model_options(&state),
         },
@@ -901,6 +1016,8 @@ pub async fn webhooks_list(State(state): State<Arc<RamaState>>, req: Request) ->
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 pub struct WebhookBody {
+    #[serde(default)]
+    pub dot_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: String,
@@ -940,6 +1057,7 @@ fn validate_webhook(parsed: &WebhookBody) -> Result<(), String> {
 /// returned exactly once.
 pub async fn webhooks_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -952,11 +1070,18 @@ pub async fn webhooks_create(State(state): State<Arc<RamaState>>, req: Request) 
     if let Err(msg) = validate_webhook(&parsed) {
         return bad_request(msg);
     }
+    if let Err(response) =
+        validate_dot_binding(&state.db, &user.id, parsed.dot_id.as_deref(), None, lang).await
+    {
+        return response;
+    }
     let link = match resolve_linked_session(
         &state.db,
         &user.id,
         parsed.reuse_conversation,
         parsed.linked_session_id.as_deref(),
+        parsed.dot_id.as_deref(),
+        lang,
     )
     .await
     {
@@ -965,6 +1090,8 @@ pub async fn webhooks_create(State(state): State<Arc<RamaState>>, req: Request) 
     };
     let (secret, hash) = auth_token::mint_webhook();
     let new = webhooks::NewWebhook {
+        dot_id: parsed.dot_id.clone(),
+        linked_session_id: link.flatten(),
         user_id: user.id.clone(),
         name: parsed.name.trim().to_string(),
         prompt: parsed.prompt,
@@ -975,22 +1102,20 @@ pub async fn webhooks_create(State(state): State<Arc<RamaState>>, req: Request) 
         reuse_rounds: parsed.reuse_rounds,
         secret_hash: hash,
     };
-    let mut w = match webhooks::create(&state.db, new).await {
+    let w = match webhooks::create(&state.db, new).await {
         Ok(w) => w,
         Err(err) => return internal(err),
     };
-    if let Some(Some(session_id)) = link {
-        if let Err(err) =
-            webhooks::set_linked_session(&state.db, &user.id, &w.id, Some(&session_id)).await
-        {
-            return internal(err);
-        }
-        w.last_session_id = Some(session_id);
-    }
+
+    let mut row = webhook_json(&w);
+    row.dot = match bound_dot_view(&state.db, &user.id, row.dot_id.as_deref()).await {
+        Ok(dot) => dot,
+        Err(error) => return internal(error),
+    };
     json_ok(
         StatusCode::CREATED,
         WebhookCreated {
-            webhook: webhook_json(&w),
+            webhook: row,
             secret,
         },
     )
@@ -1003,6 +1128,7 @@ pub async fn webhooks_update(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -1015,11 +1141,29 @@ pub async fn webhooks_update(
     if let Err(msg) = validate_webhook(&parsed) {
         return bad_request(msg);
     }
+    let previous = match webhooks::get(&state.db, &user.id, &id).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
+        Err(error) => return internal(error),
+    };
+    if let Err(response) = validate_dot_binding(
+        &state.db,
+        &user.id,
+        parsed.dot_id.as_deref(),
+        previous.dot_id.as_deref(),
+        lang,
+    )
+    .await
+    {
+        return response;
+    }
     let link = match resolve_linked_session(
         &state.db,
         &user.id,
         parsed.reuse_conversation,
         parsed.linked_session_id.as_deref(),
+        parsed.dot_id.as_deref(),
+        lang,
     )
     .await
     {
@@ -1027,6 +1171,8 @@ pub async fn webhooks_update(
         Err(resp) => return resp,
     };
     let edit = webhooks::EditWebhook {
+        dot_id: parsed.dot_id.clone(),
+        linked_session_id: link,
         name: parsed.name.trim().to_string(),
         prompt: parsed.prompt,
         model: parsed.model,
@@ -1037,15 +1183,17 @@ pub async fn webhooks_update(
     };
     match webhooks::update(&state.db, &user.id, &id, edit).await {
         Ok(true) => {
-            if let Some(link) = link
-                && let Err(err) =
-                    webhooks::set_linked_session(&state.db, &user.id, &id, link.as_deref()).await
-            {
-                return internal(err);
-            }
             let w = webhooks::get(&state.db, &user.id, &id).await.ok().flatten();
             match w {
-                Some(w) => json_ok(StatusCode::OK, Updated::Row(Box::new(webhook_json(&w)))),
+                Some(w) => {
+                    let mut row = webhook_json(&w);
+                    row.dot = match bound_dot_view(&state.db, &user.id, row.dot_id.as_deref()).await
+                    {
+                        Ok(dot) => dot,
+                        Err(error) => return internal(error),
+                    };
+                    json_ok(StatusCode::OK, Updated::Row(Box::new(row)))
+                }
                 None => json_ok(
                     StatusCode::OK,
                     Updated::<WebhookView>::Acknowledged(super::Done::OK),
@@ -1108,12 +1256,20 @@ pub async fn webhooks_delete(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     match webhooks::delete(&state.db, &user.id, &id).await {
-        Ok(true) => Response::builder()
+        Ok(scheduled::DeleteOutcome::Deleted) => Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(rama::http::Body::empty())
             .expect("static empty response"),
-        Ok(false) => json_error(StatusCode::NOT_FOUND, "not_found", "no such webhook"),
+        Ok(scheduled::DeleteOutcome::Missing) => {
+            json_error(StatusCode::NOT_FOUND, "not_found", "no such webhook")
+        }
+        Ok(scheduled::DeleteOutcome::Pending) => json_error(
+            StatusCode::CONFLICT,
+            "run_pending",
+            &t(lang, "dot-background-error-pending-delete"),
+        ),
         Err(err) => internal(err),
     }
 }
@@ -1155,6 +1311,7 @@ fn run_json(r: &webhooks::WebhookRun) -> WebhookRunView {
         fired_at: r.fired_at.to_string(),
         source: r.source.clone(),
         session_id: r.session_id.clone(),
+        assistant_turn_id: r.assistant_turn_id.clone(),
         chat_deleted: r.chat_deleted,
         prompt: r.prompt.clone(),
         payload: r.payload.clone(),
@@ -1174,10 +1331,8 @@ pub struct RerunBody {
 /// POST /api/v0/webhooks/{id}/rerun — replay a stored payload through a
 /// prompt of the caller's choosing.
 ///
-/// Runs to completion before answering rather than handing back a session to
-/// tail: a headless run is not registered with the live worker registry, so
-/// there is nothing for the chat stream to attach to. The response carries
-/// the finished conversation's id.
+/// Returns the completed conversation or an accepted conversation waiting
+/// for approval. Background output uses the shared chat worker registry.
 pub async fn webhooks_rerun(
     Path(id): Path<String>,
     State(state): State<Arc<RamaState>>,
@@ -1187,6 +1342,7 @@ pub async fn webhooks_rerun(
     use aiplane_runtime::server::headless::{self, DriveParams, OpenParams};
 
     let (_session, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     let (_, body) = req.into_parts();
     let bytes = match session_core::chrome::read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -1239,27 +1395,54 @@ pub async fn webhooks_rerun(
             prompt: &input,
             model: &hook.model,
             existing_session: None,
+            dot_id: hook.dot_id.as_deref(),
         },
     )
     .await
     {
         Ok(ids) => ids,
+        Err(headless::OpenError::Busy) => {
+            return json_error(
+                StatusCode::CONFLICT,
+                "busy",
+                &t(lang, "dot-background-error-busy"),
+            );
+        }
+        Err(headless::OpenError::Unavailable) => {
+            return json_error(
+                StatusCode::CONFLICT,
+                "unavailable",
+                &t(lang, "dot-background-error-unavailable"),
+            );
+        }
         Err(err) => return internal(err),
     };
     let run_id = match webhooks::record_run_start(
         &state.db,
-        &hook.id,
-        &session_id,
-        prompt,
-        &payload,
-        "rerun",
+        webhooks::NewWebhookRun {
+            webhook_id: &hook.id,
+            session_id: &session_id,
+            prompt,
+            payload: &payload,
+            source: "rerun",
+            assistant_turn_id: &assistant_turn_id,
+            tools_enabled: hook.tools_enabled,
+            history_limit: None,
+        },
     )
     .await
     {
         Ok(id) => Some(id),
         Err(err) => {
             tracing::warn!(webhook = %hook.id, error = %err, "recording webhook rerun");
-            None
+            let _ = session_core::db::finalize_turn(
+                &state.db,
+                &assistant_turn_id,
+                session_core::db::TurnStatus::Errored,
+                Some(&t(lang, "dot-background-error-recording")),
+            )
+            .await;
+            return internal(err);
         }
     };
     headless::drive(
@@ -1279,6 +1462,7 @@ pub async fn webhooks_rerun(
     super::webhooks::finalize_run(
         &state,
         &hook.id,
+        &hook.user_id,
         run_id.as_deref(),
         status,
         &session_id,
@@ -1287,6 +1471,15 @@ pub async fn webhooks_rerun(
     .await;
     // A run that did not finish is a failed upstream, as on a live fire; the
     // chat it opened is named so the caller can look at what happened.
+    if status == "waiting" {
+        return json_ok(
+            StatusCode::ACCEPTED,
+            RerunAccepted {
+                session_id,
+                status: "waiting".into(),
+            },
+        );
+    }
     if status != "ok" {
         return super::json_error_with(
             StatusCode::BAD_GATEWAY,

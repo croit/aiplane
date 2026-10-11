@@ -72,6 +72,7 @@ pub struct OpenParams<'a> {
     /// fresh one — so prior runs become conversation history. `None` mints a
     /// fresh session titled `title`.
     pub existing_session: Option<String>,
+    pub dot_id: Option<&'a str>,
 }
 
 /// Open the run's session and append the prompt + an in-progress assistant
@@ -79,7 +80,47 @@ pub struct OpenParams<'a> {
 ///
 /// Every call mints fresh turn ids, so repeated runs from the same source
 /// never PRIMARY KEY-clash — whether they share a session (reuse) or not.
-pub async fn open_session(db: &Pool, p: OpenParams<'_>) -> Result<(String, String), DbError> {
+#[derive(Debug, thiserror::Error)]
+pub enum OpenError {
+    #[error("Could not open the background conversation: {0}")]
+    Storage(#[from] DbError),
+    #[error(
+        "This conversation has a running turn or is waiting for a decision. Finish or stop it before starting another background run."
+    )]
+    Busy,
+    #[error(
+        "The selected Dot or conversation binding is unavailable. Choose an active owned Dot and a matching conversation before retrying."
+    )]
+    Unavailable,
+}
+
+impl From<chat::DbError> for OpenError {
+    fn from(error: chat::DbError) -> Self {
+        Self::Storage(error.into())
+    }
+}
+
+pub async fn open_session(db: &Pool, p: OpenParams<'_>) -> Result<(String, String), OpenError> {
+    if let Owner::User(owner) = p.owner {
+        if let Some(dot_id) = p.dot_id {
+            let dot = aiplane_agents::db::agents::get_personal_dot(db, owner, dot_id).await?;
+            if !dot.is_some_and(|dot| dot.active) {
+                return Err(OpenError::Unavailable);
+            }
+        }
+        if let Some(session_id) = p.existing_session.as_deref() {
+            let mut conn = db.acquire().await.map_err(DbError::from)?;
+            if !aiplane_agents::db::dot_sessions::session_matches(
+                &mut conn, owner, session_id, p.dot_id,
+            )
+            .await?
+            {
+                return Err(OpenError::Unavailable);
+            }
+        }
+    } else if p.dot_id.is_some() {
+        return Err(OpenError::Unavailable);
+    }
     let session_id = match p.existing_session {
         Some(id) => id,
         None => match p.owner {
@@ -108,18 +149,35 @@ pub async fn open_session(db: &Pool, p: OpenParams<'_>) -> Result<(String, Strin
         },
     };
 
+    if let (Owner::User(owner), Some(dot_id)) = (p.owner, p.dot_id)
+        && !aiplane_agents::db::dot_sessions::link(db, owner, dot_id, &session_id).await?
+    {
+        return Err(OpenError::Unavailable);
+    }
     let user_turn_id = Uuid::new_v4().to_string();
-    chat::create_user_turn(db, &session_id, &user_turn_id, p.prompt).await?;
-
     let assistant_turn_id = Uuid::new_v4().to_string();
-    chat::create_assistant_turn_in_progress(db, &session_id, &assistant_turn_id, p.model).await?;
+    if chat::create_turn_pair_if_idle(
+        db,
+        &session_id,
+        &user_turn_id,
+        &assistant_turn_id,
+        p.prompt,
+        p.model,
+        true,
+    )
+    .await
+    .map_err(DbError::from)?
+    .is_none()
+    {
+        return Err(OpenError::Busy);
+    }
     Ok((session_id, assistant_turn_id))
 }
 
 /// Inputs to [`drive`].
 pub struct DriveParams {
-    /// Who the run acts as. A person is gated by their roles: pass their real
-    /// roles to offer their normal tools, or an empty vec to offer none. An
+    /// Who the run acts as. User background runs refresh the owner's roles
+    /// and apply their persisted run's tool ceiling and Dot binding. An
     /// agent run is offered exactly its principal's grants, and none of any
     /// person's memory, connectors or skills; every tool call is audited with
     /// its chain, and its contract, budget and injection scan apply.
@@ -142,15 +200,26 @@ pub async fn drive(state: &Arc<RamaState>, p: DriveParams) -> Option<RunOutcome>
     drive_with_clock(state, p, crate::budget::system_clock()).await
 }
 
-/// Continue a suspended agent run: `resume` holds its claimed suspension and
+/// Continue a suspended run: `resume` holds its claimed suspension and
 /// the decision (or the resumed sub-agent's result) that settles the
 /// waiting call.
 pub async fn drive_resumed(
     state: &Arc<RamaState>,
     p: DriveParams,
     resume: ResumeFrom,
+    reserved_worker: Option<BackgroundWorker>,
 ) -> Option<RunOutcome> {
-    drive_inner(state, p, crate::budget::system_clock(), Some(resume)).await
+    if p.actor.person_id().is_some() && reserved_worker.is_none() {
+        return None;
+    }
+    drive_inner(
+        state,
+        p,
+        crate::budget::system_clock(),
+        Some(resume),
+        reserved_worker,
+    )
+    .await
 }
 
 /// [`drive`] with the run's clock supplied, so a `seconds` budget is testable.
@@ -159,21 +228,175 @@ pub async fn drive_with_clock(
     p: DriveParams,
     clock: Clock,
 ) -> Option<RunOutcome> {
-    drive_inner(state, p, clock, None).await
+    drive_inner(state, p, clock, None, None).await
+}
+
+async fn person_context(
+    state: &RamaState,
+    p: &mut DriveParams,
+) -> Result<Option<Arc<crate::persona::ChatPersona>>, DbError> {
+    use crate::persona::personal_dot::{PersonalDotContext, context_for};
+    let fail = |message: &str| DbError::Decode {
+        column: "background_context",
+        source: std::io::Error::other(message.to_string()).into(),
+    };
+    if chat::get_turn(&state.db, &p.session_id, &p.assistant_turn_id)
+        .await?
+        .is_none()
+    {
+        return Err(fail(
+            "The background assistant turn does not belong to this conversation. Correct its run binding before continuing.",
+        ));
+    }
+    let owner = p
+        .actor
+        .person_id()
+        .ok_or_else(|| fail("The background turn has no user owner."))?
+        .to_string();
+    let user = aiplane_core::server::db::users::find_by_id(&state.db, &owner)
+        .await?
+        .ok_or_else(|| fail("The background owner is unavailable."))?;
+    let background = super::background::for_turn(&state.db, &owner, &p.assistant_turn_id).await?;
+    if background.is_none() && matches!(p.source, UsageSource::Scheduled | UsageSource::Webhook) {
+        return Err(fail(
+            "The background turn has no durable run context. Inspect its run history before retrying.",
+        ));
+    }
+    let tools_enabled = background
+        .as_ref()
+        .is_none_or(|context| context.tools_enabled);
+    if let Some(background) = background {
+        p.source = background.source;
+        p.history_limit = background.history_limit;
+    }
+    p.actor = Actor::person(user.id.clone(), user.roles.clone());
+    if state
+        .limit_exceeded(
+            &owner,
+            &state.role_ids_for(&user.roles),
+            None,
+            &p.model,
+            state.upstreams.enforce_limits_for_model(
+                &p.model,
+                aiplane_core::server::upstreams::PoolKind::Chat,
+            ),
+        )
+        .await
+        .is_some()
+    {
+        return Err(fail(
+            "The owner's usage limit has been reached. Retry after the limit resets.",
+        ));
+    }
+    match context_for(state, &user, &p.session_id, tools_enabled).await? {
+        Some(PersonalDotContext::Active { actor, persona }) => {
+            p.actor = actor;
+            Ok(Some(persona))
+        }
+        Some(PersonalDotContext::Unavailable) => Err(fail(
+            "The personal Dot is unavailable. Activate it or restore its owned binding before continuing.",
+        )),
+        None if !tools_enabled => Ok(Some(Arc::new(
+            crate::persona::ChatPersona::new(
+                "",
+                Arc::new(crate::server::tools::ToolRegistry::new()),
+            )
+            .with_user_context()
+            .with_tool_access(crate::agents::spec::AgentSpec::empty()),
+        ))),
+        None => Ok(None),
+    }
 }
 
 async fn drive_inner(
     state: &Arc<RamaState>,
-    p: DriveParams,
+    mut p: DriveParams,
     clock: Clock,
     resume: Option<ResumeFrom>,
+    reserved_worker: Option<BackgroundWorker>,
 ) -> Option<RunOutcome> {
+    let reserved_worker = if let Some(guard) = reserved_worker {
+        let owner = p.actor.person_id()?;
+        let current = state.chats.get(owner, &p.session_id);
+        if guard.owner != owner
+            || !Arc::ptr_eq(&guard.state, state)
+            || !guard.worker.is_background()
+            || guard.worker.session_id != p.session_id
+            || guard.worker.turn_id != p.assistant_turn_id
+            || !current.is_some_and(|current| {
+                current.is_background()
+                    && current.turn_id == p.assistant_turn_id
+                    && Arc::ptr_eq(&current.cancel, &guard.worker.cancel)
+            })
+        {
+            return None;
+        }
+        Some(guard)
+    } else {
+        None
+    };
+    let persona = if p.actor.agent().is_none() {
+        match person_context(state, &mut p).await {
+            Ok(persona) => persona,
+            Err(error) => {
+                tracing::warn!(turn=%p.assistant_turn_id,%error,"background context unavailable");
+                let _ = chat::error_interrupted_turn(
+                    &state.db,
+                    &p.assistant_turn_id,
+                    &error.to_string(),
+                )
+                .await;
+                if let Some(owner) = p.actor.person_id() {
+                    let _ =
+                        super::background::reconcile_turn(&state.db, owner, &p.assistant_turn_id)
+                            .await;
+                }
+                return None;
+            }
+        }
+    } else {
+        None
+    };
     let agent = p.actor.agent().cloned();
     let resumed = resume.is_some();
     let worker = agent
         .as_ref()
         .map(|run| AgentWorker::of(state, run.chain(), &p.session_id, &p.assistant_turn_id));
     let person = p.actor.person_id().map(str::to_string);
+    let owner_for_reconcile = person.clone();
+    let person_worker = if reserved_worker.is_some() {
+        reserved_worker
+    } else if let Some(owner) = person.as_deref() {
+        match state
+            .chats
+            .register_background(owner, &p.assistant_turn_id, &p.session_id)
+        {
+            session_core::workers::RegisterOutcome::Registered { worker } => {
+                Some(BackgroundWorker {
+                    state: state.clone(),
+                    owner: owner.to_string(),
+                    worker,
+                })
+            }
+            session_core::workers::RegisterOutcome::Busy { existing } => {
+                if existing.turn_id != p.assistant_turn_id {
+                    let _ = chat::error_interrupted_turn(
+                        &state.db,
+                        &p.assistant_turn_id,
+                        "The conversation already has a running worker. Retry after it finishes.",
+                    )
+                    .await;
+                    let _ =
+                        super::background::reconcile_turn(&state.db, owner, &p.assistant_turn_id)
+                            .await;
+                }
+                return None;
+            }
+            session_core::workers::RegisterOutcome::AtCapacity { .. } => return None,
+        }
+    } else {
+        None
+    };
     let assistant_turn_id = p.assistant_turn_id.clone();
     let tool_ctx = crate::openai_driver::build_tool_context(
         state,
@@ -181,8 +404,7 @@ async fn drive_inner(
             actor: p.actor,
             session_id: p.session_id.clone(),
             assistant_turn_id: p.assistant_turn_id.clone(),
-            // Headless: no request, so no client IP, and nobody watching the
-            // stream to answer an interactive prompt.
+            // Background execution has no originating browser request.
             client_ip: None,
             chat_feedback: None,
             model: Some(p.model.clone()),
@@ -203,15 +425,18 @@ async fn drive_inner(
         voice_mode: false,
         clock,
         resume,
-        persona: None,
+        persona,
     });
 
-    // A person's headless run takes no registry slot — it must not count
-    // against their chat's parallel limit — and has no live viewer, so its
-    // frames go to a throwaway channel; the DB is the source of truth.
-    let (cancel, broadcast) = match &worker {
-        Some(worker) => (worker.cancel.clone(), worker.broadcast.clone()),
-        None => (Default::default(), tokio::sync::broadcast::channel(16).0),
+    let (cancel, broadcast) = if let Some(worker) = &person_worker {
+        (
+            worker.worker.cancel.clone(),
+            worker.worker.broadcast.clone(),
+        )
+    } else if let Some(worker) = &worker {
+        (worker.cancel.clone(), worker.broadcast.clone())
+    } else {
+        (Default::default(), tokio::sync::broadcast::channel(16).0)
     };
     let ctx = session_core::driver::SessionContext {
         user_id: person,
@@ -220,15 +445,20 @@ async fn drive_inner(
         model: p.model,
         cancel,
         broadcast,
-        // Nobody can interject into a scheduled run: there is no composer
-        // attached to it. An always-empty inbox is the honest expression of
-        // that, and costs the driver one lock-free check per round.
+        // Background turns reject steering even when their chat is visible.
         steers: session_core::workers::SteerInbox::default(),
     };
     let Some(agent) = agent else {
         session_core::worker::run_session_turn(state.db.clone(), driver, ctx).await;
         drop(worker);
+        drop(person_worker);
         announce_if_waiting(state, &assistant_turn_id).await;
+        if let Some(owner) = owner_for_reconcile
+            && let Err(error) =
+                super::background::reconcile_turn(&state.db, &owner, &assistant_turn_id).await
+        {
+            tracing::error!(turn=%assistant_turn_id,%error,"reconciling background turn");
+        }
         return None;
     };
     let span = turn_span(&agent, &ctx.session_id, &assistant_turn_id);
@@ -244,6 +474,32 @@ async fn drive_inner(
 
     agent.contract()?;
     Some(agent.take_outcome())
+}
+
+pub struct BackgroundWorker {
+    state: Arc<RamaState>,
+    owner: String,
+    worker: session_core::workers::ActiveWorker,
+}
+
+impl BackgroundWorker {
+    pub fn new(
+        state: Arc<RamaState>,
+        owner: String,
+        worker: session_core::workers::ActiveWorker,
+    ) -> Self {
+        Self {
+            state,
+            owner,
+            worker,
+        }
+    }
+}
+
+impl Drop for BackgroundWorker {
+    fn drop(&mut self) {
+        self.state.chats.clear(&self.owner, &self.worker);
+    }
 }
 
 /// The tracing span of one agent turn, with the correlation ids its activity
@@ -587,6 +843,7 @@ mod tests {
                 prompt: "triage the ticket",
                 model: MODEL,
                 existing_session: None,
+                dot_id: None,
             },
         )
         .await
@@ -603,7 +860,7 @@ mod tests {
             session_id: session_id.into(),
             assistant_turn_id: turn_id.into(),
             model: MODEL.into(),
-            source: UsageSource::Scheduled,
+            source: UsageSource::Chat,
             history_limit: None,
         }
     }
@@ -1246,6 +1503,7 @@ mod tests {
                 prompt: "find invoice 17",
                 model: MODEL,
                 existing_session: None,
+                dot_id: None,
             },
         )
         .await
@@ -1472,5 +1730,306 @@ mod tests {
         )
         .await;
         assert_eq!(requests[0]["stream_options"]["include_usage"], true);
+    }
+    async fn personal_background(
+        state: &Arc<RamaState>,
+        session: &str,
+        turn: &str,
+        tools_enabled: bool,
+    ) -> String {
+        use crate::server::scheduled::{self, NewAction};
+        let (_, dot) = aiplane_agents::db::agents::create_personal_dot(
+            &state.db,
+            &aiplane_agents::db::system_principals::NewPrincipal {
+                name: "Harald",
+                display: "Harald",
+                description: "",
+            },
+            r#"{"main":{"tools":["company_echo"]}}"#,
+            "u1",
+            4,
+        )
+        .await
+        .unwrap();
+        let dot = dot.unwrap().principal.id;
+        assert!(
+            aiplane_agents::db::dot_sessions::link(&state.db, "u1", &dot, session)
+                .await
+                .unwrap()
+        );
+        aiplane_agents::db::dot_memories::insert(
+            &state.db,
+            "u1",
+            &dot,
+            aiplane_core::server::db::user_memories::MemoryKind::Fact,
+            "Keep project notes",
+        )
+        .await
+        .unwrap();
+        let action = scheduled::create(
+            &state.db,
+            NewAction {
+                user_id: "u1".into(),
+                name: "job".into(),
+                prompt: "prompt".into(),
+                model: MODEL.into(),
+                cron: "* * * * *".into(),
+                timezone: "UTC".into(),
+                tools_enabled,
+                reuse_conversation: true,
+                reuse_rounds: 3,
+                next_run_at: None,
+                dot_id: Some(dot),
+                linked_session_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let run = scheduled::record_run_start(&state.db, &action.id)
+            .await
+            .unwrap();
+        scheduled::attach_run_turn(&state.db, &run, session, turn, tools_enabled, Some(6))
+            .await
+            .unwrap();
+        run
+    }
+
+    #[tokio::test]
+    async fn personal_background_pauses_and_resumes_same_context_and_history() {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted{deltas:vec![json!({"tool_calls":[{"index":0,"id":"echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"original\"}"}}]}),text("done")],served:AtomicUsize::new(0),tokens_per_round:None}).mount(&upstream).await;
+        let state = state_for(&upstream.uri()).await;
+        let (session, turn) = open(&state, "medium").await;
+        let run = personal_background(&state, &session, &turn, true).await;
+        let mut p = params(&session, &turn, person());
+        p.source = UsageSource::Scheduled;
+        drive(&state, p).await;
+        assert_eq!(
+            chat::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            chat::TurnStatus::Suspended
+        );
+        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id=?")
+            .bind(&run)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(status, "waiting");
+        let worker = match state.chats.register_background("u1", &turn, &session) {
+            session_core::workers::RegisterOutcome::Registered { worker } => worker,
+            _ => panic!("idle background session expected"),
+        };
+        let reserved = BackgroundWorker::new(state.clone(), "u1".into(), worker);
+        let resume =
+            crate::suspend::claim_for_resume(&state.db, &turn, None, chat::Decision::AllowOnce)
+                .await
+                .unwrap();
+        let mut p = params(&session, &turn, person());
+        p.source = UsageSource::Scheduled;
+        p.history_limit = None;
+        drive_resumed(&state, p, resume, Some(reserved)).await;
+        assert_eq!(
+            chat::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            chat::TurnStatus::Completed
+        );
+        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id=?")
+            .bind(&run)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(status, "ok");
+        let reqs = upstream.received_requests().await.unwrap();
+        assert_eq!(reqs.len(), 2);
+        let first: Value = serde_json::from_slice(&reqs[0].body).unwrap();
+        assert_eq!(first["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(first["tools"][0]["function"]["name"], "company_echo");
+        let messages = first["messages"].to_string();
+        assert!(messages.contains("Harald"));
+        assert!(!messages.contains("Keep project notes"));
+        let turns = chat::list_turns(&state.db, &session).await.unwrap();
+        let tool = &turns
+            .iter()
+            .find(|entry| entry.turn.id == turn)
+            .unwrap()
+            .tool_calls[0];
+        assert!(tool.output_json.as_deref().unwrap().contains("original"));
+    }
+
+    #[tokio::test]
+    async fn abandoned_background_reservation_releases_only_its_registered_worker() {
+        let state = state_for("http://unused.invalid").await;
+        let (session, turn) = open(&state, "medium").await;
+        let worker = match state.chats.register_background("u1", &turn, &session) {
+            session_core::workers::RegisterOutcome::Registered { worker } => worker,
+            _ => panic!("idle session expected"),
+        };
+        let guard = BackgroundWorker::new(state.clone(), "u1".into(), worker);
+        assert!(state.chats.holds("u1", &session, &turn));
+        drop(guard);
+        assert!(state.chats.get("u1", &session).is_none());
+        let replacement = match state
+            .chats
+            .register_background("u1", "replacement", &session)
+        {
+            session_core::workers::RegisterOutcome::Registered { worker } => worker,
+            _ => panic!("abandoned reservation must be released"),
+        };
+        state.chats.clear("u1", &replacement);
+    }
+
+    #[tokio::test]
+    async fn personal_background_tools_off_offers_no_default_role_tools() {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(Scripted {
+                deltas: vec![text("done")],
+                served: AtomicUsize::new(0),
+                tokens_per_round: None,
+            })
+            .mount(&upstream)
+            .await;
+        let state = state_for(&upstream.uri()).await;
+        let (session, turn) = open(&state, "medium").await;
+        personal_background(&state, &session, &turn, false).await;
+        let mut p = params(&session, &turn, person());
+        p.source = UsageSource::Scheduled;
+        drive(&state, p).await;
+        let reqs = upstream.received_requests().await.unwrap();
+        assert_eq!(reqs.len(), 1);
+        let request: Value = serde_json::from_slice(&reqs[0].body).unwrap();
+        assert!(
+            request
+                .get("tools")
+                .is_none_or(|tools| tools.as_array().is_some_and(Vec::is_empty))
+        );
+    }
+
+    #[tokio::test]
+    async fn scheduled_headless_without_durable_correlation_makes_no_model_request() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (session, turn) = open(&state, "medium").await;
+        let mut p = params(&session, &turn, person());
+        p.source = UsageSource::Scheduled;
+        drive(&state, p).await;
+        assert_eq!(upstream.received_requests().await.unwrap().len(), 0);
+        assert_eq!(
+            chat::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            chat::TurnStatus::Errored
+        );
+    }
+
+    #[tokio::test]
+    async fn inactive_personal_background_refuses_before_model_and_reconciles_error() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (session, turn) = open(&state, "medium").await;
+        let run = personal_background(&state, &session, &turn, true).await;
+        sqlx::query("UPDATE personal_dots SET active=0")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let mut p = params(&session, &turn, person());
+        p.source = UsageSource::Scheduled;
+        drive(&state, p).await;
+        assert_eq!(upstream.received_requests().await.unwrap().len(), 0);
+        assert_eq!(
+            chat::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            chat::TurnStatus::Errored
+        );
+        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id=?")
+            .bind(&run)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(status, "error");
+    }
+
+    #[tokio::test]
+    async fn background_open_refuses_queued_user_message_without_appending_prompt() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (session, turn) = open(&state, "medium").await;
+        chat::finalize_turn(&state.db, &turn, chat::TurnStatus::Completed, None)
+            .await
+            .unwrap();
+        chat::create_user_turn(&state.db, &session, "queued-user", "already queued")
+            .await
+            .unwrap();
+        chat::insert_pending_turn(
+            &state.db,
+            &chat::PendingTurn {
+                turn_id: "queued-user".into(),
+                session_id: session.clone(),
+                user_id: "u1".into(),
+                model: MODEL.into(),
+                voice: false,
+                client_ip: None,
+                secure: false,
+                created_at: jiff::Timestamp::now(),
+            },
+        )
+        .await
+        .unwrap();
+        let result = open_session(
+            &state.db,
+            OpenParams {
+                owner: Owner::User("u1"),
+                title: "job",
+                prompt: "new background prompt",
+                model: MODEL,
+                existing_session: Some(session.clone()),
+                dot_id: None,
+            },
+        )
+        .await;
+        assert!(matches!(result, Err(OpenError::Busy)));
+        assert_eq!(
+            chat::list_turns(&state.db, &session).await.unwrap().len(),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn background_dispatch_refuses_mismatched_session_and_assistant_turn() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (session, turn) = open(&state, "medium").await;
+        personal_background(&state, &session, &turn, true).await;
+        let other = chat::create_session(&state.db, "u1").await.unwrap();
+        let mut p = params(&other.id, &turn, person());
+        p.source = UsageSource::Scheduled;
+        drive(&state, p).await;
+        assert_eq!(upstream.received_requests().await.unwrap().len(), 0);
+        assert_eq!(
+            chat::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            chat::TurnStatus::Errored
+        );
+        assert!(
+            chat::list_turns(&state.db, &other.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

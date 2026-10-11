@@ -981,3 +981,122 @@ async fn scheduling_waits_for_an_approval_that_survives_a_restart() {
     assert_eq!(stored[0].name, "Weekly summary");
     assert!(!stored[0].tools_enabled);
 }
+
+#[tokio::test]
+async fn background_resume_busy_leaves_original_approval_unclaimed_for_retry() {
+    use aiplane_core::server::db::usage::UsageSource;
+    use aiplane_runtime::server::{headless, scheduled};
+    let dir = tempfile::tempdir().unwrap();
+    let server = upstream("Echoed: ship it", Duration::ZERO).await;
+    let state = boot_with(
+        &dir.path().join("gateway.db"),
+        &server.uri(),
+        ToolRegistry::new().with(Echo),
+        &["company_echo"],
+    )
+    .await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let (_, dot) = aiplane_agents::db::agents::create_personal_dot(
+        &state.db,
+        &aiplane_agents::db::system_principals::NewPrincipal {
+            name: "Harald",
+            display: "Harald",
+            description: "",
+        },
+        r#"{"main":{"tools":["company_echo"]}}"#,
+        "alice",
+        4,
+    )
+    .await
+    .unwrap();
+    let dot = dot.unwrap().principal.id;
+    let (session, turn) = headless::open_session(
+        &state.db,
+        headless::OpenParams {
+            owner: headless::Owner::User("alice"),
+            title: "Approval",
+            prompt: "echo something",
+            model: "model-a",
+            existing_session: None,
+            dot_id: Some(&dot),
+        },
+    )
+    .await
+    .unwrap();
+    let action = scheduled::create(
+        &state.db,
+        scheduled::NewAction {
+            user_id: "alice".into(),
+            name: "Approval".into(),
+            prompt: "echo something".into(),
+            model: "model-a".into(),
+            cron: "* * * * *".into(),
+            timezone: "UTC".into(),
+            tools_enabled: true,
+            reuse_conversation: true,
+            reuse_rounds: 3,
+            next_run_at: None,
+            dot_id: Some(dot),
+            linked_session_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let run = scheduled::record_run_start(&state.db, &action.id)
+        .await
+        .unwrap();
+    scheduled::attach_run_turn(&state.db, &run, &session, &turn, true, Some(6))
+        .await
+        .unwrap();
+    let params = headless::DriveParams {
+        actor: aiplane_runtime::agent_run::Actor::person("alice", vec![]),
+        session_id: session.clone(),
+        assistant_turn_id: turn.clone(),
+        model: "model-a".into(),
+        source: UsageSource::Scheduled,
+        history_limit: Some(6),
+    };
+    headless::drive(&state, params).await;
+    let waiting = chat::get_suspension(&state.db, &turn)
+        .await
+        .unwrap()
+        .unwrap();
+    let competitor = match state
+        .chats
+        .register_background("alice", "competing-worker", &session)
+    {
+        session_core::workers::RegisterOutcome::Registered { worker } => worker,
+        _ => panic!("idle session expected"),
+    };
+    let body = json!({"decision":"allow_once","request_id":waiting.request_id});
+    let (status, response) = resume(&state, &cookie, &session, &turn, body.clone()).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{response}");
+    let still_waiting = chat::get_suspension(&state.db, &turn)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(still_waiting, waiting);
+    assert_eq!(
+        chat::get_turn(&state.db, &session, &turn)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Suspended
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    assert!(state.chats.holds("alice", &session, "competing-worker"));
+    state.chats.clear("alice", &competitor);
+    let (status, response) = resume(&state, &cookie, &session, &turn, body).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{response}");
+    let done = wait_for_status(&state, &session, &turn, TurnStatus::Completed).await;
+    assert!(done.suspension.is_none());
+    assert!(
+        done.tool_calls[0]
+            .output_json
+            .as_deref()
+            .unwrap()
+            .contains("ship it")
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+}

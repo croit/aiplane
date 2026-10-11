@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { adminJson } from '#lib/admin-client.js';
 	import WebhookForm from './WebhookForm.svelte';
@@ -72,6 +73,8 @@
 			<WebhookForm
 				{webhook}
 				models={data.models}
+				dots={data.dots}
+				presetDotId={id === null ? page.url.searchParams.get('dot_id') : null}
 				onsaved={async () => {
 					// Editing is done; creating stays put until the secret is copied.
 					if (id !== null) await goto('/webhooks?notice=saved');

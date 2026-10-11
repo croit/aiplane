@@ -454,6 +454,7 @@ impl SteerInbox {
 /// the broadcast channel subscribers attach to.
 #[derive(Clone)]
 pub struct ActiveWorker {
+    background: bool,
     /// DB id of the assistant turn this worker is filling in. Used by
     /// HTTP handlers to confirm a /tail attach is for the right turn
     /// (e.g. user navigated to a different session mid-stream).
@@ -472,6 +473,12 @@ pub struct ActiveWorker {
     /// Interjections waiting to be folded into the running turn, oldest
     /// first. The HTTP handler pushes; the driver drains at a round boundary.
     pub steers: SteerInbox,
+}
+
+impl ActiveWorker {
+    pub fn is_background(&self) -> bool {
+        self.background
+    }
 }
 
 /// Result of trying to register a fresh worker.
@@ -578,6 +585,25 @@ impl SessionWorkers {
         session_id: &str,
         max_parallel: usize,
     ) -> RegisterOutcome {
+        self.register_with_capacity(user_id, turn_id, session_id, Some(max_parallel))
+    }
+
+    pub fn register_background(
+        &self,
+        user_id: &str,
+        turn_id: &str,
+        session_id: &str,
+    ) -> RegisterOutcome {
+        self.register_with_capacity(user_id, turn_id, session_id, None)
+    }
+
+    fn register_with_capacity(
+        &self,
+        user_id: &str,
+        turn_id: &str,
+        session_id: &str,
+        max_parallel: Option<usize>,
+    ) -> RegisterOutcome {
         let mut g = self.inner.lock().unwrap();
         let key = (user_id.to_string(), session_id.to_string());
         if let Some(existing) = g.get(&key) {
@@ -585,13 +611,19 @@ impl SessionWorkers {
                 existing: existing.clone(),
             };
         }
-        let limit = max_parallel.max(1);
-        let running = g.keys().filter(|(uid, _)| uid == user_id).count();
-        if running >= limit {
-            return RegisterOutcome::AtCapacity { running, limit };
+        if let Some(max_parallel) = max_parallel {
+            let limit = max_parallel.max(1);
+            let running = g
+                .iter()
+                .filter(|((uid, _), worker)| uid == user_id && !worker.background)
+                .count();
+            if running >= limit {
+                return RegisterOutcome::AtCapacity { running, limit };
+            }
         }
         let (broadcast, _) = broadcast::channel(BROADCAST_CAPACITY);
         let worker = ActiveWorker {
+            background: max_parallel.is_none(),
             turn_id: turn_id.to_string(),
             session_id: session_id.to_string(),
             cancel: Arc::new(AtomicBool::new(false)),
@@ -651,7 +683,7 @@ impl SessionWorkers {
         self.starts.subscribe()
     }
 
-    /// How many of this user's conversations are streaming right now.
+    /// How many of this user's interactive conversations are streaming right now.
     ///
     /// The ceiling check in [`Self::register`] is the reason this exists; it
     /// is also what a test waits on to know a worker has cleared.
@@ -659,8 +691,8 @@ impl SessionWorkers {
         self.inner
             .lock()
             .unwrap()
-            .keys()
-            .filter(|(uid, _)| uid == user_id)
+            .iter()
+            .filter(|((uid, _), worker)| uid == user_id && !worker.background)
             .count()
     }
 
@@ -836,6 +868,61 @@ mod tests {
         let r = SessionWorkers::default();
         let outcome = r.register("u1", "turn-1", "sess-1", SERIAL);
         assert!(matches!(outcome, RegisterOutcome::Registered { .. }));
+    }
+
+    #[test]
+    fn background_workers_share_busy_sessions_without_consuming_interactive_capacity() {
+        let registry = SessionWorkers::default();
+        let background = match registry.register_background("u1", "b1", "background") {
+            RegisterOutcome::Registered { worker } => worker,
+            _ => panic!("idle background session must register"),
+        };
+        assert!(background.is_background());
+        assert_eq!(registry.running_for_user("u1"), 0);
+        assert_eq!(registry.sessions_for_user("u1"), ["background"]);
+        assert!(matches!(
+            registry.register("u1", "c1", "chat", 1),
+            RegisterOutcome::Registered { .. }
+        ));
+        assert!(matches!(
+            registry.register("u1", "c2", "other-chat", 1),
+            RegisterOutcome::AtCapacity {
+                running: 1,
+                limit: 1
+            }
+        ));
+        assert!(matches!(
+            registry.register_background("u1", "b2", "other-background"),
+            RegisterOutcome::Registered { .. }
+        ));
+        assert!(matches!(
+            registry.register("u1", "conflict", "background", 8),
+            RegisterOutcome::Busy { .. }
+        ));
+        assert!(matches!(
+            registry.register_background("u1", "conflict", "chat"),
+            RegisterOutcome::Busy { .. }
+        ));
+        assert_eq!(registry.active_count(), 3);
+    }
+
+    #[test]
+    fn background_workers_announce_streams_and_obey_existing_cancel_and_clear() {
+        let registry = SessionWorkers::default();
+        let mut starts = registry.subscribe_starts();
+        let worker = match registry.register_background("u1", "turn", "session") {
+            RegisterOutcome::Registered { worker } => worker,
+            _ => panic!("idle background session must register"),
+        };
+        assert_eq!(starts.try_recv().unwrap().turn_id, "turn");
+        let mut updates = registry.subscribe("u1", "session").unwrap().1;
+        worker.broadcast.send(TurnUpdate::Tick).unwrap();
+        assert_eq!(updates.try_recv().unwrap(), TurnUpdate::Tick);
+        assert_eq!(registry.cancel_all(), 1);
+        assert!(worker.cancel.load(Ordering::SeqCst));
+        registry.clear("u1", &worker);
+        assert_eq!(updates.try_recv().unwrap(), TurnUpdate::Released);
+        assert_eq!(registry.active_count(), 0);
     }
 
     /// Two workers on one transcript would interleave their writes into it,

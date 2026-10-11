@@ -121,6 +121,20 @@ pub async fn search_sessions(
     query: &str,
     limit: usize,
 ) -> Result<Vec<SearchHit>, DbError> {
+    search_sessions_scoped(pool, user_id, query, limit, None).await
+}
+
+pub async fn search_sessions_scoped(
+    pool: &Pool,
+    user_id: &str,
+    query: &str,
+    limit: usize,
+    scope: Option<&std::collections::HashSet<String>>,
+) -> Result<Vec<SearchHit>, DbError> {
+    if limit == 0 || scope.is_some_and(|ids| ids.is_empty()) {
+        return Ok(Vec::new());
+    }
+    let scope_json = scope.map(|ids| serde_json::to_string(ids).expect("session IDs serialize"));
     let match_query = to_fts_match_query(query);
     if match_query.is_empty() {
         // Empty or punctuation-only query → fall back to the normal list,
@@ -130,6 +144,7 @@ pub async fn search_sessions(
         let sessions = list_sessions(pool, user_id).await?;
         return Ok(sessions
             .into_iter()
+            .filter(|session| scope.is_none_or(|ids| ids.contains(&session.id)))
             .take(limit)
             .map(|s| SearchHit {
                 session_id: s.id,
@@ -174,7 +189,7 @@ pub async fn search_sessions(
         FROM matches m
         JOIN chat_turns t ON t.rowid = m.turn_rowid
         JOIN chat_sessions s ON s.id = t.session_id
-        WHERE s.user_id = ?
+        WHERE s.user_id = ? AND (? IS NULL OR s.id IN (SELECT value FROM json_each(?)))
         GROUP BY s.id
         ORDER BY rank ASC, s.updated_at DESC
         LIMIT ?
@@ -182,6 +197,8 @@ pub async fn search_sessions(
     )
     .bind(&match_query)
     .bind(user_id)
+    .bind(&scope_json)
+    .bind(&scope_json)
     .bind(limit as i64)
     .fetch_all(pool)
     .await?;
@@ -199,7 +216,8 @@ pub async fn search_sessions(
         })
         .collect::<Result<Vec<SearchHit>, DbError>>()?;
 
-    let title_hits = search_titles(pool, user_id, query, limit).await?;
+    let title_hits =
+        search_titles_scoped(pool, user_id, query, limit, scope_json.as_deref()).await?;
 
     // Merge title matches ahead of content matches, deduplicated by session.
     // Title matches carry no snippet, so if the same conversation also matched
@@ -255,11 +273,12 @@ pub(crate) fn like_escape(tok: &str) -> String {
 /// [`search_sessions`], since the FTS index does not cover titles. Returned
 /// hits carry an empty snippet (the title itself is the match). Ordered pinned
 /// first, then most-recently-updated.
-pub(crate) async fn search_titles(
+async fn search_titles_scoped(
     pool: &Pool,
     user_id: &str,
     query: &str,
     limit: usize,
+    scope_json: Option<&str>,
 ) -> Result<Vec<SearchHit>, DbError> {
     let tokens: Vec<String> = query
         .split_whitespace()
@@ -275,13 +294,16 @@ pub(crate) async fn search_titles(
         r#"
         SELECT id AS session_id, title, updated_at, pinned
         FROM chat_sessions
-        WHERE user_id = ? AND title IS NOT NULL AND {conditions}
+        WHERE user_id = ? AND (? IS NULL OR id IN (SELECT value FROM json_each(?))) AND title IS NOT NULL AND {conditions}
         ORDER BY pinned DESC, updated_at DESC
         LIMIT ?
         "#
     );
 
-    let mut q = sqlx::query(&sql).bind(user_id);
+    let mut q = sqlx::query(&sql)
+        .bind(user_id)
+        .bind(scope_json)
+        .bind(scope_json);
     for pat in &tokens {
         q = q.bind(pat);
     }
@@ -332,4 +354,61 @@ pub struct SearchHit {
     /// in `<b>`/`</b>` (see [`highlight_snippet`]). Safe to render as raw
     /// HTML. Empty for the no-query fallback listing.
     pub snippet: String,
+}
+
+#[cfg(test)]
+mod scoped_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn scopes_title_content_and_empty_search_before_limit() {
+        let pool = super::super::tests::pool().await;
+        let allowed = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &allowed.id, "allowed-turn", "needle")
+            .await
+            .unwrap();
+        set_session_title(&pool, &allowed.id, "needle allowed")
+            .await
+            .unwrap();
+        let excluded = create_session(&pool, "u1").await.unwrap();
+        set_session_title(&pool, &excluded.id, "needle excluded")
+            .await
+            .unwrap();
+        set_pinned(&pool, "u1", &excluded.id, true).await.unwrap();
+        create_user_turn(&pool, &excluded.id, "excluded-turn", "needle needle")
+            .await
+            .unwrap();
+        let scope = std::collections::HashSet::from([allowed.id.clone()]);
+        for query in ["needle", "allowed", ""] {
+            let hits = search_sessions_scoped(&pool, "u1", query, 1, Some(&scope))
+                .await
+                .unwrap();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].session_id, allowed.id);
+        }
+        assert!(
+            search_sessions_scoped(&pool, "u2", "needle", 1, Some(&scope))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            search_sessions_scoped(&pool, "u1", "needle", 0, Some(&scope))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            search_sessions_scoped(
+                &pool,
+                "u1",
+                "needle",
+                1,
+                Some(&std::collections::HashSet::new())
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+    }
 }

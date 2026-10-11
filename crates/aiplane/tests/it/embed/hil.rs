@@ -603,6 +603,8 @@ async fn a_scheduled_run_that_paused_is_resumed_from_its_owners_inbox() {
     let action = scheduled::create(
         &fx.state.db,
         NewAction {
+            dot_id: None,
+            linked_session_id: None,
             user_id: "plain".into(),
             name: "Nightly refunds".into(),
             prompt: "Issue the refunds that are due.".into(),
@@ -696,6 +698,8 @@ async fn a_paused_schedule_shows_its_preview_in_the_owners_inbox() {
     scheduled::create(
         &fx.state.db,
         NewAction {
+            dot_id: None,
+            linked_session_id: None,
             user_id: "plain".into(),
             name: "Planner".into(),
             prompt: "Set up the weekly summary.".into(),

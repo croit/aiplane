@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 mod live;
+pub mod personal_dot;
 
 use crate::agents::approval::Permissions;
 use crate::agents::spec::AgentSpec;

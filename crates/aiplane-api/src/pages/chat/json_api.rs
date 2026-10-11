@@ -74,12 +74,30 @@ pub async fn sessions_list(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let scope = match params.dot_id.as_deref() {
+        Some(dot_id) => match aiplane_agents::db::dot_sessions::scoped_session_ids(
+            &state.db,
+            &user.id,
+            (!dot_id.is_empty()).then_some(dot_id),
+        )
+        .await
+        {
+            Ok(ids) => Some(ids),
+            Err(error) => return internal(error),
+        },
+        None => None,
+    };
     if let Some(q) = params.q.filter(|q| !q.trim().is_empty()) {
-        let hits = chat::search_sessions(&state.db, &user.id, q.trim(), 50)
+        let hits = chat::search_sessions_scoped(&state.db, &user.id, q.trim(), 50, scope.as_ref())
             .await
             .unwrap_or_default();
         let sessions = hits
             .into_iter()
+            .filter(|hit| {
+                scope
+                    .as_ref()
+                    .is_none_or(|ids| ids.contains(&hit.session_id))
+            })
             .map(|h| SessionMatch {
                 id: h.session_id,
                 title: h.title,
@@ -91,7 +109,10 @@ pub async fn sessions_list(
         return ok_json(StatusCode::OK, SessionsList::Found { sessions });
     }
     match chat::list_sessions(&state.db, &user.id).await {
-        Ok(sessions) => ok_json(StatusCode::OK, SessionsList::Listed { sessions }),
+        Ok(mut sessions) => {
+            sessions.retain(|session| scope.as_ref().is_none_or(|ids| ids.contains(&session.id)));
+            ok_json(StatusCode::OK, SessionsList::Listed { sessions })
+        }
         Err(err) => internal(err),
     }
 }
@@ -100,6 +121,7 @@ pub async fn sessions_list(
 pub struct SessionsQuery {
     /// Search the caller's conversations for this text instead of listing them.
     q: Option<String>,
+    dot_id: Option<String>,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -555,6 +577,11 @@ pub async fn message_send(
 fn submit_refusal(err: SubmitTurnError, lang: Lang) -> Response {
     match err {
         SubmitTurnError::RateLimited(exceeded) => over_budget(&exceeded),
+        SubmitTurnError::BackgroundBusy => json_error(
+            StatusCode::CONFLICT,
+            "background_busy",
+            &t(lang, "dot-background-error-busy"),
+        ),
         SubmitTurnError::DotInactive => json_error(
             StatusCode::CONFLICT,
             "dot_inactive",
@@ -661,6 +688,10 @@ pub async fn session_steer(
             "nothing is streaming in this conversation — send it as a message instead",
         );
     };
+
+    if worker.is_background() {
+        return submit_refusal(SubmitTurnError::BackgroundBusy, lang);
+    }
 
     // Same gate a message goes through, on the running turn's model, and the
     // same response. An interjection is not free: it is a row, and it is one
@@ -796,7 +827,17 @@ pub async fn session_cancel(
     if !cancelled {
         cancelled = match chat::suspended_turn_in_session(&state.db, &session_id).await {
             Ok(Some(turn_id)) => match chat::cancel_suspended_turn(&state.db, &turn_id).await {
-                Ok(done) => done,
+                Ok(done) => {
+                    if done
+                        && let Err(err) = aiplane_runtime::server::background::reconcile_turn(
+                            &state.db, &user.id, &turn_id,
+                        )
+                        .await
+                    {
+                        return internal(err);
+                    }
+                    done
+                }
                 Err(err) => return internal(err),
             },
             Ok(None) => false,
@@ -873,6 +914,7 @@ pub async fn turn_resume(
     req: Request,
 ) -> Response {
     use aiplane_runtime::suspend::ResumeRefused;
+    let lang = Lang::from_request(req.headers());
     let (_session, user) = require_session_json!(state, req);
     let ctx = request_ctx(&state, &req, false);
     let turn = match load_owned_turn(&state, &user, &session_id, &turn_id).await {
@@ -901,6 +943,12 @@ pub async fn turn_resume(
             "turn_in_progress",
             "another turn is running in this conversation or every parallel slot is in use —              answer again once it has finished",
         ),
+        Err(super::ResumeTurnError::Unavailable) => json_error(
+            StatusCode::CONFLICT,
+            "dot_unavailable",
+            &t(lang, "dot-background-error-unavailable"),
+        ),
+        Err(super::ResumeTurnError::Context(err)) => internal(err),
         Err(super::ResumeTurnError::Refused(refused)) => match refused {
             ResumeRefused::NotSuspended | ResumeRefused::StaleRequest { .. } => {
                 json_error(StatusCode::CONFLICT, "not_suspended", &refused.to_string())
@@ -982,11 +1030,23 @@ pub async fn session_events(
     match live {
         Some(worker) => live_stream(&state, &worker, session_id).await,
         None => {
-            let orphan_ids: Vec<_> = prior_turns
+            let mut orphan_ids = Vec::new();
+            for turn in prior_turns
                 .iter()
                 .filter(|turn| owns_session && turn.turn.status == chat::TurnStatus::InProgress)
-                .map(|turn| turn.turn.id.clone())
-                .collect();
+            {
+                match aiplane_runtime::server::background::for_turn(
+                    &state.db,
+                    &user.id,
+                    &turn.turn.id,
+                )
+                .await
+                {
+                    Ok(Some(_)) => {}
+                    Ok(None) => orphan_ids.push(turn.turn.id.clone()),
+                    Err(err) => return internal(err),
+                }
+            }
             let error_message = t(Lang::En, "chat-error-turn-interrupted");
             for turn_id in &orphan_ids {
                 if let Err(err) =
@@ -1205,6 +1265,7 @@ pub async fn turn_retry(
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
     // Read off the whole request, before `into_parts` takes it apart.
+    let lang = Lang::from_request(req.headers());
     let ctx = request_ctx(&state, &req, false);
     let (_, body) = req.into_parts();
     let parsed: RetryBody = match read_json(body, "the retry body").await {
@@ -1215,13 +1276,18 @@ pub async fn turn_retry(
         Ok(t) => t,
         Err(resp) => return resp,
     };
+    if let Err(response) = refuse_background_mutation(&state, &user, &session_id, lang).await {
+        return response;
+    }
     if turn.role != chat::TurnRole::Assistant {
         return bad_request("only assistant turns can be retried");
     }
-    if let Err(err) = super::truncate_reclaiming(&state, &session_id, turn.seq).await {
-        return internal(err);
-    }
-    match start_regeneration_json(&state, &user, &session_id, parsed.model, ctx).await {
+    let regeneration = Regeneration {
+        target: turn,
+        edited_content: None,
+        model: parsed.model,
+    };
+    match start_regeneration_json(&state, &user, &session_id, regeneration, ctx, lang).await {
         Ok(ids) => ok_json(StatusCode::ACCEPTED, ids),
         Err(resp) => resp,
     }
@@ -1244,6 +1310,7 @@ pub async fn turn_edit(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     let ctx = request_ctx(&state, &req, false);
     let content_type = req
         .headers()
@@ -1255,6 +1322,9 @@ pub async fn turn_edit(
         Ok(t) => t,
         Err(resp) => return resp,
     };
+    if let Err(response) = refuse_background_mutation(&state, &user, &session_id, lang).await {
+        return response;
+    }
     if turn.role != chat::TurnRole::User {
         return bad_request("only your own messages can be edited");
     }
@@ -1282,17 +1352,54 @@ pub async fn turn_edit(
     if text.is_empty() {
         return bad_request("the message must not be empty");
     }
-    if let Err(err) = chat::update_user_turn_content(&state.db, &session_id, &turn_id, &text).await
-    {
-        return internal(err);
-    }
-    if let Err(err) = super::truncate_reclaiming(&state, &session_id, turn.seq + 1).await {
-        return internal(err);
-    }
-    match start_regeneration_json(&state, &user, &session_id, model, ctx).await {
+    let regeneration = Regeneration {
+        target: turn,
+        edited_content: Some(text),
+        model,
+    };
+    match start_regeneration_json(&state, &user, &session_id, regeneration, ctx, lang).await {
         Ok(ids) => ok_json(StatusCode::ACCEPTED, ids),
         Err(resp) => resp,
     }
+}
+
+async fn refuse_background_mutation(
+    state: &RamaState,
+    user: &User,
+    session_id: &str,
+    lang: Lang,
+) -> Result<(), Response> {
+    if state
+        .chats
+        .get(&user.id, session_id)
+        .is_some_and(|worker| worker.is_background())
+    {
+        return Err(submit_refusal(SubmitTurnError::BackgroundBusy, lang));
+    }
+    let turns = chat::list_turns(&state.db, session_id)
+        .await
+        .map_err(internal)?;
+    for turn in turns.iter().filter(|turn| {
+        matches!(
+            turn.turn.status,
+            chat::TurnStatus::InProgress | chat::TurnStatus::Suspended
+        )
+    }) {
+        if aiplane_runtime::server::background::for_turn(&state.db, &user.id, &turn.turn.id)
+            .await
+            .map_err(internal)?
+            .is_some()
+        {
+            return Err(submit_refusal(SubmitTurnError::BackgroundBusy, lang));
+        }
+    }
+    Ok(())
+}
+
+struct Regeneration {
+    target: chat::Turn,
+    edited_content: Option<String>,
+    model: String,
 }
 
 /// The regeneration half shared by retry + edit: reserve the worker, insert
@@ -1309,9 +1416,15 @@ async fn start_regeneration_json(
     state: &Arc<RamaState>,
     user: &User,
     session_id: &str,
-    model: String,
+    regeneration: Regeneration,
     ctx: super::RequestCtx,
+    lang: Lang,
 ) -> Result<Regenerated, Response> {
+    let Regeneration {
+        target,
+        edited_content,
+        model,
+    } = regeneration;
     let assistant_turn_id = uuid::Uuid::new_v4().to_string();
     let worker = match state.chats.register(
         &user.id,
@@ -1341,21 +1454,46 @@ async fn start_regeneration_json(
             ));
         }
     };
-    let assistant_turn = match chat::create_assistant_turn_in_progress(
-        &state.db,
+    let config = state.config();
+    let doomed = [aiplane_features::server::chat_attachments::Doomed {
         session_id,
-        &assistant_turn_id,
-        &model,
+        from_seq: target.seq + i64::from(edited_content.is_some()),
+    }];
+    let mut assistant_turn = None;
+    let regenerate = async {
+        assistant_turn = chat::regenerate_turn_if_idle(
+            &state.db,
+            session_id,
+            &target.id,
+            edited_content.as_deref(),
+            &assistant_turn_id,
+            &model,
+        )
+        .await?;
+        Ok::<_, chat::DbError>(assistant_turn.is_some())
+    };
+    match aiplane_features::server::chat_attachments::delete_reclaiming(
+        &state.db,
+        config.chat.s3.as_ref(),
+        &doomed,
+        regenerate,
     )
     .await
     {
-        Ok(t) => t,
+        Ok(Some(reclaim)) => reclaim.in_background(),
+        Ok(None) => {
+            state.chats.clear(&user.id, &worker);
+            return Err(submit_refusal(SubmitTurnError::BackgroundBusy, lang));
+        }
         Err(err) => {
             state.chats.clear(&user.id, &worker);
             return Err(internal(err));
         }
+    }
+    let Some(assistant_turn) = assistant_turn else {
+        state.chats.clear(&user.id, &worker);
+        return Err(submit_refusal(SubmitTurnError::BackgroundBusy, lang));
     };
-    let _ = chat::touch_session(&state.db, session_id).await;
     super::spawn_assistant_worker(
         state,
         user,

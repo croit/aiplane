@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { adminDelete, adminPost } from '#lib/admin-client.js';
 	import { locale, t } from '#lib/i18n.svelte.js';
+	import DotAssociation from '#lib/components/dots/DotAssociation.svelte';
 	import { runLinks } from '#lib/run-links.js';
 	import { formatWebhookFire, type Webhook } from '#lib/webhooks.js';
 
@@ -62,6 +63,7 @@
 					<span class="badge badge-sm {webhook.enabled ? 'badge-success' : 'badge-ghost'}">{webhook.enabled ? t('webhooks-badge-active') : t('webhooks-badge-paused')}</span>
 					{#if webhook.reuse_conversation}<span class="badge badge-ghost badge-sm">{t('webhooks-badge-reuses-chat')}</span>{/if}
 				</div>
+				<DotAssociation binding={webhook} />
 				<p class="mt-1 line-clamp-2 text-sm text-base-content/70">{webhook.prompt}</p>
 				<div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-base-content/60">
 					<span class="font-mono">{webhook.model}</span>
@@ -71,10 +73,11 @@
 					<span class="font-mono">/hooks/gwh_••••••••••••</span>
 				</div>
 				{#if webhook.last_fired_at}
-					<p class="mt-1 text-xs {webhook.last_status === 'ok' ? 'text-success' : 'text-error'}">
-						{t(webhook.last_status === 'ok' ? 'webhooks-last-success' : 'webhooks-last-failure', { when: formatWebhookFire(webhook.last_fired_at, locale.current) })}
+					<p class="mt-1 text-xs {webhook.last_status === 'ok' ? 'text-success' : webhook.last_status === 'waiting' ? 'text-warning' : 'text-error'}">
+						{t(webhook.last_status === 'ok' ? 'webhooks-last-success' : webhook.last_status === 'waiting' ? 'dot-background-last-waiting' : 'webhooks-last-failure', { when: formatWebhookFire(webhook.last_fired_at, locale.current) })}
 					</p>
 				{/if}
+				{#if webhook.last_status === 'waiting'}<a class="link link-hover text-sm" href="/inbox">{t('inbox-heading')}</a>{/if}
 				{#if webhook.last_error}<p class="mt-1 text-xs text-error">{webhook.last_error}</p>{/if}
 			</div>
 			<div class="flex flex-wrap gap-2">

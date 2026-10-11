@@ -141,6 +141,174 @@ pub async fn create_assistant_turn_in_progress(
     Ok(turn)
 }
 
+pub async fn create_turn_pair_if_idle(
+    pool: &Pool,
+    session_id: &str,
+    user_turn_id: &str,
+    assistant_turn_id: &str,
+    prompt: &str,
+    model: &str,
+    reject_pending: bool,
+) -> Result<Option<(Turn, Turn)>, DbError> {
+    let Some((mut tx, seq)) = idle_turn_transaction(pool, session_id, reject_pending).await? else {
+        return Ok(None);
+    };
+    let now = Timestamp::now().to_string();
+    let rows = sqlx::query(
+        "INSERT INTO chat_turns
+         (id, session_id, seq, role, user_content, model, status, created_at, completed_at)
+         VALUES (?, ?, ?, 'user', ?, NULL, 'completed', ?, ?),
+                (?, ?, ?, 'assistant', NULL, ?, 'in_progress', ?, NULL)
+         RETURNING *",
+    )
+    .bind(user_turn_id)
+    .bind(session_id)
+    .bind(seq)
+    .bind(strip_fts_sentinels(prompt).as_ref())
+    .bind(&now)
+    .bind(&now)
+    .bind(assistant_turn_id)
+    .bind(session_id)
+    .bind(seq + 1)
+    .bind(model)
+    .bind(&now)
+    .fetch_all(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE chat_sessions SET updated_at = ? WHERE id = ?")
+        .bind(&now)
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+    let mut turns = rows.iter().map(map_turn).collect::<Result<Vec<_>, _>>()?;
+    turns.sort_by_key(|turn| turn.seq);
+    let assistant = turns.pop().ok_or(sqlx::Error::RowNotFound)?;
+    let user = turns.pop().ok_or(sqlx::Error::RowNotFound)?;
+    tx.commit().await?;
+    Ok(Some((user, assistant)))
+}
+
+pub async fn create_assistant_turn_if_idle(
+    pool: &Pool,
+    session_id: &str,
+    turn_id: &str,
+    model: &str,
+) -> Result<Option<Turn>, DbError> {
+    let Some((mut tx, seq)) = idle_turn_transaction(pool, session_id, false).await? else {
+        return Ok(None);
+    };
+    let now = Timestamp::now().to_string();
+    let turn = insert_assistant_turn(&mut tx, session_id, turn_id, model, seq, &now).await?;
+    tx.commit().await?;
+    Ok(Some(turn))
+}
+
+pub async fn regenerate_turn_if_idle(
+    pool: &Pool,
+    session_id: &str,
+    target_turn_id: &str,
+    edited_content: Option<&str>,
+    assistant_turn_id: &str,
+    model: &str,
+) -> Result<Option<Turn>, DbError> {
+    let Some((mut tx, _)) = idle_turn_transaction(pool, session_id, false).await? else {
+        return Ok(None);
+    };
+    let expected_role = if edited_content.is_some() {
+        "user"
+    } else {
+        "assistant"
+    };
+    let target_seq: i64 = sqlx::query_scalar(
+        "SELECT seq FROM chat_turns WHERE session_id = ? AND id = ? AND role = ?",
+    )
+    .bind(session_id)
+    .bind(target_turn_id)
+    .bind(expected_role)
+    .fetch_one(&mut *tx)
+    .await?;
+    let from_seq = target_seq + i64::from(edited_content.is_some());
+    if let Some(content) = edited_content {
+        sqlx::query("UPDATE chat_turns SET user_content = ? WHERE session_id = ? AND id = ?")
+            .bind(strip_fts_sentinels(content).as_ref())
+            .bind(session_id)
+            .bind(target_turn_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query("DELETE FROM chat_turns WHERE session_id = ? AND seq >= ?")
+        .bind(session_id)
+        .bind(from_seq)
+        .execute(&mut *tx)
+        .await?;
+    let seq: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(seq), -1) + 1 FROM chat_turns WHERE session_id = ?",
+    )
+    .bind(session_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let now = Timestamp::now().to_string();
+    let turn =
+        insert_assistant_turn(&mut tx, session_id, assistant_turn_id, model, seq, &now).await?;
+    tx.commit().await?;
+    Ok(Some(turn))
+}
+
+async fn insert_assistant_turn(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    session_id: &str,
+    turn_id: &str,
+    model: &str,
+    seq: i64,
+    now: &str,
+) -> Result<Turn, DbError> {
+    let row = sqlx::query(
+        "INSERT INTO chat_turns (id, session_id, seq, role, model, status, created_at)
+         VALUES (?, ?, ?, 'assistant', ?, 'in_progress', ?) RETURNING *",
+    )
+    .bind(turn_id)
+    .bind(session_id)
+    .bind(seq)
+    .bind(model)
+    .bind(now)
+    .fetch_one(&mut **tx)
+    .await?;
+    sqlx::query("UPDATE chat_sessions SET updated_at = ? WHERE id = ?")
+        .bind(now)
+        .bind(session_id)
+        .execute(&mut **tx)
+        .await?;
+    map_turn(&row)
+}
+
+async fn idle_turn_transaction(
+    pool: &Pool,
+    session_id: &str,
+    reject_pending: bool,
+) -> Result<Option<(sqlx::Transaction<'static, sqlx::Sqlite>, i64)>, DbError> {
+    // Reserve the write lock before checking admission or assigning sequence numbers.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let busy: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM chat_turns WHERE session_id = ?
+         AND role = 'assistant' AND status IN ('in_progress', 'suspended'))
+         OR (? AND EXISTS(SELECT 1 FROM chat_pending_turns WHERE session_id = ?))",
+    )
+    .bind(session_id)
+    .bind(reject_pending)
+    .bind(session_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if busy {
+        return Ok(None);
+    }
+    let seq: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(seq), -1) + 1 FROM chat_turns WHERE session_id = ?",
+    )
+    .bind(session_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    Ok(Some((tx, seq)))
+}
+
 /// Append to an in-progress assistant turn's `content`. Worker batches
 /// these every ~100ms; SQLite handles the small-string concat fine but
 /// we don't want one write per token.
@@ -710,3 +878,433 @@ pub async fn mark_orphaned_in_progress_as_errored(
 
 // ---------------------------------------------------------------------------
 // Tool calls
+
+#[cfg(test)]
+mod pair_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn idle_pair_persists_exact_ids_content_model_and_adjacent_sequence() {
+        let pool = super::super::tests::pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &session.id, "earlier", "history")
+            .await
+            .unwrap();
+        let (user, assistant) = create_turn_pair_if_idle(
+            &pool,
+            &session.id,
+            "prompt",
+            "reply",
+            "Review updates",
+            "model",
+            false,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!((user.seq, assistant.seq), (1, 2));
+        assert_eq!(user.user_content.as_deref(), Some("Review updates"));
+        assert_eq!(user.status, TurnStatus::Completed);
+        assert_eq!(assistant.model.as_deref(), Some("model"));
+        assert_eq!(assistant.status, TurnStatus::InProgress);
+        let stored = list_turns(&pool, &session.id).await.unwrap();
+        assert_eq!(stored.len(), 3);
+        assert_eq!(stored[1].turn.id, "prompt");
+        assert_eq!(stored[2].turn.id, "reply");
+    }
+
+    #[tokio::test]
+    async fn regeneration_refuses_active_and_suspended_turns_without_changing_history() {
+        let pool = super::super::tests::pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        create_turn_pair_if_idle(
+            &pool,
+            &session.id,
+            "prompt",
+            "reply",
+            "Original",
+            "model",
+            false,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        for status in [TurnStatus::InProgress, TurnStatus::Suspended] {
+            sqlx::query("UPDATE chat_turns SET status = ? WHERE id = 'reply'")
+                .bind(status.as_str())
+                .execute(&pool)
+                .await
+                .unwrap();
+            for (target, content) in [("prompt", Some("Changed")), ("reply", None)] {
+                assert!(
+                    regenerate_turn_if_idle(&pool, &session.id, target, content, "new", "other")
+                        .await
+                        .unwrap()
+                        .is_none()
+                );
+            }
+            let turns = list_turns(&pool, &session.id).await.unwrap();
+            assert_eq!(turns.len(), 2);
+            assert_eq!(turns[0].turn.user_content.as_deref(), Some("Original"));
+            assert_eq!(turns[1].turn.status, status);
+        }
+    }
+
+    #[tokio::test]
+    async fn regeneration_atomically_edits_or_retries_the_persisted_target() {
+        let pool = super::super::tests::pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        create_turn_pair_if_idle(
+            &pool,
+            &session.id,
+            "prompt",
+            "reply",
+            "Original",
+            "model",
+            false,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        finalize_turn(&pool, "reply", TurnStatus::Completed, None)
+            .await
+            .unwrap();
+        let edited = regenerate_turn_if_idle(
+            &pool,
+            &session.id,
+            "prompt",
+            Some("Changed"),
+            "edited",
+            "other",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(edited.seq, 1);
+        assert_eq!(edited.model.as_deref(), Some("other"));
+        assert_eq!(edited.status, TurnStatus::InProgress);
+        assert!(
+            get_turn(&pool, &session.id, "reply")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            get_turn(&pool, &session.id, "prompt")
+                .await
+                .unwrap()
+                .unwrap()
+                .user_content
+                .as_deref(),
+            Some("Changed")
+        );
+        finalize_turn(&pool, "edited", TurnStatus::Completed, None)
+            .await
+            .unwrap();
+        let retried =
+            regenerate_turn_if_idle(&pool, &session.id, "edited", None, "retried", "model")
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(retried.seq, 1);
+        assert_eq!(list_turns(&pool, &session.id).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn regeneration_insert_failure_rolls_back_edits_and_removed_answers() {
+        let pool = super::super::tests::pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        create_turn_pair_if_idle(
+            &pool,
+            &session.id,
+            "prompt",
+            "reply",
+            "Original",
+            "model",
+            false,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        finalize_turn(&pool, "reply", TurnStatus::Completed, None)
+            .await
+            .unwrap();
+        assert!(
+            regenerate_turn_if_idle(
+                &pool,
+                &session.id,
+                "prompt",
+                Some("Changed"),
+                "prompt",
+                "model"
+            )
+            .await
+            .is_err()
+        );
+        let turns = list_turns(&pool, &session.id).await.unwrap();
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].turn.user_content.as_deref(), Some("Original"));
+        assert_eq!(turns[1].turn.id, "reply");
+        assert_eq!(turns[1].turn.status, TurnStatus::Completed);
+        assert!(
+            regenerate_turn_if_idle(
+                &pool,
+                &session.id,
+                "reply",
+                Some("Wrong role"),
+                "new",
+                "model"
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            regenerate_turn_if_idle(&pool, &session.id, "missing", None, "new", "model")
+                .await
+                .is_err()
+        );
+        assert_eq!(list_turns(&pool, &session.id).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn regeneration_and_background_opening_cannot_overwrite_each_other() {
+        let pool = super::super::tests::pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        create_turn_pair_if_idle(
+            &pool,
+            &session.id,
+            "prompt",
+            "reply",
+            "Original",
+            "model",
+            false,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        finalize_turn(&pool, "reply", TurnStatus::Completed, None)
+            .await
+            .unwrap();
+        let (edited, background) = tokio::join!(
+            regenerate_turn_if_idle(
+                &pool,
+                &session.id,
+                "prompt",
+                Some("Changed"),
+                "edited",
+                "model"
+            ),
+            create_turn_pair_if_idle(
+                &pool,
+                &session.id,
+                "work",
+                "background",
+                "Background",
+                "model",
+                true
+            ),
+        );
+        let edited = edited.unwrap().is_some();
+        let background = background.unwrap().is_some();
+        assert_eq!(usize::from(edited) + usize::from(background), 1);
+        let turns = list_turns(&pool, &session.id).await.unwrap();
+        assert_eq!(turns.len(), if edited { 2 } else { 4 });
+        assert_eq!(
+            turns[0].turn.user_content.as_deref(),
+            Some(if edited { "Changed" } else { "Original" })
+        );
+        assert_eq!(
+            turns
+                .iter()
+                .filter(|turn| turn.turn.status == TurnStatus::InProgress)
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn background_pair_does_not_overtake_waiting_user_messages() {
+        let pool = super::super::tests::pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &session.id, "queued", "Earlier request")
+            .await
+            .unwrap();
+        super::super::insert_pending_turn(
+            &pool,
+            &super::super::PendingTurn {
+                turn_id: "queued".into(),
+                session_id: session.id.clone(),
+                user_id: "u1".into(),
+                model: "model".into(),
+                voice: false,
+                client_ip: None,
+                secure: false,
+                created_at: Timestamp::now(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            create_turn_pair_if_idle(
+                &pool,
+                &session.id,
+                "prompt",
+                "reply",
+                "Background work",
+                "model",
+                true
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+        assert_eq!(list_turns(&pool, &session.id).await.unwrap().len(), 1);
+        assert!(
+            create_assistant_turn_if_idle(&pool, &session.id, "queued-reply", "model")
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn running_and_suspended_sessions_refuse_a_pair_without_orphan_prompt() {
+        let pool = super::super::tests::pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&pool, &session.id, "busy", "model")
+            .await
+            .unwrap();
+        for status in [TurnStatus::InProgress, TurnStatus::Suspended] {
+            sqlx::query("UPDATE chat_turns SET status = ? WHERE id = 'busy'")
+                .bind(status.as_str())
+                .execute(&pool)
+                .await
+                .unwrap();
+            assert!(
+                create_turn_pair_if_idle(
+                    &pool,
+                    &session.id,
+                    "prompt",
+                    "reply",
+                    "work",
+                    "model",
+                    false
+                )
+                .await
+                .unwrap()
+                .is_none()
+            );
+            assert_eq!(list_turns(&pool, &session.id).await.unwrap().len(), 1);
+        }
+        finalize_turn(&pool, "busy", TurnStatus::Completed, None)
+            .await
+            .unwrap();
+        assert!(
+            create_turn_pair_if_idle(
+                &pool,
+                &session.id,
+                "prompt",
+                "reply",
+                "work",
+                "model",
+                false
+            )
+            .await
+            .unwrap()
+            .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_second_insert_rolls_back_the_prompt_and_sequence() {
+        let pool = super::super::tests::pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        assert!(
+            create_turn_pair_if_idle(&pool, &session.id, "same", "same", "work", "model", false)
+                .await
+                .is_err()
+        );
+        assert!(list_turns(&pool, &session.id).await.unwrap().is_empty());
+        let (user, assistant) = create_turn_pair_if_idle(
+            &pool,
+            &session.id,
+            "prompt",
+            "reply",
+            "work",
+            "model",
+            false,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!((user.seq, assistant.seq), (0, 1));
+    }
+
+    #[tokio::test]
+    async fn competing_openers_admit_exactly_one_pair_in_a_session() {
+        let pool = super::super::tests::pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        let (first, second) = tokio::join!(
+            create_turn_pair_if_idle(&pool, &session.id, "p1", "a1", "one", "model", false),
+            create_turn_pair_if_idle(&pool, &session.id, "p2", "a2", "two", "model", false),
+        );
+        assert_eq!(
+            usize::from(first.unwrap().is_some()) + usize::from(second.unwrap().is_some()),
+            1
+        );
+        assert_eq!(list_turns(&pool, &session.id).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn assistant_admission_and_pair_admission_share_the_same_busy_boundary() {
+        let pool = super::super::tests::pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        create_user_turn(&pool, &session.id, "existing", "work")
+            .await
+            .unwrap();
+        let assistant = create_assistant_turn_if_idle(&pool, &session.id, "reply", "model")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(assistant.seq, 1);
+        assert_eq!(assistant.status, TurnStatus::InProgress);
+        assert!(
+            create_assistant_turn_if_idle(&pool, &session.id, "other", "model")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            create_turn_pair_if_idle(
+                &pool,
+                &session.id,
+                "prompt",
+                "response",
+                "work",
+                "model",
+                false
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+        finalize_turn(&pool, "reply", TurnStatus::Suspended, None)
+            .await
+            .unwrap();
+        assert!(
+            create_assistant_turn_if_idle(&pool, &session.id, "other", "model")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        finalize_turn(&pool, "reply", TurnStatus::Completed, None)
+            .await
+            .unwrap();
+        assert!(
+            create_assistant_turn_if_idle(&pool, &session.id, "other", "model")
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+}

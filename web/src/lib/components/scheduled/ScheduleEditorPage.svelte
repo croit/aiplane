@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { adminJson } from '#lib/admin-client.js';
 	import ScheduleForm from './ScheduleForm.svelte';
@@ -63,6 +64,8 @@
 			<ScheduleForm
 				{action}
 				models={data.models}
+				dots={data.dots}
+				presetDotId={id === null ? page.url.searchParams.get('dot_id') : null}
 				defaultTimezone={data.default_timezone}
 				onsaved={done}
 				oncancel={() => goto('/scheduled')}

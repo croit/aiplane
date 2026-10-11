@@ -514,6 +514,7 @@ async fn a_persons_paused_run_is_their_own_inbox_item() {
             prompt: "Refund what is due.",
             model: "support-model",
             existing_session: None,
+            dot_id: None,
         },
     )
     .await

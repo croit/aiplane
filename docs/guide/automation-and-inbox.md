@@ -7,7 +7,7 @@ Schedules run a prompt at configured times. Webhooks run a prompt when another s
 ![A scheduled action card shows timing, conversation reuse, status and run controls.](../img/guide/scheduled-action.png)
 
 1. Open `/scheduled` and select the new-schedule action.
-2. Enter a name, choose an available model and write the prompt.
+2. Enter a name, choose an available model and write the prompt. Choose **Run as** to use the ordinary assistant or an active personal Dot you own.
 3. Select hourly, daily, weekly or monthly timing; use Advanced for a five-field cron expression.
 4. Choose a timezone and inspect the summary and upcoming-run preview. Weekly schedules require at least one weekday.
 5. Decide whether tools should be enabled for the run.
@@ -16,14 +16,14 @@ Schedules run a prompt at configured times. Webhooks run a prompt when another s
 
 The form accepts names up to 128 characters and prompts up to 8,000 characters. It displays configured GDPR and NDA metadata warnings for the selected model. Choose a model appropriate to the actual data in the prompt.
 
-Fresh conversations keep runs independent; reusing a conversation carries the configured recent history into subsequent runs. The schedule card links to the resulting chat or run history, depending on what exists. It displays the latest success or failure and any recorded error.
+Fresh conversations keep runs independent; reusing a conversation carries the configured recent history into subsequent runs. The schedule card links to the resulting chat or run history, depending on what exists. It displays the selected Dot when bound, the latest success, waiting or failure status, and any recorded error.
 
 Use **Pause** to prevent future scheduled runs, **Resume** to reactivate, **Edit** to change configuration, or Delete and confirm to remove the schedule. The page does not provide a manual run-now button.
 
 ## Create an event-driven webhook
 
 1. Open `/webhooks` and select the new-webhook action.
-2. Enter a name, model and prompt describing how to process the incoming event body.
+2. Enter a name, model and prompt describing how to process the incoming event body. Choose **Run as** to use the ordinary assistant or an active personal Dot you own.
 3. Choose synchronous or asynchronous execution.
 4. Decide whether to enable tools. Tools are disabled by default in the new-webhook form; enabling them displays a warning because an external trigger can cause work under your account.
 5. Optionally enable conversation reuse and choose its recent-history window and linked chat.
@@ -35,7 +35,7 @@ The trigger URL's secret is the credential. Possession of that URL allows a call
 | Mode | HTTP behavior |
 | --- | --- |
 | Asynchronous | Returns HTTP 202 with `status: accepted` and a `session_id`; the run continues in the background. |
-| Synchronous | Waits for the run and returns HTTP 200 with output on success, or HTTP 502 with a run error. |
+| Synchronous | Returns HTTP 200 with output on success, HTTP 202 with `status: waiting` and a session ID when a decision is needed, or HTTP 502 with a run error. |
 
 Acceptance does not mean successful execution. Follow the recorded conversation and run status.
 
@@ -43,7 +43,7 @@ Acceptance does not mean successful execution. Follow the recorded conversation 
 
 A webhook card shows active/paused state, execution mode, latest status, chat and run-history links. Run history records the payload and the prompt used for that fire. These can contain sensitive event data.
 
-After a payload has been stored, use the rerun link to replay it with a prompt. Run history can also identify a specific older run to replay. Rerunning creates new work and can execute tools again; use it deliberately for debugging or revised processing.
+After a payload has been stored, use the rerun link to replay it with a prompt. Run history can also identify a specific older run to replay. Rerunning creates a fresh conversation with the webhook's current Dot binding and can execute tools again; use it deliberately for debugging or revised processing. A rerun that needs approval is accepted with HTTP 202 and opens the conversation; answer it in Inbox.
 
 Use Pause or Resume to control future triggers. A paused or invalid trigger returns not-found behavior. Rotate the secret when you need a replacement trigger URL, and update the event source. Delete removes the configured webhook after confirmation.
 
@@ -79,8 +79,45 @@ once permits only that call's recorded arguments. Current permissions and Dot
 availability are checked again before execution; removing a selected tool or
 disabling it in your account prevents a pending approval from running it.
 An inactive Dot retains its data and conversations while its pending turns
-remain paused. Personal Dot schedules, webhook setup and separate connector
-identities are not available in this slice.
+remain paused. Separate Dot connector identities, organization Dots, automatic memory
+curation and persistent Dot computers are not available.
+
+## Run scheduled or event-driven work as a Dot
+
+An active Dot card has **Add scheduled work** and **Add webhook** links to the existing
+creation forms with that Dot selected. You can also choose it in **Run as**
+when creating or editing an automation. The available model, timing, tools,
+mode and conversation settings remain those of the existing form.
+
+![Run as selects the named Dot and links to its access and approval settings.](../img/guide/dot-scheduled-work.png)
+
+A reused conversation must be private, owned by you and bound to the same
+Dot. The linked-chat picker shows matching conversations only. Changing
+**Run as** clears your linked-chat selection. Choose a new matching chat or
+start fresh. Ordinary automations cannot reuse a Dot conversation.
+
+Enabling tools does not approve them. Dot access rules, connector rules and
+your current grants still apply. A turn that started with tools disabled keeps
+that restriction after resumption, even if you enable tools later. The run
+also retains its original history window when it resumes.
+
+**Waiting** means the run needs a decision. Use its Inbox link or open the
+conversation, inspect the actual tool and arguments, and approve once or deny.
+Current permissions are checked again. Once settled, inspect the conversation
+and run history for the outcome. The conversation's normal stop control can
+stop background work through the same worker registry as chat.
+
+Pausing an automation prevents future triggers; it does not discard an
+existing pending decision. Deactivating its Dot keeps pending Dot calls paused
+and preserves their conversations. An inactive or unavailable existing Dot
+binding remains shown when editing; you may save unrelated changes, reactivate
+the Dot or choose another active assistant. New bindings require an active
+Dot you own.
+
+An automation with a running or waiting turn cannot be deleted. Pause it,
+finish or stop its pending turn, then delete it. The Dot limit counts active
+Dots, including idle ones; it does not count their scheduled runs. Usage and
+limits remain attached to your account rather than a separate Dot budget.
 
 ## Troubleshooting
 

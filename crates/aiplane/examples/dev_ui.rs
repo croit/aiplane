@@ -159,6 +159,39 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(0);
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
+        .and(|request: &wiremock::Request| {
+            serde_json::from_slice::<serde_json::Value>(&request.body).is_ok_and(|body| {
+                body["messages"].as_array().is_some_and(|messages| {
+                    messages.iter().any(|message| {
+                        message["role"] == "user"
+                            && message["content"].as_str().is_some_and(|content| {
+                                content.starts_with("Dot background approval probe")
+                            })
+                    })
+                })
+            })
+        })
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap_or_default();
+            let completed = body["messages"].as_array().is_some_and(|messages| {
+                messages.iter().any(|message| {
+                    message["role"] == "tool"
+                        && message["tool_call_id"] == "dot-background-memory"
+                })
+            });
+            let delta = if completed {
+                serde_json::json!({"content": "The approved background lesson was recorded."})
+            } else {
+                serde_json::json!({"tool_calls": [{"index": 0, "id": "dot-background-memory",
+                    "type": "function", "function": {"name": "remember",
+                    "arguments": serde_json::json!({"content": "Approved background lesson.", "kind": "fact"}).to_string()}}]})
+            };
+            completion(&body, delta)
+        })
+        .mount(&chat_mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -1709,6 +1742,8 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
                 tools_enabled: true,
                 reuse_conversation: reuse,
                 reuse_rounds: 5,
+                dot_id: None,
+                linked_session_id: None,
                 next_run_at: Some(next.parse()?),
             },
         )
@@ -1733,13 +1768,14 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             let turn = uuid::Uuid::new_v4().to_string();
             chatdb::create_assistant_turn_in_progress(&state.db, &session, &turn, "demo-model")
                 .await?;
+            let run_id = scheduled::record_run_start(&state.db, &action.id).await?;
+            scheduled::attach_run_turn(&state.db, &run_id, &session, &turn, true, Some(5)).await?;
             chatdb::append_content(&state.db, &turn, "Here is the digest for this run.").await?;
             chatdb::finalize_turn(&state.db, &turn, TurnStatus::Completed, None).await?;
 
             // The last run of the dependency report failed, so the page has a
             // failure to render as well as successes.
             let failed = reuse && run + 1 == runs;
-            let run_id = scheduled::record_run_start(&state.db, &action.id).await?;
             let (status, error) = if failed {
                 ("error", Some("upstream timed out after 60s"))
             } else {
@@ -1820,6 +1856,8 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
                 synchronous,
                 reuse_conversation: reuse,
                 reuse_rounds: 5,
+                dot_id: None,
+                linked_session_id: None,
                 // A hash of nothing anyone can fire: the fixture demonstrates
                 // the UI, and a guessable trigger secret would be a bad habit
                 // to ship even in an example.
@@ -1845,6 +1883,20 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             let turn = uuid::Uuid::new_v4().to_string();
             chatdb::create_assistant_turn_in_progress(&state.db, &session, &turn, "demo-model")
                 .await?;
+            let run = webhooks::record_run_start(
+                &state.db,
+                webhooks::NewWebhookRun {
+                    webhook_id: &hook.id,
+                    session_id: &session,
+                    prompt,
+                    payload: r#"{"ref":"refs/heads/main"}"#,
+                    source: "fire",
+                    assistant_turn_id: &turn,
+                    tools_enabled: false,
+                    history_limit: Some(5),
+                },
+            )
+            .await?;
             chatdb::append_content(&state.db, &turn, "Here is the summary for this fire.").await?;
             chatdb::finalize_turn(&state.db, &turn, TurnStatus::Completed, None).await?;
 
@@ -1856,15 +1908,6 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             } else {
                 ("ok", None)
             };
-            let run = webhooks::record_run_start(
-                &state.db,
-                &hook.id,
-                &session,
-                prompt,
-                r#"{"ref":"refs/heads/main"}"#,
-                "fire",
-            )
-            .await?;
             webhooks::finish_run(&state.db, &run, status, error).await?;
             webhooks::mark_fired(&state.db, &hook.id, status, Some(&session), error).await?;
             // The stored payload is what a rerun replays, so it only exists

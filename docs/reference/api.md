@@ -159,7 +159,7 @@ Examples of its task families:
 | `/api/v0/memories*`, `/api/v0/tools*`, `/api/v0/integrations*`, `/api/v0/skills*` | Personal capabilities, connections and memories; [tools](../guide/tools-and-integrations.md). |
 | `/api/v0/scheduled*`, `/api/v0/webhooks*`, `/api/v0/inbox*` | Automation and durable decisions; [automation guide](../guide/automation-and-inbox.md). |
 | `/api/v0/agents*` | Agent drafts, grants, evaluation, publication and observation; agent guides. |
-| `/api/v0/dots*` | Personal Dot lifecycle, tool selection, approval rules, private chats, memory and activity; [AIplane Dots](../dots.md). |
+| `/api/v0/dots*` | Personal Dot lifecycle, tool selection, approval rules, private chats, memory and activity; scheduled actions and webhooks can run as an owned Dot; [AIplane Dots](../dots.md). |
 | `/api/v0/rag*` | Knowledge collections, snapshots, indexing and profiles; [knowledge](../admin/knowledge.md). |
 | `/api/v0/admin/*` | Administrative models, grants, settings and catalogs; administration guides. |
 | `/api/v0/setup/*` | Verified setup/recovery state machine. |
@@ -180,6 +180,31 @@ conversation's `events` endpoint as an SSE stream. Its data frames use the
 AIplane JSON event protocol (`snapshot`, `turn_delta`, tool and state events),
 not OpenAI chat chunks. Reconnect using the existing protocol's snapshot and
 event handling; do not append a reconnect snapshot as if it were new text.
+
+### Personal Dot automation
+
+Schedule and webhook create/update bodies accept `dot_id: string | null`.
+Omitting it selects ordinary user execution. A changed binding must select an
+active owned Dot; an unchanged unavailable binding can be retained while other
+configuration is edited, but cannot execute. Responses include the stored
+`dot_id` and the actual owned Dot metadata when that Dot exists.
+
+`linked_session_id` is valid only with conversation reuse. Omission retains
+the link, an empty string clears it, and a concrete ID must identify a private
+owned conversation with the same Dot binding. Changing the Dot binding clears
+the existing link unless a matching replacement is supplied. The chat-session
+list accepts `dot_id`: absence lists all conversations, an empty value selects
+ordinary conversations, and a Dot ID selects that owner's Dot conversations.
+This scope also applies to text search before its result limit.
+
+Run history includes the exact `assistant_turn_id`. A synchronous webhook or
+manual rerun that waits for approval returns `202` with status `waiting` and
+its conversation ID. Decisions use the existing Inbox and resume the recorded
+turn with its original history limit and tool ceiling. Disabling a trigger
+stops new firings while allowing a pending decision to settle; deleting a
+trigger with a nonterminal run returns `409`. Running background turns can be
+watched and stopped through the existing conversation endpoints; interactive
+messages, steering and history rewrites are refused while that turn runs.
 
 ## Public entry points and credentials
 

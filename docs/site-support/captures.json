@@ -187,5 +187,19 @@
     "width": 808,
     "height": 1262,
     "data": "Synthetic dev-ui fixture; actual application components."
+  },
+  {
+    "file": "docs/img/guide/dot-scheduled-work.png",
+    "route": "/scheduled/new",
+    "selector": "fieldset",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 1692,
+    "height": 256,
+    "data": "Synthetic dev-ui fixture; actual application components.",
+    "matchingText": "Run as"
   }
 ]

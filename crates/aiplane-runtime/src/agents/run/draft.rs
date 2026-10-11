@@ -148,9 +148,19 @@ async fn open_draft_turn(
             prompt: turn.message,
             model: &profile.model,
             existing_session: turn.session_id.map(str::to_string),
+            dot_id: None,
         },
     )
-    .await?;
+    .await
+    .map_err(|error| match error {
+        crate::server::headless::OpenError::Storage(error) => AgentRunError::Db(error),
+        crate::server::headless::OpenError::Busy => AgentRunError::Busy {
+            session: turn.session_id.unwrap_or_default().to_string(),
+        },
+        crate::server::headless::OpenError::Unavailable => {
+            AgentRunError::Unavailable(profile.principal.id.clone())
+        }
+    })?;
     let opened = OpenedTurn {
         agent_id: profile.principal.id.clone(),
         version: DRAFT_VERSION,

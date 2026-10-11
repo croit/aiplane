@@ -4,19 +4,25 @@
 	import { locale, t } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
 	import LinkedChatPicker from '#lib/components/LinkedChatPicker.svelte';
+	import DotRunPicker from '#lib/components/dots/DotRunPicker.svelte';
+	import type { Dot } from '#lib/dot-state.js';
 	import { initialLinkedSession, linkedSessionField } from '#lib/linked-chat.js';
 	import { modelSelectOptions, type ChatModelOption } from '#lib/model-option.js';
 	import { cronFromSchedule, defaultSchedule, formatScheduledRun, scheduleFromCron, type ScheduledAction } from '#lib/scheduled.js';
 	import { timezoneOptions } from '#lib/timezones.js';
 
-	let { action = null, models, defaultTimezone, onsaved, oncancel } = $props<{
+	let { action = null, models, dots, presetDotId = null, defaultTimezone, onsaved, oncancel } = $props<{
 		action?: ScheduledAction | null;
 		models: ChatModelOption[];
+		dots: Dot[];
+		presetDotId?: string | null;
 		defaultTimezone: string;
 		onsaved: () => void | Promise<void>;
 		oncancel?: () => void;
 	}>();
 	const initial = untrack(() => action);
+	const initialDotId = untrack(() => initial?.dot_id ?? presetDotId);
+	let dotId = $state(initialDotId ?? '');
 	let name = $state(initial?.name ?? '');
 	let model = $state(untrack(() => initial?.model ?? models[0]?.id ?? ''));
 	let prompt = $state(initial?.prompt ?? '');
@@ -84,7 +90,7 @@
 		busy = true;
 		error = null;
 		const body = {
-			name, prompt, model, cron, timezone, tools_enabled: toolsEnabled,
+			name, prompt, model, cron, timezone, dot_id: dotId || null, tools_enabled: toolsEnabled,
 			reuse_conversation: reuseConversation, reuse_rounds: reuseRounds,
 			...linkedSessionField(reuseConversation, initialLinked, linkedSession)
 		};
@@ -120,6 +126,7 @@
 				<input class="input min-w-0 w-full" bind:value={model} required aria-label={t('scheduled-model-label')} placeholder={t('scheduled-model-placeholder')} />
 			{/if}
 		</label>
+		<DotRunPicker {dots} initialId={initial?.dot_id ?? null} bind:value={dotId} onchange={() => (linkedSession = '')} />
 		{#if selectedModel && !selectedModel.gdpr}<div class="alert alert-error"><span>{t('scheduled-gdpr-warning')}</span></div>{/if}
 		{#if selectedModel && !selectedModel.nda}<div class="alert alert-error"><span>{t('scheduled-nda-warning')}</span></div>{/if}
 		<label class="flex min-w-0 w-full flex-col gap-1">
@@ -186,7 +193,7 @@
 			<label class="label cursor-pointer justify-start gap-3 whitespace-normal"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={reuseConversation} /><span>{t('scheduled-reuse-toggle-label')}</span></label>
 			{#if reuseConversation}<label class="flex items-center gap-2 text-sm"><span class="opacity-70">{t('scheduled-reuse-rounds-prefix')}</span><input class="input input-sm w-20" type="number" min="1" max="50" bind:value={reuseRounds} aria-label={t('scheduled-reuse-rounds-aria')} /><span class="opacity-70">{t('scheduled-reuse-rounds-suffix')}</span></label>{/if}
 		</div>
-		{#if reuseConversation}<LinkedChatPicker bind:value={linkedSession} />{/if}
+		{#if reuseConversation}<LinkedChatPicker bind:value={linkedSession} dotId={dotId || null} />{/if}
 
 		<div class="card-actions justify-end">
 			{#if oncancel}<button class="btn" type="button" onclick={oncancel}>{t('admin-cancel')}</button>{/if}

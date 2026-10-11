@@ -256,8 +256,10 @@ export const api = {
 	// --- Chat (issue #22 phase 2; wire shapes in chat-protocol.ts) --------
 
 	/** GET /api/v0/chat/sessions — the sidebar list (pinned first). */
-	listChatSessions: () =>
-		request<{ sessions: import('./chat-protocol.js').ChatSession[] }>('/api/v0/chat/sessions'),
+	listChatSessions: (dotId?: string | null) =>
+		request<{ sessions: import('./chat-protocol.js').ChatSession[] }>(
+			`/api/v0/chat/sessions${dotId === undefined ? '' : `?dot_id=${encodeURIComponent(dotId ?? '')}`}`
+		),
 
 	/** GET /api/v0/chat/landing — latest conversation, or the caller's first. */
 	chatLanding: () =>

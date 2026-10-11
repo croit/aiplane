@@ -39,7 +39,7 @@ integrations and features vary with each installation's configuration.*
 | Upload files, edit canvas documents, inspect versions and download results | [Files and documents](guide/files-and-canvas.md) |
 | Enable capabilities, connect your accounts, use browser control and skills | [Tools and integrations](guide/tools-and-integrations.md) |
 | Manage preferences, tokens, notifications, usage and limits | [Your account](guide/account-and-usage.md) |
-| Schedule prompts, trigger webhooks and respond to pending decisions | [Automation and inbox](guide/automation-and-inbox.md) |
+| Run prompts as the ordinary assistant or a personal Dot, trigger webhooks and respond to pending decisions | [Automation and inbox](guide/automation-and-inbox.md) |
 
 ## Administer the installation
 
@@ -54,7 +54,15 @@ integrations and features vary with each installation's configuration.*
 
 ## Build and publish agents
 
-- [AIplane Dots: product and architecture specification](dots.md).
+- [AIplane Dots: implemented personal behavior and product specification](dots.md).
+- [Personal Dot scheduled and event-driven work](guide/automation-and-inbox.md#run-scheduled-or-event-driven-work-as-a-dot).
+- [Persistent Dot workspace proposal](dots-workspace.md): planned storage and browser behavior, not an available feature.
+- [Dot identity proposal](dots-identities.md): planned connector identities and organization ownership.
+- [Dot action rules proposal](dots-action-rules.md): planned permissions within individual tools.
+- [Dot communication proposal](dots-communication.md): planned delegation and consent between Dots.
+- [Grok Bot comparison](dots-grok-comparison.md): researched capabilities, coverage and additional product gaps.
+- [Dot browser handover proposal](dots-browser-handover.md): planned human login and exclusive browser control.
+- [Dot workflow teaching proposal](dots-workflow-teaching.md): planned reviewed guidance through existing personal Skills.
 - [Create an agent](agent-guide/create.md).
 - [Configure permissions](agent-guide/permissions.md).
 - [Test and publish](agent-guide/test-publish.md).

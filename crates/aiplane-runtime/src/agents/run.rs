@@ -114,9 +114,19 @@ pub async fn run_turn_with(
             prompt: turn.message,
             model: &profile.model,
             existing_session: turn.session_id.map(str::to_string),
+            dot_id: None,
         },
     )
-    .await?;
+    .await
+    .map_err(|error| match error {
+        crate::server::headless::OpenError::Storage(error) => AgentRunError::Db(error),
+        crate::server::headless::OpenError::Busy => AgentRunError::Busy {
+            session: turn.session_id.unwrap_or_default().to_string(),
+        },
+        crate::server::headless::OpenError::Unavailable => {
+            AgentRunError::Unavailable(profile.principal.id.clone())
+        }
+    })?;
     let opened = OpenedTurn {
         agent_id: profile.principal.id.clone(),
         version: profile.version,
@@ -230,7 +240,7 @@ async fn drive_and_read(
 ) -> Result<AgentReply, AgentRunError> {
     let params = profile.drive_params(&turn.session_id, &turn.turn_id, chain.clone())?;
     match resume {
-        Some(resume) => drive_resumed(state, params, resume).await,
+        Some(resume) => drive_resumed(state, params, resume, None).await,
         None => {
             if let Some(lang) = turn.lang {
                 run_sessions::set_run_lang(&state.db, &turn.session_id, lang).await?;
