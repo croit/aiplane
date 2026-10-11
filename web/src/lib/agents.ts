@@ -48,9 +48,10 @@ export function agentPublicName(agent: Pick<AgentSummary, 'dot' | 'name'>): stri
     return agent.dot?.name ?? agent.name;
 }
 
-export function agentUiCapabilities(agent: Pick<AgentSummary, 'dot'> | null | undefined) {
+export function agentUiCapabilities(agent: (Pick<AgentSummary, 'dot'> & Partial<Pick<AgentSummary, 'access'>>) | null | undefined) {
     const enabled = !!agent && !organizationOwner(agent);
-    return { execution: enabled, site: enabled, channels: enabled, embed: enabled };
+    const draftChat = enabled || (!!organizationOwner(agent) && agent?.access === 'write');
+    return { draftChat, execution: enabled, site: enabled, channels: enabled, embed: enabled };
 }
 
 export interface Grant {

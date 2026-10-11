@@ -49,7 +49,7 @@ pub async fn run_draft_turn(
     draft: &Value,
     options: RunOptions,
 ) -> Result<AgentReply, AgentRunError> {
-    let (profile, opened) = open_draft_turn(state, turn, draft, &options).await?;
+    let (profile, opened) = open_draft_turn(state, turn, draft, &options, None).await?;
     drive_opened(state, &profile, &opened).await
 }
 
@@ -69,6 +69,7 @@ pub async fn start_draft_turn(
     turn: AgentTurn<'_>,
     draft: &Value,
     options: &RunOptions,
+    initiator_user_id: &str,
 ) -> Result<StartedDraftTurn, AgentRunError> {
     let busy = |session: &str| AgentRunError::Busy {
         session: session.to_string(),
@@ -78,7 +79,8 @@ pub async fn start_draft_turn(
     {
         return Err(busy(session));
     }
-    let (profile, opened) = open_draft_turn(state, turn, draft, options).await?;
+    let (profile, opened) =
+        open_draft_turn(state, turn, draft, options, Some(initiator_user_id)).await?;
     match claim(
         &state.chats,
         &opened.agent_id,
@@ -112,7 +114,19 @@ async fn open_draft_turn(
     turn: AgentTurn<'_>,
     draft: &Value,
     options: &RunOptions,
+    initiator_user_id: Option<&str>,
 ) -> Result<(RunProfile, OpenedTurn), AgentRunError> {
+    let organization = match agents_db::dot_owner(&state.db, turn.agent_id).await? {
+        Some(agents_db::DotOwner::Organization(id)) => {
+            if initiator_user_id.is_none() || turn.visitor_id.is_some() {
+                return Err(AgentRunError::OrganizationExecutionUnavailable(
+                    turn.agent_id.to_owned(),
+                ));
+            }
+            Some(id)
+        }
+        _ => None,
+    };
     if let Some(session) = turn.session_id {
         let continues = run_sessions::get_principal_session(&state.db, turn.agent_id, session)
             .await?
@@ -136,23 +150,70 @@ async fn open_draft_turn(
         options,
     )
     .await?;
-    let (session_id, turn_id) = open_session(
-        &state.db,
-        OpenParams {
-            owner: Owner::Run {
-                principal_id: &profile.principal.id,
-                parent_turn_id: None,
-                agent_version: Some(DRAFT_VERSION),
-            },
-            title: &profile.principal.name,
-            prompt: turn.message,
-            model: &profile.model,
-            existing_session: turn.session_id.map(str::to_string),
-            dot_id: None,
+    let params = OpenParams {
+        owner: Owner::Run {
+            principal_id: &profile.principal.id,
+            parent_turn_id: None,
+            agent_version: Some(DRAFT_VERSION),
         },
-    )
-    .await
-    .map_err(|error| match error {
+        title: &profile.principal.name,
+        prompt: turn.message,
+        model: &profile.model,
+        existing_session: turn.session_id.map(str::to_string),
+        dot_id: None,
+    };
+    let opened = if let Some(organization_id) = organization {
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
+        let current_owner = agents_db::get_dot_metadata_in(&mut tx, turn.agent_id).await?;
+        if current_owner.is_none_or(|dot| {
+            !dot.active || dot.owner != agents_db::DotOwner::Organization(organization_id)
+        }) || crate::agents::access::organization_access_in(
+            state,
+            &mut tx,
+            turn.agent_id,
+            initiator_user_id.unwrap_or_default(),
+        )
+        .await?
+            != Some(agents_db::Access::Write)
+        {
+            return Err(AgentRunError::OrganizationExecutionUnavailable(
+                turn.agent_id.to_owned(),
+            ));
+        }
+        let opened = crate::server::headless::open_principal_session_in(&mut tx, params).await;
+        match opened {
+            Ok((session_id, turn_id)) => {
+                let chain = Arc::new(aiplane_core::server::run_chain::RunChain::root(
+                    &session_id,
+                    None,
+                    aiplane_core::server::run_chain::Frame::for_principal(&profile.principal, None),
+                ));
+                let drive = profile.drive_params(&session_id, &turn_id, chain)?;
+                let crate::agent_run::Actor::Agent(run) = drive.actor else {
+                    return Err(AgentRunError::OrganizationExecutionUnavailable(
+                        turn.agent_id.to_owned(),
+                    ));
+                };
+                let current =
+                    crate::agents::profile::validate_organization_turn_in(&mut tx, &run).await?;
+                if !current.grants.has(
+                    aiplane_core::server::principal::GrantKind::Model,
+                    &profile.model,
+                ) {
+                    return Err(AgentRunError::ModelNotGranted {
+                        agent: profile.principal.id.clone(),
+                        model: profile.model.clone(),
+                    });
+                }
+                tx.commit().await?;
+                Ok((session_id, turn_id))
+            }
+            Err(error) => Err(error),
+        }
+    } else {
+        open_session(&state.db, params).await
+    };
+    let (session_id, turn_id) = opened.map_err(|error| match error {
         crate::server::headless::OpenError::Storage(error) => AgentRunError::Db(error),
         crate::server::headless::OpenError::Busy => AgentRunError::Busy {
             session: turn.session_id.unwrap_or_default().to_string(),

@@ -39,7 +39,7 @@ use aiplane_core::server::upstreams::{PoolAccess, PoolKind};
 use serde_json::{Value, json};
 
 use crate::rama_server::state::RamaState;
-use crate::server::model_route::route_target;
+use crate::server::model_route::{ModelAuthority, live_model_access, route_target};
 
 /// Who a side call is for: whose spend limits it must pass and whose usage
 /// row it is.
@@ -49,6 +49,8 @@ pub struct Payer {
     email: Option<String>,
     source: UsageSource,
     run: Option<Arc<RunChain>>,
+    authority: Option<ModelAuthority>,
+    context_error: Option<String>,
 }
 
 impl Payer {
@@ -62,6 +64,8 @@ impl Payer {
             email,
             source,
             run: None,
+            authority: None,
+            context_error: None,
         }
     }
 
@@ -74,6 +78,8 @@ impl Payer {
             principal: Principal::System(principal.clone()),
             source: UsageSource::Agent,
             run,
+            authority: None,
+            context_error: None,
         }
     }
 
@@ -89,7 +95,55 @@ impl Payer {
             email,
             source,
             run,
+            authority: None,
+            context_error: None,
         }
+    }
+
+    pub(crate) fn with_model_context(
+        mut self,
+        context: &crate::server::tools::ToolContext,
+    ) -> Self {
+        self.authority = context.agent.clone().map(ModelAuthority::live);
+        self.context_error = self.authority.as_ref().and_then(|authority| {
+            authority
+                .check_turn(
+                    context.session_id.as_deref(),
+                    context.assistant_turn_id.as_deref(),
+                )
+                .err()
+        });
+        self
+    }
+
+    pub(crate) fn for_compaction(
+        mut self,
+        run: Arc<crate::agent_run::AgentRun>,
+        requested_model: String,
+    ) -> Self {
+        self.authority = Some(ModelAuthority::compaction(run, requested_model));
+        self
+    }
+
+    pub(super) async fn compaction_access_in(
+        &self,
+        state: &crate::server::AppState,
+        tx: &mut aiplane_core::server::db::WriteTx,
+        access: &PoolAccess,
+        model: &str,
+    ) -> Result<(), String> {
+        if let Some(authority) = &self.authority {
+            authority
+                .compaction_access_in(state, tx, access, model)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn is_organization_compaction(&self) -> bool {
+        self.authority
+            .as_ref()
+            .is_some_and(ModelAuthority::is_organization_compaction)
     }
 
     /// The first of the payer's ceilings `model` is already over, if any.
@@ -430,6 +484,9 @@ async fn send(
     format: Option<Value>,
     exchange: &mut SideExchange,
 ) -> Result<Value, SideCallError> {
+    if let Some(error) = &payer.context_error {
+        return Err(failed(error));
+    }
     let input = if call.no_think {
         format!("{}\n\n/no_think", call.input)
     } else {
@@ -445,6 +502,8 @@ async fn send(
         &json!({ "messages": messages, "tools": [] }),
         call.access,
         None,
+        &payer.principal,
+        payer.authority.as_ref(),
     )
     .await
     .map_err(failed)?;
@@ -452,9 +511,19 @@ async fn send(
     if let Some(exceeded) = payer.over_budget(state, &target.model).await {
         return Err(SideCallError::OverBudget(exceeded));
     }
+    let access = live_model_access(
+        state,
+        &payer.principal,
+        payer.authority.as_ref(),
+        &target.access,
+        call.model,
+        target.decision.as_ref(),
+    )
+    .await
+    .map_err(failed)?;
     let acquired = state
         .upstreams
-        .route_access(&target.model, PoolKind::Chat, &target.access)
+        .route_access(&target.model, PoolKind::Chat, &access)
         .map_err(failed)?;
     let backend = acquired.backend();
     let mut body = json!({

@@ -168,7 +168,7 @@ impl Tool for LivePersonalDotTool {
                 }
             }
             Permissions::from_spec(&spec)
-                .gate_personal_dot(tool)
+                .gate_dot(tool)
                 .run(ctx, args)
                 .await
             }.await;

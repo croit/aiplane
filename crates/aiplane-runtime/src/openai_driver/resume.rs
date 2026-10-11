@@ -103,6 +103,37 @@ pub(super) async fn pause(
         }
         None => now + jiff::SignedDuration::from_secs(request.timeout_secs as i64),
     };
+    let authority = d
+        .tool_ctx
+        .agent
+        .as_ref()
+        .and_then(|run| crate::agents::profile::OrganizationResumeAuthority::capture(run));
+    if authority.is_none()
+        && let Some(run) = d
+            .tool_ctx
+            .agent
+            .as_ref()
+            .filter(|run| run.organization().is_some())
+    {
+        return Err(TurnError::Aborted {
+            message: crate::agents::profile::AgentRunError::OrganizationExecutionUnavailable(
+                run.system_principal().id.clone(),
+            )
+            .to_string(),
+        });
+    }
+    let run_context = match authority {
+        Some(authority) => {
+            Some(
+                authority
+                    .attach_to(request.context)
+                    .map_err(|error| TurnError::Aborted {
+                        message: error.to_string(),
+                    })?,
+            )
+        }
+        None => request.context,
+    };
     let suspension = TurnSuspension {
         turn_id: ctx.assistant_turn_id.clone(),
         request_id: uuid::Uuid::new_v4().to_string(),
@@ -121,7 +152,7 @@ pub(super) async fn pause(
         on_timeout: request.kind.timeout_fallback(request.on_timeout),
         expires_at,
         created_at: now,
-        run_context: request.context,
+        run_context,
     };
     let paused = chat::suspend_turn(&d.state.db, &suspension)
         .await

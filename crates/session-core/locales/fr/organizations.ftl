@@ -5,7 +5,7 @@ organization-error-permission-required = Vous devez être membre de l’organisa
 organization-error-active-limit = L’organisation a atteint sa limite de Dots actifs. Désactivez un Dot ou demandez à un administrateur d’augmenter la limite.
 organization-error-name-conflict = Cette organisation possède déjà un Dot portant ce nom. Choisissez un autre nom.
 organization-error-admin-required = Seuls les administrateurs peuvent gérer les paramètres de l’organisation. Demandez à un administrateur d’effectuer cette modification.
-organization-error-execution-unavailable = Les Dots d’organisation peuvent être configurés, mais leur exécution est indisponible sur cette installation. Contactez votre administrateur avant de lancer ce Dot.
+organization-error-execution-unavailable = Ce Dot d’organisation ou ses autorisations d’exécution sont indisponibles. Vérifiez son état actif, ses autorisations et la conversation privée avant de réessayer.
 organizations-heading = Organisations
 organizations-empty = Aucune organisation n’est disponible pour vous.
 organization-create = Créer une organisation
@@ -17,6 +17,6 @@ organization-saved = Organisation enregistrée.
 organization-dots-empty = Aucun Dot n’est partagé avec vous dans cette organisation.
 organization-active-count = { $count } Dots actifs sur { $limit }
 organization-owned-by = Organisation : { $name }
-organization-configuration-only = Ce Dot d’organisation peut être configuré et publié. Les conversations, l’automatisation et les canaux externes sont indisponibles.
+organization-configuration-only = Ce Dot d’organisation peut être configuré et publié. Les membres disposant d’un accès en écriture peuvent tester son brouillon enregistré dans une conversation privée. Les conversations publiées, les suites de tests automatisées, l’automatisation et les canaux externes sont indisponibles.
 organization-share-search-truncated = La recherche a atteint sa limite. Saisissez un nom plus précis ou une adresse e-mail complète.
 

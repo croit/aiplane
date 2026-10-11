@@ -23,12 +23,12 @@
 //! - **Budget**, **finish contract** (sub-agents only) and an injection policy
 //!   of `Flag`: an agent's tool results are untrusted data by default.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use aiplane_agents::db::{agents as agents_db, system_principals as sp};
 use aiplane_core::server::db::{DbError, Pool};
-use aiplane_core::server::principal::{GrantKind, SystemPrincipal};
+use aiplane_core::server::principal::{GrantKind, GrantSet, SystemPrincipal};
 use aiplane_core::server::run_chain::RunChain;
 use aiplane_core::server::upstreams::PoolAccess;
 use serde_json::Value;
@@ -47,7 +47,7 @@ use super::spec_cache::CompiledSpec;
 use super::state::{self, StateSchema, StateSnapshot, render_view};
 use super::topic_guard::TopicGuard;
 use super::verifier::{self, VerifierRun, Verifiers};
-use crate::agent_run::{Actor, AgentRun, MismatchedRun};
+use crate::agent_run::{Actor, AgentRun, MismatchedRun, OrganizationTurnContext};
 use crate::budget::{Budget, SpendMeter};
 use crate::finish::FinishContract;
 use crate::rama_server::state::RamaState;
@@ -150,6 +150,8 @@ pub enum Role {
 
 /// One agent's live version, ready to drive.
 pub struct RunProfile {
+    organization: Option<(String, Arc<RamaState>)>,
+    original_draft: Option<Value>,
     pub principal: SystemPrincipal,
     pub version: i64,
     pub model: String,
@@ -208,17 +210,65 @@ impl RunProfile {
         role: Role,
         options: &RunOptions,
     ) -> Result<Self, AgentRunError> {
-        if matches!(
-            agents_db::dot_owner(&state.db, agent_id).await?,
-            Some(agents_db::DotOwner::Organization(_))
-        ) {
-            return Err(AgentRunError::OrganizationExecutionUnavailable(
-                agent_id.to_owned(),
-            ));
-        }
-        let principal = sp::load_active(&state.db, agent_id)
+        Self::load_source(state, agent_id, source, role, options, None).await
+    }
+
+    pub(crate) async fn load_organization_resume(
+        state: &Arc<RamaState>,
+        authority: &OrganizationResumeAuthority,
+        options: &RunOptions,
+    ) -> Result<Self, AgentRunError> {
+        Self::load_source(
+            state,
+            &authority.principal_id,
+            authority.source(),
+            Role::Main,
+            options,
+            Some(authority),
+        )
+        .await
+    }
+
+    async fn load_source(
+        state: &Arc<RamaState>,
+        agent_id: &str,
+        source: SpecSource,
+        role: Role,
+        options: &RunOptions,
+        authority: Option<&OrganizationResumeAuthority>,
+    ) -> Result<Self, AgentRunError> {
+        let original_draft = match &source {
+            SpecSource::Draft(value) => Some(value.clone()),
+            _ => None,
+        };
+        let organization = match agents_db::dot_owner(&state.db, agent_id).await? {
+            Some(agents_db::DotOwner::Organization(id))
+                if matches!(&source, SpecSource::Draft(_)) =>
+            {
+                Some((id, state.clone()))
+            }
+            Some(agents_db::DotOwner::Organization(_)) => {
+                return Err(AgentRunError::OrganizationExecutionUnavailable(
+                    agent_id.to_owned(),
+                ));
+            }
+            _ => None,
+        };
+        let current = sp::load_active(&state.db, agent_id)
             .await?
             .ok_or_else(|| AgentRunError::Unavailable(agent_id.to_string()))?;
+        let principal = match authority {
+            Some(saved) => {
+                if organization.as_ref().map(|(id, _)| id.as_str())
+                    != Some(saved.organization_id.as_str())
+                    || saved.principal_id != agent_id
+                {
+                    return Err(saved.unavailable());
+                }
+                saved.initial_principal(current.name)?
+            }
+            None => current,
+        };
         let compiled = match source {
             SpecSource::Live => state
                 .agent_specs
@@ -246,11 +296,14 @@ impl RunProfile {
         let parts = compiled.parts().map_err(|m| bad(m.to_string()))?;
         let spec = &parts.agent;
         let (schema, gates) = (parts.schema.clone(), parts.gates.clone());
-        let model = super::defaults::main_model(state, spec)
-            .await
-            .ok_or_else(|| AgentRunError::NoModel {
-                agent: principal.name.clone(),
-            })?;
+        let model = match authority {
+            Some(saved) => saved.model.clone(),
+            None => super::defaults::main_model(state, spec)
+                .await
+                .ok_or_else(|| AgentRunError::NoModel {
+                    agent: principal.name.clone(),
+                })?,
+        };
         if !principal.grants.has(GrantKind::Model, &model) {
             return Err(AgentRunError::ModelNotGranted {
                 agent: principal.name.clone(),
@@ -282,13 +335,20 @@ impl RunProfile {
 
         let output_filter = parts.output_filter.clone().map_err(bad)?;
         let mut synthetic: BTreeMap<String, Synthetic> = BTreeMap::new();
-        let mut add = |tool: Arc<dyn Tool>, phase: ToolPhase| {
-            synthetic.insert(tool.id().to_string(), Synthetic { tool, phase });
+        let mut add = |tool: Arc<dyn Tool>, phase: ToolPhase, dependency_tool_ids: Vec<String>| {
+            synthetic.insert(
+                tool.id().to_string(),
+                Synthetic {
+                    tool,
+                    phase,
+                    dependency_tool_ids,
+                },
+            );
         };
         let slot_tools = SlotTools::with_clock(schema.clone(), options.now.clone());
         for id in slot_tools.ids() {
             if let Some(tool) = slot_tools.get(&id) {
-                add(tool, ToolPhase::WritesState);
+                add(tool, ToolPhase::WritesState, Vec::new());
             }
         }
         if matches!(role, Role::Main) {
@@ -298,8 +358,12 @@ impl RunProfile {
                 schema: schema.clone(),
                 options: options.clone(),
             };
-            for tool in verifier::tools(&Verifiers::from_spec(spec), &run) {
-                add(tool, ToolPhase::WritesState);
+            for descriptor in verifier::tools(&Verifiers::from_spec(spec), &run) {
+                add(
+                    descriptor.tool,
+                    ToolPhase::WritesState,
+                    descriptor.dependency_tool_ids,
+                );
             }
         }
         let snapshot = Arc::new(StateSnapshot::default());
@@ -321,10 +385,10 @@ impl RunProfile {
             if matches!(role, Role::Main)
                 && let Some(human) = RequestHuman::new(router.clone(), options.clone())
             {
-                add(Arc::new(human), ToolPhase::ActsOnState);
+                add(Arc::new(human), ToolPhase::ActsOnState, Vec::new());
             }
             let forward = ForwardRequest::new(state.clone(), router, options.clone());
-            add(Arc::new(forward), ToolPhase::ActsOnState);
+            add(Arc::new(forward), ToolPhase::ActsOnState, Vec::new());
         }
         let binds = match role {
             Role::Main => ToolBinds::from_spec(spec),
@@ -347,7 +411,14 @@ impl RunProfile {
             models,
             spend: options.spend.clone(),
         };
+        if let Some(saved) = authority
+            && saved.synthetic_tools != synthetic_dependencies(&surface.synthetic)
+        {
+            return Err(saved.unavailable());
+        }
         Ok(Self {
+            organization,
+            original_draft,
             budget: spec.main.budget.budget(),
             principal,
             version,
@@ -379,8 +450,27 @@ impl RunProfile {
         assistant_turn_id: &str,
         chain: Arc<RunChain>,
     ) -> Result<DriveParams, MismatchedRun> {
+        let mut run = self.agent_run(chain)?;
+        if let Some((organization_id, state)) = &self.organization {
+            run = run.with_organization(OrganizationTurnContext {
+                organization_id: organization_id.clone(),
+                session_id: session_id.to_owned(),
+                assistant_turn_id: assistant_turn_id.to_owned(),
+                state: state.clone(),
+            });
+            if let Some(draft) = &self.original_draft {
+                let authority = OrganizationResumeAuthority::for_profile(
+                    self,
+                    draft.clone(),
+                    organization_id.clone(),
+                    session_id.to_owned(),
+                    assistant_turn_id.to_owned(),
+                );
+                run = run.with_organization_resume(authority);
+            }
+        }
         Ok(DriveParams {
-            actor: Actor::Agent(Arc::new(self.agent_run(chain)?)),
+            actor: Actor::Agent(Arc::new(run)),
             session_id: session_id.to_string(),
             assistant_turn_id: assistant_turn_id.to_string(),
             model: self.model.clone(),
@@ -388,6 +478,286 @@ impl RunProfile {
             history_limit: None,
         })
     }
+}
+
+const ORGANIZATION_RESUME_KEY: &str = "aiplane_organization_resume";
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OrganizationGrant {
+    kind: String,
+    reference: String,
+    pools: Option<BTreeSet<String>>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OrganizationResumeAuthority {
+    pub(crate) principal_id: String,
+    pub(crate) organization_id: String,
+    pub(crate) session_id: String,
+    pub(crate) assistant_turn_id: String,
+    draft: Value,
+    pub(crate) model: String,
+    grants: Vec<OrganizationGrant>,
+    pub(crate) synthetic_tools: BTreeMap<String, Vec<String>>,
+}
+
+fn synthetic_dependencies(
+    synthetic: &BTreeMap<String, Synthetic>,
+) -> BTreeMap<String, Vec<String>> {
+    synthetic
+        .iter()
+        .map(|(id, tool)| (id.clone(), tool.dependency_tool_ids.clone()))
+        .collect()
+}
+
+impl OrganizationResumeAuthority {
+    fn for_profile(
+        profile: &RunProfile,
+        draft: Value,
+        organization_id: String,
+        session_id: String,
+        assistant_turn_id: String,
+    ) -> Self {
+        Self {
+            principal_id: profile.principal.id.clone(),
+            organization_id,
+            session_id,
+            assistant_turn_id,
+            draft,
+            model: profile.model.clone(),
+            grants: profile
+                .principal
+                .grants
+                .iter()
+                .map(|(kind, reference)| OrganizationGrant {
+                    kind: kind.as_str().to_owned(),
+                    reference: reference.to_owned(),
+                    pools: profile
+                        .principal
+                        .grants
+                        .model_pools(reference)
+                        .cloned()
+                        .filter(|_| kind == GrantKind::Model),
+                })
+                .collect(),
+            synthetic_tools: synthetic_dependencies(&profile.surface.synthetic),
+        }
+    }
+
+    pub(crate) fn capture(run: &AgentRun) -> Option<Self> {
+        run.organization_resume().cloned()
+    }
+
+    pub(crate) fn from_context(context: Option<&Value>) -> Option<Self> {
+        serde_json::from_value(context?.get(ORGANIZATION_RESUME_KEY)?.clone()).ok()
+    }
+
+    pub(crate) fn attach_to(&self, context: Option<Value>) -> Result<Value, AgentRunError> {
+        let mut context = match context {
+            None => serde_json::Map::new(),
+            Some(Value::Object(context)) if !context.contains_key(ORGANIZATION_RESUME_KEY) => {
+                context
+            }
+            _ => return Err(self.unavailable()),
+        };
+        context.insert(
+            ORGANIZATION_RESUME_KEY.to_owned(),
+            serde_json::to_value(self).map_err(|_| self.unavailable())?,
+        );
+        Ok(Value::Object(context))
+    }
+
+    pub(crate) fn source(&self) -> SpecSource {
+        SpecSource::Draft(self.draft.clone())
+    }
+
+    fn unavailable(&self) -> AgentRunError {
+        AgentRunError::OrganizationExecutionUnavailable(self.principal_id.clone())
+    }
+
+    fn initial_principal(&self, name: String) -> Result<SystemPrincipal, AgentRunError> {
+        let mut grants = BTreeSet::new();
+        let mut pools = Vec::new();
+        if self.principal_id.is_empty()
+            || self.organization_id.is_empty()
+            || self.session_id.is_empty()
+            || self.assistant_turn_id.is_empty()
+            || self.model.is_empty()
+        {
+            return Err(self.unavailable());
+        }
+        for grant in &self.grants {
+            let kind = GrantKind::parse(&grant.kind).ok_or_else(|| self.unavailable())?;
+            if grant.reference.is_empty()
+                || !grants.insert((kind, grant.reference.clone()))
+                || (kind != GrantKind::Model && grant.pools.is_some())
+            {
+                return Err(self.unavailable());
+            }
+            if let Some(allowed) = &grant.pools {
+                pools.push((grant.reference.clone(), allowed.clone()));
+            }
+        }
+        Ok(SystemPrincipal {
+            id: self.principal_id.clone(),
+            name,
+            grants: Arc::new(GrantSet::new(grants).with_model_pools(pools)),
+        })
+    }
+}
+
+pub(crate) async fn validate_organization_resume_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    authority: &OrganizationResumeAuthority,
+) -> Result<SystemPrincipal, AgentRunError> {
+    let compiled = CompiledSpec::compile(agents_db::DRAFT_VERSION, authority.draft.clone());
+    compiled.parts().map_err(|_| authority.unavailable())?;
+    let initial = authority.initial_principal(String::new())?;
+    let current = validate_organization_authority_in(
+        tx,
+        &initial,
+        &authority.organization_id,
+        &authority.session_id,
+        &authority.assistant_turn_id,
+        OrganizationAdmission::Live,
+    )
+    .await?;
+    if !current.grants.has(GrantKind::Model, &authority.model) {
+        return Err(authority.unavailable());
+    }
+    Ok(current)
+}
+
+pub async fn validate_organization_turn_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    run: &AgentRun,
+) -> Result<SystemPrincipal, AgentRunError> {
+    validate_organization_context_in(tx, run, OrganizationAdmission::Live).await
+}
+
+pub async fn validate_organization_compaction_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    run: &AgentRun,
+) -> Result<SystemPrincipal, AgentRunError> {
+    validate_organization_context_in(tx, run, OrganizationAdmission::Compaction).await
+}
+
+enum OrganizationAdmission {
+    Live,
+    Compaction,
+}
+
+async fn validate_organization_context_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    run: &AgentRun,
+    admission: OrganizationAdmission,
+) -> Result<SystemPrincipal, AgentRunError> {
+    let initial = run.system_principal();
+    let unavailable = || AgentRunError::OrganizationExecutionUnavailable(initial.id.clone());
+    let context = run.organization().ok_or_else(unavailable)?;
+    validate_organization_authority_in(
+        tx,
+        initial,
+        &context.organization_id,
+        &context.session_id,
+        &context.assistant_turn_id,
+        admission,
+    )
+    .await
+}
+
+async fn validate_organization_authority_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    initial: &SystemPrincipal,
+    organization_id: &str,
+    session_id: &str,
+    assistant_turn_id: &str,
+    admission: OrganizationAdmission,
+) -> Result<SystemPrincipal, AgentRunError> {
+    let unavailable = || AgentRunError::OrganizationExecutionUnavailable(initial.id.clone());
+    let dot = agents_db::get_dot_metadata_in(tx, &initial.id)
+        .await?
+        .ok_or_else(unavailable)?;
+    if !dot.active
+        || dot.owner != agents_db::DotOwner::Organization(organization_id.to_owned())
+        || aiplane_agents::db::organizations::get_admin_in(tx, organization_id)
+            .await?
+            .is_none()
+    {
+        return Err(unavailable());
+    }
+    let mut current = sp::load_active_in(tx, &initial.id)
+        .await?
+        .ok_or_else(unavailable)?;
+    let valid: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM chat_sessions s JOIN chat_turns t ON t.session_id=s.id \
+         WHERE s.id=? AND s.principal_id=? AND s.user_id IS NULL AND s.shared=0 \
+         AND s.agent_version=? AND s.parent_turn_id IS NULL AND s.visitor_id IS NULL \
+         AND t.id=? AND t.role='assistant' AND (t.status=? OR t.status=?)",
+    )
+    .bind(session_id)
+    .bind(&initial.id)
+    .bind(agents_db::DRAFT_VERSION)
+    .bind(assistant_turn_id)
+    .bind(match admission {
+        OrganizationAdmission::Live => "in_progress",
+        OrganizationAdmission::Compaction => "completed",
+    })
+    .bind(match admission {
+        OrganizationAdmission::Live => "suspended",
+        OrganizationAdmission::Compaction => "completed",
+    })
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from)?;
+    if valid != 1 {
+        return Err(unavailable());
+    }
+    let grants = GrantSet::new(
+        initial
+            .grants
+            .iter()
+            .filter(|(kind, reference)| current.grants.has(*kind, reference))
+            .map(|(kind, reference)| (kind, reference.to_owned())),
+    );
+    let pools = grants
+        .refs(GrantKind::Model)
+        .filter_map(|model| {
+            let initial_pools = initial.grants.model_pools(model);
+            let current_pools = current.grants.model_pools(model);
+            let pools = match (initial_pools, current_pools) {
+                (Some(a), Some(b)) => a.intersection(b).cloned().collect(),
+                (Some(a), None) => a.clone(),
+                (None, Some(b)) => b.clone(),
+                (None, None) => return None,
+            };
+            Some((model.to_owned(), pools))
+        })
+        .collect::<Vec<_>>();
+    current.grants = Arc::new(grants.with_model_pools(pools));
+    Ok(current)
+}
+
+pub async fn validate_organization_turn(
+    state: &crate::server::AppState,
+    run: &AgentRun,
+) -> Result<SystemPrincipal, AgentRunError> {
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
+    let principal = validate_organization_turn_in(&mut tx, run).await?;
+    tx.commit().await?;
+    Ok(principal)
+}
+
+pub async fn validate_organization_compaction(
+    state: &crate::server::AppState,
+    run: &AgentRun,
+) -> Result<SystemPrincipal, AgentRunError> {
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
+    let principal = validate_organization_compaction_in(&mut tx, run).await?;
+    tx.commit().await?;
+    Ok(principal)
 }
 
 /// The main agent's conversation pieces: what its system message reports.
@@ -405,6 +775,7 @@ struct Conversation {
 struct Synthetic {
     tool: Arc<dyn Tool>,
     phase: ToolPhase,
+    dependency_tool_ids: Vec<String>,
 }
 
 /// What an agent's spec puts in front of the model on every round of its run:
@@ -509,6 +880,7 @@ impl AgentSurface {
             inner,
             run: Some(self),
             terminal: None,
+            agent: None,
         }
     }
 }
@@ -614,6 +986,7 @@ pub struct RunToolSource<'a> {
     inner: &'a dyn ToolSource,
     run: Option<&'a AgentSurface>,
     terminal: Option<Arc<dyn Tool>>,
+    agent: Option<&'a AgentRun>,
 }
 
 impl<'a> RunToolSource<'a> {
@@ -622,11 +995,64 @@ impl<'a> RunToolSource<'a> {
             inner,
             run: run.and_then(AgentRun::surface),
             terminal: run.and_then(AgentRun::terminal_tool),
+            agent: run,
         }
     }
 
     fn terminal(&self, id: &str) -> Option<&Arc<dyn Tool>> {
         self.terminal.as_ref().filter(|t| t.id() == id)
+    }
+
+    fn admitted(
+        &self,
+        tool: Arc<dyn Tool>,
+        dependencies: &[String],
+        grant_required: bool,
+    ) -> Arc<dyn Tool> {
+        let Some(run) = self.agent else {
+            return tool;
+        };
+        let Some(context) = run.organization() else {
+            return tool;
+        };
+        let unavailable = || {
+            AgentRunError::OrganizationExecutionUnavailable(run.system_principal().id.clone())
+                .to_string()
+        };
+        let facts =
+            dependencies
+                .iter()
+                .filter(|id| id.starts_with(crate::server::tools::mcp::MCP_ID_PREFIX))
+                .try_fold(None, |selected: Option<Value>, id| {
+                    let facts = self
+                        .inner
+                        .get(id)
+                        .and_then(|tool| tool.execution_facts())
+                        .ok_or_else(unavailable)?;
+                    if !matches!(
+                        serde_json::from_value::<
+                            crate::server::tools::mcp::identities::McpDispatchFacts,
+                        >(facts.clone()),
+                        Ok(crate::server::tools::mcp::identities::McpDispatchFacts::Owned(_))
+                    ) {
+                        return Err(unavailable());
+                    }
+                    if selected.as_ref().is_some_and(|previous| previous != &facts) {
+                        return Err(unavailable());
+                    }
+                    Ok(Some(facts))
+                })
+                .map(|facts| facts.or_else(|| tool.execution_facts()));
+        Arc::new(OrganizationTool {
+            inner: tool,
+            principal: run.system_principal().clone(),
+            session_id: context.session_id.clone(),
+            assistant_turn_id: context.assistant_turn_id.clone(),
+            organization_id: context.organization_id.clone(),
+            facts,
+            grant_required,
+            dependency_tool_ids: dependencies.to_vec(),
+        })
     }
 
     fn def_for(&self, id: &str) -> Option<ToolDef> {
@@ -656,10 +1082,20 @@ impl<'a> RunToolSource<'a> {
     /// is refused outright, so nobody is asked to approve a call that could
     /// not run.
     fn bound(&self, run: &AgentSurface, tool: Arc<dyn Tool>) -> Arc<dyn Tool> {
+        let gate = |tool| {
+            if self
+                .agent
+                .is_some_and(|agent| agent.organization().is_some())
+            {
+                run.permissions.gate_dot(tool)
+            } else {
+                run.permissions.gate(tool)
+            }
+        };
         let bound: Arc<dyn Tool> = match run.binds.for_tool(tool.id(), &tool.schema()) {
-            Ok(binds) if binds.is_empty() => run.permissions.gate(tool),
+            Ok(binds) if binds.is_empty() => gate(tool),
             Ok(binds) => Arc::new(BoundTool::new(
-                run.permissions.gate(tool),
+                gate(tool),
                 binds,
                 run.schema.clone(),
                 run.snapshot.clone(),
@@ -673,15 +1109,21 @@ impl<'a> RunToolSource<'a> {
 impl ToolSource for RunToolSource<'_> {
     fn get(&self, id: &str) -> Option<Arc<dyn Tool>> {
         if let Some(terminal) = self.terminal(id) {
-            return Some(terminal.clone());
+            return Some(self.admitted(terminal.clone(), &[], false));
         }
         let Some(run) = self.run else {
             return self.inner.get(id);
         };
         if let Some(synthetic) = run.synthetic.get(id) {
-            return Some(synthetic.tool.clone());
+            return Some(self.admitted(
+                synthetic.tool.clone(),
+                &synthetic.dependency_tool_ids,
+                false,
+            ));
         }
-        self.inner.get(id).map(|t| self.bound(run, t))
+        self.inner
+            .get(id)
+            .map(|t| self.admitted(self.bound(run, t), &[], true))
     }
 
     fn defs_for(&self, allowed: &[String]) -> Vec<ToolDef> {
@@ -722,6 +1164,165 @@ impl ToolSource for RunToolSource<'_> {
     }
 }
 
+struct OrganizationTool {
+    inner: Arc<dyn Tool>,
+    principal: SystemPrincipal,
+    organization_id: String,
+    session_id: String,
+    assistant_turn_id: String,
+    facts: Result<Option<Value>, String>,
+    grant_required: bool,
+    dependency_tool_ids: Vec<String>,
+}
+
+impl OrganizationTool {
+    async fn admit(
+        &self,
+        ctx: &crate::server::tools::ToolContext,
+    ) -> Result<Option<Value>, crate::server::tools::ToolError> {
+        use crate::server::tools::{
+            ToolError,
+            mcp::identities::{McpDispatchFacts, validate_organization_identity_in},
+        };
+        let refused = || {
+            ToolError::Failed(
+                AgentRunError::OrganizationExecutionUnavailable(self.principal.id.clone())
+                    .to_string(),
+            )
+        };
+        let run = ctx.agent.as_ref().ok_or_else(refused)?;
+        let context = run.organization().ok_or_else(refused)?;
+        if ctx.principal.subject_id() != self.principal.id
+            || run.system_principal().id != self.principal.id
+            || !Arc::ptr_eq(&run.system_principal().grants, &self.principal.grants)
+            || context.organization_id != self.organization_id
+            || context.session_id != self.session_id
+            || context.assistant_turn_id != self.assistant_turn_id
+            || ctx.session_id.as_deref() != Some(self.session_id.as_str())
+            || ctx.assistant_turn_id.as_deref() != Some(self.assistant_turn_id.as_str())
+        {
+            return Err(refused());
+        }
+        let facts = self.facts.clone().map_err(ToolError::Failed)?;
+        if let Some(pending) = &ctx.pending_execution_facts
+            && pending.execution_facts != facts
+        {
+            return Err(refused());
+        }
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&ctx.db)
+            .await
+            .map_err(|error| ToolError::Failed(AgentRunError::Db(error).to_string()))?;
+        let current = validate_organization_turn_in(&mut tx, run)
+            .await
+            .map_err(|error| ToolError::Failed(error.to_string()))?;
+        for dependency in &self.dependency_tool_ids {
+            if let Some(rest) = dependency.strip_prefix(crate::server::tools::mcp::MCP_ID_PREFIX) {
+                let (connector, _) = rest.split_once("__").ok_or_else(refused)?;
+                if !current.grants.has(GrantKind::Connector, connector) {
+                    return Err(refused());
+                }
+            } else if !current.grants.has(GrantKind::Tool, dependency) {
+                return Err(refused());
+            }
+        }
+        match facts.as_ref() {
+            Some(facts) => match serde_json::from_value::<McpDispatchFacts>(facts.clone()) {
+                Ok(McpDispatchFacts::Owned(identity)) => {
+                    validate_organization_identity_in(&mut tx, ctx, &identity).await?
+                }
+                Ok(McpDispatchFacts::Shared { .. }) => return Err(refused()),
+                Err(_)
+                    if self.grant_required
+                        && !current.grants.has(GrantKind::Tool, self.inner.id()) =>
+                {
+                    return Err(refused());
+                }
+                Err(_) => {}
+            },
+            None if self.grant_required
+                && !current.grants.has(GrantKind::Tool, self.inner.id()) =>
+            {
+                return Err(refused());
+            }
+            None => {}
+        }
+        tx.commit()
+            .await
+            .map_err(|error| ToolError::Failed(AgentRunError::Db(error).to_string()))?;
+        Ok(facts)
+    }
+}
+
+impl Tool for OrganizationTool {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+    fn schema(&self) -> ToolDef {
+        self.inner.schema()
+    }
+    fn execution_facts(&self) -> Option<Value> {
+        self.facts.as_ref().ok().cloned().flatten()
+    }
+    fn phase(&self) -> ToolPhase {
+        self.inner.phase()
+    }
+    fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+        self.inner.action_catalogue()
+    }
+    fn classify_actions<'a>(
+        &'a self,
+        ctx: crate::server::tools::ToolContext,
+        args: Value,
+    ) -> crate::server::tools::ToolActionFuture<'a> {
+        Box::pin(async move {
+            self.admit(&ctx).await?;
+            self.inner.classify_actions(ctx, args).await
+        })
+    }
+    fn run<'a>(
+        &'a self,
+        mut ctx: crate::server::tools::ToolContext,
+        args: Value,
+    ) -> crate::server::tools::ToolFuture<'a> {
+        Box::pin(async move {
+            let facts = self.admit(&ctx).await?;
+            if facts.is_some() && ctx.pending_execution_facts.is_none() {
+                ctx.pending_execution_facts = Some(crate::server::tools::PendingExecutionFacts {
+                    execution_facts: facts.clone(),
+                });
+            }
+            let body = self.inner.run(ctx, args).await?;
+            if let Some(mut suspension) = crate::suspend::extract_suspend(&body) {
+                if suspension
+                    .execution_facts
+                    .as_ref()
+                    .is_some_and(|existing| Some(existing) != facts.as_ref())
+                {
+                    return Err(crate::server::tools::ToolError::Failed(
+                        AgentRunError::OrganizationExecutionUnavailable(self.principal.id.clone())
+                            .to_string(),
+                    ));
+                }
+                suspension.execution_facts = facts;
+                return Ok(crate::suspend::tool_suspend(suspension));
+            }
+            Ok(body)
+        })
+    }
+    fn max_duration(&self) -> Option<std::time::Duration> {
+        self.inner.max_duration()
+    }
+    fn sensitive_args(&self) -> bool {
+        self.inner.sensitive_args()
+    }
+    fn changes_state(&self) -> bool {
+        self.inner.changes_state()
+    }
+    fn read_only(&self) -> bool {
+        self.inner.read_only()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -752,6 +1353,7 @@ mod tests {
             Synthetic {
                 tool: Arc::new(PhasedEcho),
                 phase: ToolPhase::WritesState,
+                dependency_tool_ids: Vec::new(),
             },
         );
         let agent = AgentRun::new(principal, chain)
@@ -967,5 +1569,164 @@ mod tests {
             .to_string();
         assert!(err.contains("`message`"), "{err}");
         assert!(err.contains("not available"), "{err}");
+    }
+    #[tokio::test]
+    async fn organization_resume_authority_round_trips_original_profile_and_preserves_other_context()
+     {
+        let server = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&server.uri()).await;
+        let (profile, params) =
+            crate::server::headless::tests::organization_draft_fixture(&state).await;
+        let crate::agent_run::Actor::Agent(run) = params.actor else {
+            panic!("agent expected")
+        };
+        let authority = super::OrganizationResumeAuthority::capture(&run).unwrap();
+        let context = authority.attach_to(Some(serde_json::json!({"route_binds":{"customer":"actual"},"handoff":{"question":"Actual question"}}))).unwrap();
+        assert_eq!(context["route_binds"]["customer"], "actual");
+        assert_eq!(context["handoff"]["question"], "Actual question");
+        let restored = super::OrganizationResumeAuthority::from_context(Some(&context)).unwrap();
+        assert_eq!(restored.model, profile.model);
+        assert_eq!(restored.draft, profile.original_draft.clone().unwrap());
+        assert_eq!(
+            restored.synthetic_tools,
+            super::synthetic_dependencies(&profile.surface.synthetic)
+        );
+        let principal = restored
+            .initial_principal(profile.principal.name.clone())
+            .unwrap();
+        assert_eq!(principal.grants, profile.principal.grants);
+        assert!(authority.attach_to(Some(context.clone())).is_err());
+        assert!(
+            authority
+                .attach_to(Some(serde_json::json!("untrusted context")))
+                .is_err()
+        );
+        let mut malformed = context;
+        malformed[super::ORGANIZATION_RESUME_KEY]["unknown_field"] = serde_json::json!(true);
+        assert!(super::OrganizationResumeAuthority::from_context(Some(&malformed)).is_none());
+        assert!(super::OrganizationResumeAuthority::from_context(None).is_none());
+    }
+
+    #[tokio::test]
+    async fn organization_resume_authority_retains_initial_model_pool_and_grant_ceiling() {
+        use aiplane_core::server::principal::{GrantKind, GrantSet};
+        let server = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&server.uri()).await;
+        let (mut profile, params) =
+            crate::server::headless::tests::organization_draft_fixture(&state).await;
+        let model = profile.model.clone();
+        profile.principal.grants = std::sync::Arc::new(
+            GrantSet::new(
+                profile
+                    .principal
+                    .grants
+                    .iter()
+                    .map(|(kind, reference)| (kind, reference.to_owned())),
+            )
+            .with_model_pools([(
+                model.clone(),
+                ["initial-pool".to_owned()].into_iter().collect(),
+            )]),
+        );
+        let crate::agent_run::Actor::Agent(original) = params.actor else {
+            panic!("agent expected")
+        };
+        let context = original.organization().unwrap();
+        let rebuilt = profile
+            .drive_params(
+                &context.session_id,
+                &context.assistant_turn_id,
+                original.chain().clone(),
+            )
+            .unwrap();
+        let crate::agent_run::Actor::Agent(run) = rebuilt.actor else {
+            panic!("agent expected")
+        };
+        let authority = super::OrganizationResumeAuthority::capture(&run).unwrap();
+        aiplane_agents::db::system_principals::add_grant(
+            &state.db,
+            &profile.principal.id,
+            GrantKind::Tool,
+            "get_current_timestamp",
+            "creator",
+        )
+        .await
+        .unwrap();
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        let current = super::validate_organization_resume_in(&mut tx, &authority)
+            .await
+            .unwrap();
+        assert!(!current.grants.has(GrantKind::Tool, "get_current_timestamp"));
+        assert_eq!(
+            current.grants.model_pools(&model),
+            Some(&["initial-pool".to_owned()].into_iter().collect())
+        );
+        drop(tx);
+        let restored =
+            super::RunProfile::load_organization_resume(&state, &authority, &Default::default())
+                .await
+                .unwrap();
+        assert_eq!(restored.principal.grants, profile.principal.grants);
+        assert_eq!(restored.model, model);
+    }
+
+    #[tokio::test]
+    async fn organization_resume_loader_keeps_the_original_resolved_default_model() {
+        use aiplane_core::server::feature_defaults::{self, Feature};
+        let server = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&server.uri()).await;
+        let (profile, params) =
+            crate::server::headless::tests::organization_draft_fixture(&state).await;
+        let model = profile.model.clone();
+        feature_defaults::set(&state.db, Feature::Chat, Some(&model))
+            .await
+            .unwrap();
+        let mut draft = profile.original_draft.clone().unwrap();
+        draft["main"].as_object_mut().unwrap().remove("model");
+        let profile = super::RunProfile::load_from(
+            &state,
+            &profile.principal.id,
+            super::SpecSource::Draft(draft),
+            super::Role::Main,
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+        let crate::agent_run::Actor::Agent(original) = params.actor else {
+            panic!("agent expected")
+        };
+        let context = original.organization().unwrap();
+        let rebuilt = profile
+            .drive_params(
+                &context.session_id,
+                &context.assistant_turn_id,
+                original.chain().clone(),
+            )
+            .unwrap();
+        let crate::agent_run::Actor::Agent(run) = rebuilt.actor else {
+            panic!("agent expected")
+        };
+        let authority = super::OrganizationResumeAuthority::capture(&run).unwrap();
+        for pool in state.upstreams.pools() {
+            pool.backends[0].set_models([model.clone(), "replacement-model".to_owned()].into());
+        }
+        feature_defaults::set(&state.db, Feature::Chat, Some("replacement-model"))
+            .await
+            .unwrap();
+        let spec = crate::agents::spec::AgentSpec::from_value(&authority.draft).unwrap();
+        assert_eq!(
+            crate::agents::defaults::main_model(&state, &spec)
+                .await
+                .as_deref(),
+            Some("replacement-model")
+        );
+        let restored =
+            super::RunProfile::load_organization_resume(&state, &authority, &Default::default())
+                .await
+                .unwrap();
+        assert_eq!(restored.model, model);
+        assert_eq!(restored.principal.grants, profile.principal.grants);
     }
 }

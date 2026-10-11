@@ -618,30 +618,23 @@ pub(crate) async fn add_capped_grant(
     lang: Lang,
 ) -> Result<GrantChange, Response> {
     let mut tx = begin_principal_write(state, manager, principal_id, lang).await?;
-    if kind == GrantKind::Connector
-        && matches!(
-            agents_db::dot_owner_in(&mut tx, principal_id)
-                .await
-                .map_err(internal)?,
-            Some(agents_db::DotOwner::Organization(_))
-        )
-    {
-        return Err(json_error(
-            StatusCode::FORBIDDEN,
-            "organization_execution_unavailable",
-            &t(lang, "organization-error-execution-unavailable"),
-        ));
-    }
-    let scope = grant_holding::grant_scope_in(state, &mut tx, &manager.id, kind, reference)
-        .await
-        .map_err(|refusal| match refusal {
-            HoldRefusal::Missing(_) => not_found(refusal.to_string()),
-            HoldRefusal::Invalid(why) => bad_request(why),
-            HoldRefusal::AdminOnly(why) => {
-                json_error(StatusCode::FORBIDDEN, "grant_exceeds_manager", &why)
-            }
-            HoldRefusal::Db(error) => internal(error),
-        })?;
+    let scope = grant_holding::grant_scope_in(
+        state,
+        &mut tx,
+        &manager.id,
+        kind,
+        reference,
+        Some(principal_id),
+    )
+    .await
+    .map_err(|refusal| match refusal {
+        HoldRefusal::Missing(_) => not_found(refusal.to_string()),
+        HoldRefusal::Invalid(why) => bad_request(why),
+        HoldRefusal::AdminOnly(why) => {
+            json_error(StatusCode::FORBIDDEN, "grant_exceeds_manager", &why)
+        }
+        HoldRefusal::Db(error) => internal(error),
+    })?;
     let Some(scope) = scope else {
         return Err(json_error(
             StatusCode::FORBIDDEN,

@@ -160,7 +160,7 @@ Examples of its task families:
 | `/api/v0/scheduled*`, `/api/v0/webhooks*`, `/api/v0/inbox*` | Automation and durable decisions; [automation guide](../guide/automation-and-inbox.md). |
 | `/api/v0/agents*` | Agent drafts, grants, evaluation, publication and observation; agent guides. |
 | `/api/v0/dots*` | List/create/active-state require resolved `can_manage_dots`; owner-scoped access remains enforced. The four connection routes additionally admit organization member writers for explicit own-principal OAuth management; they return independent action capabilities and no user credential. Other routes remain personal. Personal Dot lifecycle, tool selection, tool/action approval rules, private chats, memory and activity; scheduled actions and webhooks can run as an owned Dot; [AIplane Dots](../dots.md). |
-| `/api/v0/organizations*` | Current group-derived membership, organization details and named organization Dot creation/activation. Creation requires membership and agent-management permission; configuration uses existing agent shares and principal grants. Organization execution is unavailable until its principal bridge is implemented; [organization Dots](../dots-organizations.md). |
+| `/api/v0/organizations*` | Current group-derived membership, organization details and named organization Dot creation/activation. Creation requires membership and agent-management permission; configuration uses existing agent shares and principal grants. Organization member writers can run private saved-draft conversations through the existing agent test routes; published and automated execution remain unavailable; [organization Dots](../dots-organizations.md). |
 | `/api/v0/rag*` | Knowledge collections, snapshots, indexing and profiles; [knowledge](../admin/knowledge.md). |
 | `/api/v0/admin/*` | Administrative models, grants, settings and catalogs; administration guides. |
 | `/api/v0/setup/*` | Verified setup/recovery state machine. |
@@ -196,10 +196,27 @@ Dots count towards the limit. Creation and activation enforce that limit in
 the same transaction as the current authority check.
 
 `GET /api/v0/agent-resources?agent_id={id}` resolves the actual target agent's
-configuration inventory. Organization connector choices and direct connector
-grants remain unavailable until an explicit organization credential can be
-selected. Publishing or activating an organization Dot does not enable its
-execution; test and run admission refuse it without invoking a model.
+configuration inventory. An organization connector is offered and grantable
+only after a current member writer explicitly selects a connected own-principal
+OAuth credential with current catalogue, credential and binding generations.
+The writer's existing catalogue eligibility and grant ceiling also apply;
+a selected credential is separate from the principal's Connector grant.
+
+`POST /api/v0/agents/{id}/test/messages` admits an active organization Dot's
+saved draft for a current member writer. It creates or continues a private
+principal-owned conversation, with `user_id=NULL`, version `0`, no visitor
+and no parent turn. The existing test events and debug routes require current
+member Write access to that exact private conversation. Administrator recovery
+without membership does not admit these execution or history routes.
+
+The existing staff resume route rechecks that member's Write access in the
+atomic claim transaction. Saved internal authority retains the original draft,
+resolved model and initial principal grant/model-pool ceilings across restart;
+new draft edits and added grants cannot enlarge the paused run. Its original
+selected MCP account facts must remain current. A refused claim preserves the
+waiting request. Internal run context and credential secrets are absent from
+the public suspension response. Publishing a version does not enable
+organization published conversations, automation or external channels.
 
 Organization share suggestions use the existing eight-result cap and check
 current membership before including users. A search examines at most one

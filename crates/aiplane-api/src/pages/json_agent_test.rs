@@ -132,17 +132,6 @@ pub async fn send_message(State(state): State<Arc<RamaState>>, req: Request) -> 
     let lang = Lang::from_request(req.headers());
     let user = or_return!(require_agent_manager(&state, &req).await);
     let (agent, _) = or_return!(agent_at(&state, &req, &user, 2, Access::Write).await);
-    let owner = or_return!(
-        agents_db::dot_owner(&state.db, &agent.principal.id)
-            .await
-            .map_err(internal)
-    );
-    if matches!(owner, Some(agents_db::DotOwner::Organization(_))) {
-        return run_error(
-            AgentRunError::OrganizationExecutionUnavailable(agent.principal.id.clone()),
-            lang,
-        );
-    }
     let body: TestMessageBody =
         or_return!(super::read_json(req.into_body(), "the test message").await);
     if body.message.trim().is_empty() {
@@ -157,6 +146,7 @@ pub async fn send_message(State(state): State<Arc<RamaState>>, req: Request) -> 
         test_turn(&agent, &body.message, body.session_id.as_deref()),
         &draft,
         &RunOptions::default(),
+        &user.id,
     )
     .await
     {
@@ -187,13 +177,56 @@ fn test_turn<'a>(agent: &'a AgentRow, message: &'a str, session: Option<&'a str>
     }
 }
 
+async fn organization_test_access(
+    state: &RamaState,
+    agent: &AgentRow,
+    user_id: &str,
+    session_id: &str,
+    lang: Lang,
+) -> Result<bool, Response> {
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+        .await
+        .map_err(internal)?;
+    let organization = matches!(
+        agents_db::dot_owner_in(&mut tx, &agent.principal.id)
+            .await
+            .map_err(internal)?,
+        Some(agents_db::DotOwner::Organization(_))
+    );
+    if !organization {
+        return Ok(false);
+    }
+    let access = aiplane_runtime::agents::access::organization_access_in(
+        state,
+        &mut tx,
+        &agent.principal.id,
+        user_id,
+    )
+    .await
+    .map_err(internal)?;
+    let conversation =
+        run_sessions::get_private_draft_session_in(&mut tx, &agent.principal.id, session_id)
+            .await
+            .map_err(internal)?;
+    if access != Some(Access::Write) || conversation.is_none() {
+        return Err(not_found(t(lang, "organization-error-not-found")));
+    }
+    tx.commit().await.map_err(internal)?;
+    Ok(true)
+}
+
 /// `agent`'s test conversation `session_id`, or the response saying there is
 /// none: a visitor's conversation is never a test one.
 async fn test_conversation(
     state: &RamaState,
     agent: &AgentRow,
     session_id: &str,
+    user_id: &str,
+    lang: Lang,
 ) -> Result<(), Response> {
+    if organization_test_access(state, agent, user_id, session_id, lang).await? {
+        return Ok(());
+    }
     let run = run_sessions::get_principal_session(&state.db, &agent.principal.id, session_id)
         .await
         .map_err(internal)?;
@@ -208,12 +241,13 @@ async fn test_conversation(
 
 /// GET /api/v0/agents/{id}/test/{session}/events
 pub async fn events(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let user = or_return!(require_agent_manager(&state, &req).await);
     let (agent, _) = or_return!(agent_at(&state, &req, &user, 3, Access::Write).await);
     let Some(session_id) = raw_path_segment(&req, 1) else {
         return bad_request("the URL is missing the conversation id");
     };
-    or_return!(test_conversation(&state, &agent, &session_id).await);
+    or_return!(test_conversation(&state, &agent, &session_id, &user.id, lang).await);
     match state.chats.get(&agent.principal.id, &session_id) {
         Some(worker) => super::chat::json_api::live_stream(&state, &worker, session_id).await,
         None => match chat::list_turns(&state.db, &session_id).await {
@@ -225,13 +259,14 @@ pub async fn events(State(state): State<Arc<RamaState>>, req: Request) -> Respon
 
 /// GET /api/v0/agents/{id}/test/{session}/turns/{turn}/debug
 pub async fn turn_debug(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let user = or_return!(require_agent_manager(&state, &req).await);
     let (agent, _) = or_return!(agent_at(&state, &req, &user, 5, Access::Write).await);
     let (Some(session_id), Some(turn_id)) = (raw_path_segment(&req, 3), raw_path_segment(&req, 1))
     else {
         return bad_request("the URL is missing the conversation or the turn id");
     };
-    or_return!(test_conversation(&state, &agent, &session_id).await);
+    or_return!(test_conversation(&state, &agent, &session_id, &user.id, lang).await);
     let settled = tokio::time::timeout(
         DEBUG_SETTLE,
         embed_rt::released(&state.chats, &agent.principal.id, &session_id, &turn_id),
@@ -349,6 +384,7 @@ pub async fn resume_turn(State(state): State<Arc<RamaState>>, req: Request) -> R
     else {
         return bad_request("the URL is missing the conversation or the turn id");
     };
+    or_return!(organization_test_access(&state, &agent, &user.id, &session_id, lang).await);
     let body: StaffResumeBody =
         or_return!(super::read_json(req.into_body(), "the resume body").await);
     let decision = match super::chat::json_api::decision_from(body.decision, body.value) {

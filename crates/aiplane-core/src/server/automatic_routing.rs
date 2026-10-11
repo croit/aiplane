@@ -53,14 +53,35 @@ pub enum AutomaticRoutingError {
     IneligibleFallback { alias: String, fallback: String },
     #[error("the caller may not spend on the automatic route's selector: {0}")]
     SelectorLimited(LimitExceeded),
+    #[error("the automatic route's selector is unavailable: {0}")]
+    SelectorUnavailable(String),
+}
+
+#[derive(Debug, Error)]
+pub enum SelectorAdmissionError {
+    #[error("the selector's spend limit was exceeded: {0}")]
+    Limited(LimitExceeded),
+    #[error("selector authorization is unavailable: {0}")]
+    Unavailable(String),
+}
+
+impl From<SelectorAdmissionError> for AutomaticRoutingError {
+    fn from(error: SelectorAdmissionError) -> Self {
+        match error {
+            SelectorAdmissionError::Limited(limit) => Self::SelectorLimited(limit),
+            SelectorAdmissionError::Unavailable(reason) => Self::SelectorUnavailable(reason),
+        }
+    }
 }
 
 /// Asked before a selector is: whether the caller may spend on the selector
 /// model it is about to be routed to. The router knows no caller, so whoever
 /// selects on a caller's behalf supplies their limits.
 pub trait SelectorGate: Sync {
-    fn admit(&self, selector_model: &str)
-    -> impl Future<Output = Result<(), LimitExceeded>> + Send;
+    fn admit(
+        &self,
+        selector_model: &str,
+    ) -> impl Future<Output = Result<(), SelectorAdmissionError>> + Send;
 }
 
 /// The gate of a caller that does not check the selector's limits: the chat
@@ -69,7 +90,7 @@ pub trait SelectorGate: Sync {
 pub struct Ungated;
 
 impl SelectorGate for Ungated {
-    async fn admit(&self, _selector_model: &str) -> Result<(), LimitExceeded> {
+    async fn admit(&self, _selector_model: &str) -> Result<(), SelectorAdmissionError> {
         Ok(())
     }
 }
@@ -497,7 +518,7 @@ impl AutomaticRouter {
         };
         gate.admit(&checked)
             .await
-            .map_err(AutomaticRoutingError::SelectorLimited)?;
+            .map_err(AutomaticRoutingError::from)?;
         let acquired =
             match self
                 .upstreams
@@ -511,7 +532,7 @@ impl AutomaticRouter {
         if acquired.resolved_model() != checked {
             gate.admit(acquired.resolved_model())
                 .await
-                .map_err(AutomaticRoutingError::SelectorLimited)?;
+                .map_err(AutomaticRoutingError::from)?;
         }
         Ok(Ok(acquired))
     }
@@ -768,6 +789,184 @@ fn visit_content_types(value: &Value, requirements: &mut RequestRequirements) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[allow(clippy::disallowed_methods)] // The operator upstream is the fixture's loopback Wiremock server.
+    async fn selector_fixture() -> (AutomaticRouter, wiremock::MockServer) {
+        use crate::server::upstreams::{BackendConfig, UpstreamPoolConfig};
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/systemone"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "answers": {"route": {"choice":"expert","confidence":0.95}}
+            })))
+            .mount(&upstream)
+            .await;
+        let pools = [
+            ("chat", PoolKind::Chat, vec!["fast", "expert"]),
+            ("selector", PoolKind::SystemOne, vec!["selector"]),
+        ]
+        .into_iter()
+        .map(|(name, kind, models)| {
+            (
+                name.to_owned(),
+                UpstreamPoolConfig {
+                    kind,
+                    strategy: Default::default(),
+                    fallback_offline: None,
+                    models: Vec::new(),
+                    compliance: Default::default(),
+                    enforce_limits: true,
+                    voices: Default::default(),
+                    offer_voices: Vec::new(),
+                    allowed_groups: Vec::new(),
+                    backend: vec![BackendConfig {
+                        name: name.to_owned(),
+                        base_url: upstream.uri(),
+                        models: models.into_iter().map(str::to_owned).collect(),
+                        api_key_env: None,
+                        api_key: None,
+                        weight: 1,
+                        max_inflight: 8,
+                        health_path: "/models".into(),
+                        alias: None,
+                        enabled: true,
+                        supports_edit: false,
+                    }],
+                },
+            )
+        })
+        .collect();
+        let upstreams = UpstreamRegistry::new(&pools).unwrap();
+        let db = crate::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        automatic_routes::upsert(
+            &db,
+            &AutomaticRoute {
+                alias: "automatic".into(),
+                selector_model: "selector".into(),
+                objective: "balanced".into(),
+                instructions: "Choose a configured candidate.".into(),
+                minimum_confidence: 0.7,
+                selector_timeout_ms: 1000,
+                fallback_target: "fast".into(),
+                session_affinity: false,
+                session_ttl_seconds: 3600,
+                rollout: "active".into(),
+                version: 0,
+                candidates: vec![
+                    AutomaticRouteCandidate {
+                        key: "fast".into(),
+                        target: "fast".into(),
+                        description: "Configured fast model".into(),
+                    },
+                    AutomaticRouteCandidate {
+                        key: "expert".into(),
+                        target: "expert".into(),
+                        description: "Configured expert model".into(),
+                    },
+                ],
+            },
+        )
+        .await
+        .unwrap();
+        (
+            AutomaticRouter::new(db, upstreams, reqwest::Client::new()),
+            upstream,
+        )
+    }
+
+    struct DeniedGate;
+
+    impl SelectorGate for DeniedGate {
+        async fn admit(&self, _model: &str) -> Result<(), SelectorAdmissionError> {
+            Err(SelectorAdmissionError::Unavailable(
+                "Run authority was revoked.".into(),
+            ))
+        }
+    }
+
+    struct LimitedGate;
+
+    impl SelectorGate for LimitedGate {
+        async fn admit(&self, model: &str) -> Result<(), SelectorAdmissionError> {
+            use crate::server::db::limits::{Dimension, SubjectType, Window};
+            Err(SelectorAdmissionError::Limited(LimitExceeded {
+                model: Some(model.to_owned()),
+                dimension: Dimension::Requests,
+                window: Window::Hour,
+                limit: 1.0,
+                used: 1.0,
+                retry_after_secs: 60,
+                subject: SubjectType::System,
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn unavailable_selector_admission_never_sends_or_returns_configured_fallback() {
+        let (router, upstream) = selector_fixture().await;
+        let result = router
+            .select(
+                "automatic",
+                &json!({"messages":[]}),
+                &PoolAccess::all(),
+                None,
+                &DeniedGate,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(AutomaticRoutingError::SelectorUnavailable(reason))
+            if reason == "Run authority was revoked.")
+        );
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+        assert!(router.affinity.lock().unwrap().entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn limited_selector_admission_preserves_limit_and_never_sends() {
+        let (router, upstream) = selector_fixture().await;
+        let result = router
+            .select(
+                "automatic",
+                &json!({"messages":[]}),
+                &PoolAccess::all(),
+                None,
+                &LimitedGate,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(AutomaticRoutingError::SelectorLimited(limit))
+            if limit.model.as_deref() == Some("selector") && limit.retry_after_secs == 60)
+        );
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ungated_selector_admission_preserves_actual_selection() {
+        let (router, upstream) = selector_fixture().await;
+        let selected = router
+            .select(
+                "automatic",
+                &json!({"messages":[]}),
+                &PoolAccess::all(),
+                None,
+                &Ungated,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(selected.effective_target, "expert");
+        assert_eq!(selected.reason, "selected");
+        let requests = upstream.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url.path(), "/systemone");
+    }
 
     #[test]
     fn decision_types_preserve_selector_usage() {

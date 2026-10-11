@@ -42,13 +42,15 @@
 		settings: ['versions', 'sharing']
 	} as const;
 	type Tab = keyof typeof TABS;
-	const tabs = $derived((Object.keys(TABS) as Tab[]).filter((name) => name !== 'try' || capabilities.execution));
+	const tabs = $derived((Object.keys(TABS) as Tab[]).filter((name) => name !== 'try' || capabilities.draftChat || capabilities.execution));
 	const ADVANCED = ['edit', 'canvas', 'json', 'grants'] as const;
 
 	const param = (name: string) => page.url.searchParams.get(name);
 	const tab = $derived(tabs.find((x) => x === param('tab')) ?? 'setup');
 	const advanced = $derived(tab === 'setup' && param('view') === 'advanced');
-	const subs = $derived<readonly string[]>(advanced ? ADVANCED : TABS[tab]);
+	const subs = $derived<readonly string[]>(advanced ? ADVANCED : tab === 'try'
+		? TABS.try.filter((name) => name === 'test' ? capabilities.draftChat : capabilities.execution)
+		: TABS[tab]);
 	const sub = $derived(subs.find((x) => x === param('sub')) ?? subs[0] ?? '');
 
 	function navigate(next: Record<string, string | null>) {
@@ -120,9 +122,9 @@
 		{/key}
 	{:else if sub === 'grants' && ws.detail}
 		<GrantsPanel agentId={ws.id} grants={ws.detail.grants} resources={ws.resources} writable={ws.writable} onchanged={() => ws.refresh(true)} />
-	{:else if sub === 'test'}
+	{:else if sub === 'test' && capabilities.draftChat}
 		<TestChat agentId={ws.id} spec={ws.spec} dirty={ws.dirty} onturn={(debug) => (ws.lastDebug = debug)} onsave={save} />
-	{:else if sub === 'tests' && ws.detail}
+	{:else if sub === 'tests' && capabilities.execution && ws.detail}
 		<TestsPanel agentId={ws.id} versions={ws.versions} liveVersion={ws.detail.live_version} dirty={ws.dirty} writable={ws.writable} onsave={save} />
 	{:else if sub === 'analytics'}
 		<AnalyticsPanel agentId={ws.id} versions={ws.versions} />

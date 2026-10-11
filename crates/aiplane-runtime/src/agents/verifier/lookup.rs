@@ -98,6 +98,13 @@ impl LookupTool {
         {
             return Err(unavailable());
         }
+        let mut tx = aiplane_agents::db::WriteTx::begin(&self.run.state.db)
+            .await
+            .map_err(|error| ToolError::Failed(error.to_string()))?;
+        super::validate_verifier_authority_in(&mut tx, &self.run, ctx, &self.cfg.tool).await?;
+        tx.commit()
+            .await
+            .map_err(|error| ToolError::Failed(error.to_string()))?;
         let registry = self.run.state.tools();
         let tool = registry.get(&self.cfg.tool).ok_or_else(unavailable)?;
         tool.run(ctx.clone(), args).await
@@ -187,6 +194,7 @@ impl Tool for LookupTool {
                 &self.run,
                 &ctx,
                 &self.cfg.id,
+                &self.cfg.tool,
                 &self.cfg.writes,
                 answer.as_ref().expect("a confirming answer is an object"),
                 &inputs,

@@ -366,10 +366,23 @@ test('agent UI uses actual organization ownership for configuration-only capabil
     const ordinary = { dot: null };
     const personal = { dot: { owner: { kind: 'user' as const, id: 'owner' }, name: 'Harald', active: true } };
     const organization = { dot: { owner: { kind: 'organization' as const, id: 'org', name: 'Acme Support' }, name: 'Harald', active: false } };
-    assert.deepEqual(agentUiCapabilities(ordinary), { execution: true, site: true, channels: true, embed: true });
+    assert.deepEqual(agentUiCapabilities(ordinary), { draftChat: true, execution: true, site: true, channels: true, embed: true });
     assert.deepEqual(agentUiCapabilities(personal), agentUiCapabilities(ordinary));
-    assert.deepEqual(agentUiCapabilities(organization), { execution: false, site: false, channels: false, embed: false });
-    assert.deepEqual(agentUiCapabilities(null), { execution: false, site: false, channels: false, embed: false });
+    assert.deepEqual(agentUiCapabilities(organization), { draftChat: false, execution: false, site: false, channels: false, embed: false });
+    assert.deepEqual(agentUiCapabilities(null), { draftChat: false, execution: false, site: false, channels: false, embed: false });
+});
+
+test('organization draft chat requires actual current Write access without enabling published execution', async () => {
+    const { agentUiCapabilities } = await import('./agents.ts');
+    const dot = { owner: { kind: 'organization' as const, id: 'org', name: 'Acme Support' }, name: 'Harald', active: true };
+    const writer = { dot, access: 'write' as const };
+    const reader = { dot, access: 'read' as const };
+    assert.deepEqual(agentUiCapabilities(writer), { draftChat: true, execution: false, site: false, channels: false, embed: false });
+    assert.equal(agentUiCapabilities(reader).draftChat, false);
+    assert.equal(agentUiCapabilities({ dot }).draftChat, false);
+    assert.equal(agentUiCapabilities(undefined).draftChat, false);
+    assert.equal(agentUiCapabilities({ ...writer, access: 'read' as const }).draftChat, false);
+    assert.equal(agentUiCapabilities({ dot: null, access: 'read' as const }).draftChat, true);
 });
 
 test('agent owner presentation preserves authored Dot name and actual organization return path', async () => {

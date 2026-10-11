@@ -285,6 +285,12 @@ async fn a_code_the_visitor_types_writes_the_verifier_slots_and_opens_the_gate()
     let paused = says(&world, &agent, &options, "I have a billing question.").await;
     assert_eq!(paused.status, chat::TurnStatus::Suspended);
     let waiting = paused.suspension.clone().unwrap();
+    let stored = chat::get_suspension(world.db(), &paused.turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.tool_call.execution_facts, None);
+
     assert_eq!(
         waiting.message.as_deref(),
         Some(t(Lang::En, "agent-verifier-code-sent").as_str())
@@ -1255,4 +1261,521 @@ async fn a_slot_the_host_may_not_write_stores_nothing_and_leaves_the_jti_unspent
     )
     .await;
     assert_eq!(retried.unwrap(), ["a_verified", "b_plan"]);
+}
+
+async fn organization_otp_support(world: &World, erp: &MockServer, spec: &Value) -> String {
+    use aiplane_agents::db::{dot_connections, organizations};
+    use aiplane_core::server::db::{WriteTx, gateway_groups, mcp_connections};
+    gateway_groups::upsert_group(world.db(), "organization-staff", "", false, true)
+        .await
+        .unwrap();
+    gateway_groups::set_can_manage_agents(world.db(), "organization-staff", true)
+        .await
+        .unwrap();
+    let organizations::OrganizationCreateResult::Created(organization) = organizations::create(
+        world.db(),
+        &organizations::NewOrganization {
+            name: "Support organization",
+            description: "",
+            member_groups: &["organization-staff".to_owned()],
+        },
+        "u1",
+    )
+    .await
+    .unwrap() else {
+        panic!("actual organization expected");
+    };
+    let mut tx = WriteTx::begin(world.db()).await.unwrap();
+    let (_, agent) = agents_db::create_organization_dot_in(
+        &mut tx,
+        &organization.organization.id,
+        &sp::NewPrincipal {
+            name: "Organization support",
+            display: "Organization support",
+            description: "",
+        },
+        &spec.to_string(),
+        "u1",
+        4,
+    )
+    .await
+    .unwrap();
+    let agent = agent.unwrap().principal.id;
+    tx.commit().await.unwrap();
+    for (kind, reference) in [
+        (GrantKind::Model, "support-model"),
+        (GrantKind::Connector, "erp"),
+    ] {
+        sp::add_grant(world.db(), &agent, kind, reference, "u1")
+            .await
+            .unwrap();
+    }
+    world.connect_erp(erp).await;
+    sqlx::query("UPDATE mcp_catalog_connectors SET scope='per_user',auth='oauth2' WHERE key='erp'")
+        .execute(world.db())
+        .await
+        .unwrap();
+    let connector = mcp_catalog::get(world.db(), "erp").await.unwrap().unwrap();
+    let sealed = world
+        .state
+        .crypto
+        .seal_str("actual-organization-credential")
+        .unwrap();
+    let identity = mcp_connections::upsert_connection(
+        world.db(),
+        mcp_connections::NewConnection {
+            catalog_generation: connector.dispatch_generation,
+            owner: mcp_connections::ConnectionOwner::Principal(agent.clone()),
+            connector_key: "erp".into(),
+            access_token_ct: sealed.ciphertext,
+            access_token_nonce: sealed.nonce,
+            refresh_token_ct: None,
+            refresh_token_nonce: None,
+            token_expires_at: None,
+            scopes: vec![],
+            dcr_client_id: None,
+            dcr_client_secret_ct: None,
+            dcr_client_secret_nonce: None,
+            token_url: None,
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let mut tx = WriteTx::begin(world.db()).await.unwrap();
+    assert!(matches!(
+        dot_connections::save_in(
+            &mut tx,
+            dot_connections::Selection {
+                owner: &agents_db::DotOwner::Organization(organization.organization.id),
+                dot_id: &agent,
+                connector_key: "erp",
+                identity_mode: dot_connections::IdentityMode::Principal,
+                connection_generation: &identity.generation,
+                expected_binding_generation: None,
+            }
+        )
+        .await
+        .unwrap(),
+        dot_connections::SaveOutcome::Saved(Some(_))
+    ));
+    tx.commit().await.unwrap();
+    agent
+}
+
+async fn organization_otp_pause(world: &World, agent: &str, spec: &Value) -> AgentReply {
+    let started = crate::agents::run::draft::start_draft_turn(
+        &world.state,
+        AgentTurn {
+            agent_id: agent,
+            session_id: None,
+            message: "Please verify my details",
+            visitor_id: None,
+            lang: Some(Lang::En),
+        },
+        spec,
+        &RunOptions::default(),
+        "u1",
+    )
+    .await
+    .unwrap();
+    let reply = drive_opened(&world.state, &started.profile, &started.turn)
+        .await
+        .unwrap();
+    assert_eq!(reply.status, chat::TurnStatus::Suspended, "{reply:?}");
+    drop(started.claim);
+    reply
+}
+
+fn restarted_organization_world(world: &World) -> World {
+    let app = (**world.state)
+        .clone()
+        .with_crypto(world.state.crypto.clone());
+    let sessions = aiplane_core::rama_server::SessionStore::new(world.db().clone(), [7u8; 32]);
+    World {
+        state: Arc::new(RamaState::new(
+            app,
+            sessions,
+            aiplane_core::server::usage::UsageHandle::disabled(),
+        )),
+    }
+}
+
+#[tokio::test]
+async fn organization_otp_resume_keeps_original_selected_account_and_draft_after_fresh_runtime() {
+    let main = llm(vec![
+        call("email", "set_email", json!({"value":ALICE})),
+        call("otp", REQUEST, json!({})),
+        text("Verification complete"),
+    ])
+    .await;
+    let (erp, seen) = erp().await;
+    let world = World::new(&[("support-pool", "support-model", &main)], None).await;
+    let mut spec = otp_spec(json!({}));
+    spec.as_object_mut().unwrap().remove("routes");
+    let agent = organization_otp_support(&world, &erp, &spec).await;
+    let paused = organization_otp_pause(&world, &agent, &spec).await;
+    let stored = chat::get_suspension(world.db(), &paused.turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.kind, SuspensionKind::SecureInput);
+    let facts = stored
+        .tool_call
+        .execution_facts
+        .clone()
+        .expect("original selected account facts");
+    let crate::server::tools::mcp::identities::McpDispatchFacts::Owned(identity) =
+        serde_json::from_value(facts.clone()).unwrap()
+    else {
+        panic!("own identity expected")
+    };
+    assert_eq!(
+        identity.connection.owner,
+        aiplane_core::server::db::mcp_connections::ConnectionOwner::Principal(agent.clone())
+    );
+    assert!(identity.binding_generation.is_some());
+    assert_eq!(erp_calls(&seen, "send_code"), [json!({"email":ALICE})]);
+    let mut edited = spec.clone();
+    edited["main"]["instructions"]["orchestration"] =
+        json!("Edited draft outside original paused run");
+    edited["main"]["tools"] = json!(["company_echo"]);
+    agents_db::update_draft(
+        world.db(),
+        &agent,
+        &edited.to_string(),
+        "u1",
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    sp::add_grant(world.db(), &agent, GrantKind::Tool, "company_echo", "u1")
+        .await
+        .unwrap();
+    let restarted = restarted_organization_world(&world);
+    let claimed = claim(
+        &restarted.state,
+        AgentResume {
+            agent_id: &agent,
+            session_id: &paused.session_id,
+            turn_id: &paused.turn_id,
+            request_id: Some(&stored.request_id),
+            decision: Decision::Value { value: json!(CODE) },
+            by: ResumedBy::Staff {
+                user_id: "u1".into(),
+            },
+        },
+    )
+    .await
+    .unwrap();
+    let done = run_claimed(&restarted.state, claimed, RunOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(done.status, chat::TurnStatus::Completed, "{done:?}");
+    assert_eq!(
+        erp_calls(&seen, "check_code"),
+        [json!({"email":ALICE,"code":CODE})]
+    );
+    assert!(
+        slot_rows(&restarted, &paused.session_id)
+            .await
+            .iter()
+            .any(|(slot, _, writer)| slot == "verified" && writer == "verifier:otp")
+    );
+    let sent = requests(&main).await;
+    assert_eq!(sent.len(), 3);
+    assert!(!offered(&sent[2]).contains(&"company_echo"));
+    assert!(!system(&sent[2]).contains("Edited draft outside original paused run"));
+    assert!(!every_stored_text(restarted.db()).await.contains(CODE));
+}
+
+#[tokio::test]
+async fn organization_otp_changed_binding_refuses_claim_without_consuming_original_pause() {
+    let main = llm(vec![
+        call("email", "set_email", json!({"value":ALICE})),
+        call("otp", REQUEST, json!({})),
+        text("Unexpected continuation"),
+    ])
+    .await;
+    let (erp, seen) = erp().await;
+    let world = World::new(&[("support-pool", "support-model", &main)], None).await;
+    let mut spec = otp_spec(json!({}));
+    spec.as_object_mut().unwrap().remove("routes");
+    let agent = organization_otp_support(&world, &erp, &spec).await;
+    let paused = organization_otp_pause(&world, &agent, &spec).await;
+    let before = chat::get_suspension(world.db(), &paused.turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query("UPDATE dot_connector_bindings SET binding_generation='changed-after-pause' WHERE dot_id=? AND connector_key='erp'")
+        .bind(&agent).execute(world.db()).await.unwrap();
+    let restarted = restarted_organization_world(&world);
+    assert!(
+        claim(
+            &restarted.state,
+            AgentResume {
+                agent_id: &agent,
+                session_id: &paused.session_id,
+                turn_id: &paused.turn_id,
+                request_id: Some(&before.request_id),
+                decision: Decision::Value { value: json!(CODE) },
+                by: ResumedBy::Staff {
+                    user_id: "u1".into()
+                },
+            }
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        chat::get_suspension(world.db(), &paused.turn_id)
+            .await
+            .unwrap(),
+        Some(before)
+    );
+    assert!(erp_calls(&seen, "check_code").is_empty());
+    assert_eq!(requests(&main).await.len(), 2);
+    assert!(
+        slot_rows(&restarted, &paused.session_id)
+            .await
+            .iter()
+            .all(|(slot, _, _)| slot != "verified")
+    );
+}
+
+#[tokio::test]
+async fn organization_otp_resume_current_authority_failures_preserve_original_pause() {
+    let changes = [
+        "DELETE FROM organization_groups",
+        "UPDATE dots SET active=0 WHERE principal_id=?",
+        "UPDATE system_principals SET disabled_at='2026-10-11T00:00:00Z' WHERE id=?",
+        "DELETE FROM principal_grants WHERE principal_id=? AND kind='connector' AND ref='erp'",
+        "DELETE FROM principal_grants WHERE principal_id=? AND kind='model' AND ref='support-model'",
+        "UPDATE principal_grants SET pools='[]' WHERE principal_id=? AND kind='model' AND ref='support-model'",
+        "UPDATE mcp_connections SET generation='replaced-credential' WHERE principal_id=?",
+        "UPDATE mcp_connections SET status='error' WHERE principal_id=?",
+        "UPDATE mcp_catalog_connectors SET dispatch_generation='replaced-catalogue' WHERE key='erp'",
+        "UPDATE chat_sessions SET parent_turn_id=(SELECT id FROM chat_turns WHERE role='user' LIMIT 1) WHERE principal_id=?",
+        "UPDATE chat_sessions SET agent_version=1 WHERE principal_id=?",
+        "UPDATE chat_turn_suspensions SET run_context=NULL",
+        "UPDATE chat_turn_suspensions SET run_context='{}'",
+    ];
+    for change in changes {
+        let main = llm(vec![
+            call("email", "set_email", json!({"value": ALICE})),
+            call("otp", REQUEST, json!({})),
+            text("Unexpected continuation"),
+        ])
+        .await;
+        let (erp, seen) = erp().await;
+        let world = World::new(&[("support-pool", "support-model", &main)], None).await;
+        let mut spec = otp_spec(json!({}));
+        spec.as_object_mut().unwrap().remove("routes");
+        let agent = organization_otp_support(&world, &erp, &spec).await;
+        let paused = organization_otp_pause(&world, &agent, &spec).await;
+        let mut query = sqlx::query(change);
+        if change.contains('?') {
+            query = query.bind(&agent);
+        }
+        assert!(
+            query.execute(world.db()).await.unwrap().rows_affected() > 0,
+            "{change}"
+        );
+        let before = chat::get_suspension(world.db(), &paused.turn_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let restarted = restarted_organization_world(&world);
+        let result = claim(
+            &restarted.state,
+            AgentResume {
+                agent_id: &agent,
+                session_id: &paused.session_id,
+                turn_id: &paused.turn_id,
+                request_id: Some(&before.request_id),
+                decision: Decision::Value { value: json!(CODE) },
+                by: ResumedBy::Staff {
+                    user_id: "u1".into(),
+                },
+            },
+        )
+        .await;
+        assert!(result.is_err(), "{change}");
+        assert_eq!(
+            chat::get_suspension(world.db(), &paused.turn_id)
+                .await
+                .unwrap(),
+            Some(before),
+            "{change}"
+        );
+        assert!(erp_calls(&seen, "check_code").is_empty(), "{change}");
+        assert_eq!(requests(&main).await.len(), 2, "{change}");
+        assert!(
+            slot_rows(&restarted, &paused.session_id)
+                .await
+                .iter()
+                .all(|(slot, _, _)| slot != "verified"),
+            "{change}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn organization_otp_private_pause_refuses_participant_but_allows_current_writer() {
+    let main = llm(vec![
+        call("email", "set_email", json!({"value": ALICE})),
+        call("otp", REQUEST, json!({})),
+        text("Verification complete"),
+    ])
+    .await;
+    let (erp, seen) = erp().await;
+    let world = World::new(&[("support-pool", "support-model", &main)], None).await;
+    let mut spec = otp_spec(json!({}));
+    spec.as_object_mut().unwrap().remove("routes");
+    let agent = organization_otp_support(&world, &erp, &spec).await;
+    let paused = organization_otp_pause(&world, &agent, &spec).await;
+    let before = chat::get_suspension(world.db(), &paused.turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        sqlx::query("UPDATE chat_sessions SET shared=1 WHERE id=?")
+            .bind(&paused.session_id)
+            .execute(world.db())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        chat::get_suspension(world.db(), &paused.turn_id)
+            .await
+            .unwrap(),
+        Some(before.clone())
+    );
+    assert!(
+        claim(
+            &world.state,
+            AgentResume {
+                agent_id: &agent,
+                session_id: &paused.session_id,
+                turn_id: &paused.turn_id,
+                request_id: Some(&before.request_id),
+                decision: Decision::Value { value: json!(CODE) },
+                by: ResumedBy::Participant,
+            }
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        chat::get_suspension(world.db(), &paused.turn_id)
+            .await
+            .unwrap(),
+        Some(before.clone())
+    );
+    assert!(erp_calls(&seen, "check_code").is_empty());
+    let claimed = claim(
+        &world.state,
+        AgentResume {
+            agent_id: &agent,
+            session_id: &paused.session_id,
+            turn_id: &paused.turn_id,
+            request_id: Some(&before.request_id),
+            decision: Decision::Value { value: json!(CODE) },
+            by: ResumedBy::Staff {
+                user_id: "u1".into(),
+            },
+        },
+    )
+    .await
+    .unwrap();
+    let completed = run_claimed(&world.state, claimed, RunOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(completed.status, chat::TurnStatus::Completed);
+    assert_eq!(
+        erp_calls(&seen, "check_code"),
+        [json!({"email": ALICE, "code": CODE})]
+    );
+}
+
+#[tokio::test]
+async fn organization_otp_timeout_denies_without_checking_code_or_fabricating_staff() {
+    let main = llm(vec![
+        call("email", "set_email", json!({"value": ALICE})),
+        call("otp", REQUEST, json!({})),
+        text("Verification expired"),
+    ])
+    .await;
+    let (erp, seen) = erp().await;
+    let world = World::new(&[("support-pool", "support-model", &main)], None).await;
+    let mut spec = otp_spec(json!({}));
+    spec.as_object_mut().unwrap().remove("routes");
+    let agent = organization_otp_support(&world, &erp, &spec).await;
+    let paused = organization_otp_pause(&world, &agent, &spec).await;
+    sqlx::query(
+        "UPDATE chat_turn_suspensions SET expires_at='2000-01-01T00:00:00Z' WHERE turn_id=?",
+    )
+    .bind(&paused.turn_id)
+    .execute(world.db())
+    .await
+    .unwrap();
+    let before = chat::get_suspension(world.db(), &paused.turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let restarted = restarted_organization_world(&world);
+    assert!(
+        claim(
+            &restarted.state,
+            AgentResume {
+                agent_id: &agent,
+                session_id: &paused.session_id,
+                turn_id: &paused.turn_id,
+                request_id: Some(&before.request_id),
+                decision: Decision::Value { value: json!(CODE) },
+                by: ResumedBy::Timeout,
+            }
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        chat::get_suspension(world.db(), &paused.turn_id)
+            .await
+            .unwrap(),
+        Some(before.clone())
+    );
+    let claimed = claim(
+        &restarted.state,
+        AgentResume {
+            agent_id: &agent,
+            session_id: &paused.session_id,
+            turn_id: &paused.turn_id,
+            request_id: Some(&before.request_id),
+            decision: Decision::Deny {
+                reason: chat::DenyReason::Timeout,
+            },
+            by: ResumedBy::Timeout,
+        },
+    )
+    .await
+    .unwrap();
+    let completed = run_claimed(&restarted.state, claimed, RunOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(completed.status, chat::TurnStatus::Completed);
+    assert!(erp_calls(&seen, "check_code").is_empty());
+    assert!(
+        slot_rows(&restarted, &paused.session_id)
+            .await
+            .iter()
+            .all(|(slot, _, _)| slot != "verified")
+    );
+    assert!(
+        chat::get_suspension(world.db(), &paused.turn_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(!every_stored_text(world.db()).await.contains(CODE));
 }

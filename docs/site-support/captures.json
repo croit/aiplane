@@ -282,5 +282,18 @@
     "width": 2128,
     "height": 816,
     "data": "Synthetic dev-ui fixture; actual organization member writer without personal Dot management. Real OAuth round trip and explicit selection of Harald Support's own Workspace credential. No employee identity or invented account label. Captured by spa-dots-organization-identities.test.mjs with DOCS_ORG_DOT_IDENTITY_CAPTURE."
+  },
+  {
+    "file": "docs/img/guide/organization-dot-draft-chat.png",
+    "route": "/agents/39990618-6645-406b-961b-f2140c123431?tab=try",
+    "selector": "[data-test-chat]",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2128,
+    "height": 1262,
+    "data": "Synthetic dev-ui fixture; actual organization member Writer without personal Dot management. Harald Draft's saved draft, real private TestChat answer and settled debug. Captured by spa-dots-organization-draft.test.mjs with DOCS_ORG_DOT_DRAFT_CAPTURE."
   }
 ]

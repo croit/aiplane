@@ -4,11 +4,17 @@ Testing examines the saved draft or a selected published snapshot. Publication c
 
 You need agent-management permission and access to the agent; editing test cases or publishing requires write access. The model, tools, connectors and collections used by a test must be available to its principal.
 
-Organization Dot configuration uses the existing draft and publication
-mechanisms, but organization execution is unavailable. Test and run admission
-refuse these Dots before model dispatch. A published version or active Dot is
-not evidence of an executable organization assistant. Organization membership
-also narrows share access; see [permissions](permissions.md#organization-dot-configuration).
+Organization Dots use the existing draft editor and publication mechanisms.
+An active Dot with an enabled principal can run its saved draft in **Try it →
+Test chat** when the initiating member has current Write access. Its model and
+tools run under the Dot's explicit principal grants, without the member's
+credentials or personal context. Pauses are answered in that same private
+chat; current membership and Write access are checked again when responding.
+
+Organization automated test suites, published conversations, delegation,
+automation and external channels are unavailable. Publishing a snapshot does
+not enable those callers. Organization membership also narrows share access;
+see [permissions](permissions.md#organization-dot-configuration).
 
 ## Try the saved draft
 
@@ -19,13 +25,20 @@ also narrows share access; see [permissions](permissions.md#organization-dot-con
 5. Answer any waiting approval, secure input or human-handoff card using the offered controls.
 6. Use New conversation when the next scenario requires clean state.
 
+![An organization Dot's private draft chat with an actual response and the stopped-turn debug view, using synthetic demo data.](../img/guide/organization-dot-draft-chat.png)
+
+*A current organization member with Write access tests Harald's saved draft.
+The conversation runs as Harald's principal and remains separate from personal
+chat history. This example uses synthetic demo data.*
+
 The test chat executes the agent's tools as its actual principal. It is not a dry-run tool simulator: take real external writes into account when choosing test scenarios. The output filter may replace an answer after the turn finishes; the refreshed transcript shows what the visitor would receive.
 
 Debug is manager-visible and helps inspect state, gates and routes. A selected earlier turn can be inspected separately from the latest one. A paused turn needs its answer or expiry before it can finish; sending another message is not approval of a waiting tool.
 
 ## Add repeatable test cases
 
-Open **Try it → Tests** (`?tab=try&sub=tests`).
+For ordinary agents, open **Try it → Tests** (`?tab=try&sub=tests`).
+Organization Dots provide private draft Test chat only.
 
 1. Add a named case.
 2. Write its script of visitor messages. Add trusted state writes where the scenario explicitly requires that writer.

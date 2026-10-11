@@ -3,7 +3,7 @@
 Status: implementation in progress; personal Dot ownership, active lifecycle,
 the first web management page, manually managed Dot memory, recent activity,
 owner-scoped memory/activity APIs, private Dot chat sessions, and personal
-tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; current member writers can authorize and explicitly select each organization Dot’s own OAuth credential. Organization execution requires its principal runtime bridge.
+tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; current member writers can authorize and explicitly select each organization Dot’s own OAuth credential. Active organization Dots support private saved-draft conversations for current member writers, including durable approvals and selected own credentials. Published organization execution and automation remain planned.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -71,8 +71,9 @@ with `Allow` or `Ask before each call`; unselected tools are denied. Connector
 identity labels identify the selected user, Dot or shared connection. Supported
 personal OAuth connectors may use a separately authorized Dot connection;
 connecting and selecting it are separate operations. Organization Dots have
-explicit organization ownership and a configuration surface; their execution
-and connection management remain unavailable. An owned local credential remains visible for explicit
+explicit organization ownership, own-account management and private saved-draft
+test chat for current member writers. Published and automated execution remain
+unavailable. An owned local credential remains visible for explicit
 disconnect after catalogue access is lost, including credentials never selected
 for execution. Restricted catalogue and user-account details stay hidden.
 Active
@@ -175,8 +176,8 @@ provides deactivation, not a Dot-delete action.
 
 Persistent Dot computers are specified separately in
 [dots-workspace.md](dots-workspace.md) and are not implemented. Automatic
-memory curation and organization Dots remain
-planned. The user workflow is in
+memory curation, organization shared knowledge, published organization runs
+and organization background work remain planned. The user workflow is in
 [Schedules, webhooks and inbox](guide/automation-and-inbox.md).
 
 ## Product goal
@@ -312,8 +313,8 @@ must not change permission defaults for ordinary chat or existing agents.
 The connector store represents mutually exclusive user/principal owners.
 Personal Dots can explicitly select the owner’s current connection or their
 own authorized OAuth credential. Current organization member writers can
-configure a Dot’s own credential; organization execution remains unavailable
-until its principal runtime bridge is complete. Ordinary principal runs use
+configure a Dot’s own credential and run its saved draft in a private principal
+conversation. Organization published and automated runs remain unavailable. Ordinary principal runs use
 explicitly granted shared-identity connectors. Existing `agent`-scope
 connectors accept `none` or `static_bearer`. See [Dot identities](dots-identities.md)
 for the OAuth selection and generation fences.
@@ -470,9 +471,10 @@ an explicitly authorized approval owner and continuation path.
 Action categories come from each tool's actual declared action catalogue.
 Personal tool policies and approvals are implemented as described above.
 Organization approval standing intersects current membership with the existing
-respond or stronger share; its runtime continuation must be implemented before
-organization execution becomes available. No organization publication enables
-external actions by itself.
+respond or stronger share. Private saved-draft responses require current
+member Write access and preserve the original draft, model and grant ceiling
+across restart. Published organization callers remain unavailable; publication
+does not enable an external action.
 
 ## Background work and memory curation
 

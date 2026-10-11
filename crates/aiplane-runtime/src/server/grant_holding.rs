@@ -125,6 +125,7 @@ pub async fn grant_scope_in(
     user_id: &str,
     kind: GrantKind,
     reference: &str,
+    target_principal_id: Option<&str>,
 ) -> Result<Option<GrantScope>, HoldRefusal> {
     let Some((user, policy)) =
         crate::agents::access::current_user_policy_in(state, tx, user_id).await?
@@ -133,8 +134,23 @@ pub async fn grant_scope_in(
     };
     let mut app = (**state).clone();
     app.rbac = Arc::new(policy);
+    let target = if kind == GrantKind::Connector {
+        connector_target_in(&app, tx, &user.id, target_principal_id).await?
+    } else {
+        None
+    };
     let mut source = HoldingSource::Transaction(tx);
-    if !held(state, &app, &mut source, &user, kind, reference).await? {
+    if !held(
+        state,
+        &app,
+        &mut source,
+        &user,
+        kind,
+        reference,
+        target.as_ref(),
+    )
+    .await?
+    {
         return Ok(None);
     }
     let pools = if kind == GrantKind::Model {
@@ -143,6 +159,111 @@ pub async fn grant_scope_in(
         None
     };
     Ok(Some(GrantScope { pools }))
+}
+
+struct ConnectorTarget {
+    dot_id: String,
+    owner: agents_db::DotOwner,
+    can_write: bool,
+}
+
+async fn connector_target_in(
+    state: &AppState,
+    tx: &mut WriteTx,
+    user_id: &str,
+    target: Option<&str>,
+) -> Result<Option<ConnectorTarget>, DbError> {
+    let Some(dot_id) = target else {
+        return Ok(None);
+    };
+    let Some(owner @ agents_db::DotOwner::Organization(_)) =
+        agents_db::dot_owner_in(tx, dot_id).await?
+    else {
+        return Ok(None);
+    };
+    let can_write = crate::agents::access::organization_access_in(state, tx, dot_id, user_id)
+        .await?
+        == Some(Access::Write);
+    Ok(Some(ConnectorTarget {
+        dot_id: dot_id.into(),
+        owner,
+        can_write,
+    }))
+}
+
+async fn connector_held(
+    state: &AppState,
+    source: &mut HoldingSource<'_>,
+    user: &users::User,
+    connector: &mcp_catalog::Connector,
+    target: Option<&ConnectorTarget>,
+) -> Result<bool, HoldRefusal> {
+    let roles = state.rbac.role_ids_for(&user.roles);
+    let is_admin = state.rbac.is_admin(&roles);
+    let key = format!("{MCP_ID_PREFIX}{}", connector.key);
+    if let Some(target) = target {
+        if !target.can_write
+            || !connector.enabled
+            || !connector.is_per_user()
+            || connector.auth != mcp_catalog::AuthKind::OAuth2
+            || !connector.allows(&roles, is_admin)
+            || !state.mcp_grant_for(&user.roles).allows(&key, &key)
+        {
+            return Ok(false);
+        }
+        let HoldingSource::Transaction(tx) = source else {
+            return Ok(false);
+        };
+        return Ok(
+            crate::server::tools::mcp::identities::selected_principal_identity_in(
+                tx,
+                &target.owner,
+                &target.dot_id,
+                &connector.key,
+            )
+            .await?
+            .is_some(),
+        );
+    }
+    if !connector.has_shared_identity() {
+        return Err(HoldRefusal::Invalid(format!(
+            "connector `{}` signs in as each person, so a system principal cannot use it — only connectors with the `global` or `agent` scope can be granted",
+            connector.key
+        )));
+    }
+    Ok(if connector.is_agent() {
+        connector.grantable_by(&roles, is_admin)
+    } else {
+        connector.allows(&roles, is_admin) && state.mcp_grant_for(&user.roles).allows(&key, &key)
+    })
+}
+
+pub async fn grantable_connectors_in(
+    state: &RamaState,
+    tx: &mut WriteTx,
+    user_id: &str,
+    target_principal_id: Option<&str>,
+) -> Result<BTreeSet<String>, HoldRefusal> {
+    let Some((user, policy)) =
+        crate::agents::access::current_user_policy_in(state, tx, user_id).await?
+    else {
+        return Ok(BTreeSet::new());
+    };
+    let mut app = (**state).clone();
+    app.rbac = Arc::new(policy);
+    let target = connector_target_in(&app, tx, &user.id, target_principal_id).await?;
+    let connectors = mcp_catalog::list_enabled_in(tx).await?;
+    let mut source = HoldingSource::Transaction(tx);
+    let mut keys = BTreeSet::new();
+    for connector in connectors {
+        if target.is_none() && !connector.has_shared_identity() {
+            continue;
+        }
+        if connector_held(&app, &mut source, &user, &connector, target.as_ref()).await? {
+            keys.insert(connector.key);
+        }
+    }
+    Ok(keys)
 }
 
 /// Whether `user` holds `kind` `reference` today.
@@ -159,6 +280,7 @@ pub async fn holds(
         user,
         kind,
         reference,
+        None,
     )
     .await
 }
@@ -170,6 +292,7 @@ async fn held(
     user: &users::User,
     kind: GrantKind,
     reference: &str,
+    target: Option<&ConnectorTarget>,
 ) -> Result<bool, HoldRefusal> {
     let role_ids = state.rbac.role_ids_for(&user.roles);
     let missing = |what: String| HoldRefusal::Missing(what);
@@ -192,23 +315,7 @@ async fn held(
                 Some(c) if c.enabled => c,
                 _ => return Err(missing(format!("enabled connector `{reference}`"))),
             };
-            if !connector.has_shared_identity() {
-                return Err(HoldRefusal::Invalid(format!(
-                    "connector `{reference}` signs in as each person, so a system principal \
-                     cannot use it — only connectors with the `global` or `agent` scope can be \
-                     granted"
-                )));
-            }
-            let is_admin = state.rbac.is_admin(&role_ids);
-            if connector.is_agent() {
-                // No person uses an agent connector, so there is no personal
-                // access to cap by; its groups say who may hand it out.
-                connector.grantable_by(&role_ids, is_admin)
-            } else {
-                let key = format!("{MCP_ID_PREFIX}{reference}");
-                connector.allows(&role_ids, is_admin)
-                    && state.mcp_grant_for(&user.roles).allows(&key, &key)
-            }
+            connector_held(state, source, user, &connector, target).await?
         }
         GrantKind::Skill => {
             let Some(store) = state.skills() else {
@@ -668,23 +775,23 @@ mod tests {
         );
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
-            let scope = grant_scope_in(&state, &mut tx, "manager", GrantKind::Model, "vip-model").await.unwrap().unwrap();
+            let scope = grant_scope_in(&state, &mut tx, "manager", GrantKind::Model, "vip-model", None).await.unwrap().unwrap();
             assert_eq!(scope.pools.unwrap().into_iter().collect::<BTreeSet<_>>(), BTreeSet::from(["open".into(), "vip".into()]));
-            assert!(grant_scope_in(&state, &mut tx, "admin", GrantKind::Model, "vip-model").await.unwrap().unwrap().pools.is_none());
-            assert!(grant_scope_in(&state, &mut tx, "missing-user", GrantKind::Model, "vip-model").await.unwrap().is_none());
-            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::Connector, "actual").await.unwrap().is_some());
-            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::RagCollection, &collection.id.to_string()).await.unwrap().is_some());
+            assert!(grant_scope_in(&state, &mut tx, "admin", GrantKind::Model, "vip-model", None).await.unwrap().unwrap().pools.is_none());
+            assert!(grant_scope_in(&state, &mut tx, "missing-user", GrantKind::Model, "vip-model", None).await.unwrap().is_none());
+            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::Connector, "actual", None).await.unwrap().is_some());
+            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::RagCollection, &collection.id.to_string(), None).await.unwrap().is_some());
             sqlx::query("UPDATE mcp_catalog_connectors SET enabled=0 WHERE key='actual'").execute(&mut *tx).await.unwrap();
-            assert!(matches!(grant_scope_in(&state, &mut tx, "manager", GrantKind::Connector, "actual").await, Err(HoldRefusal::Missing(_))));
+            assert!(matches!(grant_scope_in(&state, &mut tx, "manager", GrantKind::Connector, "actual", None).await, Err(HoldRefusal::Missing(_))));
             sqlx::query("UPDATE rag_collections SET allowed_groups='[\"other\"]' WHERE id=?").bind(collection.id).execute(&mut *tx).await.unwrap();
-            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::RagCollection, &collection.id.to_string()).await.unwrap().is_none());
+            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::RagCollection, &collection.id.to_string(), None).await.unwrap().is_none());
             sqlx::query("DELETE FROM oidc_group_mappings WHERE gateway_group='vip'").execute(&mut *tx).await.unwrap();
-            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::Model, "vip-model").await.unwrap().is_none());
+            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::Model, "vip-model", None).await.unwrap().is_none());
             sqlx::query("UPDATE automatic_route_candidates SET target='alternate-model' WHERE route_alias='auto' AND key='vip-model'").execute(&mut *tx).await.unwrap();
-            let scope = grant_scope_in(&state, &mut tx, "manager", GrantKind::Model, "auto").await.unwrap().unwrap();
+            let scope = grant_scope_in(&state, &mut tx, "manager", GrantKind::Model, "auto", None).await.unwrap().unwrap();
             assert_eq!(scope.pools.unwrap().into_iter().collect::<BTreeSet<_>>(), BTreeSet::from(["open".into(), "selector".into()]));
             sqlx::query("UPDATE users SET roles_json='[]' WHERE id='admin'").execute(&mut *tx).await.unwrap();
-            assert!(grant_scope_in(&state, &mut tx, "admin", GrantKind::Model, "vip-model").await.unwrap().is_none());
+            assert!(grant_scope_in(&state, &mut tx, "admin", GrantKind::Model, "vip-model", None).await.unwrap().is_none());
         }).await.expect("transactional grant reads must use the held connection");
         drop(tx);
         assert!(
@@ -709,29 +816,36 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            grant_scope_in(&state, &mut tx, "creator", GrantKind::A2aCaller, &dot)
+            grant_scope_in(&state, &mut tx, "creator", GrantKind::A2aCaller, &dot, None)
                 .await
                 .unwrap()
                 .is_some()
         );
         assert!(
-            grant_scope_in(&state, &mut tx, "outsider", GrantKind::A2aCaller, &dot)
-                .await
-                .unwrap()
-                .is_none()
+            grant_scope_in(
+                &state,
+                &mut tx,
+                "outsider",
+                GrantKind::A2aCaller,
+                &dot,
+                None
+            )
+            .await
+            .unwrap()
+            .is_none()
         );
         sqlx::query("DELETE FROM oidc_group_mappings WHERE gateway_group='members'")
             .execute(&mut *tx)
             .await
             .unwrap();
         assert!(
-            grant_scope_in(&state, &mut tx, "creator", GrantKind::A2aCaller, &dot)
+            grant_scope_in(&state, &mut tx, "creator", GrantKind::A2aCaller, &dot, None)
                 .await
                 .unwrap()
                 .is_none()
         );
         assert!(
-            grant_scope_in(&state, &mut tx, "admin", GrantKind::A2aCaller, &dot)
+            grant_scope_in(&state, &mut tx, "admin", GrantKind::A2aCaller, &dot, None)
                 .await
                 .unwrap()
                 .is_some()
@@ -791,5 +905,234 @@ mod tests {
         assert!(caps.touch_due("t1"));
         assert!(!caps.touch_due("t1"));
         assert!(caps.touch_due("t2"));
+    }
+    async fn organization_connector_fixture() -> (RamaState, String, String) {
+        use aiplane_agents::db::{agents::DotOwner, dot_connections};
+        use aiplane_core::server::db::{gateway_groups, mcp_connections};
+        let (state, organization, dot) = crate::agents::access::tests::fixture().await;
+        gateway_groups::set_tools_for_group(&state.db, "members", &["mcp__own-workspace".into()])
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,use_dcr,client_id,enabled,allowed_groups,created_at,updated_at) VALUES('own-workspace','Actual Workspace','https://workspace.example.test/mcp','oauth2','per_user',0,'client',1,'[\"members\"]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+            .execute(&state.db).await.unwrap();
+        let catalog = mcp_catalog::get(&state.db, "own-workspace")
+            .await
+            .unwrap()
+            .unwrap();
+        let identity = mcp_connections::upsert_connection(
+            &state.db,
+            mcp_connections::NewConnection {
+                owner: mcp_connections::ConnectionOwner::Principal(dot.clone()),
+                connector_key: catalog.key,
+                catalog_generation: catalog.dispatch_generation,
+                access_token_ct: vec![1],
+                access_token_nonce: vec![2],
+                refresh_token_ct: None,
+                refresh_token_nonce: None,
+                token_expires_at: None,
+                scopes: vec![],
+                dcr_client_id: None,
+                dcr_client_secret_ct: None,
+                dcr_client_secret_nonce: None,
+                token_url: None,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let owner = DotOwner::Organization(organization.clone());
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        assert!(matches!(
+            dot_connections::save_in(
+                &mut tx,
+                dot_connections::Selection {
+                    owner: &owner,
+                    dot_id: &dot,
+                    connector_key: "own-workspace",
+                    identity_mode: dot_connections::IdentityMode::Principal,
+                    connection_generation: &identity.generation,
+                    expected_binding_generation: None,
+                }
+            )
+            .await
+            .unwrap(),
+            dot_connections::SaveOutcome::Saved(Some(_))
+        ));
+        tx.commit().await.unwrap();
+        (state, organization, dot)
+    }
+
+    #[tokio::test]
+    async fn organization_connector_holding_uses_selected_own_identity_before_connector_grant() {
+        use aiplane_core::server::db::gateway_groups;
+        let (state, organization, dot) = organization_connector_fixture().await;
+        let grants = aiplane_agents::db::system_principals::grants(&state.db, &dot)
+            .await
+            .unwrap();
+        assert!(
+            grants
+                .iter()
+                .all(|grant| grant.kind != GrantKind::Connector)
+        );
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let (user, policy) =
+                crate::agents::access::current_user_policy_in(&state, &mut tx, "creator")
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert!(!policy.can_manage_dots(&policy.role_ids_for(&user.roles)));
+            assert!(
+                grant_scope_in(
+                    &state,
+                    &mut tx,
+                    "creator",
+                    GrantKind::Connector,
+                    "own-workspace",
+                    Some(&dot)
+                )
+                .await
+                .unwrap()
+                .is_some()
+            );
+            assert_eq!(
+                grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+                    .await
+                    .unwrap(),
+                BTreeSet::from(["own-workspace".into()])
+            );
+            assert!(
+                grantable_connectors_in(&state, &mut tx, "creator", None)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                grant_scope_in(
+                    &state,
+                    &mut tx,
+                    "creator",
+                    GrantKind::Connector,
+                    "own-workspace",
+                    None
+                )
+                .await
+                .is_err()
+            );
+            for user in ["outsider", "responder", "admin"] {
+                assert!(
+                    grant_scope_in(
+                        &state,
+                        &mut tx,
+                        user,
+                        GrantKind::Connector,
+                        "own-workspace",
+                        Some(&dot)
+                    )
+                    .await
+                    .unwrap()
+                    .is_none()
+                );
+            }
+            sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+                .bind(&dot)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            assert!(
+                grant_scope_in(
+                    &state,
+                    &mut tx,
+                    "creator",
+                    GrantKind::Connector,
+                    "own-workspace",
+                    Some(&dot)
+                )
+                .await
+                .unwrap()
+                .is_some()
+            );
+            sqlx::query("DELETE FROM organization_groups WHERE organization_id=?")
+                .bind(&organization)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            assert!(
+                grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        })
+        .await
+        .expect("current grant holding uses the authority transaction");
+        drop(tx);
+        gateway_groups::set_tools_for_group(&state.db, "members", &[])
+            .await
+            .unwrap();
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        assert!(
+            grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn organization_connector_holding_rechecks_saved_binding_credentials_and_catalogue_epochs()
+     {
+        let (state, _, dot) = organization_connector_fixture().await;
+        for mutation in [
+            "DELETE FROM dot_connector_bindings WHERE dot_id=?",
+            "UPDATE dot_connector_bindings SET identity_mode='user' WHERE dot_id=?",
+            "UPDATE dot_connector_bindings SET connection_generation='obsolete' WHERE dot_id=?",
+            "UPDATE mcp_connections SET status='reauth' WHERE principal_id=?",
+            "UPDATE mcp_connections SET catalog_generation=NULL WHERE principal_id=?",
+            "UPDATE mcp_connections SET generation='obsolete' WHERE principal_id=?",
+        ] {
+            let mut tx = WriteTx::begin(&state.db).await.unwrap();
+            assert!(
+                grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+                    .await
+                    .unwrap()
+                    .contains("own-workspace")
+            );
+            sqlx::query(mutation)
+                .bind(&dot)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            assert!(
+                grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+                    .await
+                    .unwrap()
+                    .is_empty(),
+                "{mutation}"
+            );
+            assert!(
+                grant_scope_in(
+                    &state,
+                    &mut tx,
+                    "creator",
+                    GrantKind::Connector,
+                    "own-workspace",
+                    Some(&dot)
+                )
+                .await
+                .unwrap()
+                .is_none(),
+                "{mutation}"
+            );
+            drop(tx);
+        }
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        sqlx::query("UPDATE mcp_catalog_connectors SET dispatch_generation='changed' WHERE key='own-workspace'").execute(&mut *tx).await.unwrap();
+        assert!(
+            grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

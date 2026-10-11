@@ -43,8 +43,17 @@ pub struct MismatchedRun {
     pub principal: String,
 }
 
+pub struct OrganizationTurnContext {
+    pub organization_id: String,
+    pub session_id: String,
+    pub assistant_turn_id: String,
+    pub state: Arc<crate::rama_server::state::RamaState>,
+}
+
 /// Everything that makes a turn an agent's run.
 pub struct AgentRun {
+    organization: Option<OrganizationTurnContext>,
+    organization_resume: Option<crate::agents::profile::OrganizationResumeAuthority>,
     principal: SystemPrincipal,
     chain: Arc<RunChain>,
     finish: Option<Arc<FinishTool>>,
@@ -90,6 +99,8 @@ impl AgentRun {
         Ok(Self {
             principal,
             chain,
+            organization: None,
+            organization_resume: None,
             finish: None,
             budget: None,
             injection: InjectionScan::default(),
@@ -105,6 +116,29 @@ impl AgentRun {
     pub fn with_contract(mut self, contract: FinishContract) -> Self {
         self.finish = Some(Arc::new(FinishTool::new(contract)));
         self
+    }
+
+    pub(crate) fn with_organization(mut self, organization: OrganizationTurnContext) -> Self {
+        self.organization = Some(organization);
+        self
+    }
+
+    pub(crate) fn with_organization_resume(
+        mut self,
+        authority: crate::agents::profile::OrganizationResumeAuthority,
+    ) -> Self {
+        self.organization_resume = Some(authority);
+        self
+    }
+
+    pub(crate) fn organization_resume(
+        &self,
+    ) -> Option<&crate::agents::profile::OrganizationResumeAuthority> {
+        self.organization_resume.as_ref()
+    }
+
+    pub fn organization(&self) -> Option<&OrganizationTurnContext> {
+        self.organization.as_ref()
     }
 
     pub fn with_budget(mut self, budget: Budget) -> Self {

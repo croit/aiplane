@@ -70,7 +70,8 @@ impl ModelCall {
         Self {
             access: PoolAccess::for_system_models(principal, [model]),
             model: model.to_string(),
-            payer: Payer::agent(principal, log.agent.as_ref().map(|a| a.chain().clone())),
+            payer: Payer::agent(principal, log.agent.as_ref().map(|a| a.chain().clone()))
+                .with_model_context(log),
             log: RunLog::of(log),
             state,
         }
@@ -126,5 +127,91 @@ impl ModelCall {
             answer,
             tokens: answered.tokens(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_run::Actor;
+    use crate::server::headless::tests::{organization_draft_fixture, state_for};
+    use aiplane_agents::db::system_principals;
+    use aiplane_core::server::principal::GrantKind;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    #[tokio::test]
+    async fn organization_model_call_retained_before_revocation_never_sends_after_revocation() {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices":[{"message":{"content":"{\"verdict\":\"in_scope\"}"}}]
+            })))
+            .mount(&upstream)
+            .await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        let Actor::Agent(run) = &params.actor else {
+            panic!("agent expected")
+        };
+        let context = ToolContext {
+            principal: run.principal(),
+            agent: Some(run.clone()),
+            session_id: Some(params.session_id.clone()),
+            assistant_turn_id: Some(params.assistant_turn_id.clone()),
+            ..ToolContext::for_test(state.db.clone())
+        };
+        let chooser = ModelCall::new(state.clone(), &params.model, &profile.principal, &context);
+        system_principals::remove_grant(
+            &state.db,
+            &profile.principal.id,
+            GrantKind::Model,
+            &params.model,
+            "creator",
+        )
+        .await
+        .unwrap();
+        let answer = chooser
+            .ask(Question {
+                purpose: "scope_decision",
+                instructions: "Choose a verdict.",
+                input: "Actual task".into(),
+                field: "verdict",
+                choices: &["in_scope", "out_of_scope"],
+            })
+            .await;
+        assert!(answer.answer.is_err());
+        assert_eq!(answer.tokens, 0);
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn organization_model_call_without_turn_context_never_sends() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        let context = ToolContext {
+            principal: aiplane_core::server::principal::Principal::System(
+                profile.principal.clone(),
+            ),
+            session_id: Some(params.session_id),
+            assistant_turn_id: Some(params.assistant_turn_id),
+            ..ToolContext::for_test(state.db.clone())
+        };
+        let answer = ModelCall::new(state, &params.model, &profile.principal, &context)
+            .ask(Question {
+                purpose: "route_decision",
+                instructions: "Choose a route.",
+                input: "Actual task".into(),
+                field: "route",
+                choices: &["main", "expert"],
+            })
+            .await;
+        assert!(answer.answer.is_err());
+        assert_eq!(answer.tokens, 0);
+        assert!(upstream.received_requests().await.unwrap().is_empty());
     }
 }

@@ -702,8 +702,13 @@ impl SessionDriver for OpenAiDriver {
         // broadcasts `Finalized` the moment `run_turn` returns), exactly like
         // title generation.
         if result.is_ok() && !ctx.cancel.load(Ordering::SeqCst) {
+            let completion = self
+                .agent()
+                .filter(|run| run.organization().is_some())
+                .map(|_| ctx.broadcast.subscribe());
             let state = self.state.clone();
             let session_id = ctx.session_id.clone();
+            let assistant_turn_id = ctx.assistant_turn_id.clone();
             let (model, access) = crate::server::compaction::compaction_target(
                 &self.state,
                 &ctx.model,
@@ -718,13 +723,33 @@ impl SessionDriver for OpenAiDriver {
             } else {
                 None
             };
-            let payer = crate::server::side_call::Payer::of_turn(
+            let mut payer = crate::server::side_call::Payer::of_turn(
                 &self.tool_ctx.principal,
                 self.agent().map(|run| run.chain().clone()),
                 email,
                 self.source,
-            );
+            )
+            .with_model_context(&self.tool_ctx);
+            if let Some(run) = self
+                .tool_ctx
+                .agent
+                .clone()
+                .filter(|run| run.organization().is_some())
+            {
+                payer = payer.for_compaction(run, ctx.model.clone());
+            }
             tokio::spawn(async move {
+                if let Some(completion) = completion
+                    && !crate::server::compaction::wait_for_completed_turn(
+                        &state,
+                        &session_id,
+                        &assistant_turn_id,
+                        completion,
+                    )
+                    .await
+                {
+                    return;
+                }
                 crate::server::compaction::maybe_autocompact(
                     &state,
                     &session_id,
@@ -1182,14 +1207,27 @@ async fn run_one_turn(
     // can advertise the connectors the model could turn on (progressive
     // disclosure — the tools themselves stay out of the request until the
     // model, or the user via the composer, enables the connector).
-    let user_mcp = d
-        .state
-        .mcp_layer_for_dot(
-            &d.tool_ctx.principal,
-            d.tool_ctx.personal_dot.as_ref(),
-            crate::server::tools::mcp::manager::AskContext::Chat,
-        )
-        .await;
+    let model_authority = d
+        .tool_ctx
+        .agent
+        .clone()
+        .map(crate::server::model_route::ModelAuthority::live);
+    if let Some(authority) = &model_authority {
+        authority
+            .check_turn(Some(&ctx.session_id), Some(&ctx.assistant_turn_id))
+            .map_err(upstream_err)?;
+    }
+    let user_mcp = if let Some(run) = d.tool_ctx.agent.as_deref() {
+        d.state.mcp_layer_for_run(run).await.map_err(upstream_err)?
+    } else {
+        d.state
+            .mcp_layer_for_dot(
+                &d.tool_ctx.principal,
+                d.tool_ctx.personal_dot.as_ref(),
+                crate::server::tools::mcp::manager::AskContext::Chat,
+            )
+            .await
+    };
     let comfyui = d
         .state
         .comfyui()
@@ -1296,14 +1334,22 @@ async fn run_one_turn(
                 session: &ctx.session_id,
             },
         ),
+        &d.tool_ctx.principal,
+        model_authority.as_ref(),
     )
     .await
     .map_err(upstream_err)?;
     let (routing_model, access, automatic_decision) =
         (target.model.as_str(), target.access, target.decision);
-    match crate::content_guard::evaluate_for_model(&d.state, &routing_state, routing_model, &access)
-        .await
-        .map_err(upstream_err)?
+    match crate::content_guard::evaluate_for_turn(
+        &d.state,
+        &routing_state,
+        routing_model,
+        &access,
+        &tool_ctx,
+    )
+    .await
+    .map_err(upstream_err)?
     {
         crate::content_guard::Action::Allow => {}
         crate::content_guard::Action::Confirm => {
@@ -1684,7 +1730,16 @@ async fn run_one_turn(
             crate::persona::personal_dot::current_pool_access(&d.state, &principal, &access)
                 .for_request(&ctx.model)
         } else {
-            access.clone()
+            crate::server::model_route::live_model_access(
+                &d.state,
+                &d.tool_ctx.principal,
+                model_authority.as_ref(),
+                &access,
+                &ctx.model,
+                automatic_decision.as_ref(),
+            )
+            .await
+            .map_err(upstream_err)?
         };
         let acquired = match d.state.upstreams.route_access_affine(
             &real_model,
@@ -3924,6 +3979,89 @@ where
 /// rather than poisoning the request.
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn organization_model_round_two_is_refused_after_round_one_revocation() {
+        use super::*;
+        use crate::server::headless::tests::{organization_draft_fixture, state_for};
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        let upstream = MockServer::start().await;
+        let reached = Arc::new(tokio::sync::Notify::new());
+        let sent = reached.clone();
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(move |_: &wiremock::Request| {
+                sent.notify_one();
+                let chunk = serde_json::json!({"choices":[{"delta":{"tool_calls":[{
+                    "index":0,"id":"echo-checkpoint","type":"function",
+                    "function":{"name":"company_echo","arguments":"{\"message\":\"checkpoint\"}"}
+                }]}}]});
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(300))
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(format!("data: {chunk}\n\ndata: [DONE]\n\n"))
+            })
+            .mount(&upstream)
+            .await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        let tool_ctx = build_tool_context(
+            &state,
+            TurnFacts {
+                actor: params.actor,
+                session_id: params.session_id.clone(),
+                assistant_turn_id: params.assistant_turn_id.clone(),
+                client_ip: None,
+                chat_feedback: None,
+                model: Some(params.model.clone()),
+                pool_access: None,
+                suspendable: true,
+            },
+        );
+        let driver = OpenAiDriver {
+            state: state.clone(),
+            tool_ctx,
+            source: params.source,
+            history_limit: None,
+            voice_mode: false,
+            clock: crate::budget::system_clock(),
+            resume: None,
+            persona: None,
+        };
+        let ctx = SessionContext {
+            user_id: None,
+            session_id: params.session_id,
+            assistant_turn_id: params.assistant_turn_id,
+            model: params.model.clone(),
+            cancel: Default::default(),
+            broadcast: tokio::sync::broadcast::channel(16).0,
+            steers: Default::default(),
+        };
+        let worker = tokio::spawn(async move { driver.run_turn(ctx).await });
+        tokio::time::timeout(std::time::Duration::from_secs(3), reached.notified())
+            .await
+            .unwrap();
+        aiplane_agents::db::system_principals::remove_grant(
+            &state.db,
+            &profile.principal.id,
+            aiplane_core::server::principal::GrantKind::Model,
+            &params.model,
+            "creator",
+        )
+        .await
+        .unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), worker)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(upstream.received_requests().await.unwrap().len(), 1);
+    }
+
     #[test]
     fn personal_round_usage_requires_complete_token_facts_and_marks_abandoned_requests_unknown() {
         assert_eq!(super::known_round_tokens((None, None, None)), None);

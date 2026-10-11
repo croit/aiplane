@@ -606,3 +606,39 @@ the classifier, `order`, separate budgets, a cycle, an injection in a
 sub-agent result, the audit chain, models), `agents/run/tests/output_filter.rs`,
 `agents/run/tests/loop_route.rs`, `agents/run/tests/topic_guard.rs`,
 `agents/output_filter.rs`, `agents/topic_guard.rs`, `agents/profile.rs`.
+
+## Organization private draft authority
+
+An organization Dot's private test turn is owned by its system principal. The
+conversation has no user owner, visitor or parent turn, is not shared, and
+uses `DRAFT_VERSION`. The draft opener checks current organization membership
+and Write access in the same transaction as its session and assistant rows.
+A member's identity supplies admission and audit attribution only.
+
+`OrganizationTurnContext` binds the runtime to the actual organization,
+principal, session and assistant turn. Before model and tool acquisition,
+`validate_organization_turn_in` verifies active ownership, the enabled
+principal and the exact private draft turn. Current grants and model-pool
+scopes are intersected with the initial principal snapshot. Retained tool
+references repeat that proof. Selected own MCP credentials also retain their
+original catalogue, credential and binding generations. A missing selection
+never falls back to a member or gateway connection.
+
+The driver captures `OrganizationResumeAuthority` into the existing internal
+suspension `run_context`. It contains the original draft, actual resolved
+model, initial grants/model pools and synthetic tool dependencies from the
+loaded profile. Tools cannot supply the reserved authority field. The public
+suspension view omits this context. Staff claim checks current member Write
+access, exact saved owner/turn authority and original account facts before
+consuming the request. The common profile loader seeds the original authority
+before constructing surfaces and verifier closures, including after restart.
+Editing the current draft or adding grants does not expand that paused run.
+
+Compaction waits for finalization and admits only the original completed
+assistant turn. Its model request and summary write repeat current ownership
+and grant checks; the final persistence proof shares the summary transaction.
+Live execution cannot use this completed-turn admission purpose.
+
+Published, pinned, public, embedded, child and automated organization callers
+remain unavailable. Organization private draft runs do not acquire employee
+profile, memory, credentials or personal tool preferences.

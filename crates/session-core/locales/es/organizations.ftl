@@ -5,7 +5,7 @@ organization-error-permission-required = Necesitas ser miembro de la organizaci�
 organization-error-active-limit = La organización ha alcanzado su límite de Dots activos. Desactiva un Dot o pide a un administrador que aumente el límite.
 organization-error-name-conflict = Esta organización ya tiene un Dot con ese nombre. Elige otro nombre.
 organization-error-admin-required = Solo los administradores pueden gestionar la configuración de la organización. Pide a un administrador que realice este cambio.
-organization-error-execution-unavailable = Los Dots de organización se pueden configurar, pero su ejecución no está disponible en esta instalación. Contacta con tu administrador antes de iniciar este Dot.
+organization-error-execution-unavailable = Este Dot de organización o sus permisos de ejecución no están disponibles. Comprueba su estado activo, sus permisos y la conversación privada antes de volver a intentarlo.
 organizations-heading = Organizaciones
 organizations-empty = No hay organizaciones disponibles para ti.
 organization-create = Crear organización
@@ -17,6 +17,6 @@ organization-saved = Organización guardada.
 organization-dots-empty = No hay Dots compartidos contigo en esta organización.
 organization-active-count = { $count } de { $limit } Dots activos
 organization-owned-by = Organización: { $name }
-organization-configuration-only = Este Dot de organización se puede configurar y publicar. Las conversaciones, la automatización y los canales externos no están disponibles.
+organization-configuration-only = Este Dot de organización se puede configurar y publicar. Los miembros con acceso de escritura pueden probar su borrador guardado en una conversación privada. Las conversaciones publicadas, las suites de pruebas automatizadas, la automatización y los canales externos no están disponibles.
 organization-share-search-truncated = La búsqueda ha alcanzado su límite. Introduce un nombre más específico o una dirección de correo completa.
 

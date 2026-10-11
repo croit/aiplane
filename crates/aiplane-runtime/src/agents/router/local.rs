@@ -34,7 +34,7 @@ pub(super) enum LocalTarget<'a> {
 }
 
 pub(super) enum LocalReceiver {
-    Principal(RunProfile),
+    Principal(Box<RunProfile>),
     Personal(Box<PersonalReceiver>),
 }
 
@@ -57,7 +57,7 @@ pub(super) async fn resolve(
             options,
         } => RunProfile::load(state, id, Role::SubAgent { route_binds }, options)
             .await
-            .map(LocalReceiver::Principal)
+            .map(|profile| LocalReceiver::Principal(Box::new(profile)))
             .map_err(|error| ToolError::Failed(error.to_string())),
         LocalTarget::Personal {
             owner,

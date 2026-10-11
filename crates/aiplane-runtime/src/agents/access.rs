@@ -54,18 +54,43 @@ pub async fn effective_access_in(
     agent_id: &str,
     user_id: &str,
 ) -> Result<Option<Access>, DbError> {
+    access_in(state, tx, agent_id, user_id, false).await
+}
+
+pub async fn organization_access_in(
+    state: &AppState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    agent_id: &str,
+    user_id: &str,
+) -> Result<Option<Access>, DbError> {
+    access_in(state, tx, agent_id, user_id, true).await
+}
+
+async fn access_in(
+    state: &AppState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    agent_id: &str,
+    user_id: &str,
+    organization_only: bool,
+) -> Result<Option<Access>, DbError> {
     let Some((user, policy)) = current_user_policy_in(state, tx, user_id).await? else {
         return Ok(None);
     };
     let groups = policy.role_ids_for(&user.roles);
-    if policy.is_admin(&groups) {
+    if policy.is_admin(&groups) && !organization_only {
         return Ok(Some(Access::Write));
     }
-    if let Some(agents_db::DotOwner::Organization(organization)) =
-        agents_db::dot_owner_in(tx, agent_id).await?
-        && !aiplane_agents::db::organizations::is_member_in(tx, &organization, &groups).await?
-    {
-        return Ok(None);
+    match agents_db::dot_owner_in(tx, agent_id).await? {
+        Some(agents_db::DotOwner::Organization(organization)) => {
+            if !aiplane_agents::db::organizations::is_member_in(tx, &organization, &groups).await? {
+                return Ok(None);
+            }
+        }
+        _ if organization_only => return Ok(None),
+        _ => {}
+    }
+    if policy.is_admin(&groups) {
+        return Ok(Some(Access::Write));
     }
     let manager = policy.can_manage_agents(&groups);
     Ok(agents_db::shares_held_in(tx, agent_id, user_id, &groups)
@@ -86,6 +111,76 @@ pub(crate) mod tests {
         upstreams::UpstreamRegistry,
     };
     use std::sync::Arc;
+
+    #[tokio::test]
+    async fn organization_access_requires_current_membership_before_admin_recovery() {
+        let (state, organization, dot) = fixture().await;
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        assert_eq!(
+            effective_access_in(&state, &mut tx, &dot, "admin")
+                .await
+                .unwrap(),
+            Some(Access::Write)
+        );
+        assert_eq!(
+            organization_access_in(&state, &mut tx, &dot, "admin")
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            organization_access_in(&state, &mut tx, &dot, "creator")
+                .await
+                .unwrap(),
+            Some(Access::Write)
+        );
+        assert_eq!(
+            organization_access_in(&state, &mut tx, &dot, "responder")
+                .await
+                .unwrap(),
+            Some(Access::Respond)
+        );
+        assert_eq!(
+            organization_access_in(&state, &mut tx, &dot, "outsider")
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            organization_access_in(&state, &mut tx, &dot, "absent")
+                .await
+                .unwrap(),
+            None
+        );
+        sqlx::query(
+            "DELETE FROM organization_groups WHERE organization_id=? AND gateway_group='members'",
+        )
+        .bind(&organization)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(
+            organization_access_in(&state, &mut tx, &dot, "creator")
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            organization_access_in(&state, &mut tx, &dot, "responder")
+                .await
+                .unwrap(),
+            Some(Access::Respond)
+        );
+        drop(tx);
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        assert_eq!(
+            organization_access_in(&state, &mut tx, &dot, "creator")
+                .await
+                .unwrap(),
+            Some(Access::Write)
+        );
+        tx.commit().await.unwrap();
+    }
 
     pub(crate) async fn fixture() -> (RamaState, String, String) {
         let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
@@ -300,13 +395,12 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn organization_profile_refuses_live_and_draft_execution_before_loading_a_model() {
+    async fn organization_profile_refuses_live_and_pinned_execution_before_loading_a_model() {
         let (state, _, dot) = fixture().await;
         let state = Arc::new(state);
         for source in [
             crate::agents::profile::SpecSource::Live,
             crate::agents::profile::SpecSource::Pinned(1),
-            crate::agents::profile::SpecSource::Draft(serde_json::json!({})),
         ] {
             let result = crate::agents::profile::RunProfile::load_from(
                 &state,

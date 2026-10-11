@@ -114,6 +114,21 @@ pub async fn get_principal_session(
     row.as_ref().map(map_run_session).transpose()
 }
 
+pub async fn get_private_draft_session_in(
+    tx: &mut super::WriteTx,
+    principal_id: &str,
+    session_id: &str,
+) -> Result<Option<RunSession>, DbError> {
+    let row = sqlx::query(&format!(
+        "SELECT {RUN_SESSION_COLUMNS} FROM chat_sessions WHERE id=? AND principal_id=? AND user_id IS NULL AND shared=0 AND agent_version=0 AND visitor_id IS NULL AND parent_turn_id IS NULL"
+    ))
+    .bind(session_id)
+    .bind(principal_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    row.as_ref().map(map_run_session).transpose()
+}
+
 /// The principal-owned conversation `turn_id` belongs to; `None` when the
 /// turn does not exist or is in a person's chat.
 pub async fn run_session_of_turn(
@@ -661,5 +676,79 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(after.notified_at.is_some());
+    }
+    #[tokio::test]
+    async fn private_draft_session_admission_reads_current_transaction_and_rejects_other_contexts()
+    {
+        let fx = fixture().await;
+        let mut tx = crate::db::WriteTx::begin(&fx.pool).await.unwrap();
+        let draft = create_principal_session(
+            &mut *tx,
+            &NewRunSession {
+                agent_version: Some(0),
+                ..fx.run_session(None)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            get_private_draft_session_in(&mut tx, &fx.principal, &draft.id)
+                .await
+                .unwrap(),
+            Some(draft.clone())
+        );
+        assert!(
+            get_private_draft_session_in(&mut tx, "wrong-principal", &draft.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            get_private_draft_session_in(&mut tx, &fx.principal, "missing")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            sqlx::query("UPDATE chat_sessions SET shared=1 WHERE id=?")
+                .bind(&draft.id)
+                .execute(&mut *tx)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            get_private_draft_session_in(&mut tx, &fx.principal, &draft.id)
+                .await
+                .unwrap(),
+            Some(draft.clone())
+        );
+        for mutation in [
+            "UPDATE chat_sessions SET agent_version=1 WHERE id=?",
+            "UPDATE chat_sessions SET agent_version=NULL WHERE id=?",
+            "UPDATE chat_sessions SET parent_turn_id='opaque-parent' WHERE id=?",
+            "UPDATE chat_sessions SET principal_id=NULL,user_id='u1' WHERE id=?",
+        ] {
+            sqlx::query(mutation)
+                .bind(&draft.id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            assert!(
+                get_private_draft_session_in(&mut tx, &fx.principal, &draft.id)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "{mutation}"
+            );
+            sqlx::query("UPDATE chat_sessions SET shared=0,agent_version=0,parent_turn_id=NULL,principal_id=?,user_id=NULL WHERE id=?")
+                .bind(&fx.principal).bind(&draft.id).execute(&mut *tx).await.unwrap();
+        }
+        drop(tx);
+        assert!(
+            get_principal_session(&fx.pool, &fx.principal, &draft.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

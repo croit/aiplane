@@ -5,7 +5,7 @@ organization-error-permission-required = 你需要是组织成员并拥有代理
 organization-error-active-limit = 组织已达到启用 Dot 的数量上限。请停用一个 Dot，或请管理员提高上限。
 organization-error-name-conflict = 此组织已有同名 Dot。请选择其他名称。
 organization-error-admin-required = 只有管理员可以管理组织设置。请管理员进行此更改。
-organization-error-execution-unavailable = 组织 Dot 可以配置，但此部署暂时不支持运行。启动此 Dot 前，请联系管理员。
+organization-error-execution-unavailable = 此组织 Dot 或其运行权限不可用。重试前请检查其启用状态、权限和私有对话。
 organizations-heading = 组织
 organizations-empty = 你没有可访问的组织。
 organization-create = 创建组织
@@ -17,6 +17,6 @@ organization-saved = 组织已保存。
 organization-dots-empty = 此组织中没有与你共享的 Dot。
 organization-active-count = 已激活 { $count } 个 Dot，上限 { $limit } 个
 organization-owned-by = 组织：{ $name }
-organization-configuration-only = 此组织 Dot 可以配置和发布。对话、自动化和外部渠道暂不可用。
+organization-configuration-only = 此组织 Dot 可以配置和发布。具有写入权限的成员可以在私有对话中测试其已保存的草稿。已发布版本的对话、自动测试套件、自动化和外部渠道暂不可用。
 organization-share-search-truncated = 搜索已达到上限。请输入更具体的名称或完整的电子邮件地址。
 

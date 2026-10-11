@@ -813,6 +813,10 @@ const DISPATCHERS: &[(Allowed, Option<&str>)] = &[
 /// Who may call `Tool::run` directly rather than through the runner.
 const DIRECT_TOOL_RUNS: &[Allowed] = &[
     Allowed {
+        path: "aiplane-runtime/src/agents/profile.rs",
+        why: "the organization wrapper revalidates the initially granted tool's exact private turn, current principal grants and selected account before inner dispatch",
+    },
+    Allowed {
         path: "aiplane-runtime/src/agents/approval.rs",
         why: "the shared permission gate classifies a granted invocation before allowing, denying or suspending its original call",
     },
@@ -920,7 +924,7 @@ fn personal_dot_calls_revalidate_access_before_execution() {
         "dot.active",
         "spec.main.tools",
         "GrantedToolSource::new",
-        "gate_personal_dot",
+        "gate_dot",
     ] {
         assert!(
             source.code.contains(mechanism),
@@ -940,6 +944,47 @@ fn personal_dot_calls_revalidate_access_before_execution() {
                 why: "the wrapper type and its Tool implementation",
             },
         ],
+        &wrapping,
+    );
+}
+
+#[test]
+fn organization_dot_calls_revalidate_private_authority_before_execution() {
+    let source = production_sources()
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/agents/profile.rs")
+        .expect("the organization Dot dispatch wrapper must exist");
+    for mechanism in [
+        "validate_organization_turn_in",
+        "validate_organization_identity_in",
+        "Arc::ptr_eq",
+        "pending_execution_facts",
+        "dependency_tool_ids",
+    ] {
+        assert!(
+            source.code.contains(mechanism),
+            "organization Dot dispatch must keep {mechanism}"
+        );
+    }
+    let implementation = source
+        .code
+        .split_once("impl Tool for OrganizationTool")
+        .expect("the admitted tool implements Tool")
+        .1;
+    let execute = implementation
+        .split_once("fn run")
+        .expect("the wrapper executes the tool")
+        .1;
+    assert!(
+        execute.find("self.admit(&ctx)").unwrap() < execute.find("self.inner.run(ctx").unwrap()
+    );
+    let wrapping = scan(&["OrganizationTool {"], |source| source.code.as_str());
+    assert_within(
+        "Only the grant-filtered run source may wrap an organization tool for live dispatch.",
+        &[Allowed {
+            path: "aiplane-runtime/src/agents/profile.rs",
+            why: "the run source wraps an initially granted tool and verifies its live private authority",
+        }],
         &wrapping,
     );
 }

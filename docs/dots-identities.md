@@ -2,7 +2,7 @@
 
 ## Status
 
-Personal Dots can select their user's OAuth connection or a separately authorized connection owned by their Dot principal. Storage, runtime selection, JSON endpoints and the web controls extend the existing MCP authorization mechanism. The real Chrome scenario exercises authorization, explicit selection, actual tool discovery and isolated disconnect. Organization ownership, group-derived membership and configuration are implemented. Current organization member writers can authorize, explicitly select and disconnect their Dot principal’s own OAuth credential through the same connection routes. Organization execution remains unavailable pending its principal runtime bridge. Connecting an account does not provision a provider account.
+Personal Dots can select their user's OAuth connection or a separately authorized connection owned by their Dot principal. Storage, runtime selection, JSON endpoints and the web controls extend the existing MCP authorization mechanism. The real Chrome scenario exercises authorization, explicit selection, actual tool discovery and isolated disconnect. Organization ownership, group-derived membership and configuration are implemented. Current organization member writers can authorize, explicitly select and disconnect their Dot principal’s own OAuth credential through the same connection routes. Active organization Dots can use an explicitly selected own connection in a private saved-draft test chat; published and automated callers remain unavailable. Connecting an account does not provision a provider account.
 
 ## Verified source baseline
 

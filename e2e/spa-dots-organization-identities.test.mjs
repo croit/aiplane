@@ -71,7 +71,7 @@ test("Organization writer authorizes and explicitly selects its Dot account with
         await row.getByRole("combobox", { name: "Connector identity", exact: true }).waitFor();
         assert.deepEqual(await row.getByRole("combobox").locator("option").evaluateAll((options) => options.map((option) => option.value)), ["principal"]);
         assert.equal(await row.getByRole("button", { name: "Save", exact: true }).isDisabled(), true);
-        assert.equal(await page.getByRole("tab", { name: "Try it", exact: true }).count(), 0);
+        assert.equal(await page.getByRole("tab", { name: "Try it", exact: true }).count(), 1);
         const provider = page.waitForRequest((request) => request.method() === "GET" && request.isNavigationRequest() && new URL(request.url()).pathname === "/authorize");
         const callback = page.waitForResponse((response) => new URL(response.url()).pathname === "/integrations/callback");
         const started = page.waitForResponse((response) => response.request().method() === "POST" && response.url() === `${connectionUrl}/connect`);

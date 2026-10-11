@@ -5,7 +5,7 @@ organization-error-permission-required = You need organization membership and ag
 organization-error-active-limit = The organization has reached its active Dot limit. Deactivate a Dot or ask an administrator to increase the limit.
 organization-error-name-conflict = This organization already has a Dot with that name. Choose a different name.
 organization-error-admin-required = Only administrators can manage organization settings. Ask an administrator to make this change.
-organization-error-execution-unavailable = Organization Dots can be configured, but execution is not available on this installation. Contact your administrator before starting this Dot.
+organization-error-execution-unavailable = This organization Dot or its execution permissions are unavailable. Check its active status, grants and private conversation before retrying.
 organizations-heading = Organizations
 organizations-empty = No organizations are available to you.
 organization-create = Create organization
@@ -17,6 +17,6 @@ organization-saved = Organization saved.
 organization-dots-empty = No Dots are shared with you in this organization.
 organization-active-count = { $count } of { $limit } Dots active
 organization-owned-by = Organization: { $name }
-organization-configuration-only = This organization Dot can be configured and published. Conversations, automation and external channels are unavailable.
+organization-configuration-only = This organization Dot can be configured and published. Members with Write access can test its saved draft in a private conversation. Published conversations, automated test suites, automation and external channels are unavailable.
 organization-share-search-truncated = Search reached its limit. Enter a more specific name or an exact email address.
 

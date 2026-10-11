@@ -415,7 +415,7 @@ impl ForwardRequest {
         child: ChildRun<'_>,
     ) -> Result<(Value, Option<RunOutcome>), ToolError> {
         let name = child.route;
-        let local::LocalReceiver::Principal(mut profile) = local::resolve(
+        let local::LocalReceiver::Principal(profile) = local::resolve(
             &self.state,
             local::LocalTarget::Principal {
                 id: child.agent_id,
@@ -435,6 +435,7 @@ impl ForwardRequest {
                 "The published route did not resolve to its principal receiver.".into(),
             ));
         };
+        let mut profile = *profile;
         if let Some((seconds, tokens)) = child.cap {
             profile.budget = profile.budget.capped(seconds, tokens);
         }
@@ -691,6 +692,23 @@ impl Tool for ForwardRequest {
 
     fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         Box::pin(async move {
+            if matches!(
+                aiplane_agents::db::agents::dot_owner(&ctx.db, &self.spec.principal.id)
+                    .await
+                    .map_err(|error| ToolError::Failed(error.to_string()))?,
+                Some(aiplane_agents::db::agents::DotOwner::Organization(_))
+            ) || ctx
+                .agent
+                .as_ref()
+                .is_some_and(|run| run.organization().is_some())
+            {
+                return Err(ToolError::Failed(
+                    super::profile::AgentRunError::OrganizationExecutionUnavailable(
+                        self.spec.principal.id.clone(),
+                    )
+                    .to_string(),
+                ));
+            }
             if let Suspend::Decided(_, Decision::Value { value }) = &ctx.suspend {
                 if let Some(pending) = A2aDispatch::resume_pending(&ctx).await? {
                     let Some(RouteTarget::A2a(route_spec)) = self
@@ -758,6 +776,39 @@ impl RouteClassifier for ModelClassifier {
 #[cfg(test)]
 mod personal_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn organization_forward_refuses_without_an_admitted_delegation_scope() {
+        let upstream = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&upstream.uri()).await;
+        let (profile, params) =
+            crate::server::headless::tests::organization_draft_fixture(&state).await;
+        let crate::agent_run::Actor::Agent(run) = params.actor else {
+            panic!("principal expected");
+        };
+        let spec = Arc::new(AgentSpec::from_value(&json!({})).unwrap());
+        let tool = ForwardRequest::new(
+            state.clone(),
+            Arc::new(RouterSpec {
+                principal: profile.principal,
+                schema: Arc::new(StateSchema::from_spec(&json!({})).unwrap()),
+                gates: Arc::new(RouteGates::from_spec(&spec).unwrap()),
+                agent: spec,
+                main_model: params.model,
+                snapshot: Arc::default(),
+            }),
+            RunOptions::default(),
+        );
+        let ctx = ToolContext {
+            principal: run.principal(),
+            agent: Some(run),
+            session_id: Some(params.session_id),
+            assistant_turn_id: Some(params.assistant_turn_id),
+            ..ToolContext::for_test(state.db.clone())
+        };
+        assert!(tool.run(ctx, json!({})).await.is_err());
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
 
     #[test]
     fn personal_forward_request_has_explicit_bounded_task_and_state_phase() {

@@ -5,7 +5,7 @@ organization-error-permission-required = Du benötigst die Organisationsmitglied
 organization-error-active-limit = Die Organisation hat ihr Limit aktiver Dots erreicht. Deaktiviere einen Dot oder bitte einen Administrator, das Limit zu erhöhen.
 organization-error-name-conflict = Diese Organisation hat bereits einen Dot mit diesem Namen. Wähle einen anderen Namen.
 organization-error-admin-required = Nur Administratoren können Organisationseinstellungen verwalten. Bitte einen Administrator, diese Änderung vorzunehmen.
-organization-error-execution-unavailable = Organisations-Dots können konfiguriert werden, aber die Ausführung ist auf dieser Installation nicht verfügbar. Wende dich an deinen Administrator, bevor du diesen Dot startest.
+organization-error-execution-unavailable = Dieser Organisations-Dot oder seine Ausführungsberechtigungen sind nicht verfügbar. Prüfe vor einem erneuten Versuch seinen Aktivierungsstatus, seine Berechtigungen und die private Unterhaltung.
 organizations-heading = Organisationen
 organizations-empty = Für Sie sind keine Organisationen verfügbar.
 organization-create = Organisation erstellen
@@ -17,6 +17,6 @@ organization-saved = Organisation gespeichert.
 organization-dots-empty = In dieser Organisation sind keine Dots für Sie freigegeben.
 organization-active-count = { $count } von { $limit } Dots aktiv
 organization-owned-by = Organisation: { $name }
-organization-configuration-only = Dieser Organisations-Dot kann konfiguriert und veröffentlicht werden. Unterhaltungen, Automatisierung und externe Kanäle sind nicht verfügbar.
+organization-configuration-only = Dieser Organisations-Dot kann konfiguriert und veröffentlicht werden. Mitglieder mit Schreibzugriff können seinen gespeicherten Entwurf in einer privaten Unterhaltung testen. Veröffentlichte Unterhaltungen, automatisierte Testsuiten, Automatisierung und externe Kanäle sind nicht verfügbar.
 organization-share-search-truncated = Die Suche hat ihr Limit erreicht. Geben Sie einen genaueren Namen oder eine vollständige E-Mail-Adresse ein.
 

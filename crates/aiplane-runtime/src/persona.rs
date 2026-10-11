@@ -119,7 +119,7 @@ impl ToolSource for PersonaToolSource<'_> {
                     state: state.clone(),
                     initial: tool,
                 }),
-                None => permissions.gate_personal_dot(tool),
+                None => permissions.gate_dot(tool),
             },
             None => tool,
         })

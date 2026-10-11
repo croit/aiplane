@@ -902,10 +902,13 @@ async fn foundation_dot_active_capacity_is_owner_scoped_and_reuses_deactivation(
 }
 
 #[tokio::test]
-async fn organization_configuration_reuses_grants_and_publish_but_refuses_execution_and_shared_credentials()
+async fn organization_configuration_reuses_grants_publish_and_private_draft_but_refuses_shared_credentials()
  {
     use aiplane_core::server::db::mcp_catalog::{self, AuthKind, ConnectorInput, Scope};
-    let fx = fixture().await;
+    let mut fx = fixture().await;
+    fx.state = fx.state.clone().with_agent_runner(std::sync::Arc::new(
+        aiplane_runtime::agents::embed::LiveAgentRunner,
+    ));
     mcp_catalog::create(
         &fx.state.db,
         ConnectorInput {
@@ -931,6 +934,11 @@ async fn organization_configuration_reuses_grants_and_publish_but_refuses_execut
     )
     .await
     .unwrap();
+    assert!(
+        mcp_catalog::set_enabled(&fx.state.db, "actual-shared-workspace", true)
+            .await
+            .unwrap()
+    );
     let org = organization(&fx, "Acme Support", &["managers"]).await;
     let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
@@ -988,11 +996,8 @@ async fn organization_configuration_reuses_grants_and_publish_but_refuses_execut
             json!({"message":"Actual test request"}),
         )
         .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
-    assert_eq!(
-        refused["error"]["type"],
-        "organization_execution_unavailable"
-    );
+    assert_eq!(status, StatusCode::ACCEPTED, "{refused}");
+    assert_eq!(refused["draft_version"], 0);
     let (status, refused) = fx
         .post(
             &fx.root,
@@ -1329,4 +1334,168 @@ async fn organization_resources_reload_current_user_roles_without_changing_membe
         "{current}"
     );
     assert!(resource_has(&current, "tool", super::agents::TIME));
+}
+
+fn offered_workspace(view: &Value) -> bool {
+    view["items"].as_array().unwrap().iter().any(|item| {
+        item["grant"]["kind"] == "connector"
+            && item["grant"]["refs"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("workspace"))
+    })
+}
+
+async fn select_organization_credential(fx: &Fx, dot: &str) {
+    use aiplane_core::server::db::mcp_connections::ConnectionOwner;
+    let own = seed_organization_credential(fx, ConnectionOwner::Principal(dot.to_owned())).await;
+    let (status, selected) = fx
+        .send(
+            Some(&fx.alice),
+            Method::PUT,
+            &format!("/api/v0/dots/{dot}/connections/workspace"),
+            Some(
+                json!({"mode":"principal","expected_binding_generation":null,
+            "connection_id":own.connection_id,"connection_generation":own.generation}),
+            ),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{selected}");
+}
+
+#[tokio::test]
+async fn organization_connector_resources_and_grant_require_explicit_selected_own_identity() {
+    use aiplane_core::server::db::mcp_connections::ConnectionOwner;
+    let (fx, _provider, _org, dot) = oauth_organization().await;
+    seed_organization_credential(&fx, ConnectionOwner::User("alice".into())).await;
+    let path = format!("/api/v0/agent-resources?agent_id={dot}");
+    let (status, before) = fx.get(&fx.alice, &path).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    assert!(!offered_workspace(&before));
+    let principal_path = format!("/api/v0/system-principals/{dot}/grants");
+    let (status, _) = fx
+        .post(
+            &fx.alice,
+            &principal_path,
+            json!({"kind":"connector","ref":"workspace"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    select_organization_credential(&fx, &dot).await;
+    let (status, selected) = fx.get(&fx.alice, &path).await;
+    assert_eq!(status, StatusCode::OK, "{selected}");
+    assert!(offered_workspace(&selected), "{selected}");
+    let (_, untargeted) = fx.get(&fx.alice, "/api/v0/agent-resources").await;
+    assert!(!offered_workspace(&untargeted));
+    let (status, grant) = fx
+        .post(
+            &fx.alice,
+            &principal_path,
+            json!({"kind":"connector","ref":"workspace"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{grant}");
+    let grants = aiplane_agents::db::system_principals::grants(&fx.state.db, &dot)
+        .await
+        .unwrap();
+    assert!(grants.iter().any(|grant| grant.kind
+        == aiplane_core::server::principal::GrantKind::Connector
+        && grant.reference == "workspace"));
+}
+
+#[tokio::test]
+async fn organization_connector_grant_rechecks_membership_after_resource_offer() {
+    let (fx, _provider, org, dot) = oauth_organization().await;
+    select_organization_credential(&fx, &dot).await;
+    let path = format!("/api/v0/agent-resources?agent_id={dot}");
+    let (_, offered) = fx.get(&fx.alice, &path).await;
+    assert!(offered_workspace(&offered), "{offered}");
+    let (status, changed) = edit(&fx, &org, "Acme OAuth", &[]).await;
+    assert_eq!(status, StatusCode::OK, "{changed}");
+    let (status, _) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/system-principals/{dot}/grants"),
+            json!({"kind":"connector","ref":"workspace"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let grants = aiplane_agents::db::system_principals::grants(&fx.state.db, &dot)
+        .await
+        .unwrap();
+    assert!(!grants.iter().any(|grant| grant.kind
+        == aiplane_core::server::principal::GrantKind::Connector
+        && grant.reference == "workspace"));
+}
+
+#[tokio::test]
+async fn organization_private_draft_chat_admits_member_writer_without_personal_dot_permission() {
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Actual organization answer.\"}}]}\n\ndata: [DONE]\n\n",
+            "text/event-stream")).mount(&upstream).await;
+    let mut fx = super::agents::fixture_on(Some(&upstream.uri())).await;
+    fx.state = fx.state.clone().with_agent_runner(std::sync::Arc::new(
+        aiplane_runtime::agents::embed::LiveAgentRunner,
+    ));
+    aiplane_core::server::db::gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
+        .await
+        .unwrap();
+    let org = organization(&fx, "Acme Draft", &["managers"]).await;
+    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let dot = id(&created["agent"]);
+    assert_eq!(
+        fx.grant(&fx.alice, dot, "model", "m").await,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        fx.grant(&fx.alice, dot, "tool", super::agents::TIME).await,
+        StatusCode::CREATED
+    );
+    let (status, saved) = fx
+        .put_draft(
+            &fx.alice,
+            dot,
+            super::agents::spec("Actual organization task"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (status, started) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/agents/{dot}/test/messages"),
+            json!({"message":"Actual draft request"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{started}");
+    assert_eq!(started["draft_version"], 0);
+    let session = started["session_id"].as_str().unwrap();
+    let row: (Option<String>, Option<String>, bool) =
+        sqlx::query_as("SELECT principal_id,user_id,shared FROM chat_sessions WHERE id=?")
+            .bind(session)
+            .fetch_one(&fx.state.db)
+            .await
+            .unwrap();
+    assert_eq!(row.0.as_deref(), Some(dot));
+    assert_eq!(row.1, None);
+    assert!(!row.2);
+    let history = format!("/api/v0/agents/{dot}/test/{session}/events");
+    let turn = started["turn_id"].as_str().unwrap();
+    let debug = format!("/api/v0/agents/{dot}/test/{session}/turns/{turn}/debug");
+    let (status, inspected) = fx.get(&fx.alice, &debug).await;
+    assert_eq!(status, StatusCode::OK, "{inspected}");
+    let (status, _) = fx.get(&fx.root, &debug).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, changed) = edit(&fx, &org, "Acme Draft", &[]).await;
+    assert_eq!(status, StatusCode::OK, "{changed}");
+    let (status, _) = fx.send(Some(&fx.alice), Method::GET, &history, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = fx.send(Some(&fx.root), Method::GET, &history, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

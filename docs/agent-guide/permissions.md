@@ -22,6 +22,11 @@ Revoke removes the selected grant. Grants are not versioned with the spec: chang
 
 Open advanced **Edit** and expand the selected tool's settings. Set `permission` to `always_allow` or `always_ask`, or leave it unset for default policy. Configure `approval_timeout` through the supported spec editor when a task needs an explicit deadline.
 
+Personal and organization Dots ask for approval by default unless the tool
+explicitly declares itself read-only. Missing safety annotations therefore
+require approval. Explicit tool and action rules still apply; a connector's
+own requirement to ask for approval remains a minimum requirement.
+
 `always_ask` creates a persisted turn suspension before the permitted tool call executes. The waiting card includes the tool and its arguments/preview where available. Approving one call is separate from changing the agent's permanent grant. [Inbox handling](run-observe.md#answer-waiting-work) explains who can respond and what expiry means.
 
 Bound tool arguments come from configured constants/state rather than letting the model freely replace those inputs. Use a trusted state slot for an input that depends on verified identity. Test both accepted and refused paths before publishing.
@@ -59,16 +64,20 @@ a member; when `truncated` is true, narrow the query. Absence from that partial
 result does not establish absence of an eligible account.
 
 The resource inventory describes configuration grants. Organization connector
-tool inventory and direct connector grants remain unavailable until the
-principal runtime bridge is complete. Current member writers can manage the
+tool inventory and direct Connector grants require an explicitly selected,
+connected own-principal OAuth credential with current binding, credential and
+catalogue generations, plus the writer's existing resource grant ceiling. Current member writers can manage the
 Dot’s own OAuth credential through the connection panel in **Setup**.
 Authorization and explicit selection are separate actions. The server repeats
 current membership, Write access and catalogue checks before OAuth exchange
 and credential save. Read/respond shares and nonmember administrator recovery
 provide no credential access. An authorized writer can erase retained local
-credentials even when the connector is unavailable. Organization execution remains
-unavailable; saving, publishing or activating its configuration does not start
-a model or give it an employee's account. See [organization
+credentials even when the connector is unavailable. Active organization Dots
+with enabled principals and explicit grants can run saved drafts in private
+Test chat for current member writers. Every response and new message checks
+current access; a resumed run retains its original draft and grant ceiling.
+Published and automated organization callers remain unavailable. Configuration
+never gives the Dot an employee's account. See [organization
 Dots](../dots-organizations.md) for the implementation boundary.
 
 ## Troubleshooting

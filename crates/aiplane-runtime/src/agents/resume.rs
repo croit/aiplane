@@ -38,7 +38,9 @@ use session_core::db::{
 use session_core::i18n::Lang;
 
 use super::human::end_unanswered;
-use super::profile::{AgentRunError, Role, RunOptions, RunProfile, SpecSource};
+use super::profile::{
+    AgentRunError, OrganizationResumeAuthority, Role, RunOptions, RunProfile, SpecSource,
+};
 use super::router::{Caller, dispatch_result};
 use super::run::{AgentReply, OpenedTurn, drive_opened, drive_opened_from, root_chain};
 use crate::rama_server::state::RamaState;
@@ -227,11 +229,68 @@ pub async fn claim(
         }
     }
     for level in &levels {
-        if matches!(
-            agents_db::dot_owner_in(&mut tx, &level.session.principal_id).await?,
-            Some(agents_db::DotOwner::Organization(_))
-        ) {
-            return Err(not_suspended());
+        let owner = agents_db::dot_owner_in(&mut tx, &level.session.principal_id).await?;
+        if let Some(agents_db::DotOwner::Organization(organization_id)) = owner {
+            if levels.len() != 1
+                || level.session.agent_version != Some(agents_db::DRAFT_VERSION)
+                || level.session.visitor_id.is_some()
+                || level.session.parent_turn_id.is_some()
+            {
+                return Err(not_suspended());
+            }
+            match &resume.by {
+                ResumedBy::Staff { user_id } => {
+                    if super::access::organization_access_in(
+                        state,
+                        &mut tx,
+                        &level.session.principal_id,
+                        user_id,
+                    )
+                    .await?
+                        != Some(agents_db::Access::Write)
+                    {
+                        return Err(not_suspended());
+                    }
+                }
+                ResumedBy::Timeout
+                    if matches!(
+                        resume.decision,
+                        Decision::Deny {
+                            reason: DenyReason::Timeout
+                        }
+                    ) => {}
+                _ => return Err(not_suspended()),
+            }
+            let authority =
+                OrganizationResumeAuthority::from_context(level.suspension.run_context.as_ref())
+                    .ok_or_else(not_suspended)?;
+            if authority.principal_id != level.session.principal_id
+                || authority.organization_id != organization_id
+                || authority.session_id != level.session.id
+                || authority.assistant_turn_id != level.suspension.turn_id
+            {
+                return Err(not_suspended());
+            }
+            let principal = super::profile::validate_organization_resume_in(&mut tx, &authority)
+                .await
+                .map_err(resume_authority_error)?;
+            let model_access = aiplane_core::server::upstreams::PoolAccess::for_system_models(
+                &principal,
+                [authority.model.as_str()],
+            );
+            if !crate::server::model_choices::offered_in(
+                state,
+                &mut tx,
+                aiplane_core::server::upstreams::PoolKind::Chat,
+                &model_access,
+            )
+            .await?
+            .iter()
+            .any(|choice| choice.id == authority.model)
+            {
+                return Err(not_suspended());
+            }
+            validate_organization_pending_in(&mut tx, level, &authority, &principal).await?;
         }
     }
     for level in &levels {
@@ -262,6 +321,70 @@ pub async fn claim(
         decision: resume.decision,
         by: resume.by,
     })
+}
+
+fn resume_authority_error(error: AgentRunError) -> AgentResumeError {
+    match error {
+        AgentRunError::Db(error) => AgentResumeError::Db(error),
+        _ => not_suspended(),
+    }
+}
+
+async fn validate_organization_pending_in(
+    tx: &mut aiplane_agents::db::WriteTx,
+    level: &Level,
+    authority: &OrganizationResumeAuthority,
+    principal: &aiplane_core::server::principal::SystemPrincipal,
+) -> Result<(), AgentResumeError> {
+    use crate::server::tools::mcp::{
+        MCP_ID_PREFIX,
+        identities::{McpDispatchFacts, selected_principal_identity_in},
+    };
+    use aiplane_core::server::principal::GrantKind;
+    let call = &level.suspension.tool_call;
+    let mut dependencies = match authority.synthetic_tools.get(&call.name) {
+        Some(dependencies) => dependencies.clone(),
+        None => vec![call.name.clone()],
+    };
+    if call.name == super::router::FORWARD_TOOL_NAME {
+        return Err(not_suspended());
+    }
+    let mut connectors = std::collections::BTreeSet::new();
+    for dependency in dependencies.drain(..) {
+        if let Some(rest) = dependency.strip_prefix(MCP_ID_PREFIX) {
+            let (connector, _) = rest.split_once("__").ok_or_else(not_suspended)?;
+            if !principal.grants.has(GrantKind::Connector, connector) {
+                return Err(not_suspended());
+            }
+            connectors.insert(connector.to_owned());
+        } else if !principal.grants.has(GrantKind::Tool, &dependency) {
+            return Err(not_suspended());
+        }
+    }
+    if !connectors.is_empty() {
+        let facts = call.execution_facts.as_ref().ok_or_else(not_suspended)?;
+        let McpDispatchFacts::Owned(expected) =
+            serde_json::from_value::<McpDispatchFacts>(facts.clone())
+                .map_err(|_| not_suspended())?
+        else {
+            return Err(not_suspended());
+        };
+        if connectors.len() != 1
+            || !connectors.contains(&expected.connection.connector_key)
+            || selected_principal_identity_in(
+                tx,
+                &agents_db::DotOwner::Organization(authority.organization_id.clone()),
+                &authority.principal_id,
+                &expected.connection.connector_key,
+            )
+            .await?
+            .as_ref()
+                != Some(&expected)
+        {
+            return Err(not_suspended());
+        }
+    }
+    Ok(())
 }
 
 async fn validate_session(
@@ -345,10 +468,22 @@ async fn rebuild(
             let binds = serde_json::from_value(route_binds(level)).unwrap_or_default();
             Role::SubAgent { route_binds: binds }
         };
-        let source = source_of(state, &level.session).await?;
-        let profile =
-            RunProfile::load_from(state, &level.session.principal_id, source, role, options)
-                .await?;
+        let profile = if matches!(
+            agents_db::dot_owner(&state.db, &level.session.principal_id).await?,
+            Some(agents_db::DotOwner::Organization(_))
+        ) {
+            let authority =
+                OrganizationResumeAuthority::from_context(level.suspension.run_context.as_ref())
+                    .ok_or_else(|| {
+                        AgentRunError::OrganizationExecutionUnavailable(
+                            level.session.principal_id.clone(),
+                        )
+                    })?;
+            RunProfile::load_organization_resume(state, &authority, options).await?
+        } else {
+            let source = source_of(state, &level.session).await?;
+            RunProfile::load_from(state, &level.session.principal_id, source, role, options).await?
+        };
         let chain = match i {
             0 => {
                 let turn = OpenedTurn {

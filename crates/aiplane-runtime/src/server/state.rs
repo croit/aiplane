@@ -1048,6 +1048,36 @@ impl AppState {
         }
     }
 
+    pub async fn mcp_layer_for_run(
+        &self,
+        run: &crate::agent_run::AgentRun,
+    ) -> Result<crate::server::tools::mcp::manager::UserMcpLayer, crate::server::tools::ToolError>
+    {
+        if run.organization().is_some() {
+            return crate::server::tools::mcp::identities::layer_for_organization_run(self, run)
+                .await;
+        }
+        if matches!(
+            aiplane_agents::db::agents::dot_owner(&self.db, &run.system_principal().id)
+                .await
+                .map_err(|error| crate::server::tools::ToolError::Failed(error.to_string()))?,
+            Some(aiplane_agents::db::agents::DotOwner::Organization(_))
+        ) {
+            return Err(crate::server::tools::ToolError::Failed(
+                crate::agents::profile::AgentRunError::OrganizationExecutionUnavailable(
+                    run.system_principal().id.clone(),
+                )
+                .to_string(),
+            ));
+        }
+        Ok(self
+            .mcp_layer_for(
+                &run.principal(),
+                crate::server::tools::mcp::manager::AskContext::Chat,
+            )
+            .await)
+    }
+
     pub async fn mcp_layer_for_dot(
         &self,
         principal: &Principal,

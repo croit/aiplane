@@ -4,6 +4,12 @@ A published agent can serve a website widget and authenticated Agent-to-Agent ca
 
 Managing channels, keys and publish policy requires agent-management permission and write access. Responding to inbox work uses the agent's sharing permissions; it does not require giving every responder builder access.
 
+Organization Dots currently offer private saved-draft Test chat for current
+member writers. Decisions for those version-0 conversations are answered in
+the test chat and are excluded from the Inbox. Their published conversations,
+website/A2A channels, notifications and automation are unavailable. The channel
+and Inbox instructions below describe ordinary published agents.
+
 ## Embed an agent on a website
 
 1. Publish the agent and verify its model/tool grants.

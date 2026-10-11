@@ -44,6 +44,7 @@ use aiplane_core::server::feature_defaults::{self, Feature};
 use aiplane_core::server::upstreams::{PoolAccess, PoolKind};
 use aiplane_runtime::agents::assist::Ability;
 use aiplane_runtime::rama_server::state::RamaState;
+use aiplane_runtime::server::grant_holding;
 use aiplane_runtime::server::model_choices::{self, ModelChoice, gateway_default};
 use aiplane_runtime::server::{AppState, tools::catalog};
 
@@ -146,20 +147,31 @@ pub(super) async fn grantable_items(
     user: &User,
     lang: Lang,
 ) -> Result<Vec<GrantableItem>, Response> {
-    let connectors = mcp_catalog::list_enabled(&state.db)
+    let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+    let Some((current, policy)) =
+        aiplane_runtime::agents::access::current_user_policy_in(state, &mut tx, &user.id)
+            .await
+            .map_err(internal)?
+    else {
+        return Ok(Vec::new());
+    };
+    let keys = grant_holding::grantable_connectors_in(state, &mut tx, &current.id, None)
         .await
         .map_err(internal)?;
-    let collections = rag_db::list_collections(&state.db)
+    let connectors = mcp_catalog::list_enabled_in(&mut tx)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .filter(|connector| keys.contains(&connector.key))
+        .collect();
+    let collections = rag_db::list_collections_in(&mut tx)
         .await
         .map_err(internal)?;
-    Ok(assemble_items(
-        state,
-        state,
-        user,
-        lang,
-        connectors,
-        collections,
-    ))
+    let mut app = (**state).clone();
+    app.rbac = Arc::new(policy);
+    let items = assemble_items(state, &app, &current, lang, connectors, collections);
+    tx.commit().await.map_err(internal)?;
+    Ok(items)
 }
 
 fn assemble_items(
@@ -176,18 +188,7 @@ fn assemble_items(
     let mut items = tool_items(display, state, &role_ids, lang);
 
     let grantable = state.grantable_tool_ids();
-    let mcp_grant = state.mcp_grant_for(&user.roles);
     for connector in connectors {
-        let offered = connector.has_shared_identity()
-            && if connector.is_agent() {
-                connector.grantable_by(&role_ids, is_admin)
-            } else {
-                let key = format!("{MCP_TOOL_PREFIX}{}", connector.key);
-                connector.allows(&role_ids, is_admin) && mcp_grant.allows(&key, &key)
-            };
-        if !offered {
-            continue;
-        }
         let prefix = format!("{MCP_TOOL_PREFIX}{}__", connector.key);
         let key = connector.key.clone();
         let mut item = GrantableItem::new(
@@ -300,31 +301,28 @@ pub async fn resources(State(state): State<Arc<RamaState>>, req: Request) -> Res
                 &session_core::i18n::t(lang, "agent-management-error-permission-required"),
             ));
         }
-        let organization = if let Some(id) = query.agent_id {
+        if let Some(id) = query.agent_id.as_deref() {
             let held = aiplane_runtime::agents::access::effective_access_in(
                 &state,
                 &mut tx,
-                &id,
+                id,
                 &current.id,
             )
             .await
             .map_err(internal)?;
-            super::json_agents::require_held(held, &id, aiplane_agents::db::agents::Access::Read)?;
-            matches!(
-                aiplane_agents::db::agents::dot_owner_in(&mut tx, &id)
-                    .await
-                    .map_err(internal)?,
-                Some(aiplane_agents::db::agents::DotOwner::Organization(_))
-            )
-        } else {
-            false
-        };
+            super::json_agents::require_held(held, id, aiplane_agents::db::agents::Access::Read)?;
+        }
         let mut app = (**state).clone();
         app.rbac = Arc::new(policy);
-        let mut view = resources_in(&state, &app, &mut tx, &current, lang).await?;
-        if organization {
-            view.items.retain(|item| item.grant.kind != "connector");
-        }
+        let view = resources_in(
+            &state,
+            &app,
+            &mut tx,
+            &current,
+            lang,
+            query.agent_id.as_deref(),
+        )
+        .await?;
         tx.commit().await.map_err(internal)?;
         Ok::<_, Response>(json_ok(StatusCode::OK, view))
     }
@@ -451,13 +449,22 @@ async fn resources_in(
     tx: &mut WriteTx,
     user: &User,
     lang: Lang,
+    target_principal_id: Option<&str>,
 ) -> Result<AgentResources, Response> {
     let models = GrantableModels {
         chat: model_list_in(state, tx, user, PoolKind::Chat).await?,
         transcription: model_list_in(state, tx, user, PoolKind::Transcription).await?,
         speech: model_list_in(state, tx, user, PoolKind::Speech).await?,
     };
-    let connectors = mcp_catalog::list_enabled_in(tx).await.map_err(internal)?;
+    let keys = grant_holding::grantable_connectors_in(display, tx, &user.id, target_principal_id)
+        .await
+        .map_err(internal)?;
+    let connectors = mcp_catalog::list_enabled_in(tx)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .filter(|connector| keys.contains(&connector.key))
+        .collect();
     let collections = rag_db::list_collections_in(tx).await.map_err(internal)?;
     let items = assemble_items(display, state, user, lang, connectors, collections);
     let defaults = DefaultModels {

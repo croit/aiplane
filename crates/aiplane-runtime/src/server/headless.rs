@@ -101,55 +101,40 @@ impl From<chat::DbError> for OpenError {
 }
 
 pub async fn open_session(db: &Pool, p: OpenParams<'_>) -> Result<(String, String), OpenError> {
-    if let Owner::User(owner) = p.owner {
-        if let Some(dot_id) = p.dot_id {
-            let dot = aiplane_agents::db::agents::get_personal_dot(db, owner, dot_id).await?;
-            if !dot.is_some_and(|dot| dot.active) {
-                return Err(OpenError::Unavailable);
-            }
+    let owner = match p.owner {
+        Owner::Run { .. } => {
+            let mut tx = aiplane_core::server::db::WriteTx::begin(db).await?;
+            let opened = open_principal_session_in(&mut tx, p).await?;
+            tx.commit().await?;
+            return Ok(opened);
         }
-        if let Some(session_id) = p.existing_session.as_deref() {
-            let mut conn = db.acquire().await.map_err(DbError::from)?;
-            if !aiplane_agents::db::dot_sessions::session_matches(
-                &mut conn, owner, session_id, p.dot_id,
-            )
-            .await?
-            {
-                return Err(OpenError::Unavailable);
-            }
+        Owner::User(owner) => owner,
+    };
+    if let Some(dot_id) = p.dot_id {
+        let dot = aiplane_agents::db::agents::get_personal_dot(db, owner, dot_id).await?;
+        if !dot.is_some_and(|dot| dot.active) {
+            return Err(OpenError::Unavailable);
         }
-    } else if p.dot_id.is_some() {
-        return Err(OpenError::Unavailable);
+    }
+    if let Some(session_id) = p.existing_session.as_deref() {
+        let mut conn = db.acquire().await.map_err(DbError::from)?;
+        if !aiplane_agents::db::dot_sessions::session_matches(
+            &mut conn, owner, session_id, p.dot_id,
+        )
+        .await?
+        {
+            return Err(OpenError::Unavailable);
+        }
     }
     let session_id = match p.existing_session {
         Some(id) => id,
-        None => match p.owner {
-            Owner::User(user_id) => {
-                let session = chat::create_session(db, user_id).await?;
-                chat::set_session_title(db, &session.id, p.title).await?;
-                session.id
-            }
-            Owner::Run {
-                principal_id,
-                parent_turn_id,
-                agent_version,
-            } => {
-                run_sessions::create_principal_session(
-                    db,
-                    &run_sessions::NewRunSession {
-                        principal_id,
-                        title: Some(p.title),
-                        parent_turn_id,
-                        agent_version,
-                    },
-                )
-                .await?
-                .id
-            }
-        },
+        None => {
+            let session = chat::create_session(db, owner).await?;
+            chat::set_session_title(db, &session.id, p.title).await?;
+            session.id
+        }
     };
-
-    if let (Owner::User(owner), Some(dot_id)) = (p.owner, p.dot_id)
+    if let Some(dot_id) = p.dot_id
         && !aiplane_agents::db::dot_sessions::link(db, owner, dot_id, &session_id).await?
     {
         return Err(OpenError::Unavailable);
@@ -158,6 +143,73 @@ pub async fn open_session(db: &Pool, p: OpenParams<'_>) -> Result<(String, Strin
     let assistant_turn_id = Uuid::new_v4().to_string();
     if chat::create_turn_pair_if_idle(
         db,
+        &session_id,
+        &user_turn_id,
+        &assistant_turn_id,
+        p.prompt,
+        p.model,
+        true,
+    )
+    .await
+    .map_err(DbError::from)?
+    .is_none()
+    {
+        return Err(OpenError::Busy);
+    }
+    Ok((session_id, assistant_turn_id))
+}
+
+pub async fn open_principal_session_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    p: OpenParams<'_>,
+) -> Result<(String, String), OpenError> {
+    let Owner::Run {
+        principal_id,
+        parent_turn_id,
+        agent_version,
+    } = p.owner
+    else {
+        return Err(OpenError::Unavailable);
+    };
+    if p.dot_id.is_some() {
+        return Err(OpenError::Unavailable);
+    }
+    let session_id = match p.existing_session {
+        Some(id) => {
+            let valid: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM chat_sessions WHERE id=? AND principal_id=? \
+                 AND user_id IS NULL AND shared=0 AND parent_turn_id IS ? AND agent_version IS ?)",
+            )
+            .bind(&id)
+            .bind(principal_id)
+            .bind(parent_turn_id)
+            .bind(agent_version)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(DbError::from)?;
+            if !valid {
+                return Err(OpenError::Unavailable);
+            }
+            id
+        }
+        None => {
+            run_sessions::create_principal_session(
+                &mut **tx,
+                &run_sessions::NewRunSession {
+                    principal_id,
+                    title: Some(p.title),
+                    parent_turn_id,
+                    agent_version,
+                },
+            )
+            .await?
+            .id
+        }
+    };
+    let user_turn_id = Uuid::new_v4().to_string();
+    let assistant_turn_id = Uuid::new_v4().to_string();
+    if chat::create_turn_pair_if_idle_in(
+        tx,
         &session_id,
         &user_turn_id,
         &assistant_turn_id,
@@ -398,16 +450,38 @@ async fn drive_inner(
             aiplane_agents::db::agents::dot_owner(&state.db, &run.system_principal().id).await;
         let error = match admission {
             Ok(Some(aiplane_agents::db::agents::DotOwner::Organization(_))) => {
-                let lang = crate::agents::run::conversation_lang(
-                    &state.db,
-                    &run.system_principal().id,
-                    &p.session_id,
-                )
-                .await;
-                Some(session_core::i18n::t(
-                    lang,
-                    "organization-error-execution-unavailable",
-                ))
+                let context_valid = run.organization().is_some_and(|context| {
+                    context.session_id == p.session_id
+                        && context.assistant_turn_id == p.assistant_turn_id
+                });
+                if context_valid
+                    && let Err(error) =
+                        crate::agents::profile::validate_organization_turn(state, run).await
+                {
+                    turn_started(state, run, &p.session_id, &p.assistant_turn_id, resumed).await;
+                    let _ = chat::error_interrupted_turn(
+                        &state.db,
+                        &p.assistant_turn_id,
+                        &error.to_string(),
+                    )
+                    .await;
+                    turn_finished(state, run, &p.session_id, &p.assistant_turn_id).await;
+                    return None;
+                }
+                if context_valid {
+                    None
+                } else {
+                    let lang = crate::agents::run::conversation_lang(
+                        &state.db,
+                        &run.system_principal().id,
+                        &p.session_id,
+                    )
+                    .await;
+                    Some(session_core::i18n::t(
+                        lang,
+                        "organization-error-execution-unavailable",
+                    ))
+                }
             }
             Ok(_) => None,
             Err(error) => Some(error.to_string()),
@@ -743,7 +817,7 @@ async fn announce_if_waiting(state: &Arc<RamaState>, turn_id: &str) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -811,7 +885,7 @@ mod tests {
         .unwrap()
     }
 
-    async fn state_for(upstream: &str) -> Arc<RamaState> {
+    pub(crate) async fn state_for(upstream: &str) -> Arc<RamaState> {
         state_with_tools(
             upstream,
             crate::server::tools::ToolRegistry::new()
@@ -3087,5 +3161,608 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn principal_session_and_turn_open_in_the_authority_transaction() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, _) = organization_draft_fixture(&state).await;
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        let (session, assistant) = open_principal_session_in(
+            &mut tx,
+            OpenParams {
+                owner: Owner::Run {
+                    principal_id: &profile.principal.id,
+                    parent_turn_id: None,
+                    agent_version: Some(aiplane_agents::db::agents::DRAFT_VERSION),
+                },
+                title: "Actual private draft",
+                prompt: "Bounded transaction prompt",
+                model: &profile.model,
+                existing_session: None,
+                dot_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let stored: (Option<String>, Option<String>, i64) =
+            sqlx::query_as("SELECT user_id,principal_id,shared FROM chat_sessions WHERE id=?")
+                .bind(&session)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(stored, (None, Some(profile.principal.id.clone()), 0));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM chat_turns WHERE session_id=?")
+                .bind(&session)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap(),
+            2
+        );
+        assert!(matches!(
+            open_principal_session_in(
+                &mut tx,
+                OpenParams {
+                    owner: Owner::Run {
+                        principal_id: &profile.principal.id,
+                        parent_turn_id: None,
+                        agent_version: Some(aiplane_agents::db::agents::DRAFT_VERSION)
+                    },
+                    title: "Actual private draft",
+                    prompt: "Must not overlap",
+                    model: &profile.model,
+                    existing_session: Some(session.clone()),
+                    dot_id: None,
+                }
+            )
+            .await,
+            Err(OpenError::Busy)
+        ));
+        drop(tx);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM chat_sessions WHERE id=?")
+                .bind(&session)
+                .fetch_one(&state.db)
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(
+            chat::get_turn(&state.db, &session, &assistant)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn organization_completed_compaction_does_not_admit_live_calls() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (_, params) = organization_draft_fixture(&state).await;
+        let Actor::Agent(run) = &params.actor else {
+            panic!("principal actor expected");
+        };
+        assert!(
+            crate::agents::profile::validate_organization_compaction(&state, run)
+                .await
+                .is_err()
+        );
+        chat::finalize_turn(
+            &state.db,
+            &params.assistant_turn_id,
+            chat::TurnStatus::Completed,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            crate::agents::profile::validate_organization_compaction(&state, run)
+                .await
+                .is_ok()
+        );
+        assert!(
+            crate::agents::profile::validate_organization_turn(&state, run)
+                .await
+                .is_err()
+        );
+        aiplane_agents::db::system_principals::remove_grant(
+            &state.db,
+            &run.system_principal().id,
+            aiplane_core::server::principal::GrantKind::Model,
+            MODEL,
+            "creator",
+        )
+        .await
+        .unwrap();
+        let current = crate::agents::profile::validate_organization_compaction(&state, run)
+            .await
+            .unwrap();
+        assert!(
+            !current
+                .grants
+                .has(aiplane_core::server::principal::GrantKind::Model, MODEL)
+        );
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn organization_compaction_rejects_suspended_cancelled_and_errored_turns() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        for status in [
+            chat::TurnStatus::Suspended,
+            chat::TurnStatus::Cancelled,
+            chat::TurnStatus::Errored,
+        ] {
+            let (_, params) = organization_draft_fixture(&state).await;
+            let Actor::Agent(run) = &params.actor else {
+                panic!("principal actor expected");
+            };
+            chat::finalize_turn(&state.db, &params.assistant_turn_id, status, None)
+                .await
+                .unwrap();
+            assert!(
+                crate::agents::profile::validate_organization_compaction(&state, run)
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
+
+    pub(crate) async fn organization_draft_fixture(
+        state: &Arc<RamaState>,
+    ) -> (crate::agents::profile::RunProfile, DriveParams) {
+        use aiplane_agents::db::{agents, organizations, system_principals};
+        let now = jiff::Timestamp::now();
+        aiplane_core::server::db::users::upsert(
+            &state.db,
+            &aiplane_core::server::db::users::User {
+                id: "creator".into(),
+                email: "creator@example.com".into(),
+                name: None,
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        let organizations::OrganizationCreateResult::Created(organization) = organizations::create(
+            &state.db,
+            &organizations::NewOrganization {
+                name: "Actual organization",
+                description: "",
+                member_groups: &[],
+            },
+            "creator",
+        )
+        .await
+        .unwrap() else {
+            panic!("organization expected");
+        };
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        let (_, dot) = agents::create_organization_dot_in(
+            &mut tx,
+            &organization.organization.id,
+            &system_principals::NewPrincipal {
+                name: "Organization draft",
+                display: "Organization draft",
+                description: "",
+            },
+            "{}",
+            "creator",
+            4,
+        )
+        .await
+        .unwrap();
+        let dot = dot.unwrap().principal.id;
+        tx.commit().await.unwrap();
+        for (kind, reference) in [
+            (aiplane_core::server::principal::GrantKind::Model, MODEL),
+            (
+                aiplane_core::server::principal::GrantKind::Tool,
+                "company_echo",
+            ),
+        ] {
+            system_principals::add_grant(&state.db, &dot, kind, reference, "creator")
+                .await
+                .unwrap();
+        }
+        let profile = crate::agents::profile::RunProfile::load_from(
+            state,
+            &dot,
+            crate::agents::profile::SpecSource::Draft(json!({"main": {
+                "model": MODEL, "tools": ["company_echo"],
+                "tool_resources": {"company_echo": {"permission": "always_allow"}}
+            }})),
+            crate::agents::profile::Role::Main,
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+        let (session, turn) = open_session(
+            &state.db,
+            OpenParams {
+                owner: Owner::Run {
+                    principal_id: &dot,
+                    parent_turn_id: None,
+                    agent_version: Some(agents::DRAFT_VERSION),
+                },
+                title: "Organization draft",
+                prompt: "Actual request",
+                model: MODEL,
+                existing_session: None,
+                dot_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let chain = Arc::new(RunChain::root(
+            &session,
+            None,
+            Frame::for_principal(&profile.principal, None),
+        ));
+        let params = profile.drive_params(&session, &turn, chain).unwrap();
+        (profile, params)
+    }
+
+    #[tokio::test]
+    async fn organization_draft_has_private_principal_context_and_live_public_entries_stay_refused()
+    {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        let Actor::Agent(run) = &params.actor else {
+            panic!("principal actor expected");
+        };
+        assert!(matches!(
+            run.principal(),
+            aiplane_core::server::principal::Principal::System(_)
+        ));
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        let current = crate::agents::profile::validate_organization_turn_in(&mut tx, run)
+            .await
+            .unwrap();
+        assert_eq!(current.id, profile.principal.id);
+        let row: (Option<String>, Option<String>, i64) =
+            sqlx::query_as("SELECT user_id,principal_id,shared FROM chat_sessions WHERE id=?")
+                .bind(&params.session_id)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(row, (None, Some(profile.principal.id.clone()), 0));
+        tx.commit().await.unwrap();
+        for source in [
+            crate::agents::profile::SpecSource::Live,
+            crate::agents::profile::SpecSource::Pinned(1),
+        ] {
+            assert!(matches!(
+                crate::agents::profile::RunProfile::load_from(
+                    &state,
+                    &profile.principal.id,
+                    source,
+                    crate::agents::profile::Role::Main,
+                    &Default::default()
+                )
+                .await,
+                Err(crate::agents::profile::AgentRunError::OrganizationExecutionUnavailable(_))
+            ));
+        }
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn organization_draft_scope_rejects_uncommitted_shared_session_and_restores_after_rollback()
+     {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (_, params) = organization_draft_fixture(&state).await;
+        let Actor::Agent(run) = &params.actor else {
+            panic!("principal actor expected");
+        };
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        assert!(
+            sqlx::query("UPDATE chat_sessions SET shared=1 WHERE id=?")
+                .bind(&params.session_id)
+                .execute(&mut *tx)
+                .await
+                .is_err()
+        );
+        sqlx::query(
+            "UPDATE chat_sessions SET principal_id=NULL,user_id='creator',shared=1 WHERE id=?",
+        )
+        .bind(&params.session_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        assert!(
+            crate::agents::profile::validate_organization_turn_in(&mut tx, run)
+                .await
+                .is_err()
+        );
+        drop(tx);
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        assert!(
+            crate::agents::profile::validate_organization_turn_in(&mut tx, run)
+                .await
+                .is_ok()
+        );
+        tx.commit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn organization_draft_held_builtin_rechecks_current_grants_before_running() {
+        use crate::server::tools::{GrantedToolSource, ToolContext, ToolSource};
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        let Actor::Agent(run) = &params.actor else {
+            panic!("principal actor expected");
+        };
+        let registry =
+            crate::server::tools::ToolRegistry::new().with(crate::server::tools::echo::Echo);
+        let granted = GrantedToolSource::new(&registry, ["company_echo".to_owned()]);
+        let source = crate::agents::profile::RunToolSource::new(&granted, Some(run));
+        let held = source.get("company_echo").unwrap();
+        aiplane_agents::db::system_principals::remove_grant(
+            &state.db,
+            &profile.principal.id,
+            aiplane_core::server::principal::GrantKind::Tool,
+            "company_echo",
+            "creator",
+        )
+        .await
+        .unwrap();
+        let ctx = ToolContext {
+            principal: run.principal(),
+            agent: Some(run.clone()),
+            session_id: Some(params.session_id),
+            assistant_turn_id: Some(params.assistant_turn_id),
+            ..ToolContext::for_test(state.db.clone())
+        };
+        assert!(
+            held.run(ctx, json!({"message":"must not run"}))
+                .await
+                .is_err()
+        );
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn organization_draft_model_revocation_before_drive_makes_zero_upstream_requests() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        aiplane_agents::db::system_principals::remove_grant(
+            &state.db,
+            &profile.principal.id,
+            aiplane_core::server::principal::GrantKind::Model,
+            MODEL,
+            "creator",
+        )
+        .await
+        .unwrap();
+        let session = params.session_id.clone();
+        let turn = params.assistant_turn_id.clone();
+        drive(&state, params).await;
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+        let rows = chat::list_turns(&state.db, &session).await.unwrap();
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.turn.id == turn)
+                .unwrap()
+                .turn
+                .status,
+            session_core::db::TurnStatus::Errored
+        );
+    }
+
+    #[tokio::test]
+    async fn organization_draft_verifier_without_explicit_own_binding_never_contacts_connector() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        let Actor::Agent(run) = &params.actor else {
+            panic!("principal actor expected");
+        };
+        aiplane_agents::db::system_principals::add_grant(
+            &state.db,
+            &profile.principal.id,
+            aiplane_core::server::principal::GrantKind::Connector,
+            "trap",
+            "creator",
+        )
+        .await
+        .unwrap();
+        let verifier = crate::agents::verifier::VerifierRun {
+            state: state.clone(),
+            principal: aiplane_agents::db::system_principals::load_active(
+                &state.db,
+                &profile.principal.id,
+            )
+            .await
+            .unwrap()
+            .unwrap(),
+            schema: Arc::new(crate::agents::state::StateSchema::default()),
+            options: Default::default(),
+        };
+        let ctx = crate::server::tools::ToolContext {
+            principal: run.principal(),
+            agent: Some(run.clone()),
+            session_id: Some(params.session_id),
+            assistant_turn_id: Some(params.assistant_turn_id),
+            ..crate::server::tools::ToolContext::for_test(state.db.clone())
+        };
+        assert!(
+            crate::agents::verifier::call_connector(
+                &verifier,
+                &ctx,
+                "trap",
+                "lookup",
+                json!({"customer":"actual"}),
+                false
+            )
+            .await
+            .is_err()
+        );
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn organization_draft_runs_main_model_without_employee_identity() {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(Scripted {
+                deltas: vec![text("Organization reply")],
+                served: AtomicUsize::new(0),
+                tokens_per_round: None,
+            })
+            .mount(&upstream)
+            .await;
+        let state = state_for(&upstream.uri()).await;
+        let (_, params) = organization_draft_fixture(&state).await;
+        let session = params.session_id.clone();
+        let turn = params.assistant_turn_id.clone();
+        drive(&state, params).await;
+        let requests = upstream.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        let body = std::str::from_utf8(&requests[0].body).unwrap();
+        assert!(!body.contains("creator@example.com"), "{body}");
+        let rows = chat::list_turns(&state.db, &session).await.unwrap();
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.turn.id == turn)
+                .unwrap()
+                .turn
+                .status,
+            session_core::db::TurnStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn organization_draft_fresh_principal_never_broadens_initial_grant_ceiling() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        let Actor::Agent(run) = &params.actor else {
+            panic!("principal actor expected");
+        };
+        aiplane_agents::db::system_principals::add_grant(
+            &state.db,
+            &profile.principal.id,
+            aiplane_core::server::principal::GrantKind::Tool,
+            "current_timestamp",
+            "creator",
+        )
+        .await
+        .unwrap();
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        let current = crate::agents::profile::validate_organization_turn_in(&mut tx, run)
+            .await
+            .unwrap();
+        assert!(!current.grants.has(
+            aiplane_core::server::principal::GrantKind::Tool,
+            "current_timestamp"
+        ));
+        assert!(current.grants.has(
+            aiplane_core::server::principal::GrantKind::Tool,
+            "company_echo"
+        ));
+        tx.commit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn organization_draft_context_rejects_inactive_dot_inside_transaction() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        let Actor::Agent(run) = &params.actor else {
+            panic!("principal actor expected");
+        };
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+            .bind(&profile.principal.id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            crate::agents::profile::validate_organization_turn_in(&mut tx, run)
+                .await
+                .is_err()
+        );
+        drop(tx);
+    }
+
+    #[tokio::test]
+    async fn organization_draft_context_rejects_disabled_principal_inside_transaction() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        let Actor::Agent(run) = &params.actor else {
+            panic!("principal actor expected");
+        };
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE system_principals SET disabled_at=? WHERE id=?")
+            .bind(jiff::Timestamp::now().to_string())
+            .bind(&profile.principal.id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            crate::agents::profile::validate_organization_turn_in(&mut tx, run)
+                .await
+                .is_err()
+        );
+        drop(tx);
+    }
+
+    #[tokio::test]
+    async fn organization_draft_context_rejects_forged_assistant_turn() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        let Actor::Agent(run) = &params.actor else {
+            panic!("principal actor expected");
+        };
+        let forged = profile
+            .drive_params(&params.session_id, "missing-assistant", run.chain().clone())
+            .unwrap();
+        let Actor::Agent(forged_run) = &forged.actor else {
+            panic!("principal actor expected");
+        };
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        assert!(
+            crate::agents::profile::validate_organization_turn_in(&mut tx, forged_run)
+                .await
+                .is_err()
+        );
+        drop(tx);
+        assert!(upstream.received_requests().await.unwrap().is_empty());
     }
 }

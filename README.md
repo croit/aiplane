@@ -227,7 +227,10 @@ The active count defaults to four per user and four per organization, configured
 independently by `dots.max_active_per_user` and
 `dots.max_active_per_organization` under
 **Administration → Settings → Access**. Idle active Dots count toward their
-owner’s limit; deactivated Dots do not.
+owner’s limit; deactivated Dots do not. Organization member writers can use
+private saved-draft test chat with the Dot's own principal grants and explicitly
+selected own OAuth account. Published organization runs and organization
+background work remain unavailable; see [Organization Dots](docs/dots-organizations.md).
 
 To build from source, install [mise](https://mise.jdx.dev/) and run:
 

@@ -66,7 +66,7 @@ impl Permissions {
         self.gate_with_default(tool, ask)
     }
 
-    pub fn gate_personal_dot(&self, tool: Arc<dyn Tool>) -> Arc<dyn Tool> {
+    pub fn gate_dot(&self, tool: Arc<dyn Tool>) -> Arc<dyn Tool> {
         let ask = !tool.read_only();
         self.gate_with_default(tool, ask)
     }
@@ -477,7 +477,7 @@ mod tests {
             ),
         ] {
             let body = permissions
-                .gate_personal_dot(tool)
+                .gate_dot(tool)
                 .run(ctx.clone(), json!({}))
                 .await
                 .unwrap();
