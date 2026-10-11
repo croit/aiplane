@@ -100,13 +100,69 @@ pub async fn connect_for_owner(
             &t(lang, "integrations-error-not-oauth"),
         );
     }
-    let role_ids = state.rbac.role_ids_for(&user.roles);
-    if !connector.allows(&role_ids, state.rbac.is_admin(&role_ids)) {
-        return flow_error_page(
-            lang,
-            StatusCode::FORBIDDEN,
-            &t(lang, "integrations-error-forbidden-role"),
-        );
+    if connector.auth == AuthKind::OAuth2 && connector.is_per_user() {
+        let admitted = async {
+            let mut tx = WriteTx::begin(&state.db).await?;
+            let current = mcp_catalog::get_in(&mut tx, key).await?;
+            let status = if !current
+                .is_some_and(|current| current.dispatch_generation == connector.dispatch_generation)
+            {
+                StatusCode::CONFLICT
+            } else if authorization_admitted_in(
+                state,
+                &mut tx,
+                &user.id,
+                &owner,
+                key,
+                subject_principal_id.as_deref(),
+            )
+            .await?
+            {
+                StatusCode::OK
+            } else {
+                StatusCode::FORBIDDEN
+            };
+            tx.commit().await?;
+            Ok::<_, aiplane_core::server::db::DbError>(status)
+        }
+        .await;
+        match admitted {
+            Ok(StatusCode::OK) => {}
+            Ok(status) => {
+                return flow_error_page(
+                    lang,
+                    status,
+                    &t(
+                        lang,
+                        if status == StatusCode::CONFLICT {
+                            "integrations-error-auth-expired"
+                        } else {
+                            "integrations-error-forbidden-role"
+                        },
+                    ),
+                );
+            }
+            Err(err) => {
+                return flow_error_page(
+                    lang,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &t_args(
+                        lang,
+                        "integrations-error-loading-authorization",
+                        &i18n::args([("error", err.to_string().into())]),
+                    ),
+                );
+            }
+        }
+    } else {
+        let role_ids = state.rbac.role_ids_for(&user.roles);
+        if !connector.allows(&role_ids, state.rbac.is_admin(&role_ids)) {
+            return flow_error_page(
+                lang,
+                StatusCode::FORBIDDEN,
+                &t(lang, "integrations-error-forbidden-role"),
+            );
+        }
     }
     if connector.is_global() {
         // Global connectors are shared by everyone — there's no per-user

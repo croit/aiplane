@@ -158,7 +158,13 @@ open the shared creation dialog to create a named Dot; existing write access per
 the independent organization cap. Configuration opens the existing
 `/agents/<id>/setup/start` flow and editor. Organization owner metadata controls
 the return link and configuration-only notice. Test chat, test suites, website
-and external-channel controls are unavailable for these Dots.
+and external-channel controls are unavailable for these Dots. Current writers
+manage the Dot’s own OAuth identity in **Setup** through the existing connection
+panel. Organization choices contain no user identity; OAuth completion leaves
+the account unselected until Save. The returned action capabilities govern
+selection, authorization and local erasure independently. Removed catalogue
+access disables selection but still permits an authorized writer to disconnect
+the retained local credential.
 
 `/admin/organizations` edits actual organization metadata and selected existing
 gateway groups. Metadata saves send the returned revision. A conflict preserves

@@ -147,6 +147,31 @@ async fn organization_operations_describe_current_typed_configuration_contracts(
 }
 
 #[tokio::test]
+async fn dot_connection_inventory_declares_authoritative_selection_and_optional_personal_identity()
+{
+    let document = served_document().await;
+    let operation = &document["paths"]["/api/v0/dots/{id}/connections"]["get"];
+    let inventory = json_body(&document, &operation["responses"]["200"]["content"]);
+    let row = resolved(&document, &inventory["properties"]["connections"]["items"]);
+    assert_eq!(row["properties"]["can_select"]["type"], "boolean");
+    assert!(
+        row["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("can_select"))
+    );
+    let identity = &row["properties"]["user_connection"];
+    assert!(
+        identity["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|choice| choice["type"] == "null")
+    );
+    assert_eq!(operation["x-aiplane-access"], "session");
+}
+
+#[tokio::test]
 async fn the_groups_save_body_is_the_handlers_own_type() {
     let document = served_document().await;
     let save = &document["paths"]["/api/v0/admin/groups"]["put"];

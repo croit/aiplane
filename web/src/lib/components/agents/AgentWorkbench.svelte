@@ -17,6 +17,8 @@
 	import TestChat from './TestChat.svelte';
 	import VersionsPanel from './VersionsPanel.svelte';
 	import SetupOverview from './setup/SetupOverview.svelte';
+	import DotConnectionsPanel from '../dots/DotConnectionsPanel.svelte';
+	import type { Dot } from '#lib/dots.js';
 
 	/**
 	 * One agent's page, in four tabs: **Setup** (the plain-language overview,
@@ -29,6 +31,10 @@
 	const ws = useWorkspace();
 
 	const capabilities = $derived(agentUiCapabilities(ws.detail));
+	const organizationDot = $derived<Dot | null>(ws.detail?.dot?.owner.kind === 'organization' ? {
+		id: ws.detail.id, name: ws.detail.dot.name, display: ws.detail.display,
+		description: ws.detail.description, active: ws.detail.dot.active,
+	} : null);
 	const TABS = {
 		setup: [] as string[],
 		try: ['test', 'tests'],
@@ -87,6 +93,12 @@
 			</button>
 		{/each}
 	</div>
+{/if}
+
+{#if tab === 'setup' && ws.writable && organizationDot}
+	{#key organizationDot.id}
+		<DotConnectionsPanel dot={organizationDot} onchange={() => void ws.refresh(true).catch((error) => ws.fail(error))} />
+	{/key}
 {/if}
 
 <div data-agent-tab class={sub === 'test' ? 'flex min-h-0 flex-1 flex-col' : 'pt-1'}>

@@ -5,6 +5,610 @@ use super::agents::{Fx, fixture, person};
 use rama::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
+async fn oauth_organization() -> (Fx, wiremock::MockServer, Value, String) {
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let fx = fixture().await;
+    let provider = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token":"organization-fixture-access","refresh_token":"organization-fixture-refresh",
+            "token_type":"Bearer","expires_in":3600,"scope":"workspace.read"
+        }))).mount(&provider).await;
+    aiplane_core::server::db::gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
+        .await
+        .unwrap();
+    aiplane_core::server::db::gateway_groups::set_tools_for_group(
+        &fx.state.db,
+        "managers",
+        &["mcp__workspace".into()],
+    )
+    .await
+    .unwrap();
+    fx.state.reload_rbac().await;
+    sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,use_dcr,client_id,authorize_url,token_url,enabled,created_at,updated_at) VALUES('workspace','Actual Workspace',?,'oauth2','per_user',0,'client',?,?,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+        .bind(format!("{}/mcp", provider.uri())).bind(format!("{}/authorize", provider.uri())).bind(format!("{}/token", provider.uri())).execute(&fx.state.db).await.unwrap();
+    let org = organization(&fx, "Acme OAuth", &["managers"]).await;
+    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let dot = id(&created["agent"]).to_owned();
+    (fx, provider, org, dot)
+}
+
+fn connection_row(view: &Value) -> &Value {
+    view["connections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["key"] == "workspace")
+        .unwrap()
+}
+
+async fn oauth_callback(
+    state: aiplane::rama_server::RamaState,
+    cookie: &str,
+    oauth_state: &str,
+) -> (StatusCode, Option<String>) {
+    use rama::{
+        Service,
+        http::{Body, Request, header},
+    };
+    let request = Request::builder()
+        .uri(format!(
+            "/integrations/callback?state={oauth_state}&code=accepted"
+        ))
+        .header(header::COOKIE, format!("id={cookie}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = crate::common::app(state).serve(request).await.unwrap();
+    let status = response.status();
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .map(|value| value.to_str().unwrap().to_owned());
+    crate::common::read_body(response).await;
+    (status, location)
+}
+
+async fn start_organization_oauth(fx: &Fx, dot: &str) -> String {
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/dots/{dot}/connections/workspace/connect"),
+            json!({"connection_id":null,"connection_generation":null}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let url = reqwest::Url::parse(body["authorization_url"].as_str().unwrap()).unwrap();
+    assert!(url.query_pairs().any(|(key, _)| key == "code_challenge"));
+    url.query_pairs()
+        .find(|(key, _)| key == "state")
+        .unwrap()
+        .1
+        .into_owned()
+}
+
+async fn seed_organization_credential(
+    fx: &Fx,
+    owner: aiplane_core::server::db::mcp_connections::ConnectionOwner,
+) -> aiplane_core::server::db::mcp_connections::ConnectionIdentity {
+    use aiplane_core::server::db::{
+        mcp_catalog,
+        mcp_connections::{self, NewConnection},
+    };
+    let catalog = mcp_catalog::get(&fx.state.db, "workspace")
+        .await
+        .unwrap()
+        .unwrap();
+    mcp_connections::upsert_connection(
+        &fx.state.db,
+        NewConnection {
+            owner,
+            connector_key: catalog.key,
+            catalog_generation: catalog.dispatch_generation,
+            access_token_ct: vec![0, 1, 255],
+            access_token_nonce: vec![2],
+            refresh_token_ct: None,
+            refresh_token_nonce: None,
+            token_expires_at: None,
+            scopes: vec!["workspace.read".into()],
+            dcr_client_id: None,
+            dcr_client_secret_ct: None,
+            dcr_client_secret_nonce: None,
+            token_url: catalog.token_url,
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap()
+}
+
+async fn deny_organization_connections(fx: &Fx, cookie: &str, dot: &str) {
+    let base = format!("/api/v0/dots/{dot}/connections");
+    for (method, suffix, body) in [
+        (Method::GET, "", None),
+        (
+            Method::PUT,
+            "/workspace",
+            Some(
+                json!({"mode":"principal","expected_binding_generation":null,"connection_id":null,"connection_generation":null}),
+            ),
+        ),
+        (
+            Method::POST,
+            "/workspace/connect",
+            Some(json!({"connection_id":null,"connection_generation":null})),
+        ),
+        (
+            Method::DELETE,
+            "/workspace",
+            Some(json!({"connection_id":null,"connection_generation":null})),
+        ),
+    ] {
+        let (status, body) = fx
+            .send(Some(cookie), method, &format!("{base}{suffix}"), body)
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert!(body.get("connections").is_none());
+    }
+}
+
+#[tokio::test]
+async fn organization_oauth_inactive_member_writer_uses_explicit_principal_identity_without_personal_permission()
+ {
+    use aiplane_core::server::db::mcp_connections::{self, ConnectionOwner};
+    let (fx, _provider, org, dot) = oauth_organization().await;
+    let (_, me) = fx.get(&fx.alice, "/api/v0/me").await;
+    assert_eq!(me["can_manage_agents"], true);
+    assert_eq!(me["can_manage_dots"], false);
+    let user = seed_organization_credential(&fx, ConnectionOwner::User("alice".into())).await;
+    let (status, clara) = create_dot(&fx, &fx.alice, &org, "Clara").await;
+    assert_eq!(status, StatusCode::CREATED);
+    let other_owner = ConnectionOwner::Principal(id(&clara["agent"]).to_owned());
+    let other = seed_organization_credential(&fx, other_owner.clone()).await;
+    let (status, _) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/organizations/{}/dots/{dot}/active", id(&org)),
+            json!({"active":false}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let base = format!("/api/v0/dots/{dot}/connections");
+    let (status, initial) = fx.get(&fx.alice, &base).await;
+    assert_eq!(status, StatusCode::OK, "{initial}");
+    assert_eq!(initial["dot"]["name"], "Harald");
+    assert_eq!(initial["dot"]["active"], false);
+    let row = connection_row(&initial);
+    assert_eq!(row["supported_modes"], json!(["principal"]));
+    assert_eq!(row["user_connection"], Value::Null);
+    assert_eq!(row["principal_connection"], Value::Null);
+    assert_eq!(row["can_select"], true);
+    assert_eq!(
+        row["selected"],
+        json!({"mode":"principal","connection_id":null,"connection_generation":null,"binding_generation":null})
+    );
+    let oauth_state = start_organization_oauth(&fx, &dot).await;
+    let (status, location) = oauth_callback(fx.state.clone(), &fx.alice, &oauth_state).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        location.as_deref(),
+        Some(format!("/agents/{dot}?tab=setup").as_str())
+    );
+    let (status, connected) = fx.get(&fx.alice, &base).await;
+    assert_eq!(status, StatusCode::OK, "{connected}");
+    let row = connection_row(&connected);
+    assert_eq!(row["principal_connection"]["connected"], true);
+    assert_eq!(row["selected"]["connection_id"], Value::Null);
+    assert_eq!(row["selected"]["binding_generation"], Value::Null);
+    for (mode, connection_id, generation) in [
+        (
+            "user",
+            user.connection_id.as_str(),
+            user.generation.as_str(),
+        ),
+        (
+            "principal",
+            other.connection_id.as_str(),
+            other.generation.as_str(),
+        ),
+    ] {
+        let (status, _) = fx.send(Some(&fx.alice), Method::PUT, &format!("{base}/workspace"), Some(json!({
+            "mode":mode,"expected_binding_generation":null,"connection_id":connection_id,"connection_generation":generation
+        }))).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+    let selection = json!({"mode":"principal","expected_binding_generation":null,
+        "connection_id":row["principal_connection"]["id"],"connection_generation":row["principal_connection"]["generation"]});
+    let (status, selected) = fx
+        .send(
+            Some(&fx.alice),
+            Method::PUT,
+            &format!("{base}/workspace"),
+            Some(selection),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{selected}");
+    let selected_row = connection_row(&selected);
+    assert_eq!(
+        selected_row["selected"]["connection_id"],
+        row["principal_connection"]["id"]
+    );
+    let (status, cleared) = fx.send(Some(&fx.alice), Method::DELETE, &format!("{base}/workspace"), Some(json!({
+        "connection_id":row["principal_connection"]["id"],"connection_generation":row["principal_connection"]["generation"]
+    }))).await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(connection_row(&cleared)["user_connection"], Value::Null);
+    assert_eq!(connection_row(&cleared)["selected"]["mode"], "principal");
+    assert_eq!(
+        connection_row(&cleared)["selected"]["connection_id"],
+        Value::Null
+    );
+    assert_eq!(
+        connection_row(&cleared)["selected"]["binding_generation"],
+        selected_row["selected"]["binding_generation"]
+    );
+    assert_eq!(
+        mcp_connections::get_connection(
+            &fx.state.db,
+            &ConnectionOwner::User("alice".into()),
+            "workspace"
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .id,
+        user.connection_id
+    );
+    assert_eq!(
+        mcp_connections::get_connection(&fx.state.db, &other_owner, "workspace")
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        other.connection_id
+    );
+}
+
+#[tokio::test]
+async fn organization_oauth_foreign_read_respond_and_nonmember_admin_never_obtain_credential_versions()
+ {
+    use aiplane_agents::db::agents;
+    let (fx, _provider, _org, dot) = oauth_organization().await;
+    for cookie in [&fx.root, &fx.bob, &fx.plain] {
+        deny_organization_connections(&fx, cookie, &dot).await;
+    }
+    for access in ["read", "respond"] {
+        let access = if access == "read" {
+            agents::Access::Read
+        } else {
+            agents::Access::Respond
+        };
+        agents::set_share(
+            &fx.state.db,
+            &dot,
+            agents::SubjectKind::User,
+            "bob",
+            access,
+            "alice",
+        )
+        .await
+        .unwrap();
+        deny_organization_connections(&fx, &fx.bob, &dot).await;
+    }
+}
+
+#[tokio::test]
+async fn organization_oauth_current_membership_role_mapping_and_write_share_revocation_apply_without_rbac_reload()
+ {
+    use aiplane_core::server::db::gateway_groups;
+    for change in ["membership", "mapping", "role", "share"] {
+        let (fx, _provider, org, dot) = oauth_organization().await;
+        let (status, body) = fx
+            .get(&fx.alice, &format!("/api/v0/dots/{dot}/connections"))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        match change {
+            "membership" => {
+                assert_eq!(edit(&fx, &org, "Acme OAuth", &[]).await.0, StatusCode::OK);
+            }
+            "mapping" => gateway_groups::set_mappings_for_group(&fx.state.db, "managers", &[])
+                .await
+                .unwrap(),
+            "role" => {
+                person(&fx.state, "alice", &[]).await;
+            }
+            "share" => {
+                use aiplane_agents::db::agents::{self, Access, SubjectKind};
+                agents::set_share(
+                    &fx.state.db,
+                    &dot,
+                    SubjectKind::User,
+                    "bob",
+                    Access::Write,
+                    "alice",
+                )
+                .await
+                .unwrap();
+                assert_eq!(
+                    agents::remove_share(&fx.state.db, &dot, SubjectKind::User, "alice", "bob")
+                        .await
+                        .unwrap(),
+                    agents::ShareChange::Changed
+                );
+            }
+            _ => unreachable!(),
+        }
+        deny_organization_connections(&fx, &fx.alice, &dot).await;
+    }
+}
+
+#[tokio::test]
+async fn organization_oauth_retained_local_credential_can_be_erased_without_catalogue_access_or_user_projection()
+ {
+    use aiplane_core::server::db::mcp_connections::{self, ConnectionOwner};
+    for restriction in ["disabled", "forbidden", "deleted"] {
+        let (fx, _provider, _org, dot) = oauth_organization().await;
+        let owner = ConnectionOwner::Principal(dot.clone());
+        let own = seed_organization_credential(&fx, owner.clone()).await;
+        let user = seed_organization_credential(&fx, ConnectionOwner::User("alice".into())).await;
+        match restriction {
+            "disabled" => {
+                sqlx::query("UPDATE mcp_catalog_connectors SET enabled=0 WHERE key='workspace'")
+                    .execute(&fx.state.db)
+                    .await
+                    .unwrap();
+            }
+            "forbidden" => {
+                sqlx::query("UPDATE mcp_catalog_connectors SET allowed_groups='[\"admins\"]' WHERE key='workspace'").execute(&fx.state.db).await.unwrap();
+            }
+            "deleted" => {
+                sqlx::query("DELETE FROM mcp_catalog_connectors WHERE key='workspace'")
+                    .execute(&fx.state.db)
+                    .await
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let base = format!("/api/v0/dots/{dot}/connections");
+        let (status, view) = fx.get(&fx.alice, &base).await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        let row = connection_row(&view);
+        assert_eq!(row["connector"], Value::Null);
+        assert_eq!(row["user_connection"], Value::Null);
+        assert_eq!(row["supported_modes"], json!([]));
+        assert_eq!(row["can_connect"], false);
+        assert_eq!(row["can_disconnect"], true);
+        assert_eq!(row["principal_connection"]["id"], own.connection_id);
+        assert_eq!(row["principal_connection"]["generation"], own.generation);
+        assert_eq!(row["selected"]["binding_generation"], Value::Null);
+        let (status, _) = fx
+            .send(
+                Some(&fx.alice),
+                Method::DELETE,
+                &format!("{base}/workspace"),
+                Some(json!({
+                    "connection_id":own.connection_id,"connection_generation":own.generation
+                })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            mcp_connections::get_connection(&fx.state.db, &owner, "workspace")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            mcp_connections::get_connection(
+                &fx.state.db,
+                &ConnectionOwner::User("alice".into()),
+                "workspace"
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+            user.connection_id
+        );
+    }
+}
+
+#[tokio::test]
+async fn organization_oauth_callback_rechecks_current_membership_before_exchange_and_consumes_state_once()
+ {
+    use aiplane_core::server::db::mcp_connections::{self, ConnectionOwner};
+    let (fx, provider, org, dot) = oauth_organization().await;
+    let oauth_state = start_organization_oauth(&fx, &dot).await;
+    assert_eq!(edit(&fx, &org, "Acme OAuth", &[]).await.0, StatusCode::OK);
+    assert_eq!(
+        oauth_callback(fx.state.clone(), &fx.alice, &oauth_state)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert!(provider.received_requests().await.unwrap().is_empty());
+    assert_eq!(
+        oauth_callback(fx.state.clone(), &fx.alice, &oauth_state)
+            .await
+            .0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert!(
+        mcp_connections::get_connection(
+            &fx.state.db,
+            &ConnectionOwner::Principal(dot),
+            "workspace"
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+}
+
+#[tokio::test]
+async fn organization_oauth_freshly_mapped_catalogue_permission_is_admitted_without_rbac_reload() {
+    let (fx, _provider, _org, dot) = oauth_organization().await;
+    sqlx::query(
+        "UPDATE mcp_catalog_connectors SET allowed_groups='[\"support\"]' WHERE key='workspace'",
+    )
+    .execute(&fx.state.db)
+    .await
+    .unwrap();
+    aiplane_core::server::db::gateway_groups::set_mappings_for_group(
+        &fx.state.db,
+        "support",
+        &["managers".into()],
+    )
+    .await
+    .unwrap();
+    let (status, inventory) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{dot}/connections"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{inventory}");
+    assert_eq!(connection_row(&inventory)["can_connect"], true);
+    let oauth_state = start_organization_oauth(&fx, &dot).await;
+    assert_eq!(
+        oauth_callback(fx.state.clone(), &fx.alice, &oauth_state)
+            .await
+            .0,
+        StatusCode::SEE_OTHER
+    );
+}
+
+#[tokio::test]
+async fn organization_oauth_callback_membership_revoked_during_exchange_never_saves_tokens() {
+    use std::{sync::Arc, time::Duration};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let (fx, provider, org, dot) = oauth_organization().await;
+    let oauth_state = start_organization_oauth(&fx, &dot).await;
+    let reached = Arc::new(tokio::sync::Notify::new());
+    let exchanged = reached.clone();
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(move |_: &wiremock::Request| {
+            exchanged.notify_one();
+            ResponseTemplate::new(200).set_delay(Duration::from_millis(300)).set_body_json(json!({
+            "access_token":"organization-fixture-access","token_type":"Bearer","expires_in":3600
+        }))
+        })
+        .with_priority(1)
+        .mount(&provider)
+        .await;
+    let state = fx.state.clone();
+    let cookie = fx.alice.clone();
+    let worker = tokio::spawn(async move { oauth_callback(state, &cookie, &oauth_state).await.0 });
+    tokio::time::timeout(Duration::from_secs(3), reached.notified())
+        .await
+        .unwrap();
+    assert_eq!(edit(&fx, &org, "Acme OAuth", &[]).await.0, StatusCode::OK);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), worker)
+            .await
+            .unwrap()
+            .unwrap(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(provider.received_requests().await.unwrap().len(), 1);
+    assert!(
+        aiplane_core::server::db::mcp_connections::get_connection(
+            &fx.state.db,
+            &aiplane_core::server::db::mcp_connections::ConnectionOwner::Principal(dot),
+            "workspace"
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+}
+
+#[tokio::test]
+async fn organization_oauth_deleted_initiator_cancels_pending_without_erasing_or_transferring_org_credentials()
+ {
+    use aiplane_agents::db::agents::{self, Access, SubjectKind};
+    use aiplane_core::server::db::mcp_connections::{self, ConnectionOwner};
+    let (fx, provider, _org, dot) = oauth_organization().await;
+    let owner = ConnectionOwner::Principal(dot.clone());
+    let own = seed_organization_credential(&fx, owner.clone()).await;
+    agents::set_share(
+        &fx.state.db,
+        &dot,
+        SubjectKind::User,
+        "bob",
+        Access::Write,
+        "alice",
+    )
+    .await
+    .unwrap();
+    let base = format!("/api/v0/dots/{dot}/connections");
+    let (status, selected) = fx.send(Some(&fx.alice), Method::PUT, &format!("{base}/workspace"), Some(json!({
+        "mode":"principal","expected_binding_generation":null,"connection_id":own.connection_id,"connection_generation":own.generation
+    }))).await;
+    assert_eq!(status, StatusCode::OK, "{selected}");
+    let binding = connection_row(&selected)["selected"].clone();
+    let (status, started) = fx
+        .post(
+            &fx.alice,
+            &format!("{base}/workspace/connect"),
+            json!({
+                "connection_id":own.connection_id,"connection_generation":own.generation
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let url = reqwest::Url::parse(started["authorization_url"].as_str().unwrap()).unwrap();
+    let oauth_state = url
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .unwrap()
+        .1
+        .into_owned();
+    sqlx::query("DELETE FROM users WHERE id='alice'")
+        .execute(&fx.state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pending_mcp_oauth WHERE principal_id=?")
+            .bind(&dot)
+            .fetch_one(&fx.state.db)
+            .await
+            .unwrap(),
+        0
+    );
+    let (status, location) = oauth_callback(fx.state.clone(), &fx.alice, &oauth_state).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(location.is_some_and(|location| location.starts_with("/login?")));
+    assert_eq!(
+        oauth_callback(fx.state.clone(), &fx.bob, &oauth_state)
+            .await
+            .0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert!(provider.received_requests().await.unwrap().is_empty());
+    let (status, inventory) = fx.get(&fx.bob, &base).await;
+    assert_eq!(status, StatusCode::OK, "{inventory}");
+    let row = connection_row(&inventory);
+    assert_eq!(row["can_select"], true);
+    assert_eq!(row["user_connection"], Value::Null);
+    assert_eq!(row["principal_connection"]["id"], own.connection_id);
+    assert_eq!(row["principal_connection"]["generation"], own.generation);
+    assert_eq!(row["principal_connection"]["authorizing"], false);
+    assert_eq!(row["selected"], binding);
+    assert_eq!(
+        mcp_connections::get_connection(&fx.state.db, &owner, "workspace")
+            .await
+            .unwrap()
+            .unwrap()
+            .owner,
+        owner
+    );
+}
+
 async fn organization(fx: &Fx, name: &str, groups: &[&str]) -> Value {
     let (status, body) = fx
         .post(

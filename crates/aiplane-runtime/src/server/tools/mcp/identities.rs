@@ -58,25 +58,64 @@ pub async fn connection_admitted_in(
     key: &str,
     subject: Option<&str>,
 ) -> Result<bool, DbError> {
-    let Some(user) = users::find_by_id_in(tx, initiator).await? else {
+    if !connection_owner_admitted_in(state, tx, initiator, owner, subject).await? {
+        return Ok(false);
+    }
+    let Some((user, policy)) =
+        crate::agents::access::current_user_policy_in(state, tx, initiator).await?
+    else {
         return Ok(false);
     };
     let Some(connector) = mcp_catalog::get_in(tx, key).await? else {
         return Ok(false);
     };
-    let roles = state.role_ids_for(&user.roles);
+    let roles = policy.role_ids_for(&user.roles);
     if !connector.enabled
         || !connector.is_per_user()
-        || !connector.allows(&roles, state.rbac.is_admin(&roles))
+        || !connector.allows(&roles, policy.is_admin(&roles))
     {
         return Ok(false);
     }
+    Ok(!matches!(owner, ConnectionOwner::Principal(_)) || connector.auth == AuthKind::OAuth2)
+}
+
+pub async fn connection_owner_admitted_in(
+    state: &AppState,
+    tx: &mut WriteTx,
+    initiator: &str,
+    owner: &ConnectionOwner,
+    subject: Option<&str>,
+) -> Result<bool, DbError> {
+    use aiplane_agents::db::{agents, organizations};
+    let Some((user, policy)) =
+        crate::agents::access::current_user_policy_in(state, tx, initiator).await?
+    else {
+        return Ok(false);
+    };
+    let groups = policy.role_ids_for(&user.roles);
     match owner {
         ConnectionOwner::User(id) => Ok(id == initiator && subject.is_none()),
-        ConnectionOwner::Principal(id) => Ok(connector.auth == AuthKind::OAuth2
-            && subject == Some(id.as_str())
-            && state.rbac.can_manage_dots(&roles)
-            && dot_connections::owned_dot_in(tx, initiator, id, false).await?),
+        ConnectionOwner::Principal(id) => {
+            if subject != Some(id.as_str()) {
+                return Ok(false);
+            }
+            match agents::dot_owner_in(tx, id).await? {
+                Some(agents::DotOwner::User(user_id)) => {
+                    Ok(user_id == initiator && policy.can_manage_dots(&groups))
+                }
+                Some(agents::DotOwner::Organization(organization)) => {
+                    if !organizations::is_member_in(tx, &organization, &groups).await? {
+                        return Ok(false);
+                    }
+                    Ok(
+                        crate::agents::access::effective_access_in(state, tx, id, initiator)
+                            .await?
+                            == Some(agents::Access::Write),
+                    )
+                }
+                None => Ok(false),
+            }
+        }
     }
 }
 
@@ -122,7 +161,8 @@ async fn selected_in(
     let Some(user) = users::find_by_id_in(tx, user_id).await? else {
         return Ok(None);
     };
-    if !dot_connections::owned_dot_in(tx, user_id, dot, require_active).await? {
+    let owner = aiplane_agents::db::agents::DotOwner::User(user_id.to_owned());
+    if !dot_connections::owned_dot_in(tx, &owner, dot, require_active).await? {
         return Ok(None);
     }
     let Some(connector) = mcp_catalog::get_in(tx, key).await? else {
@@ -135,7 +175,7 @@ async fn selected_in(
     {
         return Ok(None);
     }
-    let binding = dot_connections::get_in(tx, user_id, dot, key).await?;
+    let binding = dot_connections::get_in(tx, &owner, dot, key).await?;
     let owner = match binding.as_ref().map(|b| b.identity_mode) {
         Some(dot_connections::IdentityMode::Principal) if connector.auth == AuthKind::OAuth2 => {
             ConnectionOwner::Principal(dot.to_owned())
@@ -310,7 +350,13 @@ pub async fn layer_for_personal_dot(
     let Ok(mut tx) = WriteTx::begin(&state.db).await else {
         return layer;
     };
-    let Ok(true) = dot_connections::owned_dot_in(&mut tx, &owner.id, dot, require_active).await
+    let Ok(true) = dot_connections::owned_dot_in(
+        &mut tx,
+        &aiplane_agents::db::agents::DotOwner::User(owner.id.clone()),
+        dot,
+        require_active,
+    )
+    .await
     else {
         return layer;
     };
@@ -383,38 +429,56 @@ pub async fn layer_for_personal_dot(
     layer
 }
 
-pub async fn save_personal_selection_in(
+pub async fn save_selection_in(
     state: &AppState,
     tx: &mut WriteTx,
+    initiator: &str,
     selection: dot_connections::Selection<'_>,
 ) -> Result<Option<dot_connections::SaveOutcome>, DbError> {
-    let Some(user) = users::find_by_id_in(tx, selection.owner_user_id).await? else {
+    use aiplane_agents::db::agents::{self, DotOwner};
+    if agents::dot_owner_in(tx, selection.dot_id).await?.as_ref() != Some(selection.owner) {
         return Ok(None);
-    };
-    let roles = state.role_ids_for(&user.roles);
-    let Some(connector) = mcp_catalog::get_in(tx, selection.connector_key).await? else {
-        return Ok(Some(dot_connections::SaveOutcome::Missing));
-    };
-    if !state.rbac.can_manage_dots(&roles)
-        || !connector.enabled
-        || !connector.is_per_user()
-        || !connector.allows(&roles, state.rbac.is_admin(&roles))
-        || (selection.identity_mode == dot_connections::IdentityMode::Principal
-            && connector.auth != AuthKind::OAuth2)
+    }
+    let principal_owner = ConnectionOwner::Principal(selection.dot_id.to_owned());
+    if !connection_owner_admitted_in(
+        state,
+        tx,
+        initiator,
+        &principal_owner,
+        Some(selection.dot_id),
+    )
+    .await?
     {
         return Ok(None);
     }
-    if !dot_connections::owned_dot_in(tx, selection.owner_user_id, selection.dot_id, false).await? {
+    let Some(connector) = mcp_catalog::get_in(tx, selection.connector_key).await? else {
         return Ok(Some(dot_connections::SaveOutcome::Missing));
-    }
-    let selected_owner = match selection.identity_mode {
-        dot_connections::IdentityMode::User => {
-            ConnectionOwner::User(selection.owner_user_id.to_owned())
-        }
-        dot_connections::IdentityMode::Principal => {
-            ConnectionOwner::Principal(selection.dot_id.to_owned())
-        }
     };
+    let selected_owner = match (selection.owner, selection.identity_mode) {
+        (DotOwner::User(user), dot_connections::IdentityMode::User) => {
+            ConnectionOwner::User(user.clone())
+        }
+        _ => principal_owner,
+    };
+    let subject =
+        matches!(selected_owner, ConnectionOwner::Principal(_)).then_some(selection.dot_id);
+    if !connection_admitted_in(
+        state,
+        tx,
+        initiator,
+        &selected_owner,
+        selection.connector_key,
+        subject,
+    )
+    .await?
+    {
+        return Ok(None);
+    }
+    if matches!(selection.owner, DotOwner::Organization(_))
+        && selection.identity_mode == dot_connections::IdentityMode::User
+    {
+        return Ok(Some(dot_connections::save_in(tx, selection).await?));
+    }
     let current =
         mcp_connections::get_connection_in(tx, &selected_owner, selection.connector_key).await?;
     if !current.is_some_and(|connection| {
@@ -460,6 +524,16 @@ mod tests {
             speech_voice: None,
         };
         users::upsert(&db, &user).await.unwrap();
+        aiplane_core::server::db::gateway_groups::upsert_group(&db, "member", "", true, false)
+            .await
+            .unwrap();
+        aiplane_core::server::db::gateway_groups::set_mappings_for_group(
+            &db,
+            "member",
+            &["allowed".into()],
+        )
+        .await
+        .unwrap();
         sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,allowed_groups,enabled,created_at,updated_at,dispatch_generation) VALUES('fixture','Fixture','https://provider.test/mcp','oauth2','per_user','[\"member\"]',1,?,?,?)").bind(now.to_string()).bind(now.to_string()).bind(uuid::Uuid::new_v4().to_string()).execute(&db).await.unwrap();
         let (_, dot) = agents::create_personal_dot(
             &db,
@@ -550,11 +624,12 @@ mod tests {
         assert_eq!(implicit.connection, personal.clone());
         assert_eq!(implicit.binding_generation, None);
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
-        let Some(dot_connections::SaveOutcome::Saved(Some(binding))) = save_personal_selection_in(
+        let Some(dot_connections::SaveOutcome::Saved(Some(binding))) = save_selection_in(
             &state,
             &mut tx,
+            &user.id,
             dot_connections::Selection {
-                owner_user_id: &user.id,
+                owner: &agents::DotOwner::User(user.id.clone()),
                 dot_id: &dot,
                 connector_key: "fixture",
                 identity_mode: dot_connections::IdentityMode::Principal,
@@ -632,10 +707,14 @@ mod tests {
                 .is_some()
         );
         assert_eq!(
-            dot_connections::list_for_dot(&state.db, &user.id, &dot)
-                .await
-                .unwrap()
-                .len(),
+            dot_connections::list_for_dot(
+                &state.db,
+                &agents::DotOwner::User(user.id.clone()),
+                &dot
+            )
+            .await
+            .unwrap()
+            .len(),
             1
         );
     }
@@ -728,11 +807,12 @@ mod tests {
                 .unwrap()
         );
         assert!(
-            save_personal_selection_in(
+            save_selection_in(
                 &state,
                 &mut tx,
+                &user.id,
                 dot_connections::Selection {
-                    owner_user_id: &user.id,
+                    owner: &agents::DotOwner::User(user.id.clone()),
                     dot_id: &dot,
                     connector_key: "fixture",
                     identity_mode: dot_connections::IdentityMode::User,
@@ -912,11 +992,12 @@ mod tests {
             })))
         );
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
-        let Some(dot_connections::SaveOutcome::Saved(Some(binding))) = save_personal_selection_in(
+        let Some(dot_connections::SaveOutcome::Saved(Some(binding))) = save_selection_in(
             &state,
             &mut tx,
+            &user.id,
             dot_connections::Selection {
-                owner_user_id: &user.id,
+                owner: &agents::DotOwner::User(user.id.clone()),
                 dot_id: &dot,
                 connector_key: "fixture",
                 identity_mode: dot_connections::IdentityMode::Principal,
@@ -954,22 +1035,21 @@ mod tests {
             json!({"owner":own.owner,"connector_key":"fixture","connection_id":own.connection_id,"generation":own.generation,"binding_generation":binding.binding_generation,"catalog_generation":mcp_catalog::get(&state.db,"fixture").await.unwrap().unwrap().dispatch_generation})
         );
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
-        let Some(dot_connections::SaveOutcome::Saved(Some(user_binding))) =
-            save_personal_selection_in(
-                &state,
-                &mut tx,
-                dot_connections::Selection {
-                    owner_user_id: &user.id,
-                    dot_id: &dot,
-                    connector_key: "fixture",
-                    identity_mode: dot_connections::IdentityMode::User,
-                    connection_generation: &personal.generation,
-                    expected_binding_generation: Some(&binding.binding_generation),
-                },
-            )
-            .await
-            .unwrap()
-        else {
+        let Some(dot_connections::SaveOutcome::Saved(Some(user_binding))) = save_selection_in(
+            &state,
+            &mut tx,
+            &user.id,
+            dot_connections::Selection {
+                owner: &agents::DotOwner::User(user.id.clone()),
+                dot_id: &dot,
+                connector_key: "fixture",
+                identity_mode: dot_connections::IdentityMode::User,
+                connection_generation: &personal.generation,
+                expected_binding_generation: Some(&binding.binding_generation),
+            },
+        )
+        .await
+        .unwrap() else {
             panic!("user selection expected");
         };
         tx.commit().await.unwrap();
@@ -1144,6 +1224,602 @@ mod tests {
                 )
                 .count(),
             1
+        );
+    }
+
+    async fn organization_oauth_fixture() -> (crate::rama_server::state::RamaState, String, String)
+    {
+        let (state, organization, dot) = crate::agents::access::tests::fixture().await;
+        mcp_catalog::create(
+            &state.db,
+            mcp_catalog::ConnectorInput {
+                key: "organization-oauth".into(),
+                name: "Actual organization OAuth".into(),
+                description: None,
+                icon: None,
+                category: None,
+                url: "https://provider.example.com/mcp".into(),
+                auth: AuthKind::OAuth2,
+                scope: mcp_catalog::Scope::PerUser,
+                audit: false,
+                use_dcr: true,
+                client_id: None,
+                client_secret_ct: None,
+                client_secret_nonce: None,
+                authorize_url: None,
+                token_url: None,
+                registration_url: None,
+                scopes: vec![],
+                allowed_groups: vec!["members".into()],
+            },
+        )
+        .await
+        .unwrap();
+        mcp_catalog::set_enabled(&state.db, "organization-oauth", true)
+            .await
+            .unwrap();
+        (state, organization, dot)
+    }
+
+    #[tokio::test]
+    async fn organization_oauth_requires_member_write_without_personal_dot_management() {
+        let (state, _, dot) = organization_oauth_fixture().await;
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        let (user, policy) =
+            crate::agents::access::current_user_policy_in(&state, &mut tx, "creator")
+                .await
+                .unwrap()
+                .unwrap();
+        assert!(!policy.can_manage_dots(&policy.role_ids_for(&user.roles)));
+        let owner = ConnectionOwner::Principal(dot.clone());
+        assert!(
+            authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "responder",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "outsider",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "admin",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+            .bind(&dot)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                None
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                Some("unrelated-principal")
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &ConnectionOwner::User("creator".into()),
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn organization_local_connection_authority_survives_catalogue_restriction_but_not_membership_loss()
+     {
+        let (state, organization, dot) = organization_oauth_fixture().await;
+        let owner = ConnectionOwner::Principal(dot.clone());
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        assert!(
+            connection_owner_admitted_in(&state, &mut tx, "creator", &owner, Some(&dot))
+                .await
+                .unwrap()
+        );
+        sqlx::query("UPDATE mcp_catalog_connectors SET enabled=0 WHERE key='organization-oauth'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            connection_owner_admitted_in(&state, &mut tx, "creator", &owner, Some(&dot))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !connection_owner_admitted_in(&state, &mut tx, "admin", &owner, Some(&dot))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !connection_owner_admitted_in(&state, &mut tx, "creator", &owner, None)
+                .await
+                .unwrap()
+        );
+        assert!(
+            connection_owner_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &ConnectionOwner::User("creator".into()),
+                None
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !connection_owner_admitted_in(
+                &state,
+                &mut tx,
+                "outsider",
+                &ConnectionOwner::User("creator".into()),
+                None
+            )
+            .await
+            .unwrap()
+        );
+        sqlx::query(
+            "DELETE FROM organization_groups WHERE organization_id=? AND gateway_group='members'",
+        )
+        .bind(&organization)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        assert!(
+            !connection_owner_admitted_in(&state, &mut tx, "creator", &owner, Some(&dot))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn organization_selection_requires_exact_owner_current_write_and_current_credential_provenance()
+     {
+        let (state, organization, dot) = organization_oauth_fixture().await;
+        let owner = agents::DotOwner::Organization(organization.clone());
+        let connector = mcp_catalog::get(&state.db, "organization-oauth")
+            .await
+            .unwrap()
+            .unwrap();
+        let sealed = state.crypto.seal(b"actual-test-credential").unwrap();
+        let credential = mcp_connections::upsert_connection(
+            &state.db,
+            mcp_connections::NewConnection {
+                owner: ConnectionOwner::Principal(dot.clone()),
+                connector_key: connector.key.clone(),
+                catalog_generation: connector.dispatch_generation,
+                access_token_ct: sealed.ciphertext,
+                access_token_nonce: sealed.nonce,
+                refresh_token_ct: None,
+                refresh_token_nonce: None,
+                token_expires_at: None,
+                scopes: vec![],
+                dcr_client_id: None,
+                dcr_client_secret_ct: None,
+                dcr_client_secret_nonce: None,
+                token_url: None,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        let selection = dot_connections::Selection {
+            owner: &owner,
+            dot_id: &dot,
+            connector_key: "organization-oauth",
+            identity_mode: dot_connections::IdentityMode::Principal,
+            connection_generation: &credential.generation,
+            expected_binding_generation: None,
+        };
+        assert!(
+            save_selection_in(&state, &mut tx, "outsider", selection)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            save_selection_in(&state, &mut tx, "admin", selection)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let wrong_owner = agents::DotOwner::User(organization.clone());
+        assert!(
+            save_selection_in(
+                &state,
+                &mut tx,
+                "creator",
+                dot_connections::Selection {
+                    owner: &wrong_owner,
+                    ..selection
+                }
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+        assert_eq!(
+            save_selection_in(
+                &state,
+                &mut tx,
+                "creator",
+                dot_connections::Selection {
+                    identity_mode: dot_connections::IdentityMode::User,
+                    ..selection
+                }
+            )
+            .await
+            .unwrap(),
+            Some(dot_connections::SaveOutcome::Unavailable)
+        );
+        let Some(dot_connections::SaveOutcome::Saved(Some(binding))) =
+            save_selection_in(&state, &mut tx, "creator", selection)
+                .await
+                .unwrap()
+        else {
+            panic!("explicit own credential must be selected");
+        };
+        let selection = dot_connections::Selection {
+            expected_binding_generation: Some(&binding.binding_generation),
+            ..selection
+        };
+        sqlx::query("UPDATE agent_shares SET access='respond' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&dot).execute(&mut *tx).await.unwrap();
+        assert!(
+            save_selection_in(&state, &mut tx, "creator", selection)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        sqlx::query("UPDATE agent_shares SET access='write' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&dot).execute(&mut *tx).await.unwrap();
+        sqlx::query("UPDATE mcp_catalog_connectors SET dispatch_generation=? WHERE key='organization-oauth'").bind(uuid::Uuid::new_v4().to_string()).execute(&mut *tx).await.unwrap();
+        assert_eq!(
+            save_selection_in(&state, &mut tx, "creator", selection)
+                .await
+                .unwrap(),
+            Some(dot_connections::SaveOutcome::Unavailable)
+        );
+        assert_eq!(
+            dot_connections::get_in(&mut tx, &owner, &dot, "organization-oauth")
+                .await
+                .unwrap(),
+            Some(binding)
+        );
+    }
+
+    #[tokio::test]
+    async fn organization_oauth_revocation_is_current_inside_the_authorization_transaction() {
+        let (state, organization, dot) = organization_oauth_fixture().await;
+        let owner = ConnectionOwner::Principal(dot.clone());
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        assert!(
+            authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        sqlx::query("UPDATE gateway_groups SET can_manage_agents=0 WHERE name='members'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        sqlx::query("UPDATE gateway_groups SET can_manage_agents=1 WHERE name='members'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM oidc_group_mappings WHERE gateway_group='members'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        sqlx::query("INSERT INTO oidc_group_mappings(oidc_claim,oidc_value,gateway_group) VALUES('groups','claim-members','members')").execute(&mut *tx).await.unwrap();
+        sqlx::query(
+            "DELETE FROM organization_groups WHERE organization_id=? AND gateway_group='members'",
+        )
+        .bind(&organization)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        sqlx::query(
+            "INSERT INTO organization_groups(organization_id,gateway_group) VALUES(?,'members')",
+        )
+        .bind(&organization)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE agent_shares SET access='respond' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&dot).execute(&mut *tx).await.unwrap();
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        sqlx::query("UPDATE agent_shares SET access='write' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&dot).execute(&mut *tx).await.unwrap();
+        assert!(
+            authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+        drop(tx);
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        assert!(
+            authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &owner,
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn organization_oauth_rejects_admin_recovery_even_with_catalogue_access() {
+        let (state, _, dot) = organization_oauth_fixture().await;
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        assert_eq!(
+            crate::agents::access::effective_access_in(&state, &mut tx, &dot, "admin")
+                .await
+                .unwrap(),
+            Some(agents::Access::Write)
+        );
+        sqlx::query(
+            "UPDATE mcp_catalog_connectors SET allowed_groups='[]' WHERE key='organization-oauth'",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "admin",
+                &ConnectionOwner::Principal(dot.clone()),
+                "organization-oauth",
+                Some(&dot)
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn organization_oauth_keeps_equal_textual_user_and_organization_ids_distinct() {
+        let (state, organization, org_dot) = organization_oauth_fixture().await;
+        let now = jiff::Timestamp::now();
+        users::upsert(
+            &state.db,
+            &User {
+                id: organization.clone(),
+                email: "same-id@example.com".into(),
+                name: None,
+                roles: vec!["claim-members".into()],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        aiplane_core::server::db::gateway_groups::set_can_manage_dots(&state.db, "members", true)
+            .await
+            .unwrap();
+        let (_, personal) = agents::create_personal_dot(
+            &state.db,
+            &NewPrincipal {
+                name: "Actual personal assistant",
+                display: "Actual personal assistant",
+                description: "",
+            },
+            "{}",
+            &organization,
+            4,
+        )
+        .await
+        .unwrap();
+        let personal = personal.unwrap().principal.id;
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        assert!(
+            authorization_admitted_in(
+                &state,
+                &mut tx,
+                &organization,
+                &ConnectionOwner::Principal(personal.clone()),
+                "organization-oauth",
+                Some(&personal)
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                &organization,
+                &ConnectionOwner::Principal(org_dot.clone()),
+                "organization-oauth",
+                Some(&org_dot)
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &ConnectionOwner::Principal(personal.clone()),
+                "organization-oauth",
+                Some(&personal)
+            )
+            .await
+            .unwrap()
+        );
+        sqlx::query("UPDATE gateway_groups SET can_manage_dots=0 WHERE name='members'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                &organization,
+                &ConnectionOwner::Principal(personal.clone()),
+                "organization-oauth",
+                Some(&personal)
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            authorization_admitted_in(
+                &state,
+                &mut tx,
+                "creator",
+                &ConnectionOwner::Principal(org_dot.clone()),
+                "organization-oauth",
+                Some(&org_dot)
+            )
+            .await
+            .unwrap()
         );
     }
 }

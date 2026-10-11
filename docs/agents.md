@@ -10,7 +10,9 @@ Organization Dots reuse the same principal, spec, model grants and share
 editor, with an immutable organization owner and current group-derived
 membership. Their configuration and publication are available; conversations,
 test runs, automation and external channels are refused while the organization
-runtime bridge remains unavailable. See [organization Dots](dots-organizations.md).
+runtime bridge remains unavailable. Current member writers can manage the
+Dot’s own OAuth credential in the existing Setup connection panel; administrator
+configuration recovery alone supplies no credential access. See [organization Dots](dots-organizations.md).
 
 This file covers what an agent *is* — the trust rules, principals and grants,
 the agent definition with its shares, models — and where the code lives. The

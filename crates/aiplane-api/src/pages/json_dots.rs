@@ -58,8 +58,9 @@ pub struct DotConnectionView {
     pub connector: Option<DotConnectorView>,
     pub supported_modes: Vec<&'static str>,
     pub selected: DotSelectedConnection,
-    pub user_connection: DotCredentialView,
+    pub user_connection: Option<DotCredentialView>,
     pub principal_connection: Option<DotCredentialView>,
+    pub can_select: bool,
     pub can_connect: bool,
     pub can_disconnect: bool,
 }
@@ -138,31 +139,132 @@ fn credential_view(
     }
 }
 
-async fn connections_view(
+struct ConnectionAccess {
+    dot: DotView,
+    owner: agents_db::DotOwner,
+    user: aiplane_core::server::db::users::User,
+    policy: aiplane_core::server::rbac::Resolver,
+    can_manage: bool,
+}
+
+fn connection_permission_error(owner: &agents_db::DotOwner, lang: Lang) -> Response {
+    match owner {
+        agents_db::DotOwner::User(_) => json_error(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            &t(lang, "dot-error-permission-required"),
+        ),
+        agents_db::DotOwner::Organization(_) => not_found(t(lang, "dot-error-not-found")),
+    }
+}
+
+async fn connection_access_in(
     state: &RamaState,
-    user: &aiplane_core::server::db::users::User,
-    dot: &agents_db::PersonalDotRow,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    user_id: &str,
+    id: &str,
+    write: bool,
+    lang: Lang,
+) -> Result<ConnectionAccess, Response> {
+    use aiplane_core::server::db::mcp_connections::ConnectionOwner;
+    let Some((user, policy)) =
+        aiplane_runtime::agents::access::current_user_policy_in(state, tx, user_id)
+            .await
+            .map_err(internal)?
+    else {
+        return Err(not_found(t(lang, "dot-error-not-found")));
+    };
+    let Some(metadata) = agents_db::get_dot_metadata_in(tx, id)
+        .await
+        .map_err(internal)?
+    else {
+        return Err(not_found(t(lang, "dot-error-not-found")));
+    };
+    let can_manage = match &metadata.owner {
+        agents_db::DotOwner::User(owner) if owner == user_id => {
+            policy.can_manage_dots(&policy.role_ids_for(&user.roles))
+        }
+        agents_db::DotOwner::User(_) => return Err(not_found(t(lang, "dot-error-not-found"))),
+        agents_db::DotOwner::Organization(_) => {
+            if !aiplane_runtime::server::tools::mcp::identities::connection_owner_admitted_in(
+                state,
+                tx,
+                user_id,
+                &ConnectionOwner::Principal(id.to_owned()),
+                Some(id),
+            )
+            .await
+            .map_err(internal)?
+            {
+                return Err(not_found(t(lang, "dot-error-not-found")));
+            }
+            true
+        }
+    };
+    if write && !can_manage {
+        return Err(connection_permission_error(&metadata.owner, lang));
+    }
+    let Some(agent) = agents_db::get_in(tx, id).await.map_err(internal)? else {
+        return Err(not_found(t(lang, "dot-error-not-found")));
+    };
+    Ok(ConnectionAccess {
+        dot: DotView {
+            id: id.to_owned(),
+            name: metadata.name,
+            display: agent.principal.display,
+            description: agent.principal.description,
+            active: metadata.active,
+        },
+        owner: metadata.owner,
+        user,
+        policy,
+        can_manage,
+    })
+}
+
+async fn connection_preflight(
+    state: &RamaState,
+    user_id: &str,
+    id: &str,
+    lang: Lang,
+) -> Result<ConnectionAccess, Response> {
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+        .await
+        .map_err(internal)?;
+    let access = connection_access_in(state, &mut tx, user_id, id, true, lang).await?;
+    tx.commit().await.map_err(internal)?;
+    Ok(access)
+}
+
+async fn connections_view_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    access: ConnectionAccess,
 ) -> Result<DotConnectionsView, aiplane_core::server::db::DbError> {
     use aiplane_agents::db::dot_connections::{self, IdentityMode};
     use aiplane_core::server::db::{
         mcp_catalog,
         mcp_connections::{self, ConnectionOwner},
     };
-    let id = &dot.agent.principal.id;
-    let roles = state.rbac.role_ids_for(&user.roles);
-    let catalog = mcp_catalog::list_enabled(&state.db).await?;
+    let id = &access.dot.id;
+    let personal = matches!(&access.owner, agents_db::DotOwner::User(_));
+    let roles = access.policy.role_ids_for(&access.user.roles);
+    let catalog = mcp_catalog::list_enabled_in(tx).await?;
     let permitted: Vec<_> = catalog
         .into_iter()
         .filter(|row| {
             row.is_per_user()
                 && row.auth == mcp_catalog::AuthKind::OAuth2
-                && row.allows(&roles, state.rbac.is_admin(&roles))
+                && row.allows(&roles, access.policy.is_admin(&roles))
         })
         .collect();
-    let bindings = dot_connections::list_for_dot(&state.db, &user.id, id).await?;
+    let bindings = dot_connections::list_for_dot_in(tx, &access.owner, id).await?;
     let owned_connections =
-        mcp_connections::list_connections(&state.db, &ConnectionOwner::Principal(id.clone()))
-            .await?;
+        mcp_connections::list_connections_in(tx, &ConnectionOwner::Principal(id.clone())).await?;
+    let user_connections = if let agents_db::DotOwner::User(owner) = &access.owner {
+        mcp_connections::list_connections_in(tx, &ConnectionOwner::User(owner.clone())).await?
+    } else {
+        Vec::new()
+    };
     let mut keys: std::collections::BTreeSet<_> =
         permitted.iter().map(|row| row.key.clone()).collect();
     keys.extend(bindings.iter().map(|row| row.connector_key.clone()));
@@ -178,28 +280,29 @@ async fn connections_view(
         let principal_connection = owned_connections
             .iter()
             .find(|row| row.connector_key == key);
-        let user_connection = if connector.is_some() {
-            mcp_connections::get_connection(
-                &state.db,
-                &ConnectionOwner::User(user.id.clone()),
-                &key,
-            )
-            .await?
+        let user_connection =
+            connector.and_then(|_| user_connections.iter().find(|row| row.connector_key == key));
+        let mode = binding.map(|row| row.identity_mode).unwrap_or(if personal {
+            IdentityMode::User
         } else {
-            None
-        };
-        let mode = binding
-            .map(|row| row.identity_mode)
-            .unwrap_or(IdentityMode::User);
+            IdentityMode::Principal
+        });
         let selected = match mode {
-            IdentityMode::User => user_connection.as_ref(),
-            IdentityMode::Principal => principal_connection.filter(|_| connector.is_some()),
+            IdentityMode::User => user_connection,
+            IdentityMode::Principal => {
+                principal_connection.filter(|_| binding.is_some() && connector.is_some())
+            }
         };
         let generation = binding
             .map(|row| row.connection_generation.clone())
             .or_else(|| selected.map(|row| row.generation.clone()));
         let selected_id = selected
             .filter(|row| Some(row.generation.as_str()) == generation.as_deref())
+            .filter(|row| {
+                !row.is_errored()
+                    && row.access_token_ct.is_some()
+                    && row.access_token_nonce.is_some()
+            })
             .filter(|row| {
                 connector.is_some_and(|connector| {
                     row.catalog_generation.as_deref()
@@ -218,10 +321,12 @@ async fn connections_view(
                 scope: row.scope.as_str(),
                 needs_setup: row.needs_setup(),
             }),
-            supported_modes: if connector.is_some() {
+            supported_modes: if connector.is_none() {
+                vec![]
+            } else if personal {
                 vec!["user", "principal"]
             } else {
-                vec![]
+                vec!["principal"]
             },
             selected: DotSelectedConnection {
                 mode: match mode {
@@ -232,18 +337,37 @@ async fn connections_view(
                 connection_id: selected_id,
                 connection_generation: generation,
             },
-            user_connection: credential_view(user_connection.as_ref(), catalog_generation),
+            user_connection: personal.then(|| credential_view(user_connection, catalog_generation)),
             principal_connection: principal_connection
                 .map(|row| credential_view(Some(row), catalog_generation)),
-            can_connect: state.rbac.can_manage_dots(&roles)
-                && connector.is_some_and(|row| !row.needs_setup()),
-            can_disconnect: state.rbac.can_manage_dots(&roles) && principal_connection.is_some(),
+            can_select: access.can_manage && connector.is_some(),
+            can_connect: access.can_manage && connector.is_some_and(|row| !row.needs_setup()),
+            can_disconnect: access.can_manage && principal_connection.is_some(),
         });
     }
     Ok(DotConnectionsView {
-        dot: view(dot),
+        dot: access.dot,
         connections,
     })
+}
+
+async fn connection_response(state: &RamaState, user_id: &str, id: &str, lang: Lang) -> Response {
+    let result = async {
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .map_err(internal)?;
+        let access = connection_access_in(state, &mut tx, user_id, id, false, lang).await?;
+        let view = connections_view_in(&mut tx, access)
+            .await
+            .map_err(internal)?;
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(view)
+    }
+    .await;
+    match result {
+        Ok(view) => json_ok(StatusCode::OK, view),
+        Err(response) => response,
+    }
 }
 
 pub async fn connections_get(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -252,15 +376,7 @@ pub async fn connections_get(State(state): State<Arc<RamaState>>, req: Request) 
     let Some(id) = raw_path_segment(&req, 1) else {
         return bad_request(t(lang, "dot-error-id-missing"));
     };
-    let dot = match agents_db::get_personal_dot(&state.db, &user.id, &id).await {
-        Ok(Some(dot)) => dot,
-        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
-        Err(error) => return internal(error),
-    };
-    match connections_view(&state, &user, &dot).await {
-        Ok(view) => json_ok(StatusCode::OK, view),
-        Err(error) => internal(error),
-    }
+    connection_response(&state, &user.id, &id, lang).await
 }
 
 pub async fn connections_put(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -274,11 +390,9 @@ pub async fn connections_put(State(state): State<Arc<RamaState>>, req: Request) 
     let (Some(id), Some(key)) = (raw_path_segment(&req, 2), raw_path_segment(&req, 0)) else {
         return bad_request(t(lang, "dot-connection-error-invalid"));
     };
-    let dot = match agents_db::get_personal_dot(&state.db, &user.id, &id).await {
-        Ok(Some(dot)) => dot,
-        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
-        Err(error) => return internal(error),
-    };
+    if let Err(response) = connection_preflight(&state, &user.id, &id, lang).await {
+        return response;
+    }
     let body: DotConnectionSelectionBody =
         match super::read_json_capped(req.into_body(), "the Dot connection selection", 16 * 1024)
             .await
@@ -291,23 +405,32 @@ pub async fn connections_put(State(state): State<Arc<RamaState>>, req: Request) 
         "principal" => IdentityMode::Principal,
         _ => return bad_request(t(lang, "dot-connection-error-invalid")),
     };
-    let owner = match mode {
-        IdentityMode::User => ConnectionOwner::User(user.id.clone()),
-        IdentityMode::Principal => ConnectionOwner::Principal(id.clone()),
-    };
     let result = async {
-        let mut tx = WriteTx::begin(&state.db).await?;
-        let connection = mcp_connections::get_connection_in(&mut tx, &owner, &key).await?;
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let access = connection_access_in(&state, &mut tx, &user.id, &id, true, lang).await?;
+        if matches!(&access.owner, agents_db::DotOwner::Organization(_))
+            && mode == IdentityMode::User
+        {
+            return Ok(SaveOutcome::Unavailable);
+        }
+        let owner = match mode {
+            IdentityMode::User => ConnectionOwner::User(user.id.clone()),
+            IdentityMode::Principal => ConnectionOwner::Principal(id.clone()),
+        };
+        let connection = mcp_connections::get_connection_in(&mut tx, &owner, &key)
+            .await
+            .map_err(internal)?;
         if !connection.is_some_and(|row| {
             row.id == body.connection_id && row.generation == body.connection_generation
         }) {
-            return Ok(Some(SaveOutcome::Conflict));
+            return Ok(SaveOutcome::Conflict);
         }
-        let saved = aiplane_runtime::server::tools::mcp::identities::save_personal_selection_in(
+        let saved = aiplane_runtime::server::tools::mcp::identities::save_selection_in(
             &state,
             &mut tx,
+            &user.id,
             Selection {
-                owner_user_id: &user.id,
+                owner: &access.owner,
                 dot_id: &id,
                 connector_key: &key,
                 identity_mode: mode,
@@ -315,50 +438,40 @@ pub async fn connections_put(State(state): State<Arc<RamaState>>, req: Request) 
                 expected_binding_generation: body.expected_binding_generation.as_deref(),
             },
         )
-        .await?;
-        tx.commit().await?;
-        Ok::<_, aiplane_core::server::db::DbError>(saved)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| connection_permission_error(&access.owner, lang))?;
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(saved)
     }
     .await;
     match result {
-        Ok(Some(SaveOutcome::Saved(_))) => match connections_view(&state, &user, &dot).await {
-            Ok(view) => json_ok(StatusCode::OK, view),
-            Err(error) => internal(error),
-        },
-        Ok(Some(SaveOutcome::Missing)) => not_found(t(lang, "dot-error-not-found")),
-        Ok(Some(SaveOutcome::Unavailable)) => json_error(
+        Ok(SaveOutcome::Saved(_)) => connection_response(&state, &user.id, &id, lang).await,
+        Ok(SaveOutcome::Missing) => not_found(t(lang, "dot-error-not-found")),
+        Ok(SaveOutcome::Unavailable) => json_error(
             StatusCode::CONFLICT,
             "connection_unavailable",
             &t(lang, "dot-connection-error-unavailable"),
         ),
-        Ok(Some(SaveOutcome::Conflict)) => json_error(
+        Ok(SaveOutcome::Conflict) => json_error(
             StatusCode::CONFLICT,
             "connection_conflict",
             &t(lang, "dot-connection-error-conflict"),
         ),
-        Ok(None) => json_error(
-            StatusCode::FORBIDDEN,
-            "forbidden",
-            &t(lang, "dot-error-permission-required"),
-        ),
-        Err(error) => internal(error),
+        Err(response) => response,
     }
 }
 
 pub async fn connections_connect(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     use aiplane_core::server::db::mcp_connections::ConnectionOwner;
-    let user = match require_dot_manager(&state, &req).await {
-        Ok(user) => user,
-        Err(response) => return response,
-    };
+    let (_, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
     let (Some(id), Some(key)) = (raw_path_segment(&req, 3), raw_path_segment(&req, 1)) else {
         return bad_request(t(lang, "dot-connection-error-invalid"));
     };
-    match agents_db::get_personal_dot(&state.db, &user.id, &id).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
-        Err(error) => return internal(error),
+    let access = match connection_preflight(&state, &user.id, &id, lang).await {
+        Ok(access) => access,
+        Err(response) => return response,
     };
     let body: DotConnectionVersionBody =
         match super::read_json_capped(req.into_body(), "the Dot connection version", 16 * 1024)
@@ -370,38 +483,40 @@ pub async fn connections_connect(State(state): State<Arc<RamaState>>, req: Reque
     if body.connection_id.is_some() != body.connection_generation.is_some() {
         return bad_request(t(lang, "dot-connection-error-invalid"));
     }
+    let return_to = match access.owner {
+        agents_db::DotOwner::User(_) => format!("/dots?dot_id={id}"),
+        agents_db::DotOwner::Organization(_) => format!("/agents/{id}?tab=setup"),
+    };
     let response = super::integrations::connect_for_owner(
         &state,
-        &user,
+        &access.user,
         &key,
         super::integrations::ConnectTarget {
             owner: ConnectionOwner::Principal(id.clone()),
-            subject_principal_id: Some(id.clone()),
-            return_to: Some(format!("/dots?dot_id={id}")),
+            subject_principal_id: Some(id),
+            return_to: Some(return_to),
             expected_connection: Some((body.connection_id, body.connection_generation)),
         },
         lang,
     )
     .await;
-    if response.status() == StatusCode::SEE_OTHER {
-        if let Some(url) = response
+    if response.status() == StatusCode::SEE_OTHER
+        && let Some(url) = response
             .headers()
             .get(rama::http::header::LOCATION)
             .and_then(|value| value.to_str().ok())
-        {
-            return json_ok(
-                StatusCode::OK,
-                DotAuthorizationView {
-                    authorization_url: url.to_owned(),
-                },
-            );
-        }
-        return internal("The OAuth response omitted its authorization location.");
+    {
+        return json_ok(
+            StatusCode::OK,
+            DotAuthorizationView {
+                authorization_url: url.to_owned(),
+            },
+        );
     }
     let status = response.status();
     let key = match status {
         StatusCode::CONFLICT => "dot-connection-error-conflict",
-        StatusCode::FORBIDDEN => "dot-error-permission-required",
+        StatusCode::FORBIDDEN => "dot-connection-error-unavailable",
         _ => "dot-connection-error-authorization",
     };
     json_error(status, "connection_authorization", &t(lang, key))
@@ -411,18 +526,15 @@ pub async fn connections_delete(State(state): State<Arc<RamaState>>, req: Reques
     use aiplane_core::server::db::{
         WriteTx,
         mcp_connections::{self, ConnectionOwner},
-        users,
     };
     let (_, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
     let (Some(id), Some(key)) = (raw_path_segment(&req, 2), raw_path_segment(&req, 0)) else {
         return bad_request(t(lang, "dot-connection-error-invalid"));
     };
-    let dot = match agents_db::get_personal_dot(&state.db, &user.id, &id).await {
-        Ok(Some(dot)) => dot,
-        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
-        Err(error) => return internal(error),
-    };
+    if let Err(response) = connection_preflight(&state, &user.id, &id, lang).await {
+        return response;
+    }
     let body: DotConnectionVersionBody =
         match super::read_json_capped(req.into_body(), "the Dot connection version", 16 * 1024)
             .await
@@ -435,54 +547,39 @@ pub async fn connections_delete(State(state): State<Arc<RamaState>>, req: Reques
     }
     let owner = ConnectionOwner::Principal(id.clone());
     let result = async {
-        let mut tx = WriteTx::begin(&state.db).await?;
-        let Some(current) = users::find_by_id_in(&mut tx, &user.id).await? else {
-            return Ok(StatusCode::FORBIDDEN);
-        };
-        let roles = state.rbac.role_ids_for(&current.roles);
-        if !state.rbac.can_manage_dots(&roles) {
-            return Ok(StatusCode::FORBIDDEN);
-        }
-        if !aiplane_agents::db::dot_connections::owned_dot_in(&mut tx, &user.id, &id, false).await?
-        {
-            return Ok(StatusCode::NOT_FOUND);
-        }
-        let connection = mcp_connections::get_connection_in(&mut tx, &owner, &key).await?;
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        connection_access_in(&state, &mut tx, &user.id, &id, true, lang).await?;
+        let connection = mcp_connections::get_connection_in(&mut tx, &owner, &key)
+            .await
+            .map_err(internal)?;
         if connection.as_ref().map(|row| row.id.as_str()) != body.connection_id.as_deref()
             || connection.as_ref().map(|row| row.generation.as_str())
                 != body.connection_generation.as_deref()
         {
-            return Ok(StatusCode::CONFLICT);
+            return Ok(false);
         }
         if let Some(connection) = connection
-            && !mcp_connections::delete_connection_in(&mut tx, &connection.identity()).await?
+            && !mcp_connections::delete_connection_in(&mut tx, &connection.identity())
+                .await
+                .map_err(internal)?
         {
-            return Ok(StatusCode::CONFLICT);
+            return Ok(false);
         }
-        tx.commit().await?;
-        Ok::<_, aiplane_core::server::db::DbError>(StatusCode::OK)
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(true)
     }
     .await;
     match result {
-        Ok(StatusCode::OK) => {
+        Ok(true) => {
             state.mcp.invalidate(&owner, &key).await;
-            match connections_view(&state, &user, &dot).await {
-                Ok(view) => json_ok(StatusCode::OK, view),
-                Err(error) => internal(error),
-            }
+            connection_response(&state, &user.id, &id, lang).await
         }
-        Ok(StatusCode::FORBIDDEN) => json_error(
-            StatusCode::FORBIDDEN,
-            "forbidden",
-            &t(lang, "dot-error-permission-required"),
-        ),
-        Ok(StatusCode::NOT_FOUND) => not_found(t(lang, "dot-error-not-found")),
-        Ok(_) => json_error(
+        Ok(false) => json_error(
             StatusCode::CONFLICT,
             "connection_conflict",
             &t(lang, "dot-connection-error-conflict"),
         ),
-        Err(error) => internal(error),
+        Err(response) => response,
     }
 }
 

@@ -252,9 +252,26 @@ pub async fn list_connections(
     pool: &Pool,
     owner: &ConnectionOwner,
 ) -> Result<Vec<Connection>, DbError> {
+    list_connections_with(pool, owner).await
+}
+
+pub async fn list_connections_in(
+    tx: &mut WriteTx,
+    owner: &ConnectionOwner,
+) -> Result<Vec<Connection>, DbError> {
+    list_connections_with(&mut **tx, owner).await
+}
+
+async fn list_connections_with<'e, E>(
+    executor: E,
+    owner: &ConnectionOwner,
+) -> Result<Vec<Connection>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let (user, principal) = owner.columns();
     let rows=sqlx::query(&format!("SELECT {CONN_COLS} FROM mcp_connections WHERE user_id IS ? AND principal_id IS ? ORDER BY connector_key"))
-        .bind(user).bind(principal).fetch_all(pool).await?;
+        .bind(user).bind(principal).fetch_all(executor).await?;
     rows.iter().map(map_conn).collect()
 }
 pub async fn connected_keys(pool: &Pool, owner: &ConnectionOwner) -> Result<Vec<String>, DbError> {
@@ -718,12 +735,69 @@ mod tests {
     use jiff::Timestamp;
 
     async fn pool() -> Pool {
-        let p = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        seed_pool(db::open(std::path::Path::new(":memory:")).await.unwrap()).await
+    }
+
+    async fn seed_pool(p: Pool) -> Pool {
         sqlx::query("INSERT INTO users(id,email,roles_json,created_at,updated_at) VALUES('same','same@example.test','[]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')").execute(&p).await.unwrap();
         sqlx::query("INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES('same','same','Same','same','2026-01-01T00:00:00Z')").execute(&p).await.unwrap();
         sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,enabled,created_at,updated_at,dispatch_generation) VALUES('gmail','Gmail','https://provider.test/mcp','oauth2','per_user',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','fixture-catalog-generation')").execute(&p).await.unwrap();
         p
     }
+    #[tokio::test]
+    async fn owned_connection_inventory_uses_the_authority_transaction_with_one_connection() {
+        let p = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(":memory:")
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        db::migrate(&p).await.unwrap();
+        let p = seed_pool(p).await;
+        let personal = upsert_connection(&p, credential(user(), 1))
+            .await
+            .unwrap()
+            .unwrap();
+        let owned = upsert_connection(&p, credential(principal(), 2))
+            .await
+            .unwrap()
+            .unwrap();
+        let mut tx = WriteTx::begin(&p).await.unwrap();
+        sqlx::query("UPDATE mcp_connections SET status='reauth' WHERE principal_id='same'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let rows = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            list_connections_in(&mut tx, &principal()),
+        )
+        .await
+        .expect("inventory must use the held authority connection")
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].identity(), owned);
+        assert_eq!(rows[0].status, STATUS_REAUTH);
+        let rows = list_connections_in(&mut tx, &user()).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].identity(), personal);
+        assert_eq!(rows[0].status, STATUS_CONNECTED);
+        assert!(
+            list_connections_in(&mut tx, &ConnectionOwner::Principal("missing".into()))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        drop(tx);
+        let rows = list_connections(&p, &principal()).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].identity(), owned);
+        assert_eq!(rows[0].status, STATUS_CONNECTED);
+        p.close().await;
+    }
+
     fn user() -> ConnectionOwner {
         ConnectionOwner::User("same".into())
     }
@@ -811,6 +885,38 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+    #[tokio::test]
+    async fn deleting_authorization_initiator_cancels_only_matching_principal_reservations() {
+        for retained in [false, true] {
+            let p = pool().await;
+            if retained {
+                upsert_connection(&p, credential(principal(), 7))
+                    .await
+                    .unwrap();
+            }
+            let pending = begin_authorization(&p, authorization(principal(), "initial"))
+                .await
+                .unwrap()
+                .unwrap();
+            sqlx::query("DELETE FROM users WHERE id='same'")
+                .execute(&p)
+                .await
+                .unwrap();
+            assert!(take_pending(&p, "initial").await.unwrap().is_none());
+            let saved = get_connection(&p, &principal(), "gmail").await.unwrap();
+            if retained {
+                let saved = saved.unwrap();
+                assert_eq!(saved.id, pending.connection_id);
+                assert_eq!(saved.generation, pending.expected_connection_generation);
+                assert_eq!(saved.access_token_ct, Some(vec![7, 0, 255]));
+                assert!(saved.authorization_generation.is_none());
+                assert!(saved.authorization_expires_at.is_none());
+            } else {
+                assert!(saved.is_none());
+            }
+            p.close().await;
+        }
     }
     #[tokio::test]
     async fn consumed_initial_reservation_expires_without_pending_state() {

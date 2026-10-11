@@ -57,8 +57,8 @@ integrations and features vary with each installation's configuration.*
 - [AIplane Dots: implemented personal behavior and product specification](dots.md).
 - [Personal Dot scheduled and event-driven work](guide/automation-and-inbox.md#run-scheduled-or-event-driven-work-as-a-dot).
 - [Persistent Dot workspace proposal](dots-workspace.md): planned storage and browser behavior, not an available feature.
-- [Dot identities](dots-identities.md): personal connector identities and organization credential requirements.
-- [Organization Dots](dots-organizations.md): implemented ownership, membership and configuration, with planned credentials, shared knowledge and principal execution.
+- [Dot identities](dots-identities.md): personal and organization Dot-owned connector identities.
+- [Organization Dots](dots-organizations.md): implemented ownership, membership, configuration and own OAuth credentials, with planned shared knowledge and principal execution.
 - [Memory curation proposal](dots-memory-curation.md): planned reviewed learning through existing scheduling and approval mechanisms.
 - [Personal Dot management permission](dots-permissions.md): independent group rights through existing RBAC.
 - [Dot action rules](dots-action-rules.md): implemented permissions within `browse_page` and `browser_control`, with durable approval checks.

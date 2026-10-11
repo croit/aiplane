@@ -3,7 +3,7 @@
 Status: implementation in progress; personal Dot ownership, active lifecycle,
 the first web management page, manually managed Dot memory, recent activity,
 owner-scoped memory/activity APIs, private Dot chat sessions, and personal
-tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; organization execution and credentials require the subsequent runtime and identity packages.
+tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; current member writers can authorize and explicitly select each organization Dot’s own OAuth credential. Organization execution requires its principal runtime bridge.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -309,30 +309,26 @@ read-only metadata must not silently turn an external action into an
 unreviewed write. This stricter resolution belongs in the Dot policy seam; it
 must not change permission defaults for ordinary chat or existing agents.
 
-The connector boundary is especially important. Current personal MCP
-connections and OAuth tokens are user-keyed. A system-principal run only sees
-shared-identity connectors; it deliberately does not read a person's OAuth
-connection. Current `agent`-scope connectors accept `none` or `static_bearer`,
-not an independent OAuth login per Dot. Personal delegation and
-Dot-/organisation-owned OAuth therefore require a reviewed extension to the
-existing connector/credential path.
+The connector store represents mutually exclusive user/principal owners.
+Personal Dots can explicitly select the owner’s current connection or their
+own authorized OAuth credential. Current organization member writers can
+configure a Dot’s own credential; organization execution remains unavailable
+until its principal runtime bridge is complete. Ordinary principal runs use
+explicitly granted shared-identity connectors. Existing `agent`-scope
+connectors accept `none` or `static_bearer`. See [Dot identities](dots-identities.md)
+for the OAuth selection and generation fences.
 
-The existing group model is not an organization owner model. `gateway_groups`
-map identity-provider claims to access-control groups and resource grants;
-they do not own agents, connector credentials or data. An organization Dot
-therefore needs an explicit tenant/resource owner model, not a group name on
-`personal_dots`.
+Gateway groups resolve identity-provider claims and resource rights. Actual
+organization ownership is stored in `organizations`, group-derived membership
+in `organization_groups`, and canonical `dots` records carry exactly one User
+or Organization owner. A group name is not an owner.
 
-The current runtime makes the required execution bridge concrete. `Actor` is
-a closed choice between `Person` and `Agent`; `TurnPolicy` then chooses either
-ordinary chat (user RBAC, selected chat tools) or an agent run (principal
-grants and the agent spec's narrower tool resources). A personal Dot needs a
-third, explicit policy: retain the user's `Principal` and user-owned session
-for identity, billing and private chat, while also carrying the Dot's
-`AgentRun` for its spec, memory, activity chain and tool/action allowlist. Its
-tools and model access must be the intersection of those two sources. Reusing
-the `Agent` policy alone would drop the user's authority; reusing `Chat` alone
-would drop Dot policy and attribution.
+Personal Dot execution retains the user principal and user-owned session for
+authority, metering and private chat, while carrying the Dot’s AgentRun for
+its spec, own memory, activity chain and tool/action rules. Tools and models
+use the intersection of those sources. Organization execution requires the
+separate current principal authority bridge described in
+[organization Dots](dots-organizations.md).
 
 The current sandbox does not provide the Dot computer's persistence. Its
 `SandboxLease` lives in a turn's `ToolContext` and is released at turn end; the
@@ -343,12 +339,12 @@ filesystem across separate runs. Dot workspace files need a Dot-owned storage
 key and access checks before sandbox staging; the runtime should not gain a
 shared-volume mount.
 
-The existing MCP manager has two separate overlays: `layer_for_user` resolves
+The MCP manager’s ordinary overlays are: `layer_for_user` resolves
 the user's allowed per-user OAuth connections plus allowed global connectors;
 `layer_for_principal` resolves only granted connectors with a shared gateway
-identity. The Dot identity choice therefore belongs in an explicit
-owner-and-Dot-aware resolver. It must filter by both user grants and Dot
-policy, and apply the selected identity for each connector. Exposing both
+identity. The personal Dot resolver applies its persisted identity selection, owner
+grants and Dot policy. Organization calls require their own selected-principal
+resolver before execution is enabled. Exposing both
 overlays wholesale and relying on the prompt to choose would exceed the
 confirmed permission boundary.
 
@@ -677,14 +673,15 @@ documentation and generated artifacts together.
   currently working or idle. The user has not requested a separate cap on
   simultaneous runs.
 
-## Open decisions
+## Remaining implementation
 
 The following adopted designs define the remaining implementation work:
 
 - [Organization Dots](dots-organizations.md) defines an independent active
   cap, member/share approval standing and isolated principal execution.
 - [Dot identities](dots-identities.md) defines the reused user OAuth account
-  and explicitly selected own OAuth account. Personal selection is implemented.
+  and explicitly selected own OAuth account. Personal selection and current
+  organization member-writer credential management are implemented.
 - [Memory curation](dots-memory-curation.md) defines source selection and
   reviewed optimization; its background job remains to be implemented.
 - [Persistent workspace](dots-workspace.md) and [browser

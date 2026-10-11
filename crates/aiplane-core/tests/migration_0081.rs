@@ -252,7 +252,7 @@ async fn dot_background_schema_matches_its_fixture() {
                         'scheduled_runs_assistant_turn', 'webhook_runs_assistant_turn',
                         'mcp_connections', 'mcp_connections_user_connector',
                         'mcp_connections_principal_connector', 'pending_mcp_oauth',
-                        'idx_pending_mcp_oauth_expires', 'dot_connector_bindings',
+                        'idx_pending_mcp_oauth_expires', 'mcp_oauth_cancel_before_initiator_delete', 'dot_connector_bindings',
                         'mcp_catalog_connectors', 'mcp_connector_tools')
          ORDER BY type, name",
     )

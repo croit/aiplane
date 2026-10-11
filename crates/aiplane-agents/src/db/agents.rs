@@ -127,7 +127,7 @@ pub enum DotOwner {
 }
 
 impl DotOwner {
-    fn columns(&self) -> (Option<&str>, Option<&str>) {
+    pub(crate) fn columns(&self) -> (Option<&str>, Option<&str>) {
         match self {
             Self::User(id) => (Some(id), None),
             Self::Organization(id) => (None, Some(id)),

@@ -67,9 +67,12 @@ principal grants. Administration retains configuration recovery access.
 `dots.max_active_per_organization` defaults to four, independently of
 `dots.max_active_per_user`. Each limit counts stored active Dots, including
 idle ones. Deactivating a Dot frees a slot; publishing an organization Dot
-does not enable execution. Organization execution, selected organization
-credentials and organization knowledge require their remaining implementation
-packages. See [organization Dots](../dots-organizations.md).
+does not enable execution. A current member with Write access can authorize,
+explicitly select and erase that Dot’s own OAuth connection from its existing
+agent editor. Personal Dot management permission is not required. Nonmember
+administrator recovery grants no credential access. Organization execution,
+organization-wide credentials and organization knowledge require their
+remaining implementation packages. See [organization Dots](../dots-organizations.md).
 
 ## Inspect users and impersonation
 

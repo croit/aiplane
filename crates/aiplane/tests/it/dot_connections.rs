@@ -538,3 +538,69 @@ async fn malformed_and_oversized_connection_versions_never_initialize_authorizat
         .is_none()
     );
 }
+
+#[tokio::test]
+async fn personal_inventory_retains_owned_versions_after_current_management_permission_is_revoked()
+{
+    let fx = fixture().await;
+    let dot = setup(&fx).await;
+    let own = mcp_connections::upsert_connection(
+        &fx.state.db,
+        connection(&fx, ConnectionOwner::Principal(dot.clone())).await,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    aiplane_core::server::db::gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
+        .await
+        .unwrap();
+    let base = format!("/api/v0/dots/{dot}/connections");
+    let (status, inventory) = fx.get(&fx.alice, &base).await;
+    assert_eq!(status, StatusCode::OK, "{inventory}");
+    let current = row(&inventory);
+    assert_eq!(current["can_select"], false);
+    assert_eq!(current["can_connect"], false);
+    assert_eq!(current["can_disconnect"], false);
+    assert_eq!(current["principal_connection"]["id"], own.connection_id);
+    assert_eq!(
+        current["principal_connection"]["generation"],
+        own.generation
+    );
+    assert!(current["user_connection"].is_object());
+    for (method, suffix, body) in [
+        (
+            Method::PUT,
+            "/workspace",
+            json!({"mode":"principal","expected_binding_generation":null,
+            "connection_id":own.connection_id,"connection_generation":own.generation}),
+        ),
+        (
+            Method::POST,
+            "/workspace/connect",
+            json!({"connection_id":own.connection_id,"connection_generation":own.generation}),
+        ),
+        (
+            Method::DELETE,
+            "/workspace",
+            json!({"connection_id":own.connection_id,"connection_generation":own.generation}),
+        ),
+    ] {
+        let (status, error) = fx
+            .send(
+                Some(&fx.alice),
+                method,
+                &format!("{base}{suffix}"),
+                Some(body),
+            )
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{error}");
+    }
+    assert_eq!(
+        mcp_connections::get_connection(&fx.state.db, &own.owner, "workspace")
+            .await
+            .unwrap()
+            .unwrap()
+            .identity(),
+        own
+    );
+}

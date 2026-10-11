@@ -35,8 +35,12 @@ write share; it does not give every member access to the Dot.
 Organization Dots currently support configuration and publication. Their
 conversations, tests, automation, website widgets and external channels remain
 unavailable. The setup assistant omits its Site step, and the editor displays
-this limitation. Publication does not enable execution. Own connector accounts
-and organization memory require the identity and runtime packages described
+this limitation. Publication does not enable execution. A current member writer can connect the Dot’s own OAuth account in **Setup**,
+then explicitly Save that account as the selected identity. This uses the
+provider’s real account authorization; it does not create a provider account.
+Personal Dot management permission is not required. OAuth completion does not
+select the account automatically, and the selector offers no employee account.
+Organization execution and memory require the runtime packages described
 in [organization Dots](../dots-organizations.md).
 
 ![An organization lists its named Dot and active capacity, with creation available through a dialog. The image uses synthetic data in the real application.](../img/guide/organization-dots.png)

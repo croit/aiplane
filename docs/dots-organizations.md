@@ -2,9 +2,9 @@
 
 ## Status and scope
 
-Organization ownership, group-derived membership, independent active limits and configuration are implemented. Current organization Dots can be created, shared, configured and published through the existing agent mechanisms. Organization conversations, automation, external channels, connector authorization and memory remain unavailable until their respective implementation packages establish the required owner and live-authority checks.
+Organization ownership, group-derived membership, independent active limits and configuration are implemented. Current organization Dots can be created, shared, configured and published through the existing agent mechanisms. Current member writers can authorize and explicitly select each Dot’s own OAuth connection. Organization conversations, automation, external channels and memory remain unavailable until their respective implementation packages establish the required owner and live-authority checks.
 
-The remaining sections distinguish the implemented ownership and configuration foundation from the adopted credential, execution and knowledge design. Creating a gateway group or naming an ordinary agent after a company does not create organization ownership.
+The remaining sections distinguish the implemented ownership and configuration foundation from the adopted execution and knowledge design. Creating a gateway group or naming an ordinary agent after a company does not create organization ownership.
 
 The confirmed product requirements are explicit organization ownership, an independent named Dot identity, selected organization or Dot credentials, limited autonomy with approvals, durable isolated knowledge, and operation through the web interface. A personal Dot may select its owner's account or a separate Dot account. Organization execution must never adopt a member's credentials, tool grants or personal memory.
 
@@ -126,15 +126,15 @@ The configuration foundation exposes these organization endpoints:
 
 Reuse existing `/api/v0/agents/{id}` configuration, grants, shares, conversation and Inbox routes through the combined owner access decision. Extend the Dot inventory/access card with typed owner data where actual organization rows are shown. Do not make personal `/dots/{id}` handlers accept organization IDs without changing their documented authorization contract.
 
-The planned credential extension reuses the identity mechanism and existing integration cards. Organization connection choices must contain only actual permitted Dot/organization principals and their live connections. Its response contains selected identity, catalogue key/name/auth, status and nullable verified account label; no secrets or invented provider identity.
+Credential management reuses the identity mechanism and existing integration cards. Current organization connection choices contain only that Dot’s own principal and live connection. Organization-wide credential provisioning and selection remain unavailable. Its response contains selected identity, catalogue key/name/auth, status and nullable verified account label; no secrets or invented provider identity.
 
-The first three steps describe configuration; credential management and runs
-in the later steps remain adopted implementation requirements:
+Steps one through five describe current configuration and own OAuth management;
+runs and knowledge remain adopted implementation requirements:
 
 1. An administrator creates an organization with its actual configured name and selects real gateway groups from the existing group selector. The screen explains that selected groups supply membership and shares still determine access.
 2. A qualified member opens that organization, creates a named Dot and uses the existing agent editor/model selector. The actual organization owner is shown.
 3. An operator grants the Dot specific resources through existing principal grant controls. Membership grants no execution tools by itself.
-4. The member connects an account for the Dot through supported OAuth or selects an existing permitted organization credential. The provider controls the account; missing verified labels are shown as unavailable.
+4. A current member writer opens **Setup** in the existing agent editor and connects an account for the Dot through supported OAuth, then explicitly saves that connection. The provider controls the account; missing verified labels are shown as unavailable.
 5. The member configures existing tool/action rules and shares. Responders appear as eligible actual members or bound groups. The screen shows which effective rights each share permits.
 6. A member starts a private principal run. A background trigger is offered only after the owner/resume bridge is implemented. Pending decisions appear in the existing web Inbox; no Slack channel is required.
 7. Removing membership removes access; disabling the Dot stops/refuses its work. Missing credentials remain visible and require an explicit reconnect/selection.
@@ -145,8 +145,9 @@ The coordinator confirms this walkthrough against seeded real data before UI imp
 
 The first organization package includes metadata, immutable Dot ownership,
 current membership and the existing private agent configuration surfaces.
-Organization execution, credentials, memory and triggers remain unavailable
-until their explicit principal admission paths are implemented.
+Current member writers can manage the Dot’s own OAuth credentials. Organization
+execution, memory and triggers remain unavailable until their explicit principal
+admission paths are implemented.
 
 The authenticated navigation entry `/organizations` shows the actual membership
 inventory or an empty state. Its visibility does not assert membership and is
@@ -212,11 +213,11 @@ Coordinator verifies real organization/group/credential metadata, mobile and key
 
 ### Configuration and member search boundaries
 
-The foundation configures organization Dots through the existing agent workspace. Execution remains unavailable until the organization principal bridge is complete. The resource catalogue describes actual grant permissions; it does not claim that every tool supports organization execution. Organization connector grants and inventory remain unavailable until a selected organization credential is represented explicitly.
+The foundation configures organization Dots through the existing agent workspace. Execution remains unavailable until the organization principal bridge is complete. The resource catalogue describes actual grant permissions; it does not claim that every tool supports organization execution. Organization connector tool grants and inventory remain unavailable until the principal runtime bridge is complete; current member writers manage explicitly selected own OAuth credentials through the existing connection panel.
 
 Share-subject suggestions reuse the existing response cap of eight. Organization candidate reads reuse the same user mapper, escaped search and ranking, in transaction pages capped at fifty. Current membership is checked before suggestions are included. A search examines at most one thousand matching candidates; if an actual continuation remains at that boundary, its response carries `truncated=true` and the UI requests a narrower query. The search does not enumerate the user roster or introduce another OIDC mapping mechanism.
 
-## Per-Dot organization OAuth implementation contract
+## Per-Dot organization OAuth contract
 
 The first organization credential package uses each Dot's own existing
 principal. `mcp_connections`, `pending_mcp_oauth` and
@@ -249,9 +250,11 @@ remote result is committed. Local erasure remains available to a current
 authorized member when a connector has been removed or made unavailable.
 
 The connection remains owned by the Dot principal when its creator is deleted.
-Deleting an OAuth initiator cancels that person's pending authorization through
-the existing initiator foreign key; it does not transfer or erase an already
-saved organization credential. Existing owner-keyed refresh locks, cache keys,
+Deleting an OAuth initiator cancels that person's exact pending authorization
+before the initiator foreign key removes its pending state. The cancellation
+removes an initial tokenless reservation or clears the authorization deadline
+on an existing credential; it does not transfer or erase an already saved
+organization credential or selection. Existing owner-keyed refresh locks, cache keys,
 catalogue dispatch fences and conditional writes remain authoritative.
 
 Organization execution requires its own selected-connection admission caller.
@@ -271,6 +274,19 @@ unless a provider-supported response verifies them.
 
 ## First executable organization web slice
 
+The first runtime package admits only the existing private draft test chat and
+its durable staff responses. Published, pinned, public, embedded and automated
+test-suite entry points remain refused until their actual callers establish
+organization authority. The synchronous architect test helper is outside this
+first admitted entry point.
+
+Pass the authenticated initiating member to the existing draft opener for
+admission only. Recheck current membership and Write access in the same write
+transaction that creates or continues the private principal session and its
+turn. Administrator configuration recovery without membership does not admit
+this execution surface. History and staff settlement retain their existing
+privacy tiers and fresh membership checks.
+
 Use the existing agent test-chat surface, `Actor::Agent`, its independent
 system principal and a private principal-owned run conversation. The initiating
 person and responder supply audit attribution; neither becomes the execution
@@ -283,6 +299,20 @@ runtime must compose its explicitly selected principal connection and admit
 the corresponding owned execution facts. Existing current principal connector
 grants and catalogue-generation checks remain required in addition to the
 organization binding and credential checks.
+
+Catalogue groups govern human visibility, connection, selection and grant
+admission. Organization membership groups do not become runtime roles. Runtime
+authority comes from the initial and current explicit principal grants;
+changing catalogue groups alone does not revoke a separately granted principal.
+Grant removal, disabling the resource or principal, Dot deactivation and
+connection or binding changes provide the corresponding runtime fences.
+
+Extend the existing target-aware resource inventory and grant evaluator for
+the actual organization principal. A selected own OAuth credential must have
+current binding, credential and catalogue generations before it can be offered
+or granted. The managing member's current catalogue eligibility and MCP grant
+ceiling still apply. A credential selection does not itself grant connector
+execution; initial grant admission cannot require the grant it is creating.
 
 The initial `RunToolSource` principal grant set is a ceiling. Before each
 organization tool call, intersect it with current principal grants and verify

@@ -5,7 +5,7 @@ export function connectionModes(row: DotConnection): DotConnectionMode[] {
 }
 
 export function connectionChange(row: DotConnection, mode: DotConnectionMode): DotConnectionChange | null {
-	if (!row.connector || !row.supported_modes.includes(mode)) return null;
+	if (!row.can_select || !row.connector || !row.supported_modes.includes(mode)) return null;
 	const credential = mode === 'user' ? row.user_connection : row.principal_connection;
 	if (!credential?.connected || credential.errored || credential.needs_reauth || credential.authorizing || !credential.id || !credential.generation) return null;
 	if (mode === row.selected.mode && credential.id === row.selected.connection_id && credential.generation === row.selected.connection_generation) return null;

@@ -139,6 +139,27 @@ FROM dot_mcp_pending_preserved p JOIN mcp_connections c ON c.user_id=p.user_id A
 DROP TABLE pending_mcp_oauth;
 ALTER TABLE pending_mcp_oauth_new RENAME TO pending_mcp_oauth;
 CREATE INDEX idx_pending_mcp_oauth_expires ON pending_mcp_oauth(expires_at);
+CREATE TRIGGER mcp_oauth_cancel_before_initiator_delete
+BEFORE DELETE ON users
+BEGIN
+    DELETE FROM mcp_connections
+    WHERE status = 'pending' AND EXISTS (
+        SELECT 1 FROM pending_mcp_oauth p
+        WHERE p.initiator_user_id = OLD.id
+          AND p.connection_id = mcp_connections.id
+          AND p.expected_connection_generation = mcp_connections.generation
+          AND p.authorization_generation = mcp_connections.authorization_generation
+    );
+    UPDATE mcp_connections
+    SET authorization_generation = NULL, authorization_expires_at = NULL
+    WHERE EXISTS (
+        SELECT 1 FROM pending_mcp_oauth p
+        WHERE p.initiator_user_id = OLD.id
+          AND p.connection_id = mcp_connections.id
+          AND p.expected_connection_generation = mcp_connections.generation
+          AND p.authorization_generation = mcp_connections.authorization_generation
+    );
+END;
 DROP TABLE dot_mcp_pending_preserved;
 DROP TABLE user_mcp_connections;
 

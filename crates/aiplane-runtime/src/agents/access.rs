@@ -15,12 +15,12 @@
 use aiplane_agents::db::agents::{self as agents_db, Access};
 use aiplane_core::server::db::DbError;
 
-use crate::rama_server::state::RamaState;
+use crate::server::AppState;
 
 /// The access a person holds on agent `agent_id` today: `write`
 /// for an admin, otherwise their strongest share that takes effect for them.
 pub async fn effective_access(
-    state: &RamaState,
+    state: &AppState,
     agent_id: &str,
     user_id: &str,
 ) -> Result<Option<Access>, DbError> {
@@ -31,7 +31,7 @@ pub async fn effective_access(
 }
 
 pub async fn current_user_policy_in(
-    state: &RamaState,
+    state: &AppState,
     tx: &mut aiplane_core::server::db::WriteTx,
     user_id: &str,
 ) -> Result<
@@ -49,7 +49,7 @@ pub async fn current_user_policy_in(
 }
 
 pub async fn effective_access_in(
-    state: &RamaState,
+    state: &AppState,
     tx: &mut aiplane_core::server::db::WriteTx,
     agent_id: &str,
     user_id: &str,
@@ -78,6 +78,7 @@ pub async fn effective_access_in(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::rama_server::state::RamaState;
     use aiplane_agents::db::{organizations, system_principals::NewPrincipal};
     use aiplane_core::server::{
         db::{self, WriteTx, gateway_groups, users},

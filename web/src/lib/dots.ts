@@ -61,8 +61,9 @@ export interface DotConnection {
 	connector: { title: string; description: string | null; icon: string | null; auth_type: 'oauth2' | 'none' | 'static_bearer'; scope: 'per_user' | 'global' | 'agent'; needs_setup: boolean } | null;
 	supported_modes: readonly DotConnectionMode[];
 	selected: { mode: DotConnectionMode; binding_generation: string | null; connection_id: string | null; connection_generation: string | null };
-	user_connection: DotCredential;
+	user_connection: DotCredential | null;
 	principal_connection: DotCredential | null;
+	can_select: boolean;
 	can_connect: boolean;
 	can_disconnect: boolean;
 }

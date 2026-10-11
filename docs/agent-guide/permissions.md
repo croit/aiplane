@@ -59,8 +59,14 @@ a member; when `truncated` is true, narrow the query. Absence from that partial
 result does not establish absence of an eligible account.
 
 The resource inventory describes configuration grants. Organization connector
-inventory and direct connector grants are unavailable until an explicit
-organization credential can be selected. Organization execution remains
+tool inventory and direct connector grants remain unavailable until the
+principal runtime bridge is complete. Current member writers can manage the
+Dot’s own OAuth credential through the connection panel in **Setup**.
+Authorization and explicit selection are separate actions. The server repeats
+current membership, Write access and catalogue checks before OAuth exchange
+and credential save. Read/respond shares and nonmember administrator recovery
+provide no credential access. An authorized writer can erase retained local
+credentials even when the connector is unavailable. Organization execution remains
 unavailable; saving, publishing or activating its configuration does not start
 a model or give it an employee's account. See [organization
 Dots](../dots-organizations.md) for the implementation boundary.

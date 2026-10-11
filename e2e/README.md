@@ -36,6 +36,12 @@ scripted model responses:
   revocation and mobile layout. The member case requires the seeded Engineering
   session through `AIPLANE_DOT_MEMBER_SESSION_COOKIE`; it restores its temporary
   group permissions and removes its created Dots.
+- `spa-dots-organization-identities.test.mjs`: current organization writer
+  without personal Dot management permission, real local OAuth round trip to
+  the existing agent editor, own-principal-only selection, unavailable catalogue
+  with retained local erasure, and mobile layout. Uses the seeded Engineering
+  session through `AIPLANE_DOT_MEMBER_SESSION_COOKIE`; restores temporary group
+  permissions and catalogue availability and deletes its created Dot.
 - `spa-dots-actions.test.mjs`: action inheritance and overrides, reload,
   correction of unavailable rules, and revocation between pause and approval.
   Its browser probe validates permission refusal; the fixture does not execute
@@ -135,6 +141,8 @@ Both answer `303` with an ordinary `Set-Cookie: id=…` session.
 ## What's not covered yet
 
 - **Tool-call loop end-to-end** — the runner is fully unit-tested in isolation, but driving the full proxy + wiremock-upstream + injection path from the browser belongs here too.
+
+The organization identity scenario also captures the actual connected row and updates the screenshot manifest when `DOCS_ORG_DOT_IDENTITY_CAPTURE=docs/img/guide/organization-dot-identity.png` is set. It uses a synthetic seeded organization member, the real local OAuth callback and explicit saved selection.
 
 ## First-time setup notes
 
