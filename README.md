@@ -219,7 +219,8 @@ token, an allowed IP list or both under **Administration → Settings → Access
 Behind a reverse proxy the IP list needs `AIPLANE_TRUSTED_PROXIES` set to the
 proxy. See [monitoring](docs/operations/monitoring.md).
 
-Personal Dot lifecycle management requires `can_manage_dots`, enabled through
+Personal Dot lifecycle management and directed communication consent changes
+require `can_manage_dots`, enabled through
 **Administration → Access → Groups**. Admins hold this permission; fresh groups
 default to disabled. It is independent of agent management and tool grants.
 The active count defaults to four per user and is operator-configurable under

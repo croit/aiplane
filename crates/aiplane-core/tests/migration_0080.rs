@@ -63,3 +63,40 @@ async fn dot_group_permission_schema_matches_its_fixture() {
         );
     }
 }
+
+#[tokio::test]
+async fn dot_delegation_schema_matches_its_fixture() {
+    let pool = open(Path::new(":memory:")).await.unwrap();
+    let rows = sqlx::query(
+        "SELECT type, name, sql FROM sqlite_schema
+         WHERE name IN ('dot_delegation_edges', 'idx_dot_delegation_edges_receiver')
+         ORDER BY type, name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    let mut actual = String::new();
+    for row in rows {
+        let kind: String = row.get("type");
+        let name: String = row.get("name");
+        let sql: String = row.get("sql");
+        actual.push_str(&format!(
+            "{kind} {name}: {}\n",
+            sql.split_whitespace().collect::<Vec<_>>().join(" ")
+        ));
+    }
+    if std::env::var_os("UPDATE_SCHEMA_FIXTURE").is_some() {
+        std::fs::write(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/schema_after_dot_delegation.txt"),
+            &actual,
+        )
+        .unwrap();
+    } else {
+        assert_eq!(
+            actual,
+            include_str!("fixtures/schema_after_dot_delegation.txt")
+        );
+    }
+}

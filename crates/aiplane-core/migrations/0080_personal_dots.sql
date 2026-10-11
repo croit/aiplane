@@ -12,6 +12,19 @@ CREATE TABLE personal_dots (
 CREATE UNIQUE INDEX idx_personal_dots_owner_name ON personal_dots (owner_user_id, name);
 CREATE INDEX idx_personal_dots_owner_active ON personal_dots (owner_user_id, active);
 
+CREATE TABLE dot_delegation_edges (
+    caller_dot_id TEXT NOT NULL REFERENCES personal_dots(principal_id) ON DELETE CASCADE,
+    receiver_dot_id TEXT NOT NULL REFERENCES personal_dots(principal_id) ON DELETE CASCADE,
+    outbound_enabled INTEGER NOT NULL DEFAULT 0 CHECK (outbound_enabled IN (0, 1)),
+    inbound_enabled INTEGER NOT NULL DEFAULT 0 CHECK (inbound_enabled IN (0, 1)),
+    generation TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (caller_dot_id, receiver_dot_id),
+    CHECK (caller_dot_id <> receiver_dot_id)
+) STRICT;
+
+CREATE INDEX idx_dot_delegation_edges_receiver ON dot_delegation_edges (receiver_dot_id);
+
 CREATE TABLE personal_dot_memories (
     id TEXT PRIMARY KEY NOT NULL,
     dot_id TEXT NOT NULL REFERENCES personal_dots(principal_id) ON DELETE CASCADE,

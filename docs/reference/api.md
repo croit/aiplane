@@ -320,6 +320,8 @@ Debug fixture routes exist only in development builds.
 | `PUT /api/v0/dots/{id}/active` |
 | `GET /api/v0/dots/{id}/access` |
 | `PUT /api/v0/dots/{id}/access` |
+| `GET /api/v0/dots/{id}/communication` |
+| `PUT /api/v0/dots/{id}/communication` |
 | `GET /api/v0/dots/{id}/memories` |
 | `POST /api/v0/dots/{id}/memories` |
 | `PUT /api/v0/dots/{id}/memories/{memory_id}` |

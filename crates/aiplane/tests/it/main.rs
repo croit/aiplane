@@ -35,6 +35,7 @@ mod dev_seed;
 mod docs_current;
 mod dot_access;
 mod dot_background_chat;
+mod dot_communication;
 mod dots_background;
 mod embed;
 mod feedback_extract;

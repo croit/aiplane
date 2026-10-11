@@ -105,6 +105,24 @@ An inactive Dot retains its data and conversations while its pending turns
 remain paused. Separate Dot connector identities, organization Dots, automatic memory
 curation and persistent Dot computers are not available.
 
+## Configure communication consent
+
+Expand **Communication** on a Dot card. **Can ask** controls its outgoing
+consent to each actual owned peer. **Accepts requests from** controls which
+peers it accepts requests from. The counterpart choice is read-only; configure
+it on the other Dot's card. Save each changed row separately. **Both consents
+enabled** means both persisted choices allow that direction. Reverse
+communication needs separate choices.
+
+Inactive peers stay visible. Enabling requires both Dots active, and revocation
+is available while inactive. A stale save keeps your draft and reports a
+conflict; use **Reload communication** to fetch current choices. Changing
+consent requires current Personal Dot manager permission. The delegation
+runtime is still being implemented; saved consent alone does not execute a
+request. See [Dot communication](../dots-communication.md).
+
+![Directional consent between actual personal Dots](../img/guide/dot-communication.png)
+
 ## Run scheduled or event-driven work as a Dot
 
 An active Dot card has **Add scheduled work** and **Add webhook** links to the existing

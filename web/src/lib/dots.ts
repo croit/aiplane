@@ -10,6 +10,42 @@ export interface DotList {
 	active_limit: number;
 }
 
+export type DotCommunicationDirection = 'outbound' | 'inbound';
+
+export interface DotCommunicationEdge {
+	outbound_enabled: boolean;
+	inbound_enabled: boolean;
+	generation: string | null;
+}
+
+export interface DotCommunicationPeer {
+	dot: Dot;
+	outgoing: DotCommunicationEdge;
+	incoming: DotCommunicationEdge;
+}
+
+export interface DotCommunication {
+	dot: Dot;
+	peers: DotCommunicationPeer[];
+}
+
+export interface DotCommunicationChange {
+	peer_id: string;
+	direction: DotCommunicationDirection;
+	enabled: boolean;
+	expected_generation: string | null;
+}
+
+export const dotCommunicationApi = {
+	load: (dotId: string) => request<DotCommunication>(`/api/v0/dots/${encodeURIComponent(dotId)}/communication`),
+	save: (dotId: string, change: DotCommunicationChange) =>
+		request<DotCommunication>(`/api/v0/dots/${encodeURIComponent(dotId)}/communication`, {
+			method: 'PUT',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(change)
+		})
+};
+
 export type DotToolPermission = 'always_allow' | 'always_ask';
 export type DotActionRule = 'allow' | 'ask' | 'deny';
 

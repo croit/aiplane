@@ -17,12 +17,13 @@ The matrices edit the same group grants as the group form. Tool rows include ind
 In the group's form, enable **Agent manager** to let its members create agents and read or edit agents shared with them. Administrator groups already have this permission, so the form shows it as enabled and unavailable to change. This permission does not grant access to every model, connector or tool: agents still need their own resource grants, described in [agent permissions](../agent-guide/permissions.md).
 
 Enable **Personal Dot manager** independently to let members list, create,
-activate and deactivate their own personal Dots. Administrators hold this
+activate and deactivate their own personal Dots and change directed
+communication consent between their own Dots. Administrators hold this
 permission. Fresh groups default to disabled; enable it on an existing default
 group if every authenticated user should be able to manage personal Dots.
 It grants neither ordinary agent management nor additional tool access.
 The saved group flag is `can_manage_dots`; live RBAC reload applies changes
-immediately. Revoking it blocks lifecycle management, but does not deactivate
+immediately. Revoking it blocks lifecycle management and consent changes, but does not deactivate
 Dots or stop existing runs. Current user/tool grants, active state and approval
 rules continue to govern execution. See [Dots](../dots.md).
 

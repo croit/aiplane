@@ -131,3 +131,10 @@ test('a personal Dot chat start has a localized activity summary', () => {
 		args: {}
 	});
 });
+
+test('a Dot communication permission change has a neutral localized summary without metadata labels', () => {
+	assert.deepEqual(summarize(event({
+		kind: 'personal_dot_delegation_changed',
+		detail: { caller_dot_id: 'harald-id', receiver_dot_id: 'clara-id', outbound_enabled: true, inbound_enabled: false }
+	})), { key: 'dot-activity-communication-changed', args: {} });
+});

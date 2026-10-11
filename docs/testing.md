@@ -156,6 +156,27 @@ The version-controlled pre-push git hook (`.githooks/pre-push`, enabled with `mi
 - **Not part of the CI default** — the browser suite needs a running gateway and Chromium, so it stays a local/opt-in loop.
 - Authenticated flows (`e2e/authed.test.mjs`, the `spa*` signed-in tests) don't need OIDC: they sign in through the debug-only `/__dev/*` seeding endpoints (`rama_server::dev_seed`), compiled in under `cfg(debug_assertions)` and never present in a release build. `/__dev/seed-session` resets the canonical fixture (user `alice@example.com` + her three tokens) and is reserved for the one file that asserts those counts; everything else uses the delete-free `/__dev/session`. Completing setup is also how the suite makes `/readyz` deterministic on a fresh dev database.
 
+## Personal Dot communication coverage
+
+Directed consent tests use actual owner records and named personal Dots in
+SQLite. They cover default denial, both independent choices, reverse-direction
+isolation, exact generations, unchanged/stale saves, inactive revocation,
+foreign owners, self-edge rejection and metadata-only audit. Migration tests
+pin the edge table/index shape. Gateway tests exercise both JSON routes,
+owner isolation and live group permission revocation.
+
+Frontend state/API tests preserve drafts and their original generation across
+unrelated saves, map each direction to its own field, and retain inactive
+choices. Chrome coverage in `spa-dots-communication.test.mjs` uses actual
+created peers and checks row saves, conflicts, reload and mobile layout.
+Consent configuration does not claim personal dispatch, durable child waiting
+or tree-budget coverage; those require their actual runtime implementation.
+
+Connection-level session and turn-pair tests prove rollback and commit as one
+unit and repeat idle admission inside the same write transaction. Existing
+pool-level admission, retry, pending-turn and sequence tests use the same
+writers.
+
 ## Tool ordering coverage
 
 Tool-phase tests cover the actual published `forward_request`, registry/grant

@@ -17,6 +17,7 @@ pub mod agent_tests;
 pub mod agent_verifiers;
 pub mod agents;
 pub mod architect_sessions;
+pub mod dot_delegation;
 pub mod dot_memories;
 pub mod dot_sessions;
 pub mod embed_keys;

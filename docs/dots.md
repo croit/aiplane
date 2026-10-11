@@ -34,6 +34,8 @@ remain isolated to the Dot. Schedules and webhooks can run with the same persona
 | `PUT /api/v0/dots/{id}/active` | Activates or deactivates an owned Dot; activation rechecks capacity transactionally. |
 | `GET /api/v0/dots/{id}/access` | Returns the owned Dot's tool selection and approval rules together with the user's current available catalog. |
 | `PUT /api/v0/dots/{id}/access` | Replaces the owned Dot's selected tools and their approval rules, retaining other agent spec fields. |
+| `GET /api/v0/dots/{id}/communication` | Returns actual same-owner peers and separate directed outgoing/incoming consent. |
+| `PUT /api/v0/dots/{id}/communication` | Saves one directed consent under current management permission and generation checks. |
 | `GET /api/v0/dots/{id}/memories` | Lists the owned Dot's memories. |
 | `POST /api/v0/dots/{id}/memories` | Creates or reclassifies a Dot memory (`preference`, `project`, `fact`). |
 | `PUT /api/v0/dots/{id}/memories/{memory_id}` | Updates an owned Dot memory. |
@@ -96,6 +98,18 @@ owner can approve once or deny in chat or Inbox. Approval refers to the original
 arguments; resumption reloads Dot selection, current user grants, enabled
 settings and connected tools. Revoked selections and disabled tools cannot
 execute on an old approval. Dot deactivation leaves pending calls paused.
+
+## Personal Dot communication consent
+
+The **Communication** disclosure configures separate **Can ask** and **Accepts
+requests from** decisions for actual owned Dots. Both decisions are required
+for a directed relationship; reverse communication needs its own choices.
+Inactive peers remain visible. New enabling requires both Dots active, while
+revocation remains possible. Each row saves separately and a stale edit must
+be reloaded explicitly. Mutations require current `can_manage_dots` permission.
+The **Both consents enabled** indicator describes stored consent. The personal
+delegation runtime remains implementation work; these settings alone do not
+make Dots execute requests. See [Dot communication](dots-communication.md).
 
 ## Implemented personal Dot background execution
 
@@ -200,7 +214,8 @@ requirements; they do not determine AIplane's implementation.
   in both directions. The first planned slice permits bounded internal
   delegation between personal Dots with the same owner; receivers retain their
   own tools and approval rules, and only explicit task data is shared. This is
-  not implemented; the reusable dispatch, consent and privacy design is in
+  not executable yet; directed consent configuration is implemented and the
+  reusable dispatch and privacy design is in
   [Dot communication](dots-communication.md).
 
 - The initial user interface is AIplane's web application only. Slack is out

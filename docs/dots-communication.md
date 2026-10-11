@@ -2,7 +2,36 @@
 
 ## Status and requirement
 
-Adopted proposal for upcoming implementation. The user explicitly requires named Bots/Dots to communicate with one another under permissions. Personal Dot communication is not currently connected to the local agent dispatcher. This proposal provides bounded request/reply delegation with durable pauses using existing mechanisms; it does not claim an implemented chat channel or asynchronous mailbox.
+Implementation in progress. The owner-scoped directed consent store and web
+configuration are implemented. Personal Dot communication is not connected to
+the local agent dispatcher. The execution design below provides bounded
+request/reply delegation with durable pauses using existing mechanisms; a saved
+consent alone does not establish an executable communication channel.
+
+## Implemented consent configuration
+
+Each personal Dot's **Communication** disclosure lists actual same-owner peers,
+including inactive Dots. **Can ask** controls this Dot's outgoing consent;
+**Accepts requests from** controls its incoming consent. A read-only counterpart
+shows the other Dot's persisted choice. **Both consents enabled** describes the
+stored relationship; tool access, execution and approval checks are separate.
+
+Each row saves one decision. An unchanged save preserves its generation and
+timestamp after checking the submitted generation. A stale edit returns HTTP
+409 and retains the draft in the browser; reload before reconciling the choices.
+Enabling a consent requires both Dots active. An unchanged inactive selection
+can be retained, and revocation remains available. Current `can_manage_dots`
+permission is required to change consent, while owner-scoped reads remain
+available. The activity record contains relationship metadata, not messages.
+
+`GET /api/v0/dots/{id}/communication` returns the owned Dot and its peers with
+`outgoing` and `incoming` objects. Each object contains `outbound_enabled`,
+`inbound_enabled` and the current `generation`, or `null` when no edge exists.
+`PUT` accepts `peer_id`, `direction` (`outbound` or `inbound`), `enabled` and
+`expected_generation` and returns refreshed inventory. Outbound edits affect
+the current→peer row; inbound edits affect the peer→current row. Foreign or
+missing resources return 404, self-edges or invalid bodies return 400, and
+stale generation or inactive enabling returns 409.
 
 Initial scope: personal Dots belonging to the same user. Organization Dots may communicate within the same organization only after typed organization ownership and approval/session boundaries exist. Cross-user and cross-organization communication requires a separately explicit sharing/data-exposure design; ordinary group membership does not grant it implicitly.
 
@@ -119,6 +148,15 @@ State-based tests use actual in-memory SQLite identities/sessions, registries an
 Current source gaps are material: ordinary local dispatch loads published principal profiles; personal Dot child linkage and staff/participant resume are not yet unified; available user Dot tools do not expose communication; direction-specific consent does not exist; a tree-wide budget guarantee must be checked against actual remaining-budget accounting. These prerequisites are implementation work, not supported behavior. The existing remote A2A context/task records are sufficient for their remote protocol but should not be overloaded with invented local card URLs or tokens.
 
 ## Shared suspension claim contract
+
+Session creation and atomic idle turn-pair creation reuse connection-level
+helpers in session-core. `create_session_in(connection, user_id)` and
+`create_turn_pair_if_idle_in(connection, ...)` participate in the caller's
+write transaction. The caller acquires `BEGIN IMMEDIATE` before checking idle
+admission or assigning sequence numbers. The existing pool wrappers use those
+same writers; there is one implementation of the inserted rows and admission
+checks. A failed enclosing operation can roll back the session and both turns
+together. These helpers carry generic chat data and no Dot ownership types.
 
 Shared resume uses the existing suspension store with request-aware deletion and one
 transaction for the entire verified chain. A stale request or unavailable

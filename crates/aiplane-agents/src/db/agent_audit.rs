@@ -90,6 +90,7 @@ pub enum AuditKind {
     AgentShareRemoved,
     AgentDeleted,
     PersonalDotStateChanged,
+    PersonalDotDelegationChanged,
     PersonalDotSessionStarted,
     /// A manager asked the prompt assistant to suggest a setup or improve a
     /// text: who, the scenario or text, pool, model, token counts, and
@@ -172,6 +173,7 @@ impl AuditKind {
         Self::AgentShareRemoved,
         Self::AgentDeleted,
         Self::PersonalDotStateChanged,
+        Self::PersonalDotDelegationChanged,
         Self::PersonalDotSessionStarted,
         Self::AssistSuggested,
         Self::EmbedKeyCreated,
@@ -221,6 +223,7 @@ impl AuditKind {
             Self::AgentShareRemoved => "agent_share_removed",
             Self::AgentDeleted => "agent_deleted",
             Self::PersonalDotStateChanged => "personal_dot_state_changed",
+            Self::PersonalDotDelegationChanged => "personal_dot_delegation_changed",
             Self::PersonalDotSessionStarted => "personal_dot_session_started",
             Self::AssistSuggested => "assist_suggested",
             Self::EmbedKeyCreated => "embed_key_created",

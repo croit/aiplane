@@ -6,6 +6,7 @@
 	import DotActivityPanel from '#lib/components/dots/DotActivityPanel.svelte';
 	import DotMemoryPanel from '#lib/components/dots/DotMemoryPanel.svelte';
 	import DotAccessPanel from '#lib/components/dots/DotAccessPanel.svelte';
+	import DotCommunicationPanel from '#lib/components/dots/DotCommunicationPanel.svelte';
 	import { activeDotCount, canCreateDot, dotsApi, type Dot } from '#lib/dots.js';
 	import { t } from '#lib/i18n.svelte.js';
 
@@ -122,6 +123,7 @@
 						<DotMemoryPanel {dot} />
 						<DotActivityPanel {dot} />
 						<DotAccessPanel {dot} />
+						<DotCommunicationPanel {dot} />
 						<div class="card-actions flex-wrap justify-end">
 							{#if dot.active}<a class="btn btn-sm" href={`/scheduled/new?dot_id=${encodeURIComponent(dot.id)}`}>{t('dot-background-add-schedule')}</a><a class="btn btn-sm" href={`/webhooks/new?dot_id=${encodeURIComponent(dot.id)}`}>{t('dot-background-add-webhook')}</a>{/if}
 							{#if dot.active}<button class="btn btn-sm" type="button" disabled={openingId === dot.id} onclick={() => void openChat(dot)}>{openingId === dot.id ? t('dot-action-chat-opening') : t('dot-action-chat')}</button>{/if}

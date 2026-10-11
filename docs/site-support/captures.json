@@ -229,5 +229,19 @@
     "width": 2128,
     "height": 1264,
     "data": "Synthetic dev-ui fixture; actual Engineering group saved and reloaded with Personal Dot manager enabled, Agent manager and Admin disabled. Original group restored after capture. Existing wildcard tool grant and its warning remain visible."
+  },
+  {
+    "file": "docs/img/guide/dot-communication.png",
+    "route": "/dots",
+    "selector": "article",
+    "matchingText": "Harald",
+    "viewport": {
+      "width": 1280,
+      "height": 1500
+    },
+    "scale": 2,
+    "width": 616,
+    "height": 2236,
+    "data": "Synthetic dev-ui fixture; actual Harald and Clara personal Dots. Harald to Clara has both directional consents enabled; reverse consent is disabled. Actual Clara identifier filters the peer list. Capture Dots deactivated after capture."
   }
 ]

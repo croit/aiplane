@@ -2445,6 +2445,7 @@ async fn run_one_turn(
                     rounds: round + 1,
                     seconds: (d.clock)().duration_since(run_started).as_secs(),
                     tokens: tokens_used,
+                    tree: None,
                 },
             )
             .await?;

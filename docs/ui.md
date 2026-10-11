@@ -517,6 +517,15 @@ and reset flow. List, create and active-state routes enforce the corresponding
 server permission; the sidebar is not an authorization boundary.
 See [personal Dots](dots.md) and [access administration](admin/access.md).
 
+Each Dot card lazily loads **Communication** from its owner-scoped inventory.
+Separate outgoing and incoming rows edit one decision per save; the other
+Dot's consent is read-only. Rows preserve actual IDs, names and inactive
+choices. An unsaved row retains its original generation when another row is
+saved, so a stale decision cannot overwrite a newer counterpart. Conflict
+responses retain the draft until explicit reload. Consent mutation checks
+current management permission; an indicator of both stored consents does not
+claim the personal delegation runtime is available.
+
 ## Agent builder
 
 `/agents` (sidebar: Workspace → Agents) is visible only when `GET /api/v0/me`

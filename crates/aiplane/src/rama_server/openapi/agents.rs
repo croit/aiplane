@@ -86,6 +86,13 @@ pub(super) fn operations() -> Vec<Op> {
         get("/api/v0/dots/{id}/access", Access::Session)
             .ok(json::<aiplane_api::pages::json_dots::DotAccessView>())
             .errors(&[400, 404]),
+        get("/api/v0/dots/{id}/communication", Access::Session)
+            .ok(json::<aiplane_api::pages::json_dots::DotCommunicationView>())
+            .errors(&[400, 404]),
+        put("/api/v0/dots/{id}/communication", Access::Session)
+            .body(json::<aiplane_api::pages::json_dots::DotCommunicationBody>())
+            .ok(json::<aiplane_api::pages::json_dots::DotCommunicationView>())
+            .errors(&[400, 403, 404, 409, 413]),
         put("/api/v0/dots/{id}/access", Access::Session)
             .body(json::<aiplane_api::pages::json_dots::DotAccessBody>())
             .ok(json::<aiplane_api::pages::json_dots::DotAccessView>())

@@ -13,6 +13,7 @@ use session_core::i18n::{Lang, t};
 
 use super::{bad_request, internal, json_error, json_ok, not_found, raw_path_segment};
 use aiplane_agents::db::agents::{self as agents_db, PersonalDotCreate};
+use aiplane_agents::db::dot_delegation::{self, ConsentDirection, ConsentEdit, ConsentSaved};
 use aiplane_agents::db::system_principals::NewPrincipal;
 use aiplane_runtime::agents::spec::AgentSpec;
 use aiplane_runtime::agents::spec::model::{ActionRule, Permission};
@@ -53,6 +54,170 @@ pub(crate) fn view(row: &agents_db::PersonalDotRow) -> DotView {
         display: p.display.clone(),
         description: p.description.clone(),
         active: row.active,
+    }
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct DotCommunicationView {
+    pub dot: DotView,
+    pub peers: Vec<DotCommunicationPeer>,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct DotCommunicationPeer {
+    pub dot: DotView,
+    pub outgoing: DotConsentView,
+    pub incoming: DotConsentView,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct DotConsentView {
+    pub outbound_enabled: bool,
+    pub inbound_enabled: bool,
+    pub generation: Option<String>,
+}
+
+impl DotConsentView {
+    fn from_edge(edge: Option<&dot_delegation::DotDelegationEdge>) -> Self {
+        Self {
+            outbound_enabled: edge.is_some_and(|edge| edge.outbound_enabled),
+            inbound_enabled: edge.is_some_and(|edge| edge.inbound_enabled),
+            generation: edge.map(|edge| edge.generation.clone()),
+        }
+    }
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DotConsentDirection {
+    Outbound,
+    Inbound,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DotCommunicationBody {
+    pub peer_id: String,
+    pub direction: DotConsentDirection,
+    pub enabled: bool,
+    pub expected_generation: Option<String>,
+}
+
+async fn communication_view(
+    state: &RamaState,
+    owner: &str,
+    id: &str,
+) -> Result<Option<DotCommunicationView>, aiplane_core::server::db::DbError> {
+    let Some(dot) = agents_db::get_personal_dot(&state.db, owner, id).await? else {
+        return Ok(None);
+    };
+    let inventory = agents_db::list_personal_dots(&state.db, owner).await?;
+    let edges = dot_delegation::list_for_dot(&state.db, owner, id).await?;
+    let peers = inventory
+        .iter()
+        .filter(|peer| peer.agent.principal.id != id)
+        .map(|peer| {
+            let peer_id = &peer.agent.principal.id;
+            DotCommunicationPeer {
+                dot: view(peer),
+                outgoing: DotConsentView::from_edge(
+                    edges
+                        .iter()
+                        .find(|edge| edge.caller_dot_id == id && &edge.receiver_dot_id == peer_id),
+                ),
+                incoming: DotConsentView::from_edge(
+                    edges
+                        .iter()
+                        .find(|edge| &edge.caller_dot_id == peer_id && edge.receiver_dot_id == id),
+                ),
+            }
+        })
+        .collect();
+    Ok(Some(DotCommunicationView {
+        dot: view(&dot),
+        peers,
+    }))
+}
+
+pub async fn communication_get(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_, user) = match super::require_session_json(&state, &req).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let lang = Lang::from_request(req.headers());
+    let Some(id) = raw_path_segment(&req, 1) else {
+        return bad_request(t(lang, "dot-error-id-missing"));
+    };
+    match communication_view(&state, &user.id, &id).await {
+        Ok(Some(view)) => json_ok(StatusCode::OK, view),
+        Ok(None) => not_found(t(lang, "dot-error-not-found")),
+        Err(error) => internal(error),
+    }
+}
+
+pub async fn communication_put(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let user = match require_dot_manager(&state, &req).await {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    let lang = Lang::from_request(req.headers());
+    let Some(id) = raw_path_segment(&req, 1) else {
+        return bad_request(t(lang, "dot-error-id-missing"));
+    };
+    match agents_db::get_personal_dot(&state.db, &user.id, &id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
+        Err(error) => return internal(error),
+    }
+    let body: DotCommunicationBody = match super::read_json_capped(
+        req.into_body(),
+        "the communication setting",
+        16 * 1024,
+    )
+    .await
+    {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
+    let direction = match body.direction {
+        DotConsentDirection::Outbound => ConsentDirection::Outbound,
+        DotConsentDirection::Inbound => ConsentDirection::Inbound,
+    };
+    match dot_delegation::set_consent(
+        &state.db,
+        ConsentEdit {
+            owner_user_id: &user.id,
+            dot_id: &id,
+            peer_id: &body.peer_id,
+            direction,
+            enabled: body.enabled,
+            expected_generation: body.expected_generation.as_deref(),
+        },
+    )
+    .await
+    {
+        Ok(ConsentSaved::Saved(_)) => match communication_view(&state, &user.id, &id).await {
+            Ok(Some(view)) => json_ok(StatusCode::OK, view),
+            Ok(None) => not_found(t(lang, "dot-error-not-found")),
+            Err(error) => internal(error),
+        },
+        Ok(ConsentSaved::Missing) => not_found(t(lang, "dot-error-not-found")),
+        Ok(ConsentSaved::Invalid) => json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_consent",
+            &t(lang, "dot-communication-error-invalid"),
+        ),
+        Ok(ConsentSaved::Conflict) => json_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            &t(lang, "dot-communication-error-conflict"),
+        ),
+        Ok(ConsentSaved::Unavailable) => json_error(
+            StatusCode::CONFLICT,
+            "inactive_dot",
+            &t(lang, "dot-communication-error-inactive"),
+        ),
+        Err(error) => internal(error),
     }
 }
 

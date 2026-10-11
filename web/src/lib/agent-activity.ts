@@ -178,6 +178,8 @@ export function summarize(event: ActivityEvent): Summary | null {
 			return { key: 'agents-act-sum-state', args: { slot: str(d.slot), provenance: str(d.provenance) } };
 		case 'personal_dot_session_started':
 			return { key: 'dot-activity-session-started', args: {} };
+		case 'personal_dot_delegation_changed':
+			return { key: 'dot-activity-communication-changed', args: {} };
 		case 'turn_started':
 			return d.resumed
 				? { key: 'agents-act-sum-resumed', args: {} }

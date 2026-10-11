@@ -902,6 +902,7 @@ mod tests {
                     rounds: 2,
                     seconds: 40,
                     tokens: 900,
+                    tree: None,
                 },
                 child_turn: None,
                 on_timeout: chat::TimeoutFallback::Deny,
