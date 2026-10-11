@@ -27,6 +27,7 @@ serde_json = { workspace = true }
 schemars = { workspace = true }
 jiff = { workspace = true }
 tracing = { workspace = true }
+thiserror = { workspace = true }
 
 # Rama HTTP framework — request/response types and SSE primitives.
 rama = { workspace = true }

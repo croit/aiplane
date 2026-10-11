@@ -85,7 +85,8 @@ connect company systems and define who can access models, tools and workflows.
   secure input or hand a task to a person; authorized colleagues respond in the
   shared inbox.
 - ⏱️ **Automate recurring and event-driven work.** Schedule prompts or trigger
-  runs with webhooks, then inspect the conversation and run history.
+  runs with webhooks as a personal or organization Dot, then inspect the private
+  conversation and run history.
   [Explore schedules, webhooks and inbox](docs/guide/automation-and-inbox.md).
 
 ### Controls for administrators
@@ -231,8 +232,17 @@ owner’s limit; deactivated Dots do not. Organization member writers can use
 private saved-draft or published test chat with the Dot's own principal grants and explicitly
 selected own OAuth account. Their memory reads include the Dot's own notes
 and shared organization knowledge; writes from the Dot stay in its own scope.
-Published private conversations retain their original version. Organization
-background work and external channels remain unavailable; see [Organization Dots](docs/dots-organizations.md).
+Published private conversations, schedules and event-driven webhooks retain
+their selected version and use the Dot's own identity. Webhook callers receive
+only an opaque conversation ID; history and decisions require current member
+Write. External organization agent channels remain unavailable; see
+[Organization Dots](docs/dots-organizations.md).
+
+Optional sandbox execution uses the private [sandbox runner](docs/sandbox.md).
+It confirms container absence before acknowledging release and removing
+scratch data, retries failed teardown, and refuses startup if stale labelled
+containers cannot be cleared. Persistent Dot files and saved browser profiles
+remain planned in the [workspace specification](docs/dots-workspace.md).
 
 To build from source, install [mise](https://mise.jdx.dev/) and run:
 

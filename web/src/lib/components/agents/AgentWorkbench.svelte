@@ -99,6 +99,7 @@
 {/if}
 
 {#if ws.writable && organizationDot}<a class="btn btn-sm w-fit" href={`/scheduled?principal_id=${encodeURIComponent(ws.id)}`}>{t('scheduled-heading')}</a>{/if}
+{#if ws.writable && organizationDot}<a class="btn btn-sm w-fit" href={`/webhooks?principal_id=${encodeURIComponent(ws.id)}`}>{t('webhooks-heading')}</a>{/if}
 
 {#if tab === 'setup' && ws.writable && organizationDot}
 	{#key organizationDot.id}

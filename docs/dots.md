@@ -3,7 +3,7 @@
 Status: implementation in progress; personal Dot ownership, active lifecycle,
 the first web management page, manually managed Dot memory, recent activity,
 owner-scoped memory/activity APIs, private Dot chat sessions, and personal
-tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; current member writers can authorize and explicitly select each organization Dot’s own OAuth credential. Active organization Dots support private saved-draft and published conversations for current member writers, including durable approvals, selected own credentials, isolated Dot notes and shared organization knowledge. Published private conversations retain their original version and use current member Write access for history and Inbox decisions. Organization schedules run pinned published versions in fresh private principal conversations. Organization webhooks, conversation reuse, delegation and external channels remain unavailable.
+tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; current member writers can authorize and explicitly select each organization Dot’s own OAuth credential. Active organization Dots support private saved-draft and published conversations for current member writers, including durable approvals, selected own credentials, isolated Dot notes and shared organization knowledge. Published private conversations retain their original version and use current member Write access for history and Inbox decisions. Organization schedules and asynchronous webhooks run pinned published versions in fresh private principal conversations. Organization conversation reuse, delegation and public agent channels remain unavailable.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -76,9 +76,9 @@ test chat for current member writers. Their Setup memory panel exposes isolated
 Dot notes and shared organization knowledge. Member writers change own notes;
 shared-note changes also require current gateway administration. Runtime memory
 reads both scopes under its Recall grant; writes remain Dot-specific and no
-employee profile is read. Organization schedules use the selected published
-version and independent principal; organization webhooks, delegation and
-external channels remain unavailable. An owned local credential remains visible
+employee profile is read. Organization schedules and webhooks use the selected published
+version and independent principal; organization delegation and public agent
+channels remain unavailable. An owned local credential remains visible
 for explicit
 disconnect after catalogue access is lost, including credentials never selected
 for execution. Restricted catalogue and user-account details stay hidden.
@@ -182,8 +182,8 @@ provides deactivation, not a Dot-delete action.
 
 Persistent Dot computers are specified separately in
 [dots-workspace.md](dots-workspace.md) and are not implemented. Automatic
-memory curation remains planned. Organization webhooks and schedule conversation
-reuse remain unavailable. The user workflow is in
+memory curation remains planned. Organization conversation
+reuse remains unavailable. The user workflow is in
 [Schedules, webhooks and inbox](guide/automation-and-inbox.md).
 
 ## Organization schedules and private run history
@@ -224,8 +224,8 @@ A cancelled turn is recorded as a failed run with its cancellation reason.
 Navigation invalidates outstanding component operations so an older response
 cannot reopen a previous session or overwrite the current URL.
 
-Organization webhooks, schedule conversation reuse, Dot delegation and external
-channels are unavailable. Persistent computers and automatic memory curation
+Organization schedule conversation reuse, Dot delegation and public agent
+channels are unavailable. Organization webhooks use the same private history and exact-turn Stop; see [their admission contract](dots-webhooks.md). Persistent computers and automatic memory curation
 remain planned. See [organization Dots](dots-organizations.md) and
 [Schedules, webhooks and inbox](guide/automation-and-inbox.md).
 
@@ -332,7 +332,7 @@ requirements; they do not determine AIplane's implementation.
 | Chat, runs and streaming | `chat_sessions`, `chat_turns`, `SessionDriver`, JSON-SSE | Associate a personal Dot with user-owned sessions without turning it into a second chat engine |
 | Durable pause and approval | `chat_turn_suspensions`, `agents::approval`, Inbox | Interactive chat and user-owned scheduled/webhook turns can persist a pause and resume through the user's Inbox. Dot execution must retain its attribution and re-evaluate current owner grants and Dot rules when a paused turn resumes. |
 | Schedules | `scheduled_actions` and scheduled worker | Personal Dot binding and organization principal-owned, pinned-version execution are implemented; organization runs open fresh private sessions |
-| Event triggers | Webhooks and headless execution | Personal Dot binding and durable assistant-turn correlation are implemented; organization ownership remains planned |
+| Event triggers | Webhooks and headless execution | Personal Dot binding and organization-owned asynchronous webhooks use durable assistant-turn correlation and current execution authority |
 | MCP catalogue and execution | connector catalog, `McpConnectionManager`, `UserMcpLayer` | Personal delegated and Dot-owned credentials; organisation/Dot OAuth identity |
 | Per-user memory | `user_memories`, memory tools, `dot_memories` | Runtime reads/writes and background curation for isolated Dot memory |
 | Agent conversation state | `agent_state` | Session-scoped today; Dot workspace must persist independently across sessions |
@@ -363,7 +363,9 @@ The connector store represents mutually exclusive user/principal owners.
 Personal Dots can explicitly select the owner’s current connection or their
 own authorized OAuth credential. Current organization member writers can
 configure a Dot’s own credential and run its saved draft or published version in a private principal
-conversation. Organization automated and external runs remain unavailable. Ordinary principal runs use
+conversation. Organization schedules and asynchronous webhooks use retained
+published versions and the same own-principal credentials. Public agent channels
+remain unavailable. Ordinary principal runs use
 explicitly granted shared-identity connectors. Existing `agent`-scope
 connectors accept `none` or `static_bearer`. See [Dot identities](dots-identities.md)
 for the OAuth selection and generation fences.

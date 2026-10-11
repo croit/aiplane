@@ -325,8 +325,16 @@ Mechanics:
   exit. A `SandboxLease` `Drop` guard is the backstop for any exit that skips
   the explicit release. Backing all of that, the runner runs a
   **TTL sweeper** that reaps any lease left idle longer than `lease_ttl_secs`
-  (skipping one with an in-flight exec), so an instance that crashed mid-turn
-  can't leak a container indefinitely.
+  (skipping one with an in-flight exec). Failed teardown remains tracked in a
+  retiring state and the same sweeper retries it. A retiring container cannot
+  run another job, and an already busy container refuses overlapping execution.
+  `DELETE /container/{id}` returns 204 only after the backend confirms absence,
+  409 during an active execution and 503 when absence cannot be confirmed.
+  Podman/Docker references are validated before tracking or passing them to the
+  runtime. A failed removal is accepted only when successful enumeration proves
+  the exact generated name or full ID absent; unavailable enumeration is an
+  error. Scratch removal follows confirmed absence. Startup refuses to serve
+  if labelled stale containers cannot be enumerated and removed.
 - **Capacity is bounded** by `max_leases`, independent of `max_concurrent`
   (which counts in-flight execs). A leased container pins RAM the whole time
   it's idle — its `/work` + `/tmp` are RAM-backed tmpfs charged to `--memory` —

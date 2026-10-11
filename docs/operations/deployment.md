@@ -67,6 +67,9 @@ choices, not immutable version pins.
   runner needs a host with gVisor (`runsc`) for that configuration. The
   `local-unsafe` mode does not provide that isolation and is a development
   choice, not a production equivalent.
+  The runner refuses startup if it cannot confirm removal of stale labelled
+  containers. Keep access to the configured container runtime available;
+  failed teardown remains tracked and retried before scratch data is removed.
 
 ```bash
 docker compose -f deploy/compose.example.yml --profile ocr up -d

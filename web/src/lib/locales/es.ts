@@ -2205,7 +2205,7 @@ export const es: Catalog = {
  "scheduled-err-enter-cron": "Introduce una expresión cron.",
  "scheduled-err-pick-weekday": "Elige al menos un día de la semana.",
  "scheduled-error-configuration-conflict": "Esta acción programada ha cambiado. Recarga su configuración actual antes de volver a guardarla.",
- "scheduled-error-identity-retained": "Este Dot todavía tiene acciones programadas. Detén las ejecuciones pendientes y elimina esas acciones antes de eliminar el Dot.",
+ "scheduled-error-identity-retained": "Este Dot todavía tiene acciones programadas o webhooks. Detén las ejecuciones pendientes y elimina esas fuentes antes de eliminar el Dot.",
  "scheduled-error-invalid-configuration": "Revisa la versión publicada seleccionada, el modelo, el modo de conversación y la configuración de las herramientas y vuelve a guardar.",
  "scheduled-gdpr-warning": "Este modelo no cumple con el RGPD. Las ejecuciones programadas le enviarán tu prompt automáticamente — evita datos personales.",
  "scheduled-heading": "Acciones programadas",
@@ -3006,6 +3006,9 @@ export const es: Catalog = {
   "one": "{count} ejecución",
   "other": "{count} ejecuciones"
  },
+ "webhooks-organization-fresh": "Cada evento inicia una conversación privada nueva con la versión publicada seleccionada, su modelo y sus permisos de herramientas.",
+ "webhooks-organization-tools-toggle-label": "Permitir las herramientas del Dot",
+ "webhooks-organization-tools-warning": "Cualquier persona con la URL de activación puede enviar contenido que el Dot procesa con la versión publicada seleccionada y sus propios permisos. Activa las herramientas solo para un emisor de confianza.",
  "webhooks-pause-title": "Pausar",
  "webhooks-prompt-label": "Prompt",
  "webhooks-prompt-placeholder": "¿Qué debe hacer el modelo con los datos entrantes?",

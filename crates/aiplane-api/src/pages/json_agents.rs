@@ -1573,14 +1573,24 @@ pub async fn delete(State(state): State<Arc<RamaState>>, req: Request) -> Respon
     let schedules = or_return!(
         aiplane_runtime::server::scheduled::list_for_owner_in(
             &mut tx,
-            &aiplane_runtime::server::scheduled::ScheduleOwner::Principal(
+            &aiplane_runtime::server::background::AutomationOwner::Principal(
                 agent.principal.id.clone()
             ),
         )
         .await
         .map_err(internal)
     );
-    if !schedules.is_empty() {
+    let webhooks = or_return!(
+        aiplane_runtime::server::webhooks::list_for_owner_in(
+            &mut tx,
+            &aiplane_runtime::server::background::AutomationOwner::Principal(
+                agent.principal.id.clone()
+            )
+        )
+        .await
+        .map_err(internal)
+    );
+    if !schedules.is_empty() || !webhooks.is_empty() {
         let lang = Lang::from_request(req.headers());
         return json_error(
             StatusCode::CONFLICT,

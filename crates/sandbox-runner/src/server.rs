@@ -55,19 +55,24 @@ async fn healthz(State(state): State<Arc<RunnerState>>) -> Json<RunnerHealth> {
     })
 }
 
-/// DELETE /container/{id} — release a kept-alive (leased) container. The
-/// gateway calls this at turn end (and on `reset`) so the container's RAM is
-/// freed promptly rather than waiting for the TTL sweeper. Idempotent: an
-/// unknown / already-reaped id is a clean `204`, so the gateway's turn-end
-/// release never has to care whether the sweeper got there first. Container
-/// ids are lowercase hex, so the path extractor's case handling is a non-issue
-/// here.
 async fn release_container(
     State(state): State<Arc<RunnerState>>,
     Path(id): Path<String>,
 ) -> Response {
-    state.pool.release_container(&id).await;
-    (StatusCode::NO_CONTENT, ()).into_response()
+    match state.pool.release_container(&id).await {
+        Ok(()) => (StatusCode::NO_CONTENT, ()).into_response(),
+        Err(RunnerError::Busy) => err(
+            StatusCode::CONFLICT,
+            "The container is busy; retry release after its active operation finishes.",
+        ),
+        Err(error) => {
+            tracing::warn!(container = %id, error = %error, "container release not confirmed");
+            err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Container removal could not be confirmed; retry release. The runner retains it for cleanup.",
+            )
+        }
+    }
 }
 
 /// POST /run — decode the request, execute it, return the result.
@@ -197,6 +202,46 @@ mod tests {
             Arc::new(Config::for_test()),
         );
         Arc::new(RunnerState { pool })
+    }
+
+    #[tokio::test]
+    async fn checked_teardown_release_route_reports_failure_until_retry_confirms_absence() {
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), Arc::new(Config::for_test()));
+        let mut request = crate::backend::fake::req();
+        request.keep_alive = true;
+        let id = pool.run(&request).await.unwrap().container_id.unwrap();
+        let app = service(Arc::new(RunnerState { pool }));
+        backend
+            .fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let response = app
+            .serve(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/container/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(backend.live_count(), 1);
+        backend
+            .fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let response = app
+            .serve(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/container/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(backend.live_count(), 0);
     }
 
     #[tokio::test]

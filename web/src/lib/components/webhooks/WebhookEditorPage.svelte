@@ -1,12 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { adminJson } from '#lib/admin-client.js';
 	import WebhookForm from './WebhookForm.svelte';
 	import WebhookSecretReveal from './WebhookSecretReveal.svelte';
 	import { t } from '#lib/i18n.svelte.js';
-	import type { Webhook, WebhooksData } from '#lib/webhooks.js';
+	import { webhooksApi, type Webhook, type WebhooksData } from '#lib/webhooks.js';
 
 	/**
 	 * The webhook editor, on its own route.
@@ -30,29 +29,35 @@
 	let error = $state<string | null>(null);
 	let missing = $state(false);
 	let secretUrl = $state<string | null>(null);
+	let disposed = false;
+	onDestroy(() => { disposed = true; });
+	const listHref = $derived(`/webhooks${data?.principal_id || page.url.searchParams.get('principal_id') ? `?principal_id=${encodeURIComponent(data?.principal_id ?? page.url.searchParams.get('principal_id')!)}` : ''}`);
+	const doneHref = $derived(`${listHref}${data?.principal_id ? '&' : '?'}notice=${id === null ? 'created' : 'saved'}`);
 
 	function revealed(secret: string) {
-		secretUrl = `${location.origin}/hooks/${secret}`;
+		if (!disposed) secretUrl = `${location.origin}/hooks/${secret}`;
 	}
 
 	onMount(async () => {
 		try {
-			data = await adminJson<WebhooksData>('/api/v0/webhooks');
+			const loaded = await webhooksApi.list(page.url.searchParams.get('principal_id'));
+			if (disposed) return;
+			data = loaded;
 			if (id !== null) {
 				webhook = data.webhooks.find((candidate) => candidate.id === id) ?? null;
 				missing = webhook === null;
 			}
 			error = null;
 		} catch (caught) {
-			error = String(caught);
+			if (!disposed) error = String(caught);
 		} finally {
-			loading = false;
+			if (!disposed) loading = false;
 		}
 	});
 </script>
 
 <div class="w-full max-w-4xl">
-	<a class="link link-hover text-sm text-base-content/60" href="/webhooks">← {t('webhooks-back')}</a>
+	<a class="link link-hover text-sm text-base-content/60" href={listHref}>← {t('webhooks-back')}</a>
 	<h1 class="m-0 mt-2 text-2xl font-bold">
 		{id === null ? t('webhooks-create-heading') : webhook ? t('webhooks-edit-named-heading', { name: webhook.name }) : t('webhooks-edit-heading')}
 	</h1>
@@ -62,7 +67,7 @@
 	{#if secretUrl}
 		<div class="mt-5">
 			<WebhookSecretReveal url={secretUrl} />
-			<a class="btn btn-primary btn-sm" href="/webhooks?notice=created">{t('webhooks-reveal-done')}</a>
+			<a class="btn btn-primary btn-sm" href={doneHref}>{t('webhooks-reveal-done')}</a>
 		</div>
 	{:else if missing}
 		<div class="alert alert-warning mt-4 text-sm"><span>{t('webhooks-toast-not-found')}</span></div>
@@ -75,11 +80,14 @@
 				models={data.models}
 				dots={data.dots}
 				presetDotId={id === null ? page.url.searchParams.get('dot_id') : null}
+				principalId={data.principal_id}
+				versions={data.versions}
+				canWrite={data.can_write}
 				onsaved={async () => {
 					// Editing is done; creating stays put until the secret is copied.
-					if (id !== null) await goto('/webhooks?notice=saved');
+					if (!disposed && id !== null) await goto(doneHref);
 				}}
-				oncancel={() => goto('/webhooks')}
+				oncancel={() => goto(listHref)}
 				onsecret={revealed}
 			/>
 		</div>

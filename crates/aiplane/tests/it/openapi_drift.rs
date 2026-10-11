@@ -79,6 +79,61 @@ async fn organization_schedule_and_private_stop_contracts_require_exact_configur
     assert!(reply["properties"]["ok"].is_object());
 }
 
+#[tokio::test]
+async fn organization_webhook_contracts_publish_principal_pin_and_strict_management_generation() {
+    let document = served_document().await;
+    let paths = &document["paths"];
+    let create = json_body(
+        &document,
+        &paths["/api/v0/webhooks"]["post"]["requestBody"]["content"],
+    );
+    for field in ["principal_id", "agent_version"] {
+        assert!(create["properties"][field].is_object(), "{field}");
+    }
+    assert!(
+        !create["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "model")
+    );
+    let list = json_body(
+        &document,
+        &paths["/api/v0/webhooks"]["get"]["responses"]["200"]["content"],
+    );
+    for field in ["principal_id", "can_write", "versions"] {
+        assert!(list["properties"][field].is_object(), "{field}");
+    }
+    for path in ["/api/v0/scheduled", "/api/v0/webhooks"] {
+        let parameters = paths[path]["get"]["parameters"].as_array().unwrap();
+        let scope = parameters
+            .iter()
+            .find(|parameter| parameter["name"] == "principal_id")
+            .unwrap();
+        assert_eq!(scope["in"], "query");
+        assert_eq!(scope["required"], false);
+        assert_eq!(scope["schema"]["type"], "string");
+    }
+    for (path, method) in [
+        ("/api/v0/webhooks/{id}", "put"),
+        ("/api/v0/webhooks/{id}/toggle", "post"),
+        ("/api/v0/webhooks/{id}/rotate", "post"),
+        ("/api/v0/webhooks/{id}/rerun", "post"),
+    ] {
+        let operation = &paths[path][method];
+        let body = json_body(&document, &operation["requestBody"]["content"]);
+        assert!(
+            body["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "expected_configuration_generation"),
+            "{method} {path}"
+        );
+        assert!(operation["responses"]["409"].is_object(), "{method} {path}");
+    }
+}
+
 /// The schema a `$ref` names, out of `components/schemas`.
 fn resolved<'a>(
     document: &'a serde_json::Value,

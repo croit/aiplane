@@ -321,7 +321,7 @@ async fn person_context(
     };
     let background = super::background::for_turn(
         &state.db,
-        &crate::server::scheduled::ScheduleOwner::User(owner.clone()),
+        &crate::server::background::AutomationOwner::User(owner.clone()),
         &source_turn,
     )
     .await?;
@@ -440,7 +440,7 @@ async fn drive_inner(
                 if let Some(owner) = p.actor.person_id() {
                     let _ = super::background::reconcile_turn(
                         &state.db,
-                        &crate::server::scheduled::ScheduleOwner::User(owner.to_owned()),
+                        &crate::server::background::AutomationOwner::User(owner.to_owned()),
                         &p.assistant_turn_id,
                     )
                     .await;
@@ -507,7 +507,7 @@ async fn drive_inner(
     let person = p.actor.person_id().map(str::to_string);
     let owner_for_reconcile = person
         .clone()
-        .map(crate::server::scheduled::ScheduleOwner::User);
+        .map(crate::server::background::AutomationOwner::User);
     let person_worker = if reserved_worker.is_some() {
         reserved_worker
     } else if let Some(owner) = person.as_deref() {
@@ -532,7 +532,7 @@ async fn drive_inner(
                     .await;
                     let _ = super::background::reconcile_turn(
                         &state.db,
-                        &crate::server::scheduled::ScheduleOwner::User(owner.to_owned()),
+                        &crate::server::background::AutomationOwner::User(owner.to_owned()),
                         &p.assistant_turn_id,
                     )
                     .await;
@@ -616,7 +616,7 @@ async fn drive_inner(
         turn_finished(state, &agent, &session_id, &assistant_turn_id).await;
         if let Err(error) = super::background::reconcile_turn(
             &state.db,
-            &crate::server::scheduled::ScheduleOwner::Principal(
+            &crate::server::background::AutomationOwner::Principal(
                 agent.system_principal().id.clone(),
             ),
             &assistant_turn_id,
@@ -2059,7 +2059,7 @@ pub(crate) mod tests {
         let action = scheduled::create(
             &state.db,
             NewAction {
-                owner: crate::server::scheduled::ScheduleOwner::User("u1".into()),
+                owner: crate::server::background::AutomationOwner::User("u1".into()),
                 created_by: "u1".into(),
                 agent_version: None,
                 name: "job".into(),

@@ -1973,7 +1973,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
         let action = scheduled::create(
             &state.db,
             NewAction {
-                owner: scheduled::ScheduleOwner::User("dev".into()),
+                owner: aiplane_runtime::server::background::AutomationOwner::User("dev".into()),
                 created_by: "dev".into(),
                 name: name.into(),
                 prompt: prompt.into(),
@@ -2036,7 +2036,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
                 .await?;
             aiplane_runtime::server::background::reconcile_turn(
                 &state.db,
-                &scheduled::ScheduleOwner::User("dev".into()),
+                &aiplane_runtime::server::background::AutomationOwner::User("dev".into()),
                 &turn,
             )
             .await?;
@@ -2086,10 +2086,12 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
         let hook = webhooks::create(
             &state.db,
             NewWebhook {
-                user_id: "dev".into(),
+                owner: aiplane_runtime::server::background::AutomationOwner::User("dev".into()),
+                created_by: "dev".into(),
+                agent_version: None,
                 name: name.into(),
                 prompt: prompt.into(),
-                model: "demo-model".into(),
+                model: Some("demo-model".into()),
                 tools_enabled: false,
                 synchronous,
                 reuse_conversation: reuse,
@@ -2125,6 +2127,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
                 &state.db,
                 webhooks::NewWebhookRun {
                     webhook_id: &hook.id,
+                    expected_configuration_generation: &hook.configuration_generation,
                     session_id: &session,
                     prompt,
                     payload: r#"{"ref":"refs/heads/main"}"#,
@@ -2136,22 +2139,19 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             )
             .await?;
             chatdb::append_content(&state.db, &turn, "Here is the summary for this fire.").await?;
-            chatdb::finalize_turn(&state.db, &turn, TurnStatus::Completed, None).await?;
-
-            // The tracker's last fire failed, so the page has a failure to
-            // render as well as successes.
             let failed = reuse && fire + 1 == fires;
             let (status, error) = if failed {
-                ("error", Some("upstream returned 503"))
+                (TurnStatus::Errored, Some("upstream returned 503"))
             } else {
-                ("ok", None)
+                (TurnStatus::Completed, None)
             };
-            webhooks::finish_run(&state.db, &run, status, error).await?;
-            webhooks::mark_fired(&state.db, &hook.id, status, Some(&session), error).await?;
-            // The stored payload is what a rerun replays, so it only exists
-            // once something has actually fired — a never-fired hook must not
-            // offer a rerun link.
-            webhooks::set_last_payload(&state.db, &hook.id, r#"{"ref":"refs/heads/main"}"#).await?;
+            chatdb::finalize_turn(&state.db, &turn, status, error).await?;
+            aiplane_runtime::server::background::reconcile_turn(
+                &state.db,
+                &aiplane_runtime::server::background::AutomationOwner::User("dev".into()),
+                &turn,
+            )
+            .await?;
             // Seeded in a tight loop; space the fires out so the history page
             // does not look like one instant.
             let fired_at = (jiff::Timestamp::now()

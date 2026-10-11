@@ -1240,7 +1240,7 @@ async fn background_resume_busy_leaves_original_approval_unclaimed_for_retry() {
     let action = scheduled::create(
         &state.db,
         scheduled::NewAction {
-            owner: scheduled::ScheduleOwner::User("alice".into()),
+            owner: aiplane_runtime::server::background::AutomationOwner::User("alice".into()),
             created_by: "alice".into(),
             agent_version: None,
             name: "Approval".into(),

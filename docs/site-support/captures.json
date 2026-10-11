@@ -334,5 +334,15 @@
     "width": 2800,
     "height": 1900,
     "data": "Synthetic dev-ui organization member and actual published Dot; real schedule form with pinned version and explicit UTC timezone."
+  },
+  {
+    "file": "docs/img/guide/dot-organization-webhook.png",
+    "route": "/webhooks/new?principal_id=ca1ad01e-f5b9-4794-a59e-59b16fc34282",
+    "selector": "viewport",
+    "viewport": { "width": 1400, "height": 950 },
+    "scale": 2,
+    "width": 2800,
+    "height": 1900,
+    "data": "Synthetic dev-ui fixture; actual Engineering organization Writer without personal Dot management. Harald Webhooks, authored published version 1, actual model demo-model, explicitly enabled Dot tools, and filled trusted prompt. Captured before secret creation by spa-dots-organization-webhooks.test.mjs with DOCS_ORG_DOT_WEBHOOK_CAPTURE."
   }
 ]

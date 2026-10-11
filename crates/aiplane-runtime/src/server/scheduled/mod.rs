@@ -18,26 +18,13 @@ use uuid::Uuid;
 
 use aiplane_core::server::db::{DbError, Pool, parse_optional_ts, parse_ts};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScheduleOwner {
-    User(String),
-    Principal(String),
-}
-
-impl ScheduleOwner {
-    fn columns(&self) -> (Option<&str>, Option<&str>) {
-        match self {
-            Self::User(id) => (Some(id), None),
-            Self::Principal(id) => (None, Some(id)),
-        }
-    }
-}
+use super::background::AutomationOwner;
 
 /// A persisted scheduled action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScheduledAction {
     pub id: String,
-    pub owner: ScheduleOwner,
+    pub owner: AutomationOwner,
     pub created_by: Option<String>,
     pub configuration_generation: String,
     pub dot_id: Option<String>,
@@ -77,7 +64,7 @@ pub struct ScheduledAction {
 /// The validated, ready-to-insert fields for a new action. `next_run_at`
 /// is computed by the caller from `cron` + `timezone`.
 pub struct NewAction {
-    pub owner: ScheduleOwner,
+    pub owner: AutomationOwner,
     pub created_by: String,
     pub dot_id: Option<String>,
     pub name: String,
@@ -117,8 +104,8 @@ fn map_row(row: &SqliteRow) -> Result<ScheduledAction, DbError> {
             row.try_get::<Option<String>, _>("user_id")?,
             row.try_get::<Option<String>, _>("principal_id")?,
         ) {
-            (Some(id), None) => ScheduleOwner::User(id),
-            (None, Some(id)) => ScheduleOwner::Principal(id),
+            (Some(id), None) => AutomationOwner::User(id),
+            (None, Some(id)) => AutomationOwner::Principal(id),
             _ => return Err(invalid("The schedule has an invalid owner")),
         },
         created_by: row.try_get("created_by")?,
@@ -163,7 +150,7 @@ struct ScheduleBinding<'a> {
 
 async fn validate_configuration_in(
     tx: &mut WriteTx,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
     previous_dot: Option<&str>,
     binding: ScheduleBinding<'_>,
 ) -> Result<(), DbError> {
@@ -175,7 +162,7 @@ async fn validate_configuration_in(
         linked,
     } = binding;
     match owner {
-        ScheduleOwner::User(user) => {
+        AutomationOwner::User(user) => {
             if model.is_none_or(|value| value.is_empty())
                 || version.is_some()
                 || !dot_sessions::binding_valid(tx, user, dot_id, previous_dot).await?
@@ -190,7 +177,7 @@ async fn validate_configuration_in(
                 ));
             }
         }
-        ScheduleOwner::Principal(principal) => {
+        AutomationOwner::Principal(principal) => {
             if model.is_some()
                 || dot_id.is_some()
                 || reuse
@@ -274,19 +261,19 @@ pub async fn create_in(tx: &mut WriteTx, new: NewAction) -> Result<ScheduledActi
 }
 
 pub async fn list_for_user(pool: &Pool, user_id: &str) -> Result<Vec<ScheduledAction>, DbError> {
-    list_for_owner_with(pool, &ScheduleOwner::User(user_id.into())).await
+    list_for_owner_with(pool, &AutomationOwner::User(user_id.into())).await
 }
 
 pub async fn list_for_owner_in(
     tx: &mut WriteTx,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
 ) -> Result<Vec<ScheduledAction>, DbError> {
     list_for_owner_with(&mut **tx, owner).await
 }
 
 async fn list_for_owner_with<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
     executor: E,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
 ) -> Result<Vec<ScheduledAction>, DbError> {
     let (user, principal) = owner.columns();
     let rows=sqlx::query(&format!("SELECT {COLS} FROM scheduled_actions WHERE user_id IS ? AND principal_id IS ? ORDER BY created_at DESC,id ASC"))
@@ -296,7 +283,7 @@ async fn list_for_owner_with<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>
 
 pub async fn get(
     pool: &Pool,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
     id: &str,
 ) -> Result<Option<ScheduledAction>, DbError> {
     get_with(pool, owner, id).await
@@ -304,7 +291,7 @@ pub async fn get(
 
 pub async fn get_in(
     tx: &mut WriteTx,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
     id: &str,
 ) -> Result<Option<ScheduledAction>, DbError> {
     get_with(&mut **tx, owner, id).await
@@ -312,7 +299,7 @@ pub async fn get_in(
 
 async fn get_with<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
     executor: E,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
     id: &str,
 ) -> Result<Option<ScheduledAction>, DbError> {
     let (user, principal) = owner.columns();
@@ -344,7 +331,7 @@ pub enum EditOutcome {
 
 pub async fn update(
     pool: &Pool,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
     id: &str,
     expected_generation: &str,
     edit: EditAction,
@@ -357,7 +344,7 @@ pub async fn update(
 
 pub async fn update_in(
     tx: &mut WriteTx,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
     id: &str,
     expected_generation: &str,
     edit: &EditAction,
@@ -417,7 +404,7 @@ pub async fn update_in(
 
 pub async fn set_enabled(
     pool: &Pool,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
     id: &str,
     expected_generation: &str,
     enabled: bool,
@@ -431,7 +418,7 @@ pub async fn set_enabled(
 
 pub async fn set_enabled_in(
     tx: &mut WriteTx,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
     id: &str,
     expected_generation: &str,
     enabled: bool,
@@ -473,7 +460,7 @@ pub enum DeleteOutcome {
 
 pub async fn delete(
     pool: &Pool,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
     id: &str,
 ) -> Result<DeleteOutcome, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
@@ -484,7 +471,7 @@ pub async fn delete(
 
 pub async fn delete_in(
     tx: &mut WriteTx,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
     id: &str,
 ) -> Result<DeleteOutcome, DbError> {
     if get_in(tx, owner, id).await?.is_none() {
@@ -692,10 +679,10 @@ pub async fn attach_run_turn_in(
         return Err(invalid("The scheduled run configuration has changed"));
     }
     let valid_session = match &action.owner {
-        ScheduleOwner::User(user) => {
+        AutomationOwner::User(user) => {
             dot_sessions::session_matches(tx, user, session_id, action.dot_id.as_deref()).await?
         }
-        ScheduleOwner::Principal(principal) => run_sessions::get_private_principal_session_in(
+        AutomationOwner::Principal(principal) => run_sessions::get_private_principal_session_in(
             tx,
             principal,
             session_id,
@@ -841,19 +828,19 @@ pub async fn run_counts_for_user(
     pool: &Pool,
     user_id: &str,
 ) -> Result<std::collections::HashMap<String, (i64, i64)>, DbError> {
-    run_counts_with(pool, &ScheduleOwner::User(user_id.into())).await
+    run_counts_with(pool, &AutomationOwner::User(user_id.into())).await
 }
 
 pub async fn run_counts_for_owner_in(
     tx: &mut WriteTx,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
 ) -> Result<std::collections::HashMap<String, (i64, i64)>, DbError> {
     run_counts_with(&mut **tx, owner).await
 }
 
 async fn run_counts_with<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
     executor: E,
-    owner: &ScheduleOwner,
+    owner: &AutomationOwner,
 ) -> Result<std::collections::HashMap<String, (i64, i64)>, DbError> {
     let (user, principal) = owner.columns();
     let rows=sqlx::query("SELECT r.action_id,COUNT(*) AS runs,COUNT(DISTINCT r.session_id) AS chats FROM scheduled_runs r JOIN scheduled_actions a ON a.id=r.action_id WHERE a.user_id IS ? AND a.principal_id IS ? GROUP BY r.action_id")
@@ -934,7 +921,7 @@ mod tests {
         NewAction {
             dot_id: None,
             linked_session_id: None,
-            owner: ScheduleOwner::User(user_id.to_string()),
+            owner: AutomationOwner::User(user_id.to_string()),
             created_by: user_id.into(),
             agent_version: None,
             name: "Daily digest".to_string(),
@@ -981,7 +968,7 @@ mod tests {
         seed_user(&pool, "u1").await;
         let next = "2026-06-19T07:00:00Z".parse::<Timestamp>().unwrap();
         let created = create(&pool, sample("u1", Some(next))).await.unwrap();
-        let got = get(&pool, &ScheduleOwner::User("u1".into()), &created.id)
+        let got = get(&pool, &AutomationOwner::User("u1".into()), &created.id)
             .await
             .unwrap()
             .unwrap();
@@ -997,19 +984,19 @@ mod tests {
         seed_user(&pool, "u2").await;
         let created = create(&pool, sample("u1", None)).await.unwrap();
         assert!(
-            get(&pool, &ScheduleOwner::User("u2".into()), &created.id)
+            get(&pool, &AutomationOwner::User("u2".into()), &created.id)
                 .await
                 .unwrap()
                 .is_none()
         );
         assert_eq!(
-            delete(&pool, &ScheduleOwner::User("u2".into()), &created.id)
+            delete(&pool, &AutomationOwner::User("u2".into()), &created.id)
                 .await
                 .unwrap(),
             DeleteOutcome::Missing
         );
         assert!(
-            get(&pool, &ScheduleOwner::User("u1".into()), &created.id)
+            get(&pool, &AutomationOwner::User("u1".into()), &created.id)
                 .await
                 .unwrap()
                 .is_some()
@@ -1136,7 +1123,7 @@ mod tests {
         assert_eq!(runs[0].status, None);
         assert_eq!(runs[0].session_id.as_deref(), Some("sess-1"));
         // A reusing schedule continues in this chat even if the run dies here.
-        let a = get(&pool, &ScheduleOwner::User("u1".into()), &a.id)
+        let a = get(&pool, &AutomationOwner::User("u1".into()), &a.id)
             .await
             .unwrap()
             .unwrap();
@@ -1152,7 +1139,7 @@ mod tests {
             .unwrap();
         let runs = list_runs(&pool, &a.id, 50).await.unwrap();
         assert_eq!(runs[0].session_id.as_deref(), Some("sess-1"));
-        let a = get(&pool, &ScheduleOwner::User("u1".into()), &a.id)
+        let a = get(&pool, &AutomationOwner::User("u1".into()), &a.id)
             .await
             .unwrap()
             .unwrap();
@@ -1233,7 +1220,7 @@ mod tests {
         let finished = runs.iter().find(|r| r.id == finished).unwrap();
         assert_eq!(finished.status.as_deref(), Some("ok"));
         assert_eq!(finished.error, None);
-        let a_row = get(&pool, &ScheduleOwner::User("u1".into()), &a.id)
+        let a_row = get(&pool, &AutomationOwner::User("u1".into()), &a.id)
             .await
             .unwrap()
             .unwrap();
@@ -1242,7 +1229,7 @@ mod tests {
         assert_eq!(a_row.last_session_id.as_deref(), Some("sess-2"));
         assert_eq!(a_row.last_run_at, Some(orphan_run.fired_at));
 
-        let b_row = get(&pool, &ScheduleOwner::User("u1".into()), &b.id)
+        let b_row = get(&pool, &AutomationOwner::User("u1".into()), &b.id)
             .await
             .unwrap()
             .unwrap();
@@ -1292,7 +1279,7 @@ mod tests {
         let order: Vec<&str> = runs.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(order, [later.as_str(), earlier.as_str()]);
         assert_eq!(sweep_interrupted_runs(&pool).await.unwrap(), 1);
-        let row = get(&pool, &ScheduleOwner::User("u1".into()), &a.id)
+        let row = get(&pool, &AutomationOwner::User("u1".into()), &a.id)
             .await
             .unwrap()
             .unwrap();
@@ -1331,7 +1318,7 @@ mod tests {
         assert_eq!(
             update(
                 &pool,
-                &ScheduleOwner::User("u2".into()),
+                &AutomationOwner::User("u2".into()),
                 &source.id,
                 &source.configuration_generation,
                 edit()
@@ -1341,7 +1328,7 @@ mod tests {
             EditOutcome::Missing
         );
         assert_eq!(
-            get(&pool, &ScheduleOwner::User("u1".into()), &source.id)
+            get(&pool, &AutomationOwner::User("u1".into()), &source.id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -1361,7 +1348,7 @@ mod tests {
             EditOutcome::Saved(_)
         ));
         assert!(
-            get(&pool, &ScheduleOwner::User("u1".into()), &source.id)
+            get(&pool, &AutomationOwner::User("u1".into()), &source.id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -1380,7 +1367,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            delete(&pool, &ScheduleOwner::User("u1".into()), &a.id)
+            delete(&pool, &AutomationOwner::User("u1".into()), &a.id)
                 .await
                 .unwrap(),
             DeleteOutcome::Deleted
@@ -1395,7 +1382,7 @@ mod tests {
         let action = create(&pool, sample("u1", None)).await.unwrap();
         let run = record_run_start(&pool, &action.id).await.unwrap();
         assert_eq!(
-            delete(&pool, &ScheduleOwner::User("u1".into()), &action.id)
+            delete(&pool, &AutomationOwner::User("u1".into()), &action.id)
                 .await
                 .unwrap(),
             DeleteOutcome::Pending
@@ -1415,7 +1402,7 @@ mod tests {
                 .is_err()
         );
         assert!(
-            get(&pool, &ScheduleOwner::User("u1".into()), &action.id)
+            get(&pool, &AutomationOwner::User("u1".into()), &action.id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -1457,7 +1444,7 @@ mod tests {
                     .unwrap();
             }
             assert_eq!(
-                delete(&pool, &ScheduleOwner::User("u1".into()), &action.id)
+                delete(&pool, &AutomationOwner::User("u1".into()), &action.id)
                     .await
                     .unwrap(),
                 DeleteOutcome::Pending
@@ -1472,7 +1459,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            delete(&pool, &ScheduleOwner::User("u1".into()), &action.id)
+            delete(&pool, &AutomationOwner::User("u1".into()), &action.id)
                 .await
                 .unwrap(),
             DeleteOutcome::Deleted
@@ -1488,7 +1475,7 @@ mod tests {
         let action = create(&pool, sample("claim-user", Some(due)))
             .await
             .unwrap();
-        assert_eq!(action.owner, ScheduleOwner::User("claim-user".into()));
+        assert_eq!(action.owner, AutomationOwner::User("claim-user".into()));
         let mut tx = WriteTx::begin(&pool).await.unwrap();
         assert!(
             claim_due_in(&mut tx, &action.id, due, "stale", Some(next), due)
@@ -1636,7 +1623,7 @@ mod tests {
         let action = create(
             &pool,
             NewAction {
-                owner: ScheduleOwner::Principal(principal.clone()),
+                owner: AutomationOwner::Principal(principal.clone()),
                 created_by: "schedule-creator".into(),
                 dot_id: None,
                 name: "Incident review".into(),

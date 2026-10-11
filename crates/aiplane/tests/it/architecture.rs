@@ -1100,6 +1100,20 @@ fn organization_schedules_and_private_stop_use_shared_admission() {
         &scan(&["load_scheduled("], |source| source.code.as_str()),
     );
     assert_within(
+        "Organization webhook admission must bind its exact recorded run in the trigger's transaction.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/agents/profile.rs",
+                why: "the shared principal loader validates the recorded webhook source",
+            },
+            Allowed {
+                path: "aiplane-api/src/pages/webhooks.rs",
+                why: "public firing and human replay share atomic admission and private turn attachment",
+            },
+        ],
+        &scan(&["load_webhook_in("], |source| source.code.as_str()),
+    );
+    assert_within(
         "Private Stop must use the background structural proof in its mutation transaction.",
         &[
             Allowed {

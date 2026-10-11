@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { locale, t } from '#lib/i18n.svelte.js';
 	import DotAssociation from '#lib/components/dots/DotAssociation.svelte';
 	import { runLinks } from '#lib/run-links.js';
@@ -20,6 +21,8 @@
 	}>();
 
 	let links = $derived(runLinks(action, '/scheduled', { principalId: action.principal_id }));
+	let disposed = false;
+	onDestroy(() => { disposed = true; });
 
 	function runTime(value: string): string {
 		return formatScheduledRun(value, locale.current, action.timezone);
@@ -28,9 +31,10 @@
 	async function toggle() {
 		try {
 			await scheduledApi.toggle(action.id, !action.enabled, action.configuration_generation);
+			if (disposed) return;
 			await onchanged();
 		} catch (caught) {
-			onnotice(String(caught));
+			if (!disposed) onnotice(String(caught));
 		}
 	}
 
@@ -38,9 +42,10 @@
 		if (!confirm(t('scheduled-delete-confirm'))) return;
 		try {
 			await scheduledApi.remove(action.id);
+			if (disposed) return;
 			await onchanged();
 		} catch (caught) {
-			onnotice(String(caught));
+			if (!disposed) onnotice(String(caught));
 		}
 	}
 </script>

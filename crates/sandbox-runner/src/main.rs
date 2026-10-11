@@ -61,7 +61,10 @@ async fn main() -> anyhow::Result<()> {
         // A previous process's containers are unusable now (the pool is empty),
         // and a crash mid-job leaves scratch directories behind. Clear both
         // before serving; normal teardown removes them in `destroy`.
-        podman.reap_stale_containers().await;
+        podman
+            .reap_stale_containers()
+            .await
+            .context("confirming stale sandbox containers are absent before startup")?;
         podman.prune_orphan_scratch().await;
         Arc::new(podman)
     };

@@ -94,6 +94,7 @@ pub(super) fn operations() -> Vec<Op> {
             .no_content()
             .errors(&[404]),
         get("/api/v0/scheduled", Access::Session)
+            .param("principal_id", Scalar::String, false)
             .ok(json::<workspace::ScheduledList>())
             .errors(&[400, 403, 404]),
         post("/api/v0/scheduled", Access::Session)
@@ -118,22 +119,26 @@ pub(super) fn operations() -> Vec<Op> {
         get("/api/v0/scheduled/{id}/runs", Access::Session)
             .ok(json::<workspace::ScheduledRuns>())
             .errors(&[404]),
-        get("/api/v0/webhooks", Access::Session).ok(json::<workspace::WebhookList>()),
+        get("/api/v0/webhooks", Access::Session)
+            .param("principal_id", Scalar::String, false)
+            .ok(json::<workspace::WebhookList>())
+            .errors(&[400, 403, 404]),
         post("/api/v0/webhooks", Access::Session)
             .body(json::<workspace::WebhookBody>())
             .created(json::<workspace::WebhookCreated>())
-            .errors(&[400]),
+            .errors(&[400, 403, 404]),
         put("/api/v0/webhooks/{id}", Access::Session)
-            .body(json::<workspace::WebhookBody>())
+            .body(json::<workspace::WebhookUpdateBody>())
             .ok(json::<workspace::Updated<workspace::WebhookView>>())
-            .errors(&[400, 404]),
+            .errors(&[400, 403, 404, 409]),
         post("/api/v0/webhooks/{id}/toggle", Access::Session)
-            .body(json::<workspace::EnabledBody>())
-            .ok(json::<workspace::EnabledBody>())
-            .errors(&[400, 404]),
+            .body(json::<workspace::WebhookEnabledBody>())
+            .ok(json::<workspace::WebhookEnabledView>())
+            .errors(&[400, 403, 404, 409]),
         post("/api/v0/webhooks/{id}/rotate", Access::Session)
+            .body(json::<workspace::WebhookRotateBody>())
             .ok(json::<workspace::WebhookSecret>())
-            .errors(&[404]),
+            .errors(&[400, 403, 404, 409]),
         delete("/api/v0/webhooks/{id}", Access::Session)
             .no_content()
             .errors(&[404, 409]),

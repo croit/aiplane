@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { adminJson } from '#lib/admin-client.js';
 	import WebhookRow from '#lib/components/webhooks/WebhookRow.svelte';
 	import WebhookSecretReveal from '#lib/components/webhooks/WebhookSecretReveal.svelte';
 	import { t } from '#lib/i18n.svelte.js';
-	import type { WebhooksData } from '#lib/webhooks.js';
+	import { webhooksApi, type WebhooksData } from '#lib/webhooks.js';
 
 	let data = $state<WebhooksData | null>(null);
 	let loading = $state(true);
@@ -15,6 +14,9 @@
 	// newly created one is revealed on the editor route instead — it must not
 	// ride back in a query string.
 	let secret = $state<string | null>(null);
+	let disposed = false;
+	onDestroy(() => { disposed = true; });
+	const scopeQuery = $derived(data?.principal_id ? `?principal_id=${encodeURIComponent(data.principal_id)}` : '');
 
 	$effect(() => {
 		const kind = page.url.searchParams.get('notice');
@@ -23,18 +25,21 @@
 	});
 
 	async function refresh() {
+		if (disposed) return;
 		try {
-			data = await adminJson<WebhooksData>('/api/v0/webhooks');
+			const loaded = await webhooksApi.list(page.url.searchParams.get('principal_id'));
+			if (disposed) return;
+			data = loaded;
 			error = null;
 		} catch (caught) {
-			error = String(caught);
+			if (!disposed) error = String(caught);
 		} finally {
-			loading = false;
+			if (!disposed) loading = false;
 		}
 	}
 
 	function reveal(value: string) {
-		secret = `${location.origin}/hooks/${value}`;
+		if (!disposed) secret = `${location.origin}/hooks/${value}`;
 	}
 
 	onMount(refresh);
@@ -44,6 +49,7 @@
 	<header>
 		<h1 class="text-2xl font-bold">{t('webhooks-heading')}</h1>
 		<p class="mt-2 text-sm text-base-content/60">{t('webhooks-intro')}</p>
+		{#if data?.principal_id && data.dots[0]}<p class="mt-2 text-sm">{data.dots[0].display || data.dots[0].name}</p>{/if}
 	</header>
 
 	{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}
@@ -53,7 +59,7 @@
 	<section class="space-y-3">
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<h2 class="text-xl font-semibold">{t('webhooks-list-heading')}</h2>
-			<a class="btn btn-primary btn-sm" href="/webhooks/new">{t('webhooks-create-heading')}</a>
+			{#if data?.can_write && !error}<a class="btn btn-primary btn-sm" href={`/webhooks/new${scopeQuery}`}>{t('webhooks-create-heading')}</a>{/if}
 		</div>
 		{#if loading}
 			<div class="skeleton h-28 w-full"></div>
@@ -61,7 +67,7 @@
 			<div class="card card-border"><div class="card-body text-sm text-base-content/60">{t('webhooks-list-empty')}</div></div>
 		{:else}
 			{#each data.webhooks as webhook (webhook.id)}
-				<WebhookRow {webhook} onchanged={refresh} onnotice={(message) => (notice = message)} onsecret={reveal} />
+				<WebhookRow {webhook} canWrite={data.can_write && !error} onchanged={refresh} onnotice={(message) => (notice = message)} onsecret={reveal} />
 			{/each}
 		{/if}
 	</section>

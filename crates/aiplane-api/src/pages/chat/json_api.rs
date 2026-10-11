@@ -1102,7 +1102,7 @@ pub async fn session_events(
             {
                 match aiplane_runtime::server::background::for_turn(
                     &state.db,
-                    &aiplane_runtime::server::scheduled::ScheduleOwner::User(user.id.clone()),
+                    &aiplane_runtime::server::background::AutomationOwner::User(user.id.clone()),
                     &turn.turn.id,
                 )
                 .await
@@ -1465,7 +1465,7 @@ async fn refuse_background_mutation(
     }) {
         if aiplane_runtime::server::background::for_turn(
             &state.db,
-            &aiplane_runtime::server::scheduled::ScheduleOwner::User(user.id.clone()),
+            &aiplane_runtime::server::background::AutomationOwner::User(user.id.clone()),
             &turn.turn.id,
         )
         .await

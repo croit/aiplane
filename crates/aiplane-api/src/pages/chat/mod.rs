@@ -1080,7 +1080,7 @@ pub(crate) async fn resume_turn(
     };
     let background = aiplane_runtime::server::background::for_turn(
         &state.db,
-        &aiplane_runtime::server::scheduled::ScheduleOwner::User(user.id.clone()),
+        &aiplane_runtime::server::background::AutomationOwner::User(user.id.clone()),
         &turn.id,
     )
     .await

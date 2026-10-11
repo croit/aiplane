@@ -289,7 +289,9 @@ impl Tool for ScheduleAction {
                 NewAction {
                     dot_id: ctx.personal_dot.as_ref().map(|dot| dot.dot_id.clone()),
                     linked_session_id: None,
-                    owner: scheduled::ScheduleOwner::User(ctx.person(self.id())?.to_string()),
+                    owner: aiplane_runtime::server::background::AutomationOwner::User(
+                        ctx.person(self.id())?.to_string(),
+                    ),
                     created_by: ctx.person(self.id())?.to_string(),
                     agent_version: None,
                     name: name.to_string(),
@@ -409,7 +411,9 @@ impl Tool for DeleteScheduledAction {
             // user's action indistinguishable from a nonexistent one.
             let action = scheduled::get(
                 &ctx.db,
-                &scheduled::ScheduleOwner::User(ctx.person(self.id())?.into()),
+                &aiplane_runtime::server::background::AutomationOwner::User(
+                    ctx.person(self.id())?.into(),
+                ),
                 id,
             )
             .await
@@ -434,7 +438,9 @@ impl Tool for DeleteScheduledAction {
 
             let removed = scheduled::delete(
                 &ctx.db,
-                &scheduled::ScheduleOwner::User(ctx.person(self.id())?.into()),
+                &aiplane_runtime::server::background::AutomationOwner::User(
+                    ctx.person(self.id())?.into(),
+                ),
                 id,
             )
             .await
@@ -511,7 +517,7 @@ mod tests {
             NewAction {
                 dot_id: None,
                 linked_session_id: None,
-                owner: scheduled::ScheduleOwner::User("u1".into()),
+                owner: aiplane_runtime::server::background::AutomationOwner::User("u1".into()),
                 created_by: "u1".into(),
                 agent_version: None,
                 name: "Nightly".into(),
@@ -787,7 +793,7 @@ mod tests {
                 NewAction {
                     dot_id: None,
                     linked_session_id: None,
-                    owner: scheduled::ScheduleOwner::User(user.into()),
+                    owner: aiplane_runtime::server::background::AutomationOwner::User(user.into()),
                     created_by: user.into(),
                     agent_version: None,
                     name: name.into(),
@@ -848,7 +854,7 @@ mod tests {
             NewAction {
                 dot_id: None,
                 linked_session_id: None,
-                owner: scheduled::ScheduleOwner::User("u2".into()),
+                owner: aiplane_runtime::server::background::AutomationOwner::User("u2".into()),
                 created_by: "u2".into(),
                 agent_version: None,
                 name: "Theirs".into(),

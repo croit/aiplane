@@ -136,6 +136,9 @@ The agent builder's persistence and the pieces only agents need, on
 - `aiplane-core::server::db::WriteTx` — the shared transaction holds the write
   lock from `BEGIN IMMEDIATE`. Agent admissions, activity writes and credential
   authorization use it to check current state and update it atomically.
+  Session-core finalization uses `BEGIN IMMEDIATE` directly, preserving its
+  lower layer boundary while acquiring write authority before terminal updates
+  compete with activity writes.
 - `notify_channels.rs` — the Slack/Discord webhook payloads of the inbox.
 
 Like `aiplane-features`, it names neither `AppState` nor the tool registry, and

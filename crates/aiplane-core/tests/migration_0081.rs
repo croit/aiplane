@@ -251,6 +251,7 @@ async fn dot_background_schema_matches_its_fixture() {
                         'scheduled_actions', 'webhooks', 'scheduled_runs', 'webhook_runs',
                         'scheduled_runs_assistant_turn', 'webhook_runs_assistant_turn',
                         'scheduled_actions_principal', 'scheduled_actions_owner_immutable',
+                        'webhooks_principal', 'webhooks_owner_immutable',
                         'mcp_connections', 'mcp_connections_user_connector',
                         'mcp_connections_principal_connector', 'pending_mcp_oauth',
                         'idx_pending_mcp_oauth_expires', 'mcp_oauth_cancel_before_initiator_delete', 'dot_connector_bindings',
@@ -445,17 +446,60 @@ async fn dot_background_upgrade_preserves_existing_triggers_and_terminal_history
          VALUES('action','owner','Existing','prompt','model','0 * * * *','UTC','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
          INSERT INTO scheduled_runs(id,action_id,fired_at,status,created_at)
          VALUES('run','action','2026-01-01T00:00:00Z','ok','2026-01-01T00:00:00Z');
-         INSERT INTO webhooks(id,user_id,name,prompt,model,secret_hash,created_at,updated_at)
-         VALUES('hook','owner','Existing hook','prompt','model','testhash','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
-         INSERT INTO webhook_runs(id,webhook_id,fired_at,status,prompt,payload,source,created_at)
-         VALUES('hook-run','hook','2026-01-01T00:00:00Z','ok','prompt','{}','fire','2026-01-01T00:00:00Z');"
+         INSERT INTO webhooks(id,user_id,name,prompt,model,tools_enabled,synchronous,secret_hash,enabled,last_fired_at,last_status,last_session_id,last_error,last_payload,created_at,updated_at,reuse_conversation,reuse_rounds)
+         VALUES('hook','owner','Existing hook','Actual instruction','actual-model',1,1,'testhash',0,'2026-02-01T12:34:56Z','error','recorded-session','Actual summary error','{\"event\":\"last payload\"}','2026-01-01T00:00:00Z','2026-02-02T00:00:00Z',1,17);
+         INSERT INTO webhook_runs(id,webhook_id,fired_at,status,session_id,error,prompt,payload,source,created_at)
+         VALUES('hook-run','hook','2026-02-01T12:34:56Z','ok','recorded-session','Actual history detail','Actual historical instruction','{\"event\":\"historical payload\"}','rerun','2026-02-01T12:34:57Z');"
     )).await.unwrap();
+    pool.execute("PRAGMA foreign_keys = ON").await.unwrap();
+    let mut historical_snapshots = Vec::new();
+    for table in ["webhooks", "webhook_runs"] {
+        let columns: Vec<String> = sqlx::query(&format!("PRAGMA table_info({table})"))
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.get("name"))
+            .collect();
+        let fields = columns
+            .iter()
+            .map(|column| format!("'{column}',{column}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let query = format!("SELECT json_object({fields}) FROM {table}");
+        let before: String = sqlx::query_scalar(&query).fetch_one(&pool).await.unwrap();
+        historical_snapshots.push((query, before));
+    }
     let migrations = sqlx::migrate!("./migrations");
     let migration = migrations
         .iter()
         .find(|migration| migration.version == 81)
         .unwrap();
     pool.execute(sqlx::raw_sql(&migration.sql)).await.unwrap();
+    for (query, before) in historical_snapshots {
+        let after: String = sqlx::query_scalar(&query).fetch_one(&pool).await.unwrap();
+        assert_eq!(after, before);
+    }
+    let hook = sqlx::query(
+        "SELECT created_by,principal_id,agent_version,configuration_generation FROM webhooks",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for column in ["created_by", "principal_id"] {
+        assert!(hook.get::<Option<String>, _>(column).is_none());
+    }
+    assert!(hook.get::<Option<i64>, _>("agent_version").is_none());
+    assert!(!hook.get::<String, _>("configuration_generation").is_empty());
+    let run = sqlx::query("SELECT agent_version,configuration_generation FROM webhook_runs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(run.get::<Option<i64>, _>("agent_version").is_none());
+    assert!(
+        run.get::<Option<String>, _>("configuration_generation")
+            .is_none()
+    );
     for table in ["scheduled_actions", "webhooks"] {
         let dot: Option<String> = sqlx::query_scalar(&format!("SELECT dot_id FROM {table}"))
             .fetch_one(&pool)
@@ -514,4 +558,76 @@ async fn child_binding_requires_complete_unique_relationship() {
     assert!(sqlx::query("INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at,parent_turn_id) VALUES('child','owner','receiver','2026-01-01T00:00:00Z','parent')").execute(&pool).await.is_err());
     sqlx::query("INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at,parent_turn_id,parent_tool_call_id,caller_dot_id,edge_generation) VALUES('child','owner','receiver','2026-01-01T00:00:00Z','parent','call','caller','generation')").execute(&pool).await.unwrap();
     assert!(sqlx::query("INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at,parent_turn_id,parent_tool_call_id,caller_dot_id,edge_generation) VALUES('other','owner','receiver','2026-01-01T00:00:00Z','parent','call','caller','generation')").execute(&pool).await.is_err());
+}
+
+#[tokio::test]
+async fn organization_webhook_owner_pin_and_identity_survive_creator_deletion() {
+    let pool = open(Path::new(":memory:")).await.unwrap();
+    pool.execute(sqlx::raw_sql(
+        "INSERT INTO users(id,email,created_at,updated_at) VALUES('creator','creator@example.test','2026-01-01','2026-01-01');
+         INSERT INTO organizations(id,name,description,revision,created_by,created_at,updated_at) VALUES('acme','Acme','','initial','creator','2026-01-01','2026-01-01');
+         INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES('organization','organization','Harald','creator','2026-01-01');
+         INSERT INTO agents(principal_id,draft_spec,created_at,updated_at) VALUES('organization','{}','2026-01-01','2026-01-01');
+         INSERT INTO dots(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('organization',NULL,'acme','Harald','2026-01-01','2026-01-01');
+         INSERT INTO webhooks(id,principal_id,created_by,agent_version,configuration_generation,name,prompt,secret_hash,created_at,updated_at)
+         VALUES('org-hook','organization','creator',1,'original','Org event','Watch tickets','org-hash','2026-01-01','2026-01-01');
+         INSERT INTO webhooks(id,user_id,name,prompt,model,secret_hash,created_at,updated_at)
+         VALUES('user-hook','creator','User event','Digest','model','user-hash','2026-01-01','2026-01-01');
+         INSERT INTO webhook_runs(id,webhook_id,fired_at,status,prompt,payload,source,configuration_generation,agent_version,created_at)
+         VALUES('org-run','org-hook','2026-01-01','ok','Watch tickets','{}','fire','original',1,'2026-01-01'),('user-run','user-hook','2026-01-01','ok','Digest','{}','fire',NULL,NULL,'2026-01-01');"
+    )).await.unwrap();
+    for mutation in [
+        "UPDATE webhooks SET user_id='creator' WHERE id='org-hook'",
+        "UPDATE webhooks SET principal_id=NULL,user_id='creator',model='model',agent_version=NULL WHERE id='org-hook'",
+        "UPDATE webhooks SET agent_version=0 WHERE id='org-hook'",
+        "UPDATE webhooks SET model='employee-model' WHERE id='org-hook'",
+        "UPDATE webhooks SET dot_id='organization' WHERE id='org-hook'",
+        "UPDATE webhooks SET reuse_conversation=1 WHERE id='org-hook'",
+        "UPDATE webhooks SET synchronous=1 WHERE id='org-hook'",
+        "UPDATE webhooks SET configuration_generation='' WHERE id='org-hook'",
+        "DELETE FROM system_principals WHERE id='organization'",
+    ] {
+        assert!(pool.execute(mutation).await.is_err(), "{mutation}");
+    }
+    pool.execute("DELETE FROM users WHERE id='creator'")
+        .await
+        .unwrap();
+    let hook = sqlx::query("SELECT * FROM webhooks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(hook.get::<Option<String>, _>("user_id").is_none());
+    assert_eq!(hook.get::<String, _>("principal_id"), "organization");
+    assert_eq!(hook.get::<String, _>("created_by"), "creator");
+    assert_eq!(hook.get::<i64, _>("agent_version"), 1);
+    assert_eq!(
+        hook.get::<String, _>("configuration_generation"),
+        "original"
+    );
+    assert!(hook.get::<Option<String>, _>("model").is_none());
+    let runs: Vec<String> = sqlx::query_scalar("SELECT id FROM webhook_runs ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(runs, ["org-run"]);
+    pool.execute("DELETE FROM webhooks WHERE id='org-hook'")
+        .await
+        .unwrap();
+    pool.execute("DELETE FROM system_principals WHERE id='organization'")
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM webhook_runs")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

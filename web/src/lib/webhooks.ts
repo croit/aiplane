@@ -1,12 +1,18 @@
 import type { ChatModelOption } from './model-option';
 import type { Dot } from './dot-state.ts';
 import type { DotBinding } from './dot-background.ts';
+import type { AgentVersion } from './agents.ts';
+import { adminDelete, adminJson, adminPost, adminPut } from './admin-client.ts';
+import { request } from './api.ts';
 
 export interface Webhook extends DotBinding {
 	id: string;
 	name: string;
 	prompt: string;
-	model: string;
+	model: string | null;
+	principal_id: string | null;
+	agent_version: number | null;
+	configuration_generation: string;
 	tools_enabled: boolean;
 	synchronous: boolean;
 	reuse_conversation: boolean;
@@ -26,6 +32,8 @@ export interface Webhook extends DotBinding {
 }
 
 export interface WebhookRun {
+	agent_version: number | null;
+	configuration_generation: string | null;
 	id: string;
 	status: string | null;
 	error: string | null;
@@ -43,7 +51,35 @@ export interface WebhooksData {
 	webhooks: Webhook[];
 	dots: Dot[];
 	models: ChatModelOption[];
+	principal_id: string | null;
+	can_write: boolean;
+	versions: AgentVersion[];
 }
+
+export interface WebhookBody {
+	name: string;
+	prompt: string;
+	model?: string;
+	dot_id?: string | null;
+	principal_id?: string;
+	agent_version?: number;
+	tools_enabled: boolean;
+	synchronous: boolean;
+	reuse_conversation: boolean;
+	reuse_rounds: number;
+	linked_session_id?: string | null;
+}
+
+export const webhooksApi = {
+	list: (principalId?: string | null) => adminJson<WebhooksData>(`/api/v0/webhooks${principalId ? `?principal_id=${encodeURIComponent(principalId)}` : ''}`),
+	create: (body: WebhookBody) => adminPost<{ webhook: Webhook; secret: string }>('/api/v0/webhooks', body),
+	update: (id: string, body: WebhookBody & { expected_configuration_generation: string }) => adminPut(`/api/v0/webhooks/${encodeURIComponent(id)}`, body),
+	toggle: (id: string, enabled: boolean, generation: string) => adminPost<{ enabled: boolean; configuration_generation: string }>(`/api/v0/webhooks/${encodeURIComponent(id)}/toggle`, { enabled, expected_configuration_generation: generation }),
+	rotate: (id: string, generation: string) => adminPost<{ secret: string }>(`/api/v0/webhooks/${encodeURIComponent(id)}/rotate`, { expected_configuration_generation: generation }),
+	remove: (id: string) => adminDelete(`/api/v0/webhooks/${encodeURIComponent(id)}`),
+	runs: (id: string) => adminJson<{ runs: WebhookRun[] }>(`/api/v0/webhooks/${encodeURIComponent(id)}/runs`),
+	rerun: (id: string, body: { prompt: string; run?: string; expected_configuration_generation: string }) => request<{ session_id: string }>(`/api/v0/webhooks/${encodeURIComponent(id)}/rerun`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+};
 
 function compactDate(value: string, locale: string, withSeconds: boolean): string {
 	const date = new Date(value);

@@ -17,6 +17,7 @@ use aiplane_core::server::auth::token as auth_token;
 use aiplane_core::server::db;
 use aiplane_runtime::openai_driver;
 use aiplane_runtime::rama_server::state::RamaState;
+use aiplane_runtime::server::background::AutomationOwner;
 use aiplane_runtime::server::scheduled::{self, cron::Cron};
 use aiplane_runtime::server::webhooks;
 use session_core::i18n::{Lang, t};
@@ -181,19 +182,6 @@ pub async fn memories_delete(
 /// gone instead of linking into a 404. One query for the whole list.
 ///
 /// Each row is its `last_session_id` and the `last_chat_deleted` flag to set.
-async fn flag_deleted_last_chats<'a>(
-    db: &db::Pool,
-    rows: impl IntoIterator<Item = (Option<&'a str>, &'a mut Option<bool>)>,
-) -> Result<(), db::DbError> {
-    let rows: Vec<_> = rows.into_iter().collect();
-    let ids: Vec<&str> = rows.iter().filter_map(|(id, _)| *id).collect();
-    let existing = session_core::db::existing_session_ids(db, &ids).await?;
-    for (id, flag) in rows {
-        *flag = Some(id.is_some_and(|id| !existing.contains(id)));
-    }
-    Ok(())
-}
-
 async fn flag_deleted_last_chats_in<'a>(
     tx: &mut WriteTx,
     rows: impl IntoIterator<Item = (Option<&'a str>, &'a mut Option<bool>)>,
@@ -315,8 +303,8 @@ fn action_json_with_counts(
         id: a.id.clone(),
         dot_id: a.dot_id.clone(),
         principal_id: match &a.owner {
-            scheduled::ScheduleOwner::User(_) => None,
-            scheduled::ScheduleOwner::Principal(id) => Some(id.clone()),
+            aiplane_runtime::server::background::AutomationOwner::User(_) => None,
+            aiplane_runtime::server::background::AutomationOwner::Principal(id) => Some(id.clone()),
         },
         agent_version: a.agent_version,
         configuration_generation: a.configuration_generation.clone(),
@@ -373,18 +361,18 @@ async fn schedule_access_in(
     state: &RamaState,
     tx: &mut WriteTx,
     user_id: &str,
-    owner: &scheduled::ScheduleOwner,
+    owner: &aiplane_runtime::server::background::AutomationOwner,
     lang: Lang,
 ) -> Result<(), Response> {
     let admitted = match owner {
-        scheduled::ScheduleOwner::User(id) => {
+        aiplane_runtime::server::background::AutomationOwner::User(id) => {
             id == user_id
                 && aiplane_runtime::agents::access::current_user_policy_in(state, tx, user_id)
                     .await
                     .map_err(internal)?
                     .is_some()
         }
-        scheduled::ScheduleOwner::Principal(id) => {
+        aiplane_runtime::server::background::AutomationOwner::Principal(id) => {
             aiplane_runtime::agents::access::organization_access_in(state, tx, id, user_id)
                 .await
                 .map_err(internal)?
@@ -400,22 +388,22 @@ async fn schedule_access_in(
 
 async fn schedule_dot_in(
     tx: &mut WriteTx,
-    owner: &scheduled::ScheduleOwner,
+    owner: &aiplane_runtime::server::background::AutomationOwner,
     dot_id: Option<&str>,
 ) -> Result<Option<DotView>, db::DbError> {
     let id = match owner {
-        scheduled::ScheduleOwner::User(_) => dot_id,
-        scheduled::ScheduleOwner::Principal(id) => Some(id.as_str()),
+        aiplane_runtime::server::background::AutomationOwner::User(_) => dot_id,
+        aiplane_runtime::server::background::AutomationOwner::Principal(id) => Some(id.as_str()),
     };
     let Some(id) = id else { return Ok(None) };
     let Some(metadata) = dots_db::get_dot_metadata_in(tx, id).await? else {
         return Ok(None);
     };
     let owner_matches = match owner {
-        scheduled::ScheduleOwner::User(user) => {
+        aiplane_runtime::server::background::AutomationOwner::User(user) => {
             metadata.owner == dots_db::DotOwner::User(user.clone())
         }
-        scheduled::ScheduleOwner::Principal(principal) => {
+        aiplane_runtime::server::background::AutomationOwner::Principal(principal) => {
             id == principal && matches!(metadata.owner, dots_db::DotOwner::Organization(_))
         }
     };
@@ -453,7 +441,7 @@ async fn scheduled_view_in(
 async fn schedule_body_in(
     state: &RamaState,
     tx: &mut WriteTx,
-    owner: &scheduled::ScheduleOwner,
+    owner: &aiplane_runtime::server::background::AutomationOwner,
     parsed: &ScheduledBody,
     previous_dot: Option<&str>,
     lang: Lang,
@@ -462,7 +450,7 @@ async fn schedule_body_in(
         return Err(invalid_schedule(lang));
     };
     match owner {
-        scheduled::ScheduleOwner::Principal(id) => {
+        aiplane_runtime::server::background::AutomationOwner::Principal(id) => {
             if parsed.principal_id.as_deref() != Some(id.as_str())
                 || parsed.model.is_some()
                 || parsed.dot_id.is_some()
@@ -473,7 +461,7 @@ async fn schedule_body_in(
             {
                 return Err(invalid_schedule(lang));
             }
-            let _admitted = aiplane_runtime::agents::profile::organization_schedule_version_in(
+            let _admitted = aiplane_runtime::agents::profile::organization_automation_version_in(
                 state,
                 tx,
                 id,
@@ -486,7 +474,7 @@ async fn schedule_body_in(
             })?;
             Ok(Some(None))
         }
-        scheduled::ScheduleOwner::User(user) => {
+        aiplane_runtime::server::background::AutomationOwner::User(user) => {
             if parsed.principal_id.is_some()
                 || parsed.agent_version.is_some()
                 || parsed
@@ -527,8 +515,10 @@ pub async fn scheduled_list(State(state): State<Arc<RamaState>>, req: Request) -
     let principal_id = super::query_map(&req).get("principal_id").cloned();
     let owner = principal_id
         .as_ref()
-        .map(|id| scheduled::ScheduleOwner::Principal(id.clone()))
-        .unwrap_or_else(|| scheduled::ScheduleOwner::User(user.id.clone()));
+        .map(|id| aiplane_runtime::server::background::AutomationOwner::Principal(id.clone()))
+        .unwrap_or_else(|| {
+            aiplane_runtime::server::background::AutomationOwner::User(user.id.clone())
+        });
     let personal_dots = if principal_id.is_none() {
         match dots_db::list_personal_dots(&state.db, &user.id).await {
             Ok(rows) => rows.iter().map(json_dots::view).collect(),
@@ -716,8 +706,10 @@ pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request)
     let owner = parsed
         .principal_id
         .as_ref()
-        .map(|id| scheduled::ScheduleOwner::Principal(id.clone()))
-        .unwrap_or_else(|| scheduled::ScheduleOwner::User(user.id.clone()));
+        .map(|id| aiplane_runtime::server::background::AutomationOwner::Principal(id.clone()))
+        .unwrap_or_else(|| {
+            aiplane_runtime::server::background::AutomationOwner::User(user.id.clone())
+        });
     async {
         let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
         schedule_access_in(&state, &mut tx, &user.id, &owner, lang).await?;
@@ -767,62 +759,6 @@ pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request)
 ///
 /// The chat must be the caller's own: the link is where a run writes, so
 /// naming someone else's chat would put a run's output into it.
-async fn validate_dot_binding(
-    pool: &db::Pool,
-    user_id: &str,
-    dot_id: Option<&str>,
-    previous_dot_id: Option<&str>,
-    lang: Lang,
-) -> Result<(), Response> {
-    let mut connection = pool.acquire().await.map_err(internal)?;
-    match dot_sessions::binding_valid(&mut connection, user_id, dot_id, previous_dot_id).await {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(bad_request(t(lang, "dot-background-error-binding"))),
-        Err(error) => Err(internal(error)),
-    }
-}
-
-async fn bound_dot_view(
-    pool: &db::Pool,
-    user_id: &str,
-    dot_id: Option<&str>,
-) -> Result<Option<DotView>, db::DbError> {
-    match dot_id {
-        Some(id) => Ok(dots_db::get_personal_dot(pool, user_id, id)
-            .await?
-            .map(|row| json_dots::view(&row))),
-        None => Ok(None),
-    }
-}
-
-async fn resolve_linked_session(
-    db: &db::Pool,
-    user_id: &str,
-    reuse_conversation: bool,
-    requested: Option<&str>,
-    dot_id: Option<&str>,
-    lang: Lang,
-) -> Result<Option<Option<String>>, Response> {
-    let Some(requested) = requested.map(str::trim) else {
-        return Ok(None);
-    };
-    if requested.is_empty() {
-        return Ok(Some(None));
-    }
-    if !reuse_conversation {
-        return Err(bad_request(
-            "`linked_session_id` needs `reuse_conversation`: without it every run opens a \
-             fresh chat, so there is none to continue in. Turn reuse on, or leave the field out.",
-        ));
-    }
-    let mut connection = db.acquire().await.map_err(internal)?;
-    match dot_sessions::session_matches(&mut connection, user_id, requested, dot_id).await {
-        Ok(true) => Ok(Some(Some(requested.to_string()))),
-        Ok(false) => Err(bad_request(t(lang, "dot-background-error-linked"))),
-        Err(error) => Err(internal(error)),
-    }
-}
-
 /// The field rules both the create and the update path must apply.
 ///
 /// One validator, called from both, because the split is how the update path
@@ -1085,7 +1021,10 @@ pub struct WebhookView {
     pub dot: Option<DotView>,
     pub name: String,
     pub prompt: String,
-    pub model: String,
+    pub model: Option<String>,
+    pub principal_id: Option<String>,
+    pub agent_version: Option<i64>,
+    pub configuration_generation: String,
     pub tools_enabled: bool,
     /// The trigger waits for the run and answers with its output.
     pub synchronous: bool,
@@ -1106,6 +1045,9 @@ pub struct WebhookView {
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct WebhookList {
+    pub principal_id: Option<String>,
+    pub can_write: bool,
+    pub versions: Vec<super::json_agents::VersionView>,
     pub dots: Vec<DotView>,
     pub webhooks: Vec<WebhookView>,
     /// The chat models a webhook can run on.
@@ -1133,6 +1075,8 @@ pub struct WebhookRuns {
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct WebhookRunView {
+    pub agent_version: Option<i64>,
+    pub configuration_generation: Option<String>,
     pub id: String,
     pub status: Option<String>,
     pub error: Option<String>,
@@ -1160,10 +1104,6 @@ pub struct RerunAccepted {
     pub status: String,
 }
 
-fn webhook_json(w: &webhooks::Webhook) -> WebhookView {
-    webhook_json_with_counts(w, (0, 0))
-}
-
 /// `webhook_json` plus the hook's `(runs, chats)` totals — the two differ for
 /// a `reuse_conversation` hook, and the list row's link uses exactly that
 /// difference to decide whether to link to *the* chat or to the run history.
@@ -1180,6 +1120,12 @@ fn webhook_json_with_counts(
         name: w.name.clone(),
         prompt: w.prompt.clone(),
         model: w.model.clone(),
+        principal_id: match &w.owner {
+            AutomationOwner::User(_) => None,
+            AutomationOwner::Principal(id) => Some(id.clone()),
+        },
+        agent_version: w.agent_version,
+        configuration_generation: w.configuration_generation.clone(),
         tools_enabled: w.tools_enabled,
         synchronous: w.synchronous,
         reuse_conversation: w.reuse_conversation,
@@ -1194,59 +1140,140 @@ fn webhook_json_with_counts(
     }
 }
 
-/// GET /api/v0/webhooks — the caller's webhooks.
+fn webhook_unavailable(lang: Lang) -> Response {
+    not_found(t(lang, "webhooks-toast-not-found"))
+}
+fn webhook_conflict(lang: Lang) -> Response {
+    json_error(
+        StatusCode::CONFLICT,
+        "configuration_conflict",
+        &t(lang, "scheduled-error-configuration-conflict"),
+    )
+}
+async fn webhook_access_in(
+    state: &RamaState,
+    tx: &mut WriteTx,
+    user: &str,
+    owner: &AutomationOwner,
+    lang: Lang,
+) -> Result<(), Response> {
+    schedule_access_in(state, tx, user, owner, lang)
+        .await
+        .map_err(|response| {
+            if response.status() == StatusCode::NOT_FOUND {
+                webhook_unavailable(lang)
+            } else {
+                response
+            }
+        })
+}
+async fn webhook_view_in(
+    tx: &mut WriteTx,
+    hook: &webhooks::Webhook,
+) -> Result<WebhookView, db::DbError> {
+    let counts = webhooks::run_counts_for_owner_in(tx, &hook.owner).await?;
+    let mut row = webhook_json_with_counts(hook, counts.get(&hook.id).copied().unwrap_or((0, 0)));
+    row.dot = schedule_dot_in(tx, &hook.owner, hook.dot_id.as_deref()).await?;
+    flag_deleted_last_chats_in(
+        tx,
+        [(row.last_session_id.as_deref(), &mut row.last_chat_deleted)],
+    )
+    .await?;
+    Ok(row)
+}
+
 pub async fn webhooks_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    let rows = match webhooks::list_for_user(&state.db, &user.id).await {
-        Ok(rows) => rows,
-        Err(err) => return internal(err),
+    let lang = Lang::from_request(req.headers());
+    let principal_id = super::query_map(&req).get("principal_id").cloned();
+    let owner = principal_id
+        .as_ref()
+        .map(|id| AutomationOwner::Principal(id.clone()))
+        .unwrap_or_else(|| AutomationOwner::User(user.id.clone()));
+    let personal = if principal_id.is_none() {
+        match dots_db::list_personal_dots(&state.db, &user.id).await {
+            Ok(rows) => rows.iter().map(json_dots::view).collect(),
+            Err(error) => return internal(error),
+        }
+    } else {
+        Vec::new()
     };
-    // One grouped query for the whole list, not one per row.
-    let counts = match webhooks::run_counts_for_user(&state.db, &user.id).await {
-        Ok(counts) => counts,
-        Err(err) => return internal(err),
-    };
-    let mut hooks: Vec<_> = rows
-        .iter()
-        .map(|w| webhook_json_with_counts(w, counts.get(&w.id).copied().unwrap_or((0, 0))))
-        .collect();
-    let dots = match dots_db::list_personal_dots(&state.db, &user.id).await {
-        Ok(dots) => dots.iter().map(json_dots::view).collect::<Vec<_>>(),
-        Err(error) => return internal(error),
-    };
-    for row in &mut hooks {
-        row.dot = dots
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        webhook_access_in(&state, &mut tx, &user.id, &owner, lang).await?;
+        let rows = webhooks::list_for_owner_in(&mut tx, &owner)
+            .await
+            .map_err(internal)?;
+        let counts = webhooks::run_counts_for_owner_in(&mut tx, &owner)
+            .await
+            .map_err(internal)?;
+        let (dots, versions, models) = if let Some(id) = &principal_id {
+            let dot = schedule_dot_in(&mut tx, &owner, None)
+                .await
+                .map_err(internal)?
+                .ok_or_else(|| webhook_unavailable(lang))?;
+            let versions = dots_db::versions_in(&mut tx, id)
+                .await
+                .map_err(internal)?
+                .iter()
+                .map(super::json_agents::version_view)
+                .collect();
+            (vec![dot], versions, Vec::new())
+        } else {
+            (personal, Vec::new(), chat_model_options(&state))
+        };
+        let mut hooks: Vec<_> = rows
             .iter()
-            .find(|dot| Some(&dot.id) == row.dot_id.as_ref())
-            .cloned();
+            .map(|hook| {
+                let mut row =
+                    webhook_json_with_counts(hook, counts.get(&hook.id).copied().unwrap_or((0, 0)));
+                row.dot = dots
+                    .iter()
+                    .find(|dot| {
+                        principal_id.as_deref() == Some(dot.id.as_str())
+                            || hook.dot_id.as_deref() == Some(dot.id.as_str())
+                    })
+                    .cloned();
+                row
+            })
+            .collect();
+        flag_deleted_last_chats_in(
+            &mut tx,
+            hooks
+                .iter_mut()
+                .map(|row| (row.last_session_id.as_deref(), &mut row.last_chat_deleted)),
+        )
+        .await
+        .map_err(internal)?;
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(
+            StatusCode::OK,
+            WebhookList {
+                principal_id,
+                can_write: true,
+                dots,
+                versions,
+                models,
+                webhooks: hooks,
+            },
+        ))
     }
-    if let Err(err) = flag_deleted_last_chats(
-        &state.db,
-        hooks
-            .iter_mut()
-            .map(|w| (w.last_session_id.as_deref(), &mut w.last_chat_deleted)),
-    )
     .await
-    {
-        return internal(err);
-    }
-    json_ok(
-        StatusCode::OK,
-        WebhookList {
-            dots,
-            webhooks: hooks,
-            models: chat_model_options(&state),
-        },
-    )
+    .unwrap_or_else(|response| response)
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 pub struct WebhookBody {
     #[serde(default)]
+    pub principal_id: Option<String>,
+    #[serde(default)]
+    pub agent_version: Option<i64>,
+    #[serde(default)]
     pub dot_id: Option<String>,
     pub name: String,
     pub prompt: String,
-    pub model: String,
+    #[serde(default)]
+    pub model: Option<String>,
     #[serde(default)]
     pub tools_enabled: bool,
     #[serde(default)]
@@ -1255,99 +1282,149 @@ pub struct WebhookBody {
     pub reuse_conversation: bool,
     #[serde(default)]
     pub reuse_rounds: i64,
-    /// The chat a reusing row continues in: an id links that chat, `""` lets
-    /// the next run open a fresh one, absent leaves the link as it is.
     #[serde(default)]
     pub linked_session_id: Option<String>,
 }
-
-/// The field rules both webhook paths must apply — same story as
-/// [`validate_scheduled`]: the update path had none, so a `PUT` could leave a
-/// live trigger URL pointed at an empty prompt and an empty model id.
-fn validate_webhook(parsed: &WebhookBody) -> Result<(), String> {
-    let name = parsed.name.trim();
-    if name.is_empty() || name.len() > 128 {
-        return Err("`name` must be 1..=128 characters".into());
-    }
-    let prompt = parsed.prompt.trim();
-    if prompt.is_empty() || prompt.len() > 8000 {
-        return Err("`prompt` must be 1..=8000 characters".into());
-    }
-    if parsed.model.trim().is_empty() {
-        return Err("`model` must not be empty".into());
-    }
-    Ok(())
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct WebhookUpdateBody {
+    #[serde(flatten)]
+    pub webhook: WebhookBody,
+    pub expected_configuration_generation: String,
+}
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct WebhookEnabledBody {
+    pub enabled: bool,
+    pub expected_configuration_generation: String,
+}
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct WebhookEnabledView {
+    pub enabled: bool,
+    pub configuration_generation: String,
+}
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct WebhookRotateBody {
+    pub expected_configuration_generation: String,
 }
 
-/// POST /api/v0/webhooks — create; the trigger secret is minted once and
-/// returned exactly once.
+async fn webhook_body_in(
+    state: &RamaState,
+    tx: &mut WriteTx,
+    owner: &AutomationOwner,
+    body: &WebhookBody,
+    previous: Option<&str>,
+    lang: Lang,
+) -> Result<Option<Option<String>>, Response> {
+    if body.name.trim().is_empty()
+        || body.name.trim().len() > 128
+        || body.prompt.trim().is_empty()
+        || body.prompt.trim().len() > 8000
+    {
+        return Err(invalid_schedule(lang));
+    };
+    match owner {
+        AutomationOwner::Principal(id) => {
+            if body.principal_id.as_deref() != Some(id.as_str())
+                || body.agent_version.is_none_or(|v| v <= 0)
+                || body.model.is_some()
+                || body.dot_id.is_some()
+                || body.synchronous
+                || body.reuse_conversation
+                || body.linked_session_id.is_some()
+            {
+                return Err(invalid_schedule(lang));
+            };
+            aiplane_runtime::agents::profile::organization_automation_version_in(
+                state,
+                tx,
+                id,
+                body.agent_version.expect("positive version checked"),
+            )
+            .await
+            .map_err(|error| match error {
+                aiplane_runtime::agents::profile::AgentRunError::Db(error) => internal(error),
+                _ => invalid_schedule(lang),
+            })?;
+            Ok(Some(None))
+        }
+        AutomationOwner::User(user) => {
+            if body.principal_id.is_some()
+                || body.agent_version.is_some()
+                || body
+                    .model
+                    .as_deref()
+                    .is_none_or(|model| model.trim().is_empty())
+            {
+                return Err(invalid_schedule(lang));
+            };
+            if !dot_sessions::binding_valid(tx, user, body.dot_id.as_deref(), previous)
+                .await
+                .map_err(internal)?
+            {
+                return Err(bad_request(t(lang, "dot-background-error-binding")));
+            };
+            let Some(link) = body.linked_session_id.as_deref().map(str::trim) else {
+                return Ok(None);
+            };
+            if link.is_empty() {
+                return Ok(Some(None));
+            };
+            if !body.reuse_conversation
+                || !dot_sessions::session_matches(tx, user, link, body.dot_id.as_deref())
+                    .await
+                    .map_err(internal)?
+            {
+                return Err(bad_request(t(lang, "dot-background-error-linked")));
+            };
+            Ok(Some(Some(link.into())))
+        }
+    }
+}
+
 pub async fn webhooks_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
-    let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return bad_request(msg),
-    };
-    let parsed: WebhookBody = match serde_json::from_slice(&bytes) {
-        Ok(p) => p,
-        Err(err) => return bad_request(format!("parsing the webhook body: {err}")),
-    };
-    if let Err(msg) = validate_webhook(&parsed) {
-        return bad_request(msg);
-    }
-    if let Err(response) =
-        validate_dot_binding(&state.db, &user.id, parsed.dot_id.as_deref(), None, lang).await
-    {
-        return response;
-    }
-    let link = match resolve_linked_session(
-        &state.db,
-        &user.id,
-        parsed.reuse_conversation,
-        parsed.linked_session_id.as_deref(),
-        parsed.dot_id.as_deref(),
-        lang,
-    )
-    .await
-    {
-        Ok(link) => link,
-        Err(resp) => return resp,
-    };
+    let body: WebhookBody = or_return!(super::read_json(req.into_body(), "the webhook").await);
+    let owner = body
+        .principal_id
+        .as_ref()
+        .map(|id| AutomationOwner::Principal(id.clone()))
+        .unwrap_or_else(|| AutomationOwner::User(user.id.clone()));
     let (secret, hash) = auth_token::mint_webhook();
-    let new = webhooks::NewWebhook {
-        dot_id: parsed.dot_id.clone(),
-        linked_session_id: link.flatten(),
-        user_id: user.id.clone(),
-        name: parsed.name.trim().to_string(),
-        prompt: parsed.prompt,
-        model: parsed.model,
-        tools_enabled: parsed.tools_enabled,
-        synchronous: parsed.synchronous,
-        reuse_conversation: parsed.reuse_conversation,
-        reuse_rounds: parsed.reuse_rounds,
-        secret_hash: hash,
-    };
-    let w = match webhooks::create(&state.db, new).await {
-        Ok(w) => w,
-        Err(err) => return internal(err),
-    };
-
-    let mut row = webhook_json(&w);
-    row.dot = match bound_dot_view(&state.db, &user.id, row.dot_id.as_deref()).await {
-        Ok(dot) => dot,
-        Err(error) => return internal(error),
-    };
-    json_ok(
-        StatusCode::CREATED,
-        WebhookCreated {
-            webhook: row,
-            secret,
-        },
-    )
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        webhook_access_in(&state, &mut tx, &user.id, &owner, lang).await?;
+        let link = webhook_body_in(&state, &mut tx, &owner, &body, None, lang).await?;
+        let hook = webhooks::create_in(
+            &mut tx,
+            webhooks::NewWebhook {
+                owner,
+                created_by: user.id.clone(),
+                dot_id: body.dot_id,
+                name: body.name.trim().into(),
+                prompt: body.prompt,
+                model: body.model,
+                agent_version: body.agent_version,
+                tools_enabled: body.tools_enabled,
+                synchronous: body.synchronous,
+                reuse_conversation: body.reuse_conversation,
+                reuse_rounds: body.reuse_rounds,
+                secret_hash: hash,
+                linked_session_id: link.flatten(),
+            },
+        )
+        .await
+        .map_err(internal)?;
+        let webhook = webhook_view_in(&mut tx, &hook).await.map_err(internal)?;
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(
+            StatusCode::CREATED,
+            WebhookCreated { webhook, secret },
+        ))
+    }
+    .await
+    .unwrap_or_else(|response| response)
 }
 
-/// PUT /api/v0/webhooks/{id}
 pub async fn webhooks_update(
     Path(id): Path<String>,
     State(state): State<Arc<RamaState>>,
@@ -1355,127 +1432,141 @@ pub async fn webhooks_update(
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
-    let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return bad_request(msg),
-    };
-    let parsed: WebhookBody = match serde_json::from_slice(&bytes) {
-        Ok(p) => p,
-        Err(err) => return bad_request(format!("parsing the webhook body: {err}")),
-    };
-    if let Err(msg) = validate_webhook(&parsed) {
-        return bad_request(msg);
+    let request: WebhookUpdateBody =
+        or_return!(super::read_json(req.into_body(), "the webhook").await);
+    let body = request.webhook;
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let old = webhooks::get_by_id_in(&mut tx, &id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| webhook_unavailable(lang))?;
+        webhook_access_in(&state, &mut tx, &user.id, &old.owner, lang).await?;
+        if old.configuration_generation != request.expected_configuration_generation {
+            return Err(webhook_conflict(lang));
+        };
+        let link = webhook_body_in(
+            &state,
+            &mut tx,
+            &old.owner,
+            &body,
+            old.dot_id.as_deref(),
+            lang,
+        )
+        .await?;
+        let edit = webhooks::EditWebhook {
+            dot_id: body.dot_id,
+            linked_session_id: link,
+            name: body.name.trim().into(),
+            prompt: body.prompt,
+            model: body.model,
+            agent_version: body.agent_version,
+            tools_enabled: body.tools_enabled,
+            synchronous: body.synchronous,
+            reuse_conversation: body.reuse_conversation,
+            reuse_rounds: body.reuse_rounds,
+        };
+        let outcome = webhooks::update_in(
+            &mut tx,
+            &old.owner,
+            &id,
+            &request.expected_configuration_generation,
+            &edit,
+        )
+        .await
+        .map_err(internal)?;
+        let row = match outcome {
+            webhooks::EditOutcome::Missing => return Err(webhook_unavailable(lang)),
+            webhooks::EditOutcome::Conflict => return Err(webhook_conflict(lang)),
+            webhooks::EditOutcome::Saved(row) => row,
+        };
+        let view = webhook_view_in(&mut tx, &row).await.map_err(internal)?;
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(StatusCode::OK, Updated::Row(Box::new(view))))
     }
-    let previous = match webhooks::get(&state.db, &user.id, &id).await {
-        Ok(Some(row)) => row,
-        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
-        Err(error) => return internal(error),
-    };
-    if let Err(response) = validate_dot_binding(
-        &state.db,
-        &user.id,
-        parsed.dot_id.as_deref(),
-        previous.dot_id.as_deref(),
-        lang,
-    )
     .await
-    {
-        return response;
-    }
-    let link = match resolve_linked_session(
-        &state.db,
-        &user.id,
-        parsed.reuse_conversation,
-        parsed.linked_session_id.as_deref(),
-        parsed.dot_id.as_deref(),
-        lang,
-    )
-    .await
-    {
-        Ok(link) => link,
-        Err(resp) => return resp,
-    };
-    let edit = webhooks::EditWebhook {
-        dot_id: parsed.dot_id.clone(),
-        linked_session_id: link,
-        name: parsed.name.trim().to_string(),
-        prompt: parsed.prompt,
-        model: parsed.model,
-        tools_enabled: parsed.tools_enabled,
-        synchronous: parsed.synchronous,
-        reuse_conversation: parsed.reuse_conversation,
-        reuse_rounds: parsed.reuse_rounds,
-    };
-    match webhooks::update(&state.db, &user.id, &id, edit).await {
-        Ok(true) => {
-            let w = webhooks::get(&state.db, &user.id, &id).await.ok().flatten();
-            match w {
-                Some(w) => {
-                    let mut row = webhook_json(&w);
-                    row.dot = match bound_dot_view(&state.db, &user.id, row.dot_id.as_deref()).await
-                    {
-                        Ok(dot) => dot,
-                        Err(error) => return internal(error),
-                    };
-                    json_ok(StatusCode::OK, Updated::Row(Box::new(row)))
-                }
-                None => json_ok(
-                    StatusCode::OK,
-                    Updated::<WebhookView>::Acknowledged(super::Done::OK),
-                ),
-            }
-        }
-        Ok(false) => json_error(StatusCode::NOT_FOUND, "not_found", "no such webhook"),
-        Err(err) => internal(err),
-    }
+    .unwrap_or_else(|response| response)
 }
 
-/// POST /api/v0/webhooks/{id}/toggle
 pub async fn webhooks_toggle(
     Path(id): Path<String>,
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return bad_request(msg),
-    };
-    let parsed: EnabledBody = match serde_json::from_slice(&bytes) {
-        Ok(p) => p,
-        Err(err) => return bad_request(format!("parsing the toggle body: {err}")),
-    };
-    match webhooks::set_enabled(&state.db, &user.id, &id, parsed.enabled).await {
-        Ok(true) => json_ok(
+    let lang = Lang::from_request(req.headers());
+    let body: WebhookEnabledBody =
+        or_return!(super::read_json(req.into_body(), "the webhook toggle").await);
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let hook = webhooks::get_by_id_in(&mut tx, &id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| webhook_unavailable(lang))?;
+        webhook_access_in(&state, &mut tx, &user.id, &hook.owner, lang).await?;
+        let row = match webhooks::set_enabled_in(
+            &mut tx,
+            &hook.owner,
+            &id,
+            &body.expected_configuration_generation,
+            body.enabled,
+        )
+        .await
+        .map_err(internal)?
+        {
+            webhooks::EditOutcome::Missing => return Err(webhook_unavailable(lang)),
+            webhooks::EditOutcome::Conflict => return Err(webhook_conflict(lang)),
+            webhooks::EditOutcome::Saved(row) => row,
+        };
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(
             StatusCode::OK,
-            EnabledBody {
-                enabled: parsed.enabled,
+            WebhookEnabledView {
+                enabled: row.enabled,
+                configuration_generation: row.configuration_generation,
             },
-        ),
-        Ok(false) => json_error(StatusCode::NOT_FOUND, "not_found", "no such webhook"),
-        Err(err) => internal(err),
+        ))
     }
+    .await
+    .unwrap_or_else(|response| response)
 }
-
-/// POST /api/v0/webhooks/{id}/rotate — mint a fresh trigger secret; the
-/// old one stops working immediately. Plaintext returned exactly once.
 pub async fn webhooks_rotate(
     Path(id): Path<String>,
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
+    let body: WebhookRotateBody =
+        or_return!(super::read_json(req.into_body(), "the webhook secret rotation").await);
     let (secret, hash) = auth_token::mint_webhook();
-    match webhooks::rotate_secret(&state.db, &user.id, &id, &hash).await {
-        Ok(true) => json_ok(StatusCode::OK, WebhookSecret { secret }),
-        Ok(false) => json_error(StatusCode::NOT_FOUND, "not_found", "no such webhook"),
-        Err(err) => internal(err),
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let hook = webhooks::get_by_id_in(&mut tx, &id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| webhook_unavailable(lang))?;
+        webhook_access_in(&state, &mut tx, &user.id, &hook.owner, lang).await?;
+        match webhooks::rotate_secret_in(
+            &mut tx,
+            &hook.owner,
+            &id,
+            &body.expected_configuration_generation,
+            &hash,
+        )
+        .await
+        .map_err(internal)?
+        {
+            webhooks::EditOutcome::Missing => return Err(webhook_unavailable(lang)),
+            webhooks::EditOutcome::Conflict => return Err(webhook_conflict(lang)),
+            webhooks::EditOutcome::Saved(_) => {}
+        }
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(StatusCode::OK, WebhookSecret { secret }))
     }
+    .await
+    .unwrap_or_else(|response| response)
 }
-
-/// DELETE /api/v0/webhooks/{id}
 pub async fn webhooks_delete(
     Path(id): Path<String>,
     State(state): State<Arc<RamaState>>,
@@ -1483,239 +1574,186 @@ pub async fn webhooks_delete(
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
-    match webhooks::delete(&state.db, &user.id, &id).await {
-        Ok(scheduled::DeleteOutcome::Deleted) => Response::builder()
-            .status(StatusCode::NO_CONTENT)
-            .body(rama::http::Body::empty())
-            .expect("static empty response"),
-        Ok(scheduled::DeleteOutcome::Missing) => {
-            json_error(StatusCode::NOT_FOUND, "not_found", "no such webhook")
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let hook = webhooks::get_by_id_in(&mut tx, &id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| webhook_unavailable(lang))?;
+        webhook_access_in(&state, &mut tx, &user.id, &hook.owner, lang).await?;
+        match webhooks::delete_in(&mut tx, &hook.owner, &id)
+            .await
+            .map_err(internal)?
+        {
+            scheduled::DeleteOutcome::Missing => return Err(webhook_unavailable(lang)),
+            scheduled::DeleteOutcome::Pending => {
+                return Err(json_error(
+                    StatusCode::CONFLICT,
+                    "run_pending",
+                    &t(lang, "dot-background-error-pending-delete"),
+                ));
+            }
+            scheduled::DeleteOutcome::Deleted => {}
         }
-        Ok(scheduled::DeleteOutcome::Pending) => json_error(
-            StatusCode::CONFLICT,
-            "run_pending",
-            &t(lang, "dot-background-error-pending-delete"),
-        ),
-        Err(err) => internal(err),
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(super::no_content())
+    }
+    .await
+    .unwrap_or_else(|response| response)
+}
+fn webhook_run_json(run: &webhooks::WebhookRun) -> WebhookRunView {
+    WebhookRunView {
+        id: run.id.clone(),
+        agent_version: run.agent_version,
+        configuration_generation: run.configuration_generation.clone(),
+        status: run.status.clone(),
+        error: run.error.clone(),
+        fired_at: run.fired_at.to_string(),
+        source: run.source.clone(),
+        session_id: run.session_id.clone(),
+        assistant_turn_id: run.assistant_turn_id.clone(),
+        chat_deleted: run.chat_deleted,
+        prompt: run.prompt.clone(),
+        payload: run.payload.clone(),
     }
 }
-
-/// GET /api/v0/webhooks/{id}/runs — the run history.
-///
-/// Resolve the webhook through the caller first: `list_runs` is keyed only by
-/// webhook id, so querying it straight from the path would hand any signed-in
-/// user another account's run history — prompts and replayed payloads
-/// included — for any id they can name. `webhooks::get` is owner-scoped, and
-/// an id that is not the caller's reads as missing.
 pub async fn webhooks_runs(
     Path(id): Path<String>,
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    let hook = match webhooks::get(&state.db, &user.id, &id).await {
-        Ok(Some(h)) => h,
-        Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such webhook"),
-        Err(err) => return internal(err),
-    };
-    match webhooks::list_runs(&state.db, &hook.id, 50).await {
-        Ok(runs) => json_ok(
-            StatusCode::OK,
-            WebhookRuns {
-                runs: runs.iter().map(run_json).collect(),
-            },
-        ),
-        Err(err) => internal(err),
+    let lang = Lang::from_request(req.headers());
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let hook = webhooks::get_by_id_in(&mut tx, &id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| webhook_unavailable(lang))?;
+        webhook_access_in(&state, &mut tx, &user.id, &hook.owner, lang).await?;
+        let runs = webhooks::list_runs_in(&mut tx, &id, 50)
+            .await
+            .map_err(internal)?
+            .iter()
+            .map(webhook_run_json)
+            .collect();
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(StatusCode::OK, WebhookRuns { runs }))
     }
+    .await
+    .unwrap_or_else(|response| response)
 }
-
-fn run_json(r: &webhooks::WebhookRun) -> WebhookRunView {
-    WebhookRunView {
-        id: r.id.clone(),
-        status: r.status.clone(),
-        error: r.error.clone(),
-        fired_at: r.fired_at.to_string(),
-        source: r.source.clone(),
-        session_id: r.session_id.clone(),
-        assistant_turn_id: r.assistant_turn_id.clone(),
-        chat_deleted: r.chat_deleted,
-        prompt: r.prompt.clone(),
-        payload: r.payload.clone(),
-    }
-}
-
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 pub struct RerunBody {
-    /// The prompt to run the payload through — the point of a rerun is
-    /// usually to try a *different* one against the same input.
     pub prompt: String,
-    /// Which past run's payload to replay; the webhook's last one by default.
     #[serde(default)]
     pub run: Option<String>,
+    pub expected_configuration_generation: String,
 }
 
-/// POST /api/v0/webhooks/{id}/rerun — replay a stored payload through a
-/// prompt of the caller's choosing.
-///
-/// Returns the completed conversation or an accepted conversation waiting
-/// for approval. Background output uses the shared chat worker registry.
 pub async fn webhooks_rerun(
     Path(id): Path<String>,
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
-    use aiplane_core::server::db::usage::UsageSource;
-    use aiplane_runtime::server::headless::{self, DriveParams, OpenParams};
-
     let (_session, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
-    let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return bad_request(msg),
+    let body: RerunBody = or_return!(super::read_json(req.into_body(), "the webhook replay").await);
+    if body.prompt.trim().is_empty() || body.prompt.trim().len() > 8000 {
+        return invalid_schedule(lang);
     };
-    let parsed: RerunBody = match serde_json::from_slice(&bytes) {
-        Ok(p) => p,
-        Err(err) => return bad_request(format!("parsing the rerun body: {err}")),
-    };
-    let prompt = parsed.prompt.trim();
-    if prompt.is_empty() || prompt.len() > 8000 {
-        return bad_request("the prompt must be 1..=8000 characters");
-    }
-    let hook = match webhooks::get(&state.db, &user.id, &id).await {
-        Ok(Some(h)) => h,
-        Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such webhook"),
-        Err(err) => return internal(err),
-    };
-    // A named run replays that run's payload; otherwise the latest one.
-    let payload = match &parsed.run {
-        Some(run_id) => match webhooks::get_run(&state.db, &hook.id, run_id).await {
-            Ok(Some(run)) => Some(run.payload),
-            Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such run"),
-            Err(err) => return internal(err),
-        },
-        None => hook.last_payload.clone(),
-    };
-    let Some(payload) = payload else {
-        return json_error(
-            StatusCode::CONFLICT,
-            "no_payload",
-            "this webhook has no stored payload to replay; it needs to be called once first",
-        );
-    };
-
-    // Same framing as a live fire — the replayed payload stays an untrusted
-    // block — with the caller's prompt in front of it.
-    let input = super::webhooks::build_input(prompt, "(replayed webhook payload)", "", &payload);
-    let roles = if hook.tools_enabled {
-        user.roles.clone()
-    } else {
-        Vec::new()
-    };
-    // A rerun is an ad-hoc experiment, so it always opens a fresh chat.
-    let (session_id, assistant_turn_id) = match headless::open_session(
-        &state.db,
-        OpenParams {
-            owner: headless::Owner::User(&hook.user_id),
-            title: &hook.name,
-            prompt: &input,
-            model: &hook.model,
-            existing_session: None,
-            dot_id: hook.dot_id.as_deref(),
-        },
-    )
-    .await
-    {
-        Ok(ids) => ids,
-        Err(headless::OpenError::Busy) => {
-            return json_error(
-                StatusCode::CONFLICT,
-                "busy",
-                &t(lang, "dot-background-error-busy"),
-            );
+    let prepared = async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let hook = webhooks::get_by_id_in(&mut tx, &id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| webhook_unavailable(lang))?;
+        webhook_access_in(&state, &mut tx, &user.id, &hook.owner, lang).await?;
+        if hook.configuration_generation != body.expected_configuration_generation {
+            return Err(webhook_conflict(lang));
+        };
+        let payload = match body.run.as_deref() {
+            Some(run) => Some(
+                webhooks::get_run_in(&mut tx, &id, run)
+                    .await
+                    .map_err(internal)?
+                    .ok_or_else(|| webhook_unavailable(lang))?
+                    .payload,
+            ),
+            None => hook.last_payload.clone(),
         }
-        Err(headless::OpenError::Unavailable) => {
-            return json_error(
+        .ok_or_else(|| {
+            json_error(
                 StatusCode::CONFLICT,
-                "unavailable",
-                &t(lang, "dot-background-error-unavailable"),
-            );
-        }
-        Err(err) => return internal(err),
-    };
-    let run_id = match webhooks::record_run_start(
-        &state.db,
-        webhooks::NewWebhookRun {
-            webhook_id: &hook.id,
-            session_id: &session_id,
-            prompt,
-            payload: &payload,
-            source: "rerun",
-            assistant_turn_id: &assistant_turn_id,
-            tools_enabled: hook.tools_enabled,
-            history_limit: None,
-        },
-    )
-    .await
-    {
-        Ok(id) => Some(id),
-        Err(err) => {
-            tracing::warn!(webhook = %hook.id, error = %err, "recording webhook rerun");
-            let _ = session_core::db::finalize_turn(
-                &state.db,
-                &assistant_turn_id,
-                session_core::db::TurnStatus::Errored,
-                Some(&t(lang, "dot-background-error-recording")),
+                "no_payload",
+                &t(lang, "webhooks-rerun-no-payload"),
             )
-            .await;
-            return internal(err);
-        }
+        })?;
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>((hook, payload))
+    }
+    .await;
+    let (hook, payload) = match prepared {
+        Ok(value) => value,
+        Err(response) => return response,
     };
-    headless::drive(
+    let input = super::webhooks::build_input(
+        body.prompt.trim(),
+        "(replayed webhook payload)",
+        "",
+        &payload,
+    );
+    let opened = super::webhooks::admit_and_open(
         &state,
-        DriveParams {
-            actor: aiplane_runtime::agent_run::Actor::person(hook.user_id.clone(), roles),
-            session_id: session_id.clone(),
-            assistant_turn_id: assistant_turn_id.clone(),
-            model: hook.model.clone(),
-            source: UsageSource::Webhook,
-            history_limit: None,
-        },
+        &hook,
+        webhooks::AdmissionKind::Replay,
+        body.prompt.trim(),
+        &payload,
+        &input,
+        Some(&user.id),
     )
     .await;
-    let (status, error, _out) =
-        super::webhooks::outcome(&state.db, &session_id, &assistant_turn_id).await;
-    super::webhooks::finalize_run(
-        &state,
-        &hook.id,
-        &hook.user_id,
-        run_id.as_deref(),
-        status,
-        &session_id,
-        error.as_deref(),
-    )
-    .await;
-    // A run that did not finish is a failed upstream, as on a live fire; the
-    // chat it opened is named so the caller can look at what happened.
+    let (session, turn, drive) = match opened {
+        Ok(value) => value,
+        Err(error) => return super::webhooks::admission_error(error, lang, false),
+    };
+    aiplane_runtime::server::headless::drive(&state, drive).await;
+    let (status, error, _) = super::webhooks::outcome(&state.db, &session, &turn).await;
+    if matches!(&hook.owner, AutomationOwner::Principal(_)) {
+        let delivery = async {
+            let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+            webhook_access_in(&state, &mut tx, &user.id, &hook.owner, lang).await?;
+            tx.commit().await.map_err(internal)
+        }
+        .await;
+        if let Err(response) = delivery {
+            return response;
+        }
+    }
     if status == "waiting" {
         return json_ok(
             StatusCode::ACCEPTED,
             RerunAccepted {
-                session_id,
+                session_id: session,
                 status: "waiting".into(),
             },
         );
-    }
+    };
     if status != "ok" {
         return super::json_error_with(
             StatusCode::BAD_GATEWAY,
             "run_failed",
             error.as_deref().unwrap_or("the run failed"),
             serde_json::Map::from_iter([
-                ("session_id".to_string(), serde_json::json!(session_id)),
-                ("status".to_string(), serde_json::json!(status)),
+                ("session_id".into(), serde_json::json!(session)),
+                ("status".into(), serde_json::json!(status)),
             ]),
         );
-    }
-    json_ok(StatusCode::OK, RerunOutcome { session_id })
+    };
+    json_ok(
+        StatusCode::OK,
+        RerunOutcome {
+            session_id: session,
+        },
+    )
 }

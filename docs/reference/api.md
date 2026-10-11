@@ -230,8 +230,9 @@ Published private approvals, human answers and secure input appear in the
 existing Inbox only for current member writers. Draft pauses remain inline.
 Read, Respond and administrator recovery without membership expose no private
 items. Organization announcements do not send push or external channel messages.
-Publication does not admit public, visitor, embedded, delegated, automated or
-test-suite execution.
+Publication alone does not admit public, visitor, embedded, delegated or
+test-suite execution. Scheduled actions and webhooks require their own retained
+published pin and exact recorded private-run admission.
 
 Organization share suggestions use the existing eight-result cap and check
 current membership before including users. A search examines at most one
@@ -309,9 +310,9 @@ Creation uses the existing `POST /api/v0/scheduled` route. For an organization
 Dot, send `principal_id`, a positive `agent_version`, `name`, `prompt`, `cron`,
 `timezone`, `tools_enabled`, `reuse_conversation: false` and `reuse_rounds`.
 Omit `model`, `dot_id` and `linked_session_id`. The model comes from the pinned
-published spec and the operator's agent model configuration, under the Dot
-principal's current grants. Each fire opens a fresh private principal-owned
-conversation. Organization webhooks and conversation reuse are unavailable.
+published spec, or the existing gateway Chat default when the spec omits it,
+under the Dot principal's current grants. Each fire opens a fresh private principal-owned
+conversation. Organization conversation reuse is unavailable.
 
 The returned action includes `principal_id`, `agent_version` and
 `configuration_generation`; its `model` and `dot_id` are null. Ownership is
@@ -353,6 +354,52 @@ Deleting a schedule with a running, waiting or starting run returns 409.
 Stop or settle it before retrying. Deleting a Dot with retained principal-owned
 schedules also returns 409: delete those schedules first, even if their runs
 have finished. Schedule deletion removes its recorded run history.
+
+### Organization webhooks
+
+`GET /api/v0/webhooks?principal_id={dot_id}` selects an organization Dot's
+webhook inventory. Without this query, it returns the authenticated user's
+webhooks. The scoped response contains `principal_id`, `can_write`, `webhooks`,
+the actual target in `dots` and its retained published `versions`.
+
+`POST /api/v0/webhooks` accepts `principal_id`, positive `agent_version`, `name`,
+`prompt` and `tools_enabled`. Organization sources require asynchronous mode
+and fresh conversations: omit `model`, `dot_id` and `linked_session_id`, and
+keep `synchronous` and `reuse_conversation` false. The response contains
+`{webhook,secret}`; only this creation and rotation disclose the minted secret.
+The stored webhook includes `principal_id`, `agent_version` and its nonempty
+`configuration_generation`. Its model and personal Dot binding are null.
+Ownership is immutable; creator deletion does not delete the principal's source.
+
+Current member Write guards inventory, configuration, secret rotation, deletion,
+history and replay. `PUT /api/v0/webhooks/{id}` requires the configuration plus
+`expected_configuration_generation`. Toggle requires
+`{enabled,expected_configuration_generation}`; rotation requires
+`{expected_configuration_generation}`. Replay requires
+`{prompt,expected_configuration_generation,run?}`. These generation requirements
+also apply to user-owned webhooks. Missing or incorrectly typed required fields
+return 400; stale generations return 409. Effective execution changes rotate the
+generation; names, unchanged saves, pausing and secret rotation preserve it.
+
+`GET /api/v0/webhooks/{id}/runs` returns `{runs}` scoped by the stored owner.
+Each new run includes its exact assistant turn, source generation and authored
+version; legacy user snapshots remain null. Organization history opens the same
+private agent Test chat as scheduled runs. Principal grants, selected own
+credentials, approvals and usage limits govern execution.
+
+Public `GET` or `POST /hooks/{secret}` returns `202 {session_id}` for organization
+sources, without output, private errors or waiting decisions. The existing
+256 KiB input-prefix limit truncates larger bodies. Unknown, rotated and paused
+secrets return the same 404. Final admission rechecks the original secret,
+enabled state and generation after reading the body.
+
+An explicit member-writer replay may run while the source is paused. It uses
+actual stored input and the submitted prompt in a new private conversation,
+under the current source's retained publication. Membership and Write are checked
+again before returning its private result. Rotation and pause preserve admitted
+decisions; execution edits invalidate further dispatch from older generations.
+Exact Stop uses the private cancellation endpoint described above. Pending or
+starting runs prevent source deletion; retained sources prevent Dot deletion.
 
 ## Public entry points and credentials
 

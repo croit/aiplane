@@ -33,7 +33,7 @@ by tests that read the workspace's own source, in
 | `organization_dot_calls_revalidate_private_authority_before_execution` | only the run source wraps organization tools; it retains the exact private turn, initial grant ceiling, current principal and selected-account checks before inner dispatch | `RunToolSource`, `OrganizationTool`, `validate_organization_turn_in`, `validate_organization_identity_in` |
 | `organization_memory_uses_shared_private_authority_for_tools_and_model_context` | scoped memory tools and the agent system message share current exact private-turn, initial/current grant and selected-tool admission | `organization_scope_in`, `organization_standing_context`, `validate_organization_turn_in`, `WriteTx` |
 | `organization_published_admission_uses_the_existing_private_opener_and_source_proof` | only the authenticated private opener directly loads organization published profiles; source proof retains actual version rows and exact captured identities | `RunProfile::load_private`, `OrganizationSpecSource`, `validate_source_in`, `agents::version_in` |
-| `organization_schedules_and_private_stop_use_shared_admission` | organization schedule loading stays in the existing worker; private Stop uses the same original run/session proof before mutation | `RunProfile::load_scheduled`, `headless::open_principal_session_in`, `background::validate_turn_in`, `WriteTx` |
+| `organization_schedules_and_private_stop_use_shared_admission` | scheduled loading stays in the existing worker; webhook firing and replay share exact-run admission; private Stop validates original run/session proof before mutation | `RunProfile::load_scheduled`, `RunProfile::load_webhook_in`, `headless::open_principal_session_in`, `background::validate_turn_in`, `WriteTx` |
 | `action_rules_classify_and_validate_before_using_shared_approvals` | permission and approval gates validate classified actions before resolving or accepting approval | `Tool::classify_actions`, `validate_actions`, `Permissions`, `AskFirst` |
 | `agent_resume_claims_use_one_request_aware_transaction` | a paused agent chain uses one transaction and request-aware connection claims, avoiding independently committed levels | `WriteTx`, `claim_for_resume_in`, `claim_suspension_in` |
 
@@ -187,7 +187,24 @@ Tool-phase tests cover the actual published `forward_request`, registry/grant
 and discovery ceilings, seven forwarding wrappers, synthetic/terminal phases
 and finite sequential execution through the real runner.
 
-## Personal Dot background coverage
+## Dot background coverage
+
+Organization background coverage uses the same mechanisms with principal-owned
+private conversations. Migration tests preserve every existing webhook source
+and history field with foreign keys enabled. Router tests cover actual published
+pins, immutable ownership, current member Write, strict configuration generations,
+malformed mutations without storage changes, paused replay and secret rotation
+during body reading. Replay also tests membership revocation during the model
+request before private result delivery. Runtime tests exercise uncommitted
+webhook admission with every other pool connection held, plus current source,
+principal, grant and publication checks on continuation. Chrome verifies both
+automation forms, private history, exact Stop, scope navigation and discarded
+revealed secrets through the real gateway.
+
+The file-backed activity test runs six actual agent conversations concurrently
+and checks terminal status and complete audit chains after awaiting their workers.
+Terminal persistence acquires SQLite's write lock through `BEGIN IMMEDIATE`;
+the test does not poll until a failed finalization appears successful.
 
 The background slice uses real registries, in-memory SQLite and mocked model
 upstreams. `crates/aiplane/tests/it/dots_background.rs` covers owner-bound

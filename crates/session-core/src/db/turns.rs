@@ -498,7 +498,7 @@ pub async fn finalize_turn(
     status: TurnStatus,
     error_message: Option<&str>,
 ) -> Result<(), DbError> {
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     finalize_turn_in(&mut tx, turn_id, status, error_message).await?;
     tx.commit().await?;
     Ok(())

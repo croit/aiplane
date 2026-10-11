@@ -2205,7 +2205,7 @@ export const en: Catalog = {
  "scheduled-err-enter-cron": "Enter a cron expression.",
  "scheduled-err-pick-weekday": "Pick at least one weekday.",
  "scheduled-error-configuration-conflict": "This scheduled action changed. Reload its current settings before saving again.",
- "scheduled-error-identity-retained": "This Dot still owns scheduled actions. Stop pending runs and delete those actions before deleting the Dot.",
+ "scheduled-error-identity-retained": "This Dot still owns scheduled actions or webhooks. Stop pending runs and delete those sources before deleting the Dot.",
  "scheduled-error-invalid-configuration": "Check the selected published version, model, conversation mode and tool settings, then save again.",
  "scheduled-gdpr-warning": "This model is not GDPR-compliant. Scheduled runs will send your prompt to it automatically — avoid personal data.",
  "scheduled-heading": "Scheduled actions",
@@ -3006,6 +3006,9 @@ export const en: Catalog = {
   "one": "{count} run",
   "other": "{count} runs"
  },
+ "webhooks-organization-fresh": "Each event starts a fresh private conversation using the selected published version, its model and its tool access.",
+ "webhooks-organization-tools-toggle-label": "Allow the Dot’s tools",
+ "webhooks-organization-tools-warning": "Anyone with the trigger URL can send content that the Dot processes using the selected published version and its own permissions. Only enable tools for a trusted caller.",
  "webhooks-pause-title": "Pause",
  "webhooks-prompt-label": "Prompt",
  "webhooks-prompt-placeholder": "What should the model do with the incoming payload?",

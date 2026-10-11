@@ -81,7 +81,7 @@ impl Tool for LivePersonalDotTool {
                 }
                 if crate::server::background::for_turn(
                     &self.state.db,
-                    &crate::server::scheduled::ScheduleOwner::User(execution.identity().owner_user_id.clone()),
+                    &crate::server::background::AutomationOwner::User(execution.identity().owner_user_id.clone()),
                     &root_turn,
                 )
                 .await
@@ -102,7 +102,7 @@ impl Tool for LivePersonalDotTool {
             if let Some(turn_id) = ctx.assistant_turn_id.as_deref()
                 && crate::server::background::for_turn(
                     &self.state.db,
-                    &crate::server::scheduled::ScheduleOwner::User(identity.owner_user_id.clone()),
+                    &crate::server::background::AutomationOwner::User(identity.owner_user_id.clone()),
                     turn_id,
                 )
                 .await

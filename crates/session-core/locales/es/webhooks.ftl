@@ -98,3 +98,7 @@ webhooks-open-runs = { $count ->
    *[other] { $count } ejecuciones
 }
 webhooks-reveal-done = Listo — volver a los webhooks
+
+webhooks-organization-fresh = Cada evento inicia una conversación privada nueva con la versión publicada seleccionada, su modelo y sus permisos de herramientas.
+webhooks-organization-tools-toggle-label = Permitir las herramientas del Dot
+webhooks-organization-tools-warning = Cualquier persona con la URL de activación puede enviar contenido que el Dot procesa con la versión publicada seleccionada y sus propios permisos. Activa las herramientas solo para un emisor de confianza.

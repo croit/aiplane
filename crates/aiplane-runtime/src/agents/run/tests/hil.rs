@@ -540,7 +540,7 @@ async fn a_persons_paused_run_is_their_own_inbox_item() {
     let action = crate::server::scheduled::create(
         world.db(),
         crate::server::scheduled::NewAction {
-            owner: crate::server::scheduled::ScheduleOwner::User("u1".into()),
+            owner: crate::server::background::AutomationOwner::User("u1".into()),
             created_by: "u1".into(),
             agent_version: None,
             dot_id: None,

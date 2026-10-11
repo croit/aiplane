@@ -2205,7 +2205,7 @@ export const fr: Catalog = {
  "scheduled-err-enter-cron": "Saisissez une expression cron.",
  "scheduled-err-pick-weekday": "Choisissez au moins un jour de la semaine.",
  "scheduled-error-configuration-conflict": "Cette action planifiée a changé. Rechargez ses paramètres actuels avant de l’enregistrer à nouveau.",
- "scheduled-error-identity-retained": "Ce Dot possède encore des actions planifiées. Arrêtez les exécutions en attente et supprimez ces actions avant de supprimer le Dot.",
+ "scheduled-error-identity-retained": "Ce Dot possède encore des actions planifiées ou des webhooks. Arrêtez les exécutions en attente et supprimez ces sources avant de supprimer le Dot.",
  "scheduled-error-invalid-configuration": "Vérifiez la version publiée sélectionnée, le modèle, le mode de conversation et les paramètres des outils, puis enregistrez à nouveau.",
  "scheduled-gdpr-warning": "Ce modèle n'est pas conforme au RGPD. Les exécutions planifiées lui enverront automatiquement votre prompt — évitez les données personnelles.",
  "scheduled-heading": "Actions planifiées",
@@ -3006,6 +3006,9 @@ export const fr: Catalog = {
   "one": "{count} exécution",
   "other": "{count} exécutions"
  },
+ "webhooks-organization-fresh": "Chaque événement démarre une nouvelle conversation privée avec la version publiée sélectionnée, son modèle et ses autorisations d’outils.",
+ "webhooks-organization-tools-toggle-label": "Autoriser les outils du Dot",
+ "webhooks-organization-tools-warning": "Toute personne disposant de l’URL de déclenchement peut envoyer du contenu que le Dot traite avec la version publiée sélectionnée et ses propres autorisations. Activez les outils uniquement pour un appelant de confiance.",
  "webhooks-pause-title": "Mettre en pause",
  "webhooks-prompt-label": "Prompt",
  "webhooks-prompt-placeholder": "Que doit faire le modèle avec les données reçues ?",

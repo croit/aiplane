@@ -108,6 +108,14 @@ test("An organization schedule fires its pinned published version as a principal
         assert.equal((await member.request.post(`${BASE}/api/v0/scheduled/${schedule.id}/toggle`, { data: { enabled: false, expected_configuration_generation: schedule.configuration_generation } })).status(), 200);
         assert.equal((await member.request.get(`${BASE}/api/v0/chat/sessions/${run.session_id}`)).status(), 404);
         await page.goto(`${BASE}/scheduled?principal_id=${encodeURIComponent(dotId)}`, { waitUntil: "networkidle" });
+        await page.getByRole("heading", { name: "Check support", exact: true }).waitFor();
+        await page.locator('aside a[href="/scheduled"]').click();
+        await page.waitForURL((url) => url.pathname === "/scheduled" && !url.searchParams.has("principal_id"));
+        await page.getByRole("heading", { name: "Check support", exact: true }).waitFor({ state: "detached" });
+        assert.equal(await page.getByText("Harald Scheduled", { exact: true }).count(), 0);
+        await page.goBack({ waitUntil: "networkidle" });
+        await page.waitForURL((url) => url.searchParams.get("principal_id") === dotId);
+        await page.getByRole("heading", { name: "Check support", exact: true }).waitFor();
         await page.getByRole("link", { name: "Open chat", exact: true }).click();
         await page.waitForURL((url) => url.pathname === `/agents/${dotId}` && url.searchParams.get("test_session") === run.session_id);
         const chat = page.locator("[data-test-chat]");

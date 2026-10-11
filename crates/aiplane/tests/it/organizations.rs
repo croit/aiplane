@@ -2144,12 +2144,13 @@ async fn organization_schedule_rejects_employee_model_reuse_and_stale_edit() {
 
 #[tokio::test]
 async fn organization_retained_schedule_refuses_dot_deletion_until_source_deleted() {
-    use aiplane_runtime::server::scheduled::{self, NewAction, ScheduleOwner};
+    use aiplane_runtime::server::background::AutomationOwner;
+    use aiplane_runtime::server::scheduled::{self, NewAction};
     let (fx, _upstream, _org, dot) = private_published_organization().await;
     let action = scheduled::create(
         &fx.state.db,
         NewAction {
-            owner: ScheduleOwner::Principal(dot.clone()),
+            owner: AutomationOwner::Principal(dot.clone()),
             created_by: "alice".into(),
             dot_id: None,
             name: "Retained schedule".into(),
@@ -2270,7 +2271,8 @@ async fn organization_private_cancel_is_current_writer_structural_even_after_dea
 
 #[tokio::test]
 async fn organization_scheduled_pause_stop_cleans_stale_generation_and_unlocks_deletion() {
-    use aiplane_runtime::server::scheduled::{self, NewAction, ScheduleOwner};
+    use aiplane_runtime::server::background::AutomationOwner;
+    use aiplane_runtime::server::scheduled::{self, NewAction};
     use wiremock::{
         Mock, ResponseTemplate,
         matchers::{method, path},
@@ -2293,7 +2295,7 @@ async fn organization_scheduled_pause_stop_cleans_stale_generation_and_unlocks_d
     let action = scheduled::create(
         &fx.state.db,
         NewAction {
-            owner: ScheduleOwner::Principal(dot.clone()),
+            owner: AutomationOwner::Principal(dot.clone()),
             created_by: "alice".into(),
             dot_id: None,
             name: "Pending schedule".into(),
@@ -2421,4 +2423,449 @@ async fn organization_scheduled_pause_stop_cleans_stale_generation_and_unlocks_d
         .0,
         StatusCode::NO_CONTENT
     );
+}
+
+fn organization_webhook_body(dot: &str) -> Value {
+    json!({"principal_id":dot,"agent_version":1,"name":"Incident event",
+        "prompt":"Review the incoming incident","tools_enabled":false,
+        "synchronous":false,"reuse_conversation":false,"reuse_rounds":5})
+}
+
+#[tokio::test]
+async fn organization_webhook_creation_and_inventory_use_actual_principal_publication() {
+    let (fx, _upstream, _organization, dot) = private_published_organization().await;
+    aiplane_core::server::db::gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
+        .await
+        .unwrap();
+    let (status, created) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/webhooks",
+            organization_webhook_body(&dot),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let hook = &created["webhook"];
+    assert_eq!(hook["principal_id"], dot);
+    assert_eq!(hook["agent_version"], 1);
+    assert!(hook["model"].is_null());
+    assert_eq!(hook["synchronous"], false);
+    assert_eq!(hook["reuse_conversation"], false);
+    assert!(
+        hook["configuration_generation"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert!(
+        created["secret"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("gwh_"))
+    );
+    let endpoint = format!("/api/v0/webhooks?principal_id={dot}");
+    let (status, inventory) = fx.get(&fx.alice, &endpoint).await;
+    assert_eq!(status, StatusCode::OK, "{inventory}");
+    assert_eq!(inventory["principal_id"], dot);
+    assert_eq!(inventory["can_write"], true);
+    assert_eq!(inventory["dots"][0]["id"], dot);
+    assert_eq!(inventory["models"], json!([]));
+    assert_eq!(inventory["versions"][0]["version"], 1);
+    assert_eq!(inventory["webhooks"][0]["id"], hook["id"]);
+    for cookie in [&fx.bob, &fx.root] {
+        let (status, denied) = fx.get(cookie, &endpoint).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{denied}");
+        assert!(denied.get("webhooks").is_none());
+    }
+}
+
+#[tokio::test]
+async fn organization_webhook_management_preserves_generation_and_current_member_write() {
+    let (fx, _upstream, org, dot) = private_published_organization().await;
+    let (status, created) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/webhooks",
+            organization_webhook_body(&dot),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let hook = created["webhook"]["id"].as_str().unwrap();
+    let generation = created["webhook"]["configuration_generation"]
+        .as_str()
+        .unwrap();
+    let endpoint = format!("/api/v0/webhooks/{hook}");
+    for cookie in [&fx.bob, &fx.root] {
+        assert_eq!(
+            fx.get(cookie, &format!("{endpoint}/runs")).await.0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            fx.post(
+                cookie,
+                &format!("{endpoint}/rotate"),
+                json!({"expected_configuration_generation":generation})
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            fx.send(Some(cookie), Method::DELETE, &endpoint, None)
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+    }
+    let mut body = organization_webhook_body(&dot);
+    body["expected_configuration_generation"] = json!("stale");
+    assert_eq!(
+        fx.send(Some(&fx.alice), Method::PUT, &endpoint, Some(body.clone()))
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    body["expected_configuration_generation"] = json!(generation);
+    body["name"] = json!("Actual renamed event");
+    let (status, renamed) = fx
+        .send(Some(&fx.alice), Method::PUT, &endpoint, Some(body.clone()))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["configuration_generation"], generation);
+    body["prompt"] = json!("Changed execution instructions");
+    let (status, changed) = fx
+        .send(Some(&fx.alice), Method::PUT, &endpoint, Some(body))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{changed}");
+    let next = changed["configuration_generation"].as_str().unwrap();
+    assert_ne!(next, generation);
+    assert_eq!(
+        fx.post(
+            &fx.alice,
+            &format!("{endpoint}/toggle"),
+            json!({"enabled":false,"expected_configuration_generation":generation})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let (status, paused) = fx
+        .post(
+            &fx.alice,
+            &format!("{endpoint}/toggle"),
+            json!({"enabled":false,"expected_configuration_generation":next}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{paused}");
+    assert_eq!(paused["configuration_generation"], next);
+    let (status, rotated) = fx
+        .post(
+            &fx.alice,
+            &format!("{endpoint}/rotate"),
+            json!({"expected_configuration_generation":next}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    assert!(
+        rotated["secret"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("gwh_"))
+    );
+    assert_eq!(
+        fx.send(
+            Some(&fx.alice),
+            Method::DELETE,
+            &format!("/api/v0/agents/{dot}"),
+            None
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    sqlx::query("DELETE FROM organization_groups WHERE organization_id=?")
+        .bind(id(&org))
+        .execute(&fx.state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.get(&fx.alice, &format!("{endpoint}/runs")).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fx.send(Some(&fx.alice), Method::DELETE, &endpoint, None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn organization_webhook_public_fire_and_paused_replay_use_private_pinned_history() {
+    use aiplane_runtime::server::{background::AutomationOwner, webhooks};
+    let (fx, _upstream, _org, dot) = private_published_organization().await;
+    let (status, created) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/webhooks",
+            organization_webhook_body(&dot),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let hook = created["webhook"]["id"].as_str().unwrap();
+    let generation = created["webhook"]["configuration_generation"]
+        .as_str()
+        .unwrap();
+    let endpoint = format!("/api/v0/webhooks/{hook}");
+    let public = format!("/hooks/{}", created["secret"].as_str().unwrap());
+    let (status, accepted) = fx
+        .send(
+            None,
+            Method::POST,
+            &public,
+            Some(json!({"incident":"Actual input"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    assert_eq!(accepted.as_object().unwrap().len(), 1);
+    let session = accepted["session_id"].as_str().unwrap();
+    let mut completed = false;
+    for _ in 0..200 {
+        if webhooks::list_runs(&fx.state.db, hook, 1)
+            .await
+            .unwrap()
+            .first()
+            .is_some_and(|run| run.status.as_deref() == Some("ok"))
+        {
+            completed = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(completed, "finite webhook completion");
+    let run = &webhooks::list_runs(&fx.state.db, hook, 1).await.unwrap()[0];
+    assert_eq!(run.agent_version, Some(1));
+    assert_eq!(run.configuration_generation.as_deref(), Some(generation));
+    let binding =
+        aiplane_agents::db::run_sessions::get_principal_session(&fx.state.db, &dot, session)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(binding.agent_version, Some(1));
+    let (status, history) = fx.get(&fx.alice, &format!("{endpoint}/runs")).await;
+    assert_eq!(status, StatusCode::OK, "{history}");
+    assert_eq!(history["runs"][0]["session_id"], session);
+    assert!(history.get("secret").is_none());
+    assert_eq!(
+        fx.get(
+            &fx.bob,
+            &format!("/api/v0/agents/{dot}/test/{session}/events")
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, paused) = fx
+        .post(
+            &fx.alice,
+            &format!("{endpoint}/toggle"),
+            json!({"enabled":false,"expected_configuration_generation":generation}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{paused}");
+    assert_eq!(
+        fx.send(None, Method::POST, &public, Some(json!({})))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fx.post(
+            &fx.alice,
+            &format!("{endpoint}/rerun"),
+            json!({"prompt":"Replay actual input","expected_configuration_generation":"stale"})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(fx.post(&fx.alice, &format!("{endpoint}/rerun"), json!({"prompt":"Replay actual input","run":"foreign-run","expected_configuration_generation":generation})).await.0, StatusCode::NOT_FOUND);
+    let (status, replay) = fx.post(&fx.alice, &format!("{endpoint}/rerun"), json!({"prompt":"Replay actual input","run":run.id,"expected_configuration_generation":generation})).await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_ne!(replay["session_id"], session);
+    assert_eq!(
+        webhooks::list_runs(&fx.state.db, hook, 5)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        !webhooks::get(&fx.state.db, &AutomationOwner::Principal(dot), hook)
+            .await
+            .unwrap()
+            .unwrap()
+            .enabled
+    );
+}
+
+#[tokio::test]
+async fn organization_webhook_replay_rechecks_membership_before_private_result_delivery() {
+    use std::{sync::Arc, time::Duration};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let (fx, upstream, org, dot) = private_published_organization().await;
+    let (status, created) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/webhooks",
+            organization_webhook_body(&dot),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let hook = created["webhook"]["id"].as_str().unwrap().to_owned();
+    let generation = created["webhook"]["configuration_generation"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&fx.state.db)
+        .await
+        .unwrap();
+    aiplane_runtime::server::webhooks::admit_run_in(
+        &mut tx,
+        &aiplane_runtime::server::webhooks::WebhookAdmission {
+            webhook_id: &hook,
+            expected_configuration_generation: &generation,
+            kind: aiplane_runtime::server::webhooks::AdmissionKind::Replay,
+            prompt: "Actual earlier input",
+            payload: "Actual private payload",
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    tx.commit().await.unwrap();
+    let reached = Arc::new(tokio::sync::Notify::new());
+    let driving = reached.clone();
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(move |_: &wiremock::Request| {
+            driving.notify_one();
+            ResponseTemplate::new(500)
+                .set_delay(Duration::from_millis(300))
+                .set_body_json(json!({"error":{"message":"Actual private fixture error"}}))
+        })
+        .with_priority(1)
+        .mount(&upstream)
+        .await;
+    let endpoint = format!("/api/v0/webhooks/{hook}/rerun");
+    let replay = fx.post(&fx.alice, &endpoint,
+        json!({"prompt":"Replay actual stored input","expected_configuration_generation":generation}));
+    let withdraw = async {
+        tokio::time::timeout(Duration::from_secs(3), reached.notified())
+            .await
+            .unwrap();
+        let runs = aiplane_runtime::server::webhooks::list_runs(&fx.state.db, &hook, 2)
+            .await
+            .unwrap();
+        assert_eq!(runs.len(), 2);
+        assert!(runs[0].assistant_turn_id.is_some());
+        sqlx::query("DELETE FROM organization_groups WHERE organization_id=?")
+            .bind(id(&org))
+            .execute(&fx.state.db)
+            .await
+            .unwrap();
+    };
+    let ((status, refused), ()) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(replay, withdraw)
+    })
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    assert!(refused.get("session_id").is_none());
+    assert!(refused.get("status").is_none());
+    assert!(!refused.to_string().contains("Actual private fixture error"));
+}
+
+#[tokio::test]
+async fn organization_webhook_malformed_mutations_and_invalid_configuration_leave_storage_unchanged()
+ {
+    use aiplane_runtime::server::{background::AutomationOwner, webhooks};
+    let (fx, _upstream, _org, dot) = private_published_organization().await;
+    for (field, value) in [
+        ("synchronous", json!(true)),
+        ("reuse_conversation", json!(true)),
+        ("model", json!("m")),
+        ("agent_version", json!(0)),
+    ] {
+        let mut body = organization_webhook_body(&dot);
+        body[field] = value;
+        let (status, refused) = fx.post(&fx.alice, "/api/v0/webhooks", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {refused}");
+    }
+    let owner = AutomationOwner::Principal(dot.clone());
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&fx.state.db)
+        .await
+        .unwrap();
+    assert!(
+        webhooks::list_for_owner_in(&mut tx, &owner)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    tx.commit().await.unwrap();
+    let (status, created) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/webhooks",
+            organization_webhook_body(&dot),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let hook = created["webhook"]["id"].as_str().unwrap();
+    let before = webhooks::get(&fx.state.db, &owner, hook)
+        .await
+        .unwrap()
+        .unwrap();
+    let before_runs = webhooks::list_runs(&fx.state.db, hook, 50).await.unwrap();
+    let endpoint = format!("/api/v0/webhooks/{hook}");
+    for (method, url, body) in [
+        (
+            Method::PUT,
+            endpoint.clone(),
+            organization_webhook_body(&dot),
+        ),
+        (
+            Method::POST,
+            format!("{endpoint}/toggle"),
+            json!({"enabled":false}),
+        ),
+        (Method::POST, format!("{endpoint}/rotate"), json!({})),
+        (
+            Method::POST,
+            format!("{endpoint}/rerun"),
+            json!({"prompt":"Rejected malformed replay"}),
+        ),
+    ] {
+        for invalid in [None, Some(json!(false)), Some(json!(17)), Some(json!(null))] {
+            let mut malformed = body.clone();
+            if let Some(value) = invalid {
+                malformed["expected_configuration_generation"] = value;
+            }
+            let (status, refused) = fx
+                .send(Some(&fx.alice), method.clone(), &url, Some(malformed))
+                .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{url}: {refused}");
+            assert_eq!(
+                webhooks::get(&fx.state.db, &owner, hook)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                before
+            );
+            assert_eq!(
+                webhooks::list_runs(&fx.state.db, hook, 50).await.unwrap(),
+                before_runs
+            );
+        }
+    }
 }

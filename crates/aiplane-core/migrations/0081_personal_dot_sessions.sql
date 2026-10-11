@@ -75,7 +75,65 @@ WHEN NEW.user_id IS NOT OLD.user_id OR NEW.principal_id IS NOT OLD.principal_id
 BEGIN
     SELECT RAISE(ABORT, 'The scheduled action owner is immutable');
 END;
-ALTER TABLE webhooks ADD COLUMN dot_id TEXT;
+CREATE TEMP TABLE dot_webhook_runs_preserved AS SELECT * FROM webhook_runs;
+CREATE TABLE webhooks_new (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    principal_id TEXT REFERENCES system_principals(id) ON DELETE RESTRICT,
+    created_by TEXT,
+    dot_id TEXT,
+    agent_version INTEGER,
+    configuration_generation TEXT NOT NULL DEFAULT (lower(hex(randomblob(16))))
+        CHECK (length(configuration_generation) > 0),
+    name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    model TEXT,
+    tools_enabled INTEGER NOT NULL DEFAULT 0,
+    synchronous INTEGER NOT NULL DEFAULT 0,
+    secret_hash TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_fired_at TEXT,
+    last_status TEXT,
+    last_session_id TEXT,
+    last_error TEXT,
+    last_payload TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    reuse_conversation INTEGER NOT NULL DEFAULT 0,
+    reuse_rounds INTEGER NOT NULL DEFAULT 5,
+    CHECK (
+        (user_id IS NOT NULL AND principal_id IS NULL AND model IS NOT NULL AND agent_version IS NULL)
+        OR
+        (user_id IS NULL AND principal_id IS NOT NULL AND model IS NULL AND dot_id IS NULL
+         AND agent_version IS NOT NULL AND agent_version > 0
+         AND reuse_conversation = 0 AND synchronous = 0)
+    )
+);
+INSERT INTO webhooks_new
+    (id, user_id, name, prompt, model, tools_enabled, synchronous, secret_hash, enabled,
+     last_fired_at, last_status, last_session_id, last_error, last_payload,
+     created_at, updated_at, reuse_conversation, reuse_rounds)
+SELECT id, user_id, name, prompt, model, tools_enabled, synchronous, secret_hash, enabled,
+       last_fired_at, last_status, last_session_id, last_error, last_payload,
+       created_at, updated_at, reuse_conversation, reuse_rounds
+FROM webhooks;
+DROP TABLE webhooks;
+ALTER TABLE webhooks_new RENAME TO webhooks;
+DELETE FROM webhook_runs;
+INSERT INTO webhook_runs
+    (id, webhook_id, fired_at, status, session_id, error, prompt, payload, source, created_at)
+SELECT id, webhook_id, fired_at, status, session_id, error, prompt, payload, source, created_at
+FROM dot_webhook_runs_preserved;
+DROP TABLE dot_webhook_runs_preserved;
+CREATE UNIQUE INDEX webhooks_secret ON webhooks(secret_hash);
+CREATE INDEX webhooks_user ON webhooks(user_id, created_at DESC);
+CREATE INDEX webhooks_principal ON webhooks(principal_id, created_at DESC);
+CREATE TRIGGER webhooks_owner_immutable
+BEFORE UPDATE OF user_id, principal_id ON webhooks
+WHEN NEW.user_id IS NOT OLD.user_id OR NEW.principal_id IS NOT OLD.principal_id
+BEGIN
+    SELECT RAISE(ABORT, 'The webhook owner is immutable');
+END;
 
 ALTER TABLE scheduled_runs ADD COLUMN assistant_turn_id TEXT;
 ALTER TABLE scheduled_runs ADD COLUMN tools_enabled INTEGER NOT NULL DEFAULT 0
@@ -94,6 +152,10 @@ ALTER TABLE webhook_runs ADD COLUMN tools_enabled INTEGER NOT NULL DEFAULT 0
     CHECK (tools_enabled IN (0, 1));
 ALTER TABLE webhook_runs ADD COLUMN history_limit INTEGER
     CHECK (history_limit IS NULL OR history_limit >= 0);
+ALTER TABLE webhook_runs ADD COLUMN configuration_generation TEXT
+    CHECK (configuration_generation IS NULL OR length(configuration_generation) > 0);
+ALTER TABLE webhook_runs ADD COLUMN agent_version INTEGER
+    CHECK (agent_version IS NULL OR (agent_version > 0 AND configuration_generation IS NOT NULL));
 CREATE UNIQUE INDEX webhook_runs_assistant_turn ON webhook_runs (assistant_turn_id)
     WHERE assistant_turn_id IS NOT NULL;
 

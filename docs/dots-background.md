@@ -2,8 +2,9 @@
 
 Scheduled actions and webhooks support an optional personal Dot binding. They
 use AIplane's existing background execution, chat, approval and user-budget
-paths. Organization-owned triggers and separate connector identities belong
-to subsequent packages.
+paths. [Organization schedules](dots-organizations.md) and
+[organization webhooks](dots-webhooks.md) use the shared principal admission path.
+[Separate connector identities](dots-identities.md) preserve their selected owner and credential generation.
 
 ## Execution context
 
@@ -357,6 +358,6 @@ completed, cancelled or errored. A genuinely suspended turn retains its
 approval. History for a deleted conversation retains its deleted-chat marker;
 continuation requires its actual session and turn.
 
-Organization-owned triggers, automatic memory
+Automatic memory
 consolidation and persistent Dot computer/workspace lifecycle are separate
 remaining packages.

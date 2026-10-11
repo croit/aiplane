@@ -32,7 +32,6 @@ use session_core::i18n::{Lang, t};
 
 use aiplane_core::server::auth::token;
 use aiplane_core::server::db::usage::UsageSource;
-use aiplane_core::server::db::users;
 use aiplane_runtime::rama_server::state::RamaState;
 use aiplane_runtime::server::headless::{self, DriveParams, OpenParams};
 use aiplane_runtime::server::webhooks::{self, Webhook};
@@ -56,190 +55,317 @@ pub async fn webhook_trigger(
     req: Request,
 ) -> Response {
     let lang = Lang::from_request(req.headers());
-    // hex + `gwh_` is already lowercase, so rama's path-lowercasing is a
-    // no-op here; the hashed lookup is exact regardless.
     let Some(hash) = token::hash_webhook_secret(&secret) else {
         return trigger_not_found();
     };
     let hook = match webhooks::find_active_by_secret_hash(&state.db, &hash).await {
-        Ok(Some(h)) => h,
+        Ok(Some(hook)) => hook,
         Ok(None) => return trigger_not_found(),
-        Err(err) => {
-            tracing::warn!(error = %err, "webhook lookup failed");
-            return trigger_error(StatusCode::INTERNAL_SERVER_ERROR, "lookup failed");
-        }
-    };
-
-    // Capture request metadata before consuming the body.
-    let method = req.method().as_str().to_string();
-    let content_type = req
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let (_, body) = req.into_parts();
-    let raw = match read_body_prefix(body, MAX_PAYLOAD_BYTES).await {
-        Ok(b) => b,
-        Err(_) => return trigger_error(StatusCode::BAD_REQUEST, "could not read request body"),
-    };
-    let payload = String::from_utf8_lossy(&raw).into_owned();
-    let input = build_input(&hook.prompt, &method, &content_type, &payload);
-
-    // Retain the payload so the owner can rerun this fire with a different
-    // prompt later (see `webhooks_rerun`). Stored before the run so a failed
-    // run still leaves something to replay; a write error is non-fatal.
-    if let Err(err) = webhooks::set_last_payload(&state.db, &hook.id, &payload).await {
-        tracing::warn!(webhook = %hook.id, error = %err, "storing webhook payload");
-    }
-
-    // The run executes as the owner. Tools follow the owner's roles only when
-    // the webhook opts in; otherwise the driver offers none.
-    let user = match users::find_by_id(&state.db, &hook.user_id).await {
-        Ok(Some(u)) => u,
-        Ok(None) => return trigger_error(StatusCode::INTERNAL_SERVER_ERROR, "owner missing"),
-        Err(err) => {
-            tracing::warn!(error = %err, "loading webhook owner");
-            return trigger_error(StatusCode::INTERNAL_SERVER_ERROR, "owner lookup failed");
-        }
-    };
-    let roles = if hook.tools_enabled {
-        user.roles.clone()
-    } else {
-        Vec::new()
-    };
-
-    // Reuse the previous fire's chat when the webhook opts in (so the model
-    // sees prior fires as history), otherwise open a fresh one.
-    let existing_session = reuse_session(&state.db, &hook).await;
-    let history_limit = hook
-        .reuse_conversation
-        .then(|| (hook.reuse_rounds.max(0) as usize).saturating_mul(2));
-
-    // Open the session up front so we can return its id even in async mode.
-    let (session_id, assistant_turn_id) = match headless::open_session(
-        &state.db,
-        OpenParams {
-            owner: headless::Owner::User(&hook.user_id),
-            title: &hook.name,
-            prompt: &input,
-            model: &hook.model,
-            existing_session,
-            dot_id: hook.dot_id.as_deref(),
-        },
-    )
-    .await
-    {
-        Ok(ids) => ids,
-        Err(headless::OpenError::Unavailable) => return trigger_not_found(),
-        Err(headless::OpenError::Busy) => {
-            return trigger_error(StatusCode::CONFLICT, &t(lang, "dot-background-error-busy"));
-        }
-        Err(err) => {
-            tracing::warn!(error = %err, "opening webhook run session");
+        Err(error) => {
+            tracing::warn!(%error,"webhook lookup failed");
             return trigger_error(StatusCode::INTERNAL_SERVER_ERROR, "could not start run");
         }
     };
-
-    // Log this fire in the run history (status filled in when it finishes).
-    let run_id = match webhooks::record_run_start(
-        &state.db,
-        webhooks::NewWebhookRun {
-            webhook_id: &hook.id,
-            session_id: &session_id,
-            prompt: &hook.prompt,
-            payload: &payload,
-            source: "fire",
-            assistant_turn_id: &assistant_turn_id,
-            tools_enabled: hook.tools_enabled,
-            history_limit,
-        },
+    let method = req.method().as_str().to_owned();
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let payload = match read_body_prefix(req.into_body(), MAX_PAYLOAD_BYTES).await {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(_) => return trigger_error(StatusCode::BAD_REQUEST, "could not read request body"),
+    };
+    let input = build_input(&hook.prompt, &method, &content_type, &payload);
+    let (session, turn, drive) = match admit_and_open(
+        &state,
+        &hook,
+        webhooks::AdmissionKind::Fire { secret_hash: &hash },
+        &hook.prompt,
+        &payload,
+        &input,
+        None,
     )
     .await
     {
-        Ok(id) => Some(id),
-        Err(err) => {
-            tracing::warn!(webhook = %hook.id, error = %err, "recording webhook run");
-            let _ = chat::finalize_turn(
-                &state.db,
-                &assistant_turn_id,
-                TurnStatus::Errored,
-                Some(&t(lang, "dot-background-error-recording")),
-            )
-            .await;
-            return trigger_error(StatusCode::INTERNAL_SERVER_ERROR, "could not record run");
-        }
+        Ok(value) => value,
+        Err(error) => return admission_error(error, lang, true),
     };
-
-    let drive = DriveParams {
-        actor: aiplane_runtime::agent_run::Actor::person(hook.user_id.clone(), roles),
-        session_id: session_id.clone(),
-        assistant_turn_id: assistant_turn_id.clone(),
-        model: hook.model.clone(),
-        source: UsageSource::Webhook,
-        history_limit,
-    };
-
     if hook.synchronous {
         headless::drive(&state, drive).await;
-        let (status, error, output) = outcome(&state.db, &session_id, &assistant_turn_id).await;
-        finalize_run(
-            &state,
-            &hook.id,
-            &hook.user_id,
-            run_id.as_deref(),
-            status,
-            &session_id,
-            error.as_deref(),
-        )
-        .await;
+        let (status, error, output) = outcome(&state.db, &session, &turn).await;
         if status == "waiting" {
             return super::json_ok(
                 StatusCode::ACCEPTED,
-                json!({"session_id":session_id,"status":"waiting"}),
+                json!({"session_id":session,"status":"waiting"}),
             );
-        }
+        };
         if status != "ok" {
-            // A run that did not finish is a failed upstream; the conversation
-            // it opened is named so the owner can look at what happened.
             return super::json_error_with(
                 StatusCode::BAD_GATEWAY,
                 "run_failed",
                 error.as_deref().unwrap_or("the run failed"),
                 serde_json::Map::from_iter([
-                    ("session_id".to_string(), json!(session_id)),
-                    ("status".to_string(), json!(status)),
+                    ("session_id".into(), json!(session)),
+                    ("status".into(), json!(status)),
                 ]),
             );
-        }
+        };
         super::json_ok(
             StatusCode::OK,
             TriggerAnswer {
-                session_id,
+                session_id: session,
                 output: output.unwrap_or_default(),
             },
         )
     } else {
-        let state = state.clone();
-        let hook_id = hook.id.clone();
-        let owner_id = hook.user_id.clone();
-        let sess = session_id.clone();
+        let driven = state.clone();
         tokio::spawn(async move {
-            headless::drive(&state, drive).await;
-            let (status, error, _output) = outcome(&state.db, &sess, &assistant_turn_id).await;
-            finalize_run(
-                &state,
-                &hook_id,
-                &owner_id,
-                run_id.as_deref(),
-                status,
-                &sess,
-                error.as_deref(),
-            )
-            .await;
+            headless::drive(&driven, drive).await;
         });
-        super::json_ok(StatusCode::ACCEPTED, TriggerAccepted { session_id })
+        super::json_ok(
+            StatusCode::ACCEPTED,
+            TriggerAccepted {
+                session_id: session,
+            },
+        )
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum AdmissionError {
+    #[error(transparent)]
+    Storage(#[from] aiplane_core::server::db::DbError),
+    #[error(transparent)]
+    Run(#[from] aiplane_runtime::agents::profile::AgentRunError),
+    #[error("The webhook is unavailable")]
+    Unavailable,
+    #[error("The webhook configuration changed")]
+    Conflict,
+    #[error("The webhook conversation is busy")]
+    Busy,
+}
+
+pub(super) fn admission_error(error: AdmissionError, lang: Lang, public: bool) -> Response {
+    match error {
+        AdmissionError::Storage(error) => {
+            tracing::warn!(%error,"webhook admission failed");
+            trigger_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &t(lang, "dot-background-error-recording"),
+            )
+        }
+        AdmissionError::Run(aiplane_runtime::agents::profile::AgentRunError::Db(error)) => {
+            tracing::warn!(%error,"webhook principal admission failed");
+            trigger_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &t(lang, "dot-background-error-recording"),
+            )
+        }
+        AdmissionError::Busy => {
+            trigger_error(StatusCode::CONFLICT, &t(lang, "dot-background-error-busy"))
+        }
+        AdmissionError::Conflict if !public => super::json_error(
+            StatusCode::CONFLICT,
+            "configuration_conflict",
+            &t(lang, "scheduled-error-configuration-conflict"),
+        ),
+        _ => trigger_not_found(),
+    }
+}
+
+pub(super) async fn admit_and_open(
+    state: &Arc<RamaState>,
+    expected: &Webhook,
+    kind: webhooks::AdmissionKind<'_>,
+    prompt: &str,
+    payload: &str,
+    input: &str,
+    initiator: Option<&str>,
+) -> Result<(String, String, DriveParams), AdmissionError> {
+    use aiplane_core::server::db::WriteTx;
+    use aiplane_core::server::run_chain::{Frame, RunChain};
+    use aiplane_runtime::server::background::AutomationOwner;
+    let history = expected
+        .reuse_conversation
+        .then(|| (expected.reuse_rounds.max(0) as usize).saturating_mul(2));
+    let user_opened = if let AutomationOwner::User(user) = &expected.owner {
+        let existing = if matches!(kind, webhooks::AdmissionKind::Fire { .. }) {
+            reuse_session(&state.db, expected).await
+        } else {
+            None
+        };
+        Some(
+            headless::open_session(
+                &state.db,
+                OpenParams {
+                    owner: headless::Owner::User(user),
+                    title: &expected.name,
+                    prompt: input,
+                    model: expected
+                        .model
+                        .as_deref()
+                        .ok_or(AdmissionError::Unavailable)?,
+                    existing_session: existing,
+                    dot_id: expected.dot_id.as_deref(),
+                },
+            )
+            .await
+            .map_err(|error| match error {
+                headless::OpenError::Storage(error) => AdmissionError::Storage(error),
+                headless::OpenError::Busy => AdmissionError::Busy,
+                headless::OpenError::Unavailable => AdmissionError::Unavailable,
+            })?,
+        )
+    } else {
+        None
+    };
+    let result = async {
+        let mut tx = WriteTx::begin(&state.db).await?;
+        let hook = webhooks::get_by_id_in(&mut tx, &expected.id)
+            .await?
+            .ok_or(AdmissionError::Unavailable)?;
+        if hook.owner != expected.owner {
+            return Err(AdmissionError::Unavailable);
+        };
+        if let Some(initiator) = initiator {
+            let authorized = match &hook.owner {
+                AutomationOwner::User(user) => {
+                    user == initiator
+                        && aiplane_runtime::agents::access::current_user_policy_in(
+                            state, &mut tx, initiator,
+                        )
+                        .await?
+                        .is_some()
+                }
+                AutomationOwner::Principal(principal) => {
+                    aiplane_runtime::agents::access::organization_access_in(
+                        state, &mut tx, principal, initiator,
+                    )
+                    .await?
+                        == Some(aiplane_agents::db::agents::Access::Write)
+                }
+            };
+            if !authorized {
+                return Err(AdmissionError::Unavailable);
+            };
+        }
+        if hook.configuration_generation != expected.configuration_generation {
+            return Err(AdmissionError::Conflict);
+        };
+        let run = webhooks::admit_run_in(
+            &mut tx,
+            &webhooks::WebhookAdmission {
+                webhook_id: &hook.id,
+                expected_configuration_generation: &expected.configuration_generation,
+                kind,
+                prompt,
+                payload,
+            },
+        )
+        .await?
+        .ok_or(AdmissionError::Unavailable)?;
+        let (session, turn, drive) = match &hook.owner {
+            AutomationOwner::Principal(principal) => {
+                let profile = aiplane_runtime::agents::profile::RunProfile::load_webhook_in(
+                    state, &mut tx, &hook.id, &run.id,
+                )
+                .await?;
+                let (session, turn) = headless::open_principal_session_in(
+                    &mut tx,
+                    OpenParams {
+                        owner: headless::Owner::Run {
+                            principal_id: principal,
+                            parent_turn_id: None,
+                            agent_version: hook.agent_version,
+                        },
+                        title: &hook.name,
+                        prompt: input,
+                        model: &profile.model,
+                        existing_session: None,
+                        dot_id: None,
+                    },
+                )
+                .await
+                .map_err(|error| match error {
+                    headless::OpenError::Storage(error) => AdmissionError::Storage(error),
+                    headless::OpenError::Busy => AdmissionError::Busy,
+                    _ => AdmissionError::Unavailable,
+                })?;
+                webhooks::attach_run_turn_in(
+                    &mut tx,
+                    &run.id,
+                    &session,
+                    &turn,
+                    run.tools_enabled,
+                    None,
+                )
+                .await?;
+                let chain = Arc::new(RunChain::root(
+                    &session,
+                    None,
+                    Frame::for_principal(&profile.principal, None),
+                ));
+                let drive = profile
+                    .drive_params(&session, &turn, chain)
+                    .map_err(|_| AdmissionError::Unavailable)?;
+                let aiplane_runtime::agent_run::Actor::Agent(actor) = &drive.actor else {
+                    unreachable!()
+                };
+                aiplane_runtime::agents::profile::validate_organization_turn_in(&mut tx, actor)
+                    .await?;
+                (session, turn, drive)
+            }
+            AutomationOwner::User(user) => {
+                let (current, _) =
+                    aiplane_runtime::agents::access::current_user_policy_in(state, &mut tx, user)
+                        .await?
+                        .ok_or(AdmissionError::Unavailable)?;
+                let (session, turn) = user_opened
+                    .as_ref()
+                    .ok_or(AdmissionError::Unavailable)?
+                    .clone();
+                let limit = if matches!(kind, webhooks::AdmissionKind::Replay) {
+                    None
+                } else {
+                    history
+                };
+                webhooks::attach_run_turn_in(
+                    &mut tx,
+                    &run.id,
+                    &session,
+                    &turn,
+                    hook.tools_enabled,
+                    limit,
+                )
+                .await?;
+                let roles = if hook.tools_enabled {
+                    current.roles
+                } else {
+                    Vec::new()
+                };
+                let drive = DriveParams {
+                    actor: aiplane_runtime::agent_run::Actor::person(user.clone(), roles),
+                    session_id: session.clone(),
+                    assistant_turn_id: turn.clone(),
+                    model: hook.model.clone().ok_or(AdmissionError::Unavailable)?,
+                    source: UsageSource::Webhook,
+                    history_limit: limit,
+                };
+                (session, turn, drive)
+            }
+        };
+        tx.commit().await?;
+        Ok::<_, AdmissionError>((session, turn, drive))
+    }
+    .await;
+    if result.is_err()
+        && let Some((_, turn)) = &user_opened
+    {
+        let _ = chat::finalize_turn(&state.db, turn, TurnStatus::Cancelled, None).await;
+    }
+    result
 }
 
 /// Assemble the model input: the owner's (trusted) prompt, then the incoming
@@ -306,38 +432,6 @@ pub(super) async fn outcome(
     }
 }
 
-pub(super) async fn finalize_run(
-    state: &RamaState,
-    hook_id: &str,
-    owner_id: &str,
-    run_id: Option<&str>,
-    _status: &str,
-    _session_id: &str,
-    _error: Option<&str>,
-) {
-    let result = async {
-        let Some(run_id) = run_id else {
-            return Ok(());
-        };
-        let Some(run) = webhooks::get_run(&state.db, hook_id, run_id).await? else {
-            return Ok(());
-        };
-        let Some(turn_id) = run.assistant_turn_id else {
-            return Ok(());
-        };
-        aiplane_runtime::server::background::reconcile_turn(
-            &state.db,
-            &aiplane_runtime::server::scheduled::ScheduleOwner::User(owner_id.to_owned()),
-            &turn_id,
-        )
-        .await
-    }
-    .await;
-    if let Err(error) = result {
-        tracing::warn!(webhook = %hook_id, %error, "reconciling webhook fire");
-    }
-}
-
 /// The session a reuse-enabled webhook should append into: the previous fire's
 /// chat, but only when reuse is on *and* that chat still exists (the owner may
 /// have deleted it). `None` means open a fresh session.
@@ -346,7 +440,10 @@ async fn reuse_session(db: &aiplane_core::server::db::Pool, hook: &Webhook) -> O
         return None;
     }
     let last = hook.last_session_id.as_deref()?;
-    match chat::get_session(db, &hook.user_id, last).await {
+    let aiplane_runtime::server::background::AutomationOwner::User(user) = &hook.owner else {
+        return None;
+    };
+    match chat::get_session(db, user, last).await {
         Ok(Some(_)) => Some(last.to_string()),
         _ => None,
     }

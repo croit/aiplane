@@ -391,8 +391,28 @@ Invariants worth knowing before you touch either side:
   multiple runs use the shared runs list. Each organization fire opens a fresh
   private conversation, and run history shows its captured published version.
   Cancelled turns reconcile to run `error`; disabling a schedule prevents future
-  fires without cancelling or approving a pending turn. Organization webhooks
-  and conversation reuse are unavailable.
+  fires without cancelling or approving a pending turn. Organization runs
+  always use fresh private conversations.
+- **Organization webhooks reuse the scoped automation surface.**
+  `GET /api/v0/webhooks?principal_id={id}` returns the actual Dot, retained
+  published versions and current Write capability. The existing form hides
+  personal model, synchronous response and conversation-reuse controls. Its
+  selected publication supplies the model and own-principal execution identity.
+  Creation and rotation reveal the trigger URL once, outside URL parameters.
+  Public firing returns only `{session_id}` with `202`; errors, output and
+  pending decisions remain private. History links to the same private agent
+  Test chat and shows each run's captured publication. Editing, toggling,
+  rotation and explicit replay require the actual configuration generation;
+  stale requests return `409`. Current member writers may explicitly replay
+  stored untrusted input while the source is paused. Pausing and rotating
+  secrets preserve admitted runs and their pending approvals. Replay checks
+  current membership again before delivering its private result.
+- **Automation scope changes discard the previous page instance.** Local
+  schedule and webhook layouts key their existing pages by route and owner
+  scope. Switching between organization and personal lists clears previous
+  rows, drafts, notices and revealed secrets. Returning in browser history
+  reloads actual data; it does not restore a revealed secret. Results and
+  navigation callbacks from disposed forms cannot update the replacement page.
 - **Every scheduled or webhook run links its chat and ends terminal.** A run's history row gets its `session_id` the moment the chat is opened (webhooks at `record_run_start`, schedules via `attach_run_session`, which also moves the action's `last_session_id` so a reusing schedule keeps its thread); closing a run with no session never erases that link. The scheduler wraps each run in a panic guard, so the row is always closed through `record`. A process that dies mid-run leaves rows pending; `sweep_interrupted_runs` closes them at startup as `error` — before the scheduler's first tick and before the server accepts webhook fires, so nothing live can be caught by it — and corrects the list row when the orphan was the newest run and the schedule configuration generation still matches. The runs lists join `chat_sessions` and report `chat_deleted`; list rows get `last_chat_deleted`, and the SPA shows "chat deleted" rather than linking to a 404.
 - **A reusing schedule or webhook can continue in any of its owner's chats.** Reuse always meant "append to `last_session_id`"; the form's *Continue in* picker (`LinkedChatPicker`) sets that pointer directly through `linked_session_id` on create/update — an id links that chat, `""` lets the next run open a fresh one, an absent field leaves it alone (a run may have moved it since the form opened). The server accepts only the caller's own chat, and only with `reuse_conversation` on. The picker starts on `last_session_id` even before reuse is switched on, because that is where a reusing run would continue; a deleted one reads as "a new chat", which is what the next run does.
 - **The public embed stream speaks the same frames, buffered.** `GET /api/v0/embed/events` (visitor token, read with `fetch` streaming) sends `snapshot`, then either `idle` or — once the running turn is terminal — its whole answer as one `turn_delta` with `full: true` and `turn_finalized`. When the conversation waits for a decision, or the running turn pauses, the stream ends with `suspended` (the visitor view above) instead. A request staff answer has empty `options`: the widget shows that it waits and re-attaches every 10 s until the answer arrives. The visitor answers a `secure_input` with `POST /api/v0/embed/resume {request_id, decision, value?}` (the widget's masked code field) and re-attaches. A host page's signed identity token goes to `POST /api/v0/embed/identity {token}`. A message sent meanwhile is queued (`placement: "queued"`) and shows in the snapshot's `waiting_turn_ids`. Tool calls, reasoning and unfinished answers are stripped from what a visitor receives. See [`agent-visitors.md`](agent-visitors.md) and [agent-run suspend](agent-hil.md#suspend-and-resume).

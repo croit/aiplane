@@ -58,7 +58,13 @@ Adopt one active computer execution turn per Dot as a storage consistency defaul
 
 Hold an exclusive browser profile lock for the browser container's whole lifetime, including idle lease time. Use the existing runner's single-process ownership assumption and a filesystem lock on private metadata to guard accidental duplicate access. One runner process owns each work root. Supporting independent runner replicas sharing one root requires additional coordination and is not claimed here.
 
-Current `ContainerBackend::destroy` returns `()` and Podman teardown logs failures; the pool can drop a lease before asynchronous teardown completes. That is insufficient for persistent profile reuse. Change the shared teardown path to return confirmed absence or an error. On failure retain the scope's occupied state, retry through the existing sweep/lifecycle machinery and deny a second browser mount. Startup reaping of runner-labelled stale containers must complete successfully before reopening affected scopes. Do not release a lock solely because the gateway disconnected or the TTL expired.
+The shared `ContainerBackend::destroy` path returns confirmed absence or an error.
+The existing pool retains retiring containers until confirmation, refuses their
+reuse and retries failures through its sweeper. Startup refuses to serve when
+labelled stale containers cannot be enumerated and removed. Persistent scope
+occupancy and browser-profile locks still require integration with this lifecycle:
+retain the occupied scope on failure and deny a second mount until absence is
+confirmed. Gateway disconnection or TTL expiry alone is not proof of absence.
 
 Container timeouts, egress, gVisor, CPU/memory/PID limits and TTL remain the existing operator controls. `/work` and `/tmp` remain scratch and normal artifact collection remains limited to its existing outputs. Do not enumerate and upload `/workspace` on each tool call. A Dot explicitly copies a chosen output into `/work` when it wants to produce a conversation attachment.
 

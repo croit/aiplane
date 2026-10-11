@@ -30,11 +30,11 @@ Use **Pause** to prevent future scheduled runs, **Resume** to reactivate, **Edit
 6. Save and copy the secret trigger URL from its reveal panel.
 7. Configure the event source to call that URL with its payload.
 
-The trigger URL's secret is the credential. Possession of that URL allows a caller to trigger the webhook while it is enabled. Keep it private. The prompt receives the request method, content type and body as event input. It is not a template in which you must invent payload placeholder syntax. The trigger body is capped at 256 KiB.
+The trigger URL's secret is the credential. Possession of that URL allows a caller to trigger the webhook while it is enabled. Keep it private. The prompt receives the request method, content type and body as event input. It is not a template in which you must invent payload placeholder syntax. The trigger reads at most the first 256 KiB of the body; additional bytes are not processed. This is truncation, not an oversize rejection.
 
 | Mode | HTTP behavior |
 | --- | --- |
-| Asynchronous | Returns HTTP 202 with `status: accepted` and a `session_id`; the run continues in the background. |
+| Asynchronous | Returns HTTP 202 with a `session_id`; the run continues in the background. |
 | Synchronous | Returns HTTP 200 with output on success, HTTP 202 with `status: waiting` and a session ID when a decision is needed, or HTTP 502 with a run error. |
 
 Acceptance does not mean successful execution. Follow the recorded conversation and run status.
@@ -138,8 +138,7 @@ personal runs and linked delegation work. Organization Dots support member
 configuration, their own connected identities, private draft or published conversations and
 scoped memory. See [Organization Dots](../dots-organizations.md) for their
 current access requirements. Organization Dots also support scheduled work as
-described below. Organization webhooks, automatic memory curation and persistent
-Dot computers are not available.
+described below. Organization event triggers are described in **Create an organization Dot webhook**. Automatic memory curation and persistent Dot computers are not available.
 
 ## Configure communication consent
 
@@ -225,7 +224,7 @@ limits remain attached to your account rather than a separate Dot budget.
    its run history and edit controls.
 
 Each fire starts a fresh private conversation owned by the Dot principal.
-Conversation reuse and organization webhooks are unavailable. The schedule
+Organization conversation reuse is unavailable. The schedule
 survives deletion of the user who created it. The Dot's current model, tool and
 connector grants govern execution; your personal credentials and preferences
 are not runtime context. A later publication does not move an existing
@@ -253,3 +252,51 @@ A schedule with a running, waiting or starting run cannot be deleted. Stop or
 settle its run, then delete it. A Dot that owns schedules cannot be deleted
 until those schedules are deleted, including schedules whose runs have ended.
 Deleting a schedule removes its recorded run history.
+
+
+## Create an organization Dot webhook
+
+1. Open an organization Dot as a current member with Write access and choose
+   **Webhooks**. The page is scoped to that Dot.
+2. Create a webhook using the existing form. Enter its name and instruction,
+   then explicitly select an actual published version. The model display comes
+   from that version; your personal model selection is not used.
+3. Choose whether to allow the Dot's tools. The warning identifies the Dot's own
+   permissions because the trigger URL allows an external caller to submit
+   content for it to process. Existing per-tool and per-action approvals still
+   apply.
+4. Save, copy the actual trigger URL shown once, and configure the event source.
+5. Inspect the webhook's run history and open its private conversation in the
+   existing agent Test chat. The run identifies its captured published version.
+   Only current member writers can inspect its payload and conversation or
+   answer its pending decisions.
+
+![An organization webhook uses its Dot's published version and own permissions.](../img/guide/dot-organization-webhook.png)
+
+Organization triggers are asynchronous and always open a fresh private principal
+conversation. HTTP 202 returns only its opaque session ID; it does not expose
+output, private run errors or waiting decision details to the secret holder.
+A later publication does not change the selected version. The Dot's own selected
+connector identities, model/tool grants, usage limits and approval rules apply;
+no employee's credentials or preferences become runtime context.
+
+Pause stops future public fires. It leaves an admitted decision answerable.
+Rotation replaces the public secret immediately and preserves admitted work.
+An explicit member-writer replay remains available while the source is paused;
+it uses the selected historical payload and the submitted instruction in a new
+private conversation under the current source version and permissions. Replays
+may repeat external side effects; review their instruction and approvals.
+
+Edits, pause/resume, rotation and replay compare the configuration generation
+returned by the current webhook, for personal and organization webhooks. A stale
+request returns a conflict and preserves the form input; reload the source before
+retrying. Execution changes replace that generation; renaming, pausing and
+rotation preserve it. An execution edit prevents an older run from continuing
+under the changed configuration. Its exact **Stop** remains available to current
+member writers through the original private conversation.
+
+The webhook survives deletion of its configuring employee. A retained webhook
+prevents deleting its Dot identity. Stop or finish active and waiting runs before
+deleting the webhook; a pending run makes deletion return a conflict. Inactive
+Dots and disabled principals remain configurable by their current member writers
+but cannot start or positively resume execution.

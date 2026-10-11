@@ -605,7 +605,7 @@ async fn a_scheduled_run_that_paused_is_resumed_from_its_owners_inbox() {
         NewAction {
             dot_id: None,
             linked_session_id: None,
-            owner: scheduled::ScheduleOwner::User("plain".into()),
+            owner: aiplane_runtime::server::background::AutomationOwner::User("plain".into()),
             created_by: "plain".into(),
             agent_version: None,
             name: "Nightly refunds".into(),
@@ -702,7 +702,7 @@ async fn a_paused_schedule_shows_its_preview_in_the_owners_inbox() {
         NewAction {
             dot_id: None,
             linked_session_id: None,
-            owner: scheduled::ScheduleOwner::User("plain".into()),
+            owner: aiplane_runtime::server::background::AutomationOwner::User("plain".into()),
             created_by: "plain".into(),
             agent_version: None,
             name: "Planner".into(),

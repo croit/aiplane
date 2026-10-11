@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Organization ownership, group-derived membership, independent active limits and configuration are implemented. Current organization Dots can be created, shared, configured and published through the existing agent mechanisms. Current member writers can authorize and explicitly select each Dot’s own OAuth connection. Active organization Dots with enabled principals can run saved drafts or published versions in private test conversations for current member writers. Durable Dot notes and shared organization knowledge are available through the existing memory panel and tools. Published private conversations retain their original version and expose waiting decisions only to current member writers. Scheduled organization work uses explicitly pinned published versions, fresh private principal conversations and the existing cron worker. Automated test suites, delegation, organization webhooks and external channels remain unavailable.
+Organization ownership, group-derived membership, independent active limits and configuration are implemented. Current organization Dots can be created, shared, configured and published through the existing agent mechanisms. Current member writers can authorize and explicitly select each Dot’s own OAuth connection. Active organization Dots with enabled principals can run saved drafts or published versions in private test conversations for current member writers. Durable Dot notes and shared organization knowledge are available through the existing memory panel and tools. Published private conversations retain their original version and expose waiting decisions only to current member writers. Scheduled organization work uses explicitly pinned published versions, fresh private principal conversations and the existing cron worker. Asynchronous organization webhooks use the same private principal conversations and pinned published authority. Automated test suites, delegation and public agent channels remain unavailable.
 
 The remaining sections distinguish the implemented ownership and configuration foundation from the adopted execution and knowledge design. Creating a gateway group or naming an ordinary agent after a company does not create organization ownership.
 
@@ -25,7 +25,7 @@ The confirmed product requirements are explicit organization ownership, an indep
 | `aiplane-tools/src/memory.rs`; `server/tools/mod.rs::ToolContext::person` | Personal memory tools require a user actor. | Organization tools use a typed principal context; passing an employee ID never establishes organization authority. |
 | `aiplane-agents/src/db/dot_memories.rs` | Typed Dot and shared organization notes checked through the actual immutable owner. | Preserve current ownership isolation when adding typed organization scopes. |
 | `aiplane-agents/src/db/agent_state.rs` | Typed slots scoped to a run session. | Session state does not supply durable organization-wide memory. |
-| `aiplane-runtime/src/server/scheduled/mod.rs`; `server/webhooks.rs` | Schedules have immutable User or Principal ownership; webhooks retain user ownership and optional personal Dot binding. | Organization schedules reuse the principal path and exact configuration proof. Organization webhooks require a separate extension. |
+| `aiplane-runtime/src/server/scheduled/mod.rs`; `server/webhooks.rs` | Both sources have immutable User or Principal ownership. Personal sources retain optional Dot binding. | Organization execution reuses the principal path and exact configuration proof. |
 
 Principal tool inventories use `SystemPrincipal.grants` through `AppState::allowed_tools_for_principal`. The loaded grant set is a snapshot. `RunProfile` reloads it when loading a run; this alone is not proof that every invocation in an already running turn observes a subsequent revocation. Organization implementation must include the live check described below.
 
@@ -130,7 +130,8 @@ lists remain bounded to 500 notes. New human saves use the memory tools'
 ### Scheduled organization work
 
 Organization schedules extend the existing scheduled-action storage, cron
-worker, form and run history. Organization webhooks remain unavailable.
+worker, form and run history. [Organization webhooks](dots-webhooks.md) reuse
+the corresponding event-trigger store, private run authority and history.
 
 - A schedule has exactly one immutable owner: User or Principal. An organization
   schedule belongs to the Dot's actual principal. Its configuring employee is
@@ -245,7 +246,7 @@ Current member writers can manage the Dot’s own OAuth credentials and run its
 saved draft or published version in a private principal conversation. Typed durable memory includes
 its own notes and shared organization knowledge. Organization schedules have
 explicit principal ownership and published-version admission. Organization
-webhooks and external execution require their respective owner admission paths.
+webhooks use that same authority with an exact webhook source/run/generation binding; public agent channels remain unavailable.
 
 The authenticated navigation entry `/organizations` shows the actual membership
 inventory or an empty state. Its visibility does not assert membership and is
@@ -256,7 +257,7 @@ Activation uses `POST /api/v0/organizations/{id}/dots/{dot_id}/active` with
 `{active:boolean}` and returns the existing agent view with typed Dot metadata.
 It requires current write access, an actual Dot belonging to that organization,
 and the existing capacity check in the same transaction. Personal activation
-retains its existing route and exact owner check. Organization webhooks, delegation and external callers remain unavailable. Private draft or published
+retains its existing route and exact owner check. Organization delegation and public agent channels remain unavailable. Webhook URL holders can submit events but cannot read private execution content. Private draft or published
 execution requires activation, an enabled principal, member Write access and
 explicit model/tool grants.
 

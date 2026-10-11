@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { scheduledApi } from '#lib/scheduled.js';
 	import ScheduledActionRow from '#lib/components/scheduled/ScheduledActionRow.svelte';
@@ -10,6 +10,8 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
+	let disposed = false;
+	onDestroy(() => { disposed = true; });
 
 	// The create/edit form lives on its own route and reports back through the
 	// URL, so its confirmation shows up on the list the user returns to.
@@ -20,13 +22,16 @@
 	});
 
 	async function refresh() {
+		if (disposed) return;
 		try {
-			data = await scheduledApi.list(page.url.searchParams.get('principal_id'));
+			const loaded = await scheduledApi.list(page.url.searchParams.get('principal_id'));
+			if (disposed) return;
+			data = loaded;
 			error = null;
 		} catch (caught) {
-			error = String(caught);
+			if (!disposed) error = String(caught);
 		} finally {
-			loading = false;
+			if (!disposed) loading = false;
 		}
 	}
 

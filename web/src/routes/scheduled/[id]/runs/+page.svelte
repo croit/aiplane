@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import DotAssociation from '#lib/components/dots/DotAssociation.svelte';
 	import { page } from '$app/state';
 	import { runLinks } from '#lib/run-links.js';
@@ -19,6 +19,8 @@
 	let runs = $state<ScheduledRun[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let disposed = false;
+	onDestroy(() => { disposed = true; });
 	const listHref = $derived(`/scheduled${action?.principal_id || page.url.searchParams.get('principal_id') ? `?principal_id=${encodeURIComponent(action?.principal_id ?? page.url.searchParams.get('principal_id')!)}` : ''}`);
 
 	function runTime(value: string): string {
@@ -28,13 +30,14 @@
 	onMount(async () => {
 		try {
 			const data = await scheduledApi.runs(page.params.id!);
+			if (disposed) return;
 			action = data.action;
 			runs = data.runs;
 			error = null;
 		} catch (caught) {
-			error = String(caught);
+			if (!disposed) error = String(caught);
 		} finally {
-			loading = false;
+			if (!disposed) loading = false;
 		}
 	});
 </script>

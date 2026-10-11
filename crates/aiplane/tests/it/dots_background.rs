@@ -168,7 +168,7 @@ async fn scheduled_delete_conflicts_with_the_exact_running_turn_and_then_succeed
     assert!(
         scheduled::get(
             &fx.state.db,
-            &scheduled::ScheduleOwner::User("alice".into()),
+            &aiplane_runtime::server::background::AutomationOwner::User("alice".into()),
             id
         )
         .await
@@ -262,7 +262,7 @@ async fn dot_webhook_fire_and_rerun_wait_for_approval_and_cannot_be_deleted_unti
         .post(
             &fx.alice,
             &format!("/api/v0/webhooks/{hook_id}/rerun"),
-            json!({"prompt":"Review again"}),
+            json!({"prompt":"Review again", "expected_configuration_generation": created["webhook"]["configuration_generation"]}),
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{rerun}");
@@ -296,7 +296,7 @@ async fn dot_webhook_fire_and_rerun_wait_for_approval_and_cannot_be_deleted_unti
         fx.post(
             &fx.alice,
             &format!("/api/v0/webhooks/{hook_id}/toggle"),
-            json!({"enabled":false})
+            json!({"enabled":false, "expected_configuration_generation": created["webhook"]["configuration_generation"]})
         )
         .await
         .0,

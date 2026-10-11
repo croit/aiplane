@@ -1639,6 +1639,9 @@ async fn workspace_surfaces_round_trip() {
         &state.db,
         aiplane_runtime::server::webhooks::NewWebhookRun {
             webhook_id: hook_id,
+            expected_configuration_generation: hook["webhook"]["configuration_generation"]
+                .as_str()
+                .unwrap(),
             session_id: &run_chat.id,
             prompt: "summarise",
             payload: r#"{"event":"deploy"}"#,
@@ -1785,7 +1788,12 @@ async fn schedules_and_webhooks_continue_in_a_linked_chat() {
     let (status, _) = send(
         rama::http::Method::PUT,
         format!("/api/v0/webhooks/{hook_id}"),
-        foreign,
+        {
+            let mut payload: serde_json::Value = serde_json::from_str(&foreign).unwrap();
+            payload["expected_configuration_generation"] =
+                created["webhook"]["configuration_generation"].clone();
+            payload.to_string()
+        },
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -2633,10 +2641,12 @@ async fn unconfigured_features_and_missing_resources_refuse_by_meaning() {
         aiplane_runtime::server::webhooks::NewWebhook {
             dot_id: None,
             linked_session_id: None,
-            user_id: "boss".into(),
+            owner: aiplane_runtime::server::background::AutomationOwner::User("boss".into()),
+            created_by: "boss".into(),
+            agent_version: None,
             name: "never-called".into(),
             prompt: "summarise".into(),
-            model: "model-a".into(),
+            model: Some("model-a".into()),
             tools_enabled: false,
             synchronous: false,
             reuse_conversation: false,
@@ -2648,10 +2658,14 @@ async fn unconfigured_features_and_missing_resources_refuse_by_meaning() {
     .unwrap();
     let app = router(state);
     let rerun = |run: Option<&str>| {
-        Some(match run {
-            Some(run) => format!(r#"{{"prompt":"again","run":"{run}"}}"#),
-            None => r#"{"prompt":"again"}"#.to_string(),
-        })
+        let mut payload = serde_json::json!({
+            "prompt": "again",
+            "expected_configuration_generation": hook.configuration_generation,
+        });
+        if let Some(run) = run {
+            payload["run"] = serde_json::json!(run);
+        }
+        Some(payload.to_string())
     };
     for (method, path, payload, status, code) in [
         (

@@ -16,6 +16,7 @@ test("existing automation forms retain Dot binding, filter reused chats and allo
     let dotId;
     let scheduleId;
     let webhookId;
+    let webhookGeneration;
 
     async function choose(label, option) {
         await page.getByRole("combobox", { name: label, exact: true }).click();
@@ -109,6 +110,7 @@ test("pending Dot webhook is approved in Inbox and settles its exact run without
     const suffix = Date.now();
     let dotId;
     let webhookId;
+    let webhookGeneration;
     let sessionId;
 
     async function jsonGet(path) {
@@ -154,6 +156,7 @@ test("pending Dot webhook is approved in Inbox and settles its exact run without
         assert.equal(hookCreated.status(), 201);
         const hook = await hookCreated.json();
         webhookId = hook.webhook.id;
+        webhookGeneration = hook.webhook.configuration_generation;
         const fired = await context.request.post(`${BASE}/hooks/${hook.secret}`, {
             data: { event: "approval-probe" },
         });
@@ -173,7 +176,7 @@ test("pending Dot webhook is approved in Inbox and settles its exact run without
         const deletion = await context.request.delete(`${BASE}/api/v0/webhooks/${webhookId}`);
         assert.equal(deletion.status(), 409);
         const paused = await context.request.post(`${BASE}/api/v0/webhooks/${webhookId}/toggle`, {
-            data: { enabled: false },
+            data: { enabled: false, expected_configuration_generation: webhookGeneration },
         });
         assert.equal(paused.status(), 200);
 
@@ -210,7 +213,7 @@ test("pending Dot webhook is approved in Inbox and settles its exact run without
     } finally {
         if (sessionId) await context.request.post(`${BASE}/api/v0/chat/sessions/${sessionId}/cancel`);
         if (webhookId) {
-            await context.request.post(`${BASE}/api/v0/webhooks/${webhookId}/toggle`, { data: { enabled: false } });
+            await context.request.post(`${BASE}/api/v0/webhooks/${webhookId}/toggle`, { data: { enabled: false, expected_configuration_generation: webhookGeneration } });
             await context.request.delete(`${BASE}/api/v0/webhooks/${webhookId}`);
         }
         if (dotId) await context.request.put(`${BASE}/api/v0/dots/${dotId}/active`, { data: { active: false } });

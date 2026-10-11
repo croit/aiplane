@@ -103,6 +103,7 @@ test("Approve once rechecks a pending Dot browser action after its rule changes 
     let context;
     let dotId;
     let webhookId;
+    let webhookGeneration;
     let sessionId;
     try {
         context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -148,6 +149,7 @@ test("Approve once rechecks a pending Dot browser action after its rule changes 
         assert.equal(hookCreated.status(), 201);
         const hook = await hookCreated.json();
         webhookId = hook.webhook.id;
+        webhookGeneration = hook.webhook.configuration_generation;
         const fired = await context.request.post(`${BASE}/hooks/${hook.secret}`, {
             data: { event: "action-approval-probe" },
         });
@@ -215,7 +217,7 @@ test("Approve once rechecks a pending Dot browser action after its rule changes 
                 } finally {
                     try {
                         if (webhookId) {
-                            await context.request.post(`${BASE}/api/v0/webhooks/${webhookId}/toggle`, { data: { enabled: false }, timeout: 5000 });
+                            await context.request.post(`${BASE}/api/v0/webhooks/${webhookId}/toggle`, { data: { enabled: false, expected_configuration_generation: webhookGeneration }, timeout: 5000 });
                             await context.request.delete(`${BASE}/api/v0/webhooks/${webhookId}`, { timeout: 5000 });
                         }
                     } finally {

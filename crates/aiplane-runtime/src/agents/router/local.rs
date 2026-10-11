@@ -255,7 +255,7 @@ pub(super) async fn dispatch_personal(
         .map_err(|error| ToolError::Failed(error.to_string()))?;
     let background = crate::server::background::for_turn(
         &state.db,
-        &crate::server::scheduled::ScheduleOwner::User(owner.to_owned()),
+        &crate::server::background::AutomationOwner::User(owner.to_owned()),
         &root_turn,
     )
     .await

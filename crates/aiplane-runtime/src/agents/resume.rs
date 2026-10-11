@@ -433,7 +433,9 @@ async fn fail(state: &RamaState, levels: &[Level], message: &str) {
         }
         if let Err(err) = crate::server::background::reconcile_turn(
             &state.db,
-            &crate::server::scheduled::ScheduleOwner::Principal(level.session.principal_id.clone()),
+            &crate::server::background::AutomationOwner::Principal(
+                level.session.principal_id.clone(),
+            ),
             turn,
         )
         .await
@@ -627,7 +629,7 @@ pub async fn run_claimed(
             .map_err(DbError::from)?;
         crate::server::background::reconcile_turn(
             &state.db,
-            &crate::server::scheduled::ScheduleOwner::Principal(
+            &crate::server::background::AutomationOwner::Principal(
                 levels[0].session.principal_id.clone(),
             ),
             &innermost.turn_id,
@@ -1030,7 +1032,7 @@ async fn run_personal_children_inner(
     let root = &claimed.levels[0];
     let background = crate::server::background::for_turn(
         &state.db,
-        &crate::server::scheduled::ScheduleOwner::User(claimed.owner.clone()),
+        &crate::server::background::AutomationOwner::User(claimed.owner.clone()),
         &root.suspension.turn_id,
     )
     .await?;
@@ -1243,7 +1245,7 @@ pub async fn cancel_private_turn(
     }
     crate::server::background::validate_turn_in(
         &mut tx,
-        &crate::server::scheduled::ScheduleOwner::Principal(principal_id.to_owned()),
+        &crate::server::background::AutomationOwner::Principal(principal_id.to_owned()),
         turn_id,
     )
     .await?;
@@ -1267,7 +1269,7 @@ pub async fn cancel_private_turn(
     state.chats.cancel_turn(principal_id, session_id, turn_id);
     crate::server::background::reconcile_turn(
         &state.db,
-        &crate::server::scheduled::ScheduleOwner::Principal(principal_id.to_owned()),
+        &crate::server::background::AutomationOwner::Principal(principal_id.to_owned()),
         turn_id,
     )
     .await?;
@@ -1316,7 +1318,7 @@ pub async fn cancel_personal_tree(
         }
         crate::server::background::reconcile_turn(
             &state.db,
-            &crate::server::scheduled::ScheduleOwner::User(owner.to_owned()),
+            &crate::server::background::AutomationOwner::User(owner.to_owned()),
             &turn,
         )
         .await?;
@@ -1778,7 +1780,8 @@ mod private_cancel_tests {
         assert!(upstream.received_requests().await.unwrap().is_empty());
     }
     async fn scheduled_pause(state: &Arc<RamaState>, kind: SuspensionKind) -> (Level, String) {
-        use crate::server::scheduled::{self, ScheduleOwner};
+        use crate::server::background::AutomationOwner;
+        use crate::server::scheduled;
         use aiplane_core::server::db::WriteTx;
         let (base, _) = crate::server::headless::tests::organization_draft_fixture(state).await;
         let mut spec = json!({"main":{"model":base.model}});
@@ -1796,7 +1799,7 @@ mod private_cancel_tests {
         let action = scheduled::create(
             &state.db,
             scheduled::NewAction {
-                owner: ScheduleOwner::Principal(base.principal.id.clone()),
+                owner: AutomationOwner::Principal(base.principal.id.clone()),
                 created_by: "creator".into(),
                 dot_id: None,
                 agent_version: Some(version),

@@ -21,7 +21,7 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 | `tokio` | `gateway`, `cli` | Async runtime. |
 | `serde`, `serde_json` | all | Data interchange (OpenAI schema, config). |
 | `schemars` (`derive`) | `gateway`, `aiplane-api` and the crates whose types cross `/api/v0` | `#[derive(JsonSchema)]` on the request, response and error types the handlers really (de)serialize, so `GET /openapi.json` describes them from the types themselves rather than from a second, hand-kept contract. Already in the tree via `serde_with`; the `derive` feature adds only its proc macro. |
-| `thiserror` | all | Library-style error types. |
+| `thiserror` | all | Library-style error types, including typed webhook admission errors at the `aiplane-api` boundary; reuses the existing workspace version. |
 | `tracing`, `tracing-subscriber` | `gateway`, `cli` | Structured logging. |
 | `reqwest` (rustls, stream) | `gateway`, `cli` | Outbound HTTP — upstream LLM calls (gateway) + gateway-API calls (cli). TLS is rustls with the aws-lc-rs provider and the OS trust store via `rustls-platform-verifier`; both were already pulled in by `jsonwebtoken` and rama, so reqwest adds no build inputs of its own. See `crates/aiplane/src/rama_server/proxy.rs` for why AIplane keeps reqwest rather than driving rama's client side directly. |
 | `openidconnect` | `gateway` | OIDC discovery + code exchange. The Rust ecosystem's standard. |

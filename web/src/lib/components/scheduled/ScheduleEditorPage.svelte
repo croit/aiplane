@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { scheduledApi } from '#lib/scheduled.js';
@@ -26,24 +26,29 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let missing = $state(false);
+	let disposed = false;
+	onDestroy(() => { disposed = true; });
 	const listHref = $derived(`/scheduled${data?.principal_id || page.url.searchParams.get('principal_id') ? `?principal_id=${encodeURIComponent(data?.principal_id ?? page.url.searchParams.get('principal_id')!)}` : ''}`);
 
 	async function done() {
+		if (disposed) return;
 		await goto(`/scheduled?notice=${id === null ? 'created' : 'saved'}${data?.principal_id ? `&principal_id=${encodeURIComponent(data.principal_id)}` : ''}`);
 	}
 
 	onMount(async () => {
 		try {
-			data = await scheduledApi.list(page.url.searchParams.get('principal_id'));
+			const loaded = await scheduledApi.list(page.url.searchParams.get('principal_id'));
+			if (disposed) return;
+			data = loaded;
 			if (id !== null) {
 				action = data.actions.find((candidate) => candidate.id === id) ?? null;
 				missing = action === null;
 			}
 			error = null;
 		} catch (caught) {
-			error = String(caught);
+			if (!disposed) error = String(caught);
 		} finally {
-			loading = false;
+			if (!disposed) loading = false;
 		}
 	});
 </script>

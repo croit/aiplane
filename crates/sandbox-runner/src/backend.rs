@@ -32,6 +32,85 @@ pub enum BackendError {
     Protocol(String),
 }
 
+fn validate_podman_id(id: &str) -> Result<(), BackendError> {
+    let hex = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    let full_id = id.len() == 64 && hex(id);
+    let name = id.strip_prefix("sbx-").is_some_and(|suffix| {
+        let parts: Vec<_> = suffix.split('-').collect();
+        parts.len() == 3
+            && !parts[0].is_empty()
+            && parts[0].len() <= 10
+            && parts[0].bytes().all(|byte| byte.is_ascii_digit())
+            && parts[1].len() <= 32
+            && parts[2].len() <= 16
+            && hex(parts[1])
+            && hex(parts[2])
+    });
+    if full_id || name {
+        Ok(())
+    } else {
+        Err(BackendError::Protocol(
+            "container reference is not a full ID or generated sandbox name".into(),
+        ))
+    }
+}
+
+fn parse_container_ids(bytes: &[u8]) -> Result<Vec<String>, BackendError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| {
+        BackendError::Protocol("container enumeration returned invalid UTF-8".into())
+    })?;
+    text.lines()
+        .map(|line| {
+            let id = line.trim();
+            validate_podman_id(id)?;
+            if id.len() != 64 {
+                return Err(BackendError::Protocol(
+                    "container enumeration requires full IDs".into(),
+                ));
+            }
+            Ok(id.to_owned())
+        })
+        .collect()
+}
+
+fn listed_container_exists(bytes: &[u8], expected: &str) -> Result<bool, BackendError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| {
+        BackendError::Protocol("container enumeration returned invalid UTF-8".into())
+    })?;
+    let mut found = false;
+    for line in text.lines() {
+        let (id, name) = line.split_once('\t').ok_or_else(|| {
+            BackendError::Protocol("container enumeration omitted its ID or name".into())
+        })?;
+        validate_podman_id(id)?;
+        if id.len() != 64 {
+            return Err(BackendError::Protocol(
+                "container enumeration returned a truncated ID".into(),
+            ));
+        }
+        let mut name_matches = false;
+        for name in name.split(',').map(str::trim) {
+            if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
+            {
+                return Err(BackendError::Protocol(
+                    "container enumeration returned an invalid name".into(),
+                ));
+            }
+            name_matches |= name == expected;
+        }
+        found |= id == expected || name_matches;
+    }
+    Ok(found)
+}
+
 /// Label every sandbox container this runner creates carries, so a restart
 /// (or an operator, or the unit's ExecStopPost) can find them all again.
 ///
@@ -60,6 +139,7 @@ pub enum Network {
 /// and tests can swap in a fake.
 #[async_trait::async_trait]
 pub trait ContainerBackend: Send + Sync + 'static {
+    fn validate_container_id(&self, id: &str) -> Result<(), BackendError>;
     /// Boot one fresh, idle sandbox container and return its id.
     async fn create(&self, network: Network) -> Result<String, BackendError>;
 
@@ -73,10 +153,7 @@ pub trait ContainerBackend: Send + Sync + 'static {
         timeout: Duration,
     ) -> Result<RunResponse, BackendError>;
 
-    /// Tear a container down. Best-effort: failures are logged, not
-    /// surfaced — a leaked container is a monitoring concern, not a
-    /// request error.
-    async fn destroy(&self, id: &str);
+    async fn destroy(&self, id: &str) -> Result<(), BackendError>;
 
     /// Content id of the configured workload image as it resolves *right
     /// now*. The pool snapshots this and re-checks periodically; a change
@@ -246,43 +323,45 @@ impl PodmanBackend {
     /// Without this they linger until someone notices (and, with host-backed
     /// scratch, keep their directories pinned too). Assumes one runner per
     /// host, which the fixed bind address already implies.
-    pub async fn reap_stale_containers(&self) {
+    pub async fn reap_stale_containers(&self) -> Result<(), BackendError> {
         // Two passes rather than one `--filter` with two labels: podman ANDs
         // repeated filters, so asking for both at once matches nothing.
         let mut ids: Vec<String> = Vec::new();
         for label in [LABEL, LEGACY_LABEL] {
             let out = tokio::process::Command::new(&self.cfg.podman)
-                .args(["ps", "-aq", "--filter", &format!("label={label}")])
+                .args([
+                    "ps",
+                    "-aq",
+                    "--no-trunc",
+                    "--filter",
+                    &format!("label={label}"),
+                ])
                 .stdin(Stdio::null())
                 .output()
                 .await;
-            let Ok(out) = out else {
-                tracing::warn!("listing stale sandbox containers failed; skipping reap");
-                return;
-            };
+            let out = out?;
             if !out.status.success() {
-                tracing::warn!("listing stale sandbox containers failed; skipping reap");
-                return;
+                return Err(BackendError::Command {
+                    op: "ps",
+                    code: out.status.to_string(),
+                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                });
             }
-            ids.extend(
-                String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .map(|l| l.trim().to_string())
-                    .filter(|l| !l.is_empty()),
-            );
+            ids.extend(parse_container_ids(&out.stdout)?);
         }
         ids.sort();
         ids.dedup();
         if ids.is_empty() {
-            return;
+            return Ok(());
         }
         tracing::info!(
             count = ids.len(),
             "reaping sandbox containers from a previous run"
         );
         for id in ids {
-            self.destroy(&id).await;
+            self.destroy(&id).await?;
         }
+        Ok(())
     }
 
     /// Read artifacts the agent deliberately left on disk.
@@ -460,8 +539,12 @@ impl PodmanBackend {
 
 #[async_trait::async_trait]
 impl ContainerBackend for PodmanBackend {
+    fn validate_container_id(&self, id: &str) -> Result<(), BackendError> {
+        validate_podman_id(id)
+    }
     async fn create(&self, network: Network) -> Result<String, BackendError> {
         let name = new_container_name();
+        self.validate_container_id(&name)?;
         if let Some(root) = &self.cfg.work_root {
             let (work, tmp) = host_dirs(root, &name);
             prepare_host_dirs(root, &work, &tmp).map_err(|e| {
@@ -486,9 +569,11 @@ impl ContainerBackend for PodmanBackend {
                 stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
             });
         }
-        if String::from_utf8_lossy(&out.stdout).trim().is_empty() {
-            self.remove_host_dirs(&name);
-            return Err(BackendError::Protocol("podman run printed no id".into()));
+        let ids = parse_container_ids(&out.stdout)?;
+        if ids.len() != 1 {
+            return Err(BackendError::Protocol(
+                "podman run did not return exactly one full ID".into(),
+            ));
         }
         // Hand back the name, not the id podman printed: podman accepts either
         // wherever a container is named, and the name is what the scratch
@@ -544,24 +629,35 @@ impl ContainerBackend for PodmanBackend {
         Ok(id)
     }
 
-    async fn destroy(&self, id: &str) {
-        // `rm -f` (no `-t`) so the same command works under both podman and
-        // docker — handy for dev (SANDBOX_PODMAN=docker on macOS).
-        let res = tokio::process::Command::new(&self.cfg.podman)
+    async fn destroy(&self, id: &str) -> Result<(), BackendError> {
+        self.validate_container_id(id)?;
+        let removed = tokio::process::Command::new(&self.cfg.podman)
             .args(["rm", "-f", id])
             .stdin(Stdio::null())
             .output()
             .await;
-        match res {
-            Ok(o) if !o.status.success() => tracing::warn!(
-                container = id,
-                stderr = %String::from_utf8_lossy(&o.stderr).trim(),
-                "podman rm failed; container may be leaked"
-            ),
-            Err(e) => tracing::warn!(container = id, error = %e, "podman rm could not run"),
-            _ => {}
+        if !matches!(&removed, Ok(output) if output.status.success()) {
+            let listed = tokio::process::Command::new(&self.cfg.podman)
+                .args(["ps", "-a", "--no-trunc", "--format", "{{.ID}}\t{{.Names}}"])
+                .stdin(Stdio::null())
+                .output()
+                .await?;
+            if !listed.status.success() {
+                return Err(BackendError::Command {
+                    op: "ps",
+                    code: listed.status.to_string(),
+                    stderr: String::from_utf8_lossy(&listed.stderr).into_owned(),
+                });
+            }
+            if listed_container_exists(&listed.stdout, id)? {
+                return Err(BackendError::Protocol(
+                    "container removal failed and the container remains present; retry teardown"
+                        .into(),
+                ));
+            }
         }
         self.remove_host_dirs(id);
+        Ok(())
     }
 }
 
@@ -749,6 +845,83 @@ async fn drive_agent(
 }
 
 #[cfg(test)]
+mod teardown_validation_tests {
+    use super::*;
+
+    #[test]
+    fn checked_teardown_validates_actual_generated_names_and_strict_full_ids() {
+        for name in [new_container_name(), "a".repeat(64)] {
+            validate_podman_id(&name).unwrap();
+        }
+        for invalid in [
+            "",
+            "-f",
+            "sbx-",
+            "sbx-1-x-2",
+            "sbx-1-a-2-extra",
+            "abcdef",
+            "../sbx-1-a-2",
+        ] {
+            assert!(validate_podman_id(invalid).is_err(), "{invalid}");
+        }
+        assert!(parse_container_ids(&[0xff]).is_err());
+        assert!(parse_container_ids(b"\n").is_err());
+        assert!(parse_container_ids(b"sbx-1-a-2\n").is_err());
+        let id = "a".repeat(64);
+        assert_eq!(
+            parse_container_ids(format!("{id}\n").as_bytes()).unwrap(),
+            vec![id]
+        );
+        assert!(parse_container_ids(b"").unwrap().is_empty());
+    }
+
+    #[test]
+    fn checked_teardown_enumeration_requires_exact_name_or_id_and_all_valid_rows() {
+        let id = "a".repeat(64);
+        let listing = format!("{id}\tsbx-1-ab-2\n");
+        assert!(listed_container_exists(listing.as_bytes(), "sbx-1-ab-2").unwrap());
+        assert!(listed_container_exists(listing.as_bytes(), &id).unwrap());
+        assert!(!listed_container_exists(listing.as_bytes(), "sbx-1-ab-20").unwrap());
+        assert!(!listed_container_exists(listing.as_bytes(), "aaaaaaaaaaaa").unwrap());
+        assert!(!listed_container_exists(b"", "sbx-1-ab-2").unwrap());
+        for invalid in [
+            format!("{listing}bad\tother\n"),
+            format!("{id}\n"),
+            format!("{id}\t\n"),
+        ] {
+            assert!(listed_container_exists(invalid.as_bytes(), "sbx-1-ab-2").is_err());
+        }
+        assert!(listed_container_exists(&[0xff], "sbx-1-ab-2").is_err());
+    }
+
+    #[test]
+    fn checked_teardown_local_validation_rejects_foreign_and_parent_paths() {
+        let backend = LocalBackend {
+            agent: PathBuf::new(),
+        };
+        let base = std::env::temp_dir().join("llm-sandbox-local");
+        backend
+            .validate_container_id(base.join("work-1-2").to_str().unwrap())
+            .unwrap();
+        for path in [
+            base.clone(),
+            base.join(".."),
+            base.join("work-1-2/child"),
+            base.join("sandbox-agent-1-2.py"),
+            base.join("work-x-2"),
+        ] {
+            assert!(
+                backend
+                    .validate_container_id(path.to_str().unwrap())
+                    .is_err(),
+                "{}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod podman_args_tests {
     use super::*;
 
@@ -842,6 +1015,29 @@ impl LocalBackend {
 
 #[async_trait::async_trait]
 impl ContainerBackend for LocalBackend {
+    fn validate_container_id(&self, id: &str) -> Result<(), BackendError> {
+        let path = Path::new(id);
+        let base = std::env::temp_dir().join("llm-sandbox-local");
+        let valid = path.parent() == Some(base.as_path())
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("work-"))
+                .is_some_and(|suffix| {
+                    let parts: Vec<_> = suffix.split('-').collect();
+                    parts.len() == 2
+                        && parts.iter().all(|part| {
+                            !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())
+                        })
+                });
+        if valid {
+            Ok(())
+        } else {
+            Err(BackendError::Protocol(
+                "local container reference is not a generated work directory".into(),
+            ))
+        }
+    }
     async fn create(&self, _network: Network) -> Result<String, BackendError> {
         let dir = std::env::temp_dir().join("llm-sandbox-local").join(format!(
             "work-{}-{}",
@@ -868,8 +1064,13 @@ impl ContainerBackend for LocalBackend {
         drive_agent(child, id, req, timeout, self).await
     }
 
-    async fn destroy(&self, id: &str) {
-        let _ = tokio::fs::remove_dir_all(id).await;
+    async fn destroy(&self, id: &str) -> Result<(), BackendError> {
+        self.validate_container_id(id)?;
+        match tokio::fs::remove_dir_all(id).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 }
 
@@ -912,6 +1113,9 @@ pub(crate) mod fake {
         pub created: Mutex<Vec<(String, Network)>>,
         pub destroyed: Mutex<Vec<String>>,
         pub execs: AtomicUsize,
+        pub fail_destroy: std::sync::atomic::AtomicBool,
+        pub exec_entered: tokio::sync::Notify,
+        pub exec_release: tokio::sync::Notify,
         /// Simulated workload-image id; `set_image` mutates it so pool tests
         /// can exercise the auto-recycle path.
         image: Mutex<String>,
@@ -934,6 +1138,17 @@ pub(crate) mod fake {
 
     #[async_trait::async_trait]
     impl ContainerBackend for FakeBackend {
+        fn validate_container_id(&self, id: &str) -> Result<(), BackendError> {
+            if id.strip_prefix("fake-").is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+            }) {
+                Ok(())
+            } else {
+                Err(BackendError::Protocol(
+                    "invalid fake container reference".into(),
+                ))
+            }
+        }
         async fn create(&self, network: Network) -> Result<String, BackendError> {
             let n = self.next.fetch_add(1, Ordering::SeqCst);
             let id = format!("fake-{n}");
@@ -952,6 +1167,10 @@ pub(crate) mod fake {
             _timeout: Duration,
         ) -> Result<RunResponse, BackendError> {
             self.execs.fetch_add(1, Ordering::SeqCst);
+            if req.code == "hold-exec" {
+                self.exec_entered.notify_one();
+                self.exec_release.notified().await;
+            }
             Ok(RunResponse {
                 exit_code: 0,
                 stdout: format!("ran {} in {id}", req.language.as_str()),
@@ -965,8 +1184,15 @@ pub(crate) mod fake {
             })
         }
 
-        async fn destroy(&self, id: &str) {
-            self.destroyed.lock().unwrap().push(id.to_string());
+        async fn destroy(&self, id: &str) -> Result<(), BackendError> {
+            if self.fail_destroy.load(Ordering::SeqCst) {
+                return Err(BackendError::Protocol("teardown unavailable".into()));
+            }
+            let mut destroyed = self.destroyed.lock().unwrap();
+            if !destroyed.iter().any(|previous| previous == id) {
+                destroyed.push(id.to_string());
+            }
+            Ok(())
         }
     }
 
@@ -1025,7 +1251,7 @@ mod local_tests {
             keep_alive: false,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
 
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
         assert!(resp.stdout.contains("in=foo"), "stdout={}", resp.stdout);
@@ -1058,7 +1284,7 @@ mod local_tests {
             keep_alive: false,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         let art = resp.artifacts.iter().find(|a| a.name == "stdout.txt");
         assert!(
             art.is_some(),
@@ -1108,7 +1334,7 @@ mod local_tests {
             keep_alive: false,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
 
         let by_name = |n: &str| resp.artifacts.iter().find(|a| a.name == n).cloned();
@@ -1152,7 +1378,7 @@ mod local_tests {
             keep_alive: false,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
 
         let flat = resp
@@ -1198,7 +1424,7 @@ mod local_tests {
             keep_alive: false,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
         let names: Vec<&str> = resp.artifacts.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(
@@ -1235,7 +1461,7 @@ mod local_tests {
             keep_alive: false,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
         let names: Vec<&str> = resp.artifacts.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(
@@ -1288,7 +1514,7 @@ mod local_tests {
             )
             .await
             .unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         assert_eq!(r2.exit_code, 0, "stderr={}", r2.stderr);
         let names: Vec<&str> = r2.artifacts.iter().map(|a| a.name.as_str()).collect();
         assert!(names.contains(&"b.txt"), "new file collected: {names:?}");
@@ -1321,7 +1547,7 @@ mod local_tests {
             keep_alive: false,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
 
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
         let art = resp

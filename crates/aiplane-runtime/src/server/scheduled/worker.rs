@@ -27,7 +27,7 @@ use rama::futures::FutureExt;
 use session_core::db as chat;
 use session_core::db::TurnStatus;
 
-use super::{ScheduleOwner, ScheduledAction, ScheduledRun, cron::Cron};
+use super::{AutomationOwner, ScheduledAction, ScheduledRun, cron::Cron};
 use crate::rama_server::state::RamaState;
 
 /// How often to poll for due actions. Cron granularity is one minute, so
@@ -158,7 +158,7 @@ async fn execute_run(
     run_id: Option<&str>,
 ) -> RunOutcome {
     let fail = |msg: &str| ("error", None, Some(msg.to_string()));
-    if let ScheduleOwner::Principal(_) = &action.owner {
+    if let AutomationOwner::Principal(_) = &action.owner {
         let Some(run_id) = run_id else {
             return fail("The scheduled run history is unavailable");
         };
@@ -170,7 +170,7 @@ async fn execute_run(
             Err(error) => fail(&error.to_string()),
         };
     }
-    let ScheduleOwner::User(user_id) = &action.owner else {
+    let AutomationOwner::User(user_id) = &action.owner else {
         unreachable!()
     };
     let Some(model) = action.model.as_deref() else {
@@ -293,7 +293,7 @@ async fn open_run_session(
     db: &aiplane_core::server::db::Pool,
     action: &ScheduledAction,
 ) -> Result<(String, String), crate::server::headless::OpenError> {
-    let ScheduleOwner::User(user_id) = &action.owner else {
+    let AutomationOwner::User(user_id) = &action.owner else {
         return Err(crate::server::headless::OpenError::Unavailable);
     };
     let model = action
@@ -328,7 +328,7 @@ async fn reusable_session(
     let Some(last) = action.last_session_id.as_deref() else {
         return Ok(None);
     };
-    let ScheduleOwner::User(user_id) = &action.owner else {
+    let AutomationOwner::User(user_id) = &action.owner else {
         return Ok(None);
     };
     Ok(chat::get_session(db, user_id, last)
@@ -419,7 +419,7 @@ async fn try_run_organization(
         .await?
         .ok_or_else(unavailable)?;
     if !action.enabled
-        || action.owner != ScheduleOwner::Principal(profile.principal.id.clone())
+        || action.owner != AutomationOwner::Principal(profile.principal.id.clone())
         || run.configuration_generation.as_deref() != Some(action.configuration_generation.as_str())
         || run.agent_version != Some(profile.version)
         || action.agent_version != Some(profile.version)
@@ -518,7 +518,7 @@ mod tests {
 
     fn new_action(reuse_conversation: bool) -> NewAction {
         NewAction {
-            owner: ScheduleOwner::User("u1".to_string()),
+            owner: AutomationOwner::User("u1".to_string()),
             created_by: "u1".to_string(),
             agent_version: None,
             name: "Every minute".to_string(),
@@ -647,7 +647,7 @@ mod tests {
         let action = create(
             &state.db,
             NewAction {
-                owner: super::super::ScheduleOwner::Principal(profile.principal.id),
+                owner: super::super::AutomationOwner::Principal(profile.principal.id),
                 created_by: "creator".into(),
                 dot_id: None,
                 agent_version: Some(1),
@@ -705,7 +705,7 @@ mod tests {
         let (status, session, error) = execute_run(&state, &action, Some(&run.id)).await;
         assert_eq!(status, "ok", "{error:?}");
         let session = session.unwrap();
-        let super::super::ScheduleOwner::Principal(principal) = &action.owner else {
+        let super::super::AutomationOwner::Principal(principal) = &action.owner else {
             panic!("principal expected");
         };
         let stored =

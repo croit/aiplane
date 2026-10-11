@@ -66,6 +66,7 @@ struct Leased {
     /// reap it even if `last_used` is old (a single exec can legitimately
     /// run up to `max_timeout_secs`).
     busy: bool,
+    retiring: bool,
 }
 
 pub struct Pool {
@@ -82,6 +83,19 @@ pub struct Pool {
     sem: Semaphore,
     /// Serializes refill so we never overshoot `pool_size`.
     refill_lock: tokio::sync::Mutex<()>,
+}
+
+struct TeardownAttempt<'a> {
+    pool: &'a Pool,
+    id: &'a str,
+}
+
+impl Drop for TeardownAttempt<'_> {
+    fn drop(&mut self) {
+        if let Some(lease) = self.pool.leased.lock().unwrap().get_mut(self.id) {
+            lease.busy = false;
+        }
+    }
 }
 
 impl Pool {
@@ -134,7 +148,9 @@ impl Pool {
             let leased = self.leased.lock().unwrap();
             leased
                 .iter()
-                .filter(|(_, l)| !l.busy && now.saturating_duration_since(l.last_used) > ttl)
+                .filter(|(_, l)| {
+                    !l.busy && (l.retiring || now.saturating_duration_since(l.last_used) > ttl)
+                })
                 .map(|(id, _)| id.clone())
                 .collect()
         };
@@ -153,36 +169,52 @@ impl Pool {
     /// that id and start an exec (marking it busy); this re-check ensures we
     /// don't destroy a container mid-exec. Nothing removed → nothing destroyed.
     async fn reap_if_idle(self: &Arc<Self>, id: &str) {
-        let removed = {
-            let mut leased = self.leased.lock().unwrap();
-            match leased.get(id) {
-                Some(l) if !l.busy => leased.remove(id).is_some(),
-                _ => false,
-            }
-        };
-        if removed {
-            self.backend.destroy(id).await;
+        if let Err(error) = self.release_container(id).await {
+            tracing::warn!(container = %id, error = %error, "sandbox teardown not confirmed; retaining container for retry");
         }
     }
 
-    /// Free a leased container: drop it from the lease table and destroy it.
-    /// Idempotent — a DELETE for an id we no longer track (already swept, or
-    /// never leased) still best-effort destroys and returns cleanly, so the
-    /// gateway's turn-end release and the sweeper can't double-fault.
-    pub async fn release_container(self: &Arc<Self>, id: &str) {
-        let tracked = { self.leased.lock().unwrap().remove(id).is_some() };
-        // Destroy regardless: the id came from us, and `destroy` is itself
-        // best-effort (a no-op on an unknown/gone container).
-        self.backend.destroy(id).await;
-        if tracked {
-            tracing::debug!(container = %id, "sandbox lease released");
+    pub async fn release_container(self: &Arc<Self>, id: &str) -> Result<(), RunnerError> {
+        self.backend.validate_container_id(id)?;
+        {
+            let mut leased = self.leased.lock().unwrap();
+            let lease = leased.entry(id.to_owned()).or_insert(Leased {
+                last_used: Instant::now(),
+                busy: false,
+                retiring: true,
+            });
+            if lease.busy {
+                return Err(RunnerError::Busy);
+            }
+            lease.retiring = true;
+            lease.busy = true;
+        }
+        let _attempt = TeardownAttempt { pool: self, id };
+        let result = self.backend.destroy(id).await;
+        let mut leased = self.leased.lock().unwrap();
+        match result {
+            Ok(()) => {
+                leased.remove(id);
+                Ok(())
+            }
+            Err(error) => {
+                if let Some(lease) = leased.get_mut(id) {
+                    lease.busy = false;
+                }
+                Err(error.into())
+            }
         }
     }
 
     /// Number of live leases — test/observability only.
     #[cfg(test)]
     pub fn leased_len(&self) -> usize {
-        self.leased.lock().unwrap().len()
+        self.leased
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|lease| !lease.retiring)
+            .count()
     }
 
     /// Number of pre-booted containers currently idle. Test-only today;
@@ -261,8 +293,7 @@ impl Pool {
             // and torn down on completion regardless.
             let stale: Vec<Warm> = { self.ready.lock().unwrap().drain(..).collect() };
             for w in stale {
-                let backend = self.backend.clone();
-                tokio::spawn(async move { backend.destroy(&w.id).await });
+                self.spawn_destroy(w.id);
             }
         }
         self.refill().await;
@@ -289,9 +320,7 @@ impl Pool {
             // stamped with a superseded image is destroyed, not served, and
             // we boot a fresh one (which uses the new image).
             Some(w) if !target.is_empty() && w.image != target => {
-                let backend = self.backend.clone();
-                let stale = w.id.clone();
-                tokio::spawn(async move { backend.destroy(&stale).await });
+                self.spawn_destroy(w.id.clone());
                 Ok((self.backend.create(Network::None).await?, false))
             }
             Some(w) => Ok((w.id, true)),
@@ -331,7 +360,7 @@ impl Pool {
         let mut reused = false;
         let mut pooled = false;
         let id = match req.container_id.as_deref() {
-            Some(want) if self.mark_lease_busy(want) => {
+            Some(want) if self.mark_lease_busy(want)? => {
                 reused = true;
                 want.to_string()
             }
@@ -375,16 +404,15 @@ impl Pool {
         Ok(resp)
     }
 
-    /// Mark an existing lease busy (so the sweeper won't reap it) if it's
-    /// live. Returns whether the id named a tracked lease.
-    fn mark_lease_busy(&self, id: &str) -> bool {
+    fn mark_lease_busy(&self, id: &str) -> Result<bool, RunnerError> {
         let mut leased = self.leased.lock().unwrap();
         match leased.get_mut(id) {
-            Some(l) => {
-                l.busy = true;
-                true
+            Some(lease) if lease.busy || lease.retiring => Err(RunnerError::Busy),
+            Some(lease) => {
+                lease.busy = true;
+                Ok(true)
             }
-            None => false,
+            None => Ok(false),
         }
     }
 
@@ -409,12 +437,10 @@ impl Pool {
                 }
                 return Some(id.to_string());
             }
-            // The reused container's job failed or timed out — treat the lease
-            // as poisoned: drop it and destroy the container so the gateway's
-            // next call recreates a clean one (a stale id it re-sends will miss
-            // the table and fall through to a fresh container) instead of
-            // re-exec'ing into a dead/saturated container all turn.
-            self.leased.lock().unwrap().remove(id);
+            if let Some(lease) = self.leased.lock().unwrap().get_mut(id) {
+                lease.busy = false;
+                lease.retiring = true;
+            }
             self.spawn_destroy(id.to_string());
             return None;
         }
@@ -433,6 +459,7 @@ impl Pool {
                         Leased {
                             last_used: Instant::now(),
                             busy: false,
+                            retiring: false,
                         },
                     );
                     true
@@ -453,10 +480,22 @@ impl Pool {
         None
     }
 
-    /// Fire-and-forget container teardown.
     fn spawn_destroy(self: &Arc<Self>, id: String) {
-        let backend = self.backend.clone();
-        tokio::spawn(async move { backend.destroy(&id).await });
+        {
+            let mut leased = self.leased.lock().unwrap();
+            let lease = leased.entry(id.clone()).or_insert(Leased {
+                last_used: Instant::now(),
+                busy: false,
+                retiring: true,
+            });
+            lease.retiring = true;
+        }
+        let pool = self.clone();
+        tokio::spawn(async move {
+            if let Err(error) = pool.release_container(&id).await {
+                tracing::warn!(container = %id, error = %error, "sandbox teardown not confirmed; retaining container for retry");
+            }
+        });
     }
 }
 
@@ -753,6 +792,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn checked_teardown_invalid_release_never_enters_retirement_tracking() {
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), cfg_leases(0, 6, 600));
+        for id in ["-f", "", "fake-1/../other"] {
+            assert!(pool.release_container(id).await.is_err());
+            assert!(pool.leased.lock().unwrap().is_empty());
+        }
+        assert!(backend.destroyed.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn checked_teardown_poisoned_lease_is_retiring_before_async_destruction() {
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), cfg_leases(0, 6, 600));
+        pool.leased.lock().unwrap().insert(
+            "fake-0".into(),
+            Leased {
+                last_used: Instant::now(),
+                busy: true,
+                retiring: false,
+            },
+        );
+        assert_eq!(pool.dispose("fake-0", true, true, false), None);
+        assert!(matches!(
+            pool.mark_lease_busy("fake-0"),
+            Err(RunnerError::Busy)
+        ));
+        assert!(pool.leased.lock().unwrap().get("fake-0").unwrap().retiring);
+        settle_destroyed(&backend, 1).await;
+    }
+
+    #[tokio::test]
+    async fn checked_teardown_release_failure_retains_tracking_until_retry_confirms_absence() {
+        let be = Arc::new(FakeBackend::new());
+        let pool = Pool::new(be.clone(), cfg_leases(0, 6, 600));
+        let mut request = req();
+        request.keep_alive = true;
+        let id = pool.run(&request).await.unwrap().container_id.unwrap();
+        be.fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(pool.release_container(&id).await.is_err());
+        assert_eq!(be.live_count(), 1);
+        assert!(
+            pool.leased.lock().unwrap().contains_key(&id),
+            "unconfirmed container absence must retain tracking"
+        );
+        request.container_id = Some(id.clone());
+        assert!(matches!(pool.run(&request).await, Err(RunnerError::Busy)));
+        assert_eq!(be.execs.load(std::sync::atomic::Ordering::SeqCst), 1);
+        be.fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        pool.release_container(&id).await.unwrap();
+        assert_eq!(be.live_count(), 0);
+        assert_eq!(pool.leased_len(), 0);
+    }
+
+    #[tokio::test]
+    async fn checked_teardown_ttl_failure_retains_tracking_until_sweeper_retry() {
+        let be = Arc::new(FakeBackend::new());
+        let pool = Pool::new(be.clone(), cfg_leases(0, 6, 600));
+        let mut request = req();
+        request.keep_alive = true;
+        let id = pool.run(&request).await.unwrap().container_id.unwrap();
+        pool.leased.lock().unwrap().get_mut(&id).unwrap().last_used =
+            Instant::now() - Duration::from_secs(601);
+        be.fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        pool.sweep_expired().await;
+        assert_eq!(be.live_count(), 1);
+        assert!(
+            pool.leased.lock().unwrap().contains_key(&id),
+            "failed TTL teardown must retain tracking"
+        );
+        be.fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        pool.sweep_expired().await;
+        assert_eq!(be.live_count(), 0);
+        assert_eq!(pool.leased_len(), 0);
+    }
+
+    #[tokio::test]
+    async fn checked_teardown_same_container_concurrent_exec_is_refused() {
+        let be = Arc::new(FakeBackend::new());
+        let pool = Pool::new(be.clone(), cfg_leases(0, 6, 600));
+        let mut request = req();
+        request.keep_alive = true;
+        let id = pool.run(&request).await.unwrap().container_id.unwrap();
+        request.container_id = Some(id.clone());
+        let mut blocked = request.clone();
+        blocked.code = "hold-exec".into();
+        let active = tokio::spawn({
+            let pool = pool.clone();
+            async move { pool.run(&blocked).await }
+        });
+        tokio::time::timeout(Duration::from_secs(2), be.exec_entered.notified())
+            .await
+            .unwrap();
+        let concurrent = tokio::time::timeout(Duration::from_secs(2), pool.run(&request))
+            .await
+            .unwrap();
+        be.exec_release.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), active)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(concurrent, Err(RunnerError::Busy)),
+            "{concurrent:?}"
+        );
+        assert_eq!(be.execs.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(be.live_count(), 1);
+        assert_eq!(pool.leased_len(), 1);
+        pool.release_container(&id).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn release_container_destroys_and_untracks_and_is_idempotent() {
         let be = Arc::new(FakeBackend::new());
         let pool = Pool::new(be.clone(), cfg_leases(0, 6, 600));
@@ -761,12 +917,12 @@ mod tests {
         let id = pool.run(&r).await.unwrap().container_id.unwrap();
         assert_eq!(pool.leased_len(), 1);
 
-        pool.release_container(&id).await;
+        pool.release_container(&id).await.unwrap();
         assert_eq!(pool.leased_len(), 0);
         assert!(be.destroyed.lock().unwrap().contains(&id));
 
         // A second release (e.g. sweeper raced the gateway) must not panic.
-        pool.release_container(&id).await;
+        pool.release_container(&id).await.unwrap();
         assert_eq!(pool.leased_len(), 0);
     }
 
@@ -808,6 +964,7 @@ mod tests {
             Leased {
                 last_used: Instant::now(),
                 busy: true,
+                retiring: false,
             },
         );
 
@@ -835,6 +992,19 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl ContainerBackend for FailExecBackend {
+        fn validate_container_id(&self, id: &str) -> Result<(), crate::backend::BackendError> {
+            if !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            {
+                Ok(())
+            } else {
+                Err(crate::backend::BackendError::Protocol(
+                    "invalid test container ID".into(),
+                ))
+            }
+        }
         async fn create(&self, _network: Network) -> Result<String, crate::backend::BackendError> {
             let mut n = self.created.lock().unwrap();
             *n += 1;
@@ -848,8 +1018,9 @@ mod tests {
         ) -> Result<RunResponse, crate::backend::BackendError> {
             Err(crate::backend::BackendError::Protocol("boom".into()))
         }
-        async fn destroy(&self, id: &str) {
+        async fn destroy(&self, id: &str) -> Result<(), crate::backend::BackendError> {
             self.destroyed.lock().unwrap().push(id.to_string());
+            Ok(())
         }
     }
 
@@ -897,6 +1068,7 @@ mod tests {
             Leased {
                 last_used: Instant::now(),
                 busy: false,
+                retiring: false,
             },
         );
         let mut r = req();
@@ -915,6 +1087,19 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl ContainerBackend for TimeoutBackend {
+        fn validate_container_id(&self, id: &str) -> Result<(), crate::backend::BackendError> {
+            if !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            {
+                Ok(())
+            } else {
+                Err(crate::backend::BackendError::Protocol(
+                    "invalid test container ID".into(),
+                ))
+            }
+        }
         async fn create(&self, _network: Network) -> Result<String, crate::backend::BackendError> {
             let mut n = self.created.lock().unwrap();
             *n += 1;
@@ -938,8 +1123,9 @@ mod tests {
                 container_id: None,
             })
         }
-        async fn destroy(&self, id: &str) {
+        async fn destroy(&self, id: &str) -> Result<(), crate::backend::BackendError> {
             self.destroyed.lock().unwrap().push(id.to_string());
+            Ok(())
         }
     }
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import type { AgentVersion } from '#lib/agents.js';
 	import { locale, t } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
@@ -43,6 +43,8 @@
 	let error = $state<string | null>(null);
 	let busy = $state(false);
 	let previewVersion = 0;
+	let disposed = false;
+	onDestroy(() => { disposed = true; });
 
 	const modes = ['hourly', 'daily', 'weekly', 'monthly', 'advanced'] as const;
 	const weekdays = [
@@ -67,6 +69,7 @@
 	}
 
 	async function loadPreview() {
+		if (disposed) return;
 		const cron = cronFromSchedule(schedule);
 		if (!cron || !timezone.trim()) {
 			preview = null;
@@ -75,12 +78,12 @@
 		const version = ++previewVersion;
 		try {
 			const result = await scheduledApi.preview(cron, timezone);
-			if (version === previewVersion) {
+			if (!disposed && version === previewVersion) {
 				preview = result;
 				error = null;
 			}
 		} catch (caught) {
-			if (version === previewVersion) {
+			if (!disposed && version === previewVersion) {
 				preview = null;
 				error = String(caught);
 			}
@@ -88,6 +91,7 @@
 	}
 
 	async function save() {
+		if (disposed || busy) return;
 		const cron = cronFromSchedule(schedule);
 		if (!cron) {
 			error = t(schedule.mode === 'weekly' ? 'scheduled-err-pick-weekday' : 'scheduled-err-enter-cron');
@@ -104,14 +108,15 @@
 		try {
 			if (action) await scheduledApi.update(action.id, { ...body, expected_configuration_generation: action.configuration_generation });
 			else await scheduledApi.create(body);
+			if (disposed) return;
 			// Both paths leave for /scheduled, so there is no form left to
 			// clear — the create form used to live above the list and had to
 			// reset itself in place.
 			await onsaved();
 		} catch (caught) {
-			error = String(caught);
+			if (!disposed) error = String(caught);
 		} finally {
-			busy = false;
+			if (!disposed) busy = false;
 		}
 	}
 
