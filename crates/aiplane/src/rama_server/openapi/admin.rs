@@ -4,7 +4,7 @@
 //! The `/api/v0/admin/*` operator surfaces.
 
 use super::*;
-use crate::rama_server::pages::json_admin as admin;
+use crate::rama_server::pages::{json_admin as admin, json_tokens};
 
 pub(super) fn operations() -> Vec<Op> {
     vec![
@@ -72,8 +72,8 @@ pub(super) fn operations() -> Vec<Op> {
             .ok(json::<admin::AdminTokenModels>())
             .errors(&[400, 404]),
         put("/api/v0/admin/tokens/{id}/priority", Access::Admin)
-            .body(json::<admin::AdminTokenPriority>())
-            .ok(json::<admin::AdminTokenPriority>())
+            .body(json::<json_tokens::TokenPriorityRequest>())
+            .ok(json::<json_tokens::TokenPriorityRequest>())
             .errors(&[400, 404]),
         get("/api/v0/admin/upstreams", Access::Admin).ok(json::<admin::TopologyView>()),
         get("/api/v0/admin/upstreams/events", Access::Admin).ok(sse::<admin::BackendStatus>()),

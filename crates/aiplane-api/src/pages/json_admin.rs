@@ -1926,12 +1926,6 @@ pub async fn tokens_models(
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AdminTokenPriority {
-    pub priority: Option<Priority>,
-}
-
 pub async fn tokens_priority(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let lang = session_core::i18n::Lang::from_headers(req.headers());
@@ -1943,7 +1937,7 @@ pub async fn tokens_priority(State(state): State<Arc<RamaState>>, req: Request) 
         Ok(bytes) => bytes,
         Err(_) => return bad_request(session_core::i18n::t(lang, "priority-error-body")),
     };
-    let parsed: AdminTokenPriority = match serde_json::from_slice(&bytes) {
+    let parsed: super::json_tokens::TokenPriorityRequest = match serde_json::from_slice(&bytes) {
         Ok(value) => value,
         Err(_) => return bad_request(session_core::i18n::t(lang, "priority-error-body")),
     };

@@ -23,7 +23,7 @@ capacity; cancellation is checked every 50 ms while admission is pending.
 
 - The DB-backed gateway groups and RBAC resolver determine group membership.
 - The existing tokens table stores the token override; token management remains
-  administrator-only for priority changes.
+  owner-scoped for personal priority changes and administrator-scoped for unrestricted changes.
 - The typed operator settings catalog stores the switch and system default.
 - `UpstreamRegistry`, `PoolAccess`, aliases, fallback routing and prefix affinity
   continue to select authorized models and backends.
@@ -33,7 +33,9 @@ capacity; cancellation is checked every 50 ms while admission is pending.
   backend editor stores automatic, gateway-only or manual parameter mappings.
 - One priority mapping translates the effective class at the final dispatch
   boundary, including tool rounds, retries and fallback backends.
-- Fluent catalogs supply all labels in the existing admin forms.
+- `PrioritySelect` and the existing token creation dialog and card editors provide personal and administrator priority controls.
+- The RBAC resolver supplies the inherited priority and administrator rights; the server checks the permitted ceiling before token creation or a personal priority update.
+- Fluent catalogs supply labels and errors in all six UI languages.
 
 ## Administration
 
@@ -41,7 +43,9 @@ capacity; cancellation is checked every 50 ms while admission is pending.
 
 Enable **request prioritization** under **Administration → Settings → Access → Gateway** (`gateway.priority_enabled`, disabled by default) and choose the system default. Edit a
 group's priority under Administration → Access → Groups. Under Tokens, choose
-inherit, low, medium or high for any application making API requests. Tokens
+inherit, low, medium or high for any application making API requests. Owners choose priority during creation under Settings → Tokens and edit it through the Priority tile. Owners can choose values up to their inherited user priority or restore inheritance. Administrators can choose any value. The personal API checks this ceiling against current groups on every save, even when prioritization is disabled.
+
+Tokens
 without an override and browser chat inherit their owner's groups.
 
 Token save failures restore the previous selection and clear earlier success
@@ -70,8 +74,17 @@ Forwarding priority does not guarantee a latency bound or reserve GPU capacity.
 
 `PUT /api/v0/admin/groups` accepts `priority: "low" | "medium" | "high" | null`.
 `PUT /api/v0/admin/tokens/{id}/priority` accepts `{"priority":"high"}`;
-`null` restores inheritance. Both require an administrator session. Token owners
-cannot raise their priority through personal token endpoints or request bodies.
+`null` restores inheritance. Both require an administrator session.
+
+`POST /api/v0/tokens` accepts an optional `priority: "low" | "medium" | "high" | null`.
+Omitting it or sending `null` inherits the owner's groups. `PUT /api/v0/tokens/{id}/priority`
+accepts the same priority field and requires a session belonging to the token owner.
+The server returns 403 for a value above the owner's current inherited priority,
+unless the owner is an administrator, and 404 for missing or foreign tokens.
+Invalid priority values return 400. Rejected saves leave the token unchanged.
+`GET /api/v0/tokens/details` includes each token's saved `priority`, the caller's
+`owner_priority` and `max_priority`, and `priority_enabled`.
+Client-supplied priority in model request bodies cannot elevate the caller.
 
 `PUT /api/v0/admin/backends` accepts `priority` alongside the existing backend
 fields. Save the complete editor and apply topology changes. Modes:

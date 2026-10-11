@@ -1,5 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import PrioritySelect from '#lib/components/PrioritySelect.svelte';
+	import { canChoosePriority, type Priority } from '#lib/priority.js';
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
 	import EditModal from '#lib/components/EditModal.svelte';
 	import CapabilityPicker from '#lib/components/chat/CapabilityPicker.svelte';
@@ -14,13 +16,8 @@
 
 	type ToolState = 'on' | 'auto' | 'off';
 
-	/**
-	 * One API token as a card: who it is and when it lapses, then three tiles
-	 * — models, tools, budget — that each show their current state and open
-	 * one dialog to change it. Every dialog edits a draft and commits on Save;
-	 * the lifecycle actions live in the ⋯ menu, away from the settings.
-	 */
-	let { token, capabilities, models, ownerLimits, currency, timezone, usageEnabled, ontools, onmodels, onquotas, onrotate, onrevoke, onremove }: {
+
+	let { token, capabilities, models, ownerLimits, currency, timezone, usageEnabled, ownerPriority, maxPriority, priorityEnabled, onpriority, ontools, onmodels, onquotas, onrotate, onrevoke, onremove }: {
 		token: ManagedToken;
 		capabilities: Omit<ChatCapability, 'state'>[];
 		models: TokenModel[];
@@ -28,6 +25,10 @@
 		currency: string;
 		timezone: string;
 		usageEnabled: boolean;
+		ownerPriority: Priority;
+		maxPriority: Priority;
+		priorityEnabled: boolean;
+		onpriority: (priority: Priority | null) => Promise<void>;
 		ontools: (enabled: boolean, states: Record<string, ToolState>, mcpAllow: boolean) => Promise<void>;
 		onmodels: (restrict: boolean, models: string[]) => Promise<void>;
 		onquotas: (changes: { remove: string[]; add: NewQuota[] }) => Promise<void>;
@@ -41,6 +42,9 @@
 	let editingModels = $state(false);
 	let editingTools = $state(false);
 	let editingBudget = $state(false);
+	let editingPriority = $state(false);
+	let priorityDraft = $state<Priority | null>(null);
+	let priorityError = $state<string | null>(null);
 
 	let restrict = $state(false);
 	let selectedModels = $state<string[]>([]);
@@ -75,7 +79,7 @@
 		return capability.kind === 'skill' ? `skill:${capability.key}` : capability.key;
 	}
 
-	function open(which: 'models' | 'tools' | 'budget') {
+	function open(which: 'models' | 'tools' | 'budget' | 'priority') {
 		restrict = token.owner_models !== null;
 		selectedModels = [...(token.owner_models ?? [])];
 		toolsEnabled = token.tools_enabled;
@@ -84,6 +88,9 @@
 		keptQuotas = token.quotas.filter((quota) => quota.managed_by === 'owner').map((quota) => quota.id);
 		addedQuotas = [];
 		quotaValue = null;
+		priorityDraft = token.priority;
+		priorityError = null;
+		editingPriority = which === 'priority';
 		editingModels = which === 'models';
 		editingTools = which === 'tools';
 		editingBudget = which === 'budget';
@@ -94,10 +101,18 @@
 		busy = true;
 		try {
 			await action();
-			editingModels = editingTools = editingBudget = false;
+			editingModels = editingTools = editingBudget = editingPriority = false;
 		} catch {
 			// The page has already said what failed; the draft stays open so it can be retried.
 		} finally { busy = false; }
+	}
+
+	async function savePriority() {
+		priorityError = null;
+		await save(async () => {
+			try { await onpriority(priorityDraft); }
+			catch (caught) { priorityError = String(caught); throw caught; }
+		});
 	}
 
 	async function act(action: () => Promise<void>) {
@@ -131,7 +146,7 @@
 	}
 </script>
 
-{#snippet tile(title: string, icon: string, which: 'models' | 'tools' | 'budget', body: Snippet)}
+{#snippet tile(title: string, icon: string, which: 'models' | 'tools' | 'budget' | 'priority', body: Snippet)}
 	<button type="button" class="card card-border bg-base-100 text-left transition-colors hover:border-primary focus-visible:border-primary" onclick={() => open(which)} aria-label={`${title} · ${t('tokens-edit-button')}`}>
 		<div class="card-body gap-1 p-4">
 			<div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-base-content/60"><span aria-hidden="true">{icon}</span>{title}<span class="ml-auto text-base normal-case" aria-hidden="true">›</span></div>
@@ -174,6 +189,11 @@
 	{#if ownerLimits.length > 0}<div class="text-xs text-base-content/60">{t('tokens-budget-owner-applies')}</div>{/if}
 {/snippet}
 
+{#snippet priorityBody()}
+	<div class="font-medium">{token.priority === null ? t('priority-inherit-value', { priority: t(`priority-${ownerPriority}`) }) : t(`priority-${token.priority}`)}</div>
+	{#if !priorityEnabled}<div class="text-xs text-base-content/60">{t('priority-owner-disabled')}</div>{/if}
+{/snippet}
+
 {#if token.revoked}
 	<li class="card border border-dashed border-base-300 bg-base-200/40 opacity-70">
 		<div class="card-body flex-row flex-wrap items-center gap-3 p-4">
@@ -208,12 +228,25 @@
 				</div>
 			</div>
 
-			<div class="grid gap-3 md:grid-cols-3">
+			<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
 				{@render tile(t('tokens-tile-models'), '◇', 'models', modelsBody)}
 				{@render tile(t('tokens-tile-tools'), '⚒', 'tools', toolsBody)}
 				{@render tile(t('tokens-tile-budget'), '◔', 'budget', budgetBody)}
+				{@render tile(t('priority-label'), '↥', 'priority', priorityBody)}
 			</div>
 		</div>
+
+		<EditModal bind:open={editingPriority} title={t('priority-label')} description={token.name}
+			cancellabel={t('admin-cancel')} savelabel={t('tokens-save')}
+			saving={busy || !canChoosePriority(priorityDraft, maxPriority)} onsave={savePriority}>
+			<div class="flex flex-col gap-3">
+				{#if priorityError}<div class="alert alert-error" role="alert"><span>{priorityError}</span></div>{/if}
+				<PrioritySelect bind:value={priorityDraft} maximum={maxPriority} disabled={busy} inheritLabel={t('priority-inherit-value', { priority: t(`priority-${ownerPriority}`) })} />
+				<p class="text-sm text-base-content/60">{t('priority-owner-inherited', { priority: t(`priority-${ownerPriority}`) })}</p>
+				<p class="text-sm text-base-content/60">{t('priority-owner-help')}</p>
+				{#if !priorityEnabled}<div class="alert alert-info"><span>{t('priority-owner-disabled')}</span></div>{/if}
+			</div>
+		</EditModal>
 
 		<EditModal
 			bind:open={editingModels}

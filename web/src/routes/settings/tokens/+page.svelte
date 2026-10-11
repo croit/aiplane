@@ -5,6 +5,8 @@
 	import { adminDelete, adminJson, adminPost, adminPut } from '#lib/admin-client.js';
 	import EditModal from '#lib/components/EditModal.svelte';
 	import ManagedTokenCard from '#lib/components/tokens/ManagedTokenCard.svelte';
+	import PrioritySelect from '#lib/components/PrioritySelect.svelte';
+	import { canChoosePriority, type Priority } from '#lib/priority.js';
 	import TokenSetupGuides from '#lib/components/tokens/TokenSetupGuides.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 	import { selectedTokenTab } from '#lib/tokens-tabs.js';
@@ -17,14 +19,16 @@
 	let minted = $state<{ name: string; plaintext: string } | null>(null);
 	let name = $state('');
 	let ttlDays = $state(90);
-	// Two fields is a dialog, not a card wedged above the list — the tokens a
-	// user came to manage should be the first thing on the page.
+	let priority = $state<Priority | null>(null);
+	let createError = $state<string | null>(null);
 	let creating = $state(false);
 	let selected = $derived(selectedTokenTab(page.url.search));
 
 	function openCreate() {
 		name = '';
 		ttlDays = 90;
+		priority = null;
+		createError = null;
 		creating = true;
 	}
 
@@ -35,14 +39,15 @@
 
 	async function create() {
 		const trimmed = name.trim();
-		if (!trimmed || busy) return;
+		if (!trimmed || busy || !details || !canChoosePriority(priority, details.max_priority)) return;
 		busy = true;
+		createError = null;
 		try {
-			const response = await api.createToken({ name: trimmed, ttl_days: ttlDays, tools_enabled: false, tool_states: {} });
+			const response = await api.createToken({ name: trimmed, ttl_days: ttlDays, priority, tools_enabled: false, tool_states: {} });
 			minted = { name: response.token.name, plaintext: response.plaintext };
 			creating = false;
 			await refresh();
-		} catch (caught) { notice = String(caught); } finally { busy = false; }
+		} catch (caught) { createError = String(caught); } finally { busy = false; }
 	}
 
 	async function mutate(action: () => Promise<void>) {
@@ -72,6 +77,12 @@
 		await commit(async () => {
 			await adminPut(`/api/v0/tokens/${token.id}/models`, { restrict, models });
 			notice = restrict ? t('tokens-models-saved-toast', { count: models.length }) : t('tokens-models-cleared-toast');
+		});
+	}
+	async function updatePriority(token: ManagedToken, priority: Priority | null) {
+		await commit(async () => {
+			await adminPut(`/api/v0/tokens/${encodeURIComponent(token.id)}/priority`, { priority });
+			notice = t('priority-saved');
 		});
 	}
 	async function updateQuotas(token: ManagedToken, changes: { remove: string[]; add: NewQuota[] }) {
@@ -119,11 +130,12 @@
 	<section class="flex flex-col gap-4">
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<h2 class="m-0 text-lg font-semibold">{t('tokens-list-heading')}</h2>
-			<button class="btn btn-primary btn-sm" type="button" onclick={openCreate}>{t('tokens-create-heading')}</button>
+			<button class="btn btn-primary btn-sm" type="button" onclick={openCreate} disabled={!details}>{t('tokens-create-heading')}</button>
 		</div>
 		{#if !details}<div class="skeleton h-24 w-full"></div>{:else if details.tokens.length === 0}<p class="text-sm text-base-content/60">{t('tokens-list-empty')}</p>{:else}
 			<ul class="flex flex-col gap-4">{#each details.tokens as token (token.id)}
 				<ManagedTokenCard {token} capabilities={details.capabilities} models={details.models} ownerLimits={details.owner_limits} currency={details.currency} timezone={details.timezone} usageEnabled={details.usage_enabled}
+					ownerPriority={details.owner_priority} maxPriority={details.max_priority} priorityEnabled={details.priority_enabled} onpriority={(priority) => updatePriority(token, priority)}
 					ontools={(enabled, states, mcpAllow) => updateTools(token, enabled, states, mcpAllow)} onmodels={(restrict, models) => updateModels(token, restrict, models)}
 					onquotas={(changes) => updateQuotas(token, changes)} onrotate={() => rotate(token)} onrevoke={() => revoke(token)} onremove={() => remove(token)} />
 			{/each}</ul>
@@ -140,10 +152,11 @@
 	description={t('tokens-create-description')}
 	cancellabel={t('admin-cancel')}
 	savelabel={t('tokens-create-submit')}
-	saving={busy}
+	saving={busy || !details || !canChoosePriority(priority, details.max_priority)}
 	onsave={create}
 >
 	<div class="flex flex-col gap-3">
+		{#if createError}<div class="alert alert-error" role="alert"><span>{createError}</span></div>{/if}
 		<fieldset class="fieldset">
 			<legend class="fieldset-legend">{t('tokens-name-label')}</legend>
 			<!-- svelte-ignore a11y_autofocus -->
@@ -153,5 +166,10 @@
 			<legend class="fieldset-legend">{t('tokens-ttl-label')}</legend>
 			<input class="input w-32" type="number" min="1" max="1825" bind:value={ttlDays} aria-label={t('tokens-ttl-label')} />
 		</fieldset>
+		{#if details}
+			<PrioritySelect bind:value={priority} maximum={details.max_priority} inheritLabel={t('priority-inherit-value', { priority: t(`priority-${details.owner_priority}`) })} />
+			<p class="text-sm text-base-content/60">{t('priority-owner-help')}</p>
+			{#if !details.priority_enabled}<div class="alert alert-info"><span>{t('priority-owner-disabled')}</span></div>{/if}
+		{/if}
 	</div>
 </EditModal>

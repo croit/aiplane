@@ -156,9 +156,9 @@ page.
 
 Within `/settings/tokens`, `?tab=tokens` manages tokens and `?tab=guides`
 contains client setup guides. Each token is a card (`ManagedTokenCard`) with
-three tiles — **Models**, **Tools**, **Budget** — that show the current state
+four tiles — **Models**, **Tools**, **Budget**, **Priority** — that show the current state
 (GDPR/NDA exposure and the dearest token price; tool use and the MCP ask
-policy; the tightest quota with its spend) and open one dialog each. Every
+policy; the tightest quota with its spend; the saved priority or inheritance) and open one dialog each. Every
 dialog edits a draft and commits on Save; nothing on the card saves on a
 click. Rotate and Revoke sit in the card's ⋯ menu. The model dialog is
 `TokenModelPicker`, shared with the operator restriction on `/admin/tokens`:
@@ -174,6 +174,15 @@ the one-time value. The guide's `client` query parameter selects OpenCode,
 Claude Code, Pi, Oh My Pi, or Python; code examples use the browser's current origin so they
 also work on self-hosted domains. All guide instructions live in the six Fluent
 catalogs.
+
+The token creation dialog and each active token card's Priority editor reuse
+`PrioritySelect`. `/api/v0/tokens/details` supplies the saved nullable priority,
+the caller's inherited `owner_priority`, permitted `max_priority`, and the
+`priority_enabled` setting. Values above the ceiling are disabled; the server
+checks the current ceiling independently on creation and every priority save.
+The editor saves through `PUT /api/v0/tokens/{id}/priority`, keeps failed drafts
+open with a localized error, and refreshes the card after saving. Inheritance
+uses the owner's groups and system default. Administrators can choose any class.
 
 Long or data-driven choices use the shared `SearchableSelect` combobox instead
 of a native select. It searches labels, stored values, descriptions, keywords and

@@ -445,6 +445,7 @@ Debug fixture routes exist only in development builds.
 | `DELETE /api/v0/tokens/{id}` |
 | `PUT /api/v0/tokens/{id}/mcp-policy` |
 | `PUT /api/v0/tokens/{id}/models` |
+| `PUT /api/v0/tokens/{id}/priority` |
 | `POST /api/v0/tokens/{id}/quota` |
 | `DELETE /api/v0/tokens/{id}/quota/{rule_id}` |
 | `POST /api/v0/tokens/{id}/revoke` |

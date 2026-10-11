@@ -21,14 +21,14 @@
 
 use std::sync::Arc;
 
+use aiplane_core::server::priority::Priority;
 use jiff::Timestamp;
 use rama::http::service::web::extract::{Path, Query, State};
 use rama::http::service::web::response::IntoResponse;
 use rama::http::{Request, Response, StatusCode, header};
 use session_core::chrome::read_body_to_bytes;
 use shared::api::{
-    CreateTokenRequest, CreateTokenResponse, DeleteResponse, Me, RevokeResponse, TokenSummary,
-    UpdateTokenToolsRequest,
+    CreateTokenResponse, DeleteResponse, Me, RevokeResponse, TokenSummary, UpdateTokenToolsRequest,
 };
 use uuid::Uuid;
 
@@ -141,12 +141,28 @@ pub async fn list_tokens(State(state): State<Arc<RamaState>>, req: Request) -> R
     json_ok(&out)
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct CreateTokenRequest {
+    pub priority: Option<Priority>,
+    pub name: String,
+    /// Token lifetime in days. Falls back to the server's default if missing.
+    pub ttl_days: Option<i64>,
+    /// Whether the new token may use gateway tools at all. Defaults to
+    /// `false` (off) — a token is born without tool access until opted in.
+    #[serde(default)]
+    pub tools_enabled: Option<bool>,
+    /// Explicit `on`, `auto`, or `off` states; missing keys use the family default.
+    #[serde(default)]
+    pub tool_states: std::collections::BTreeMap<String, String>,
+}
+
 /// POST /api/v0/tokens — mint a new bearer. Plaintext returned **once**.
 pub async fn create_token(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let session = match require_session(&state, &req).await {
         Ok(s) => s,
         Err(resp) => return resp,
     };
+    let lang = session_core::i18n::Lang::from_headers(req.headers());
     let (_, body) = req.into_parts();
     let body_bytes = match read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -154,7 +170,7 @@ pub async fn create_token(State(state): State<Arc<RamaState>>, req: Request) -> 
     };
     let body: CreateTokenRequest = match serde_json::from_slice(&body_bytes) {
         Ok(b) => b,
-        Err(err) => return invalid_request(&format!("body is not a CreateTokenRequest: {err}")),
+        Err(_) => return invalid_request(&session_core::i18n::t(lang, "tokens-create-error-body")),
     };
 
     let now = Timestamp::now();
@@ -180,6 +196,14 @@ pub async fn create_token(State(state): State<Arc<RamaState>>, req: Request) -> 
             return internal_error("user lookup failed");
         }
     };
+    let (_, maximum) = aiplane_api::pages::json_tokens::priority_limits(&state, &user);
+    if body.priority.is_some_and(|priority| priority > maximum) {
+        return aiplane_api::pages::json_error(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            &session_core::i18n::t(lang, "priority-error-ceiling"),
+        );
+    }
     let states = match validate_token_states(&state, &user, &body.tool_states).await {
         Ok(states) => states,
         Err(message) => return invalid_request(&message),
@@ -187,7 +211,7 @@ pub async fn create_token(State(state): State<Arc<RamaState>>, req: Request) -> 
 
     let (plaintext, hash) = token::mint();
     let row = tokens::Token {
-        priority: None,
+        priority: body.priority,
         id: Uuid::new_v4().to_string(),
         user_id: session.user_id.clone(),
         name: name.to_string(),

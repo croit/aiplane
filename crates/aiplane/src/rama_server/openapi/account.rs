@@ -13,9 +13,9 @@ pub(super) fn operations() -> Vec<Op> {
         get("/api/v0/me", Access::Session).ok(json::<shared::api::Me>()),
         get("/api/v0/tokens", Access::Session).ok(json::<Vec<shared::api::TokenSummary>>()),
         post("/api/v0/tokens", Access::Session)
-            .body(json::<shared::api::CreateTokenRequest>())
+            .body(json::<api::CreateTokenRequest>())
             .ok(json::<shared::api::CreateTokenResponse>())
-            .errors(&[400]),
+            .errors(&[400, 403]),
         post("/api/v0/tokens/{id}/revoke", Access::Session)
             .ok(json::<shared::api::RevokeResponse>())
             .errors(&[404, 409]),
@@ -26,6 +26,10 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<shared::api::UpdateTokenToolsRequest>())
             .ok(json::<api::TokenToolsSaved>())
             .errors(&[400, 404]),
+        put("/api/v0/tokens/{id}/priority", Access::Session)
+            .body(json::<json_tokens::TokenPriorityRequest>())
+            .ok(json::<json_tokens::TokenPriorityRequest>())
+            .errors(&[400, 403, 404]),
         delete("/api/v0/tokens/{id}", Access::Session)
             .ok(json::<shared::api::DeleteResponse>())
             .errors(&[404, 409]),

@@ -8,11 +8,12 @@ use jiff::Timestamp;
 use rama::http::service::web::extract::State;
 use rama::http::{Request, Response, StatusCode};
 
-use super::{internal, json_ok};
+use super::{bad_request, internal, json_error, json_ok, raw_path_segment};
 use aiplane_core::server::db::{
     DbError, limits, model_defaults, token_models, token_tool_prefs, tokens, usage, user_mcp,
 };
 use aiplane_core::server::limits::LimitStatus;
+use aiplane_core::server::priority::Priority;
 use aiplane_core::server::upstreams::PoolAccess;
 use aiplane_runtime::rama_server::state::RamaState;
 
@@ -89,6 +90,69 @@ impl From<&LimitStatus> for LimitStatusView {
             limit: status.limit,
             used: status.used,
             refreshes_at: status.refreshes_at.to_string(),
+        }
+    }
+}
+
+pub fn priority_limits(
+    state: &RamaState,
+    user: &aiplane_core::server::db::users::User,
+) -> (Priority, Priority) {
+    let inherited = state
+        .rbac
+        .request_priority(&user.roles, state.config().gateway.default_priority);
+    let maximum = if super::is_admin(state, user) {
+        Priority::High
+    } else {
+        inherited
+    };
+    (inherited, maximum)
+}
+
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TokenPriorityRequest {
+    pub priority: Option<Priority>,
+}
+
+pub async fn priority(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, user) = require_session_json!(state, req);
+    let lang = session_core::i18n::Lang::from_headers(req.headers());
+    let Some(id) = raw_path_segment(&req, 1) else {
+        return bad_request(session_core::i18n::t(lang, "priority-error-body"));
+    };
+    let (_, body) = req.into_parts();
+    let parsed: TokenPriorityRequest = match super::read_json(body, "the token priority").await {
+        Ok(parsed) => parsed,
+        Err(_) => return bad_request(session_core::i18n::t(lang, "priority-error-body")),
+    };
+    match tokens::find_by_id(&state.db, &id).await {
+        Ok(Some(token)) if token.user_id == user.id => {}
+        Ok(_) => {
+            return json_error(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                &session_core::i18n::t(lang, "priority-error-not-found"),
+            );
+        }
+        Err(err) => {
+            tracing::error!(%err, "reading personal token priority");
+            return internal(session_core::i18n::t(lang, "priority-error-internal"));
+        }
+    }
+    let (_, maximum) = priority_limits(&state, &user);
+    if parsed.priority.is_some_and(|priority| priority > maximum) {
+        return json_error(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            &session_core::i18n::t(lang, "priority-error-ceiling"),
+        );
+    }
+    match tokens::set_priority(&state.db, &id, parsed.priority).await {
+        Ok(()) => json_ok(StatusCode::OK, parsed),
+        Err(err) => {
+            tracing::error!(%err, "saving personal token priority");
+            internal(session_core::i18n::t(lang, "priority-error-internal"))
         }
     }
 }
@@ -170,6 +234,7 @@ pub async fn details(State(state): State<Arc<RamaState>>, req: Request) -> Respo
         let quota_status = state.enforcer.token_statuses(&token.id).await;
         let usage = usage_by_token.get(&token.id);
         token_details.push(TokenDetail {
+            priority: token.priority,
             id: token.id,
             name: token.name,
             created_at: token.created_at,
@@ -206,9 +271,13 @@ pub async fn details(State(state): State<Arc<RamaState>>, req: Request) -> Respo
         Err(err) => return internal(err),
     };
     let owner_limits = state.enforcer.statuses(&user.id, &role_ids).await;
+    let (owner_priority, max_priority) = priority_limits(&state, &user);
     json_ok(
         StatusCode::OK,
         TokenDetails {
+            owner_priority,
+            max_priority,
+            priority_enabled: state.config().gateway.priority_enabled,
             tokens: token_details,
             capabilities,
             models,
@@ -231,6 +300,9 @@ pub async fn details(State(state): State<Arc<RamaState>>, req: Request) -> Respo
 /// everything the token editor shows, and the option sets it picks from.
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct TokenDetails {
+    pub owner_priority: Priority,
+    pub max_priority: Priority,
+    pub priority_enabled: bool,
     pub tokens: Vec<TokenDetail>,
     /// The capabilities a token can switch on, off or to automatic.
     pub capabilities: Vec<super::tool_toggles::CapabilityEntry>,
@@ -246,6 +318,7 @@ pub struct TokenDetails {
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct TokenDetail {
+    pub priority: Option<Priority>,
     pub id: String,
     pub name: String,
     pub created_at: Timestamp,

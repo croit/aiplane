@@ -54,20 +54,6 @@ pub struct TokenSummary {
     pub tool_states: std::collections::BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CreateTokenRequest {
-    pub name: String,
-    /// Token lifetime in days. Falls back to the server's default if missing.
-    pub ttl_days: Option<i64>,
-    /// Whether the new token may use gateway tools at all. Defaults to
-    /// `false` (off) — a token is born without tool access until opted in.
-    #[serde(default)]
-    pub tools_enabled: Option<bool>,
-    /// Explicit `on`, `auto`, or `off` states; missing keys use the family default.
-    #[serde(default)]
-    pub tool_states: std::collections::BTreeMap<String, String>,
-}
-
 /// Set a token's tool configuration wholesale — the master switch plus
 /// the full set of explicit capability states. Replaces any previous per-token
 /// tool prefs. Backs `PUT /api/v0/tokens/{id}/tools`.

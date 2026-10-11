@@ -26,23 +26,26 @@ Preferences use a bounded standing section: the driver reads up to 50 recent pre
 
 ## Create an API token
 
-![An API token card groups its model restrictions, tool access and budget.](../img/guide/token-card.png)
+![An API token card groups its model restrictions, tool access, budget and priority.](../img/guide/token-card.png)
 
 Open **Settings → Tokens** (`/settings/tokens`).
 
 1. Select **Create token**.
 2. Give the token a name that identifies the application or device.
 3. Choose its lifetime in days. The UI accepts 1–1,825 days and starts with 90.
-4. Create it and copy the plaintext value from the reveal panel immediately.
-5. Follow the **Guides** tab for the client you want to configure.
+4. Choose **Inherit from groups** or a priority up to your inherited user priority. Higher values require an administrator.
+5. Create it and copy the plaintext value from the reveal panel immediately.
+6. Follow the **Guides** tab for the client you want to configure.
 
 The plaintext is revealed at creation or rotation; it cannot be retrieved from a normal token listing. Store it as a credential, not in a document, screenshot or source repository. New tokens have gateway-owned tool execution disabled by default.
 
-Each token card provides three configuration areas:
+Each token card provides four configuration areas:
 
 - **Models:** restrict the token to selected models within its effective permissions. The picker groups models by kind, such as chat, embedding and reranking. Administrator restrictions are displayed and remain applicable.
 - **Tools:** enable gateway-owned tools and set their capability states. A separate MCP policy switch controls MCP access for the token.
 - **Budget:** add request, token or cost quotas with hourly, daily, weekly or monthly windows. Owner limits still apply and are displayed separately; user configuration cannot remove administrator-owned quotas.
+
+- **Priority:** open the priority tile, choose inheritance or a permitted priority, then select Save. The dialog shows the inherited user priority. Cancelling leaves the token unchanged; a failed save keeps the draft open.
 
 Use the token's menu to rotate or revoke it. Rotation reveals a replacement credential; update clients that use the old value. Revocation prevents further use. A revoked token card offers removal. Expired and revoked status are shown explicitly.
 
@@ -66,4 +69,4 @@ Use the feedback button in the composer, or the floating feedback button on othe
 
 ## Request priority
 
-Your administrator can prioritize chat and API requests from any application using Low, Medium and High. Tokens inherit your groups unless an administrator sets a token-specific priority. Higher-priority waiting requests receive the next available model slot; already running requests finish normally. Sustained higher-priority load may cause a lower-priority request to time out. Priority does not change model permissions or usage limits.
+Your administrator can prioritize chat and API requests from any application using Low, Medium and High. Tokens inherit your groups unless a token-specific priority is saved. Choose it when creating a token or edit its Priority tile under Settings → Tokens. Owners can select Low, Medium or High up to their inherited user priority, or restore inheritance. Administrators can select any priority. If prioritization is disabled, the UI explains that the saved setting applies when an administrator enables it. Rotation preserves the saved priority. Higher-priority waiting requests receive the next available model slot; already running requests finish normally. Sustained higher-priority load may cause a lower-priority request to time out. Priority does not change model permissions or usage limits.

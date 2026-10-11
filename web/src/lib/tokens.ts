@@ -1,6 +1,7 @@
 import type { ChatCapability } from './api';
 import type { TokenModel } from './token-models';
 import type { UsageLimit } from './usage-types';
+import type { Priority } from './priority';
 
 export interface TokenQuota {
 	id: string;
@@ -18,6 +19,7 @@ export interface TokenUsage {
 }
 
 export interface ManagedToken {
+	priority: Priority | null;
 	id: string;
 	name: string;
 	created_at: string;
@@ -35,6 +37,9 @@ export interface ManagedToken {
 }
 
 export interface TokenManagementDetails {
+	owner_priority: Priority;
+	max_priority: Priority;
+	priority_enabled: boolean;
 	tokens: ManagedToken[];
 	capabilities: Omit<ChatCapability, 'state'>[];
 	models: TokenModel[];

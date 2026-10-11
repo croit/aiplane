@@ -20,6 +20,250 @@ fn req_with_cookie(method: Method, uri: &str, cookie: &str, body: Option<&str>) 
 }
 
 #[tokio::test]
+async fn personal_token_priority_creation_editing_and_inheritance() {
+    use aiplane_core::server::{db::tokens, priority::Priority};
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let app = common::app(state.clone());
+    let response = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/tokens",
+            &cookie,
+            Some(r#"{"name":"background","priority":"low"}"#),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let created: serde_json::Value =
+        serde_json::from_slice(&common::read_body(response).await).unwrap();
+    let id = created["token"]["id"].as_str().unwrap();
+    assert_eq!(
+        tokens::find_by_id(&state.db, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .priority,
+        Some(Priority::Low)
+    );
+    for priority in [Some("medium"), Some("low"), None] {
+        let body = serde_json::json!({"priority": priority}).to_string();
+        let response = app
+            .serve(req_with_cookie(
+                Method::PUT,
+                &format!("/api/v0/tokens/{id}/priority"),
+                &cookie,
+                Some(&body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            tokens::find_by_id(&state.db, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .priority
+                .map(Priority::as_str),
+            priority
+        );
+        let response = app
+            .serve(req_with_cookie(
+                Method::GET,
+                "/api/v0/tokens/details",
+                &cookie,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let details: serde_json::Value =
+            serde_json::from_slice(&common::read_body(response).await).unwrap();
+        assert_eq!(details["owner_priority"], "medium");
+        assert_eq!(details["max_priority"], "medium");
+        assert_eq!(details["priority_enabled"], false);
+        assert_eq!(
+            details["tokens"][0]["priority"],
+            serde_json::json!(priority)
+        );
+    }
+    tokens::set_priority(&state.db, id, Some(Priority::Low))
+        .await
+        .unwrap();
+    let response = app
+        .serve(req_with_cookie(
+            Method::POST,
+            &format!("/api/v0/tokens/{id}/rotate"),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        tokens::find_by_id(&state.db, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .priority,
+        Some(Priority::Low)
+    );
+}
+
+#[tokio::test]
+async fn personal_token_priority_uses_live_group_ceiling_and_admin_rights() {
+    use aiplane_core::server::{db::gateway_groups, priority::Priority};
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    gateway_groups::upsert_group(&state.db, "priority-group", "", false, true)
+        .await
+        .unwrap();
+    let app = common::app(state.clone());
+    for (ceiling, admin, value, status) in [
+        (Priority::Low, false, "medium", StatusCode::FORBIDDEN),
+        (Priority::High, false, "high", StatusCode::OK),
+        (Priority::Low, true, "high", StatusCode::OK),
+    ] {
+        gateway_groups::upsert_group(&state.db, "priority-group", "", admin, true)
+            .await
+            .unwrap();
+        gateway_groups::set_priority(&state.db, "priority-group", Some(ceiling))
+            .await
+            .unwrap();
+        state
+            .rbac
+            .reload(gateway_groups::load_snapshot(&state.db).await.unwrap());
+        let response = app
+            .serve(req_with_cookie(
+                Method::GET,
+                "/api/v0/tokens/details",
+                &cookie,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let details: serde_json::Value =
+            serde_json::from_slice(&common::read_body(response).await).unwrap();
+        assert_eq!(details["owner_priority"], ceiling.as_str());
+        assert_eq!(
+            details["max_priority"],
+            if admin { "high" } else { ceiling.as_str() }
+        );
+        let body = serde_json::json!({"name":"background","priority":value}).to_string();
+        let response = app
+            .serve(req_with_cookie(
+                Method::POST,
+                "/api/v0/tokens",
+                &cookie,
+                Some(&body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status);
+        if status == StatusCode::OK {
+            let created: serde_json::Value =
+                serde_json::from_slice(&common::read_body(response).await).unwrap();
+            let id = created["token"]["id"].as_str().unwrap();
+            let update = serde_json::json!({"priority": value}).to_string();
+            let response = app
+                .serve(req_with_cookie(
+                    Method::PUT,
+                    &format!("/api/v0/tokens/{id}/priority"),
+                    &cookie,
+                    Some(&update),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+    }
+}
+
+#[tokio::test]
+async fn personal_token_priority_rejects_escalation_invalid_values_and_foreign_tokens() {
+    use aiplane_core::server::{db::tokens, priority::Priority};
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let (_, id) = common::seed_user_with_token_id(&state, "alice").await;
+    let foreign_cookie = common::seed_session(&state, "bob", "bob@example.com").await;
+    tokens::set_priority(&state.db, &id, Some(Priority::High))
+        .await
+        .unwrap();
+    let app = common::app(state.clone());
+    for (value, status) in [
+        ("high", StatusCode::FORBIDDEN),
+        ("urgent", StatusCode::BAD_REQUEST),
+    ] {
+        let body = serde_json::json!({"name":"background","priority":value}).to_string();
+        let response = app
+            .serve(req_with_cookie(
+                Method::POST,
+                "/api/v0/tokens",
+                &cookie,
+                Some(&body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status);
+        let update = serde_json::json!({"priority":value}).to_string();
+        let response = app
+            .serve(req_with_cookie(
+                Method::PUT,
+                &format!("/api/v0/tokens/{id}/priority"),
+                &cookie,
+                Some(&update),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status);
+        assert_eq!(
+            tokens::find_by_id(&state.db, &id)
+                .await
+                .unwrap()
+                .unwrap()
+                .priority,
+            Some(Priority::High)
+        );
+    }
+    assert_eq!(
+        tokens::list_for_user(&state.db, "alice")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    for token_id in [&id, "missing"] {
+        let response = app
+            .serve(req_with_cookie(
+                Method::PUT,
+                &format!("/api/v0/tokens/{token_id}/priority"),
+                &foreign_cookie,
+                Some(r#"{"priority":"low"}"#),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+    let response = app
+        .serve(common::req(
+            Method::PUT,
+            &format!("/api/v0/tokens/{id}/priority"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        tokens::find_by_id(&state.db, &id)
+            .await
+            .unwrap()
+            .unwrap()
+            .priority,
+        Some(Priority::High)
+    );
+}
+
+#[tokio::test]
 async fn me_anonymous_is_401() {
     let state = common::state_with_chat_pool("http://unused.invalid").await;
     let app = common::app(state);

@@ -108,6 +108,7 @@ export interface TokenSummary {
 }
 
 export interface CreateTokenRequest {
+	priority?: import('./priority').Priority | null;
 	name: string;
 	ttl_days?: number | null;
 	tools_enabled?: boolean | null;

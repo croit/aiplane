@@ -1,10 +1,11 @@
 <script lang="ts">
-	import type { Priority } from '#lib/priority.js';
+	import { canChoosePriority, type Priority } from '#lib/priority.js';
 	import { t } from '#lib/i18n.svelte.js';
-	let { value = $bindable(null), inheritLabel, disabled = false, onchange }: {
+	let { value = $bindable(null), inheritLabel, disabled = false, maximum = 'high', onchange }: {
 		value: Priority | null;
 		inheritLabel: string;
 		disabled?: boolean;
+		maximum?: Priority;
 		onchange?: (value: Priority | null) => void;
 	} = $props();
 </script>
@@ -16,8 +17,8 @@
 		onchange?.(value);
 	}}>
 		<option value="">{inheritLabel}</option>
-		<option value="low">{t('priority-low')}</option>
-		<option value="medium">{t('priority-medium')}</option>
-		<option value="high">{t('priority-high')}</option>
+		{#each ['low', 'medium', 'high'] as priority}
+			<option value={priority} disabled={!canChoosePriority(priority as Priority, maximum)}>{t(`priority-${priority}`)}{!canChoosePriority(priority as Priority, maximum) ? ` — ${t('priority-admin-only')}` : ''}</option>
+		{/each}
 	</select>
 </label>

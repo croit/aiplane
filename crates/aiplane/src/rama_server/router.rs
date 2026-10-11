@@ -144,6 +144,7 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         .with_post("/api/v0/tokens/{id}/revoke", api::revoke_token)
         .with_post("/api/v0/tokens/{id}/rotate", api::rotate_token)
         .with_put("/api/v0/tokens/{id}/tools", api::update_token_tools)
+        .with_put("/api/v0/tokens/{id}/priority", pages::json_tokens::priority)
         .with_delete("/api/v0/tokens/{id}", api::delete_token)
         .with_endpoint_layer(endpoint(BodyLimitLayer::UPLOAD))
         .with_post("/api/v0/transcriptions", proxy::transcribe_session)
