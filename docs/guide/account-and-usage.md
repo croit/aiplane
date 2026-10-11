@@ -66,4 +66,4 @@ Use the feedback button in the composer, or the floating feedback button on othe
 
 ## Request priority
 
-Your administrator can prioritize interactive chat and ERP API tokens using Low, Medium and High. Tokens inherit your groups unless an administrator sets a token-specific priority. Higher-priority waiting requests receive the next available model slot; already running requests finish normally. Sustained higher-priority load may cause a lower-priority request to time out. Priority does not change model permissions or usage limits.
+Your administrator can prioritize chat and API requests from any application using Low, Medium and High. Tokens inherit your groups unless an administrator sets a token-specific priority. Higher-priority waiting requests receive the next available model slot; already running requests finish normally. Sustained higher-priority load may cause a lower-priority request to time out. Priority does not change model permissions or usage limits.

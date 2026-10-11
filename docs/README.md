@@ -47,6 +47,7 @@ integrations and features vary with each installation's configuration.*
 |---|---|
 | Connect upstreams, configure models, aliases and automatic routes | [Models and routing](admin/models.md) |
 | Manage users, groups, rights, tokens and limits | [Access administration](admin/access.md) |
+| Prioritize chat and API requests; configure backend scheduling | [Request priority](request-priority.md) |
 | Configure optional services and content policy | [Operator settings](admin/settings.md) |
 | Look up every declared operator field | [Settings reference](admin/settings-reference.md) |
 | Configure connector catalogs, audit activity and global skills | [Integrations](admin/integrations.md) |
@@ -77,5 +78,3 @@ under `/docs/`; the public website carries the same formats. See
 The manual uses the application's actual behaviour. Optional capabilities
 require their configured services and grants; screenshots use synthetic data
 from the real application, including prerequisites, permissions and limits.
-
-Request scheduling for ERP tokens and interactive workloads is described in [Request priority](request-priority.md).

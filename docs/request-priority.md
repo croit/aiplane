@@ -41,8 +41,8 @@ capacity; cancellation is checked every 50 ms while admission is pending.
 
 Enable **request prioritization** under **Administration → Settings → Access → Gateway** (`gateway.priority_enabled`, disabled by default) and choose the system default. Edit a
 group's priority under Administration → Access → Groups. Under Tokens, choose
-inherit, low, medium or high. For the ERP integration choose high on its token;
-other tokens and browser chat continue to inherit their owner's groups.
+inherit, low, medium or high for any application making API requests. Tokens
+without an override and browser chat inherit their owner's groups.
 
 Token save failures restore the previous selection and clear earlier success
 messages. Backend save errors receive keyboard focus and scroll into view;

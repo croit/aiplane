@@ -1,8 +1,7 @@
 # Releases & versioning
 
-How this project is versioned and how a release is cut. **Authority for the
-version scheme** — the same scheme croit ERP uses, so a croit engineer reads
-both the same way.
+How this project is versioned and how a release is cut. This document is the
+authority for the version scheme.
 
 ---
 

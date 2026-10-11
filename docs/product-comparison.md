@@ -4,6 +4,8 @@ This is a feature-by-feature comparison of croit AIplane, LiteLLM and Open WebUI
 
 **Checked on 6 October 2026.** AIplane entries use the local `main` implementation revision pinned at the end of this document. LiteLLM and Open WebUI entries describe the public product documentation linked in the source index. For LiteLLM, ✅ means available in the open-source edition; 🟡 Enterprise means the capability requires a paid Enterprise license. Product capabilities change; recheck those sources before using this matrix in a proposal or contract.
 
+The request-priority rows were checked on **11 October 2026** against AIplane revision `d5b81c2a` and the official documentation cited as L31 and O6. Other entries retain the review dates and revision pins below.
+
 ## How to read the matrix
 
 | Mark | Meaning |
@@ -62,6 +64,9 @@ This is a feature-by-feature comparison of croit AIplane, LiteLLM and Open WebUI
 | Prompt-prefix affinity selection | ✅ | 🟡 | ⚪ | A5 L5 |
 | Backend health probes | ✅ | ✅ | ⚪ | A5 L5 O2 |
 | Per-backend in-flight limits | ✅ | ✅ | ⚪ | A5 L5 |
+| Priority queue for model requests | ✅ | 🟡 Beta; testing only | ⚪ | A36 L31 O6 |
+| Administrator-assigned Low/Medium/High priorities on groups and API tokens | ✅ | ⚪ | ⚪ | A36 L31 O6 |
+| Translate trusted priorities into backend scheduler parameters | 🟡 Requires backend support and enabled scheduling | ⚪ | ⚪ | A36 L31 O6 |
 | Automatic route selection by quality, balance, or cost | ✅ | 🟡 | 🟡 | A6 L5 O3 |
 | Stable model aliases | ✅ | ✅ | ✅ | A5 L5 O2 |
 | Unknown-model fallback | ✅ | ✅ | 🟡 | A5 L5 O2 |
@@ -299,6 +304,8 @@ This is a feature-by-feature comparison of croit AIplane, LiteLLM and Open WebUI
 
 AIplane's strongest position is the combination of a user-facing AI workspace, a governed application gateway, and a business-agent lifecycle in one self-hosted product. The most distinctive documented areas are browser control in a user's own browser, agent publication to a website or A2A channel, repeatable tests before publication, durable human decisions in an inbox, and version-matched documentation shipped with each installation.
 
+Request priority gives administrators a shared Low/Medium/High setting for chat and API requests from any application. AIplane orders waiting requests by their authenticated priority, retains FIFO within each class and preserves running calls. Its queue belongs to one process; sustained higher-priority traffic can make lower classes time out. Backend forwarding depends on reported scheduling support or an explicit mapping and an enabled upstream scheduler. LiteLLM documents numeric, request-supplied priorities as a beta feature for testing only. Its reviewed scheduler guide does not establish the same group/token administration or backend translation, and the reviewed Open WebUI administration guide does not establish these scheduling capabilities; those entries remain unknown. See A36 and L31 for the operating conditions.
+
 AIplane is behind LiteLLM on documented provider breadth, the standalone Python SDK, the batch API surface, broad third-party logging/observability integrations, Terraform deployment modules, and documented multi-replica scaling. Those are concrete gaps, not wording problems. AIplane's documented deployment topology is one application replica; do not position it as horizontally scalable today.
 
 Open WebUI documents stronger end-user collaboration and chat customization in areas such as shared channels, multi-model side-by-side chats, a centralized file manager, and user-selectable local-password authentication. AIplane's advantage is deeper integration between employee chat, application/API governance, and business-agent lifecycle controls. The products overlap substantially in chat, knowledge retrieval, tools, voice and image workflows; check each row's conditions before calling them equivalent.
@@ -352,6 +359,7 @@ AIplane sources link to this repository's user and operator documentation. LiteL
 | A33 | [Versioned installed documentation](documentation-system.md) |
 | A34 | [Monitoring](operations/monitoring.md), [Prometheus metrics settings](admin/settings.md#prometheus-metrics) |
 | A35 | [Verify images](operations/deployment.md#verify-images), [what a build publishes](releases.md#what-a-build-publishes) |
+| A36 | [Request priority](request-priority.md), [group and token administration](admin/access.md#prioritize-chat-and-api-requests), [backend forwarding](admin/models.md#backend-priority-forwarding) |
 
 ### LiteLLM
 
@@ -385,6 +393,7 @@ AIplane sources link to this repository's user and operator documentation. LiteL
 | L28 | [Supported API endpoints](https://docs.litellm.ai/docs/supported_endpoints) |
 | L29 | [Enterprise features and license requirements](https://docs.litellm.ai/docs/enterprise) |
 | L30 | [Role-based access controls, including OSS and Enterprise scopes](https://docs.litellm.ai/docs/proxy/access_control) |
+| L31 | [Beta request prioritization](https://docs.litellm.ai/docs/scheduler), reviewed 11 October 2026 |
 
 ### Open WebUI
 
@@ -415,11 +424,12 @@ AIplane sources link to this repository's user and operator documentation. LiteL
 
 ## Git revisions compared
 
-The product and documentation sources were checked against these exact repository revisions. The public documentation pages were reviewed on **4 October 2026**; the revision pins make this comparison reproducible even as the upstream `main` branches move.
+The product and documentation sources were checked against these exact repository revisions. The public documentation baseline was reviewed on **4 October 2026**; the request-priority update uses the **11 October 2026** documentation check described above. The revision pins identify the implementation baselines even as upstream `main` branches move.
 
 | Product/source | Repository | Revision |
 |---|---|---|
 | croit AIplane (implementation baseline reviewed) | [`croit/aiplane`](https://github.com/croit/aiplane) | [`e8285ffdd457ef9b5d6899e438c3484a7b8f36cf`](https://github.com/croit/aiplane/commit/e8285ffdd457ef9b5d6899e438c3484a7b8f36cf) |
+| croit AIplane (request-priority implementation reviewed) | [`croit/aiplane`](https://github.com/croit/aiplane) | [`d5b81c2abcdb77f96522c4f10b9cecf0c691c16d`](https://github.com/croit/aiplane/commit/d5b81c2abcdb77f96522c4f10b9cecf0c691c16d) |
 | LiteLLM (implementation and documentation) | [`BerriAI/litellm`](https://github.com/BerriAI/litellm) | [`e1d16f51d14849c1b3decf17cd81a3bcb4863dca`](https://github.com/BerriAI/litellm/commit/e1d16f51d14849c1b3decf17cd81a3bcb4863dca) |
 | Open WebUI (implementation) | [`open-webui/open-webui`](https://github.com/open-webui/open-webui) | [`8bd8b4fac5e059578ac0c74b3c18d11139f88b7d`](https://github.com/open-webui/open-webui/commit/8bd8b4fac5e059578ac0c74b3c18d11139f88b7d) |
 | Open WebUI (public feature documentation) | [`open-webui/docs`](https://github.com/open-webui/docs) | [`e6e9151cae4d4aec79d1a2169475c0a41f47cad9`](https://github.com/open-webui/docs/commit/e6e9151cae4d4aec79d1a2169475c0a41f47cad9) |

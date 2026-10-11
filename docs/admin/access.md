@@ -72,10 +72,10 @@ The page shows summary metrics and breakdowns by backend, source, model and toke
 | Cost looks too low | Unpriced models, configured prices, filters and retention |
 | Impersonation action absent | `gateway.allow_impersonation`; own row cannot impersonate itself |
 
-## Prioritize ERP and interactive workloads
+## Prioritize chat and API requests
 
 A failed token priority save restores the previous selection and displays an error without retaining an earlier success message.
 
 ![An administrator assigns High priority to a synthetic application token while other tokens inherit their groups.](../img/guide/request-priority.png)
 
-Enable prioritization in [Gateway settings](settings.md), then choose **High** on the ERP token in `/admin/tokens`. The token selector saves immediately. **Inherit from groups** removes its override. In `/admin/groups`, a group can inherit the system default or choose Low, Medium or High; save the group form to apply. The highest explicit priority of the user’s groups wins. An explicit token setting overrides it, including a lower priority for background integrations. Only administrators can set token priority. Priority does not grant model access or bypass limits. See [Request priority](../request-priority.md) for ordering, backend configuration and timeout behavior.
+Enable prioritization in [Gateway settings](settings.md), then choose Low, Medium or High on an application's token in `/admin/tokens`. The token selector saves immediately. **Inherit from groups** removes its override. In `/admin/groups`, a group can inherit the system default or choose Low, Medium or High; save the group form to apply. The highest explicit priority of the user’s groups wins. An explicit token setting overrides it, including a lower priority for background integrations. Only administrators can set token priority. Priority does not grant model access or bypass limits. See [Request priority](../request-priority.md) for ordering, backend configuration and timeout behavior.
