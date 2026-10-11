@@ -173,8 +173,9 @@ pub trait ToolSource: Send + Sync {
     }
 
     /// When a call to `id` runs relative to the other calls of its round.
-    fn phase(&self, _id: &str) -> ToolPhase {
-        ToolPhase::Concurrent
+    fn phase(&self, id: &str) -> ToolPhase {
+        self.get(id)
+            .map_or(ToolPhase::Concurrent, |tool| tool.phase())
     }
 
     /// A call of [`ToolPhase::WritesState`] just ran, so whatever this source
@@ -287,6 +288,14 @@ impl<'a> GrantedToolSource<'a> {
 }
 
 impl ToolSource for GrantedToolSource<'_> {
+    fn phase(&self, id: &str) -> ToolPhase {
+        if self.get(id).is_some() {
+            self.source.phase(id)
+        } else {
+            ToolPhase::Concurrent
+        }
+    }
+
     fn get(&self, id: &str) -> Option<Arc<dyn Tool>> {
         if self.granted.contains(id) {
             self.source.get(id)
@@ -342,6 +351,20 @@ impl aiplane_core::server::rbac::resolver::GrantableSet for ToolRegistry {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tool_phases_survive_registry_and_grants_without_exposing_denied_tools() {
+        let registry = ToolRegistry::new().with(super::super::tests::PhasedEcho);
+        assert_eq!(
+            ToolSource::phase(&registry, "company_echo"),
+            ToolPhase::ActsOnState
+        );
+        let granted = GrantedToolSource::new(&registry, ["company_echo".to_string()]);
+        assert_eq!(granted.phase("company_echo"), ToolPhase::ActsOnState);
+        let denied = GrantedToolSource::new(&registry, std::iter::empty());
+        assert!(denied.get("company_echo").is_none());
+        assert_eq!(denied.phase("company_echo"), ToolPhase::Concurrent);
+        assert_eq!(granted.phase("missing"), ToolPhase::Concurrent);
+    }
     use super::*;
     use crate::server::tools::echo::Echo;
     use crate::server::tools::time::CurrentTimestamp;

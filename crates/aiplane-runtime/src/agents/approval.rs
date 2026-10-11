@@ -92,6 +92,10 @@ struct ActionPolicy {
 }
 
 impl Tool for ActionPolicy {
+    fn phase(&self) -> crate::server::tools::ToolPhase {
+        self.inner.phase()
+    }
+
     fn id(&self) -> &str {
         self.inner.id()
     }
@@ -167,6 +171,11 @@ impl Tool for ActionPolicy {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn action_policy_preserves_the_tools_phase() {
+        let tool = Permissions::default().gate(Arc::new(crate::server::tools::tests::PhasedEcho));
+        assert_eq!(tool.phase(), crate::server::tools::ToolPhase::ActsOnState);
+    }
     use super::*;
     use crate::server::tools::echo::Echo;
     use crate::server::tools::{ToolContext, ToolFuture};

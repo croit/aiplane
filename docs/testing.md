@@ -156,6 +156,12 @@ The version-controlled pre-push git hook (`.githooks/pre-push`, enabled with `mi
 - **Not part of the CI default** — the browser suite needs a running gateway and Chromium, so it stays a local/opt-in loop.
 - Authenticated flows (`e2e/authed.test.mjs`, the `spa*` signed-in tests) don't need OIDC: they sign in through the debug-only `/__dev/*` seeding endpoints (`rama_server::dev_seed`), compiled in under `cfg(debug_assertions)` and never present in a release build. `/__dev/seed-session` resets the canonical fixture (user `alice@example.com` + her three tokens) and is reserved for the one file that asserts those counts; everything else uses the delete-free `/__dev/session`. Completing setup is also how the suite makes `/readyz` deterministic on a fresh dev database.
 
+## Tool ordering coverage
+
+Tool-phase tests cover the actual published `forward_request`, registry/grant
+and discovery ceilings, seven forwarding wrappers, synthetic/terminal phases
+and finite sequential execution through the real runner.
+
 ## Personal Dot background coverage
 
 The background slice uses real registries, in-memory SQLite and mocked model

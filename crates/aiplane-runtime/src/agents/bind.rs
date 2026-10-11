@@ -214,6 +214,10 @@ impl WithheldTool {
 }
 
 impl Tool for WithheldTool {
+    fn phase(&self) -> crate::server::tools::ToolPhase {
+        self.inner.phase()
+    }
+
     fn id(&self) -> &str {
         self.inner.id()
     }
@@ -319,6 +323,10 @@ pub fn without_bound(mut def: ToolDef, bound: &BTreeMap<String, BindSource>) -> 
 }
 
 impl Tool for BoundTool {
+    fn phase(&self) -> crate::server::tools::ToolPhase {
+        self.inner.phase()
+    }
+
     fn id(&self) -> &str {
         self.inner.id()
     }
@@ -374,6 +382,17 @@ impl Tool for BoundTool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bound_and_withheld_wrappers_preserve_the_tools_phase() {
+        let inner: Arc<dyn Tool> = Arc::new(crate::server::tools::tests::PhasedEcho);
+        let bound = BoundTool::new(inner.clone(), BTreeMap::new(), None, Arc::default());
+        let withheld = WithheldTool::new(inner, vec!["message".into()]);
+        assert_eq!(bound.phase(), crate::server::tools::ToolPhase::ActsOnState);
+        assert_eq!(
+            withheld.phase(),
+            crate::server::tools::ToolPhase::ActsOnState
+        );
+    }
     use super::*;
     use crate::agents::state::tests::{at, schema};
     use aiplane_agents::db::agent_state::StoredSlot;

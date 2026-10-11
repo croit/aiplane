@@ -501,6 +501,10 @@ pub type ToolActionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<Vec<String>>, ToolError>> + Send + 'a>>;
 
 pub trait Tool: Send + Sync + 'static {
+    fn phase(&self) -> ToolPhase {
+        ToolPhase::Concurrent
+    }
+
     /// Stable identifier. Used as the OpenAI function name and as the lookup
     /// key in `ToolRegistry`. Must be unique across all registered tools.
     /// Convention: `"company.<area>.<verb>"`, e.g. `"company_wiki_search"`.
@@ -563,9 +567,26 @@ pub trait Tool: Send + Sync + 'static {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    pub(crate) struct PhasedEcho;
+
+    impl Tool for PhasedEcho {
+        fn id(&self) -> &str {
+            echo::Echo.id()
+        }
+        fn schema(&self) -> shared::api::ToolDef {
+            echo::Echo.schema()
+        }
+        fn phase(&self) -> ToolPhase {
+            ToolPhase::ActsOnState
+        }
+        fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
+            echo::Echo.run(ctx, args)
+        }
+    }
 
     #[test]
     fn parts_envelope_round_trips_through_extract() {

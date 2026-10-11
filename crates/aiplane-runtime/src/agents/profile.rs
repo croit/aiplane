@@ -702,7 +702,7 @@ impl ToolSource for RunToolSource<'_> {
         }
         self.run
             .and_then(|r| r.synthetic.get(id))
-            .map_or(ToolPhase::Concurrent, |s| s.phase)
+            .map_or_else(|| self.inner.phase(id), |s| s.phase)
     }
 
     fn state_written(&self) {
@@ -714,6 +714,52 @@ impl ToolSource for RunToolSource<'_> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn run_sources_preserve_inner_synthetic_and_terminal_phases_through_grants_and_discovery() {
+        use crate::server::tools::{
+            GrantedToolSource, ToolRegistry, discovery::DiscoverableToolSource, tests::PhasedEcho,
+        };
+        use aiplane_core::server::principal::GrantSet;
+        use aiplane_core::server::run_chain::Frame;
+        let registry = ToolRegistry::new().with(PhasedEcho);
+        assert_eq!(
+            RunToolSource::new(&registry, None).phase("company_echo"),
+            ToolPhase::ActsOnState
+        );
+        let principal = SystemPrincipal {
+            id: "phase-agent".into(),
+            name: "phase-agent".into(),
+            grants: Arc::new(GrantSet::default()),
+        };
+        let chain = Arc::new(RunChain::root(
+            "root",
+            None,
+            Frame::for_principal(&principal, None),
+        ));
+        let mut surface = run();
+        surface.synthetic.insert(
+            "company_echo".into(),
+            Synthetic {
+                tool: Arc::new(PhasedEcho),
+                phase: ToolPhase::WritesState,
+            },
+        );
+        let agent = AgentRun::new(principal, chain)
+            .unwrap()
+            .with_surface(Arc::new(surface))
+            .with_contract(
+                FinishContract::new(serde_json::json!({"type":"object","properties":{}})).unwrap(),
+            );
+        let source = RunToolSource::new(&registry, Some(&agent));
+        let ids = ["company_echo".to_string(), "finish".to_string()];
+        let granted = GrantedToolSource::new(&source, ids.clone());
+        let discovery = DiscoverableToolSource::new(&granted, &ids, &[]);
+        for tool_source in [&source as &dyn ToolSource, &granted, &discovery] {
+            assert_eq!(tool_source.phase("company_echo"), ToolPhase::WritesState);
+            assert_eq!(tool_source.phase("finish"), ToolPhase::Terminal);
+            assert_eq!(tool_source.phase("missing"), ToolPhase::Concurrent);
+        }
+    }
     use super::*;
     use crate::server::tools::echo::Echo;
     use crate::server::tools::{ToolContext, ToolRegistry};

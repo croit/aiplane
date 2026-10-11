@@ -453,6 +453,42 @@ fn billing_spec(rounds: u32) -> Value {
     })
 }
 
+#[tokio::test]
+async fn the_actual_published_forward_request_declares_its_sequential_phase() {
+    use crate::agents::profile::{Role, RunOptions, RunProfile};
+    use crate::server::tools::{ToolPhase, ToolSource};
+    let model = llm(vec![text("unused")]).await;
+    let world = World::new(&[("support-pool", "support-model", &model)], None).await;
+    let receiver = world
+        .agent("receiver", &[(GrantKind::Model, "support-model")])
+        .await;
+    world
+        .publish(
+            &receiver,
+            &json!({"main":{"model":"support-model"},"finish":{"schema":{"type":"object"}}}),
+        )
+        .await;
+    let caller = world
+        .agent("caller", &[(GrantKind::Model, "support-model")])
+        .await;
+    world.publish(&caller, &json!({"main":{"model":"support-model"},
+        "state":{"question":{"type":"string","max_length":100,"set_by":["llm"]}},
+        "router":{"kind":"rules"}, "routes":{"child":{"when":{"slot":"question","set":true},"agent":receiver,"task":"Help with the explicit task"}}})).await;
+    let profile = RunProfile::load(&world.state, &caller, Role::Main, &RunOptions::default())
+        .await
+        .unwrap();
+    let registry = world.state.tools();
+    let source = profile.surface.source(registry.as_ref());
+    let forward = source.get("forward_request").unwrap();
+    assert_eq!(forward.phase(), ToolPhase::ActsOnState);
+    assert_eq!(source.phase("forward_request"), ToolPhase::ActsOnState);
+    assert_eq!(
+        forward.schema().function.parameters["properties"],
+        json!({})
+    );
+    assert!(requests(&model).await.is_empty());
+}
+
 fn support_spec(billing: &str) -> Value {
     json!({
         "main": {

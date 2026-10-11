@@ -23,6 +23,10 @@ pub(super) struct LivePersonalDotTool {
 }
 
 impl Tool for LivePersonalDotTool {
+    fn phase(&self) -> crate::server::tools::ToolPhase {
+        self.initial.phase()
+    }
+
     fn id(&self) -> &str {
         self.initial.id()
     }
@@ -164,6 +168,12 @@ impl LivePersonalDotTool {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn live_personal_dot_wrapper_preserves_the_tools_phase() {
+        let (mut tool, _) = fixture().await;
+        tool.initial = Arc::new(crate::server::tools::tests::PhasedEcho);
+        assert_eq!(tool.phase(), crate::server::tools::ToolPhase::ActsOnState);
+    }
     use super::*;
     use crate::agent_run::PersonalDotIdentity;
     use crate::server::tools::{ToolRegistry, echo::Echo};

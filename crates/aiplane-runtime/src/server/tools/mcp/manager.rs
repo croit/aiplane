@@ -819,6 +819,10 @@ struct AuditedTool {
 }
 
 impl Tool for AuditedTool {
+    fn phase(&self) -> crate::server::tools::ToolPhase {
+        self.inner.phase()
+    }
+
     fn id(&self) -> &str {
         self.inner.id()
     }
@@ -902,6 +906,10 @@ impl Tool for AuditedTool {
 struct SensitiveArgs(Arc<dyn Tool>);
 
 impl Tool for SensitiveArgs {
+    fn phase(&self) -> crate::server::tools::ToolPhase {
+        self.0.phase()
+    }
+
     fn id(&self) -> &str {
         self.0.id()
     }
@@ -1214,6 +1222,28 @@ impl UserMcpLayer {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn audit_and_sensitive_wrappers_preserve_the_tools_phase() {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let inner: Arc<dyn Tool> = Arc::new(crate::server::tools::tests::PhasedEcho);
+        let audited = AuditedTool {
+            inner: inner.clone(),
+            connector_key: "demo".into(),
+            db,
+            sensitive: false,
+        };
+        let sensitive = SensitiveArgs(inner);
+        assert_eq!(
+            audited.phase(),
+            crate::server::tools::ToolPhase::ActsOnState
+        );
+        assert_eq!(
+            sensitive.phase(),
+            crate::server::tools::ToolPhase::ActsOnState
+        );
+    }
     use super::*;
     use crate::server::tools::echo::Echo;
     use aiplane_core::server::crypto::Crypto;

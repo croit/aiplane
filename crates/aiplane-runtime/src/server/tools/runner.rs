@@ -1897,6 +1897,63 @@ mod tests {
     /// tags its synthetic tools.
     struct Phased(std::collections::BTreeMap<String, Arc<dyn Tool>>);
 
+    struct SequentialStep(Step);
+
+    impl Tool for SequentialStep {
+        fn id(&self) -> &str {
+            &self.0.name
+        }
+        fn schema(&self) -> shared::api::ToolDef {
+            self.0.schema()
+        }
+        fn phase(&self) -> ToolPhase {
+            ToolPhase::ActsOnState
+        }
+        fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
+            self.0.run(ctx, args)
+        }
+    }
+
+    #[tokio::test]
+    async fn actual_registry_phases_serialize_allowed_calls_and_never_run_denied_calls() {
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let step = |name: &str| {
+            SequentialStep(Step {
+                name: name.into(),
+                log: log.clone(),
+                meet: None,
+            })
+        };
+        let registry = ToolRegistry::new()
+            .with(step("forward_a"))
+            .with(step("forward_b"))
+            .with(step("forward_denied"));
+        let source = crate::server::tools::GrantedToolSource::new(
+            &registry,
+            ["forward_a".into(), "forward_b".into()],
+        );
+        let calls = ["forward_a", "forward_b", "forward_denied"].map(|name| ToolCallRef {
+            id: name.into(),
+            name: name.into(),
+            arguments_raw: "{}".into(),
+        });
+        let results =
+            execute_tool_calls(&source, &ctx().await, &calls, &InjectionScan::default()).await;
+        assert_eq!(
+            results.iter().map(|r| r.failed).collect::<Vec<_>>(),
+            [false, false, true]
+        );
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "start forward_a",
+                "end forward_a",
+                "start forward_b",
+                "end forward_b"
+            ]
+        );
+    }
+
     impl ToolSource for Phased {
         fn get(&self, id: &str) -> Option<Arc<dyn Tool>> {
             self.0.get(id).cloned()

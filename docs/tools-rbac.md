@@ -573,13 +573,17 @@ client tool in one turn.
   `LOOP_MESSAGE`, because it is written into the turn row at generation time.
 - **Per-tool timeout** — 30s, overridable per tool via `max_duration`.
 - **Concurrency** — tool calls within one round run concurrently, bounded by a
-  per-request semaphore of 4. The exception is an agent run's synthetic tools:
-  `ToolSource::phase` tags each call with a `ToolPhase`, and the runner runs the
+  per-request semaphore of 4. Tools declare their ordering through
+  `Tool::phase`; `ToolSource::phase` preserves it through registries, grants,
+  discovery, personal tool policies and wrappers. Agent synthetic tools can
+  supply their own source phase. The runner runs the
   state writers (`set_<slot>`, verifiers) first and one at a time, then the
   concurrent rest, then the tools that act on state (`forward_request`,
   `request_human`) one at a time, then the `Terminal` one (`finish`), which
-  the driver only lets run as the round's sole call. Only `RunToolSource`
-  returns anything but `Concurrent`. Results keep call order whatever order the calls ran in
+  the driver only lets run as the round's sole call. The actual local
+  `forward_request` tool declares `ActsOnState`, including through approval
+  wrappers; a denied or undiscovered tool does not acquire a source phase.
+  Results keep call order whatever order the calls ran in
   ([`agent-runs.md`](agent-runs.md#synthetic-tools)).
 - **Tool-result context budget** — once cumulative `role:"tool"` content passes
   128 KB (`/v1` loop) or the turn's allowance derived from the model's context

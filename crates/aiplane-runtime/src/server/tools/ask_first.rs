@@ -110,6 +110,10 @@ pub(crate) fn validate_actions(
 }
 
 impl Tool for AskFirst {
+    fn phase(&self) -> crate::server::tools::ToolPhase {
+        self.inner.phase()
+    }
+
     fn id(&self) -> &str {
         self.inner.id()
     }
@@ -160,6 +164,14 @@ impl Tool for AskFirst {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn approval_wrapper_preserves_the_tools_phase() {
+        let tool = AskFirst::new(
+            crate::server::tools::tests::PhasedEcho,
+            Duration::from_secs(90),
+        );
+        assert_eq!(tool.phase(), crate::server::tools::ToolPhase::ActsOnState);
+    }
     use super::*;
     use crate::server::tools::echo::Echo;
     use crate::suspend::extract_suspend;

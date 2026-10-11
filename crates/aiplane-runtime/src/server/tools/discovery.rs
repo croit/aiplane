@@ -114,6 +114,14 @@ impl<'a> DiscoverableToolSource<'a> {
 }
 
 impl ToolSource for DiscoverableToolSource<'_> {
+    fn phase(&self, id: &str) -> super::ToolPhase {
+        if id != SEARCH_TOOL_ID && self.get(id).is_some() {
+            self.source.phase(id)
+        } else {
+            super::ToolPhase::Concurrent
+        }
+    }
+
     fn get(&self, id: &str) -> Option<Arc<dyn Tool>> {
         if id == SEARCH_TOOL_ID {
             return self
@@ -152,6 +160,27 @@ impl ToolSource for DiscoverableToolSource<'_> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn discovery_preserves_visible_tool_phases_and_withholds_inactive_tools() {
+        use crate::server::tools::{ToolPhase, tests::PhasedEcho};
+        let registry = ToolRegistry::new().with(PhasedEcho);
+        let always = DiscoverableToolSource::new(&registry, &["company_echo".into()], &[]);
+        assert_eq!(always.phase("company_echo"), ToolPhase::ActsOnState);
+        let auto = DiscoverableToolSource::new(&registry, &[], &["company_echo".into()]);
+        assert!(auto.get("company_echo").is_none());
+        assert_eq!(auto.phase("company_echo"), ToolPhase::Concurrent);
+        assert_eq!(auto.phase(SEARCH_TOOL_ID), ToolPhase::Concurrent);
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        auto.get(SEARCH_TOOL_ID)
+            .unwrap()
+            .run(ToolContext::for_test(db), json!({"query":"echo"}))
+            .await
+            .unwrap();
+        assert_eq!(auto.phase("company_echo"), ToolPhase::ActsOnState);
+        assert_eq!(auto.phase("unknown"), ToolPhase::Concurrent);
+    }
     use super::*;
     use crate::server::tools::ToolRegistry;
     use crate::server::tools::echo::Echo;

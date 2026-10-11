@@ -595,6 +595,10 @@ pub(crate) async fn record_finished(
 }
 
 impl Tool for ForwardRequest {
+    fn phase(&self) -> crate::server::tools::ToolPhase {
+        crate::server::tools::ToolPhase::ActsOnState
+    }
+
     fn id(&self) -> &str {
         FORWARD_TOOL_NAME
     }
