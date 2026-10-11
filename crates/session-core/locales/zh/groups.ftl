@@ -44,3 +44,5 @@ groups-identity-unseen-hint = 已在某个组上配置但从未提交过 — 请
 groups-identity-empty = 尚无声明值。它们会在用户登录时记录。
 groups-identity-create = 为此创建一个组
 groups-matrix-section-families = 整个系列
+groups-field-manage-dots = 个人 Dot 管理者
+groups-field-manage-dots-help = 成员可以创建、查看、启用和停用自己的个人 Dot。管理员已拥有此权限。此权限不授予代理管理权限或工具访问权限。

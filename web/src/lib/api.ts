@@ -48,6 +48,7 @@ export interface Me {
 	features?: string[];
 	/** May build agents; the Agents section is shown only when true. */
 	can_manage_agents?: boolean;
+	can_manage_dots: boolean;
 }
 
 /** A canvas document belonging to a conversation. */

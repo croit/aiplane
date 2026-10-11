@@ -36,7 +36,7 @@ the confirmed scope does not request it.
 
 | Capability | Classification | Verified AIplane behavior or remaining work |
 |---|---|---|
-| Named personal assistant | Implemented | Owned Dot inventory, active lifecycle and private chat; user authority with separate Dot attribution. Creation currently requires `can_manage_agents`; broad user creation remains a planned settings refinement. |
+| Named personal assistant | Implemented | Owned Dot inventory, active lifecycle and private chat; user authority with separate Dot attribution. Lifecycle management requires the independent `can_manage_dots` group permission; administrators can enable it on configured default groups. |
 | Scheduled and event-driven execution without an open browser | Implemented | Existing schedules/webhooks run a selected personal Dot through headless execution; durable source correlation and existing user usage limits. This does not imply an uninterrupted model process. |
 | Tool access and human decisions | Implemented | Explicit selected tools, per-action rules for `browse_page` and `browser_control`, live authorization, current MCP connections, original-argument approvals and Inbox. Unknown/write effects default to Ask; changing trust does not change permissions automatically. |
 | Remember preferences and lessons | Implemented foundation; planned curation | Separate Dot notes, read-only user-wide memory context and existing memory controls; no automatic evidence consolidation or conflict resolution. |

@@ -306,3 +306,18 @@ gateway; the credential for the external agent lives sealed in the route's
 ## What's intentionally out of scope
 
 - **Refresh tokens between CLI and gateway** — re-login is acceptable for a 90-day TTL.
+
+## Personal Dot management
+
+Personal Dot list, create and active-state routes require `can_manage_dots`
+on a resolved gateway group. Administrator and bootstrap-admin membership
+imply it; `can_manage_agents` does not. Set it through the existing
+`PUT /api/v0/admin/groups` with `"can_manage_dots": true`; omission preserves
+the stored value. Fresh groups default to false. `GET /api/v0/me` reports the
+resolved flag. Reloading group rights applies grants and revocations immediately.
+
+This flag controls lifecycle management. Existing owner-scoped memory,
+activity, tool selection, private chat and background binding checks remain
+in place. Revocation does not deactivate existing Dots or stop existing runs;
+execution still checks active state, actual user grants, enabled tools,
+selected Dot rules and approvals. See [Dots](dots.md).

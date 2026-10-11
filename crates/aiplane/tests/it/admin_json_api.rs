@@ -2685,3 +2685,41 @@ async fn unconfigured_features_and_missing_resources_refuse_by_meaning() {
         assert_eq!(refused["error"]["code"], code, "{method} {path}: {raw}");
     }
 }
+
+#[tokio::test]
+async fn groups_save_sets_clears_and_preserves_independent_dot_management() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+    for (extra, expected) in [
+        ("", false),
+        (r#","can_manage_dots":true"#, true),
+        ("", true),
+        (r#","can_manage_dots":false"#, false),
+    ] {
+        let saved = app
+            .serve(req(
+                Method::PUT,
+                "/api/v0/admin/groups",
+                &cookie,
+                Some(format!(
+                    r#"{{"name":"dot-users","can_manage_agents":false{extra}}}"#
+                )),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(saved.status(), StatusCode::OK, "{}", body(saved).await);
+        let listed = app
+            .serve(req(Method::GET, "/api/v0/admin/groups", &cookie, None))
+            .await
+            .unwrap();
+        let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+        let group = listed["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["name"] == "dot-users")
+            .unwrap();
+        assert_eq!(group["can_manage_dots"], expected);
+        assert_eq!(group["can_manage_agents"], false);
+    }
+}

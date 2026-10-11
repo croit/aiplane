@@ -1,3 +1,5 @@
+ALTER TABLE gateway_groups ADD COLUMN can_manage_dots INTEGER NOT NULL DEFAULT 0 CHECK (can_manage_dots IN (0, 1));
+
 CREATE TABLE personal_dots (
     principal_id TEXT PRIMARY KEY NOT NULL REFERENCES agents(principal_id) ON DELETE CASCADE,
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

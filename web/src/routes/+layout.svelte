@@ -175,7 +175,7 @@
 		visibleNavLinks(workspaceLinks, features).filter(
 			([, path]) =>
 				(path !== '/agents' || me.value?.can_manage_agents) &&
-				(path !== '/dots' || me.value?.can_manage_agents) &&
+				(path !== '/dots' || me.value?.can_manage_dots) &&
 				(path !== '/inbox' || inboxShown(inboxLive, isActive('/inbox')))
 		)
 	);

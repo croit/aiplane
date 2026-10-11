@@ -16,6 +16,22 @@ The matrices edit the same group grants as the group form. Tool rows include ind
 
 In the group's form, enable **Agent manager** to let its members create agents and read or edit agents shared with them. Administrator groups already have this permission, so the form shows it as enabled and unavailable to change. This permission does not grant access to every model, connector or tool: agents still need their own resource grants, described in [agent permissions](../agent-guide/permissions.md).
 
+Enable **Personal Dot manager** independently to let members list, create,
+activate and deactivate their own personal Dots. Administrators hold this
+permission. Fresh groups default to disabled; enable it on an existing default
+group if every authenticated user should be able to manage personal Dots.
+It grants neither ordinary agent management nor additional tool access.
+The saved group flag is `can_manage_dots`; live RBAC reload applies changes
+immediately. Revoking it blocks lifecycle management, but does not deactivate
+Dots or stop existing runs. Current user/tool grants, active state and approval
+rules continue to govern execution. See [Dots](../dots.md).
+
+![The Engineering group with Personal Dot manager enabled and Agent manager disabled. Synthetic data in the real group form.](../img/guide/dot-management-permission.png)
+
+*Independent personal Dot management in the existing group form. The wildcard
+tool grant shown belongs to the synthetic fixture; its existing warning remains
+visible and the Dot checkbox does not add tool grants.*
+
 Builder permission does not itself give an agent permission to use every model or tool: the agent has separate grants, documented in [agent permissions](../agent-guide/permissions.md).
 
 Pool allowed groups, collection allowed groups, connector allowed groups, tool grants and skill grants serve different resources. A tool being listed in a permission matrix does not establish that its external service is configured or reachable.
@@ -66,6 +82,7 @@ The page shows summary metrics and breakdowns by backend, source, model and toke
 |---|---|
 | Admin page returns forbidden | Effective `admin` role shown for the signed-in identity |
 | Group does not match | Actual observed OIDC values, group mapping and effective roles |
+| Dots management unavailable | `can_manage_dots` on a resolved group |
 | Builder unavailable | `can_manage_agents` on a resolved group |
 | Token cannot request a model | Token scope and owner access to the model's pool |
 | Limit has no effect | `limits.enabled`, subject/model match and pool `enforce_limits` |

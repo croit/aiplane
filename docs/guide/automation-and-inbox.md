@@ -59,6 +59,16 @@ Open `/inbox` to review pending requests visible to your account. The navigation
 
 The card only offers decisions the server permits. Expiry information appears when the request has an expiry. If another person already settled it or it expired, the page reports that state and refreshes; your later click does not replace the earlier decision. Sensitive-value requests can use a password field rather than a visible text area.
 
+## Manage personal Dots
+
+Open **Workspace → Dots** to list and create your personal Dots or change their
+active state. Your administrator enables **Personal Dot manager** in your
+resolved gateway group; ordinary agent management is a separate permission.
+Admins hold both. The configured cap counts active Dots even when idle;
+deactivating one frees a slot. Removing management permission blocks lifecycle
+management, without deactivating existing Dots or stopping their runs. Tool
+access and approvals remain bounded by the current permissions on execution.
+
 ## Configure a personal Dot's tool access
 
 Open `/dots` and expand **Access and approvals** on your Dot's card. Search

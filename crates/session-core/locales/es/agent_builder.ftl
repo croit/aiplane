@@ -380,3 +380,4 @@ dot-action-remove-aria = Eliminar regla para { $action }
 dot-action-rule = Regla para { $action }
 dot-action-unknown-rule = Regla desconocida: { $rule }
 dot-action-deny = Denegar
+dot-error-permission-required = La gestión de Dots personales requiere permiso. Pide a un administrador que habilite la gestión de Dots personales para uno de tus grupos.

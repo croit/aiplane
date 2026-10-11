@@ -508,6 +508,15 @@ built-in default.
 
 `chat-protocol.ts` is deliberately framework-free — no Svelte, no DOM — so the fold is unit-testable under `node --test` (`chat-protocol.test.ts`, run by `mise run test-web`) and `chat.svelte.ts` stays a thin reactive wrapper around it. Keep it that way: wire behaviour that can only be tested through a browser is wire behaviour nobody tests.
 
+## Personal Dot navigation and management
+
+The Workspace Dots link uses the resolved `can_manage_dots` value from
+`GET /api/v0/me`. The existing group form exposes **Personal Dot manager**
+independently of **Agent manager**, with admin implication and the same save
+and reset flow. List, create and active-state routes enforce the corresponding
+server permission; the sidebar is not an authorization boundary.
+See [personal Dots](dots.md) and [access administration](admin/access.md).
+
 ## Agent builder
 
 `/agents` (sidebar: Workspace → Agents) is visible only when `GET /api/v0/me`

@@ -23,6 +23,7 @@ struct GroupDef {
     is_admin: bool,
     is_default: bool,
     can_manage_agents: bool,
+    can_manage_dots: bool,
     tools: Vec<String>,
     /// Only populated on the config/test build path; the DB reload path leaves
     /// this empty and sources skills entirely from the overlay.
@@ -120,6 +121,7 @@ impl Resolver {
                     is_admin: role.admin,
                     is_default,
                     can_manage_agents: false,
+                    can_manage_dots: false,
                     tools: role.tools,
                     skills: role.skills,
                 },
@@ -296,6 +298,17 @@ impl Resolver {
             snap.groups
                 .get(id)
                 .is_some_and(|g| g.is_admin || g.can_manage_agents)
+        })
+    }
+
+    pub fn can_manage_dots(&self, role_ids: &[String]) -> bool {
+        let Ok(snap) = self.inner.read() else {
+            return false;
+        };
+        role_ids.iter().any(|id| {
+            snap.groups
+                .get(id)
+                .is_some_and(|g| g.is_admin || g.can_manage_dots)
         })
     }
 
@@ -503,6 +516,7 @@ fn build_snapshot(snap: &GroupSnapshot, bootstrap: &[String]) -> Snapshot {
                 is_admin: g.is_admin,
                 is_default: g.is_default,
                 can_manage_agents: g.can_manage_agents,
+                can_manage_dots: g.can_manage_dots,
                 tools: Vec::new(),
                 skills: Vec::new(),
             },
@@ -569,6 +583,7 @@ fn apply_bootstrap(snapshot: &mut Snapshot, bootstrap: &[String]) {
             is_admin: true,
             is_default: false,
             can_manage_agents: true,
+            can_manage_dots: true,
             tools: vec!["*".to_string()],
             skills: vec!["*".to_string()],
         },
@@ -1059,6 +1074,7 @@ mod tests {
                 is_admin: false,
                 is_default: false,
                 can_manage_agents: false,
+                can_manage_dots: false,
             }],
             mappings: vec![("g-dev".into(), "developers".into())],
             // `company_echo` rather than a "real" tool id: this asserts that a
@@ -1090,6 +1106,7 @@ mod tests {
                         is_admin,
                         is_default,
                         can_manage_agents,
+                        can_manage_dots: false,
                     },
                 )
                 .collect(),
@@ -1124,6 +1141,84 @@ mod tests {
         assert!(r.can_manage_agents(&["managers".into()]));
         assert!(r.can_manage_agents(&["admins".into()]));
         assert!(!r.can_manage_agents(&[]));
+    }
+
+    #[tokio::test]
+    async fn dot_management_resolves_explicit_default_admin_and_revoked_snapshot() {
+        use crate::server::db::gateway_groups as groups;
+        let pool = crate::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        for (name, admin, default) in [
+            ("agents", false, false),
+            ("dots", false, false),
+            ("admins", true, false),
+            ("everyone", false, true),
+        ] {
+            groups::upsert_group(&pool, name, "", admin, default)
+                .await
+                .unwrap();
+            groups::set_mappings_for_group(&pool, name, &[format!("claim-{name}")])
+                .await
+                .unwrap();
+        }
+        groups::set_can_manage_agents(&pool, "agents", true)
+            .await
+            .unwrap();
+        groups::set_can_manage_dots(&pool, "dots", true)
+            .await
+            .unwrap();
+        let r = Resolver::from_snapshot(
+            groups::load_snapshot(&pool).await.unwrap(),
+            vec!["break-glass".into()],
+        );
+        let agent_roles = r.role_ids_for(&["claim-agents".into()]);
+        assert!(r.can_manage_agents(&agent_roles));
+        assert!(!r.can_manage_dots(&agent_roles));
+        let dot_roles = r.role_ids_for(&["claim-dots".into()]);
+        assert!(r.can_manage_dots(&dot_roles));
+        assert!(!r.can_manage_agents(&dot_roles));
+        assert!(r.can_manage_dots(&r.role_ids_for(&["claim-admins".into()])));
+        assert!(r.can_manage_dots(&r.role_ids_for(&["break-glass".into()])));
+        assert!(!r.can_manage_dots(&r.role_ids_for(&[])));
+        assert!(!r.can_manage_dots(&["unknown".into()]));
+        groups::set_can_manage_dots(&pool, "dots", false)
+            .await
+            .unwrap();
+        r.reload(groups::load_snapshot(&pool).await.unwrap());
+        assert!(!r.can_manage_dots(&dot_roles));
+        assert!(r.can_manage_dots(&r.role_ids_for(&["break-glass".into()])));
+        groups::set_can_manage_dots(&pool, "everyone", true)
+            .await
+            .unwrap();
+        r.reload(groups::load_snapshot(&pool).await.unwrap());
+        assert!(r.can_manage_dots(&r.role_ids_for(&[])));
+        assert!(!r.can_manage_agents(&r.role_ids_for(&[])));
+    }
+
+    #[test]
+    fn dot_management_config_defaults_false_and_admin_or_bootstrap_implies_it() {
+        let ordinary = Resolver::build(
+            RbacConfig::default(),
+            vec![RoleConfig {
+                id: "plain".into(),
+                admin: false,
+                models: vec![],
+                tools: vec![],
+                skills: vec![],
+            }],
+        )
+        .unwrap();
+        assert!(!ordinary.can_manage_dots(&["plain".into()]));
+        let admin = Resolver::build(RbacConfig::default(), vec![admin_role("ops")]).unwrap();
+        assert!(admin.can_manage_dots(&["ops".into()]));
+        let bootstrap = Resolver::build_with_bootstrap(
+            RbacConfig::default(),
+            vec![],
+            vec!["break-glass".into()],
+        )
+        .unwrap();
+        assert!(bootstrap.can_manage_dots(&bootstrap.role_ids_for(&["break-glass".into()])));
     }
 
     #[test]

@@ -380,3 +380,4 @@ dot-action-remove-aria = 移除 { $action } 的规则
 dot-action-rule = { $action } 的规则
 dot-action-unknown-rule = 未知规则：{ $rule }
 dot-action-deny = 禁止
+dot-error-permission-required = 管理个人 Dot 需要权限。请管理员为你所属的某个组启用个人 Dot 管理权限。

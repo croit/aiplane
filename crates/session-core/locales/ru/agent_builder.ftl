@@ -380,3 +380,4 @@ dot-action-remove-aria = Удалить правило для { $action }
 dot-action-rule = Правило для { $action }
 dot-action-unknown-rule = Неизвестное правило: { $rule }
 dot-action-deny = Запретить
+dot-error-permission-required = Для управления личными Dot требуется разрешение. Попросите администратора включить управление личными Dot для одной из ваших групп.

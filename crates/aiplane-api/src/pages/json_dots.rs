@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use session_core::i18n::{Lang, t};
 
-use super::json_principals::require_agent_manager;
 use super::{bad_request, internal, json_error, json_ok, not_found, raw_path_segment};
 use aiplane_agents::db::agents::{self as agents_db, PersonalDotCreate};
 use aiplane_agents::db::system_principals::NewPrincipal;
@@ -57,8 +56,25 @@ pub(crate) fn view(row: &agents_db::PersonalDotRow) -> DotView {
     }
 }
 
+async fn require_dot_manager(
+    state: &RamaState,
+    req: &Request,
+) -> Result<aiplane_core::server::db::users::User, Response> {
+    let (_, user) = super::require_session_json(state, req).await?;
+    let role_ids = state.rbac.role_ids_for(&user.roles);
+    if !state.rbac.can_manage_dots(&role_ids) {
+        let lang = Lang::from_request(req.headers());
+        return Err(json_error(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            &t(lang, "dot-error-permission-required"),
+        ));
+    }
+    Ok(user)
+}
+
 pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let user = match require_agent_manager(&state, &req).await {
+    let user = match require_dot_manager(&state, &req).await {
         Ok(user) => user,
         Err(response) => return response,
     };
@@ -76,7 +92,7 @@ pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response
 }
 
 pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let user = match require_agent_manager(&state, &req).await {
+    let user = match require_dot_manager(&state, &req).await {
         Ok(user) => user,
         Err(response) => return response,
     };
@@ -413,7 +429,7 @@ pub struct ActiveBody {
 }
 
 pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let user = match require_agent_manager(&state, &req).await {
+    let user = match require_dot_manager(&state, &req).await {
         Ok(user) => user,
         Err(response) => return response,
     };

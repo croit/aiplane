@@ -215,5 +215,19 @@
     "width": 626,
     "height": 1332,
     "data": "Synthetic dev-ui fixture; actual browse_page tool catalogue. Search browse_page, expand Actions; read Allow and fill Deny saved under tool Ask. Native list scroll bounds remain visible."
+  },
+  {
+    "file": "docs/img/guide/dot-management-permission.png",
+    "route": "/admin/groups",
+    "selector": "article",
+    "matchingText": "engineering",
+    "viewport": {
+      "width": 1400,
+      "height": 1500
+    },
+    "scale": 2,
+    "width": 2128,
+    "height": 1264,
+    "data": "Synthetic dev-ui fixture; actual Engineering group saved and reloaded with Personal Dot manager enabled, Agent manager and Admin disabled. Original group restored after capture. Existing wildcard tool grant and its warning remain visible."
   }
 ]

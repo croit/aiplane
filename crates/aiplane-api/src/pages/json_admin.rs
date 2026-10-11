@@ -60,6 +60,7 @@ pub async fn groups_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             is_admin: g.is_admin,
             is_default: g.is_default,
             can_manage_agents: g.can_manage_agents,
+            can_manage_dots: g.can_manage_dots,
             oidc_values,
             tools,
             skills,
@@ -144,6 +145,7 @@ pub struct GroupView {
     pub is_admin: bool,
     pub is_default: bool,
     pub can_manage_agents: bool,
+    pub can_manage_dots: bool,
     /// The OIDC group claim values mapped to this group.
     pub oidc_values: Vec<String>,
     /// The granted tool ids (`*` grants every tool).
@@ -189,6 +191,8 @@ pub struct GroupSaveBody {
     #[serde(default)]
     pub can_manage_agents: Option<bool>,
     #[serde(default)]
+    pub can_manage_dots: Option<bool>,
+    #[serde(default)]
     pub oidc_values: Vec<String>,
     #[serde(default)]
     pub tools: Vec<String>,
@@ -226,6 +230,11 @@ pub async fn groups_save(State(state): State<Arc<RamaState>>, req: Request) -> R
     }
     if let Some(enabled) = parsed.can_manage_agents
         && let Err(err) = db::gateway_groups::set_can_manage_agents(&state.db, &name, enabled).await
+    {
+        return internal(err);
+    }
+    if let Some(enabled) = parsed.can_manage_dots
+        && let Err(err) = db::gateway_groups::set_can_manage_dots(&state.db, &name, enabled).await
     {
         return internal(err);
     }

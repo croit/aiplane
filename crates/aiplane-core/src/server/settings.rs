@@ -772,7 +772,6 @@ pub fn section_is_enabled(config: &Config, section: &SectionSpec) -> Option<bool
         "geoip" => config.geoip.is_some(),
         "usage" => config.usage.enabled,
         "limits" => config.limits.enabled,
-        "dots" => true,
         "content_guard" => config.content_guard.enabled,
         "feedback" => config.feedback.is_some(),
         "push" => config.push.enabled,

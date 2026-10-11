@@ -10,8 +10,8 @@ state table, transactional active-slot enforcement, and session-authenticated
 `GET`/`POST /api/v0/dots` plus `PUT /api/v0/dots/{id}/active` endpoints. The
 active cap is an operator setting at `/admin/settings` → Access, defaulting to
 four. The `/dots` page lists, creates, activates and deactivates personal Dots.
-Lifecycle endpoints currently reuse the existing `can_manage_agents` group
-permission. Each Dot card has a lazily loaded memory panel with separate
+Lifecycle endpoints require the independent `can_manage_dots` group
+permission; administrators hold it and other groups default to disabled. Each Dot card has a lazily loaded memory panel with separate
 preference, project and fact entries. Owners can add, edit and delete those
 notes; they remain separate from user-wide memory. A second lazily loaded
 panel shows the Dot's recent audited events and can page through older ones.
@@ -41,7 +41,11 @@ remain isolated to the Dot. Schedules and webhooks can run with the same persona
 | `GET /api/v0/dots/{id}/activity` | Lists the owned Dot's audited activity, newest first; accepts `cursor` and `limit`. |
 | `POST /api/v0/dots/{id}/sessions` | Creates a private chat session owned by the user and associated with the active Dot. |
 
-Lifecycle routes require `can_manage_agents` today. Creation and active-state
+Lifecycle routes require `can_manage_dots`. Administrators configure it in the
+existing group form; agent management does not imply Dot management. Revoking
+it blocks list, creation and active-state changes after RBAC reload. It does
+not deactivate existing Dots, revoke tool grants or stop existing runs;
+owner-scoped access and execution retain their existing checks. Creation and active-state
 changes are recorded through the existing agent activity chain. The Dot
 principal starts without independent grants; personal execution uses the
 owner's effective authority. Lowering the configured active cap does not deactivate existing
@@ -572,8 +576,7 @@ are checked again even when the call was approved once.
 - Establish user- and organization-owned Dot records on top of existing agent
   definitions and principals.
 - Let users create personal Dots when their configured group permission
-  allows it. The permission mechanism remains an open implementation
-  decision; the current lifecycle routes reuse `can_manage_agents`.
+  allows it through the independent `can_manage_dots` group flag.
 - Enforce the configurable active personal Dot cap (default 4) transactionally
   at creation/activation; deactivation frees capacity.
 - Preserve current agent-manager workflows for visitor-facing and other
@@ -644,23 +647,21 @@ documentation and generated artifacts together.
 
 ## Open decisions
 
-1. Should personal-Dot creation use a dedicated gateway-group permission, the
-   existing `can_manage_agents` permission, or a global operator switch?
-2. Does an organization have its own active Dot cap, separate from personal
+1. Does an organization have its own active Dot cap, separate from personal
    limits?
-3. Which exact action categories are always approval-required or prohibited?
+2. Which exact action categories are always approval-required or prohibited?
    Who may approve organization actions?
-4. For personal MCP identity, does "use my identity" reuse the existing
+3. For personal MCP identity, does "use my identity" reuse the existing
    `/tools/integrations` authorization, while "Dot identity" starts a separate
    OAuth flow? Which connector auth modes must work for Dot-owned identities?
-5. How frequently may memory curation run, what evidence may it read, and are
+4. How frequently may memory curation run, what evidence may it read, and are
    changes written automatically or reviewed by the user?
-6. Does the Dot workspace need arbitrary structured collections, or are
+5. Does the Dot workspace need arbitrary structured collections, or are
    documents/files plus typed records sufficient? What size and retention
    bounds apply?
-7. Must the Dot computer persist across process/container restarts, or only
+6. Must the Dot computer persist across process/container restarts, or only
    across agent runs? Which network destinations may it access?
-8. What concurrent-run ceiling and resource budget should operators configure?
+7. What concurrent-run ceiling and resource budget should operators configure?
 
 Deactivation is reversible and frees an active slot; this is the confirmed
 product behavior and is implemented by the lifecycle API.

@@ -381,3 +381,4 @@ dot-action-remove-aria = Remove rule for { $action }
 dot-action-rule = Rule for { $action }
 dot-action-unknown-rule = Unknown rule: { $rule }
 dot-action-deny = Deny
+dot-error-permission-required = Managing personal Dots requires permission. Ask an administrator to enable personal Dot management for one of your groups.
