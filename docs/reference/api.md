@@ -202,21 +202,36 @@ OAuth credential with current catalogue, credential and binding generations.
 The writer's existing catalogue eligibility and grant ceiling also apply;
 a selected credential is separate from the principal's Connector grant.
 
-`POST /api/v0/agents/{id}/test/messages` admits an active organization Dot's
-saved draft for a current member writer. It creates or continues a private
-principal-owned conversation, with `user_id=NULL`, version `0`, no visitor
-and no parent turn. The existing test events and debug routes require current
-member Write access to that exact private conversation. Administrator recovery
-without membership does not admit these execution or history routes.
+`POST /api/v0/agents/{id}/test/messages` requires
+`{message, source:"draft"|"published", session_id?}`. Ordinary agents accept
+explicit `draft`; active organization Dots additionally accept `published` for
+current member writers. A new published conversation uses the actual current
+live version. Continuing it keeps its stored positive version after publishing
+or rollback; changing source requires a new conversation. The response is
+`202 {session_id, turn_id, source, agent_version}`. Draft uses version `0`.
+No client-supplied version or organization ID selects authority.
 
-The existing staff resume route rechecks that member's Write access in the
-atomic claim transaction. Saved internal authority retains the original draft,
-resolved model and initial principal grant/model-pool ceilings across restart;
-new draft edits and added grants cannot enlarge the paused run. Its original
-selected MCP account facts must remain current. A refused claim preserves the
-waiting request. Internal run context and credential secrets are absent from
-the public suspension response. Publishing a version does not enable
-organization published conversations, automation or external channels.
+Organization conversations are private principal-owned sessions with
+`user_id=NULL`, `shared=0`, no visitor and no parent turn. Events and debug
+require current member Write access and exact private source/version proof.
+Debug also returns `source` and `agent_version`. Administrator recovery
+without membership does not admit execution or history.
+
+Staff resume rechecks current member Write access in its atomic claim
+transaction. Strict saved authority retains the original source, authored
+snapshot, resolved model and initial principal grant/model-pool ceilings across
+restart. Published snapshots must agree with their actual version row; a cache
+hit cannot replace that proof. Current selected MCP account facts must match.
+A refused claim preserves the waiting request. New publication, draft edits or
+added grants cannot enlarge the paused run. Internal run context and secrets
+are absent from the public suspension response.
+
+Published private approvals, human answers and secure input appear in the
+existing Inbox only for current member writers. Draft pauses remain inline.
+Read, Respond and administrator recovery without membership expose no private
+items. Organization announcements do not send push or external channel messages.
+Publication does not admit public, visitor, embedded, delegated, automated or
+test-suite execution.
 
 Organization share suggestions use the existing eight-result cap and check
 current membership before including users. A search examines at most one

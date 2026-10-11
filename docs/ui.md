@@ -696,8 +696,13 @@ are in `web/src/lib/components/agents/`.
   JSON because `structuredClone` refuses a Svelte proxy.
 - **Test chat** (`TestChat`, `DebugPanel`). A streamed conversation like
   any other: `POST /api/v0/agents/{id}/test/messages` (`sendTestMessage`)
-  runs the **saved draft** in the background, so an unsaved buffer is
-  flagged with a Save button, and a `ConversationController` opened on
+  requires an explicit source and runs the **saved draft** or an organization
+  Dot’s actual **published version** in the background. The organization source
+  selector uses actual ownership and live-version data. Returned source and
+  `agent_version` remain attached to the conversation after later publishing.
+  Changing source resets the conversation; source/reset controls are disabled
+  during submission, live work and response submission. An unsaved draft buffer
+  is flagged with a Save button only for draft execution, and a `ConversationController` opened on
   `GET …/test/{session}/events` (`createConversationController(id,
   eventsUrl)`) folds the frames, exactly as the chat page does. The
   transcript and composer are `StreamedChat` (below). Whenever no turn runs,

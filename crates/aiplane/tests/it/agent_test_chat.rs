@@ -364,14 +364,14 @@ async fn a_draft_that_was_never_published_answers_with_the_manager_debug_view() 
         .turn(
             &fx.alice,
             &support,
-            json!({ "message": "My router is broken" }),
+            json!({ "source": "draft", "message": "My router is broken" }),
         )
         .await;
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "completed", "{body}");
     assert_eq!(body["answer"], "The technician looked into it.");
-    assert_eq!(body["draft_version"], 0);
+    assert_eq!(body["agent_version"], 0);
     assert!(body["session_id"].as_str().is_some());
 
     let slots = body["debug"]["slots"].as_array().unwrap();
@@ -423,11 +423,11 @@ async fn the_test_conversation_streams_like_any_chat_and_stays_out_of_the_inbox(
         .post(
             &fx.alice,
             &format!("/api/v0/agents/{support}/test/messages"),
-            json!({ "message": "hello" }),
+            json!({ "source": "draft", "message": "hello" }),
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{sent}");
-    assert_eq!(sent["draft_version"], 0);
+    assert_eq!(sent["agent_version"], 0);
     let session = sent["session_id"].as_str().unwrap();
     let turn = sent["turn_id"].as_str().unwrap();
 
@@ -521,7 +521,7 @@ async fn the_debug_view_shows_the_topic_guards_verdict() {
         .turn(
             &fx.alice,
             &website,
-            json!({ "message": "How does a diesel engine work?" }),
+            json!({ "source": "draft", "message": "How does a diesel engine work?" }),
         )
         .await;
 
@@ -543,7 +543,11 @@ async fn the_test_chat_runs_the_draft_not_the_published_version() {
         .await;
 
     let (status, body) = fx
-        .turn(&fx.alice, &support, json!({ "message": "hello" }))
+        .turn(
+            &fx.alice,
+            &support,
+            json!({ "source": "draft", "message": "hello" }),
+        )
         .await;
 
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -570,7 +574,7 @@ async fn a_second_turn_continues_the_conversation_and_keeps_its_state() {
         .turn(
             &fx.alice,
             &support,
-            json!({ "message": "I am ada@example.com" }),
+            json!({ "source": "draft", "message": "I am ada@example.com" }),
         )
         .await;
     let session = first["session_id"].as_str().unwrap();
@@ -578,7 +582,7 @@ async fn a_second_turn_continues_the_conversation_and_keeps_its_state() {
         .turn(
             &fx.alice,
             &support,
-            json!({ "message": "that is all", "session_id": session }),
+            json!({ "source": "draft", "message": "that is all", "session_id": session }),
         )
         .await;
 
@@ -608,14 +612,18 @@ async fn an_unknown_session_empty_message_and_ungranted_model_say_what_to_fix() 
         .turn(
             &fx.alice,
             &support,
-            json!({ "message": "hi", "session_id": "nope" }),
+            json!({ "source": "draft", "message": "hi", "session_id": "nope" }),
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(body["error"]["code"], "unknown_session");
 
     let (status, _) = fx
-        .turn(&fx.alice, &support, json!({ "message": "  " }))
+        .turn(
+            &fx.alice,
+            &support,
+            json!({ "source": "draft", "message": "  " }),
+        )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
@@ -623,7 +631,13 @@ async fn an_unknown_session_empty_message_and_ungranted_model_say_what_to_fix() 
     fx.grant_model(&bare, "tech-model").await;
     fx.save_draft(&bare, json!({ "main": { "model": "tech-model" } }))
         .await;
-    let (status, _) = fx.turn(&fx.alice, &bare, json!({ "message": "hi" })).await;
+    let (status, _) = fx
+        .turn(
+            &fx.alice,
+            &bare,
+            json!({ "source": "draft", "message": "hi" }),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK);
 
     let (status, body) = fx
@@ -634,7 +648,13 @@ async fn an_unknown_session_empty_message_and_ungranted_model_say_what_to_fix() 
         )
         .await;
     assert!(status.is_success(), "{status} {body}");
-    let (status, body) = fx.turn(&fx.alice, &bare, json!({ "message": "hi" })).await;
+    let (status, body) = fx
+        .turn(
+            &fx.alice,
+            &bare,
+            json!({ "source": "draft", "message": "hi" }),
+        )
+        .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_eq!(body["error"]["code"], "agent_model_not_granted");
     let message = body["error"]["message"].as_str().unwrap();
@@ -648,7 +668,7 @@ async fn an_unknown_session_empty_message_and_ungranted_model_say_what_to_fix() 
 async fn only_a_manager_with_a_write_share_may_run_the_draft() {
     let (fx, _tech_llm) = fixture(vec![text("ok")], tech_script()).await;
     let (support, _) = fx.support("x").await;
-    let message = json!({ "message": "hi" });
+    let message = json!({ "source": "draft", "message": "hi" });
 
     let (status, _) = fx.turn(&fx.plain, &support, message.clone()).await;
     assert_eq!(

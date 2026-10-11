@@ -441,3 +441,14 @@ dot-memory-organization-scope = Conocimiento compartido de esta organización. S
 dot-memory-error-byte-limit = Esta nota supera los 2.000 bytes UTF-8. Acórtala antes de guardarla.
 dot-memory-error-scope = Elige si esta nota pertenece al Dot o a su organización e inténtalo de nuevo.
 dot-memory-error-shared-write = Las notas compartidas requieren pertenencia actual a la organización, acceso de escritura y permisos de administración de la pasarela. Pide a un administrador autorizado que realice este cambio.
+
+agents-test-source = Origen de la conversación
+agents-test-source-draft = Borrador guardado
+agents-test-source-published = Versión publicada { $version }
+agents-test-conversation-draft = Esta conversación privada utiliza el borrador guardado.
+agents-test-conversation-published = Esta conversación privada utiliza la versión publicada { $version }.
+
+agents-test-organization-intro = Habla en privado con este Dot de la organización usando el origen seleccionado. Sus herramientas utilizan sus propios permisos. Usa «Mostrar lo ocurrido» bajo una respuesta para revisar la ejecución.
+agents-test-organization-empty = Envía un mensaje para iniciar una conversación privada con este Dot de la organización.
+agents-test-organization-draft-handoff = Los miembros actuales de la organización con acceso de escritura a este Dot pueden responder aquí a esta solicitud privada.
+agents-test-organization-published-handoff = Esta solicitud privada también aparece en la bandeja de entrada de los miembros actuales de la organización con acceso de escritura a este Dot. Puedes responder aquí.

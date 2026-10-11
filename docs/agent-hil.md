@@ -229,11 +229,22 @@ message queued behind it runs afterwards as usual.
 
 ## The inbox
 
+Private organization Dot conversations require current organization membership
+and Write access for staff settlement. Draft pauses stay inline in Test chat.
+Published private approvals, human answers and secure input also appear in the
+Inbox after exact private session, captured source and original version-row
+proof. Read, Respond and administrator recovery without membership expose no
+such items. These conversations permit writer staff to supply secure input;
+ordinary published visitor conversations retain participant-only secure input.
+Organization announcements remain in the web interface and do not dispatch
+push or external channel messages. See [private organization
+authority](agent-runs.md#organization-private-conversation-authority).
+
 `agents::inbox`, `aiplane-api::pages::json_inbox`. An item is a
 conversation's own pause (`run_sessions::pending_suspensions`; a sub-agent's
 pause shows through its conversation's):
 
-- an agent conversation's `approval` or `human_answer`, outside the test chat,
+- an ordinary agent conversation's `approval` or `human_answer`, outside the test chat,
   for whoever holds access to the agent (`effective_access`): an admin or a
   manager with a `read` or `write` share (`standing: manager`), or a `respond`
   share (`standing: responder`);

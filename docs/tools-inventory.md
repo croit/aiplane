@@ -234,7 +234,7 @@ the user threw away.
 
 These have no fixed id — one tool per discovered template / workflow /
 connected server. The drift guard matches them by prefix. Auditing, approval
-and live personal-Dot authorization wrappers retain the wrapped tool's actual
+and live personal-Dot or organization-principal authorization wrappers retain the wrapped tool's actual
 ID and schema; they do not add another tool or toggle.
 
 | Tool IDs | When they are available | Toggle key |

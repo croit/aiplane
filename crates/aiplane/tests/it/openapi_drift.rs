@@ -301,3 +301,30 @@ fn detached_openapi_document_does_not_exist() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     assert!(!manifest.join("../../docs/openapi.json").exists());
 }
+
+#[tokio::test]
+async fn private_agent_chat_declares_required_source_and_actual_version_metadata() {
+    let document = served_document().await;
+    let paths = &document["paths"];
+    let send = &paths["/api/v0/agents/{id}/test/messages"]["post"];
+    let body = json_body(&document, &send["requestBody"]["content"]);
+    assert!(
+        body["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "source")
+    );
+    let source = resolved(&document, &body["properties"]["source"]);
+    assert_eq!(source["enum"], serde_json::json!(["draft", "published"]));
+    for content in [
+        &send["responses"]["202"]["content"],
+        &paths["/api/v0/agents/{id}/test/{session}/turns/{turn}/debug"]["get"]["responses"]["200"]
+            ["content"],
+    ] {
+        let response = json_body(&document, content);
+        assert!(response["properties"]["agent_version"].is_object());
+        assert!(response["properties"]["source"].is_object());
+        assert!(response["properties"].get("draft_version").is_none());
+    }
+}

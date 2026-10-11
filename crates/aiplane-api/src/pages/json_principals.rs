@@ -618,6 +618,17 @@ pub(crate) async fn add_capped_grant(
     lang: Lang,
 ) -> Result<GrantChange, Response> {
     let mut tx = begin_principal_write(state, manager, principal_id, lang).await?;
+    if kind == GrantKind::A2aCaller {
+        let held = aiplane_runtime::agents::access::effective_access_in(
+            state,
+            &mut tx,
+            reference,
+            &manager.id,
+        )
+        .await
+        .map_err(internal)?;
+        super::json_agents::require_held(held, reference, Access::Write)?;
+    }
     let scope = grant_holding::grant_scope_in(
         state,
         &mut tx,

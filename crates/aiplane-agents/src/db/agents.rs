@@ -1000,13 +1000,32 @@ pub async fn versions(pool: &Pool, id: &str) -> Result<Vec<VersionRow>, DbError>
 }
 
 pub async fn version(pool: &Pool, id: &str, version: i64) -> Result<Option<VersionRow>, DbError> {
+    version_with(pool, id, version).await
+}
+
+pub async fn version_in(
+    tx: &mut WriteTx,
+    id: &str,
+    version: i64,
+) -> Result<Option<VersionRow>, DbError> {
+    version_with(&mut **tx, id, version).await
+}
+
+async fn version_with<'e, E>(
+    executor: E,
+    id: &str,
+    version: i64,
+) -> Result<Option<VersionRow>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let row = sqlx::query(
         "SELECT version, spec, published_by, published_at FROM agent_versions
           WHERE principal_id = ? AND version = ?",
     )
     .bind(id)
     .bind(version)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?;
     row.as_ref().map(map_version).transpose()
 }
@@ -2143,5 +2162,57 @@ mod tests {
         assert!(delete_in(&mut tx, id, "owner").await.unwrap());
         tx.commit().await.unwrap();
         assert!(get(&pool, id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn private_published_version_reader_uses_current_transaction_and_existing_pointer() {
+        let pool = pool().await;
+        let a = agent(&pool, "private-published-reader", "alice").await;
+        let id = &a.principal.id;
+        assert_eq!(
+            publish(&pool, id, "first-authored-spec", "alice")
+                .await
+                .unwrap(),
+            Some(1)
+        );
+        let first = version(&pool, id, 1).await.unwrap().unwrap();
+        let mut tx = WriteTx::begin(&pool).await.unwrap();
+        assert_eq!(
+            publish_in(&mut tx, id, "second-authored-spec", "alice")
+                .await
+                .unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            get_in(&mut tx, id).await.unwrap().unwrap().live_version,
+            Some(2)
+        );
+        assert_eq!(
+            version_in(&mut tx, id, 1).await.unwrap(),
+            Some(first.clone())
+        );
+        let second = version_in(&mut tx, id, 2).await.unwrap().unwrap();
+        assert_eq!(second.version, 2);
+        assert_eq!(second.spec, "second-authored-spec");
+        assert_eq!(second.published_by, "alice");
+        assert!(
+            version_in(&mut tx, "foreign-principal", 2)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        for missing in [-1, 0, 3] {
+            assert!(version_in(&mut tx, id, missing).await.unwrap().is_none());
+        }
+        assert!(set_live_in(&mut tx, id, 1, "alice").await.unwrap());
+        assert_eq!(
+            get_in(&mut tx, id).await.unwrap().unwrap().live_version,
+            Some(1)
+        );
+        assert_eq!(version_in(&mut tx, id, 2).await.unwrap(), Some(second));
+        drop(tx);
+        assert_eq!(get(&pool, id).await.unwrap().unwrap().live_version, Some(1));
+        assert_eq!(version(&pool, id, 1).await.unwrap(), Some(first));
+        assert!(version(&pool, id, 2).await.unwrap().is_none());
     }
 }

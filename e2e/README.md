@@ -42,6 +42,13 @@ scripted model responses:
   with retained local erasure, and mobile layout. Uses the seeded Engineering
   session through `AIPLANE_DOT_MEMBER_SESSION_COOKIE`; restores temporary group
   permissions and catalogue availability and deletes its created Dot.
+- `spa-dots-organization-draft.test.mjs`: private saved-draft and published
+  Test chat through the actual streamed renderer. Covers explicit source,
+  published-version pinning after another publication, delayed-submit source
+  locks, reset, private history admission, keyboard submission and mobile
+  layout. Uses the seeded Engineering member session and restores its fixture
+  permissions and resources. `DOCS_ORG_DOT_PUBLISHED_CAPTURE` captures the actual
+  first published answer and writes separate capture metadata for the coordinator.
 - `spa-dots-organization-memory.test.mjs`: the existing editor shows actual
   Dot/shared-organization scopes, administrator shared edits, member own-note
   edits, UTF-8 byte validation with retained editable text, read-only revocation,

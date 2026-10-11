@@ -73,10 +73,11 @@ current membership, Write access and catalogue checks before OAuth exchange
 and credential save. Read/respond shares and nonmember administrator recovery
 provide no credential access. An authorized writer can erase retained local
 credentials even when the connector is unavailable. Active organization Dots
-with enabled principals and explicit grants can run saved drafts in private
+with enabled principals and explicit grants can run saved drafts or published versions in private
 Test chat for current member writers. Every response and new message checks
-current access; a resumed run retains its original draft and grant ceiling.
-Published and automated organization callers remain unavailable. Configuration
+current access; a resumed run retains its original source, version, authored snapshot and grant ceiling.
+Private published decisions appear only in the current member-writer Inbox.
+Automated and external organization callers remain unavailable. Configuration
 never gives the Dot an employee's account. See [organization
 Dots](../dots-organizations.md) for the implementation boundary.
 

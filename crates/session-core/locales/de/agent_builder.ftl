@@ -441,3 +441,14 @@ dot-memory-organization-scope = Gemeinsames Wissen dieser Organisation. Ihre Dot
 dot-memory-error-byte-limit = Diese Notiz ist länger als 2.000 UTF-8-Bytes. Kürze sie vor dem Speichern.
 dot-memory-error-scope = Wähle, ob diese Notiz dem Dot oder seiner Organisation gehört, und versuche es erneut.
 dot-memory-error-shared-write = Gemeinsame Organisationsnotizen erfordern aktuelle Mitgliedschaft, Schreibzugriff und Gateway-Administrationsrechte. Bitte einen berechtigten Administrator um diese Änderung.
+
+agents-test-source = Quelle der Unterhaltung
+agents-test-source-draft = Gespeicherter Entwurf
+agents-test-source-published = Veröffentlichte Version { $version }
+agents-test-conversation-draft = Diese private Unterhaltung verwendet den gespeicherten Entwurf.
+agents-test-conversation-published = Diese private Unterhaltung verwendet die veröffentlichte Version { $version }.
+
+agents-test-organization-intro = Sprechen Sie privat mit diesem Organisations-Dot über die ausgewählte Quelle. Seine Tools verwenden seine eigenen Berechtigungen. Mit „Anzeigen, was geschah“ unter einer Antwort können Sie den Lauf prüfen.
+agents-test-organization-empty = Senden Sie eine Nachricht, um eine private Unterhaltung mit diesem Organisations-Dot zu beginnen.
+agents-test-organization-draft-handoff = Aktuelle Organisationsmitglieder mit Schreibzugriff auf diesen Dot können diese private Anfrage hier beantworten.
+agents-test-organization-published-handoff = Diese private Anfrage erscheint auch im Posteingang aktueller Organisationsmitglieder mit Schreibzugriff auf diesen Dot. Sie können sie hier beantworten.

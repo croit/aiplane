@@ -908,7 +908,8 @@ pub async fn test_chat_settled(
         "answer": (row.turn.status == chat::TurnStatus::Completed).then_some(row.turn.content),
         "error": row.turn.error_message,
         "suspension": suspension,
-        "draft_version": view["draft_version"],
+        "agent_version": view["agent_version"],
+        "source": view["source"],
         "debug": view["debug"],
     })
 }

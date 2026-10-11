@@ -58,7 +58,7 @@ integrations and features vary with each installation's configuration.*
 - [Personal Dot scheduled and event-driven work](guide/automation-and-inbox.md#run-scheduled-or-event-driven-work-as-a-dot).
 - [Persistent Dot workspace proposal](dots-workspace.md): planned storage and browser behavior, not an available feature.
 - [Dot identities](dots-identities.md): personal and organization Dot-owned connector identities.
-- [Organization Dots](dots-organizations.md): implemented ownership, membership, configuration, own OAuth credentials and private draft conversations, with isolated Dot notes and shared organization knowledge; published execution remains planned.
+- [Organization Dots](dots-organizations.md): implemented ownership, membership, configuration, own OAuth credentials and private draft or published conversations, with version pinning, writer-only Inbox decisions, isolated Dot notes and shared organization knowledge.
 - [Memory curation proposal](dots-memory-curation.md): planned reviewed learning through existing scheduling and approval mechanisms.
 - [Personal Dot management permission](dots-permissions.md): independent group rights through existing RBAC.
 - [Dot action rules](dots-action-rules.md): implemented permissions within `browse_page` and `browser_control`, with durable approval checks.

@@ -151,7 +151,7 @@ pub enum Role {
 /// One agent's live version, ready to drive.
 pub struct RunProfile {
     organization: Option<(String, Arc<RamaState>)>,
-    original_draft: Option<Value>,
+    original_spec: Option<Value>,
     pub principal: SystemPrincipal,
     pub version: i64,
     pub model: String,
@@ -174,6 +174,19 @@ pub enum SpecSource {
     /// `agents::run::draft` loads one: the test chat, the architect's test
     /// turn and an evaluation.
     Draft(Value),
+}
+
+#[derive(Clone, Copy)]
+enum ProfilePurpose {
+    Generic,
+    Private,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum OrganizationSpecSource {
+    Draft,
+    Published { version: i64 },
 }
 
 impl RunProfile {
@@ -229,6 +242,24 @@ impl RunProfile {
         .await
     }
 
+    pub(crate) async fn load_private(
+        state: &Arc<RamaState>,
+        agent_id: &str,
+        source: SpecSource,
+        options: &RunOptions,
+    ) -> Result<Self, AgentRunError> {
+        Self::load_source_for(
+            state,
+            agent_id,
+            source,
+            Role::Main,
+            options,
+            None,
+            ProfilePurpose::Private,
+        )
+        .await
+    }
+
     async fn load_source(
         state: &Arc<RamaState>,
         agent_id: &str,
@@ -237,13 +268,31 @@ impl RunProfile {
         options: &RunOptions,
         authority: Option<&OrganizationResumeAuthority>,
     ) -> Result<Self, AgentRunError> {
-        let original_draft = match &source {
+        let purpose = if authority.is_some() {
+            ProfilePurpose::Private
+        } else {
+            ProfilePurpose::Generic
+        };
+        Self::load_source_for(state, agent_id, source, role, options, authority, purpose).await
+    }
+
+    async fn load_source_for(
+        state: &Arc<RamaState>,
+        agent_id: &str,
+        source: SpecSource,
+        role: Role,
+        options: &RunOptions,
+        authority: Option<&OrganizationResumeAuthority>,
+        purpose: ProfilePurpose,
+    ) -> Result<Self, AgentRunError> {
+        let mut original_spec = match &source {
             SpecSource::Draft(value) => Some(value.clone()),
             _ => None,
         };
         let organization = match agents_db::dot_owner(&state.db, agent_id).await? {
             Some(agents_db::DotOwner::Organization(id))
-                if matches!(&source, SpecSource::Draft(_)) =>
+                if matches!(&source, SpecSource::Draft(_))
+                    || matches!(purpose, ProfilePurpose::Private) =>
             {
                 Some((id, state.clone()))
             }
@@ -269,22 +318,60 @@ impl RunProfile {
             }
             None => current,
         };
-        let compiled = match source {
-            SpecSource::Live => state
-                .agent_specs
-                .live(&state.db, agent_id)
-                .await?
-                .ok_or_else(|| AgentRunError::NotLive(principal.name.clone()))?,
-            SpecSource::Pinned(v) => state
-                .agent_specs
-                .version(&state.db, agent_id, v)
-                .await?
-                .ok_or_else(|| AgentRunError::MissingVersion {
+        let compiled = if organization.is_some() {
+            let (version, spec) = match &source {
+                SpecSource::Draft(spec) => (agents_db::DRAFT_VERSION, spec.clone()),
+                SpecSource::Live => {
+                    let (version, text) = agents_db::live(&state.db, agent_id)
+                        .await?
+                        .ok_or_else(|| AgentRunError::NotLive(principal.name.clone()))?;
+                    let spec = serde_json::from_str(&text).map_err(|_| {
+                        AgentRunError::OrganizationExecutionUnavailable(agent_id.to_owned())
+                    })?;
+                    (version, spec)
+                }
+                SpecSource::Pinned(version) => {
+                    let row = agents_db::version(&state.db, agent_id, *version)
+                        .await?
+                        .ok_or_else(|| {
+                            AgentRunError::OrganizationExecutionUnavailable(agent_id.to_owned())
+                        })?;
+                    let spec = serde_json::from_str(&row.spec).map_err(|_| {
+                        AgentRunError::OrganizationExecutionUnavailable(agent_id.to_owned())
+                    })?;
+                    (row.version, spec)
+                }
+            };
+            if version < 0 || (!matches!(&source, SpecSource::Draft(_)) && version == 0) {
+                return Err(AgentRunError::OrganizationExecutionUnavailable(
+                    agent_id.to_owned(),
+                ));
+            }
+            if let Some(saved) = authority
+                && (saved.version() != Some(version) || saved.spec != spec)
+            {
+                return Err(saved.unavailable());
+            }
+            original_spec = Some(spec.clone());
+            Arc::new(CompiledSpec::compile(version, spec))
+        } else {
+            match source {
+                SpecSource::Live => state
+                    .agent_specs
+                    .live(&state.db, agent_id)
+                    .await?
+                    .ok_or_else(|| AgentRunError::NotLive(principal.name.clone()))?,
+                SpecSource::Pinned(v) => state
+                    .agent_specs
+                    .version(&state.db, agent_id, v)
+                    .await?
+                    .ok_or_else(|| AgentRunError::MissingVersion {
                     agent: principal.name.clone(),
                     version: v,
                 })?,
-            SpecSource::Draft(spec) => {
-                Arc::new(CompiledSpec::compile(agents_db::DRAFT_VERSION, spec))
+                SpecSource::Draft(spec) => {
+                    Arc::new(CompiledSpec::compile(agents_db::DRAFT_VERSION, spec))
+                }
             }
         };
         let version = compiled.version;
@@ -418,7 +505,7 @@ impl RunProfile {
         }
         Ok(Self {
             organization,
-            original_draft,
+            original_spec,
             budget: spec.main.budget.budget(),
             principal,
             version,
@@ -458,7 +545,7 @@ impl RunProfile {
                 assistant_turn_id: assistant_turn_id.to_owned(),
                 state: state.clone(),
             });
-            if let Some(draft) = &self.original_draft {
+            if let Some(draft) = &self.original_spec {
                 let authority = OrganizationResumeAuthority::for_profile(
                     self,
                     draft.clone(),
@@ -497,7 +584,8 @@ pub(crate) struct OrganizationResumeAuthority {
     pub(crate) organization_id: String,
     pub(crate) session_id: String,
     pub(crate) assistant_turn_id: String,
-    draft: Value,
+    source: OrganizationSpecSource,
+    spec: Value,
     pub(crate) model: String,
     grants: Vec<OrganizationGrant>,
     pub(crate) synthetic_tools: BTreeMap<String, Vec<String>>,
@@ -525,7 +613,14 @@ impl OrganizationResumeAuthority {
             organization_id,
             session_id,
             assistant_turn_id,
-            draft,
+            source: if profile.version == agents_db::DRAFT_VERSION {
+                OrganizationSpecSource::Draft
+            } else {
+                OrganizationSpecSource::Published {
+                    version: profile.version,
+                }
+            },
+            spec: draft,
             model: profile.model.clone(),
             grants: profile
                 .principal
@@ -551,7 +646,10 @@ impl OrganizationResumeAuthority {
     }
 
     pub(crate) fn from_context(context: Option<&Value>) -> Option<Self> {
-        serde_json::from_value(context?.get(ORGANIZATION_RESUME_KEY)?.clone()).ok()
+        let authority: Self =
+            serde_json::from_value(context?.get(ORGANIZATION_RESUME_KEY)?.clone()).ok()?;
+        authority.version()?;
+        Some(authority)
     }
 
     pub(crate) fn attach_to(&self, context: Option<Value>) -> Result<Value, AgentRunError> {
@@ -570,7 +668,35 @@ impl OrganizationResumeAuthority {
     }
 
     pub(crate) fn source(&self) -> SpecSource {
-        SpecSource::Draft(self.draft.clone())
+        match self.source {
+            OrganizationSpecSource::Draft => SpecSource::Draft(self.spec.clone()),
+            OrganizationSpecSource::Published { version } => SpecSource::Pinned(version),
+        }
+    }
+
+    pub(crate) fn version(&self) -> Option<i64> {
+        match self.source {
+            OrganizationSpecSource::Draft => Some(0),
+            OrganizationSpecSource::Published { version } if version > 0 => Some(version),
+            _ => None,
+        }
+    }
+
+    pub(crate) async fn validate_source_in(
+        &self,
+        tx: &mut aiplane_core::server::db::WriteTx,
+    ) -> Result<i64, AgentRunError> {
+        let version = self.version().ok_or_else(|| self.unavailable())?;
+        if version > 0 {
+            let row = agents_db::version_in(tx, &self.principal_id, version)
+                .await?
+                .ok_or_else(|| self.unavailable())?;
+            let spec: Value = serde_json::from_str(&row.spec).map_err(|_| self.unavailable())?;
+            if spec != self.spec {
+                return Err(self.unavailable());
+            }
+        }
+        Ok(version)
     }
 
     fn unavailable(&self) -> AgentRunError {
@@ -612,7 +738,8 @@ pub(crate) async fn validate_organization_resume_in(
     tx: &mut aiplane_core::server::db::WriteTx,
     authority: &OrganizationResumeAuthority,
 ) -> Result<SystemPrincipal, AgentRunError> {
-    let compiled = CompiledSpec::compile(agents_db::DRAFT_VERSION, authority.draft.clone());
+    let version = authority.validate_source_in(tx).await?;
+    let compiled = CompiledSpec::compile(version, authority.spec.clone());
     compiled.parts().map_err(|_| authority.unavailable())?;
     let initial = authority.initial_principal(String::new())?;
     let current = validate_organization_authority_in(
@@ -621,6 +748,7 @@ pub(crate) async fn validate_organization_resume_in(
         &authority.organization_id,
         &authority.session_id,
         &authority.assistant_turn_id,
+        version,
         OrganizationAdmission::Live,
     )
     .await?;
@@ -628,6 +756,94 @@ pub(crate) async fn validate_organization_resume_in(
         return Err(authority.unavailable());
     }
     Ok(current)
+}
+
+pub async fn private_session_spec_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    principal_id: &str,
+    session_id: &str,
+    version: i64,
+) -> Result<Option<(super::run::draft::PrivateChatSource, Value)>, AgentRunError> {
+    use super::run::draft::PrivateChatSource;
+    if aiplane_agents::db::run_sessions::get_private_principal_session_in(
+        tx,
+        principal_id,
+        session_id,
+        version,
+    )
+    .await?
+    .is_none()
+    {
+        return Ok(None);
+    }
+    let mut captured_spec = None;
+    let source = if version == 0 {
+        PrivateChatSource::Draft
+    } else {
+        let Some(row) = agents_db::version_in(tx, principal_id, version).await? else {
+            return Ok(None);
+        };
+        let compiled = CompiledSpec::parse(version, &row.spec);
+        if compiled.parts().is_err() {
+            return Ok(None);
+        }
+        let Ok(spec) = serde_json::from_str::<Value>(&row.spec) else {
+            return Ok(None);
+        };
+        captured_spec = Some(spec);
+        PrivateChatSource::Published
+    };
+    let turns: Vec<String> = sqlx::query_scalar("SELECT t.id FROM chat_turns t JOIN chat_turn_suspensions p ON p.turn_id=t.id WHERE t.session_id=? AND t.role='assistant'")
+        .bind(session_id).fetch_all(&mut **tx).await.map_err(DbError::from)?;
+    for turn in turns {
+        let Some(pause) = session_core::db::get_suspension_in(tx, &turn)
+            .await
+            .map_err(DbError::from)?
+        else {
+            return Ok(None);
+        };
+        let Some(authority) = OrganizationResumeAuthority::from_context(pause.run_context.as_ref())
+        else {
+            return Ok(None);
+        };
+        let owner = agents_db::dot_owner_in(tx, principal_id).await?;
+        if authority.principal_id != principal_id
+            || authority.session_id != session_id
+            || authority.assistant_turn_id != turn
+            || authority.version() != Some(version)
+            || owner
+                != Some(agents_db::DotOwner::Organization(
+                    authority.organization_id.clone(),
+                ))
+        {
+            return Ok(None);
+        }
+        match authority.validate_source_in(tx).await {
+            Ok(_) => {}
+            Err(AgentRunError::Db(error)) => return Err(AgentRunError::Db(error)),
+            Err(_) => return Ok(None),
+        }
+        if captured_spec
+            .as_ref()
+            .is_some_and(|spec| spec != &authority.spec)
+        {
+            return Ok(None);
+        }
+        captured_spec = Some(authority.spec);
+    }
+    let spec = match captured_spec {
+        Some(spec) => spec,
+        None => {
+            let Some(row) = agents_db::get_in(tx, principal_id).await? else {
+                return Ok(None);
+            };
+            let Ok(spec) = serde_json::from_str::<Value>(&row.draft_spec) else {
+                return Ok(None);
+            };
+            spec
+        }
+    };
+    Ok(Some((source, spec)))
 }
 
 pub async fn validate_organization_turn_in(
@@ -657,12 +873,22 @@ async fn validate_organization_context_in(
     let initial = run.system_principal();
     let unavailable = || AgentRunError::OrganizationExecutionUnavailable(initial.id.clone());
     let context = run.organization().ok_or_else(unavailable)?;
+    let authority = run.organization_resume().ok_or_else(unavailable)?;
+    if authority.principal_id != initial.id
+        || authority.organization_id != context.organization_id
+        || authority.session_id != context.session_id
+        || authority.assistant_turn_id != context.assistant_turn_id
+    {
+        return Err(unavailable());
+    }
+    let version = authority.validate_source_in(tx).await?;
     validate_organization_authority_in(
         tx,
         initial,
         &context.organization_id,
         &context.session_id,
         &context.assistant_turn_id,
+        version,
         admission,
     )
     .await
@@ -674,6 +900,7 @@ async fn validate_organization_authority_in(
     organization_id: &str,
     session_id: &str,
     assistant_turn_id: &str,
+    version: i64,
     admission: OrganizationAdmission,
 ) -> Result<SystemPrincipal, AgentRunError> {
     let unavailable = || AgentRunError::OrganizationExecutionUnavailable(initial.id.clone());
@@ -699,7 +926,7 @@ async fn validate_organization_authority_in(
     )
     .bind(session_id)
     .bind(&initial.id)
-    .bind(agents_db::DRAFT_VERSION)
+    .bind(version)
     .bind(assistant_turn_id)
     .bind(match admission {
         OrganizationAdmission::Live => "in_progress",
@@ -1586,7 +1813,7 @@ mod tests {
         assert_eq!(context["handoff"]["question"], "Actual question");
         let restored = super::OrganizationResumeAuthority::from_context(Some(&context)).unwrap();
         assert_eq!(restored.model, profile.model);
-        assert_eq!(restored.draft, profile.original_draft.clone().unwrap());
+        assert_eq!(restored.spec, profile.original_spec.clone().unwrap());
         assert_eq!(
             restored.synthetic_tools,
             super::synthetic_dependencies(&profile.surface.synthetic)
@@ -1683,7 +1910,7 @@ mod tests {
         feature_defaults::set(&state.db, Feature::Chat, Some(&model))
             .await
             .unwrap();
-        let mut draft = profile.original_draft.clone().unwrap();
+        let mut draft = profile.original_spec.clone().unwrap();
         draft["main"].as_object_mut().unwrap().remove("model");
         let profile = super::RunProfile::load_from(
             &state,
@@ -1715,7 +1942,7 @@ mod tests {
         feature_defaults::set(&state.db, Feature::Chat, Some("replacement-model"))
             .await
             .unwrap();
-        let spec = crate::agents::spec::AgentSpec::from_value(&authority.draft).unwrap();
+        let spec = crate::agents::spec::AgentSpec::from_value(&authority.spec).unwrap();
         assert_eq!(
             crate::agents::defaults::main_model(&state, &spec)
                 .await
@@ -1728,5 +1955,36 @@ mod tests {
                 .unwrap();
         assert_eq!(restored.model, model);
         assert_eq!(restored.principal.grants, profile.principal.grants);
+    }
+    #[tokio::test]
+    async fn organization_authority_requires_explicit_source_and_authored_snapshot() {
+        let server = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&server.uri()).await;
+        let (_, params) = crate::server::headless::tests::organization_draft_fixture(&state).await;
+        let crate::agent_run::Actor::Agent(run) = params.actor else {
+            panic!("agent expected")
+        };
+        let authority = super::OrganizationResumeAuthority::capture(&run).unwrap();
+        let context = authority.attach_to(None).unwrap();
+        assert_eq!(
+            context[super::ORGANIZATION_RESUME_KEY]["source"],
+            serde_json::json!({"kind":"draft"})
+        );
+        assert!(context[super::ORGANIZATION_RESUME_KEY]["spec"].is_object());
+        for field in ["source", "spec"] {
+            let mut missing = context.clone();
+            missing[super::ORGANIZATION_RESUME_KEY]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert!(
+                super::OrganizationResumeAuthority::from_context(Some(&missing)).is_none(),
+                "{field}"
+            );
+        }
+        let mut malformed = context;
+        malformed[super::ORGANIZATION_RESUME_KEY]["source"] =
+            serde_json::json!({"kind":"published","version":0});
+        assert!(super::OrganizationResumeAuthority::from_context(Some(&malformed)).is_none());
     }
 }

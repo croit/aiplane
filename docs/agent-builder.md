@@ -7,16 +7,17 @@ The screens themselves are in [`ui.md`](ui.md#agent-builder).
 
 ## Test chat
 
-A manager talks to the agent's **draft** in a conversation that streams like
-any other, and reads per turn what a visitor never sees
+A manager talks to the agent's **draft**, or an organization Dot’s published
+version, in a private conversation that streams like any other, and reads per turn what a visitor never sees
 (`aiplane-api::pages::json_agent_test`, `agents::run::draft`).
 
 - **`POST /api/v0/agents/{id}/test/messages`** (`write` share) `{message,
-  session_id?}`. It opens one message against the draft, claims the
-  conversation as the public endpoint does (`agents::embed::claim`) and
-  answers `202 {session_id, turn_id, draft_version: 0}` at once; the turn runs
-  in the background (`run::draft::start_draft_turn`, then
-  `embed::spawn_guarded` with `TurnWork::Draft`) through the ordinary run path,
+  source:"draft"|"published", session_id?}`. Ordinary agents require `draft`;
+  organization member writers can also choose `published`. It opens a message
+  against the selected source, claims the conversation as the public endpoint does (`agents::embed::claim`) and
+  answers `202 {session_id, turn_id, source, agent_version}` at once; the turn runs
+  in the background (`run::draft::start_private_turn`, then
+  `embed::spawn_guarded` with `TurnWork::Private`) through the ordinary run path,
   as the agent's principal: its grants, gates, binds and budgets apply and its
   tools really run. No `session_id` starts a conversation; one continues it.
   Failures, all before anything runs: `404 agent_unavailable`, `404
@@ -29,17 +30,18 @@ any other, and reads per turn what a visitor never sees
   test conversation's `chat_json` stream, exactly a person's chat's
   (`chat::json_api::{live_stream, quiet_stream}`): a `snapshot`, then the
   running turn's deltas, tool calls and `turn_finalized` — or `suspended` when
-  it pauses — or `idle`. Only a test conversation (version 0) of this agent
-  streams here; any other id is `404`.
+  it pauses — or `idle`. Only the admitted private source/version of this agent streams here; any
+  other id is `404`. Organization history requires current member Write access.
 - **`GET /api/v0/agents/{id}/test/{session}/turns/{turn}/debug`** (`write`
-  share) is that turn's `{turn_id, draft_version, debug, handoff}`, read once
+  share) is that turn's `{turn_id, source, agent_version, debug, handoff}`, read once
   the turn has settled: it waits up to 15 s for the conversation's claim to
   drop (the output filter rules after the row is final), else `409
   turn_in_progress`. `handoff` is what the turn hands to a person while it
   waits on one (the pause's `run_context.handoff`), else `null`.
 - **A pause** in a test conversation is answered by the manager through the
   staff resume route, a `secure_input` included (the manager plays the
-  visitor); it never reaches the inbox ([`agent-hil.md`](agent-hil.md#answering)).
+  visitor); draft pauses stay inline. Published private organization pauses also reach
+  the current member-writer Inbox ([`agent-hil.md`](agent-hil.md#answering)).
 
 **The debug view** is for managers only and is built from the conversation's
 state now and the turn's activity events (`run::draft::collect_turn_debug`:
@@ -61,10 +63,13 @@ stored anywhere else:
   policy).
 - `scope`: a strict scope's verdict `{verdict, topics, error?}`.
 
-**How the draft is run.** `run_draft_turn` / `start_draft_turn` load the
-profile with `SpecSource::Draft(spec)`, open the session themselves and then
-use the same `drive_opened` as a visitor's turn
-([`agent-runs.md`](agent-runs.md#entry-points)), recorded as version `0`
+**How private sources run.** The synchronous evaluator `run_draft_turn` loads
+`SpecSource::Draft(spec)` and refuses organization execution. The authenticated
+`start_private_turn` admits Draft or organization Published using the common
+profile loader behind its explicit private purpose. New Published uses the
+actual live pointer, and continuation loads its captured version. Both open
+their session and use the same `drive_opened` as a visitor's turn
+([`agent-runs.md`](agent-runs.md#entry-points)). Draft is recorded as version `0`
 (`DRAFT_VERSION`). A sub-agent the draft dispatches to runs its own live
 version. The `embed` integration test publishes v1, edits the draft, and shows
 the test chat running the draft while a visitor message gets v1. Test

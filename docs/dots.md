@@ -3,7 +3,7 @@
 Status: implementation in progress; personal Dot ownership, active lifecycle,
 the first web management page, manually managed Dot memory, recent activity,
 owner-scoped memory/activity APIs, private Dot chat sessions, and personal
-tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; current member writers can authorize and explicitly select each organization Dot’s own OAuth credential. Active organization Dots support private saved-draft conversations for current member writers, including durable approvals, selected own credentials, isolated Dot notes and shared organization knowledge. Published organization execution and automation remain planned.
+tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; current member writers can authorize and explicitly select each organization Dot’s own OAuth credential. Active organization Dots support private saved-draft and published conversations for current member writers, including durable approvals, selected own credentials, isolated Dot notes and shared organization knowledge. Published private conversations retain their original version and use current member Write access for history and Inbox decisions. Organization automation and external execution remain planned.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -71,12 +71,12 @@ with `Allow` or `Ask before each call`; unselected tools are denied. Connector
 identity labels identify the selected user, Dot or shared connection. Supported
 personal OAuth connectors may use a separately authorized Dot connection;
 connecting and selecting it are separate operations. Organization Dots have
-explicit organization ownership, own-account management and private saved-draft
+explicit organization ownership, own-account management and private draft or published
 test chat for current member writers. Their Setup memory panel exposes isolated
 Dot notes and shared organization knowledge. Member writers change own notes;
 shared-note changes also require current gateway administration. Runtime memory
 reads both scopes under its Recall grant; writes remain Dot-specific and no
-employee profile is read. Published and automated execution remain
+employee profile is read. Automated and external execution remain
 unavailable. An owned local credential remains visible for explicit
 disconnect after catalogue access is lost, including credentials never selected
 for execution. Restricted catalogue and user-account details stay hidden.
@@ -180,8 +180,7 @@ provides deactivation, not a Dot-delete action.
 
 Persistent Dot computers are specified separately in
 [dots-workspace.md](dots-workspace.md) and are not implemented. Automatic
-memory curation, published organization runs
-and organization background work remain planned. The user workflow is in
+memory curation and organization background work remain planned. The user workflow is in
 [Schedules, webhooks and inbox](guide/automation-and-inbox.md).
 
 ## Product goal
@@ -317,8 +316,8 @@ must not change permission defaults for ordinary chat or existing agents.
 The connector store represents mutually exclusive user/principal owners.
 Personal Dots can explicitly select the owner’s current connection or their
 own authorized OAuth credential. Current organization member writers can
-configure a Dot’s own credential and run its saved draft in a private principal
-conversation. Organization published and automated runs remain unavailable. Ordinary principal runs use
+configure a Dot’s own credential and run its saved draft or published version in a private principal
+conversation. Organization automated and external runs remain unavailable. Ordinary principal runs use
 explicitly granted shared-identity connectors. Existing `agent`-scope
 connectors accept `none` or `static_bearer`. See [Dot identities](dots-identities.md)
 for the OAuth selection and generation fences.
@@ -478,11 +477,11 @@ an explicitly authorized approval owner and continuation path.
 
 Action categories come from each tool's actual declared action catalogue.
 Personal tool policies and approvals are implemented as described above.
-Organization approval standing intersects current membership with the existing
-respond or stronger share. Private saved-draft responses require current
-member Write access and preserve the original draft, model and grant ceiling
-across restart. Published organization callers remain unavailable; publication
-does not enable an external action.
+Private organization decisions require current membership and Write access.
+Responses preserve the original source, version, authored snapshot, model and
+grant ceiling across restart. Published private decisions also appear in the
+existing Inbox for current member writers. Publication does not admit
+automation or external callers.
 
 ## Background work and memory curation
 

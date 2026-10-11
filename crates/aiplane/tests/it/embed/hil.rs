@@ -240,7 +240,7 @@ async fn a_test_chat_handoff_carries_its_context_and_stays_out_of_the_inbox() {
         &e.fx.state,
         &e.fx.alice,
         &e.agent,
-        json!({ "message": "I was billed twice for RE-1." }),
+        json!({ "source": "draft", "message": "I was billed twice for RE-1." }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{paused}");

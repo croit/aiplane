@@ -17,6 +17,6 @@ organization-saved = 组织已保存。
 organization-dots-empty = 此组织中没有与你共享的 Dot。
 organization-active-count = 已激活 { $count } 个 Dot，上限 { $limit } 个
 organization-owned-by = 组织：{ $name }
-organization-configuration-only = 此组织 Dot 可以配置和发布。具有写入权限的成员可以在私有对话中测试其已保存的草稿。已发布版本的对话、自动测试套件、自动化和外部渠道暂不可用。
+organization-configuration-only = 此组织 Dot 可以配置和发布。拥有写入权限的成员可以在私密对话中使用其已保存的草稿或已发布版本。自动化测试套件、委派、自动化任务和外部渠道不可用。
 organization-share-search-truncated = 搜索已达到上限。请输入更具体的名称或完整的电子邮件地址。
 

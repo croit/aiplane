@@ -4573,6 +4573,9 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
         let state =
             state_with_chat_access("http://unused.invalid", Arc::new(ToolRegistry::new()), rbac)
                 .await;
+        aiplane_core::server::db::gateway_groups::upsert_group(&state.db, "admin", "", true, true)
+            .await
+            .unwrap();
         let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
         let state = Arc::new(state);
         let mut ids = Vec::new();

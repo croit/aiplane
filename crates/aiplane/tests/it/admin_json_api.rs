@@ -1734,7 +1734,13 @@ async fn schedules_and_webhooks_continue_in_a_linked_chat() {
         StatusCode::BAD_REQUEST,
         "another user's chat is not linkable"
     );
-    assert!(err.to_string().contains("no chat of yours"), "{err}");
+    assert!(
+        err.to_string().contains(&session_core::i18n::t(
+            session_core::i18n::Lang::En,
+            "dot-background-error-linked"
+        )),
+        "{err}"
+    );
 
     // An edit that leaves the field out keeps the link; an empty one clears it.
     let keep = r#"{"name":"digest","prompt":"hi","model":"model-a","cron":"0 9 * * *","reuse_conversation":true,"reuse_rounds":5}"#;
@@ -1889,8 +1895,10 @@ async fn skills_and_connectors_surfaces() {
     );
     let error_page = body(resp).await;
     assert!(error_page.contains("That connection did not complete"));
-    assert!(error_page.contains("access_denied"));
-    assert!(error_page.contains("Consent cancelled"));
+    assert!(error_page.contains(&session_core::i18n::t(
+        session_core::i18n::Lang::En,
+        "integrations-error-callback-missing"
+    )));
     assert!(error_page.contains("Back to the app"));
 
     aiplane_core::server::db::mcp_audit::record(

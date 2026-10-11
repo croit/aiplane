@@ -1045,6 +1045,44 @@ fn organization_memory_uses_shared_private_authority_for_tools_and_model_context
     );
 }
 
+#[test]
+fn organization_published_admission_uses_the_existing_private_opener_and_source_proof() {
+    let sources = production_sources();
+    let profile = sources
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/agents/profile.rs")
+        .expect("the organization source proof must exist");
+    for mechanism in [
+        "ProfilePurpose::Private",
+        "OrganizationSpecSource",
+        "validate_source_in",
+        "agents_db::version_in",
+        "authority.principal_id",
+        "authority.session_id",
+        "authority.assistant_turn_id",
+    ] {
+        assert!(
+            profile.code.contains(mechanism),
+            "private published admission must retain {mechanism}"
+        );
+    }
+    let callers = scan(&["load_private("], |source| source.code.as_str());
+    assert_within(
+        "Only the authenticated private opener may load an organization published profile directly.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/agents/profile.rs",
+                why: "the common loader defines its explicit private admission purpose",
+            },
+            Allowed {
+                path: "aiplane-runtime/src/agents/run/draft.rs",
+                why: "the existing private opener verifies the authenticated member in the opening transaction",
+            },
+        ],
+        &callers,
+    );
+}
+
 /// `.run(<context>, …)`: a `Tool::run` call, told from other `run` methods
 /// by its first argument being a tool context.
 fn tool_run_calls(src: &Source) -> Vec<usize> {

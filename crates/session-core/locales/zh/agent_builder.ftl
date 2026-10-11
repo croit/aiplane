@@ -441,3 +441,14 @@ dot-memory-organization-scope = 此组织的共享知识。组织内的 Dot 可�
 dot-memory-error-byte-limit = 此笔记超过 2,000 个 UTF-8 字节。请缩短后再保存。
 dot-memory-error-scope = 请选择此笔记属于 Dot 还是其组织，然后重试。
 dot-memory-error-shared-write = 修改组织共享笔记需要当前组织成员身份、写入权限和网关管理权限。请有权限的管理员进行修改。
+
+agents-test-source = 对话来源
+agents-test-source-draft = 已保存的草稿
+agents-test-source-published = 已发布版本 { $version }
+agents-test-conversation-draft = 此私密对话使用已保存的草稿。
+agents-test-conversation-published = 此私密对话使用已发布版本 { $version }。
+
+agents-test-organization-intro = 使用所选来源与此组织 Dot 私密对话。它的工具使用其自身权限。在回复下点击“查看发生了什么”可检查运行过程。
+agents-test-organization-empty = 发送消息以开始与此组织 Dot 的私密对话。
+agents-test-organization-draft-handoff = 当前拥有此 Dot 写入权限的组织成员可以在此回答这条私密请求。
+agents-test-organization-published-handoff = 这条私密请求也会显示在当前拥有此 Dot 写入权限的组织成员的收件箱中。您可以在此回答。

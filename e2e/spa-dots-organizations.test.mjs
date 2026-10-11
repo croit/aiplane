@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BASE, chooseSearchable, devSessionCookie, gatewayIsUp, launchBrowser } from "./helpers.mjs";
 
-test("Organization membership and Dot configuration reuse the existing editor with private draft chat only", async () => {
+test("Organization membership and Dot configuration reuse the existing editor with private source-aware chat", async () => {
     assert.ok(await gatewayIsUp(), `gateway is not reachable at ${BASE}`);
     const browser = await launchBrowser();
     let admin;
@@ -84,7 +84,7 @@ test("Organization membership and Dot configuration reuse the existing editor wi
         assert.deepEqual(dot.dot.owner, { kind: "organization", id: organization.id, name: externalName });
         assert.notEqual(dot.name, "Harald");
         await page.waitForURL((url) => url.pathname === `/agents/${dotId}/setup/start`);
-        await page.getByText("Members with Write access can test its saved draft in a private conversation.", { exact: false }).waitFor();
+        await page.getByText("Members with Write access can use its saved draft or a published version in a private conversation.", { exact: false }).waitFor();
         assert.equal(await page.getByRole("button", { name: "Website", exact: true }).count(), 0);
         const personal = await admin.request.get(`${BASE}/api/v0/dots/${dotId}/access`);
         assert.equal(personal.status(), 404);
@@ -109,7 +109,7 @@ test("Organization membership and Dot configuration reuse the existing editor wi
         await page.goto(`${BASE}/agents/${dotId}?tab=try`, { waitUntil: "networkidle" });
         await page.getByRole("tab", { name: "Setup", exact: true }).waitFor();
         await page.getByRole("tab", { name: "Try it", exact: true }).waitFor();
-        await page.getByRole("textbox", { name: "Message as a visitor…", exact: true }).waitFor();
+        await page.getByRole("textbox", { name: "Your message", exact: true }).waitFor();
         assert.equal(await page.getByRole("tab", { name: "Tests", exact: true }).count(), 0);
         assert.equal(await page.getByRole("heading", { name: "Website", exact: true }).count(), 0);
         assert.equal(await page.getByText(dot.name, { exact: true }).count(), 0);

@@ -17,6 +17,6 @@ organization-saved = Organización guardada.
 organization-dots-empty = No hay Dots compartidos contigo en esta organización.
 organization-active-count = { $count } de { $limit } Dots activos
 organization-owned-by = Organización: { $name }
-organization-configuration-only = Este Dot de organización se puede configurar y publicar. Los miembros con acceso de escritura pueden probar su borrador guardado en una conversación privada. Las conversaciones publicadas, las suites de pruebas automatizadas, la automatización y los canales externos no están disponibles.
+organization-configuration-only = Este Dot de la organización se puede configurar y publicar. Los miembros con acceso de escritura pueden utilizar su borrador guardado o una versión publicada en una conversación privada. Las suites de pruebas automatizadas, la delegación, la automatización y los canales externos no están disponibles.
 organization-share-search-truncated = La búsqueda ha alcanzado su límite. Introduce un nombre más específico o una dirección de correo completa.
 

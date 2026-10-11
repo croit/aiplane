@@ -408,3 +408,52 @@ test('agent resource API scopes the existing inventory by the actual target ID',
     await agentsApi.resources();
     assert.deepEqual(paths, ['/api/v0/agent-resources?agent_id=actual%2Fagent', '/api/v0/agent-resources']);
 });
+
+test('private test chat sends explicit draft and published sources and retains actual response versions', async (context) => {
+    const { agentsApi } = await import('./agents.ts');
+    const original = globalThis.fetch;
+    const calls: { path: string; body: unknown }[] = [];
+    globalThis.fetch = async (input, init) => {
+        calls.push({ path: String(input), body: init?.body ? JSON.parse(String(init.body)) : null });
+        const source = calls.length === 1 ? 'draft' : 'published';
+        return new Response(JSON.stringify({ session_id: 'private', turn_id: 'answer', source, agent_version: source === 'draft' ? 0 : 3 }), { status: 202 });
+    };
+    context.after(() => globalThis.fetch = original);
+    const draft = await agentsApi.sendTestMessage('harald', 'Draft task', null, 'draft');
+    const published = await agentsApi.sendTestMessage('harald', 'Published task', null, 'published');
+    const continued = await agentsApi.sendTestMessage('harald', 'Continue pinned task', published.session_id, published.source);
+    assert.equal(draft.source, 'draft');
+    assert.equal(draft.agent_version, 0);
+    assert.equal(published.source, 'published');
+    assert.equal(published.agent_version, 3);
+    assert.equal(continued.agent_version, 3);
+    assert.deepEqual(calls, [
+        { path: '/api/v0/agents/harald/test/messages', body: { message: 'Draft task', source: 'draft' } },
+        { path: '/api/v0/agents/harald/test/messages', body: { message: 'Published task', source: 'published' } },
+        { path: '/api/v0/agents/harald/test/messages', body: { message: 'Continue pinned task', session_id: 'private', source: 'published' } }
+    ]);
+});
+
+test('private test chat debug preserves actual published source and agent version', async (context) => {
+    const { agentsApi } = await import('./agents.ts');
+    const original = globalThis.fetch;
+    const actual = { turn_id: 'answer', source: 'published', agent_version: 7, debug: { tool_calls: [] }, handoff: null };
+    let path = '';
+    globalThis.fetch = async (input) => {
+        path = String(input);
+        return new Response(JSON.stringify(actual), { status: 200 });
+    };
+    context.after(() => globalThis.fetch = original);
+    assert.deepEqual(await agentsApi.testTurnView('harald', 'private', 'answer'), actual);
+    assert.equal(path, '/api/v0/agents/harald/test/private/turns/answer/debug');
+});
+
+test('private test chat source choices require actual organization ownership and a published version', async () => {
+    const { testChatSources } = await import('./agents.ts');
+    const dot = { owner: { kind: 'organization' as const, id: 'org', name: 'Acme Support' }, name: 'Harald', active: true };
+    assert.deepEqual(testChatSources({ dot, live_version: 3 }), ['draft', 'published']);
+    assert.deepEqual(testChatSources({ dot, live_version: null }), ['draft']);
+    assert.deepEqual(testChatSources({ dot, live_version: 0 }), ['draft']);
+    assert.deepEqual(testChatSources({ dot: null, live_version: 3 }), ['draft']);
+    assert.deepEqual(testChatSources(undefined), ['draft']);
+});

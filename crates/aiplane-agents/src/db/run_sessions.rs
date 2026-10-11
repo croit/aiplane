@@ -104,26 +104,50 @@ pub async fn get_principal_session(
     principal_id: &str,
     session_id: &str,
 ) -> Result<Option<RunSession>, DbError> {
+    get_principal_session_with(pool, principal_id, session_id).await
+}
+
+pub async fn get_principal_session_in(
+    tx: &mut super::WriteTx,
+    principal_id: &str,
+    session_id: &str,
+) -> Result<Option<RunSession>, DbError> {
+    get_principal_session_with(&mut **tx, principal_id, session_id).await
+}
+
+async fn get_principal_session_with<'e, E>(
+    executor: E,
+    principal_id: &str,
+    session_id: &str,
+) -> Result<Option<RunSession>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let row = sqlx::query(&format!(
         "SELECT {RUN_SESSION_COLUMNS} FROM chat_sessions WHERE id = ? AND principal_id = ?"
     ))
     .bind(session_id)
     .bind(principal_id)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?;
     row.as_ref().map(map_run_session).transpose()
 }
 
-pub async fn get_private_draft_session_in(
+pub async fn get_private_principal_session_in(
     tx: &mut super::WriteTx,
     principal_id: &str,
     session_id: &str,
+    expected_version: i64,
 ) -> Result<Option<RunSession>, DbError> {
+    if expected_version < 0 {
+        return Ok(None);
+    }
     let row = sqlx::query(&format!(
-        "SELECT {RUN_SESSION_COLUMNS} FROM chat_sessions WHERE id=? AND principal_id=? AND user_id IS NULL AND shared=0 AND agent_version=0 AND visitor_id IS NULL AND parent_turn_id IS NULL"
+        "SELECT {RUN_SESSION_COLUMNS} FROM chat_sessions WHERE id=? AND principal_id=? AND user_id IS NULL AND shared=0 AND agent_version=? AND visitor_id IS NULL AND parent_turn_id IS NULL"
     ))
     .bind(session_id)
     .bind(principal_id)
+    .bind(expected_version)
     .fetch_optional(&mut **tx)
     .await?;
     row.as_ref().map(map_run_session).transpose()
@@ -692,19 +716,19 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            get_private_draft_session_in(&mut tx, &fx.principal, &draft.id)
+            get_private_principal_session_in(&mut tx, &fx.principal, &draft.id, 0)
                 .await
                 .unwrap(),
             Some(draft.clone())
         );
         assert!(
-            get_private_draft_session_in(&mut tx, "wrong-principal", &draft.id)
+            get_private_principal_session_in(&mut tx, "wrong-principal", &draft.id, 0)
                 .await
                 .unwrap()
                 .is_none()
         );
         assert!(
-            get_private_draft_session_in(&mut tx, &fx.principal, "missing")
+            get_private_principal_session_in(&mut tx, &fx.principal, "missing", 0)
                 .await
                 .unwrap()
                 .is_none()
@@ -717,7 +741,7 @@ mod tests {
                 .is_err()
         );
         assert_eq!(
-            get_private_draft_session_in(&mut tx, &fx.principal, &draft.id)
+            get_private_principal_session_in(&mut tx, &fx.principal, &draft.id, 0)
                 .await
                 .unwrap(),
             Some(draft.clone())
@@ -734,7 +758,7 @@ mod tests {
                 .await
                 .unwrap();
             assert!(
-                get_private_draft_session_in(&mut tx, &fx.principal, &draft.id)
+                get_private_principal_session_in(&mut tx, &fx.principal, &draft.id, 0)
                     .await
                     .unwrap()
                     .is_none(),
@@ -749,6 +773,160 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn private_principal_session_reads_exact_nonnegative_version_and_transaction_state() {
+        let fx = fixture().await;
+        let mut tx = crate::db::WriteTx::begin(&fx.pool).await.unwrap();
+        let mut sessions = Vec::new();
+        for version in [0, 1, 7] {
+            let session = create_principal_session(
+                &mut *tx,
+                &NewRunSession {
+                    agent_version: Some(version),
+                    ..fx.run_session(None)
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                get_private_principal_session_in(&mut tx, &fx.principal, &session.id, version)
+                    .await
+                    .unwrap(),
+                Some(session.clone())
+            );
+            assert_eq!(
+                get_principal_session_in(&mut tx, &fx.principal, &session.id)
+                    .await
+                    .unwrap(),
+                Some(session.clone())
+            );
+            assert!(
+                get_principal_session_in(&mut tx, "foreign-principal", &session.id)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            for wrong in [-1, version + 1] {
+                assert!(
+                    get_private_principal_session_in(&mut tx, &fx.principal, &session.id, wrong)
+                        .await
+                        .unwrap()
+                        .is_none()
+                );
+            }
+            assert!(
+                get_private_principal_session_in(&mut tx, "wrong-principal", &session.id, version)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            sessions.push(session);
+        }
+        let published = &sessions[1];
+        assert!(
+            sqlx::query("UPDATE chat_sessions SET shared=1 WHERE id=?")
+                .bind(&published.id)
+                .execute(&mut *tx)
+                .await
+                .is_err()
+        );
+        for mutation in [
+            "UPDATE chat_sessions SET agent_version=NULL WHERE id=?",
+            "UPDATE chat_sessions SET parent_turn_id='opaque-parent' WHERE id=?",
+            "UPDATE chat_sessions SET principal_id=NULL,user_id='u1' WHERE id=?",
+        ] {
+            sqlx::query(mutation)
+                .bind(&published.id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            assert!(
+                get_private_principal_session_in(&mut tx, &fx.principal, &published.id, 1)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "{mutation}"
+            );
+            sqlx::query("UPDATE chat_sessions SET shared=0,agent_version=1,parent_turn_id=NULL,principal_id=?,user_id=NULL WHERE id=?")
+                .bind(&fx.principal).bind(&published.id).execute(&mut *tx).await.unwrap();
+        }
+        assert!(
+            get_private_principal_session_in(&mut tx, &fx.principal, "missing", 0)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        drop(tx);
+        for session in sessions {
+            assert!(
+                get_principal_session(&fx.pool, &fx.principal, &session.id)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn private_principal_session_rejects_actual_visitor_context() {
+        let fx = fixture().await;
+        let agent = crate::db::agents::create(
+            &fx.pool,
+            &sp::NewPrincipal {
+                name: "private-reader-visitor",
+                display: "Visitor fixture",
+                description: "",
+            },
+            "{}",
+            "u1",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let principal = &agent.principal.id;
+        let key = crate::db::embed_keys::create(
+            &fx.pool,
+            &crate::db::embed_keys::NewEmbedKey {
+                principal_id: principal,
+                name: "Visitor fixture",
+                origins: &[],
+                key_hash: "private-reader-key",
+            },
+            "u1",
+        )
+        .await
+        .unwrap();
+        let visitor = crate::db::visitor_sessions::start(
+            &fx.pool,
+            &crate::db::visitor_sessions::NewVisitorSession {
+                principal_id: principal,
+                embed_key_id: &key.id,
+                agent_version: 1,
+                token_hash: "private-reader-visitor-token",
+                client_ip: None,
+                idle_ttl: jiff::SignedDuration::from_secs(60),
+                max_age: jiff::SignedDuration::from_secs(600),
+                now: Timestamp::now(),
+            },
+        )
+        .await
+        .unwrap();
+        let mut tx = crate::db::WriteTx::begin(&fx.pool).await.unwrap();
+        assert!(
+            get_private_principal_session_in(&mut tx, principal, &visitor.session_id, 1)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        drop(tx);
+        assert!(
+            get_principal_session(&fx.pool, principal, &visitor.session_id)
+                .await
+                .unwrap()
+                .is_some()
         );
     }
 }

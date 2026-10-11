@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Organization ownership, group-derived membership, independent active limits and configuration are implemented. Current organization Dots can be created, shared, configured and published through the existing agent mechanisms. Current member writers can authorize and explicitly select each Dot’s own OAuth connection. Active organization Dots with enabled principals can run saved drafts in private test conversations for current member writers. Durable Dot notes and shared organization knowledge are available through the existing memory panel and tools. Published conversations, automated test suites, delegation, automation and external channels remain unavailable.
+Organization ownership, group-derived membership, independent active limits and configuration are implemented. Current organization Dots can be created, shared, configured and published through the existing agent mechanisms. Current member writers can authorize and explicitly select each Dot’s own OAuth connection. Active organization Dots with enabled principals can run saved drafts or published versions in private test conversations for current member writers. Durable Dot notes and shared organization knowledge are available through the existing memory panel and tools. Published private conversations retain their original version and expose waiting decisions only to current member writers. Automated test suites, delegation, automation and external channels remain unavailable.
 
 The remaining sections distinguish the implemented ownership and configuration foundation from the adopted execution and knowledge design. Creating a gateway group or naming an ordinary agent after a company does not create organization ownership.
 
@@ -154,7 +154,7 @@ Reuse existing `/api/v0/agents/{id}` configuration, grants, shares, conversation
 Credential management reuses the identity mechanism and existing integration cards. Current organization connection choices contain only that Dot’s own principal and live connection. Organization-wide credential provisioning and selection remain unavailable. Its response contains selected identity, catalogue key/name/auth, status and nullable verified account label; no secrets or invented provider identity.
 
 The implemented web flow covers configuration, own OAuth management, scoped
-memory and private saved-draft testing. Background runs remain adopted
+memory and private draft or published conversations. Background runs remain adopted
 implementation requirements:
 
 1. An administrator creates an organization with its actual configured name and selects real gateway groups from the existing group selector. The screen explains that selected groups supply membership and shares still determine access.
@@ -163,19 +163,19 @@ implementation requirements:
 4. A current member writer opens **Setup** in the existing agent editor and connects an account for the Dot through supported OAuth, then explicitly saves that connection. The provider controls the account; missing verified labels are shown as unavailable.
 5. The member configures existing tool/action rules and shares. Responders appear as eligible actual members or bound groups. The screen shows which effective rights each share permits.
 6. A current member reader opens **Setup → Dot memory** to inspect own and shared notes. A member writer can edit the Dot's own notes; shared edits also require gateway administration rights. New saves are bounded to 2,000 UTF-8 bytes.
-7. A current member writer opens **Try it → Test chat** and starts a private saved-draft conversation. Pending decisions are answered in that test chat; version-0 conversations are excluded from the Inbox. Background triggers require their separate owner/resume bridge.
+7. A current member writer opens **Try it → Test chat** and starts a private saved-draft or published conversation. Pending decisions can be answered in that test chat. Published private approvals, human answers and secure input also appear in the member-writer Inbox; version-0 conversations are excluded. Background triggers require their separate owner/resume bridge.
 8. Removing membership removes access; disabling the Dot stops/refuses its work. Missing credentials remain visible and require an explicit reconnect/selection.
 
 The coordinator confirms this walkthrough against seeded real data before UI implementation. All new strings use the six canonical Fluent catalogues. Reuse existing model, resource, permission, connector-status and share labels.
 
 ## Adopted foundation contracts
 
-The first organization package includes metadata, immutable Dot ownership,
+Organization Dots include metadata, immutable Dot ownership,
 current membership and the existing private agent configuration surfaces.
 Current member writers can manage the Dot’s own OAuth credentials and run its
-saved draft in a private principal conversation. Typed durable memory includes
-its own notes and shared organization knowledge. Published execution and
-organization triggers require their respective owner admission paths.
+saved draft or published version in a private principal conversation. Typed durable memory includes
+its own notes and shared organization knowledge. Organization triggers and
+external execution require their respective owner admission paths.
 
 The authenticated navigation entry `/organizations` shows the actual membership
 inventory or an empty state. Its visibility does not assert membership and is
@@ -186,7 +186,7 @@ Activation uses `POST /api/v0/organizations/{id}/dots/{dot_id}/active` with
 `{active:boolean}` and returns the existing agent view with typed Dot metadata.
 It requires current write access, an actual Dot belonging to that organization,
 and the existing capacity check in the same transaction. Personal activation
-retains its existing route and exact owner check. Published and automated callers remain unavailable. Private saved-draft
+retains its existing route and exact owner check. Automated and external callers remain unavailable. Private draft or published
 execution requires activation, an enabled principal, member Write access and
 explicit model/tool grants.
 
@@ -242,7 +242,7 @@ Coordinator verifies real organization/group/credential metadata, mobile and key
 
 ### Configuration and member search boundaries
 
-Organization Dots use the existing agent workspace for configuration and private saved-draft testing. The resource catalogue describes actual grant permissions; it does not claim that every tool supports a principal actor. Connector inventory and grant admission require an explicitly selected current own-principal OAuth credential, current member Write access and the manager’s existing resource ceiling. Public, published and automated execution remain unavailable.
+Organization Dots use the existing agent workspace for configuration and private draft or published testing. The resource catalogue describes actual grant permissions; it does not claim that every tool supports a principal actor. Connector inventory and grant admission require an explicitly selected current own-principal OAuth credential, current member Write access and the manager’s existing resource ceiling. Public and automated execution remain unavailable.
 
 Share-subject suggestions reuse the existing response cap of eight. Organization candidate reads reuse the same user mapper, escaped search and ranking, in transaction pages capped at fifty. Current membership is checked before suggestions are included. A search examines at most one thousand matching candidates; if an actual continuation remains at that boundary, its response carries `truncated=true` and the UI requests a narrower query. The search does not enumerate the user roster or introduce another OIDC mapping mechanism.
 
@@ -301,15 +301,14 @@ creator deletion and pending-initiator deletion. Mocked provider responses and
 real encrypted storage supply the evidence; account labels remain unavailable
 unless a provider-supported response verifies them.
 
-## First executable organization web slice
+## Private organization web execution
 
-Private draft execution uses the existing test chat and its durable staff
-responses. Published, pinned, public, embedded and automated
-test-suite entry points remain refused until their actual callers establish
-organization authority. The synchronous architect test helper is outside this
-first admitted entry point.
+Private draft and published execution use the existing test chat and durable
+staff responses. Generic Live/Pinned, public, embedded, delegated, automated
+and test-suite entry points remain refused. The synchronous architect test
+helper does not establish private organization admission.
 
-Pass the authenticated initiating member to the existing draft opener for
+Pass the authenticated initiating member to the existing private opener for
 admission only. Recheck current membership and Write access in the same write
 transaction that creates or continues the private principal session and its
 turn. Administrator configuration recovery without membership does not admit
@@ -363,7 +362,7 @@ operator authority while the organization run itself is checked before their
 request. Completed-turn compaction has a distinct admission purpose and
 rechecks current authority in the same transaction that persists its summary.
 
-Durable staff responses retain the original Draft spec and explicit principal
+Durable staff responses retain the original source, authored spec and explicit principal
 grant and model-pool ceilings. The adopted implementation extends the existing
 `chat_turn_suspensions.run_context` with a strict typed organization authority
 captured by the driver from its actual run. Tool-returned context cannot supply
@@ -372,10 +371,10 @@ fields; MCP execution facts continue to describe only the original selected
 account. The public suspension view omits this internal context.
 
 The existing atomic suspension claim must verify this saved authority against
-the actual private Draft conversation, current enabled principal and active
+the actual private conversation and captured version, current enabled principal and active
 Dot, together with current member Write access and original selected-account
 facts. A missing, malformed or changed binding leaves the request unclaimed.
-Reconstruction uses the saved Draft and initial grant ceiling, then applies the
+Reconstruction uses the saved source and initial grant ceiling, then applies the
 same current-authority intersection as every live invocation. A newly edited
 Draft or added grant cannot enlarge a previously paused run.
 
@@ -394,11 +393,11 @@ principal conversations and Dot-attributed usage. Preserve ordinary principal
 and personal Dot execution tests. Background scheduling follows this verified
 web slice through the existing workers.
 
-## Adopted next private published conversation slice
+## Private published version and source contract
 
-Private published conversations remain unavailable. The next web slice extends
-**Try it → Test chat** through its existing renderer and authenticated private
-opener. It retains current member Write admission; it does not enable public,
+Private published conversations use **Try it → Test chat** through its existing
+renderer and authenticated private opener. Current member Write admission
+is required; publication does not enable public,
 visitor, embedded, delegated, automated or test-suite entry points.
 
 The source control offers Saved draft and, when an actual live version exists,
@@ -408,7 +407,7 @@ that version on subsequent messages. Publishing or rollback cannot change an
 open conversation. Changing the source starts a new conversation through the
 existing reset flow; pending draft saving applies only to draft execution.
 
-Extend the existing message body with an explicit source for every actual
+The existing message body requires an explicit source for every actual
 client. The server accepts no arbitrary version or organization ID. Stored
 session version, typed run source and original authored snapshot must agree.
 Draft is version zero; Published requires an actual positive version and its
@@ -423,16 +422,14 @@ callers. The existing loader implementation is reused behind explicit private
 admission; permitting one authenticated web surface does not authorize another
 entry point to create private-looking principal rows.
 
-Published private staff pauses use the existing Inbox only after current member
-Write access and exact private source/session proof. Read, Respond and nonmember
+Published private approvals, human answers and secure input use the existing
+Inbox only after current member Write access and exact private source/session proof. Read, Respond and nonmember
 administrator recovery expose no such private items. Draft pauses remain in the
 test chat. Secure input retains the private writer staff contract; ordinary
 participant handling and negative-only timeout behavior remain unchanged.
 
-Shared prerequisites land first: version-aware private session reads, strict
-captured source/version proof and same-transaction current admission. Actual
-SQLite, mocked model requests and router tests cover original-version pinning,
-pause/restart, membership/grant/account loss and denied alternate entry points.
-The coordinator then checks the source selector, private history, Inbox,
-keyboard and mobile flows in Chrome with real fixture data. No additional
-conversation store, approval queue, model selector or dependency is required.
+The shared mechanisms are version-aware private session reads, strict captured
+source/version proof and same-transaction current admission. Existing
+conversation storage, approval queues and model selection serve both sources.
+Organization announcements remain in the web interface; push and external
+channel messages are not dispatched.

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { agentUiCapabilities, type Spec } from '#lib/agents.js';
+	import { agentUiCapabilities, testChatSources, type Spec } from '#lib/agents.js';
 	import { useWorkspace } from '#lib/agent-workspace.svelte.js';
 	import { t } from '#lib/i18n.svelte.js';
 	import AgentEditor from './AgentEditor.svelte';
@@ -130,7 +130,7 @@
 	{:else if sub === 'grants' && ws.detail}
 		<GrantsPanel agentId={ws.id} grants={ws.detail.grants} resources={ws.resources} writable={ws.writable} onchanged={() => ws.refresh(true)} />
 	{:else if sub === 'test' && capabilities.draftChat}
-		<TestChat agentId={ws.id} spec={ws.spec} dirty={ws.dirty} onturn={(debug) => (ws.lastDebug = debug)} onsave={save} />
+		<TestChat agentId={ws.id} spec={ws.spec} dirty={ws.dirty} organization={!!organizationDot} sources={testChatSources(ws.detail)} liveVersion={ws.detail?.live_version ?? null} onturn={(debug) => (ws.lastDebug = debug)} onsave={save} />
 	{:else if sub === 'tests' && capabilities.execution && ws.detail}
 		<TestsPanel agentId={ws.id} versions={ws.versions} liveVersion={ws.detail.live_version} dirty={ws.dirty} writable={ws.writable} onsave={save} />
 	{:else if sub === 'analytics'}

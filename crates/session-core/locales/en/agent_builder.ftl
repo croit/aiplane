@@ -442,3 +442,14 @@ dot-memory-organization-scope = Shared knowledge for this organization. Its Dots
 dot-memory-error-byte-limit = This note is longer than 2,000 UTF-8 bytes. Shorten it before saving.
 dot-memory-error-scope = Choose whether this note belongs to the Dot or its organization, then try again.
 dot-memory-error-shared-write = Shared organization notes require current organization membership, write access and gateway administration rights. Ask an eligible administrator to make this change.
+
+agents-test-source = Conversation source
+agents-test-source-draft = Saved draft
+agents-test-source-published = Published version { $version }
+agents-test-conversation-draft = This private conversation uses the saved draft.
+agents-test-conversation-published = This private conversation uses published version { $version }.
+
+agents-test-organization-intro = Talk privately to this organization Dot using the selected source. Its tools run with its own permissions. Use “Show what happened” under a reply to inspect the run.
+agents-test-organization-empty = Send a message to start a private conversation with this organization Dot.
+agents-test-organization-draft-handoff = Current organization members with Write access to this Dot can answer this private request here.
+agents-test-organization-published-handoff = This private request also appears in the Inbox for current organization members with Write access to this Dot. You can answer it here.

@@ -204,13 +204,17 @@ pub async fn claim(
         .map(|l| l.suspension.kind)
         .ok_or_else(not_suspended)?;
     let testing = levels[0].session.agent_version == Some(agents_db::DRAFT_VERSION);
+    let organization = matches!(
+        agents_db::dot_owner(db, &levels[0].session.principal_id).await?,
+        Some(agents_db::DotOwner::Organization(_))
+    );
     match (&resume.by, kind.answered_by()) {
         (ResumedBy::Participant, Answerer::Staff) => {
             return Err(AgentResumeError::StaffOnly {
                 kind: kind.as_str(),
             });
         }
-        (ResumedBy::Staff { .. }, Answerer::Participant) if !testing => {
+        (ResumedBy::Staff { .. }, Answerer::Participant) if !testing && !organization => {
             return Err(AgentResumeError::ParticipantOnly {
                 kind: kind.as_str(),
             });
@@ -232,7 +236,10 @@ pub async fn claim(
         let owner = agents_db::dot_owner_in(&mut tx, &level.session.principal_id).await?;
         if let Some(agents_db::DotOwner::Organization(organization_id)) = owner {
             if levels.len() != 1
-                || level.session.agent_version != Some(agents_db::DRAFT_VERSION)
+                || !level
+                    .session
+                    .agent_version
+                    .is_some_and(|version| version >= 0)
                 || level.session.visitor_id.is_some()
                 || level.session.parent_turn_id.is_some()
             {
@@ -268,6 +275,7 @@ pub async fn claim(
                 || authority.organization_id != organization_id
                 || authority.session_id != level.session.id
                 || authority.assistant_turn_id != level.suspension.turn_id
+                || authority.version() != level.session.agent_version
             {
                 return Err(not_suspended());
             }

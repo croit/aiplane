@@ -1369,7 +1369,7 @@ async fn a_draft_reaches_the_test_chat_and_never_the_public_path() {
         &e.fx.state,
         &e.fx.alice,
         &e.agent,
-        json!({ "message": "manager here" }),
+        json!({ "source": "draft", "message": "manager here" }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{test}");

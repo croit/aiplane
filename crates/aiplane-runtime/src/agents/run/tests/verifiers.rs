@@ -1364,7 +1364,22 @@ async fn organization_otp_support(world: &World, erp: &MockServer, spec: &Value)
 }
 
 async fn organization_otp_pause(world: &World, agent: &str, spec: &Value) -> AgentReply {
-    let started = crate::agents::run::draft::start_draft_turn(
+    organization_otp_pause_source(
+        world,
+        agent,
+        spec,
+        crate::agents::run::draft::PrivateChatSource::Draft,
+    )
+    .await
+}
+
+async fn organization_otp_pause_source(
+    world: &World,
+    agent: &str,
+    spec: &Value,
+    source: crate::agents::run::draft::PrivateChatSource,
+) -> AgentReply {
+    let started = crate::agents::run::draft::start_private_turn(
         &world.state,
         AgentTurn {
             agent_id: agent,
@@ -1374,6 +1389,7 @@ async fn organization_otp_pause(world: &World, agent: &str, spec: &Value) -> Age
             lang: Some(Lang::En),
         },
         spec,
+        source,
         &RunOptions::default(),
         "u1",
     )
@@ -1449,6 +1465,24 @@ async fn organization_otp_resume_keeps_original_selected_account_and_draft_after
     )
     .await
     .unwrap();
+    let mut source_tx = aiplane_core::server::db::WriteTx::begin(world.db())
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::agents::profile::private_session_spec_in(
+            &mut source_tx,
+            &agent,
+            &paused.session_id,
+            0
+        )
+        .await
+        .unwrap(),
+        Some((
+            crate::agents::run::draft::PrivateChatSource::Draft,
+            spec.clone()
+        ))
+    );
+    drop(source_tx);
     sp::add_grant(world.db(), &agent, GrantKind::Tool, "company_echo", "u1")
         .await
         .unwrap();
@@ -1778,4 +1812,365 @@ async fn organization_otp_timeout_denies_without_checking_code_or_fabricating_st
             .is_none()
     );
     assert!(!every_stored_text(world.db()).await.contains(CODE));
+}
+
+#[tokio::test]
+async fn organization_published_otp_resume_keeps_original_version_model_grants_and_account_after_restart()
+ {
+    let main = llm(vec![
+        call("email", "set_email", json!({"value":ALICE})),
+        call("otp", REQUEST, json!({})),
+        text("Verification complete"),
+    ])
+    .await;
+    let (erp, seen) = erp().await;
+    let world = World::new(&[("support-pool", "support-model", &main)], None).await;
+    let mut spec = otp_spec(json!({}));
+    spec.as_object_mut().unwrap().remove("routes");
+    let agent = organization_otp_support(&world, &erp, &spec).await;
+    assert_eq!(
+        agents_db::publish(world.db(), &agent, &spec.to_string(), "u1")
+            .await
+            .unwrap(),
+        Some(1)
+    );
+    let paused = organization_otp_pause_source(
+        &world,
+        &agent,
+        &spec,
+        crate::agents::run::draft::PrivateChatSource::Published,
+    )
+    .await;
+    let stored = chat::get_suspension(world.db(), &paused.turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.kind, SuspensionKind::SecureInput);
+    let facts = stored
+        .tool_call
+        .execution_facts
+        .clone()
+        .expect("original selected account facts");
+    let crate::server::tools::mcp::identities::McpDispatchFacts::Owned(identity) =
+        serde_json::from_value(facts.clone()).unwrap()
+    else {
+        panic!("own identity expected")
+    };
+    assert_eq!(
+        identity.connection.owner,
+        aiplane_core::server::db::mcp_connections::ConnectionOwner::Principal(agent.clone())
+    );
+    assert!(identity.binding_generation.is_some());
+    assert_eq!(erp_calls(&seen, "send_code"), [json!({"email":ALICE})]);
+    let mut edited = spec.clone();
+    edited["main"]["instructions"]["orchestration"] =
+        json!("Edited draft outside original paused run");
+    edited["main"]["tools"] = json!(["company_echo"]);
+    edited["main"]["model"] = json!("replacement-model");
+    assert_eq!(
+        agents_db::publish(world.db(), &agent, &edited.to_string(), "u1")
+            .await
+            .unwrap(),
+        Some(2)
+    );
+    sp::add_grant(
+        world.db(),
+        &agent,
+        GrantKind::Model,
+        "replacement-model",
+        "u1",
+    )
+    .await
+    .unwrap();
+    sp::add_grant(world.db(), &agent, GrantKind::Tool, "company_echo", "u1")
+        .await
+        .unwrap();
+    let restarted = restarted_organization_world(&world);
+    let claimed = claim(
+        &restarted.state,
+        AgentResume {
+            agent_id: &agent,
+            session_id: &paused.session_id,
+            turn_id: &paused.turn_id,
+            request_id: Some(&stored.request_id),
+            decision: Decision::Value { value: json!(CODE) },
+            by: ResumedBy::Staff {
+                user_id: "u1".into(),
+            },
+        },
+    )
+    .await
+    .unwrap();
+    let done = run_claimed(&restarted.state, claimed, RunOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(done.status, chat::TurnStatus::Completed, "{done:?}");
+    assert_eq!(
+        erp_calls(&seen, "check_code"),
+        [json!({"email":ALICE,"code":CODE})]
+    );
+    assert!(
+        slot_rows(&restarted, &paused.session_id)
+            .await
+            .iter()
+            .any(|(slot, _, writer)| slot == "verified" && writer == "verifier:otp")
+    );
+    let sent = requests(&main).await;
+    assert_eq!(sent.len(), 3);
+    assert_eq!(sent[2]["model"], "support-model");
+    assert!(!offered(&sent[2]).contains(&"company_echo"));
+    assert!(!system(&sent[2]).contains("Edited draft outside original paused run"));
+    assert!(!every_stored_text(restarted.db()).await.contains(CODE));
+}
+
+#[tokio::test]
+async fn organization_published_otp_changed_or_missing_original_source_keeps_pause_unclaimed() {
+    for delete in [false, true] {
+        let main = llm(vec![
+            call("email", "set_email", json!({"value":ALICE})),
+            call("otp", REQUEST, json!({})),
+            text("Unexpected continuation"),
+        ])
+        .await;
+        let (erp, seen) = erp().await;
+        let world = World::new(&[("support-pool", "support-model", &main)], None).await;
+        let mut spec = otp_spec(json!({}));
+        spec.as_object_mut().unwrap().remove("routes");
+        let agent = organization_otp_support(&world, &erp, &spec).await;
+        agents_db::publish(world.db(), &agent, &spec.to_string(), "u1")
+            .await
+            .unwrap();
+        assert!(
+            world
+                .state
+                .agent_specs
+                .version(world.db(), &agent, 1)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let paused = organization_otp_pause_source(
+            &world,
+            &agent,
+            &spec,
+            crate::agents::run::draft::PrivateChatSource::Published,
+        )
+        .await;
+        let before = chat::get_suspension(world.db(), &paused.turn_id)
+            .await
+            .unwrap()
+            .unwrap();
+        if delete {
+            sqlx::query("DELETE FROM agent_versions WHERE principal_id=? AND version=1")
+                .bind(&agent)
+                .execute(world.db())
+                .await
+                .unwrap();
+        } else {
+            let mut changed = spec;
+            changed["main"]["instructions"]["orchestration"] = json!("CHANGED ORIGINAL VERSION");
+            sqlx::query("UPDATE agent_versions SET spec=? WHERE principal_id=? AND version=1")
+                .bind(changed.to_string())
+                .bind(&agent)
+                .execute(world.db())
+                .await
+                .unwrap();
+        }
+        let restarted = restarted_organization_world(&world);
+        assert!(
+            claim(
+                &restarted.state,
+                AgentResume {
+                    agent_id: &agent,
+                    session_id: &paused.session_id,
+                    turn_id: &paused.turn_id,
+                    request_id: Some(&before.request_id),
+                    decision: Decision::Value { value: json!(CODE) },
+                    by: ResumedBy::Staff {
+                        user_id: "u1".into()
+                    }
+                }
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            chat::get_suspension(world.db(), &paused.turn_id)
+                .await
+                .unwrap(),
+            Some(before)
+        );
+        assert!(erp_calls(&seen, "check_code").is_empty());
+        assert_eq!(requests(&main).await.len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn organization_published_inbox_requires_current_member_write_for_all_private_pause_kinds() {
+    use crate::agents::inbox::{self, Viewer};
+    use aiplane_core::server::db::{WriteTx, gateway_groups, users};
+    let main = llm(vec![
+        call("email", "set_email", json!({"value":ALICE})),
+        call("otp", REQUEST, json!({})),
+    ])
+    .await;
+    let (erp, _) = erp().await;
+    let world = World::new(&[("support-pool", "support-model", &main)], None).await;
+    let mut spec = otp_spec(json!({}));
+    spec.as_object_mut().unwrap().remove("routes");
+    let agent = organization_otp_support(&world, &erp, &spec).await;
+    agents_db::publish(world.db(), &agent, &spec.to_string(), "u1")
+        .await
+        .unwrap();
+    let paused = organization_otp_pause_source(
+        &world,
+        &agent,
+        &spec,
+        crate::agents::run::draft::PrivateChatSource::Published,
+    )
+    .await;
+    let original = chat::get_suspension(world.db(), &paused.turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    gateway_groups::upsert_group(world.db(), "organization-staff", "", false, false)
+        .await
+        .unwrap();
+    gateway_groups::set_mappings_for_group(world.db(), "organization-staff", &["member".into()])
+        .await
+        .unwrap();
+    gateway_groups::upsert_group(world.db(), "recovery-admin", "", true, false)
+        .await
+        .unwrap();
+    gateway_groups::set_mappings_for_group(world.db(), "recovery-admin", &["admin".into()])
+        .await
+        .unwrap();
+    let now = jiff::Timestamp::now();
+    for (id, role) in [
+        ("u1", "member"),
+        ("reader", "member"),
+        ("responder", "member"),
+        ("recovery", "admin"),
+    ] {
+        users::upsert(
+            world.db(),
+            &users::User {
+                id: id.into(),
+                email: format!("{id}@example.test"),
+                name: None,
+                roles: vec![role.into()],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+    for (id, access) in [
+        ("reader", agents_db::Access::Read),
+        ("responder", agents_db::Access::Respond),
+    ] {
+        agents_db::set_share(
+            world.db(),
+            &agent,
+            agents_db::SubjectKind::User,
+            id,
+            access,
+            "u1",
+        )
+        .await
+        .unwrap();
+    }
+    let viewer = |id: &str| Viewer {
+        user_id: id.into(),
+        groups: vec!["organization-staff".into()],
+    };
+    for kind in [
+        SuspensionKind::Approval,
+        SuspensionKind::HumanAnswer,
+        SuspensionKind::SecureInput,
+    ] {
+        sqlx::query("UPDATE chat_turn_suspensions SET kind=? WHERE turn_id=?")
+            .bind(kind.as_str())
+            .bind(&paused.turn_id)
+            .execute(world.db())
+            .await
+            .unwrap();
+        assert!(
+            inbox::find(&world.state, &viewer("u1"), &original.request_id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            inbox::list(&world.state, &viewer("u1"))
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        for denied in ["reader", "responder", "recovery"] {
+            assert!(
+                inbox::find(&world.state, &viewer(denied), &original.request_id)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "{kind:?} {denied}"
+            );
+            assert!(
+                inbox::list(&world.state, &viewer(denied))
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        let mut tx = WriteTx::begin(world.db()).await.unwrap();
+        assert_eq!(
+            crate::agents::profile::private_session_spec_in(&mut tx, &agent, &paused.session_id, 1)
+                .await
+                .unwrap(),
+            Some((
+                crate::agents::run::draft::PrivateChatSource::Published,
+                spec.clone()
+            ))
+        );
+        assert!(
+            crate::agents::profile::private_session_spec_in(&mut tx, &agent, &paused.session_id, 0)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        drop(tx);
+    }
+    gateway_groups::set_mappings_for_group(world.db(), "organization-staff", &[])
+        .await
+        .unwrap();
+    assert!(
+        inbox::find(&world.state, &viewer("u1"), &original.request_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        inbox::list(&world.state, &viewer("u1"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let mut tx = WriteTx::begin(world.db()).await.unwrap();
+    sqlx::query("UPDATE chat_turn_suspensions SET run_context=NULL WHERE turn_id=?")
+        .bind(&paused.turn_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert!(
+        crate::agents::profile::private_session_spec_in(&mut tx, &agent, &paused.session_id, 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    drop(tx);
+    assert_eq!(requests(&main).await.len(), 2);
 }

@@ -17,6 +17,6 @@ organization-saved = Organisation enregistrée.
 organization-dots-empty = Aucun Dot n’est partagé avec vous dans cette organisation.
 organization-active-count = { $count } Dots actifs sur { $limit }
 organization-owned-by = Organisation : { $name }
-organization-configuration-only = Ce Dot d’organisation peut être configuré et publié. Les membres disposant d’un accès en écriture peuvent tester son brouillon enregistré dans une conversation privée. Les conversations publiées, les suites de tests automatisées, l’automatisation et les canaux externes sont indisponibles.
+organization-configuration-only = Ce Dot d’organisation peut être configuré et publié. Les membres disposant d’un accès en écriture peuvent utiliser son brouillon enregistré ou une version publiée dans une conversation privée. Les suites de tests automatisées, la délégation, l’automatisation et les canaux externes sont indisponibles.
 organization-share-search-truncated = La recherche a atteint sa limite. Saisissez un nom plus précis ou une adresse e-mail complète.
 

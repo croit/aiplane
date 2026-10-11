@@ -54,6 +54,20 @@ export function agentUiCapabilities(agent: (Pick<AgentSummary, 'dot'> & Partial<
     return { draftChat, execution: enabled, site: enabled, channels: enabled, embed: enabled };
 }
 
+export type PrivateChatSource = 'draft' | 'published';
+
+export function testChatSources(agent: Pick<AgentSummary, 'dot' | 'live_version'> | null | undefined): PrivateChatSource[] {
+	return organizationOwner(agent) && agent?.live_version != null && agent.live_version > 0
+		? ['draft', 'published'] : ['draft'];
+}
+
+export interface TestMessageStarted {
+	session_id: string;
+	turn_id: string;
+	source: PrivateChatSource;
+	agent_version: number;
+}
+
 export interface Grant {
 	kind: GrantKind;
 	ref: string;
@@ -256,10 +270,11 @@ export interface TestDebug {
 	scope?: ScopeDebug | null;
 }
 
-/** One test-chat turn's debug view, read once the turn stopped running. */
+/** A private agent conversation's debug view, read once its turn stopped running. */
 export interface TestTurnView {
 	turn_id: string;
-	draft_version: number;
+	source: PrivateChatSource;
+	agent_version: number;
 	debug: TestDebug;
 	/** What the turn hands to a person while it waits on one: what the Inbox would show whoever answers it. */
 	handoff: HandoffContext | null;
@@ -395,11 +410,11 @@ export const agentsApi = {
 		call<AssistSuggestion>(`/api/v0/agents/${id}/assist/suggest`, json('POST', body)),
 	improve: (id: string, field: ImproveField, text: string) =>
 		call<{ suggestion: string; why: string }>(`/api/v0/agents/${id}/assist/improve`, json('POST', { field, text })),
-	/** Send a test message to the draft; the turn streams on `testEventsUrl`. */
-	sendTestMessage: (id: string, message: string, sessionId: string | null) =>
-		call<{ session_id: string; turn_id: string }>(
+	/** Send a private message with its explicit source; subsequent turns retain the server's pinned version. */
+	sendTestMessage: (id: string, message: string, sessionId: string | null, source: PrivateChatSource) =>
+		call<TestMessageStarted>(
 			`/api/v0/agents/${id}/test/messages`,
-			json('POST', sessionId ? { message, session_id: sessionId } : { message })
+			json('POST', sessionId ? { message, session_id: sessionId, source } : { message, source })
 		),
 	testEventsUrl: (id: string, sessionId: string) =>
 		`/api/v0/agents/${encodeURIComponent(id)}/test/${encodeURIComponent(sessionId)}/events`,

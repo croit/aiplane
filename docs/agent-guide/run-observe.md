@@ -4,11 +4,13 @@ A published agent can serve a website widget and authenticated Agent-to-Agent ca
 
 Managing channels, keys and publish policy requires agent-management permission and write access. Responding to inbox work uses the agent's sharing permissions; it does not require giving every responder builder access.
 
-Organization Dots currently offer private saved-draft Test chat for current
-member writers. Decisions for those version-0 conversations are answered in
-the test chat and are excluded from the Inbox. Their published conversations,
-website/A2A channels, notifications and automation are unavailable. The channel
-and Inbox instructions below describe ordinary published agents.
+Organization Dots offer private saved-draft and published Test chat for current
+member writers. Decisions for version-0 draft conversations stay in the test
+chat. Published private approvals, human answers and secure input also appear
+in the Inbox for current member writers; Read, Respond and administrator
+recovery without membership do not expose these requests. Website/A2A channels,
+external notifications and automation are unavailable. The channel instructions
+below describe ordinary published agents.
 
 ## Embed an agent on a website
 

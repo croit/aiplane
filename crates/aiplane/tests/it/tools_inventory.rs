@@ -98,6 +98,8 @@ const DYNAMIC_ID_IMPLS: &[&str] = &[
     "aiplane-runtime/src/agents/approval.rs",
     // LivePersonalDotTool preserves the selected tool's id.
     "aiplane-runtime/src/persona/live.rs",
+    // OrganizationTool preserves the admitted principal tool's id.
+    "aiplane-runtime/src/agents/profile.rs",
     // set_<slot> — an agent run's synthetic state tools
     "aiplane-runtime/src/agents/slot_tools.rs",
     // BoundTool — delegates to the wrapped tool

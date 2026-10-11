@@ -220,7 +220,7 @@ approval. Deactivating or deleting the Dot blocks new fires and continuations.
 Editing a trigger's Dot affects future runs. A waiting turn remains bound to
 its original Dot; a changed trigger binding cannot turn it into another Dot
 or ordinary user execution. Refuse continuation when its current trigger
-binding no longer agrees.
+binding differs from the original run.
 
 Reject trigger deletion with `409` while an exact correlated assistant turn
 is generating or suspended. Disabling remains available. A stopped,

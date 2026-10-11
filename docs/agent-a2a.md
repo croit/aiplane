@@ -43,7 +43,9 @@ the card and the state mapping in `aiplane-runtime::agents::a2a` and
   `WWW-Authenticate: Bearer`; a person's `gwk_` token `403`. Granting
   `a2a_caller` follows the grant-time cap: the manager needs `write` on that
   agent by the one access rule (`effective_access`), since letting another
-  platform call the agent changes the agent. A token a manager minted loses the
+  platform call the agent changes the agent. The grant transaction checks
+  current access to the referenced agent: no access returns `404`, and Read
+  access returns `403` without adding a grant. A token a manager minted loses the
   grant whenever the manager does not hold that. The caller gets nothing of its
   own into the run: the task runs as the agent's principal, with its grants
   ([`auth.md`](auth.md#a2a-callers-gws_--a2a_caller)).

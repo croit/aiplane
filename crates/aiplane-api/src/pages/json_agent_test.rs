@@ -1,32 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! The internal test chat (`docs/agent-builder.md` → "Test chat"): a manager talks
-//! to the agent's **draft** in a conversation that streams like any other,
-//! and reads per turn what a visitor never sees — slot values and
-//! provenance, each route's gate, the routing decision, sub-agent calls and
-//! tool-call decisions.
-//!
-//! - `POST /api/v0/agents/{id}/test/messages` opens the turn, claims the
-//!   conversation and answers `202 {session_id, turn_id}` at once; the turn
-//!   runs in the background on the real run path ([`start_draft_turn`]): the
-//!   draft's grants, gates, binds and budgets apply, and its tools really run
-//!   as the agent's principal, so it needs a `write` share. Omitting
-//!   `session_id` starts a conversation; passing one continues it.
-//! - `GET /api/v0/agents/{id}/test/{session}/events` is the conversation's
-//!   `chat_json` stream, the same frames a person's chat gets.
-//! - `GET …/test/{session}/turns/{turn}/debug` is that turn's debug view,
-//!   read from the agent's activity log once the turn has settled, with the
-//!   hand-off it waits on when it waits for a person.
-//!
-//! `POST /api/v0/agents/{id}/conversations/{session}/turns/{turn}/resume` is
-//! the staff side of a suspended agent run: an approval (or a human answer)
-//! for any of the agent's conversations, and any decision in a test
-//! conversation, where the manager is the visitor too. `202` once the turn
-//! runs again; the rest arrives on the conversation's stream.
-//!
-//! A test conversation is recorded as version [`DRAFT_VERSION`], so its pauses
-//! never reach the Inbox; the manager answers them in the test chat.
+//! Authenticated private agent conversations using the saved draft or an
+//! organization's pinned published source, with the existing streamed chat
+//! and staff settlement surfaces.
 
 use session_core::i18n::{Lang, t};
 use std::sync::Arc;
@@ -46,8 +23,8 @@ use aiplane_runtime::agents::embed::{self as embed_rt, TurnWork};
 use aiplane_runtime::agents::profile::{AgentRunError, RunOptions};
 use aiplane_runtime::agents::run::AgentTurn;
 use aiplane_runtime::agents::run::draft::{
-    DRAFT_VERSION, DraftDebug, collect_turn_debug, run_draft_turn, start_draft_turn,
-    waiting_handoff,
+    DRAFT_VERSION, DraftDebug, PrivateChatSource, collect_turn_debug, run_draft_turn,
+    start_private_turn, waiting_handoff,
 };
 use aiplane_runtime::rama_server::state::RamaState;
 use session_core::db as chat;
@@ -59,6 +36,7 @@ const DEBUG_SETTLE: Duration = Duration::from_secs(15);
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct TestMessageBody {
     pub message: String,
+    pub source: PrivateChatSource,
     /// The test conversation to continue; a new one when absent.
     #[serde(default)]
     pub session_id: Option<String>,
@@ -70,15 +48,16 @@ pub struct TestMessageBody {
 pub struct TestTurnStarted {
     pub session_id: String,
     pub turn_id: String,
-    /// The version a test conversation is recorded as.
-    pub draft_version: i64,
+    pub agent_version: i64,
+    pub source: PrivateChatSource,
 }
 
 /// A test turn's debug view.
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct TurnDebugView {
     pub turn_id: String,
-    pub draft_version: i64,
+    pub agent_version: i64,
+    pub source: PrivateChatSource,
     pub debug: DraftDebug,
     /// The hand-off the turn waits on, when it waits for a person.
     pub handoff: Option<Value>,
@@ -141,10 +120,11 @@ pub async fn send_message(State(state): State<Arc<RamaState>>, req: Request) -> 
         return runtime_unavailable();
     };
     let draft = parse_spec(&agent.draft_spec);
-    let started = match start_draft_turn(
+    let started = match start_private_turn(
         &state,
         test_turn(&agent, &body.message, body.session_id.as_deref()),
         &draft,
+        body.source,
         &RunOptions::default(),
         &user.id,
     )
@@ -156,13 +136,14 @@ pub async fn send_message(State(state): State<Arc<RamaState>>, req: Request) -> 
     let out = TestTurnStarted {
         session_id: started.turn.session_id.clone(),
         turn_id: started.turn.turn_id.clone(),
-        draft_version: DRAFT_VERSION,
+        agent_version: started.profile.version,
+        source: body.source,
     };
     embed_rt::spawn_guarded(
         state,
         runner,
         started.claim,
-        TurnWork::Draft(Box::new(started.profile), started.turn),
+        TurnWork::Private(Box::new(started.profile), started.turn),
     );
     json_ok(StatusCode::ACCEPTED, out)
 }
@@ -204,11 +185,29 @@ async fn organization_test_access(
     )
     .await
     .map_err(internal)?;
-    let conversation =
-        run_sessions::get_private_draft_session_in(&mut tx, &agent.principal.id, session_id)
-            .await
-            .map_err(internal)?;
-    if access != Some(Access::Write) || conversation.is_none() {
+    if access != Some(Access::Write) {
+        return Err(not_found(t(lang, "organization-error-not-found")));
+    }
+    let stored = run_sessions::get_principal_session_in(&mut tx, &agent.principal.id, session_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found(t(lang, "organization-error-not-found")))?;
+    let version = stored
+        .agent_version
+        .filter(|version| *version >= 0)
+        .ok_or_else(|| not_found(t(lang, "organization-error-not-found")))?;
+    let source = aiplane_runtime::agents::profile::private_session_spec_in(
+        &mut tx,
+        &agent.principal.id,
+        session_id,
+        version,
+    )
+    .await
+    .map_err(|error| match error {
+        AgentRunError::Db(error) => internal(error),
+        _ => not_found(t(lang, "organization-error-not-found")),
+    })?;
+    if source.is_none() {
         return Err(not_found(t(lang, "organization-error-not-found")));
     }
     tx.commit().await.map_err(internal)?;
@@ -289,8 +288,11 @@ pub async fn turn_debug(State(state): State<Arc<RamaState>>, req: Request) -> Re
         }
         Err(err) => return internal(err),
     }
-    match turn_view(&state, &agent, &session_id, &turn_id).await {
-        Ok(view) => json_ok(StatusCode::OK, view),
+    match turn_view(&state, &agent, &session_id, &turn_id, lang).await {
+        Ok(view) => {
+            or_return!(test_conversation(&state, &agent, &session_id, &user.id, lang).await);
+            json_ok(StatusCode::OK, view)
+        }
         Err(resp) => resp,
     }
 }
@@ -301,12 +303,46 @@ async fn turn_view(
     agent: &AgentRow,
     session_id: &str,
     turn_id: &str,
+    lang: Lang,
 ) -> Result<TurnDebugView, Response> {
-    let draft = parse_spec(&agent.draft_spec);
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+        .await
+        .map_err(internal)?;
+    let run = run_sessions::get_principal_session_in(&mut tx, &agent.principal.id, session_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found(t(lang, "organization-error-not-found")))?;
+    let version = run
+        .agent_version
+        .filter(|version| *version >= 0)
+        .ok_or_else(|| not_found(t(lang, "organization-error-not-found")))?;
+    let organization = matches!(
+        agents_db::dot_owner_in(&mut tx, &agent.principal.id)
+            .await
+            .map_err(internal)?,
+        Some(agents_db::DotOwner::Organization(_))
+    );
+    let (source, spec) = if organization {
+        aiplane_runtime::agents::profile::private_session_spec_in(
+            &mut tx,
+            &agent.principal.id,
+            session_id,
+            version,
+        )
+        .await
+        .map_err(|error| match error {
+            AgentRunError::Db(error) => internal(error),
+            _ => not_found(t(lang, "organization-error-not-found")),
+        })?
+        .ok_or_else(|| not_found(t(lang, "organization-error-not-found")))?
+    } else {
+        (PrivateChatSource::Draft, parse_spec(&agent.draft_spec))
+    };
+    tx.commit().await.map_err(internal)?;
     let debug = collect_turn_debug(
         state,
         &agent.principal.id,
-        &draft,
+        &spec,
         session_id,
         turn_id,
         &RunOptions::default(),
@@ -318,7 +354,8 @@ async fn turn_view(
         .map_err(internal)?;
     Ok(TurnDebugView {
         turn_id: turn_id.to_string(),
-        draft_version: DRAFT_VERSION,
+        agent_version: version,
+        source,
         debug,
         handoff,
     })
@@ -344,7 +381,7 @@ pub(super) async fn draft_test_turn(
     )
     .await
     .map_err(|error| run_error(error, Lang::En))?;
-    let view = turn_view(state, agent, &reply.session_id, &reply.turn_id).await?;
+    let view = turn_view(state, agent, &reply.session_id, &reply.turn_id, Lang::En).await?;
     Ok(json!({
         "session_id": reply.session_id,
         "turn_id": reply.turn_id,

@@ -993,11 +993,11 @@ async fn organization_configuration_reuses_grants_publish_and_private_draft_but_
         .post(
             &fx.alice,
             &format!("/api/v0/agents/{agent_id}/test/messages"),
-            json!({"message":"Actual test request"}),
+            json!({"source":"draft","message":"Actual test request"}),
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{refused}");
-    assert_eq!(refused["draft_version"], 0);
+    assert_eq!(refused["agent_version"], 0);
     let (status, refused) = fx
         .post(
             &fx.root,
@@ -1470,11 +1470,11 @@ async fn organization_private_draft_chat_admits_member_writer_without_personal_d
         .post(
             &fx.alice,
             &format!("/api/v0/agents/{dot}/test/messages"),
-            json!({"message":"Actual draft request"}),
+            json!({"source":"draft","message":"Actual draft request"}),
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{started}");
-    assert_eq!(started["draft_version"], 0);
+    assert_eq!(started["agent_version"], 0);
     let session = started["session_id"].as_str().unwrap();
     let row: (Option<String>, Option<String>, bool) =
         sqlx::query_as("SELECT principal_id,user_id,shared FROM chat_sessions WHERE id=?")
@@ -1755,4 +1755,297 @@ async fn organization_memory_requires_explicit_scope_and_limits_human_saves_by_u
     assert_eq!(status, StatusCode::BAD_REQUEST, "{denied}");
     let (_, persisted) = fx.get(&fx.alice, &base).await;
     assert_eq!(persisted["memories"], json!([accepted]));
+}
+
+async fn private_published_organization() -> (Fx, wiremock::MockServer, Value, String) {
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Published organization answer.\"}}]}\n\ndata: [DONE]\n\n",
+            "text/event-stream")).mount(&upstream).await;
+    let mut fx = super::agents::fixture_on(Some(&upstream.uri())).await;
+    fx.state = fx.state.clone().with_agent_runner(std::sync::Arc::new(
+        aiplane_runtime::agents::embed::LiveAgentRunner,
+    ));
+    let org = organization(&fx, "Acme Published", &["managers"]).await;
+    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let dot = id(&created["agent"]).to_owned();
+    for (kind, reference) in [("model", "m"), ("tool", super::agents::TIME)] {
+        assert_eq!(
+            fx.grant(&fx.alice, &dot, kind, reference).await,
+            StatusCode::CREATED
+        );
+    }
+    assert_eq!(
+        fx.put_draft(
+            &fx.alice,
+            &dot,
+            super::agents::spec("First published instructions")
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(fx.publish(&fx.alice, &dot).await.0, StatusCode::CREATED);
+    (fx, upstream, org, dot)
+}
+
+#[tokio::test]
+async fn organization_private_published_chat_requires_explicit_source_and_refuses_ordinary_published()
+ {
+    let (fx, upstream, _org, dot) = private_published_organization().await;
+    let endpoint = format!("/api/v0/agents/{dot}/test/messages");
+    for body in [
+        json!({"message":"Missing source"}),
+        json!({"message":"Invalid source","source":"live"}),
+        json!({"message":"Null source","source":null}),
+    ] {
+        let (status, response) = fx.post(&fx.alice, &endpoint, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    }
+    let ordinary = fx.runnable("ordinary-private-source").await;
+    let (status, refused) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/agents/{ordinary}/test/messages"),
+            json!({"message":"No ordinary published admission","source":"published"}),
+        )
+        .await;
+    assert!(!status.is_success(), "{refused}");
+    assert!(upstream.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn organization_private_published_chat_keeps_pinned_version_after_publish_and_rejects_source_change()
+ {
+    let (fx, upstream, _org, dot) = private_published_organization().await;
+    let endpoint = format!("/api/v0/agents/{dot}/test/messages");
+    let (status, first) = fx
+        .post(
+            &fx.alice,
+            &endpoint,
+            json!({"message":"First private message","source":"published"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{first}");
+    assert_eq!(first["agent_version"], 1);
+    assert_eq!(first["source"], "published");
+    assert!(first.get("draft_version").is_none());
+    let session = first["session_id"].as_str().unwrap();
+    let turn = first["turn_id"].as_str().unwrap();
+    let debug = crate::common::test_chat_settled(&fx.state, &fx.alice, &dot, session, turn).await;
+    assert_eq!(debug["status"], "completed", "{debug}");
+    assert_eq!(
+        fx.put_draft(
+            &fx.alice,
+            &dot,
+            super::agents::spec("Second published instructions")
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(fx.publish(&fx.alice, &dot).await.0, StatusCode::CREATED);
+    let (status, second) = fx.post(&fx.alice, &endpoint, json!({"message":"Continue pinned conversation","source":"published","session_id":session})).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{second}");
+    assert_eq!(second["agent_version"], 1);
+    assert_eq!(second["source"], "published");
+    crate::common::test_chat_settled(
+        &fx.state,
+        &fx.alice,
+        &dot,
+        session,
+        second["turn_id"].as_str().unwrap(),
+    )
+    .await;
+    let (status, wrong) = fx
+        .post(
+            &fx.alice,
+            &endpoint,
+            json!({"message":"Do not rebase","source":"draft","session_id":session}),
+        )
+        .await;
+    assert!(!status.is_success(), "{wrong}");
+    let requests = upstream.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    for request in requests {
+        let body = String::from_utf8(request.body).unwrap();
+        assert!(body.contains("First published instructions"), "{body}");
+        assert!(!body.contains("Second published instructions"), "{body}");
+    }
+    let row = aiplane_agents::db::run_sessions::get_principal_session(&fx.state.db, &dot, session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.agent_version, Some(1));
+}
+
+#[tokio::test]
+async fn organization_private_published_history_requires_current_member_write_and_private_context()
+{
+    let (fx, _upstream, org, dot) = private_published_organization().await;
+    let (status, started) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/agents/{dot}/test/messages"),
+            json!({"message":"Private history","source":"published"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{started}");
+    let session = started["session_id"].as_str().unwrap();
+    let turn = started["turn_id"].as_str().unwrap();
+    let debug_path = format!("/api/v0/agents/{dot}/test/{session}/turns/{turn}/debug");
+    let events_path = format!("/api/v0/agents/{dot}/test/{session}/events");
+    let (status, debug) = fx.get(&fx.alice, &debug_path).await;
+    assert_eq!(status, StatusCode::OK, "{debug}");
+    assert_eq!(debug["agent_version"], 1);
+    assert_eq!(debug["source"], "published");
+    assert_eq!(fx.get(&fx.root, &debug_path).await.0, StatusCode::NOT_FOUND);
+    for (access, expected) in [
+        ("read", StatusCode::FORBIDDEN),
+        ("respond", StatusCode::NOT_FOUND),
+    ] {
+        assert_eq!(
+            fx.share(&fx.alice, &dot, "user", "bob", access).await.0,
+            StatusCode::CREATED
+        );
+        for uri in [&debug_path, &events_path] {
+            let (status, hidden) = fx.send(Some(&fx.bob), Method::GET, uri, None).await;
+            assert_eq!(status, expected, "{hidden}");
+            assert!(hidden.get("debug").is_none());
+            assert!(hidden.get("source").is_none());
+            assert!(hidden.get("agent_version").is_none());
+        }
+    }
+    assert_eq!(
+        edit(&fx, &org, "Acme Published", &[]).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        fx.get(&fx.alice, &debug_path).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fx.send(Some(&fx.alice), Method::GET, &events_path, None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fx.get(&fx.alice, &format!("/api/v0/chat/sessions/{session}"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn organization_private_published_pause_inbox_is_current_member_writer_only() {
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let (fx, upstream, org, dot) = private_published_organization().await;
+    upstream.reset().await;
+    let delta = json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"private-published-time","type":"function","function":{"name":super::agents::TIME,"arguments":"{}"}}]}}]});
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!("data: {delta}\n\ndata: [DONE]\n\n"),
+            "text/event-stream",
+        ))
+        .mount(&upstream)
+        .await;
+    let mut spec = super::agents::spec("Ask before reading time");
+    spec["main"]["tool_resources"] = json!({(super::agents::TIME):{"permission":"always_ask"}});
+    assert_eq!(fx.put_draft(&fx.alice, &dot, spec).await.0, StatusCode::OK);
+    assert_eq!(fx.publish(&fx.alice, &dot).await.0, StatusCode::CREATED);
+    let (status, started) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/agents/{dot}/test/messages"),
+            json!({"message":"Request approved time","source":"published"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{started}");
+    let settled = crate::common::test_chat_settled(
+        &fx.state,
+        &fx.alice,
+        &dot,
+        started["session_id"].as_str().unwrap(),
+        started["turn_id"].as_str().unwrap(),
+    )
+    .await;
+    assert_eq!(settled["status"], "suspended", "{settled}");
+    let (status, inbox) = fx.get(&fx.alice, "/api/v0/agents/inbox").await;
+    assert_eq!(status, StatusCode::OK, "{inbox}");
+    assert_eq!(inbox["count"], 1, "{inbox}");
+    for access in ["read", "respond"] {
+        assert_eq!(
+            fx.share(&fx.alice, &dot, "user", "bob", access).await.0,
+            StatusCode::CREATED
+        );
+        let (status, hidden) = fx.get(&fx.bob, "/api/v0/agents/inbox").await;
+        assert_eq!(status, StatusCode::OK, "{hidden}");
+        assert_eq!(hidden["count"], 0, "{hidden}");
+    }
+    let (status, hidden) = fx.get(&fx.root, "/api/v0/agents/inbox").await;
+    assert_eq!(status, StatusCode::OK, "{hidden}");
+    assert_eq!(hidden["count"], 0, "{hidden}");
+    assert_eq!(
+        edit(&fx, &org, "Acme Published", &[]).await.0,
+        StatusCode::OK
+    );
+    let (status, hidden) = fx.get(&fx.alice, "/api/v0/agents/inbox").await;
+    assert_eq!(status, StatusCode::OK, "{hidden}");
+    assert_eq!(hidden["count"], 0, "{hidden}");
+}
+
+#[tokio::test]
+async fn organization_private_published_debug_rechecks_membership_after_waiting_for_release() {
+    let (fx, _upstream, org, dot) = private_published_organization().await;
+    let (status, started) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/agents/{dot}/test/messages"),
+            json!({"message":"Private delayed debug","source":"published"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{started}");
+    let session = started["session_id"].as_str().unwrap();
+    let turn = started["turn_id"].as_str().unwrap();
+    crate::common::test_chat_settled(&fx.state, &fx.alice, &dot, session, turn).await;
+    let claim =
+        aiplane_runtime::agents::embed::claim(&fx.state.chats, &dot, session, turn).unwrap();
+    let updates = claim.worker().broadcast.clone();
+    let state = fx.state.clone();
+    let cookie = fx.alice.clone();
+    let uri = format!("/api/v0/agents/{dot}/test/{session}/turns/{turn}/debug");
+    let request = tokio::spawn(async move { crate::common::get_json(&state, &cookie, &uri).await });
+    for _ in 0..500 {
+        if updates.receiver_count() > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(
+        updates.receiver_count() > 0,
+        "the debug request reached its release wait"
+    );
+    assert_eq!(
+        edit(&fx, &org, "Acme Published", &[]).await.0,
+        StatusCode::OK
+    );
+    drop(claim);
+    let (status, body) = tokio::time::timeout(std::time::Duration::from_secs(3), request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(body.get("debug").is_none());
 }

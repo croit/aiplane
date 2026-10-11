@@ -609,16 +609,16 @@ async fn drive_or_error(
 /// agent's draft, or a suspended one whose decision won the claim.
 pub enum TurnWork {
     Run(OpenedTurn),
-    /// The draft's profile, loaded by the caller: no runner can load a draft,
-    /// so no visitor's turn can reach one.
-    Draft(Box<RunProfile>, OpenedTurn),
+    /// The profile prepared by authenticated private admission; public callers
+    /// cannot load this Organization source through the ordinary runner.
+    Private(Box<RunProfile>, OpenedTurn),
     Resume(ClaimedResume),
 }
 
 impl TurnWork {
     fn ids(&self) -> (String, String) {
         match self {
-            Self::Run(turn) | Self::Draft(_, turn) => {
+            Self::Run(turn) | Self::Private(_, turn) => {
                 (turn.session_id.clone(), turn.turn_id.clone())
             }
             Self::Resume(claimed) => (
@@ -647,7 +647,7 @@ pub fn spawn_guarded(
             async move {
                 match work {
                     TurnWork::Run(turn) => runner.run(state, turn).await,
-                    TurnWork::Draft(profile, turn) => {
+                    TurnWork::Private(profile, turn) => {
                         drive_or_error(&state, Ok(*profile), &turn).await
                     }
                     TurnWork::Resume(claimed) => runner.resume(state, claimed).await,
