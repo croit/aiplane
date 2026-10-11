@@ -408,6 +408,7 @@ mod tests {
                 id: "call-1".into(),
                 name: "company_echo".into(),
                 arguments: r#"{"message":"hi"}"#.into(),
+                actions: None,
             },
             tail: vec![serde_json::json!({"role": "assistant", "content": null})],
             budget_used: BudgetUsed {

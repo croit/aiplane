@@ -647,16 +647,16 @@ impl<'a> RunToolSource<'a> {
     /// not run.
     fn bound(&self, run: &AgentSurface, tool: Arc<dyn Tool>) -> Arc<dyn Tool> {
         let bound: Arc<dyn Tool> = match run.binds.for_tool(tool.id(), &tool.schema()) {
-            Ok(binds) if binds.is_empty() => tool,
+            Ok(binds) if binds.is_empty() => run.permissions.gate(tool),
             Ok(binds) => Arc::new(BoundTool::new(
-                tool,
+                run.permissions.gate(tool),
                 binds,
                 run.schema.clone(),
                 run.snapshot.clone(),
             )),
             Err(unbound) => return Arc::new(WithheldTool::new(tool, unbound)),
         };
-        run.permissions.gate(bound)
+        bound
     }
 }
 
@@ -792,6 +792,103 @@ mod tests {
             refusal_only
                 .ends_with("## Scope\n\nIf asked about anything else, reply exactly: Not my area."),
             "{refusal_only}"
+        );
+    }
+
+    struct ActionEcho;
+    impl Tool for ActionEcho {
+        fn id(&self) -> &str {
+            "company_echo"
+        }
+        fn schema(&self) -> ToolDef {
+            Echo.schema()
+        }
+        fn run<'a>(
+            &'a self,
+            _ctx: ToolContext,
+            args: Value,
+        ) -> crate::server::tools::ToolFuture<'a> {
+            Box::pin(async move { Ok(args) })
+        }
+        fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+            Some(&[
+                crate::server::tools::ToolAction {
+                    id: "read",
+                    description: "Read",
+                },
+                crate::server::tools::ToolAction {
+                    id: "write",
+                    description: "Write",
+                },
+            ])
+        }
+        fn classify_actions<'a>(
+            &'a self,
+            _ctx: ToolContext,
+            args: Value,
+        ) -> crate::server::tools::ToolActionFuture<'a> {
+            Box::pin(async move {
+                Ok(Some(vec![
+                    args["message"]
+                        .as_str()
+                        .ok_or_else(|| {
+                            crate::server::tools::ToolError::InvalidArgs(
+                                "missing bound message".into(),
+                            )
+                        })?
+                        .to_string(),
+                ]))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn published_action_gate_uses_effective_bound_arguments_before_approval() {
+        let registry = ToolRegistry::new().with(ActionEcho);
+        let mut run = run();
+        let spec = AgentSpec::from_value(&json!({"main":{"tool_resources":{"company_echo":{
+            "bind":{"message":{"const":"write"}},"actions":{"read":"allow","write":"ask"}
+        }}}}))
+        .unwrap();
+        run.binds = ToolBinds::from_spec(&spec);
+        run.permissions = Permissions::from_spec(&spec);
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let ctx = ToolContext {
+            suspend: crate::suspend::Suspend::Available,
+            ..ToolContext::for_test(db)
+        };
+        let tool = run.source(&registry).get("company_echo").unwrap();
+        let body = tool
+            .run(ctx.clone(), json!({"message":"read"}))
+            .await
+            .unwrap();
+        let pause = crate::suspend::extract_suspend(&body).unwrap();
+        assert_eq!(pause.actions, Some(vec!["write".to_string()]));
+        let mut resumed = ctx;
+        resumed.suspend = crate::suspend::Suspend::Decided(
+            session_core::db::SuspensionKind::Approval,
+            session_core::db::Decision::AllowOnce,
+        );
+        resumed.pending_actions = Some(crate::server::tools::PendingActionFacts {
+            actions: pause.actions,
+        });
+        assert_eq!(
+            tool.run(resumed.clone(), json!({"message":"read"}))
+                .await
+                .unwrap(),
+            json!({"message":"write"})
+        );
+        let changed = AgentSpec::from_value(&json!({"main":{"tool_resources":{"company_echo":{"bind":{"message":{"const":"read"}}}}}})).unwrap();
+        run.binds = ToolBinds::from_spec(&changed);
+        assert!(
+            run.source(&registry)
+                .get("company_echo")
+                .unwrap()
+                .run(resumed, json!({}))
+                .await
+                .is_err()
         );
     }
 

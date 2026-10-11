@@ -244,6 +244,8 @@ pub struct ToolResource {
     #[serde(default)]
     pub bind: BTreeMap<String, BindSource>,
     pub permission: Option<Permission>,
+    #[serde(default)]
+    pub actions: BTreeMap<String, ActionRule>,
     pub approval_timeout: Option<SpecDuration>,
 }
 
@@ -261,6 +263,14 @@ impl ToolResource {
 pub enum Permission {
     AlwaysAllow,
     AlwaysAsk,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionRule {
+    Allow,
+    Ask,
+    Deny,
 }
 
 /// `state.<slot>`. Its run-time form is [`crate::agents::state::SlotDef`],

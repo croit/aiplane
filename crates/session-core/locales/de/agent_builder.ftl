@@ -368,3 +368,15 @@ dot-background-error-pending-delete = Diese Automatisierung läuft oder wartet a
 dot-background-error-unavailable = Dieser Dot ist inaktiv oder nicht verfügbar. Aktiviere ihn oder wähle einen anderen Assistenten, bevor du diese Automatisierung ausführst.
 dot-background-error-busy = Die ausgewählte Unterhaltung läuft oder wartet auf Freigabe. Beende oder stoppe den Durchlauf, bevor du sie wiederverwendest.
 dot-background-error-recording = Der Durchlauf konnte nicht gespeichert werden. Es wurde kein Modellaufruf gestartet. Versuche es erneut; wende dich an deinen Administrator, wenn der Fehler weiterhin auftritt.
+
+dot-action-heading = Aktionen
+dot-action-count = Explizite Regeln: { $count }
+dot-action-inherit = Werkzeugregel verwenden
+dot-action-inheritance = Aktionen ohne eigene Regel verwenden die Werkzeugregel. Einschränkungen des Connectors gelten weiterhin.
+dot-action-correction-required = Korrigiere nicht verfügbare Aktionen oder ungültige Regeln vor dem Speichern oder wähle das Werkzeug ab.
+dot-action-unavailable = Diese gespeicherte Aktion ist nicht mehr verfügbar. Entferne ihre Regel vor dem Speichern.
+dot-action-remove = Regel entfernen
+dot-action-remove-aria = Regel für { $action } entfernen
+dot-action-rule = Regel für { $action }
+dot-action-unknown-rule = Unbekannte Regel: { $rule }
+dot-action-deny = Sperren

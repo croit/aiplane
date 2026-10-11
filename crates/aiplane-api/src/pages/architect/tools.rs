@@ -451,6 +451,7 @@ async fn update(ctx: &Ctx, args: UpdateArgs) -> Result<Value, Refusal> {
         agents: &world.agents,
         live_specs: &world.live_specs,
         candidates: &candidates,
+        action_catalogues: &world.action_catalogues,
         allow_private: world.allow_private,
     };
     let base = parse_spec(&agent.draft_spec);

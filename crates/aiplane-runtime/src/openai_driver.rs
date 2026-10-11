@@ -623,6 +623,7 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
             .clone()
             .map(crate::server::tools::PushNotifier::new),
         model,
+        pending_actions: None,
         suspend: if suspendable {
             crate::suspend::Suspend::Available
         } else {

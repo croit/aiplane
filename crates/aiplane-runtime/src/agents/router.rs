@@ -545,6 +545,7 @@ pub(crate) async fn dispatch_result(
             .map_err(|e| ToolError::Failed(format!("recording the sub-agent's pause: {e}")))?;
         let remaining = paused.expires_at.duration_since(jiff::Timestamp::now());
         return Ok(tool_suspend(SuspendRequest {
+            actions: None,
             kind: paused.kind,
             message: paused.message,
             timeout_secs: u64::try_from(remaining.as_secs()).unwrap_or(0),

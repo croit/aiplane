@@ -23,7 +23,7 @@ use serde_json::Value;
 use session_core::db::Decision;
 use shared::api::ToolDef;
 
-use super::{Tool, ToolContext, ToolError, ToolFuture};
+use super::{Tool, ToolAction, ToolActionFuture, ToolContext, ToolError, ToolFuture};
 use crate::suspend::{Suspend, SuspendRequest, tool_suspend};
 
 /// How long an approval may take when nobody chose a deadline: an agent spec
@@ -80,6 +80,35 @@ pub fn approval(
     }
 }
 
+pub(crate) fn validate_actions(
+    ctx: &ToolContext,
+    id: &str,
+    catalogue: Option<&[ToolAction]>,
+    actions: &Option<Vec<String>>,
+) -> Result<(), ToolError> {
+    match (catalogue, actions) {
+        (None, None) => {}
+        (Some(known), Some(actual))
+            if !actual.is_empty()
+                && actual
+                    .iter()
+                    .all(|id| known.iter().any(|entry| entry.id == id)) => {}
+        _ => {
+            return Err(ToolError::Failed(format!(
+                "`{id}` returned action facts that do not match its declared actions, so it did not run."
+            )));
+        }
+    }
+    if let Some(pending) = &ctx.pending_actions
+        && &pending.actions != actions
+    {
+        return Err(ToolError::Failed(format!(
+            "`{id}` actions changed since this call requested approval, so it did not run. Request a new approval."
+        )));
+    }
+    Ok(())
+}
+
 impl Tool for AskFirst {
     fn id(&self) -> &str {
         self.inner.id()
@@ -90,11 +119,26 @@ impl Tool for AskFirst {
     }
 
     fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
-        match approval(&ctx, self.id(), SuspendRequest::approval(self.timeout)) {
-            Ok(Approval::Granted) => self.inner.run(ctx, args),
-            Ok(Approval::Ask(pause)) => Box::pin(async move { Ok(pause) }),
-            Err(refusal) => Box::pin(async move { Err(refusal) }),
-        }
+        Box::pin(async move {
+            let actions = self
+                .inner
+                .classify_actions(ctx.clone(), args.clone())
+                .await?;
+            validate_actions(&ctx, self.id(), self.inner.action_catalogue(), &actions)?;
+            let mut request = SuspendRequest::approval(self.timeout);
+            request.actions = actions;
+            match approval(&ctx, self.id(), request)? {
+                Approval::Granted => self.inner.run(ctx, args).await,
+                Approval::Ask(pause) => Ok(pause),
+            }
+        })
+    }
+
+    fn action_catalogue(&self) -> Option<&'static [ToolAction]> {
+        self.inner.action_catalogue()
+    }
+    fn classify_actions<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolActionFuture<'a> {
+        self.inner.classify_actions(ctx, args)
     }
 
     fn max_duration(&self) -> Option<Duration> {

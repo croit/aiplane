@@ -208,6 +208,7 @@ mod tests {
                     kind: db::SuspensionKind::Approval,
                     message: None,
                     tool_call: db::PendingCall {
+                        actions: None,
                         id: "call-1".into(),
                         name: "company_echo".into(),
                         arguments: "{}".into(),

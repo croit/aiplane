@@ -201,5 +201,19 @@
     "height": 256,
     "data": "Synthetic dev-ui fixture; actual application components.",
     "matchingText": "Run as"
+  },
+  {
+    "file": "docs/img/guide/dot-action-rules.png",
+    "route": "/dots",
+    "selector": "article details",
+    "matchingText": "Access and approvals",
+    "viewport": {
+      "width": 1400,
+      "height": 1500
+    },
+    "scale": 2,
+    "width": 626,
+    "height": 1332,
+    "data": "Synthetic dev-ui fixture; actual browse_page tool catalogue. Search browse_page, expand Actions; read Allow and fill Deny saved under tool Ask. Native list scroll bounds remain visible."
   }
 ]

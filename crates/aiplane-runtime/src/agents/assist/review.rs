@@ -39,6 +39,7 @@ const LONG_TEXT_MAX: u64 = 2000;
 /// every agent and every live spec, as on a save.
 pub struct ReviewContext<'a> {
     pub agent_id: &'a str,
+    pub action_catalogues: &'a std::collections::BTreeMap<String, BTreeSet<String>>,
     pub grants: &'a GrantSet,
     pub agents: &'a HashMap<String, bool>,
     pub live_specs: &'a HashMap<String, Value>,
@@ -354,6 +355,7 @@ impl<'a> Reviewer<'a> {
                 .chain(self.granted.iter().cloned()),
         );
         let ctx = SpecContext {
+            action_catalogues: self.ctx.action_catalogues,
             agent_id: self.ctx.agent_id,
             grants: &grants,
             agents: self.ctx.agents,

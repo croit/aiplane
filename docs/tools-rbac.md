@@ -50,6 +50,25 @@ pub trait Tool: Send + Sync + 'static {
   use it — their jobs (LibreOffice, headless Chromium, cold start) legitimately
   exceed 30s.
 
+### Declared tool actions
+
+`Tool::action_catalogue` supplies optional actual action IDs and descriptions;
+`Tool::classify_actions` validates an invocation and returns its ordered IDs
+without executing it. `browse_page` shares its `ActionPlan::parse` between
+classification and execution. `browser_control` shares its complete validated
+batch parser, preserves ordered IDs including repeats, and emits no prefix
+before permission is resolved for the entire batch. Wrapper tools forward both methods. JSON schema
+enums alone do not establish an action contract.
+
+Agent `ToolResource.actions` stores `allow`, `ask` and `deny` overrides in the
+existing typed spec. `Permissions` resolves them after binding arguments,
+retains the whole-tool permission as fallback, and uses `AskFirst` for Ask.
+Current grants and connector modes remain ceilings. Invalid or unavailable
+rules refuse execution. Pending-call JSON carries the classified IDs; resume
+checks the same facts before accepting approval, including when the original
+Ask wrapper has been removed. This metadata applies only to the pending call.
+The shared runner also checks resumed calls before dispatching a raw tool.
+
 ### Tool ids are a contract
 
 `ToolRegistry::with` asserts at registration that an id matches OpenAI's

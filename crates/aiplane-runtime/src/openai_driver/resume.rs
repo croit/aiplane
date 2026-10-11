@@ -110,6 +110,7 @@ pub(super) async fn pause(
         kind: request.kind,
         message: request.message,
         tool_call: PendingCall {
+            actions: request.actions,
             id: call.id.clone(),
             name: call.name.clone(),
             arguments: call.arguments_raw.clone(),
@@ -247,6 +248,9 @@ pub(super) async fn resume_into(
                 None => {
                     let tool_ctx = ToolContext {
                         suspend: Suspend::Decided(suspension.kind, decided.clone()),
+                        pending_actions: Some(crate::server::tools::PendingActionFacts {
+                            actions: suspension.tool_call.actions.clone(),
+                        }),
                         ..tool_ctx.clone()
                     };
                     let (status, body) = runner::execute_tool_calls(
@@ -661,6 +665,150 @@ mod tests {
         assert_eq!(messages[0]["role"], "system");
     }
 
+    struct ActionEcho;
+
+    impl crate::server::tools::Tool for ActionEcho {
+        fn id(&self) -> &str {
+            "company_echo"
+        }
+
+        fn schema(&self) -> shared::api::ToolDef {
+            Echo.schema()
+        }
+
+        fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+            Some(&[
+                crate::server::tools::ToolAction {
+                    id: "send",
+                    description: "Echo the original request",
+                },
+                crate::server::tools::ToolAction {
+                    id: "read",
+                    description: "Echo a fresh request",
+                },
+            ])
+        }
+
+        fn classify_actions<'a>(
+            &'a self,
+            _ctx: crate::server::tools::ToolContext,
+            args: Value,
+        ) -> crate::server::tools::ToolActionFuture<'a> {
+            Box::pin(async move {
+                let action = match args["message"].as_str() {
+                    Some("ship it") => "send",
+                    Some("read") => "read",
+                    _ => {
+                        return Err(crate::server::tools::ToolError::InvalidArgs(
+                            "unknown action fixture message".into(),
+                        ));
+                    }
+                };
+                Ok(Some(vec![action.to_string()]))
+            })
+        }
+
+        fn run<'a>(
+            &'a self,
+            ctx: crate::server::tools::ToolContext,
+            args: Value,
+        ) -> crate::server::tools::ToolFuture<'a> {
+            Echo.run(ctx, args)
+        }
+    }
+
+    fn action_gated() -> ToolRegistry {
+        ToolRegistry::new().with(AskFirst::new(ActionEcho, Duration::from_secs(3600)))
+    }
+
+    #[tokio::test]
+    async fn persisted_action_facts_apply_only_to_the_pending_invocation_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("gateway.db");
+        let fresh_call = json!({"tool_calls": [{"index": 0, "id": "call-2", "type": "function",
+            "function": {"name": "company_echo", "arguments": "{\"message\":\"read\"}"}}]});
+        let server = upstream(vec![
+            echo_call(),
+            fresh_call,
+            json!({"content": "Both approved."}),
+        ])
+        .await;
+        let before = boot(&db_path, &server.uri(), action_gated()).await;
+        let (session_id, turn_id) = open_turn(&before).await;
+        drive(&before, &session_id, None).await;
+        let first = chat::get_suspension(&before.db, &turn_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.tool_call.actions, Some(vec!["send".to_string()]));
+        assert_eq!(first.tool_call.arguments, "{\"message\":\"ship it\"}");
+        before.db.close().await;
+        drop(before);
+
+        let after = boot(&db_path, &server.uri(), action_gated()).await;
+        let restored = chat::get_suspension(&after.db, &turn_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.tool_call, first.tool_call);
+        let resume = claim_for_resume(
+            &after.db,
+            &turn_id,
+            Some(&restored.request_id),
+            Decision::AllowOnce,
+        )
+        .await
+        .unwrap();
+        drive(&after, &session_id, Some(resume)).await;
+
+        let waiting = the_turn(&after, &session_id).await;
+        assert_eq!(waiting.turn.status, TurnStatus::Suspended);
+        assert_eq!(waiting.tool_calls.len(), 2);
+        assert_eq!(waiting.tool_calls[0].status, ToolCallStatus::Completed);
+        assert!(
+            waiting.tool_calls[0]
+                .output_json
+                .as_ref()
+                .unwrap()
+                .contains("ship it")
+        );
+        assert_eq!(waiting.tool_calls[1].status, ToolCallStatus::Running);
+        let next = chat::get_suspension(&after.db, &turn_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(next.request_id, restored.request_id);
+        assert_eq!(next.tool_call.id, "call-2");
+        assert_eq!(next.tool_call.actions, Some(vec!["read".to_string()]));
+        assert_eq!(next.tool_call.arguments, "{\"message\":\"read\"}");
+
+        let resume = claim_for_resume(
+            &after.db,
+            &turn_id,
+            Some(&next.request_id),
+            Decision::AllowOnce,
+        )
+        .await
+        .unwrap();
+        drive(&after, &session_id, Some(resume)).await;
+        let done = the_turn(&after, &session_id).await;
+        assert_eq!(done.turn.status, TurnStatus::Completed);
+        assert!(done.suspension.is_none());
+        assert!(
+            done.tool_calls
+                .iter()
+                .all(|call| call.status == ToolCallStatus::Completed)
+        );
+        assert!(
+            done.tool_calls[1]
+                .output_json
+                .as_ref()
+                .unwrap()
+                .contains("read")
+        );
+        assert_eq!(requests(&server).await.len(), 3);
+    }
+
     #[tokio::test]
     async fn a_denied_call_never_runs_and_the_model_reads_why() {
         let dir = tempfile::tempdir().unwrap();
@@ -744,6 +892,7 @@ mod tests {
                 kind: chat::SuspensionKind::Approval,
                 message: None,
                 tool_call: chat::PendingCall {
+                    actions: None,
                     id: "c".into(),
                     name: "n".into(),
                     arguments: "{}".into(),

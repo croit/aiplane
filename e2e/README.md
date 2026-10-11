@@ -19,6 +19,26 @@ That runs every `e2e/*.test.mjs`:
 - `spa.test.mjs` — the SvelteKit SPA at the root: shell boot, signed-out redirect into OIDC, signed-in identity from `GET /api/v0/me`.
 - `spa-chat.test.mjs` — the SPA chat round trip (issue #22 P2): create a conversation, submit a turn, watch the reply stream in over the JSON-SSE event protocol. Needs an AIplane with a chat upstream — `AIPLANE_STATIC_DIR=target/frontend/build mise run dev-ui` — and skips with a pointer at that command when AIplane has no pools.
 
+The Dot suites use the seeded `dev-ui` gateway with actual tool catalogues and
+scripted model responses:
+
+- `spa-dots.test.mjs`: personal lifecycle, access, private chat, memory,
+  activity and mobile layout.
+- `spa-dots-background.test.mjs`: existing automation forms, Dot binding,
+  exact-run durable Inbox approval and isolated memory writes.
+- `spa-dots-actions.test.mjs`: action inheritance and overrides, reload,
+  correction of unavailable rules, and revocation between pause and approval.
+  Its browser probe validates permission refusal; the fixture does not execute
+  sandbox containers. Batch dispatch is covered by real browser-request hub
+  tests in `browser_control`.
+
+Run these suites sequentially when checking the four-active-Dot limit:
+
+```bash
+CHROMIUM_CHANNEL=chrome mise exec -- node --test --test-concurrency=1 \
+  e2e/spa-dots.test.mjs e2e/spa-dots-background.test.mjs e2e/spa-dots-actions.test.mjs
+```
+
 The `e2e` mise task finds Playwright in the mise-installed `npm:@playwright/cli` package; export `PLAYWRIGHT_DIR` only to override it.
 
 Set `CHROMIUM_HEADED=1` to watch the browser locally. To use an installed

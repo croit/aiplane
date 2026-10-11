@@ -146,6 +146,7 @@ mod tests {
         validate(
             &json!({ "publish": { "a2a": a2a } }),
             &SpecContext {
+                action_catalogues: &Default::default(),
                 agent_id: "self",
                 grants: &grants,
                 agents: &HashMap::new(),

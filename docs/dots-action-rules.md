@@ -1,21 +1,25 @@
 # Dot action rules
 
-## Status and verified gap
+## Implemented first slice
 
-Adopted proposal for a later vertical slice, not implemented behavior. The user requires configurable autonomy per tool and per action. Current personal Dots expose a selected-tool list and `Allow` or `Ask before each call` for each tool. Deselection denies the whole tool. There is no argument-sensitive action rule or action catalogue in the tool interface.
+Personal Dots expose selected tools with a whole-tool Allow or Ask rule and
+optional action overrides. `browse_page` provides eight actual actions:
+`navigate`, `read`, `click`, `fill`, `screenshot`, `back`, `console`, `close`.
+The runtime, typed spec, owner-scoped access API and web disclosure share this
+contract. `browser_control` declares its 14 existing actions and classifies
+the complete validated batch before dispatch. Tool deselection denies the
+whole tool.
 
-Verified sources:
-
-| Source | Current behavior |
+| Source | Responsibility |
 |---|---|
-| `aiplane-runtime/src/agents/spec/model.rs` | `ToolResource` contains tool binding, permission and approval timeout. Permission supports `always_allow` and `always_ask`. |
-| `aiplane-runtime/src/agents/spec.rs` | Spec validation recognizes those resource fields and permissions; it does not validate action rules. |
-| `aiplane-runtime/src/agents/approval.rs` | `Permissions` maps tool ID to approval setting; gates wrap entire tools in `AskFirst`. Personal Dot default asks unless `Tool::read_only()` is positive. |
-| `aiplane-runtime/src/persona/live.rs` | `LivePersonalDotTool` reloads current Dot state/access and applies the existing personal Dot gate before invoking the live tool. |
-| `aiplane-runtime/src/server/tools/ask_first.rs` | Existing durable approval wrapper preserves the tool schema, pauses an available call and accepts the recorded allow-once decision. |
-| `aiplane-runtime/src/server/tools/mod.rs` | Tool interface has schema, execution, sensitivity, state-change and read-only declarations, but no action classifier/catalogue. |
-| `aiplane-runtime/src/server/tools/sandbox/browse.rs` | Typed `BrowseAction`, validated arguments and schema `action` enum: `navigate`, `read`, `click`, `fill`, `screenshot`, `back`, `console`, `close`. |
-| `aiplane-tools/src/browser_control.rs` | Batched `actions[]`, typed parsing and actual schema actions: `navigate`, `go_back`, `read_page`, `find`, `click`, `hover`, `drag`, `type_text`, `press_key`, `scroll`, `screenshot`, `set_viewport`, `wait_for`, `list_tabs`. |
+| `aiplane-runtime/src/agents/spec/model.rs` | `ToolResource.actions` stores typed Allow, Ask and Deny overrides alongside binding, permission and timeout. |
+| `aiplane-runtime/src/agents/spec.rs` | Validates selected tool/action IDs against actual registered catalogues. |
+| `aiplane-runtime/src/agents/approval.rs` | `Permissions` classifies effective arguments, validates rules and resolves the decision before execution. |
+| `aiplane-runtime/src/persona/live.rs` | Reloads owner, active state and current selected rules before each call. |
+| `aiplane-runtime/src/server/tools/ask_first.rs` | Validates action facts and uses the existing durable approval path. |
+| `aiplane-runtime/src/server/tools/runner.rs` | Validates saved pending facts before dispatch, including a tool whose approval wrapper was removed. |
+| `aiplane-runtime/src/server/tools/sandbox/browse.rs` | Shares typed `BrowseAction` catalogue and `ActionPlan::parse` with execution. |
+| `aiplane-api/src/pages/json_dots.rs` | Returns actual action metadata, preserves unavailable saved rules, and rejects invalid replacements. |
 
 Action strings in output data, such as a document result saying `added` or `replaced`, are not selectable input actions. An arbitrary JSON schema enum is not proof of an action's effect or a safety classification. Named MCP tools already distinguish many provider operations through their actual tool IDs, and continue to use existing tool rules without inventing another action layer.
 
@@ -27,13 +31,13 @@ Add one concrete tool action contract in runtime, first implemented by `browse_p
 
 ## Minimum typed extension
 
-Add `ToolResource.actions`, a map keyed by actual action ID with an enum rule `allow`, `ask` or `deny`. Keep the existing whole-tool permission and timeout as the fallback. This nested field lives in the existing persisted `AgentSpec`; it requires no new database collection. Validation rejects duplicate JSON keys through the existing parsing/validation path or an explicit duplicate check, unknown action IDs and unsupported rules. Actions may be configured only on currently granted/available selected tools exposing the trusted action contract.
+Add `ToolResource.actions`, a map keyed by actual action ID with an enum rule `allow`, `ask` or `deny`. Keep the existing whole-tool permission and timeout as the fallback. This nested field lives in the existing persisted `AgentSpec`; it requires no new database collection. The access API accepts an override list and rejects duplicate action IDs before converting it into the map. Unknown action IDs and unsupported rules are rejected against the current tool catalogue. `AgentSpec::from_value` receives an already parsed JSON value and cannot recover duplicate object keys discarded during parsing; it does not establish duplicate-key rejection for raw spec input. Actions may be configured only on currently granted/available selected tools exposing the trusted action contract.
 
 The tool supplies an action catalogue from the same typed action definitions used by parsing and schema generation. Refactor current action IDs and their existing schema descriptions into that shared source so UI, schema and execution cannot disagree. Show actual IDs and descriptions. Do not infer new categories like “safe browsing” or generic “send email” from a connector title.
 
 For `browse_page`, classification uses the existing validated `BrowseArgs`/plan parser, including required URL/element/text validation, and returns exactly one `BrowseAction`. An unsupported or malformed value fails before approval or execution. Do not classify by a loose extraction of `args.action` while execution uses different defaulting/coercion.
 
-For batched `browser_control`, classify all parsed actions before executing any step. Deny wins over the entire batch; otherwise any action requiring approval causes one approval for the entire original batch. Execute no allowed prefix before asking about a later step. Whole-batch approval preserves the existing invocation/arguments and avoids a separate per-step suspension engine. This browser tool still depends on its real connected user browser; action rules do not make it an unattended computer.
+Batched `browser_control` classifies all parsed actions before executing any step. Deny wins over the entire batch; otherwise any action requiring approval causes one approval for the entire original batch. Execute no allowed prefix before asking about a later step. Whole-batch approval preserves the existing invocation/arguments and avoids a separate per-step suspension engine. This browser tool still depends on its real connected user browser; action rules do not make it an unattended computer.
 
 ## Resolution and safety
 
@@ -63,13 +67,42 @@ Extend existing `/api/v0/dots/{id}/access` rows with nullable action catalogue d
 
 Walkthrough: expand **Access and approvals**, select actual `browse_page`, choose **Ask before each call** as its tool default and open an **Actions** disclosure supplied by that tool's catalogue. Each row displays the actual action ID and existing description plus **Use tool rule**, **Allow**, **Ask**, or **Deny**. Choose Allow for `read` and Deny for `fill`; save through the existing save/error/reload flow. The tool row shows the actual number of explicit overrides derived from saved data. It does not display a fabricated safety badge.
 
-The UI explains that missing overrides use the tool rule and connector restrictions still apply. A batch asks once if any included action requires it and is denied if any is prohibited. Tool/connector identity stays visible using existing real connection metadata. Unknown/stale actions are shown as unavailable rather than dropped silently; saving requires correction/reload and never turns a removed denial into Allow. The server repeats availability and schema checks.
+The UI explains that missing overrides use the tool rule and connector restrictions still apply. A batch asks once if any included action requires it and denies the batch if any is prohibited. Tool/connector identity stays visible using existing real connection metadata. Unknown/stale actions are shown as unavailable rather than dropped silently; saving requires correction/reload and never turns a removed denial into Allow. The server repeats availability and schema checks.
 
 Reuse the current native disclosure, select controls, loading/error states and daisyUI classes. All added strings go through six Fluent catalogues. The existing named MCP action rows remain unchanged; they do not gain empty nested action controls. Coordinator browser verification must include keyboard/mobile behavior and pending-rule revocation before the feature is reported complete.
 
 ## Implementation order and tests
 
-First add the typed action catalogue/classifier contract, `browse_page` concrete implementation and spec/permission tests. Then integrate live revalidation and pending metadata, followed by access API/UI and optional batched browser-control support. Coordinate ownership: one agent on typed spec/permissions/tool contract, one on concrete tools/live resume, one on access API/UI/catalogues after contracts are fixed. Shared protocol/spec and generated files each have one writer. No Rust builds run concurrently against the shared target.
+### Settled first implementation contract
+
+The first complete slice exposes `browse_page` actions and batched
+`browser_control` actions through the same contract. Runtime `ToolAction`
+contains the actual ID and description; `Tool::action_catalogue` returns an
+optional static catalogue. Its asynchronous `classify_actions` receives the
+execution context and arguments and returns optional ordered action IDs.
+`browse_page` parsing and execution share `ActionPlan::parse` and its existing
+validation and bounds. Classification does not execute browser operations.
+
+The existing `Permissions` gate classifies before resolving overrides or
+invoking `AskFirst`. `BoundTool` wraps that gate, so effective state-bound
+arguments are resolved before classification and approval. Existing wrapper
+types forward the catalogue and classifier. Connector modes, current grants
+and the live Dot gate remain mandatory ceilings.
+
+The existing suspension JSON carries `PendingCall.actions`, an optional list
+of ordered IDs, and `SuspendRequest` passes those facts into that encoding.
+Resumption distinguishes a fresh call from a stored call without an action
+contract and compares current classification with the stored facts before
+accepting AllowOnce. No new suspension table or schema migration is needed.
+
+Access GET tool rows expose nullable `actions` catalogue entries and saved
+`action_rules` as `{id, rule}` rows. PUT tool selections carry an `actions`
+override list. Typed spec persistence, ownership, current catalogue validation,
+revision auditing and save conflicts use the existing access path. Valid saved
+rules for unavailable action IDs remain visible for correction. A malformed
+spec remains an error; the view does not invent a valid replacement policy.
+
+First add the typed action catalogue/classifier contract, `browse_page` concrete implementation and spec/permission tests. Then integrate live revalidation and pending metadata, followed by access API/UI and batched browser-control support. Coordinate ownership: one agent on typed spec/permissions/tool contract, one on concrete tools/live resume, one on access API/UI/catalogues after contracts are fixed. Shared protocol/spec and generated files each have one writer. No Rust builds run concurrently against the shared target.
 
 Tests use actual parsers, existing in-memory SQLite approval rows and fake/mocked remote collaborators with finite input:
 
@@ -81,6 +114,11 @@ Tests use actual parsers, existing in-memory SQLite approval rows and fake/mocke
 - Different connected account/generation on resume is rejected after the identity slice exists; unchanged identity and permitted stored arguments can settle normally.
 - API owner isolation and audited nested spec save preserve unrelated bindings/timeouts. UI fixtures show actual action metadata, inherited rules, unavailable actions, errors and accessible mobile controls.
 
-## Constraints still to verify
+## Remaining scope
 
-The current generic approval wrapper does not validate arguments before asking; classification must be introduced before it without losing the live gate. Existing pending encoding needs an exact compatible action-facts field chosen with the runtime owner; no second suspension store is acceptable. External MCP schema enums alone are insufficient to offer per-action rules; only a verified MCP action contract could extend this later. Browser navigation's effects depend on the destination, so this slice does not promise URL-based or argument-sensitive safety categories. Critical platform-wide prohibitions and organization approval authority remain separate policies and cannot be guessed from action names.
+External MCP schema enums are insufficient to offer per-action rules; extending
+this requires a verified implementation contract. Browser navigation effects
+depend on the destination, so action IDs do not establish URL-based safety
+categories. Critical platform-wide prohibitions, identity-generation pinning
+and organization approval authority remain separate requirements. The first
+slice does not change connected identities or introduce a separate policy DB.

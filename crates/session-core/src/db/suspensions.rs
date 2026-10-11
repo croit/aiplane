@@ -189,6 +189,8 @@ pub struct PendingCall {
     pub name: String,
     /// The model's raw JSON arguments string.
     pub arguments: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<String>>,
 }
 
 /// What the turn had spent when it paused, so a resumed run continues against
@@ -586,6 +588,27 @@ mod tests {
     use super::*;
     use crate::db::tests::pool;
 
+    #[test]
+    fn pending_call_action_facts_round_trip_and_absence_is_explicit() {
+        let pending = PendingCall {
+            id: "call".into(),
+            name: "browser".into(),
+            arguments: "{}".into(),
+            actions: Some(vec!["fill".into()]),
+        };
+        let encoded = serde_json::to_value(&pending).unwrap();
+        assert_eq!(encoded["actions"], serde_json::json!(["fill"]));
+        assert_eq!(
+            serde_json::from_value::<PendingCall>(encoded).unwrap(),
+            pending
+        );
+        let absent: PendingCall = serde_json::from_value(
+            serde_json::json!({"id":"call","name":"browser","arguments":"{}"}),
+        )
+        .unwrap();
+        assert_eq!(absent.actions, None);
+    }
+
     fn suspension(turn_id: &str, expires_at: Timestamp) -> TurnSuspension {
         TurnSuspension {
             turn_id: turn_id.into(),
@@ -593,6 +616,7 @@ mod tests {
             kind: SuspensionKind::Approval,
             message: None,
             tool_call: PendingCall {
+                actions: None,
                 id: "call-1".into(),
                 name: "company_echo".into(),
                 arguments: r#"{"message":"hi"}"#.into(),

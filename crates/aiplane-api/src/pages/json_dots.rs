@@ -16,7 +16,8 @@ use super::{bad_request, internal, json_error, json_ok, not_found, raw_path_segm
 use aiplane_agents::db::agents::{self as agents_db, PersonalDotCreate};
 use aiplane_agents::db::system_principals::NewPrincipal;
 use aiplane_runtime::agents::spec::AgentSpec;
-use aiplane_runtime::agents::spec::model::Permission;
+use aiplane_runtime::agents::spec::model::{ActionRule, Permission};
+use aiplane_runtime::agents::spec::tool_access::ToolAccessSelection;
 use aiplane_runtime::rama_server::state::RamaState;
 use aiplane_runtime::server::tools::mcp::manager::{AskContext, CompositeToolSource};
 use aiplane_runtime::server::tools::{ToolSource, catalog};
@@ -159,6 +160,21 @@ pub struct DotAccessTool {
     pub identity: &'static str,
     pub connector_key: Option<String>,
     pub connector_mode: Option<&'static str>,
+    pub actions: Option<Vec<DotAccessAction>>,
+    pub action_rules: Vec<DotActionRule>,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct DotAccessAction {
+    pub id: String,
+    pub description: String,
+}
+
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DotActionRule {
+    pub id: String,
+    pub rule: String,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -172,6 +188,8 @@ pub struct DotAccessBody {
 pub struct DotAccessSelection {
     pub id: String,
     pub permission: String,
+    #[serde(default)]
+    pub actions: Vec<DotActionRule>,
 }
 
 async fn access_view(
@@ -246,6 +264,35 @@ async fn access_view(
             identity,
             connector_mode: layer.mode_of(&id).map(|mode| mode.as_str()),
             connector_key,
+            actions: tool.action_catalogue().map(|actions| {
+                actions
+                    .iter()
+                    .map(|action| DotAccessAction {
+                        id: action.id.to_owned(),
+                        description: action.description.to_owned(),
+                    })
+                    .collect()
+            }),
+            action_rules: spec
+                .main
+                .tool_resources
+                .get(&id)
+                .map(|resource| {
+                    resource
+                        .actions
+                        .iter()
+                        .map(|(id, rule)| DotActionRule {
+                            id: id.clone(),
+                            rule: match rule {
+                                ActionRule::Allow => "allow",
+                                ActionRule::Ask => "ask",
+                                ActionRule::Deny => "deny",
+                            }
+                            .to_owned(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
             id,
         });
     }
@@ -297,16 +344,36 @@ pub async fn access_put(State(state): State<Arc<RamaState>>, req: Request) -> Re
         {
             return bad_request(t(lang, "dot-access-error-invalid"));
         }
-        if !inventory.tools.iter().any(|tool| tool.id == selection.id) {
+        let Some(tool) = inventory.tools.iter().find(|tool| tool.id == selection.id) else {
             return bad_request(t(lang, "dot-access-error-unavailable"));
+        };
+        let mut actions = std::collections::BTreeMap::new();
+        for action in &selection.actions {
+            let rule = match action.rule.as_str() {
+                "allow" => ActionRule::Allow,
+                "ask" => ActionRule::Ask,
+                "deny" => ActionRule::Deny,
+                _ => return bad_request(t(lang, "dot-access-error-invalid")),
+            };
+            if actions.insert(action.id.clone(), rule).is_some() {
+                return bad_request(t(lang, "dot-access-error-invalid"));
+            }
+            if !tool
+                .actions
+                .as_ref()
+                .is_some_and(|catalogue| catalogue.iter().any(|known| known.id == action.id))
+            {
+                return bad_request(t(lang, "dot-access-error-unavailable"));
+            }
         }
-        selections.push((
-            selection.id.clone(),
-            match selection.permission.as_str() {
+        selections.push(ToolAccessSelection {
+            id: selection.id.clone(),
+            permission: match selection.permission.as_str() {
                 "always_allow" => Permission::AlwaysAllow,
                 _ => Permission::AlwaysAsk,
             },
-        ));
+            actions,
+        });
     }
     let draft = match aiplane_runtime::agents::spec::tool_access::replace_tool_access(
         &dot.agent.draft_spec,

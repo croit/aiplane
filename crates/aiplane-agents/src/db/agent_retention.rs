@@ -337,6 +337,7 @@ mod tests {
                 id: "call-1".into(),
                 name: "refund".into(),
                 arguments: "{}".into(),
+                actions: None,
             },
             tail: Vec::new(),
             budget_used: chat::BudgetUsed::default(),

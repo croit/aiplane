@@ -182,6 +182,26 @@ pub trait ToolSource: Send + Sync {
     fn state_written(&self) {}
 }
 
+pub fn action_catalogues(
+    source: &dyn ToolSource,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    source
+        .ids()
+        .into_iter()
+        .filter_map(|id| {
+            let tool = source.get(&id)?;
+            let catalogue = tool.action_catalogue()?;
+            Some((
+                id,
+                catalogue
+                    .iter()
+                    .map(|action| action.id.to_string())
+                    .collect(),
+            ))
+        })
+        .collect()
+}
+
 /// The order a round's calls run in. Phases run one after the other, each
 /// finished before the next starts; every result still answers its own call,
 /// in the order the model made the calls.
@@ -338,6 +358,28 @@ mod tests {
         let defs = granted.defs_for(&["company_echo".into(), "get_current_timestamp".into()]);
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].function.name, "get_current_timestamp");
+    }
+
+    #[test]
+    fn action_catalogues_include_only_source_declared_and_granted_actions() {
+        let client = crate::server::tools::sandbox::SandboxClient::new(
+            Arc::new(aiplane_core::server::config::SandboxConfig {
+                enabled: true,
+                runner_url: "http://127.0.0.1:9".into(),
+                timeout_secs: 1,
+                max_artifact_bytes: 1024,
+            }),
+            crate::server::state::RuntimeSettings::new_handle("https://gw.example"),
+        );
+        let source = ToolRegistry::new()
+            .with(Echo)
+            .with(crate::server::tools::sandbox::BrowsePage(client));
+        let catalogue = action_catalogues(&source);
+        assert_eq!(catalogue.len(), 1);
+        assert!(catalogue["browse_page"].contains("fill"));
+        assert!(
+            action_catalogues(&GrantedToolSource::new(&source, ["company_echo".into()])).is_empty()
+        );
     }
 
     #[test]

@@ -982,7 +982,14 @@ async fn run_one(
     // Most tools finish well within TOOL_TIMEOUT; a few (the sandbox
     // family) declare a longer ceiling via `max_duration`.
     let tool_timeout = tool.max_duration().unwrap_or(TOOL_TIMEOUT);
-    let outcome = tokio::time::timeout(tool_timeout, tool.run(ctx, args)).await;
+    let outcome = tokio::time::timeout(tool_timeout, async {
+        if ctx.pending_actions.is_some() {
+            let actions = tool.classify_actions(ctx.clone(), args.clone()).await?;
+            super::ask_first::validate_actions(&ctx, tool.id(), tool.action_catalogue(), &actions)?;
+        }
+        tool.run(ctx, args).await
+    })
+    .await;
     let elapsed = started.elapsed();
     let elapsed_ms = elapsed.as_millis();
     let failed = !matches!(outcome, Ok(Ok(_)));
@@ -1478,6 +1485,91 @@ mod tests {
     use crate::server::tools::time::CurrentTimestamp;
     use crate::server::tools::{Tool, ToolFuture, ToolRegistry};
     use std::sync::Arc;
+
+    use session_core::db::ToolCallStatus;
+
+    struct ActionWrites;
+    impl Tool for ActionWrites {
+        fn id(&self) -> &str {
+            "company_echo"
+        }
+        fn schema(&self) -> shared::api::ToolDef {
+            Echo.schema()
+        }
+        fn action_catalogue(&self) -> Option<&'static [super::super::ToolAction]> {
+            Some(&[
+                super::super::ToolAction {
+                    id: "read",
+                    description: "Read",
+                },
+                super::super::ToolAction {
+                    id: "write",
+                    description: "Write",
+                },
+            ])
+        }
+        fn classify_actions<'a>(
+            &'a self,
+            _ctx: ToolContext,
+            args: Value,
+        ) -> super::super::ToolActionFuture<'a> {
+            Box::pin(async move { Ok(Some(vec![args["message"].as_str().unwrap().to_string()])) })
+        }
+        fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
+            Box::pin(async move {
+                sqlx::query("INSERT INTO app_settings(key,value,updated_at) VALUES ('action_count','1','2026-10-11T00:00:00Z') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1")
+                    .execute(&ctx.db).await.map_err(|e|ToolError::Failed(e.to_string()))?;
+                Ok(args)
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn resumed_raw_tool_compares_action_facts_after_approval_wrapper_removal() {
+        let source = ToolRegistry::new().with(ActionWrites);
+        let fresh = ctx().await;
+        let mut pending = fresh.clone();
+        pending.pending_actions = Some(super::super::PendingActionFacts {
+            actions: Some(vec!["write".into()]),
+        });
+        let mismatch = execute_tool_calls(
+            &source,
+            &pending,
+            &echo_call("read"),
+            &InjectionScan::default(),
+        )
+        .await;
+        assert_eq!(mismatch[0].status(), ToolCallStatus::Errored);
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM app_settings WHERE key='action_count'")
+                .fetch_one(&fresh.db)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+        let matched = execute_tool_calls(
+            &source,
+            &pending,
+            &echo_call("write"),
+            &InjectionScan::default(),
+        )
+        .await;
+        assert_eq!(matched[0].status(), ToolCallStatus::Completed);
+        let next = execute_tool_calls(
+            &source,
+            &fresh,
+            &echo_call("read"),
+            &InjectionScan::default(),
+        )
+        .await;
+        assert_eq!(next[0].status(), ToolCallStatus::Completed);
+        let count: String =
+            sqlx::query_scalar("SELECT value FROM app_settings WHERE key='action_count'")
+                .fetch_one(&fresh.db)
+                .await
+                .unwrap();
+        assert_eq!(count, "2");
+        assert!(fresh.pending_actions.is_none());
+    }
 
     async fn ctx() -> ToolContext {
         let pool = aiplane_core::server::db::open(std::path::Path::new(":memory:"))

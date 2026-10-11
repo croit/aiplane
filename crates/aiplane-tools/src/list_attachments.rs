@@ -167,6 +167,7 @@ mod tests {
             granted_tools: None,
             agent: None,
             personal_dot: None,
+            pending_actions: None,
             call_id: None,
         }
     }

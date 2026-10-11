@@ -277,6 +277,7 @@ async fn spec_check(
             live_specs: &world.live_specs,
             model_defaults: &world.model_defaults,
             speech_voices: &world.speech_voices,
+            action_catalogues: &world.action_catalogues,
             allow_private: world.allow_private,
         },
         stage,
@@ -292,6 +293,7 @@ pub(super) struct SpecWorld {
     pub model_defaults: ModelDefaults,
     /// The voices of every speech model the gateway serves, by model.
     pub speech_voices: HashMap<String, Vec<String>>,
+    pub action_catalogues: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     pub allow_private: bool,
 }
 
@@ -325,6 +327,9 @@ impl SpecWorld {
             live_specs,
             model_defaults,
             speech_voices,
+            action_catalogues: aiplane_runtime::server::tools::registry::action_catalogues(
+                state.tools().as_ref(),
+            ),
             allow_private: state.config().network.allow_private_networks,
         })
     }
@@ -661,6 +666,7 @@ fn uses_grant(
                 live_specs: &world.live_specs,
                 model_defaults: &world.model_defaults,
                 speech_voices: &world.speech_voices,
+                action_catalogues: &world.action_catalogues,
                 allow_private: world.allow_private,
             },
             Stage::Publish,

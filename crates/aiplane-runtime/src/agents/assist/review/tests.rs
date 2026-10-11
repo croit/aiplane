@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use super::*;
 use crate::agents::assist::proposal::{suggest_input, suggest_schema};
 use crate::agents::assist::{Ability, Candidates, Knowledge, Target};
+use std::collections::BTreeMap;
 
 const AGENT: &str = "self-agent";
 
@@ -53,6 +54,7 @@ fn candidates() -> Candidates {
 }
 
 struct World {
+    action_catalogues: BTreeMap<String, BTreeSet<String>>,
     grants: GrantSet,
     agents: HashMap<String, bool>,
     live: HashMap<String, Value>,
@@ -62,6 +64,7 @@ struct World {
 impl World {
     fn new() -> Self {
         Self {
+            action_catalogues: BTreeMap::new(),
             grants: GrantSet::new([(GrantKind::Model, "main-model".to_string())]),
             agents: HashMap::from([
                 (AGENT.to_string(), false),
@@ -77,6 +80,7 @@ impl World {
 
     fn ctx(&self) -> ReviewContext<'_> {
         ReviewContext {
+            action_catalogues: &self.action_catalogues,
             agent_id: AGENT,
             grants: &self.grants,
             agents: &self.agents,
@@ -223,6 +227,7 @@ fn a_good_proposal_maps_to_a_draft_that_passes_the_validator() {
             .chain([(GrantKind::Tool, "get_current_timestamp".to_string())]),
     );
     let ctx = SpecContext {
+        action_catalogues: &Default::default(),
         agent_id: AGENT,
         grants: &granted,
         agents: &w.agents,
@@ -635,6 +640,7 @@ fn an_architects_changes_become_the_draft_and_the_grants_it_needs() {
             .chain(out.grants.iter().cloned()),
     );
     let ctx = SpecContext {
+        action_catalogues: &Default::default(),
         agent_id: AGENT,
         grants: &granted,
         agents: &w.agents,
@@ -687,6 +693,7 @@ fn an_architects_hand_offs_and_slots_are_written_the_way_the_setup_reads_them() 
     spec::check(
         &out.draft,
         &SpecContext {
+            action_catalogues: &Default::default(),
             agent_id: AGENT,
             grants: &w.grants,
             agents: &w.agents,

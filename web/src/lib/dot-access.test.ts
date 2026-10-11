@@ -13,8 +13,8 @@ test('access replacement sends only explicitly selected tools and approval rules
 		received = JSON.parse(options?.body as string);
 		return Response.json({ tools: [] });
 	};
-	await dotAccessApi.save('personal/dot', [{ id: 'workspace_send', permission: 'always_ask' }]);
-	assert.deepEqual(received, { tools: [{ id: 'workspace_send', permission: 'always_ask' }] });
+	await dotAccessApi.save('personal/dot', [{ id: 'browse_page', permission: 'always_ask', actions: [{ id: 'read', rule: 'allow' }, { id: 'fill', rule: 'deny' }] }]);
+	assert.deepEqual(received, { tools: [{ id: 'browse_page', permission: 'always_ask', actions: [{ id: 'read', rule: 'allow' }, { id: 'fill', rule: 'deny' }] }] });
 });
 
 test('a revoked tool refusal retains the server error for reload guidance', async (context) => {

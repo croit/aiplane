@@ -23,6 +23,34 @@ Initial scope: personal Dots belonging to the same user. Organization Dots may c
 
 The actual local dispatcher is reusable, but its published-principal profile loader and parent-child/resume accessors require an explicit personal-Dot branch. Merely selecting a Dot principal as a route target would drop the current personal execution model. Existing public A2A permission fields cannot safely stand in for the new local delegation boundary.
 
+## Personal execution integration
+
+The existing `ForwardRequest` schema accepts no arguments: published routes
+render their task from state. Personal delegation needs an explicit receiver
+and bounded message schema while using the same local dispatch machinery.
+`ToolContext::chain` currently reads only `AgentRun`; personal actors have no
+`AgentRun` because they must keep the user principal. Personal execution must
+carry call-chain facts without impersonating a system principal.
+
+The personal child opens an ordinary private user-owned session bound to the
+receiver Dot. Receiver context resolves its own selected tools and memories
+under current user authority. The caller's selected tools do not replace the
+receiver's selection; both sides still require current user grants and explicit
+edge consent. An optional child link belongs in the existing agent-layer
+personal session association, with exact parent turn/call and edge generation.
+
+Principal child lookup and user Inbox answering currently follow different
+paths. A shared resolver must recognize both child owner kinds and reuse the
+existing deepest-child claim/resume flow. The root waiting item represents the
+pending delegation; independently actionable parent and child cards must not
+claim the same chain twice. Personal child results come from persisted turn
+content, status and suspension in runtime; runtime cannot call an API helper.
+
+Current per-turn budgets are not a remaining tree budget. Before claiming an
+aggregate cap, delegation must pass the actual remaining parent allowance and
+account for child charges through shared runtime accounting. Reusing the
+existing `Budget.capped` without remaining usage would not establish that cap.
+
 ## Shared mechanisms
 
 Reuse `forward_request` and its local dispatch/result machinery; typed route/task rendering; `RunChain`, budgets and finish contracts; existing user/private or principal-owned sessions; `ChildPause`, suspensions, claim/resume and Inbox; existing live tool authorization; model catalogue/pool access; audit and usage recording.

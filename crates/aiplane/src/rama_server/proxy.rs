@@ -435,6 +435,7 @@ fn proxy_tool_ctx(
         // caller drives the loop, so there is no chain to carry.
         agent: None,
         personal_dot: None,
+        pending_actions: None,
         call_id: None,
         token_id: Some(token_id),
         pool_access,

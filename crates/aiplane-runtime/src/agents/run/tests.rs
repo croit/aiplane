@@ -417,6 +417,7 @@ impl World {
         spec::validate(
             spec,
             &SpecContext {
+                action_catalogues: &Default::default(),
                 agent_id: id,
                 grants: &grants,
                 agents: &agents,

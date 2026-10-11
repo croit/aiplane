@@ -3,26 +3,45 @@
 
 use serde_json::json;
 
-use super::{AgentSpec, model::Permission};
+use std::collections::BTreeMap;
+
+use super::{
+    AgentSpec,
+    model::{ActionRule, Permission},
+};
+
+pub struct ToolAccessSelection {
+    pub id: String,
+    pub permission: Permission,
+    pub actions: BTreeMap<String, ActionRule>,
+}
 
 pub fn replace_tool_access(
     draft: &str,
-    selections: &[(String, Permission)],
+    selections: &[ToolAccessSelection],
 ) -> Result<String, serde_json::Error> {
     let mut spec: serde_json::Value = serde_json::from_str(draft)?;
     AgentSpec::from_value(&spec)?;
-    spec["main"]["tools"] = json!(selections.iter().map(|(id, _)| id).collect::<Vec<_>>());
+    spec["main"]["tools"] = json!(
+        selections
+            .iter()
+            .map(|selection| &selection.id)
+            .collect::<Vec<_>>()
+    );
     let mut resources = spec["main"]["tool_resources"]
         .as_object()
         .cloned()
         .unwrap_or_default();
-    resources.retain(|id, _| selections.iter().any(|(selected, _)| selected == id));
-    for (id, permission) in selections {
-        let resource = resources.entry(id.clone()).or_insert_with(|| json!({}));
-        resource["permission"] = json!(match permission {
+    resources.retain(|id, _| selections.iter().any(|selection| &selection.id == id));
+    for selection in selections {
+        let resource = resources
+            .entry(selection.id.clone())
+            .or_insert_with(|| json!({}));
+        resource["permission"] = json!(match selection.permission {
             Permission::AlwaysAllow => "always_allow",
             Permission::AlwaysAsk => "always_ask",
         });
+        resource["actions"] = serde_json::to_value(&selection.actions)?;
     }
     spec["main"]["tool_resources"] = json!(resources);
     AgentSpec::from_value(&spec)?;
@@ -50,8 +69,16 @@ mod tests {
         let saved = replace_tool_access(
             &draft.to_string(),
             &[
-                ("read".into(), Permission::AlwaysAllow),
-                ("write".into(), Permission::AlwaysAsk),
+                ToolAccessSelection {
+                    id: "read".into(),
+                    permission: Permission::AlwaysAllow,
+                    actions: Default::default(),
+                },
+                ToolAccessSelection {
+                    id: "write".into(),
+                    permission: Permission::AlwaysAsk,
+                    actions: Default::default(),
+                },
             ],
         )
         .unwrap();
@@ -79,6 +106,51 @@ mod tests {
     }
 
     #[test]
+    fn nested_actions_are_replaced_without_changing_other_resource_fields() {
+        let draft = r#"{"main":{"tools":["browse"],"tool_resources":{"browse":{"permission":"always_ask","approval_timeout":"5m","bind":{"project":{"const":"example"}},"actions":{"old":"deny"}}}}}"#;
+        let saved = replace_tool_access(
+            draft,
+            &[ToolAccessSelection {
+                id: "browse".into(),
+                permission: Permission::AlwaysAsk,
+                actions: [
+                    ("read".into(), ActionRule::Allow),
+                    ("fill".into(), ActionRule::Deny),
+                ]
+                .into(),
+            }],
+        )
+        .unwrap();
+        let saved: Value = serde_json::from_str(&saved).unwrap();
+        assert_eq!(
+            saved["main"]["tool_resources"]["browse"]["actions"],
+            json!({"read":"allow","fill":"deny"})
+        );
+        assert_eq!(
+            saved["main"]["tool_resources"]["browse"]["approval_timeout"],
+            "5m"
+        );
+        assert_eq!(
+            saved["main"]["tool_resources"]["browse"]["bind"]["project"]["const"],
+            "example"
+        );
+        let cleared = replace_tool_access(
+            &saved.to_string(),
+            &[ToolAccessSelection {
+                id: "browse".into(),
+                permission: Permission::AlwaysAsk,
+                actions: Default::default(),
+            }],
+        )
+        .unwrap();
+        let cleared: Value = serde_json::from_str(&cleared).unwrap();
+        assert_eq!(
+            cleared["main"]["tool_resources"]["browse"]["actions"],
+            json!({})
+        );
+    }
+
+    #[test]
     fn empty_selection_denies_every_tool_and_removes_resources() {
         let saved = replace_tool_access(r#"{"main":{"tools":["read"],"tool_resources":{"read":{"permission":"always_allow"}}}}"#, &[]).unwrap();
         let saved: Value = serde_json::from_str(&saved).unwrap();
@@ -92,6 +164,7 @@ mod tests {
             "invalid",
             r#"{"main":{"unknown":true}}"#,
             r#"{"main":{"tool_resources":{"read":{"permission":"invalid"}}}}"#,
+            r#"{"main":{"tool_resources":{"read":{"actions":{"read":"invalid"}}}}}"#,
         ] {
             assert!(replace_tool_access(draft, &[]).is_err(), "{draft}");
         }

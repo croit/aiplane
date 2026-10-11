@@ -143,6 +143,7 @@ pub(super) async fn suggest_for(
         agents: &world.agents,
         live_specs: &world.live_specs,
         candidates: &candidates,
+        action_catalogues: &world.action_catalogues,
         allow_private: world.allow_private,
     };
     let asker = Asker {

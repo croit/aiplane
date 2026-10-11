@@ -62,11 +62,24 @@ The card only offers decisions the server permits. Expiry information appears wh
 ## Configure a personal Dot's tool access
 
 Open `/dots` and expand **Access and approvals** on your Dot's card. Search
-the tools available to your account, select each action the Dot may use, and
+by tool name, description or ID, select each tool the Dot may use, and
 choose **Allow** or **Ask before each call**. Save your changes. Unselected
 tools are denied. Tool IDs distinguish actions that share a capability title.
 The account label identifies the current user or shared connector account;
 a connector configured to ask still asks when the Dot rule is Allow.
+
+For `browse_page` or `browser_control`, open **Actions** under the selected tool. Choose **Use tool
+rule**, **Allow**, **Ask**, or **Deny** for each action. For example, keep the tool
+on Ask, allow `read` and deny `fill`. Save and reload to review the stored rules.
+A denied action does not execute, including on an earlier pending approval.
+Browser action lists are checked in full: any Deny prevents the whole batch;
+otherwise any Ask requests approval once for that batch. `browser_control`
+still requires your connected browser extension and its own confirmations.
+Connector restrictions still apply. Other tools show action controls only when
+their implementation supplies a catalogue. If a saved action is unavailable,
+remove its rule before saving; the interface preserves it for review.
+
+![A personal Dot’s access and action rules](../img/guide/dot-action-rules.png)
 
 New Dots select the existing memory tools when available to your account.
 Memory writes belong to that Dot; user-wide memory remains read-only context.

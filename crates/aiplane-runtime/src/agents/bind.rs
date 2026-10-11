@@ -218,6 +218,20 @@ impl Tool for WithheldTool {
         self.inner.id()
     }
 
+    fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+        self.inner.action_catalogue()
+    }
+    fn classify_actions<'a>(
+        &'a self,
+        ctx: ToolContext,
+        args: Value,
+    ) -> crate::server::tools::ToolActionFuture<'a> {
+        Box::pin(async move {
+            self.run(ctx, args).await?;
+            Ok(None)
+        })
+    }
+
     fn schema(&self) -> ToolDef {
         self.inner.schema()
     }
@@ -307,6 +321,27 @@ pub fn without_bound(mut def: ToolDef, bound: &BTreeMap<String, BindSource>) -> 
 impl Tool for BoundTool {
     fn id(&self) -> &str {
         self.inner.id()
+    }
+
+    fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+        self.inner.action_catalogue()
+    }
+    fn classify_actions<'a>(
+        &'a self,
+        ctx: ToolContext,
+        args: Value,
+    ) -> crate::server::tools::ToolActionFuture<'a> {
+        Box::pin(async move {
+            let mut args = match args {
+                Value::Object(map) => map,
+                _ => Map::new(),
+            };
+            args.extend(self.bound_values(&ctx).await?);
+            self.inner.classify_actions(ctx, Value::Object(args)).await
+        })
+    }
+    fn read_only(&self) -> bool {
+        self.inner.read_only()
     }
 
     fn schema(&self) -> ToolDef {

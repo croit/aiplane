@@ -369,3 +369,15 @@ dot-background-error-pending-delete = This automation has a running turn or is w
 dot-background-error-unavailable = This Dot is inactive or unavailable. Activate it or choose another assistant before running this automation.
 dot-background-error-busy = The selected conversation is running or waiting for approval. Finish or stop that turn before reusing it.
 dot-background-error-recording = The run could not be recorded. No model execution started. Try again; contact your administrator if the error persists.
+
+dot-action-heading = Actions
+dot-action-count = Explicit rules: { $count }
+dot-action-inherit = Use tool rule
+dot-action-inheritance = Actions without an override use the tool rule. Connector restrictions still apply.
+dot-action-correction-required = Correct unavailable actions or invalid rules before saving, or deselect the tool.
+dot-action-unavailable = This saved action is no longer available. Remove its rule before saving.
+dot-action-remove = Remove rule
+dot-action-remove-aria = Remove rule for { $action }
+dot-action-rule = Rule for { $action }
+dot-action-unknown-rule = Unknown rule: { $rule }
+dot-action-deny = Deny

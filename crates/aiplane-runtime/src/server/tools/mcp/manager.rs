@@ -823,6 +823,17 @@ impl Tool for AuditedTool {
         self.inner.id()
     }
 
+    fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+        self.inner.action_catalogue()
+    }
+    fn classify_actions<'a>(
+        &'a self,
+        ctx: ToolContext,
+        args: Value,
+    ) -> crate::server::tools::ToolActionFuture<'a> {
+        self.inner.classify_actions(ctx, args)
+    }
+
     fn schema(&self) -> ToolDef {
         self.inner.schema()
     }
@@ -893,6 +904,17 @@ struct SensitiveArgs(Arc<dyn Tool>);
 impl Tool for SensitiveArgs {
     fn id(&self) -> &str {
         self.0.id()
+    }
+
+    fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+        self.0.action_catalogue()
+    }
+    fn classify_actions<'a>(
+        &'a self,
+        ctx: ToolContext,
+        args: Value,
+    ) -> crate::server::tools::ToolActionFuture<'a> {
+        self.0.classify_actions(ctx, args)
     }
 
     fn schema(&self) -> ToolDef {
@@ -1537,6 +1559,7 @@ mod tests {
             push: None,
             model: None,
             suspend: Default::default(),
+            pending_actions: None,
             granted_tools: None,
             agent: None,
             personal_dot: None,

@@ -11,6 +11,13 @@ export interface DotList {
 }
 
 export type DotToolPermission = 'always_allow' | 'always_ask';
+export type DotActionRule = 'allow' | 'ask' | 'deny';
+
+export interface DotAccessSelection {
+	id: string;
+	permission: DotToolPermission;
+	actions: { id: string; rule: DotActionRule }[];
+}
 
 export interface DotAccessTool {
 	id: string;
@@ -22,6 +29,8 @@ export interface DotAccessTool {
 	identity: 'builtin' | 'user' | 'shared';
 	connector_key: string | null;
 	connector_mode: 'always' | 'ask' | 'off' | null;
+	actions: { id: string; description: string }[] | null;
+	action_rules: { id: string; rule: string }[];
 }
 
 export interface DotAccess {
@@ -30,7 +39,7 @@ export interface DotAccess {
 
 export const dotAccessApi = {
 	load: (dotId: string) => request<DotAccess>(`/api/v0/dots/${encodeURIComponent(dotId)}/access`),
-	save: (dotId: string, tools: { id: string; permission: DotToolPermission }[]) =>
+	save: (dotId: string, tools: DotAccessSelection[]) =>
 		request<DotAccess>(`/api/v0/dots/${encodeURIComponent(dotId)}/access`, {
 			method: 'PUT',
 			headers: { 'content-type': 'application/json' },

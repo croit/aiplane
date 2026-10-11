@@ -1133,6 +1133,7 @@ mod tests {
             granted_tools: None,
             agent: None,
             personal_dot: None,
+            pending_actions: None,
             call_id: None,
         }
     }
@@ -1200,6 +1201,7 @@ mod tests {
             granted_tools: None,
             agent: None,
             personal_dot: None,
+            pending_actions: None,
             call_id: None,
         };
         let err = FetchAttachment::new(None)

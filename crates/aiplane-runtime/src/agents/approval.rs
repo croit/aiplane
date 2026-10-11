@@ -18,16 +18,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::spec::AgentSpec;
-use super::spec::model::Permission as Setting;
-use crate::server::tools::Tool;
+use super::spec::model::{ActionRule, Permission as Setting};
 use crate::server::tools::ask_first::{AskFirst, DEFAULT_APPROVAL_TIMEOUT};
+use crate::server::tools::{
+    Tool, ToolAction, ToolActionFuture, ToolContext, ToolError, ToolFuture,
+};
+use serde_json::Value;
+use shared::api::ToolDef;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Permission {
     /// `Some(true)` for `always_ask`, `Some(false)` for `always_allow`,
     /// `None` when the spec says nothing.
     ask: Option<bool>,
     timeout: Duration,
+    actions: BTreeMap<String, ActionRule>,
 }
 
 /// Every tool's permission, as the spec's `main.tool_resources` sets it.
@@ -46,6 +51,7 @@ impl Permissions {
                 let permission = Permission {
                     ask: resource.permission.map(|p| p == Setting::AlwaysAsk),
                     timeout: resource.approval_timeout(),
+                    actions: resource.actions.clone(),
                 };
                 (tool.clone(), permission)
             })
@@ -66,13 +72,96 @@ impl Permissions {
     }
 
     fn gate_with_default(&self, tool: Arc<dyn Tool>, default_ask: bool) -> Arc<dyn Tool> {
-        let set = self.tools.get(tool.id()).copied();
+        let set = self.tools.get(tool.id());
         let ask = set.and_then(|p| p.ask).unwrap_or(default_ask);
-        if !ask {
-            return tool;
-        }
         let timeout = set.map_or(DEFAULT_APPROVAL_TIMEOUT, |p| p.timeout);
-        Arc::new(AskFirst::wrap(tool, timeout))
+        Arc::new(ActionPolicy {
+            inner: tool,
+            ask,
+            timeout,
+            actions: set.map(|p| p.actions.clone()).unwrap_or_default(),
+        })
+    }
+}
+
+struct ActionPolicy {
+    inner: Arc<dyn Tool>,
+    ask: bool,
+    timeout: Duration,
+    actions: BTreeMap<String, ActionRule>,
+}
+
+impl Tool for ActionPolicy {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+    fn schema(&self) -> ToolDef {
+        self.inner.schema()
+    }
+    fn action_catalogue(&self) -> Option<&'static [ToolAction]> {
+        self.inner.action_catalogue()
+    }
+    fn classify_actions<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolActionFuture<'a> {
+        self.inner.classify_actions(ctx, args)
+    }
+    fn max_duration(&self) -> Option<Duration> {
+        self.inner.max_duration()
+    }
+    fn sensitive_args(&self) -> bool {
+        self.inner.sensitive_args()
+    }
+    fn changes_state(&self) -> bool {
+        self.inner.changes_state()
+    }
+    fn read_only(&self) -> bool {
+        self.inner.read_only()
+    }
+    fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
+        Box::pin(async move {
+            let catalogue = self.inner.action_catalogue();
+            for action in self.actions.keys() {
+                if !catalogue.is_some_and(|known| known.iter().any(|entry| entry.id == action)) {
+                    return Err(ToolError::Failed(format!(
+                        "`{}` cannot use action rule `{action}` because this tool does not declare it. Update the tool rules before retrying.",
+                        self.id()
+                    )));
+                }
+            }
+            let classified = self
+                .inner
+                .classify_actions(ctx.clone(), args.clone())
+                .await?;
+            crate::server::tools::ask_first::validate_actions(
+                &ctx,
+                self.id(),
+                catalogue,
+                &classified,
+            )?;
+            let mut ask = self.ask;
+            if let Some(actions) = &classified {
+                ask = false;
+                for action in actions {
+                    match self.actions.get(action) {
+                        Some(ActionRule::Deny) => {
+                            return Err(ToolError::Failed(format!(
+                                "`{}` action `{action}` is denied by the current tool rules. Change the rule before retrying.",
+                                self.id()
+                            )));
+                        }
+                        Some(ActionRule::Ask) => ask = true,
+                        Some(ActionRule::Allow) => {}
+                        None => ask |= self.ask,
+                    }
+                }
+            }
+            if ask {
+                AskFirst::wrap(self.inner.clone(), self.timeout)
+                    .run(ctx, args)
+                    .await
+            } else {
+                self.inner.run(ctx, args).await
+            }
+        })
     }
 }
 
@@ -122,6 +211,182 @@ mod tests {
 
     fn permissions(spec: Value) -> Permissions {
         Permissions::from_spec(&AgentSpec::from_value(&spec).unwrap())
+    }
+
+    struct Actions;
+    impl Tool for Actions {
+        fn id(&self) -> &str {
+            "company_echo"
+        }
+        fn schema(&self) -> ToolDef {
+            Echo.schema()
+        }
+        fn run<'a>(&'a self, _ctx: ToolContext, args: Value) -> ToolFuture<'a> {
+            Box::pin(async move { Ok(args) })
+        }
+        fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+            Some(&[
+                crate::server::tools::ToolAction {
+                    id: "read",
+                    description: "Read",
+                },
+                crate::server::tools::ToolAction {
+                    id: "write",
+                    description: "Write",
+                },
+            ])
+        }
+        fn classify_actions<'a>(
+            &'a self,
+            _ctx: ToolContext,
+            args: Value,
+        ) -> crate::server::tools::ToolActionFuture<'a> {
+            Box::pin(async move {
+                let action = args["action"]
+                    .as_str()
+                    .filter(|a| ["read", "write"].contains(a))
+                    .ok_or_else(|| {
+                        crate::server::tools::ToolError::InvalidArgs("unknown action".into())
+                    })?;
+                Ok(Some(vec![action.to_string()]))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn action_rules_allow_ask_deny_and_validate_before_asking() {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let ctx = ToolContext {
+            suspend: Suspend::Available,
+            ..ToolContext::for_test(db)
+        };
+        for (rule, outcome) in [("allow", 0), ("ask", 1), ("deny", 2)] {
+            let p = permissions(json!({"main":{"tool_resources":{"company_echo":{
+                "permission":"always_ask", "actions":{"read":rule}
+            }}}}));
+            let result = p
+                .gate(Arc::new(Actions))
+                .run(ctx.clone(), json!({"action":"read"}))
+                .await;
+            match outcome {
+                0 => assert_eq!(result.unwrap(), json!({"action":"read"})),
+                1 => assert_eq!(
+                    extract_suspend(&result.unwrap()).unwrap().actions,
+                    Some(vec!["read".to_string()])
+                ),
+                _ => assert!(result.is_err()),
+            }
+            assert!(
+                p.gate(Arc::new(Actions))
+                    .run(ctx.clone(), json!({"action":"invalid"}))
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn resumed_action_mismatch_and_unknown_saved_rules_refuse_execution() {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let ctx = ToolContext {
+            suspend: Suspend::Decided(
+                session_core::db::SuspensionKind::Approval,
+                session_core::db::Decision::AllowOnce,
+            ),
+            pending_actions: Some(crate::server::tools::PendingActionFacts {
+                actions: Some(vec!["write".to_string()]),
+            }),
+            ..ToolContext::for_test(db)
+        };
+        let p = permissions(
+            json!({"main":{"tool_resources":{"company_echo":{"permission":"always_allow"}}}}),
+        );
+        assert!(
+            p.gate(Arc::new(Actions))
+                .run(ctx.clone(), json!({"action":"read"}))
+                .await
+                .is_err()
+        );
+        let p = permissions(
+            json!({"main":{"tool_resources":{"company_echo":{"actions":{"removed":"allow"}}}}}),
+        );
+        assert!(
+            p.gate(Arc::new(Actions))
+                .run(ctx, json!({"action":"write"}))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn connector_ask_is_a_ceiling_over_action_allow() {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let ctx = ToolContext {
+            suspend: Suspend::Available,
+            ..ToolContext::for_test(db)
+        };
+        let p = permissions(json!({"main":{"tool_resources":{"company_echo":{
+            "permission":"always_allow", "actions":{"read":"allow"}
+        }}}}));
+        let tool = Arc::new(AskFirst::new(Actions, Duration::from_secs(30)));
+        let body = p
+            .gate(tool)
+            .run(ctx, json!({"action":"read"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            extract_suspend(&body).unwrap().actions,
+            Some(vec!["read".into()])
+        );
+    }
+
+    #[tokio::test]
+    async fn approved_action_runs_and_unsupported_contract_change_is_refused() {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let mut ctx = ToolContext {
+            suspend: Suspend::Decided(
+                session_core::db::SuspensionKind::Approval,
+                session_core::db::Decision::AllowOnce,
+            ),
+            pending_actions: Some(crate::server::tools::PendingActionFacts {
+                actions: Some(vec!["read".into()]),
+            }),
+            ..ToolContext::for_test(db)
+        };
+        let p = permissions(
+            json!({"main":{"tool_resources":{"company_echo":{"actions":{"read":"ask"}}}}}),
+        );
+        assert_eq!(
+            p.gate(Arc::new(Actions))
+                .run(ctx.clone(), json!({"action":"read"}))
+                .await
+                .unwrap(),
+            json!({"action":"read"})
+        );
+        ctx.pending_actions = Some(crate::server::tools::PendingActionFacts { actions: None });
+        assert!(
+            p.gate(Arc::new(Actions))
+                .run(ctx.clone(), json!({"action":"read"}))
+                .await
+                .is_err()
+        );
+        ctx.pending_actions = Some(crate::server::tools::PendingActionFacts {
+            actions: Some(vec!["read".into()]),
+        });
+        assert!(
+            p.gate(Arc::new(Echo))
+                .run(ctx, json!({"message":"hi"}))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

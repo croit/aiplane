@@ -165,6 +165,7 @@ pub struct ToolContext {
     /// model, or what was decided if it is running again after one. Persisted
     /// interactive and headless turns can pause. See [`crate::suspend`].
     pub suspend: crate::suspend::Suspend,
+    pub pending_actions: Option<PendingActionFacts>,
     /// The tool ids the acting principal is granted, resolved once per chat
     /// turn by the driver. `enable_tools` refuses a key that none of them
     /// belongs to, so a conversation never records an ungranted tool as on.
@@ -219,6 +220,7 @@ impl ToolContext {
             push: None,
             model: None,
             suspend: crate::suspend::Suspend::Unavailable,
+            pending_actions: None,
             granted_tools: None,
             agent: None,
             personal_dot: None,
@@ -484,6 +486,20 @@ pub fn extract_content_parts(body: &Value) -> Option<&Vec<Value>> {
 ///
 /// Implementations are typically zero-sized or hold an `Arc<Service>`; cloning
 /// them must be cheap because they're held in `Arc` by the registry.
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+pub struct ToolAction {
+    pub id: &'static str,
+    pub description: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingActionFacts {
+    pub actions: Option<Vec<String>>,
+}
+
+pub type ToolActionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<Vec<String>>, ToolError>> + Send + 'a>>;
+
 pub trait Tool: Send + Sync + 'static {
     /// Stable identifier. Used as the OpenAI function name and as the lookup
     /// key in `ToolRegistry`. Must be unique across all registered tools.
@@ -493,6 +509,14 @@ pub trait Tool: Send + Sync + 'static {
     /// The OpenAI-shaped definition the model sees. Generated fresh each call
     /// so the schema can interpolate runtime context if needed (most don't).
     fn schema(&self) -> ToolDef;
+
+    fn action_catalogue(&self) -> Option<&'static [ToolAction]> {
+        None
+    }
+
+    fn classify_actions<'a>(&'a self, _ctx: ToolContext, _args: Value) -> ToolActionFuture<'a> {
+        Box::pin(async { Ok(None) })
+    }
 
     /// Executes the tool. Returns a JSON value that's stringified into the
     /// `role: "tool"` message we send back to the model in the next round.

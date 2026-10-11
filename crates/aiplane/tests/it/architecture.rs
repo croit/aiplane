@@ -813,6 +813,10 @@ const DISPATCHERS: &[(Allowed, Option<&str>)] = &[
 /// Who may call `Tool::run` directly rather than through the runner.
 const DIRECT_TOOL_RUNS: &[Allowed] = &[
     Allowed {
+        path: "aiplane-runtime/src/agents/approval.rs",
+        why: "the shared permission gate classifies a granted invocation before allowing, denying or suspending its original call",
+    },
+    Allowed {
         path: "aiplane-runtime/src/persona/live.rs",
         why: "a personal Dot wrapper reloads owner grants, active selection and approval rules before dispatch through GrantedToolSource",
     },
@@ -841,6 +845,41 @@ const DIRECT_TOOL_RUNS: &[Allowed] = &[
         why: "a connector verifier resolves through the principal's grant-bounded MCP layer",
     },
 ];
+
+#[test]
+fn action_rules_classify_and_validate_before_using_shared_approvals() {
+    let sources = production_sources();
+    for (path, approval) in [
+        ("aiplane-runtime/src/agents/approval.rs", "AskFirst::wrap"),
+        (
+            "aiplane-runtime/src/server/tools/ask_first.rs",
+            "match approval(",
+        ),
+    ] {
+        let source = sources
+            .iter()
+            .find(|source| source.rel == path)
+            .expect("the shared permission and approval implementations must exist");
+        let run = source
+            .code
+            .split_once("fn run")
+            .expect("the policy implements Tool::run")
+            .1;
+        let classifier = run
+            .find(".classify_actions(")
+            .expect("permission and approval gates must use the tool's classifier");
+        let validation = run
+            .find("validate_actions(")
+            .expect("permission and approval gates must share action-fact validation");
+        let approval = run
+            .find(approval)
+            .expect("action rules must use the existing approval mechanism");
+        assert!(
+            classifier < validation && validation < approval,
+            "{path} must classify and validate an invocation before using its approval"
+        );
+    }
+}
 
 #[test]
 fn personal_dot_calls_revalidate_access_before_execution() {

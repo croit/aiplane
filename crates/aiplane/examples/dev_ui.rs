@@ -29,7 +29,8 @@ use std::sync::Arc;
 
 use aiplane::rama_server::{RamaState, SessionStore, router};
 use aiplane_core::server::config::{
-    ComfyuiConfig, FeedbackConfig, GatewayConfig, RagConfig, SkillsConfig, TypstConfig,
+    ComfyuiConfig, FeedbackConfig, GatewayConfig, RagConfig, SandboxConfig, SkillsConfig,
+    TypstConfig,
 };
 use aiplane_core::server::rbac::RoleConfig;
 use aiplane_core::server::rbac::{Resolver, config::RbacConfig, config::RoleMapping};
@@ -77,6 +78,13 @@ async fn main() -> anyhow::Result<()> {
     //   voice mock: GET /models → `demo-whisper`
     //              POST /audio/transcriptions → JSON
     let chat_mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/run"))
+        .respond_with(ResponseTemplate::new(503).set_body_json(shared::sandbox::RunError {
+            error: "The UI fixture does not execute sandbox containers. Use a configured sandbox runner for execution.".into(),
+        }))
+        .mount(&chat_mock)
+        .await;
     Mock::given(method("GET"))
         .and(path("/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -166,6 +174,7 @@ async fn main() -> anyhow::Result<()> {
                         message["role"] == "user"
                             && message["content"].as_str().is_some_and(|content| {
                                 content.starts_with("Dot background approval probe")
+                                    || content.starts_with("Dot action approval probe")
                             })
                     })
                 })
@@ -173,18 +182,40 @@ async fn main() -> anyhow::Result<()> {
         })
         .respond_with(|request: &wiremock::Request| {
             let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap_or_default();
-            let completed = body["messages"].as_array().is_some_and(|messages| {
+            let browser_probe = body["messages"].as_array().is_some_and(|messages| {
                 messages.iter().any(|message| {
-                    message["role"] == "tool"
-                        && message["tool_call_id"] == "dot-background-memory"
+                    message["role"] == "user"
+                        && message["content"]
+                            .as_str()
+                            .is_some_and(|content| content.starts_with("Dot action approval probe"))
                 })
             });
-            let delta = if completed {
-                serde_json::json!({"content": "The approved background lesson was recorded."})
+            let (call_id, tool, arguments, content) = if browser_probe {
+                (
+                    "dot-action-browser",
+                    "browse_page",
+                    serde_json::json!({"action": "navigate", "url": "https://example.com"}),
+                    "The browser action probe finished.",
+                )
             } else {
-                serde_json::json!({"tool_calls": [{"index": 0, "id": "dot-background-memory",
-                    "type": "function", "function": {"name": "remember",
-                    "arguments": serde_json::json!({"content": "Approved background lesson.", "kind": "fact"}).to_string()}}]})
+                (
+                    "dot-background-memory",
+                    "remember",
+                    serde_json::json!({"content": "Approved background lesson.", "kind": "fact"}),
+                    "The approved background lesson was recorded.",
+                )
+            };
+            let completed = body["messages"].as_array().is_some_and(|messages| {
+                messages
+                    .iter()
+                    .any(|message| message["role"] == "tool" && message["tool_call_id"] == call_id)
+            });
+            let delta = if completed {
+                serde_json::json!({"content": content})
+            } else {
+                serde_json::json!({"tool_calls": [{"index": 0, "id": call_id,
+                    "type": "function", "function": {"name": tool,
+                    "arguments": arguments.to_string()}}]})
             };
             completion(&body, delta)
         })
@@ -242,6 +273,8 @@ async fn main() -> anyhow::Result<()> {
 
     // --- RamaState (in-memory SQLite + chat + transcription pools) ---
     let pool = db::open(std::path::Path::new(":memory:")).await?;
+    // SQLite drops the in-memory database when the pool retires its last idle connection.
+    let _fixture_connection = pool.acquire().await?;
     let mut pools = HashMap::new();
     pools.insert(
         "chat".to_string(),
@@ -549,6 +582,12 @@ async fn main() -> anyhow::Result<()> {
         ],
     };
     let config = Config {
+        sandbox: Some(SandboxConfig {
+            enabled: true,
+            runner_url: chat_mock.uri(),
+            timeout_secs: 5,
+            max_artifact_bytes: 25 * 1024 * 1024,
+        }),
         typst: Some(TypstConfig {
             templates_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../examples/typst-templates"),
@@ -632,13 +671,28 @@ async fn main() -> anyhow::Result<()> {
     let skill_store = Arc::new(SkillStore::load(skills_dir));
     let typst_family = aiplane::tool_families::typst();
     let typst_metas = aiplane_runtime::server::state::typst_template_metas(&config);
-    let base_tools = aiplane::tool_registry::base_registry(rbac.clone(), None, true)
-        .with(aiplane_tools::generate_image::GenerateImage)
-        .with(aiplane_tools::edit_image::EditImage)
-        .with_family_replaced(
-            aiplane_core::server::tool_naming::TYPST_PREFIX,
-            typst_family(&config, &Default::default()),
-        );
+    let runtime =
+        aiplane_runtime::server::state::RuntimeSettings::new_handle(config.public_url_fallback());
+    let sandbox_client = aiplane_runtime::server::tools::sandbox::SandboxClient::new(
+        Arc::new(
+            config
+                .sandbox
+                .clone()
+                .expect("seeded sandbox configuration"),
+        ),
+        runtime.clone(),
+    );
+    let base_tools =
+        aiplane::tool_registry::base_registry(rbac.clone(), Some(sandbox_client.clone()), true)
+            .with(aiplane_runtime::server::tools::sandbox::BrowsePage(
+                sandbox_client.clone(),
+            ))
+            .with(aiplane_tools::generate_image::GenerateImage)
+            .with(aiplane_tools::edit_image::EditImage)
+            .with_family_replaced(
+                aiplane_core::server::tool_naming::TYPST_PREFIX,
+                typst_family(&config, &Default::default()),
+            );
     let bootstrap_tool = enable_tools::EnableTools::from_registry(&base_tools);
     let tools = Arc::new(
         base_tools
@@ -664,6 +718,8 @@ async fn main() -> anyhow::Result<()> {
         chat_updates: ChatUpdateRegistry::default(),
     });
     let mut app = AppState::new(config, pool.clone(), registry, tools, rbac)
+        .with_runtime_handle(runtime)
+        .with_sandbox_client(sandbox_client)
         .with_skills(skill_store)
         .with_user_skills(user_skill_store)
         .with_typst_templates(typst_metas)

@@ -27,6 +27,17 @@ impl Tool for LivePersonalDotTool {
         self.initial.id()
     }
 
+    fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+        self.initial.action_catalogue()
+    }
+    fn classify_actions<'a>(
+        &'a self,
+        ctx: ToolContext,
+        args: Value,
+    ) -> crate::server::tools::ToolActionFuture<'a> {
+        self.initial.classify_actions(ctx, args)
+    }
+
     fn schema(&self) -> ToolDef {
         self.initial.schema()
     }
@@ -170,6 +181,19 @@ mod tests {
         }
         fn schema(&self) -> ToolDef {
             Echo.schema()
+        }
+        fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+            Some(&[crate::server::tools::ToolAction {
+                id: "read",
+                description: "Read caller identity",
+            }])
+        }
+        fn classify_actions<'a>(
+            &'a self,
+            _ctx: ToolContext,
+            _args: Value,
+        ) -> crate::server::tools::ToolActionFuture<'a> {
+            Box::pin(async { Ok(Some(vec!["read".into()])) })
         }
         fn run<'a>(&'a self, ctx: ToolContext, _args: Value) -> ToolFuture<'a> {
             Box::pin(async move {
@@ -317,6 +341,28 @@ mod tests {
         )
         .await
         .unwrap();
+        assert!(tool.run(ctx, json!({})).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn live_dot_actions_reload_current_rule_and_preserve_grant_ceiling() {
+        let (tool, ctx) = fixture().await;
+        for (rule, expected) in [("allow", 0), ("ask", 1), ("deny", 2)] {
+            save(&tool,&ctx,json!({"main":{"tools":["company_echo"],"tool_resources":{"company_echo":{"actions":{"read":rule}}}}})).await;
+            let result = tool.run(ctx.clone(), json!({})).await;
+            match expected {
+                0 => assert_eq!(result.unwrap()["user"], json!("owner")),
+                1 => assert_eq!(
+                    extract_suspend(&result.unwrap()).unwrap().actions,
+                    Some(vec!["read".into()])
+                ),
+                _ => assert!(result.is_err()),
+            }
+        }
+        save(&tool,&ctx,json!({"main":{"tools":["company_echo"],"tool_resources":{"company_echo":{"actions":{"read":"allow"}}}}})).await;
+        user_tool_prefs::set(&tool.state.db, "owner", "company_echo", false)
+            .await
+            .unwrap();
         assert!(tool.run(ctx, json!({})).await.is_err());
     }
 

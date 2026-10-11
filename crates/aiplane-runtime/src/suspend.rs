@@ -57,6 +57,8 @@ pub struct SuspendRequest {
     /// the slots the model may see. Never anything a resume relies on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<String>>,
 }
 
 /// The paused sub-agent run a call is waiting on.
@@ -77,6 +79,7 @@ impl SuspendRequest {
             message: None,
             timeout_secs: timeout.as_secs(),
             on_timeout: TimeoutFallback::Deny,
+            actions: None,
             child: None,
             context: None,
         }
@@ -91,6 +94,7 @@ impl SuspendRequest {
             message: Some(question.into()),
             timeout_secs: timeout.as_secs(),
             on_timeout: TimeoutFallback::Deny,
+            actions: None,
             child: None,
             context: Some(context),
         }
@@ -105,6 +109,7 @@ impl SuspendRequest {
             message: Some(message.into()),
             timeout_secs: timeout.as_secs(),
             on_timeout: TimeoutFallback::Deny,
+            actions: None,
             child: None,
             context: None,
         }
@@ -266,6 +271,7 @@ mod tests {
                 kind: SuspensionKind::Approval,
                 message: None,
                 tool_call: PendingCall {
+                    actions: None,
                     id: "call-1".into(),
                     name: "company_echo".into(),
                     arguments: "{}".into(),

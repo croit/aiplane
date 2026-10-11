@@ -368,3 +368,15 @@ dot-background-error-pending-delete = Cette automatisation est en cours ou atten
 dot-background-error-unavailable = Ce Dot est inactif ou indisponible. Activez-le ou choisissez un autre assistant avant d’exécuter cette automatisation.
 dot-background-error-busy = La conversation sélectionnée est en cours ou attend une approbation. Terminez ou arrêtez le tour avant de la réutiliser.
 dot-background-error-recording = Le lancement n’a pas pu être enregistré. Aucune exécution du modèle n’a démarré. Réessayez ; contactez votre administrateur si l’erreur persiste.
+
+dot-action-heading = Actions
+dot-action-count = Règles explicites : { $count }
+dot-action-inherit = Utiliser la règle de l’outil
+dot-action-inheritance = Les actions sans règle spécifique utilisent celle de l’outil. Les restrictions du connecteur s’appliquent toujours.
+dot-action-correction-required = Corrigez les actions indisponibles ou les règles invalides avant d’enregistrer, ou désélectionnez l’outil.
+dot-action-unavailable = Cette action enregistrée n’est plus disponible. Supprimez sa règle avant d’enregistrer.
+dot-action-remove = Supprimer la règle
+dot-action-remove-aria = Supprimer la règle pour { $action }
+dot-action-rule = Règle pour { $action }
+dot-action-unknown-rule = Règle inconnue : { $rule }
+dot-action-deny = Interdire

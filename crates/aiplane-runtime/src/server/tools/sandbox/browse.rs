@@ -322,7 +322,29 @@ enum BrowseAction {
 }
 
 impl BrowseAction {
-    fn as_str(self) -> &'static str {
+    const ALL: [Self; 8] = [
+        Self::Navigate,
+        Self::Read,
+        Self::Click,
+        Self::Fill,
+        Self::Screenshot,
+        Self::Back,
+        Self::Console,
+        Self::Close,
+    ];
+    const fn description(self) -> &'static str {
+        match self {
+            Self::Navigate => "Go to an HTTP or HTTPS page.",
+            Self::Read => "Read page text and numbered interactive elements.",
+            Self::Click => "Click a numbered element.",
+            Self::Fill => "Type into a numbered field and optionally submit it.",
+            Self::Screenshot => "Capture a picture of the current page.",
+            Self::Back => "Go back in the browser history.",
+            Self::Console => "Read JavaScript console output and page errors.",
+            Self::Close => "End the browser session.",
+        }
+    }
+    const fn as_str(self) -> &'static str {
         match self {
             BrowseAction::Navigate => "navigate",
             BrowseAction::Read => "read",
@@ -336,9 +358,41 @@ impl BrowseAction {
     }
 }
 
+const ACTION_CATALOGUE: [crate::server::tools::ToolAction; 8] = {
+    let mut catalogue = [crate::server::tools::ToolAction {
+        id: "",
+        description: "",
+    }; 8];
+    let mut index = 0;
+    while index < BrowseAction::ALL.len() {
+        let action = BrowseAction::ALL[index];
+        catalogue[index] = crate::server::tools::ToolAction {
+            id: action.as_str(),
+            description: action.description(),
+        };
+        index += 1;
+    }
+    catalogue
+};
+
 impl Tool for BrowsePage {
     fn id(&self) -> &str {
         "browse_page"
+    }
+
+    fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+        Some(&ACTION_CATALOGUE)
+    }
+    fn classify_actions<'a>(
+        &'a self,
+        _ctx: ToolContext,
+        args: Value,
+    ) -> crate::server::tools::ToolActionFuture<'a> {
+        Box::pin(async move {
+            Ok(Some(vec![
+                ActionPlan::parse(args)?.action.as_str().to_string(),
+            ]))
+        })
     }
 
     fn max_duration(&self) -> Option<std::time::Duration> {
@@ -376,8 +430,7 @@ impl Tool for BrowsePage {
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["navigate", "read", "click", "fill", "screenshot",
-                                 "back", "console", "close"],
+                        "enum": BrowseAction::ALL.map(BrowseAction::as_str),
                         "description": "`navigate` (needs `url`) — go to a page. \
                                         `read` — page text + numbered interactive \
                                         elements. `click` (needs `element`) — click one \
@@ -433,13 +486,7 @@ impl Tool for BrowsePage {
 
     fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         Box::pin(async move {
-            let args: BrowseArgs = serde_json::from_value(args).map_err(|e| {
-                ToolError::InvalidArgs(format!(
-                    "expected {{action, url?, element?, text?, submit?, max_chars?, \
-                     full_page?}}: {e}"
-                ))
-            })?;
-            let plan = ActionPlan::validate(&args)?;
+            let plan = ActionPlan::parse(args)?;
 
             // Egress is the whole premise. The tool isn't registered without
             // it, so this only trips if a runner changed under a running
@@ -555,6 +602,15 @@ struct ActionPlan {
 }
 
 impl ActionPlan {
+    fn parse(args: Value) -> Result<Self, ToolError> {
+        let args: BrowseArgs = serde_json::from_value(args).map_err(|e| {
+            ToolError::InvalidArgs(format!(
+                "expected {{action, url?, element?, text?, submit?, max_chars?, full_page?}}: {e}"
+            ))
+        })?;
+        Self::validate(&args)
+    }
+
     fn validate(args: &BrowseArgs) -> Result<Self, ToolError> {
         let url = match args.action {
             BrowseAction::Navigate => {
@@ -770,6 +826,59 @@ mod tests {
         let a: BrowseArgs = serde_json::from_value(v)
             .map_err(|e| ToolError::InvalidArgs(format!("bad args: {e}")))?;
         ActionPlan::validate(&a)
+    }
+
+    #[tokio::test]
+    async fn action_catalogue_and_classifier_share_the_validated_browser_plan() {
+        let tool = BrowsePage(SandboxClient::new(
+            Arc::new(aiplane_core::server::config::SandboxConfig {
+                enabled: true,
+                runner_url: "http://127.0.0.1:9".into(),
+                timeout_secs: 1,
+                max_artifact_bytes: 1024,
+            }),
+            crate::server::state::RuntimeSettings::new_handle("https://gw.example"),
+        ));
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let ctx = ToolContext::for_test(db);
+        let catalogue = tool.action_catalogue().unwrap();
+        assert_eq!(
+            catalogue.iter().map(|a| a.id).collect::<Vec<_>>(),
+            BrowseAction::ALL.map(BrowseAction::as_str)
+        );
+        for value in [
+            json!({"action":"navigate"}),
+            json!({"action":"navigate","url":"file:///secret"}),
+            json!({"action":"fill","element":1}),
+            json!({"action":"unknown"}),
+        ] {
+            assert!(
+                tool.classify_actions(ctx.clone(), value.clone())
+                    .await
+                    .is_err()
+            );
+            assert!(matches!(
+                tool.run(ctx.clone(), value).await,
+                Err(ToolError::InvalidArgs(_))
+            ));
+        }
+        assert_eq!(
+            tool.classify_actions(
+                ctx.clone(),
+                json!({"action":"fill","element":1,"text":"","submit":true})
+            )
+            .await
+            .unwrap(),
+            Some(vec!["fill".into()])
+        );
+        assert_eq!(
+            tool.classify_actions(ctx, json!({"action":"read","max_chars":1}))
+                .await
+                .unwrap(),
+            Some(vec!["read".into()])
+        );
     }
 
     /// Each action states its own requirements, so the model gets told what is

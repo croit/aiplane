@@ -3,7 +3,7 @@
 Status: implementation in progress; personal Dot ownership, active lifecycle,
 the first web management page, manually managed Dot memory, recent activity,
 owner-scoped memory/activity APIs, private Dot chat sessions, and personal
-tool selection with durable approvals, and Dot-bound schedules and webhooks are implemented.
+tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, and Dot-bound schedules and webhooks are implemented.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -67,7 +67,7 @@ Dot cards link to the existing schedule and webhook creation forms with that
 Dot selected.
 
 Access changes reuse the agent's draft spec, revisions and audited save path.
-The API accepts `{"tools":[{"id":"search_web","permission":"always_allow"}]}`;
+The API accepts `{"tools":[{"id":"browse_page","permission":"always_ask","actions":[{"id":"read","rule":"allow"},{"id":"fill","rule":"deny"}]}]}`;
 an empty list denies every tool. Duplicate IDs, unavailable tools and unknown
 permissions are rejected. Only the owner can read or update these settings,
 including while the Dot is inactive. Tool labels and descriptions use the
@@ -76,6 +76,16 @@ a grouped capability. A read-only declaration defaults to Allow; writes and
 unknown effects default to Ask before each call. Explicit rules may narrow or
 permit an action within the owner's existing authority. A connector's own
 Ask mode continues to require approval even when the Dot rule is Allow.
+
+Tools with a declared action catalogue expose an **Actions** disclosure. Each
+actual action can inherit the tool rule or use Allow, Ask or Deny. The implementation supports `browse_page` and batched `browser_control`; connector tools without that contract
+retain their existing tool rules. Action IDs and descriptions come from the
+tool implementation. Unavailable saved actions remain visible and must be
+removed before saving. Current overrides and grants are checked before any
+execution, including after approval; action Allow cannot bypass connector Ask.
+The saved pending call carries ordered action IDs, and incompatible changes
+to its classification refuse execution. See [action rules](dots-action-rules.md)
+for the runtime and wire contract.
 
 AskFirst persists a suspended call in the existing chat approval system. The
 owner can approve once or deny in chat or Inbox. Approval refers to the original

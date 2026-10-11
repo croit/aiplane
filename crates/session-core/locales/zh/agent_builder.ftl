@@ -368,3 +368,15 @@ dot-background-error-pending-delete = 此自动化正在运行或等待审批。
 dot-background-error-unavailable = 此 Dot 未启用或不可用。执行此自动化前请启用它或选择其他助手。
 dot-background-error-busy = 所选对话正在运行或等待审批。请先完成或停止该轮执行，再复用此对话。
 dot-background-error-recording = 无法保存此次运行记录。模型尚未开始执行。请重试；如果错误持续出现，请联系管理员。
+
+dot-action-heading = 操作
+dot-action-count = 明确规则：{ $count }
+dot-action-inherit = 使用工具规则
+dot-action-inheritance = 未设置单独规则的操作将使用工具规则。连接器的限制仍然有效。
+dot-action-correction-required = 保存前请修正不可用的操作或无效规则，或者取消选择该工具。
+dot-action-unavailable = 此已保存的操作已不可用。保存前请移除其规则。
+dot-action-remove = 移除规则
+dot-action-remove-aria = 移除 { $action } 的规则
+dot-action-rule = { $action } 的规则
+dot-action-unknown-rule = 未知规则：{ $rule }
+dot-action-deny = 禁止

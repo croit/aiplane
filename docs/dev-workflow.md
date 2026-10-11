@@ -351,8 +351,14 @@ This runs the `dev_ui` example (`crates/aiplane/examples/dev_ui.rs`), which boot
 The example maps the debug `/__dev/session` user's `admin` group to the admin
 role, so that URL shows the same setup hints as the printed admin seed cookie.
 It uses the same built-in tool registry as the real binary and loads
-the example Typst templates. Tools whose operator backend is missing (GeoIP,
-sandbox) still appear to the seeded admin as disabled rows with setup links.
+the example Typst templates. Its sandbox client uses the same registry and
+`browse_page` action catalogue as production; the local mock refuses `/run`
+with an explicit fixture error and does not execute containers. This supports
+access-rule UI checks, not sandbox execution verification. The exact prompt
+`Dot action approval probe` produces a `browse_page` navigation call for
+checking action revocation through the real Inbox flow. Tools whose operator
+backend is missing (GeoIP) appear as disabled rows with setup links. A retained
+SQLite connection keeps the fixture database alive while the server is idle.
 The mock has no file storage or RAG indexer, so dependent tools, including the
 tools for its mock image pool, are also shown disabled. It initializes the
 same Web Push sender as production so device notification settings can be

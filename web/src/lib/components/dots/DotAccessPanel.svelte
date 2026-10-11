@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { dotAccessApi, type Dot, type DotAccessTool, type DotToolPermission } from '#lib/dots.js';
+	import { dotAccessApi, type Dot, type DotAccessTool, type DotToolPermission, type DotActionRule } from '#lib/dots.js';
+	import { actionRows, setActionRule, accessSelections } from '#lib/dot-action-rules.js';
 	import { searchCapabilities } from '#lib/capability-picker.js';
 	import { t } from '#lib/i18n.svelte.js';
 
@@ -12,6 +13,8 @@
 	let query = $state('');
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
+	let openActions = $state<Record<string, boolean>>({});
+	const selections = $derived(accessSelections(tools));
 	const shown = $derived(searchCapabilities(tools.map((tool) => ({
 		...tool, key: tool.id, kind: 'tool', title: tool.label, group: tool.connector_key ?? '', order: 0, icon: null
 	})), query));
@@ -42,12 +45,26 @@
 		notice = null;
 	}
 
+	function changeAction(toolId: string, actionId: string, rule: DotActionRule | null) {
+		tools = tools.map((tool) => tool.id === toolId ? setActionRule(tool, actionId, rule) : tool);
+		dirty = true;
+		notice = null;
+	}
+
+	function toggleActions(toolId: string, event: Event) {
+		const details = event.currentTarget;
+		if (details instanceof HTMLDetailsElement && details.isConnected) {
+			openActions[toolId] = details.open;
+		}
+	}
+
 	async function save() {
+		if (selections === null) return;
 		saving = true;
 		error = null;
 		notice = null;
 		try {
-			tools = (await dotAccessApi.save(dot.id, tools.filter((tool) => tool.selected).map(({ id, permission }) => ({ id, permission })))).tools;
+			tools = (await dotAccessApi.save(dot.id, selections)).tools;
 			dirty = false;
 			notice = t('dot-access-saved');
 		} catch (caught) {
@@ -67,6 +84,7 @@
 		{#if loading}
 			<div class="skeleton h-16 w-full"></div>
 		{:else if loaded}
+			{#if selections === null}<div class="alert alert-warning py-2" role="alert"><span>{t('dot-action-correction-required')}</span></div>{/if}
 			<label class="input input-sm w-full"><input bind:value={query} aria-label={t('chat-render-tools-search-placeholder')} placeholder={t('chat-render-tools-search-placeholder')} /></label>
 			<ul class="max-h-96 space-y-3 overflow-y-auto">
 				{#each shown as tool (tool.id)}
@@ -90,6 +108,38 @@
 							</select>
 						</label>
 						{#if tool.connector_mode === 'ask'}<p class="mt-1 text-xs text-base-content/60">{t('dot-access-connector-asks')}</p>{/if}
+						{#if tool.actions?.length || tool.action_rules.length}
+							<details class="collapse collapse-arrow mt-2 border border-base-300" open={openActions[tool.id] ?? false} ontoggle={(event) => toggleActions(tool.id, event)}>
+								<summary class="collapse-title min-h-0 py-2 text-xs font-medium"><span>{t('dot-action-heading')}</span><span class="badge badge-outline badge-sm ml-2">{t('dot-action-count', { count: tool.action_rules.length })}</span></summary>
+								<div class="collapse-content min-w-0 space-y-3">
+									<p class="text-xs text-base-content/60">{t('dot-action-inheritance')}</p>
+									<ul class="space-y-3">
+										{#each actionRows(tool) as action (action.id)}
+											<li class="rounded-box border border-base-300 p-2">
+												<code class="block break-all text-xs">{action.id}</code>
+												{#if action.description}<p class="mt-1 break-words text-xs text-base-content/60">{action.description}</p>{/if}
+												{#if !action.available}
+													<p class="mt-1 text-xs text-warning">{t('dot-action-unavailable')}</p>
+													<code class="mt-1 block break-all text-xs">{action.rule}</code>
+													<button class="btn btn-ghost btn-xs mt-1" type="button" disabled={saving} aria-label={t('dot-action-remove-aria', { action: action.id })} onclick={() => changeAction(tool.id, action.id, null)}>{t('dot-action-remove')}</button>
+												{:else}
+													<label class="mt-2 flex flex-col gap-1">
+														<span class="text-xs">{t('dot-action-rule', { action: action.id })}</span>
+														<select class="select select-sm w-full" value={action.rule ?? ''} disabled={!tool.selected || saving} onchange={(event) => changeAction(tool.id, action.id, (event.currentTarget.value || null) as DotActionRule | null)}>
+															{#if action.rule && !['allow', 'ask', 'deny'].includes(action.rule)}<option value={action.rule} disabled>{t('dot-action-unknown-rule', { rule: action.rule })}</option>{/if}
+															<option value="">{t('dot-action-inherit')}</option>
+															<option value="allow">{t('dot-access-allow')}</option>
+															<option value="ask">{t('dot-access-ask')}</option>
+															<option value="deny">{t('dot-action-deny')}</option>
+														</select>
+													</label>
+												{/if}
+											</li>
+										{/each}
+									</ul>
+								</div>
+							</details>
+						{/if}
 					</li>
 				{:else}
 					<li class="text-base-content/60">{tools.length ? t('searchable-select-no-results') : t('dot-access-empty')}</li>
@@ -99,7 +149,7 @@
 		{/if}
 		<div class="flex flex-wrap justify-end gap-2">
 			<button class="btn btn-ghost btn-sm" type="button" disabled={loading || saving} onclick={() => void refresh()}>{t('dot-access-reload')}</button>
-			{#if loaded}<button class="btn btn-sm" type="button" disabled={!dirty || loading || saving} onclick={() => void save()}>{saving ? t('dot-access-saving') : t('memory-save-button')}</button>{/if}
+			{#if loaded}<button class="btn btn-sm" type="button" disabled={!dirty || loading || saving || selections === null} onclick={() => void save()}>{saving ? t('dot-access-saving') : t('memory-save-button')}</button>{/if}
 		</div>
 	</div>
 </details>
