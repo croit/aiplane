@@ -200,6 +200,30 @@ async fn innermost(
         let Some(child) = current.child_turn.clone() else {
             break;
         };
+        let owner = chat::user_for_turn(db, &current.turn_id).await?;
+        let linked = match aiplane_agents::db::child_sessions::child_of_turn(db, &child).await? {
+            Some(aiplane_agents::db::child_sessions::LocalChild::Principal(session)) => {
+                owner.is_none()
+                    && session.parent_turn_id.as_deref() == Some(current.turn_id.as_str())
+            }
+            Some(aiplane_agents::db::child_sessions::LocalChild::Personal(binding)) => {
+                owner.as_deref() == Some(binding.session.owner_user_id.as_str())
+                    && binding.link.parent_turn_id == current.turn_id
+                    && binding.link.parent_tool_call_id == current.tool_call.id
+                    && current.tool_call.name == super::router::FORWARD_TOOL_NAME
+                    && aiplane_agents::db::child_sessions::root_session_id(
+                        db,
+                        &binding.session.owner_user_id,
+                        &binding.session.session_id,
+                    )
+                    .await?
+                    .is_some()
+            }
+            None => false,
+        };
+        if !linked {
+            break;
+        }
         match chat::get_suspension(db, &child).await? {
             Some(next) => current = next,
             None => break,
@@ -518,6 +542,64 @@ impl InboxList {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn personal_inbox_does_not_follow_a_forged_other_owner_child_reference() {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let now = jiff::Timestamp::now();
+        for owner in ["caller", "other"] {
+            aiplane_core::server::db::users::upsert(
+                &db,
+                &aiplane_core::server::db::users::User {
+                    id: owner.into(),
+                    email: format!("{owner}@example.test"),
+                    name: None,
+                    roles: Vec::new(),
+                    created_at: now,
+                    updated_at: now,
+                    timezone: None,
+                    speech_voice: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let mut rows = Vec::new();
+        for (owner, turn, child) in [
+            ("caller", "root", Some("unrelated")),
+            ("other", "unrelated", None),
+        ] {
+            let session = session_core::db::create_session(&db, owner).await.unwrap();
+            session_core::db::create_assistant_turn_in_progress(&db, &session.id, turn, "model")
+                .await
+                .unwrap();
+            let row = session_core::db::TurnSuspension {
+                turn_id: turn.into(),
+                request_id: format!("request-{turn}"),
+                kind: session_core::db::SuspensionKind::Approval,
+                message: None,
+                tool_call: session_core::db::PendingCall {
+                    id: format!("call-{turn}"),
+                    name: "forward_request".into(),
+                    arguments: format!("{{\"private_owner\":\"{owner}\"}}"),
+                    actions: None,
+                },
+                tail: Vec::new(),
+                budget_used: Default::default(),
+                child_turn: child.map(str::to_owned),
+                on_timeout: session_core::db::TimeoutFallback::Deny,
+                expires_at: now,
+                created_at: now,
+                run_context: None,
+            };
+            session_core::db::suspend_turn(&db, &row).await.unwrap();
+            rows.push(row);
+        }
+        let visible = super::innermost(&db, &rows[0]).await.unwrap();
+        assert_eq!(visible, rows[0]);
+        assert!(!visible.tool_call.arguments.contains("other"));
+    }
 
     use aiplane_agents::db::agent_channels::ChannelKind;
 

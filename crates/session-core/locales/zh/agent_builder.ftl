@@ -405,3 +405,6 @@ dot-communication-error-invalid = 通信设置无效。请选择另一个属于�
 dot-communication-error-conflict = 编辑期间通信权限发生了变化。请重新加载后重试。
 dot-communication-error-inactive = 只有两个 Dot 都处于启用状态时才能启用通信。请启用两个 Dot 后重试。
 dot-activity-communication-changed = Dot 通信权限已更改。
+
+dot-communication-error-busy = 委派的对话已在运行。请等待其完成后再次回答。
+dot-communication-error-unavailable = 此 Dot 委派不可用。请在重试前检查处于活动状态的 Dot、通信权限和工具访问权限。

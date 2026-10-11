@@ -196,11 +196,26 @@ pub async fn communication_put(State(state): State<Arc<RamaState>>, req: Request
     )
     .await
     {
-        Ok(ConsentSaved::Saved(_)) => match communication_view(&state, &user.id, &id).await {
-            Ok(Some(view)) => json_ok(StatusCode::OK, view),
-            Ok(None) => not_found(t(lang, "dot-error-not-found")),
-            Err(error) => internal(error),
-        },
+        Ok(ConsentSaved::Saved(edge)) => {
+            if let Some(previous) = body.expected_generation.as_deref()
+                && previous != edge.generation
+                && let Err(error) = aiplane_runtime::agents::resume::cancel_personal_runs_for_edge(
+                    &state,
+                    &user.id,
+                    &edge.caller_dot_id,
+                    &edge.receiver_dot_id,
+                    previous,
+                )
+                .await
+            {
+                return internal(error);
+            }
+            match communication_view(&state, &user.id, &id).await {
+                Ok(Some(view)) => json_ok(StatusCode::OK, view),
+                Ok(None) => not_found(t(lang, "dot-error-not-found")),
+                Err(error) => internal(error),
+            }
+        }
         Ok(ConsentSaved::Missing) => not_found(t(lang, "dot-error-not-found")),
         Ok(ConsentSaved::Invalid) => json_error(
             StatusCode::BAD_REQUEST,
@@ -377,6 +392,7 @@ async fn access_view(
     state: &RamaState,
     user: &aiplane_core::server::db::users::User,
     draft: &str,
+    lang: Lang,
 ) -> Result<DotAccessView, Box<dyn std::error::Error + Send + Sync>> {
     let spec: AgentSpec = serde_json::from_str(draft)?;
     let role_ids = state.rbac.role_ids_for(&user.roles);
@@ -399,7 +415,7 @@ async fn access_view(
     catalog::retain_enabled(&mut allowed, &disabled);
     allowed.retain(|id| !catalog::is_hidden(id));
     allowed.sort();
-    let entries = super::tool_toggles::entries_for_tools(state, &allowed);
+    let entries = super::tool_toggles::entries_for_tools(state, &allowed, lang);
     let registry = state.tools();
     let comfyui = state.comfyui().as_ref().map(|handle| {
         aiplane_runtime::server::comfyui_tool::ComfyuiToolSource::new((**handle).clone())
@@ -439,7 +455,9 @@ async fn access_view(
             label: entry
                 .map(|entry| entry.title.clone())
                 .unwrap_or_else(|| def.function.name.clone()),
-            description: def.function.description.clone(),
+            description: super::tool_toggles::builtin_display_copy(&id, lang)
+                .map(|(_, description)| description)
+                .unwrap_or_else(|| def.function.description.clone()),
             permission,
             read_only,
             identity,
@@ -491,7 +509,7 @@ pub async fn access_get(State(state): State<Arc<RamaState>>, req: Request) -> Re
         Ok(None) => return not_found(t(lang, "dot-error-not-found")),
         Err(error) => return internal(error),
     };
-    match access_view(&state, &user, &dot.agent.draft_spec).await {
+    match access_view(&state, &user, &dot.agent.draft_spec, lang).await {
         Ok(view) => json_ok(StatusCode::OK, view),
         Err(error) => internal(error),
     }
@@ -513,7 +531,7 @@ pub async fn access_put(State(state): State<Arc<RamaState>>, req: Request) -> Re
         Ok(body) => body,
         Err(response) => return response,
     };
-    let inventory = match access_view(&state, &user, &dot.agent.draft_spec).await {
+    let inventory = match access_view(&state, &user, &dot.agent.draft_spec, lang).await {
         Ok(view) => view,
         Err(error) => return internal(error),
     };
@@ -573,7 +591,7 @@ pub async fn access_put(State(state): State<Arc<RamaState>>, req: Request) -> Re
     .await
     {
         Ok(agents_db::PersonalDotDraftSaved::Saved) => {
-            match access_view(&state, &user, &draft).await {
+            match access_view(&state, &user, &draft, lang).await {
                 Ok(view) => json_ok(StatusCode::OK, view),
                 Err(error) => internal(error),
             }
@@ -615,7 +633,17 @@ pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Re
     )
     .await
     {
-        Ok(true) => json_ok(StatusCode::OK, json!({ "id": id, "active": body.active })),
+        Ok(true) => {
+            if !body.active
+                && let Err(error) = aiplane_runtime::agents::resume::cancel_personal_runs_for_dot(
+                    &state, &user.id, &id,
+                )
+                .await
+            {
+                return internal(error);
+            }
+            json_ok(StatusCode::OK, json!({ "id": id, "active": body.active }))
+        }
         Ok(false) => {
             let owned = agents_db::list_personal_dots(&state.db, &user.id).await;
             match owned {

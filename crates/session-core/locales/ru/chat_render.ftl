@@ -99,3 +99,7 @@ chat-render-canvas-assets-count = { $count ->
 chat-render-canvas-assets-empty = В эту беседу пока не добавлены файлы.
 chat-render-canvas-asset-download = Скачать файл
 chat-render-canvas-close-title = Закрыть холст
+
+chat-render-delegated-readonly-banner = Делегированный разговор — история только для чтения. Продолжайте, одобряйте или останавливайте эту работу через основной разговор или входящие.
+chat-render-delegated-root-link = Открыть основной разговор
+chat-render-delegated-root-unavailable = Основной разговор недоступен. Эта история остаётся доступной только для чтения.

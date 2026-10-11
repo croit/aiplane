@@ -1184,6 +1184,21 @@ pub async fn revoke_share(State(state): State<Arc<RamaState>>, req: Request) -> 
 pub async fn delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let user = or_return!(require_agent_manager(&state, &req).await);
     let (agent, _) = or_return!(agent_at(&state, &req, &user, 0, Access::Write).await);
+    match agents_db::personal_dot_owner(&state.db, &agent.principal.id).await {
+        Ok(Some(owner)) => {
+            if let Err(error) = aiplane_runtime::agents::resume::cancel_personal_runs_for_dot(
+                &state,
+                &owner,
+                &agent.principal.id,
+            )
+            .await
+            {
+                return internal(error);
+            }
+        }
+        Ok(None) => {}
+        Err(error) => return internal(error),
+    }
     match agents_db::delete(&state.db, &agent.principal.id, &user.id).await {
         Ok(_) => no_content(),
         Err(err) => internal(err),

@@ -35,6 +35,7 @@ message rather than being absent.
 | `get_current_timestamp` | — | `get_current_timestamp` | Timezone-aware current date/time, from the caller's `users.timezone`. |
 | `convert_currency` | — | `convert_currency` | Currency conversion at daily ECB reference rates. |
 | `ask_user` | yes | `ask_user` | Ask the user a short question mid-turn and wait for the answer, rather than guessing. Needs a live chat turn *and* someone watching it; times out and reports `answered: false` otherwise. |
+| `forward_request` | yes | `forward_request` | An active personal Dot sends an explicit task to another active Dot belonging to its owner. Both directed consents and current tool access are required; the receiver uses its own tools, memory and approval rules. Ordinary chats and stateless `/v1` requests do not offer this personal variant. See [Dot communication](dots-communication.md). |
 | `notify_user` | — | `notify_user` | Send the user a Web Push notification (long work finished, a scheduled action found something). Deliberately *not* chat-only — a notification lands on a device, not in a conversation, so it also works from the headless scheduler. Hard limit of **one per turn**, latched in `PushNotifier`; errors clearly when `[push]` is unconfigured or the user has no subscribed device. |
 | `get_user_location` | — | `get_user_location` | Caller's location: a browser GPS prompt when a live chat turn is watching, else coarse GeoIP. |
 | `generate_qr_code` | yes | `generate_qr_code` | QR codes (URL, WiFi, vCard, SEPA) as PNG/SVG, rendered in-process. |
@@ -232,7 +233,9 @@ the user threw away.
 ## Dynamic families
 
 These have no fixed id — one tool per discovered template / workflow /
-connected server. The drift guard matches them by prefix.
+connected server. The drift guard matches them by prefix. Auditing, approval
+and live personal-Dot authorization wrappers retain the wrapped tool's actual
+ID and schema; they do not add another tool or toggle.
 
 | Tool IDs | When they are available | Toggle key |
 |---|---|---|
@@ -241,11 +244,16 @@ connected server. The drift guard matches them by prefix.
 | `mcp__<server>__<tool>` | Actions exposed by a connected personal or shared MCP integration. | `mcp__<server>` |
 | Agent builder actions | Available to the assistant while creating or editing an agent, according to the builder user's permissions. | Managed by the agent builder |
 | `set_<slot>` | Available during an agent run for slots the agent is allowed to fill. | Managed by the agent |
-| `forward_request` | Available when an agent has configured sub-agent routes. | Managed by the agent |
 | `request_human` | Available when an agent can hand work to a person. | Managed by the agent |
 | `finish` | Available when an agent has a result contract to satisfy. | Managed by the agent |
 | `verify_<id>_request_code`, `verify_<id>_submit_code` | Available when an agent requires one-time-code verification. | Managed by the agent |
 | `verify_<id>` | Available when an agent requires lookup-based verification. | Managed by the agent |
+
+Published agents with configured sub-agent routes use a run-scoped
+`forward_request` variant with the same ID. Its argument-free schema renders
+the request from the agent's state and dispatches the configured route. That
+variant is supplied by the existing agent run tool source; it does not use the
+personal receiver/message schema.
 
 Some document conversions also need the sandbox service and an enabled output
 format. Connector-returned files become conversation attachments. For how to

@@ -58,9 +58,11 @@ integrations and features vary with each installation's configuration.*
 - [Personal Dot scheduled and event-driven work](guide/automation-and-inbox.md#run-scheduled-or-event-driven-work-as-a-dot).
 - [Persistent Dot workspace proposal](dots-workspace.md): planned storage and browser behavior, not an available feature.
 - [Dot identity proposal](dots-identities.md): planned connector identities and organization ownership.
+- [Organization Dot proposal](dots-organizations.md): planned ownership, membership, shared knowledge and principal execution.
+- [Memory curation proposal](dots-memory-curation.md): planned reviewed learning through existing scheduling and approval mechanisms.
 - [Personal Dot management permission](dots-permissions.md): independent group rights through existing RBAC.
 - [Dot action rules](dots-action-rules.md): implemented permissions within `browse_page` and `browser_control`, with durable approval checks.
-- [Dot communication](dots-communication.md): directed consent configuration and planned delegation between Dots.
+- [Dot communication](dots-communication.md): directed consent and implemented personal request/reply delegation.
 - [Grok Bot comparison](dots-grok-comparison.md): researched capabilities, coverage and additional product gaps.
 - [Dot browser handover proposal](dots-browser-handover.md): planned human login and exclusive browser control.
 - [Dot workflow teaching proposal](dots-workflow-teaching.md): planned reviewed guidance through existing personal Skills.

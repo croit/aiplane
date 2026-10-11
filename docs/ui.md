@@ -368,6 +368,18 @@ mutations include `…/cancel`, `…/fork`, `…/share`, `…/effort`,
 `…/documents/*` (canvas and version history), `…/export.md`,
 `…/export.pdf`, and `…/turns/{turn_id}/retry`.
 
+The session detail also returns `can_write`, `can_delete` and nullable
+`delegation`. Ordinary owner conversations allow writes and deletion; shared
+readers do not. An opaque parent link makes a personal child history private
+and read-only, even when its binding cannot be resolved. Its `delegation`
+contains a nullable `root_session_id`, resolved from actual same-owner private
+parent links and the original forward call. Session lists and search results
+include `can_delete`, so the sidebar uses the same authority. The SPA loads
+these fields before attaching SSE and blocks automatic browser/feedback writes
+when `can_write` is false. The server independently rejects child mutations
+before parsing uploads or feedback. Owner read access still covers history,
+assets, canvas inspection and export; pinning does not enable execution.
+
 ## The composer during a turn
 
 The composer stays usable while an answer streams, and **Enter always means
@@ -523,8 +535,13 @@ Dot's consent is read-only. Rows preserve actual IDs, names and inactive
 choices. An unsaved row retains its original generation when another row is
 saved, so a stale decision cannot overwrite a newer counterpart. Conflict
 responses retain the draft until explicit reload. Consent mutation checks
-current management permission; an indicator of both stored consents does not
-claim the personal delegation runtime is available.
+current management permission. Both stored consents are necessary for personal
+delegation, together with selected tool access and current execution rules.
+Receiver histories use server-supplied read-only authority; approval and
+continuation remain on the root or Inbox. Tool-call rows and grouped headers
+use the actual turn status: suspended running calls show the existing neutral
+human-decision label and a static pause badge, while in-progress calls retain
+their running indicator.
 
 ## Agent builder
 
@@ -1035,6 +1052,14 @@ single string source for both server responses and the SPA. `mise run
 gen-locales` compiles them into `web/src/lib/locales/*.ts`; Svelte components
 use `t()`, `dt()`, and `n()` from `i18n.svelte.ts`. Never put a user-visible
 literal in a component.
+
+The shared `locale.ts` detector uses the explicit `lang` cookie, then the
+browser's language preferences and English. Both `i18n.svelte.ts` and the
+same-origin JSON request helper reuse it. Each JSON request sends the current
+selection as `Accept-Language`, preserving an explicitly supplied request
+header. Changing the interface language therefore also changes subsequent API
+error messages, even when the browser prefers another language. Bearer clients
+retain the server's existing header-based negotiation.
 
 `crates/session-core/build.rs` fails when the six catalog key sets or variables
 drift, and the web locale test verifies the generated catalogs against English.

@@ -68,7 +68,7 @@ impl ChatPersona {
         }
     }
 
-    pub(crate) fn offered(&self, granted: &[String]) -> Vec<String> {
+    pub fn offered(&self, granted: &[String]) -> Vec<String> {
         match &self.access {
             Some((selected, _)) => selected
                 .iter()

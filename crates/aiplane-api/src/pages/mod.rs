@@ -477,7 +477,8 @@ pub use chat::chat_attachment;
 // so the JSON token API can validate toggle keys against the same source.
 mod tool_toggles;
 pub use tool_toggles::{
-    capabilities_for_user, entries_for_roles, token_capabilities_for_user, valid_keys,
+    builtin_display_copy, capabilities_for_user, entries_for_roles, token_capabilities_for_user,
+    valid_keys,
 };
 
 // ---------------------------------------------------------------------------

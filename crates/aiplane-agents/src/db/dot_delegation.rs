@@ -78,9 +78,27 @@ pub async fn authorized(
     receiver_dot_id: &str,
     expected_generation: &str,
 ) -> Result<Option<DotDelegationEdge>, DbError> {
+    let mut connection = pool.acquire().await?;
+    authorized_in(
+        &mut connection,
+        owner_user_id,
+        caller_dot_id,
+        receiver_dot_id,
+        expected_generation,
+    )
+    .await
+}
+
+pub async fn authorized_in(
+    connection: &mut sqlx::SqliteConnection,
+    owner_user_id: &str,
+    caller_dot_id: &str,
+    receiver_dot_id: &str,
+    expected_generation: &str,
+) -> Result<Option<DotDelegationEdge>, DbError> {
     sqlx::query(&format!("{OWNED_EDGES} AND e.caller_dot_id = ? AND e.receiver_dot_id = ? AND c.active = 1 AND r.active = 1 AND e.outbound_enabled = 1 AND e.inbound_enabled = 1 AND e.generation = ?"))
         .bind(owner_user_id).bind(owner_user_id).bind(caller_dot_id).bind(receiver_dot_id).bind(expected_generation)
-        .fetch_optional(pool).await?.map(edge).transpose()
+        .fetch_optional(connection).await?.map(edge).transpose()
 }
 
 pub async fn set_consent(pool: &Pool, edit: ConsentEdit<'_>) -> Result<ConsentSaved, DbError> {

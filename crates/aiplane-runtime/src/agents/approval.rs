@@ -71,6 +71,13 @@ impl Permissions {
         self.gate_with_default(tool, ask)
     }
 
+    pub fn validate_tool_rules(&self, tool: &dyn Tool) -> Result<(), ToolError> {
+        if let Some(permission) = self.tools.get(tool.id()) {
+            validate_action_rules(tool, &permission.actions)?;
+        }
+        Ok(())
+    }
+
     fn gate_with_default(&self, tool: Arc<dyn Tool>, default_ask: bool) -> Arc<dyn Tool> {
         let set = self.tools.get(tool.id());
         let ask = set.and_then(|p| p.ask).unwrap_or(default_ask);
@@ -82,6 +89,24 @@ impl Permissions {
             actions: set.map(|p| p.actions.clone()).unwrap_or_default(),
         })
     }
+}
+
+fn validate_action_rules(
+    tool: &dyn Tool,
+    actions: &BTreeMap<String, ActionRule>,
+) -> Result<(), ToolError> {
+    for action in actions.keys() {
+        if !tool
+            .action_catalogue()
+            .is_some_and(|known| known.iter().any(|entry| entry.id == action))
+        {
+            return Err(ToolError::Failed(format!(
+                "`{}` cannot use action rule `{action}` because this tool does not declare it. Update the tool rules before retrying.",
+                tool.id()
+            )));
+        }
+    }
+    Ok(())
 }
 
 struct ActionPolicy {
@@ -123,14 +148,7 @@ impl Tool for ActionPolicy {
     fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         Box::pin(async move {
             let catalogue = self.inner.action_catalogue();
-            for action in self.actions.keys() {
-                if !catalogue.is_some_and(|known| known.iter().any(|entry| entry.id == action)) {
-                    return Err(ToolError::Failed(format!(
-                        "`{}` cannot use action rule `{action}` because this tool does not declare it. Update the tool rules before retrying.",
-                        self.id()
-                    )));
-                }
-            }
+            validate_action_rules(self.inner.as_ref(), &self.actions)?;
             let classified = self
                 .inner
                 .classify_actions(ctx.clone(), args.clone())
@@ -260,6 +278,19 @@ mod tests {
                 Ok(Some(vec![action.to_string()]))
             })
         }
+    }
+
+    #[test]
+    fn tool_rule_availability_uses_the_actual_action_catalogue() {
+        let selected = permissions(
+            json!({"main":{"tool_resources":{"company_echo":{"actions":{"read":"allow"}}}}}),
+        );
+        assert!(selected.validate_tool_rules(&Actions).is_ok());
+        assert!(selected.validate_tool_rules(&Echo).is_err());
+        let unknown = permissions(
+            json!({"main":{"tool_resources":{"company_echo":{"actions":{"missing":"ask"}}}}}),
+        );
+        assert!(unknown.validate_tool_rules(&Actions).is_err());
     }
 
     #[tokio::test]

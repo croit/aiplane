@@ -95,3 +95,7 @@ chat-render-canvas-assets-count = { $count ->
 chat-render-canvas-assets-empty = Todavía no se han añadido archivos a esta conversación.
 chat-render-canvas-asset-download = Descargar archivo
 chat-render-canvas-close-title = Cerrar lienzo
+
+chat-render-delegated-readonly-banner = Conversación delegada — historial de solo lectura. Continúe, apruebe o detenga este trabajo desde la conversación principal o la bandeja de entrada.
+chat-render-delegated-root-link = Abrir la conversación principal
+chat-render-delegated-root-unavailable = La conversación principal no está disponible. Este historial sigue siendo de solo lectura.

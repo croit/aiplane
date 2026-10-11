@@ -3,7 +3,7 @@
 Status: implementation in progress; personal Dot ownership, active lifecycle,
 the first web management page, manually managed Dot memory, recent activity,
 owner-scoped memory/activity APIs, private Dot chat sessions, and personal
-tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, and Dot-bound schedules and webhooks are implemented.
+tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -61,7 +61,8 @@ Dot's own store; recall returns both Dot and user memories with explicit
 scopes, and user-wide memory is read-only from a Dot chat. Selected core and
 MCP tools act under the owner account and existing connector mode. Deactivating
 a Dot preserves its existing sessions but blocks new sessions and new turns;
-existing pending Dot turns remain paused while the Dot is inactive. The `/dots`
+ordinary pending Dot turns remain paused while the Dot is inactive. Affected
+delegation trees are cancelled when a participating Dot is deactivated. The `/dots`
 page displays active usage against the operator limit, creates a personal Dot
 with a friendly name, starts a private chat, and lets the owner deactivate or
 reactivate it. A deactivated Dot stays in the list and can be reactivated when
@@ -97,7 +98,8 @@ AskFirst persists a suspended call in the existing chat approval system. The
 owner can approve once or deny in chat or Inbox. Approval refers to the original
 arguments; resumption reloads Dot selection, current user grants, enabled
 settings and connected tools. Revoked selections and disabled tools cannot
-execute on an old approval. Dot deactivation leaves pending calls paused.
+execute on an old approval. Dot deactivation leaves ordinary pending calls
+paused and cancels affected delegation trees.
 
 ## Personal Dot communication consent
 
@@ -107,9 +109,12 @@ for a directed relationship; reverse communication needs its own choices.
 Inactive peers remain visible. New enabling requires both Dots active, while
 revocation remains possible. Each row saves separately and a stale edit must
 be reloaded explicitly. Mutations require current `can_manage_dots` permission.
-The **Both consents enabled** indicator describes stored consent. The personal
-delegation runtime remains implementation work; these settings alone do not
-make Dots execute requests. See [Dot communication](dots-communication.md).
+The **Both consents enabled** indicator describes stored consent. Personal chats with selected and authorized `forward_request` can send an
+explicit bounded task to a consenting receiver. The receiver uses its own
+selected tools, rules and memories under current owner permissions. Child
+approvals propagate to the root conversation and Inbox; receiver histories
+are private and read-only. Revoking consent or deactivating a participating
+Dot cancels affected delegation trees. See [Dot communication](dots-communication.md).
 
 ## Implemented personal Dot background execution
 
@@ -156,7 +161,8 @@ needed; waiting is distinct from a failed run.
 
 Pausing a schedule or webhook prevents future triggers and permits resolution
 of its existing pending turn. Deactivating the Dot preserves conversations
-and keeps pending Dot calls paused. Deletion of an automation returns a
+and keeps ordinary pending Dot calls paused; affected delegation trees are
+cancelled. Deletion of an automation returns a
 conflict while its run is executing or awaiting a decision: disable future
 triggers, then finish or stop the turn before deleting. The existing Dot UI
 provides deactivation, not a Dot-delete action.

@@ -120,13 +120,21 @@ pub async fn run_session_of_turn(
     pool: &Pool,
     turn_id: &str,
 ) -> Result<Option<RunSession>, DbError> {
+    let mut connection = pool.acquire().await?;
+    run_session_of_turn_in(&mut connection, turn_id).await
+}
+
+pub async fn run_session_of_turn_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+) -> Result<Option<RunSession>, DbError> {
     let row = sqlx::query(&format!(
         "SELECT {RUN_SESSION_COLUMNS} FROM chat_sessions \
          WHERE principal_id IS NOT NULL \
            AND id = (SELECT session_id FROM chat_turns WHERE id = ?)"
     ))
     .bind(turn_id)
-    .fetch_optional(pool)
+    .fetch_optional(connection)
     .await?;
     row.as_ref().map(map_run_session).transpose()
 }
@@ -415,6 +423,7 @@ mod tests {
                 rounds: 1,
                 seconds: 3,
                 tokens: 120,
+                tree: None,
             },
             child_turn: None,
             on_timeout: TimeoutFallback::Deny,

@@ -319,6 +319,7 @@ pub fn requires_chat_session(tool_id: &str) -> bool {
         || tool_id == "read_sandbox_output"
         // Needs a live turn *and* a human watching it to answer.
         || tool_id == "ask_user"
+        || tool_id == "forward_request"
         // Acts through the browser extension paired with the *open* chat page.
         // Off the chat path there is no page to relay through, so there is
         // nothing for a /v1 caller to call.
@@ -1024,6 +1025,14 @@ mod tests {
         // them on would let a user who disabled memory still have it written.
         assert!(MEMORY_TOOL_IDS.contains(&"forget"));
         assert!(MEMORY_TOOL_IDS.contains(&"update_memory"));
+    }
+
+    #[test]
+    fn personal_forward_request_is_excluded_from_stateless_tools() {
+        assert!(requires_chat_session("forward_request"));
+        let keys = api_keys(["forward_request", "get_current_timestamp"]);
+        assert!(!keys.contains("forward_request"));
+        assert!(keys.contains("get_current_timestamp"));
     }
 
     #[test]

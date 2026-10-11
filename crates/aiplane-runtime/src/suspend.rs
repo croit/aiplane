@@ -239,6 +239,40 @@ pub async fn claim_for_resume_in(
     })
 }
 
+pub(crate) async fn claim_chain_in(
+    connection: &mut sqlx::SqliteConnection,
+    snapshots: &[TurnSuspension],
+    decision: Decision,
+) -> Result<Vec<TurnSuspension>, ResumeRefused> {
+    let Some(leaf) = snapshots.last() else {
+        return Err(ResumeRefused::NotSuspended);
+    };
+    for snapshot in snapshots {
+        if chat::get_suspension_in(connection, &snapshot.turn_id)
+            .await?
+            .as_ref()
+            != Some(snapshot)
+        {
+            return Err(ResumeRefused::NotSuspended);
+        }
+    }
+    let deepest =
+        claim_for_resume_in(connection, &leaf.turn_id, Some(&leaf.request_id), decision).await?;
+    if deepest.suspension != *leaf {
+        return Err(ResumeRefused::NotSuspended);
+    }
+    let mut claimed = vec![deepest.suspension];
+    for snapshot in snapshots[..snapshots.len() - 1].iter().rev() {
+        let row = chat::claim_suspension_in(connection, &snapshot.turn_id, &snapshot.request_id)
+            .await?
+            .filter(|row| row == snapshot)
+            .ok_or(ResumeRefused::NotSuspended)?;
+        claimed.push(row);
+    }
+    claimed.reverse();
+    Ok(claimed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

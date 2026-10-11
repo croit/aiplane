@@ -72,3 +72,6 @@ tools-browser-notes-heading = Bon à savoir
 tools-browser-note-window = L'assistant travaille dans sa propre fenêtre, dans un groupe d'onglets nommé « Assistant ». Tant que l'extension est active, son icône est verte et Chrome affiche une barre indiquant que le navigateur est en cours de débogage.
 tools-browser-note-open = Cela ne fonctionne que tant que la conversation est ouverte dans un onglet. Désactivez l'extension depuis son icône quand vous avez terminé.
 tools-browser-note-injection = Les pages lues par l'assistant peuvent contenir du texte qui lui est destiné. Dans les paramètres de l'extension, vous pouvez la limiter aux sites que vous approuvez.
+
+tool-forward-request-title = Demander à un autre Dot
+tool-forward-request-description = Envoie une tâche explicite à un autre Dot personnel. Les deux Dots doivent autoriser la demande ; le Dot destinataire utilise ses propres outils et règles d’approbation.

@@ -929,6 +929,16 @@ async fn turn_feedback_body<T: serde::de::DeserializeOwned>(
         Ok(s) => s,
         Err(resp) => return Err(resp),
     };
+    let writable = match session_core::db::user_for_root_turn(&state.db, turn_id).await {
+        Ok(owner) => owner.as_deref() == Some(session.user_id.as_str()),
+        Err(error) => {
+            tracing::warn!(%error, turn_id, "turn feedback ownership check");
+            return Err(internal_error("could not verify the request"));
+        }
+    };
+    if !writable {
+        return Err(not_found(missing));
+    }
     let (_, body) = req.into_parts();
     let body = match read_body_to_bytes(body).await {
         Ok(b) => b,
@@ -939,14 +949,7 @@ async fn turn_feedback_body<T: serde::de::DeserializeOwned>(
         Err(err) => return Err(invalid_request(&format!("expected {shape}: {err}"))),
     };
 
-    match session_core::db::user_for_turn(&state.db, turn_id).await {
-        Ok(Some(owner)) if owner == session.user_id => Ok((session, parsed)),
-        Ok(_) => Err(not_found(missing)),
-        Err(err) => {
-            tracing::warn!(error = %err, turn_id, "turn feedback user_for_turn");
-            Err(internal_error("could not verify the request"))
-        }
-    }
+    Ok((session, parsed))
 }
 
 /// POST /api/v0/me/location/feedback/{turn_id} — reply to an in-flight
@@ -1403,7 +1406,7 @@ async fn validate_token_states(
     requested: &std::collections::BTreeMap<String, String>,
 ) -> Result<std::collections::HashMap<String, i64>, String> {
     let allowed: std::collections::HashSet<String> =
-        token_capabilities_for_user(state, &user.roles, &user.id)
+        token_capabilities_for_user(state, &user.roles, &user.id, session_core::i18n::Lang::En)
             .await
             .into_iter()
             .map(|entry| {

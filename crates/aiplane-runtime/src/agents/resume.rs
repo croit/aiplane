@@ -43,7 +43,7 @@ use super::router::{Caller, dispatch_result};
 use super::run::{AgentReply, OpenedTurn, drive_opened, drive_opened_from, root_chain};
 use crate::rama_server::state::RamaState;
 use crate::server::headless::drive_resumed;
-use crate::suspend::{ResumeFrom, ResumeRefused, claim_for_resume_in};
+use crate::suspend::{ResumeFrom, ResumeRefused};
 
 /// Who gives the decision, for the rules on who may and for the audit row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +82,12 @@ pub struct AgentResume<'a> {
 /// Why a resume was refused. Nothing was claimed in any of these cases.
 #[derive(Debug, thiserror::Error)]
 pub enum AgentResumeError {
+    #[error("A child conversation already has a running worker. Retry after it finishes.")]
+    Busy,
+    #[error(
+        "The personal Dot run is unavailable under its current ownership, consent or access. Review its settings before retrying."
+    )]
+    Unavailable,
     #[error(transparent)]
     Refused(#[from] ResumeRefused),
     #[error(
@@ -221,25 +227,14 @@ pub async fn claim(
             return Err(not_suspended());
         }
     }
-    let innermost = levels.len() - 1;
-    let claimed = claim_for_resume_in(
-        &mut tx,
-        &levels[innermost].suspension.turn_id,
-        Some(&levels[innermost].suspension.request_id),
-        resume.decision.clone(),
-    )
-    .await?;
-    levels[innermost].suspension = claimed.suspension;
-    for i in (0..innermost).rev() {
-        let row = chat::claim_suspension_in(
-            &mut tx,
-            &levels[i].suspension.turn_id,
-            &levels[i].suspension.request_id,
-        )
-        .await?
-        .filter(|row| row == &levels[i].suspension)
-        .ok_or_else(not_suspended)?;
-        levels[i].suspension = row;
+    let snapshots: Vec<_> = levels
+        .iter()
+        .map(|level| level.suspension.clone())
+        .collect();
+    let claimed =
+        crate::suspend::claim_chain_in(&mut tx, &snapshots, resume.decision.clone()).await?;
+    for (level, suspension) in levels.iter_mut().zip(claimed) {
+        level.suspension = suspension;
     }
     for level in &levels {
         validate_session(&mut tx, level).await?;
@@ -608,6 +603,486 @@ pub async fn resume_expired(state: &Arc<RamaState>) {
             }
         }
     }
+}
+
+struct PersonalLevel {
+    binding: aiplane_agents::db::dot_sessions::PersonalDotSession,
+    link: Option<aiplane_agents::db::dot_sessions::PersonalChildLink>,
+    suspension: TurnSuspension,
+    model: String,
+}
+
+pub struct ClaimedPersonalResume {
+    owner: String,
+    levels: Vec<PersonalLevel>,
+    decision: Decision,
+    workers: Vec<Option<crate::server::headless::BackgroundWorker>>,
+}
+
+impl ClaimedPersonalResume {
+    pub fn turn_id(&self) -> &str {
+        &self.levels[0].suspension.turn_id
+    }
+    pub fn session_id(&self) -> &str {
+        &self.levels[0].binding.session_id
+    }
+}
+
+async fn validate_personal_level_in(
+    connection: &mut sqlx::SqliteConnection,
+    owner: &str,
+    level: &PersonalLevel,
+) -> Result<(), AgentResumeError> {
+    let valid: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM chat_turns t JOIN chat_sessions s ON s.id = t.session_id
+         JOIN personal_dot_sessions p ON p.session_id = s.id JOIN personal_dots d ON d.principal_id = p.dot_id
+         WHERE t.id = ? AND t.role = 'assistant' AND t.model = ? AND s.id = ? AND s.user_id = ?
+           AND s.principal_id IS NULL AND s.shared = 0 AND p.owner_user_id = ? AND p.dot_id = ?
+           AND d.owner_user_id = ? AND d.active = 1 AND s.parent_turn_id IS ? AND p.parent_turn_id IS ?)",
+    ).bind(&level.suspension.turn_id).bind(&level.model).bind(&level.binding.session_id).bind(owner)
+        .bind(owner).bind(&level.binding.dot_id).bind(owner)
+        .bind(level.link.as_ref().map(|link| link.parent_turn_id.as_str()))
+        .bind(level.link.as_ref().map(|link| link.parent_turn_id.as_str()))
+        .fetch_one(&mut *connection).await.map_err(DbError::from)?;
+    if !valid {
+        return Err(AgentResumeError::Unavailable);
+    }
+    if let Some(link) = &level.link
+        && !aiplane_agents::db::child_sessions::validate_child_in(
+            connection,
+            owner,
+            &level.suspension.turn_id,
+            &link.parent_turn_id,
+            &link.parent_tool_call_id,
+            &link.edge_generation,
+        )
+        .await?
+    {
+        return Err(AgentResumeError::Unavailable);
+    }
+    Ok(())
+}
+
+pub async fn claim_personal(
+    state: &Arc<RamaState>,
+    owner: &str,
+    root_turn: &str,
+    request_id: Option<&str>,
+    decision: Decision,
+) -> Result<ClaimedPersonalResume, AgentResumeError> {
+    use aiplane_agents::db::{child_sessions, dot_sessions};
+    if chat::user_for_root_turn(&state.db, root_turn)
+        .await?
+        .as_deref()
+        != Some(owner)
+    {
+        return Err(AgentResumeError::Unavailable);
+    }
+    let top = chat::get_suspension(&state.db, root_turn)
+        .await?
+        .ok_or_else(not_suspended)?;
+    if let Some(request_id) = request_id
+        && request_id != top.request_id
+    {
+        return Err(ResumeRefused::StaleRequest {
+            current: top.request_id,
+        }
+        .into());
+    }
+    let root_session: String = sqlx::query_scalar("SELECT session_id FROM chat_turns WHERE id = ?")
+        .bind(root_turn)
+        .fetch_one(&state.db)
+        .await
+        .map_err(DbError::from)?;
+    let binding = dot_sessions::for_session(&state.db, owner, &root_session)
+        .await?
+        .filter(|binding| binding.active)
+        .ok_or(AgentResumeError::Unavailable)?;
+    let root_model = chat::get_turn(&state.db, &root_session, root_turn)
+        .await?
+        .and_then(|turn| turn.model)
+        .ok_or(AgentResumeError::Unavailable)?;
+    let mut levels = vec![PersonalLevel {
+        binding,
+        link: None,
+        suspension: top,
+        model: root_model,
+    }];
+    while let Some(child_turn) = levels
+        .last()
+        .and_then(|level| level.suspension.child_turn.clone())
+    {
+        if levels.len() >= MAX_DEPTH {
+            return Err(AgentResumeError::Unavailable);
+        }
+        let Some(child_sessions::LocalChild::Personal(child)) =
+            child_sessions::child_of_turn(&state.db, &child_turn).await?
+        else {
+            return Err(AgentResumeError::Unavailable);
+        };
+        let parent = levels.last().ok_or(AgentResumeError::Unavailable)?;
+        if child.session.owner_user_id != owner
+            || child.link.parent_turn_id != parent.suspension.turn_id
+            || child.link.parent_tool_call_id != parent.suspension.tool_call.id
+            || child.link.caller_dot_id != parent.binding.dot_id
+            || parent.suspension.tool_call.name != super::router::FORWARD_TOOL_NAME
+            || levels
+                .iter()
+                .any(|level| level.binding.dot_id == child.session.dot_id)
+        {
+            return Err(AgentResumeError::Unavailable);
+        }
+        let suspension = chat::get_suspension(&state.db, &child_turn)
+            .await?
+            .ok_or_else(not_suspended)?;
+        let model = chat::get_turn(&state.db, &child.session.session_id, &child_turn)
+            .await?
+            .and_then(|turn| turn.model)
+            .ok_or(AgentResumeError::Unavailable)?;
+        levels.push(PersonalLevel {
+            binding: child.session,
+            link: Some(child.link),
+            suspension,
+            model,
+        });
+    }
+    let user = aiplane_core::server::db::users::find_by_id(&state.db, owner)
+        .await?
+        .ok_or(AgentResumeError::Unavailable)?;
+    let access =
+        state.pool_access_for_principal(&aiplane_core::server::principal::Principal::User {
+            id: user.id.clone(),
+            roles: user.roles.clone(),
+        });
+    let offered = crate::server::model_choices::offered(
+        state,
+        aiplane_core::server::upstreams::PoolKind::Chat,
+        &access,
+    )
+    .await;
+    for (index, level) in levels.iter().enumerate() {
+        if !offered.iter().any(|model| model.id == level.model) {
+            return Err(AgentResumeError::Unavailable);
+        }
+        let dot = agents_db::get_personal_dot(&state.db, owner, &level.binding.dot_id)
+            .await?
+            .filter(|dot| dot.active)
+            .ok_or(AgentResumeError::Unavailable)?;
+        let spec: super::spec::AgentSpec = serde_json::from_str(&dot.agent.draft_spec)
+            .map_err(|_| AgentResumeError::Unavailable)?;
+        if index + 1 < levels.len()
+            && !super::router::local::forward_available(state, &user, &spec)
+                .await
+                .map_err(|_| AgentResumeError::Unavailable)?
+        {
+            return Err(AgentResumeError::Unavailable);
+        }
+    }
+    let mut workers = vec![None];
+    for level in levels.iter().skip(1) {
+        match state.chats.register_background(
+            owner,
+            &level.suspension.turn_id,
+            &level.binding.session_id,
+        ) {
+            session_core::workers::RegisterOutcome::Registered { worker } => {
+                workers.push(Some(crate::server::headless::BackgroundWorker::new(
+                    state.clone(),
+                    owner.to_owned(),
+                    worker,
+                )))
+            }
+            _ => return Err(AgentResumeError::Busy),
+        }
+    }
+    let mut tx = aiplane_agents::db::WriteTx::begin(&state.db).await?;
+    for level in &levels {
+        validate_personal_level_in(&mut tx, owner, level).await?;
+    }
+    let snapshots: Vec<_> = levels
+        .iter()
+        .map(|level| level.suspension.clone())
+        .collect();
+    let claimed = crate::suspend::claim_chain_in(&mut tx, &snapshots, decision.clone()).await?;
+    for level in &levels {
+        validate_personal_level_in(&mut tx, owner, level).await?;
+    }
+    for (level, suspension) in levels.iter_mut().zip(claimed) {
+        level.suspension = suspension;
+    }
+    tx.commit().await?;
+    Ok(ClaimedPersonalResume {
+        owner: owner.to_owned(),
+        levels,
+        decision,
+        workers,
+    })
+}
+
+pub async fn run_personal_children(
+    state: &Arc<RamaState>,
+    claimed: ClaimedPersonalResume,
+) -> Result<ResumeFrom, AgentResumeError> {
+    let root_turn = claimed.turn_id().to_owned();
+    let owner = claimed.owner.clone();
+    match run_personal_children_inner(state, claimed).await {
+        Ok(resumed) => Ok(resumed),
+        Err(error) => {
+            if let Err(cleanup) = cancel_personal_tree(state, &owner, &root_turn).await {
+                tracing::error!(%cleanup, %root_turn, "settling the claimed personal run failed");
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn run_personal_children_inner(
+    state: &Arc<RamaState>,
+    mut claimed: ClaimedPersonalResume,
+) -> Result<ResumeFrom, AgentResumeError> {
+    use crate::agent_run::{
+        Actor, PersonalDotExecution, PersonalDotIdentity, PersonalExecutionBinding,
+    };
+    use crate::persona::personal_dot::{
+        PersonalDotContext, PersonalTurnContext, initialize_for_turn,
+    };
+    let user = aiplane_core::server::db::users::find_by_id(&state.db, &claimed.owner)
+        .await?
+        .ok_or(AgentResumeError::Unavailable)?;
+    let root = &claimed.levels[0];
+    let background =
+        crate::server::background::for_turn(&state.db, &claimed.owner, &root.suspension.turn_id)
+            .await?;
+    let enabled = background
+        .as_ref()
+        .is_none_or(|context| context.tools_enabled);
+    let source = background.as_ref().map_or(
+        aiplane_core::server::db::usage::UsageSource::Chat,
+        |context| context.source,
+    );
+    let history_limit = background.and_then(|context| context.history_limit);
+    let Some(PersonalDotContext::Active { actor, .. }) = initialize_for_turn(
+        state,
+        &user,
+        enabled,
+        PersonalTurnContext {
+            session_id: &root.binding.session_id,
+            assistant_turn_id: &root.suspension.turn_id,
+            model: &root.model,
+            clock: crate::budget::system_clock(),
+            resume_checkpoint: root.suspension.budget_used.tree.as_ref(),
+            child_execution: None,
+        },
+    )
+    .await?
+    else {
+        return Err(AgentResumeError::Unavailable);
+    };
+    let root_execution = actor
+        .personal_execution()
+        .cloned()
+        .ok_or(AgentResumeError::Unavailable)?;
+    let mut executions = vec![root_execution.clone()];
+    for level in claimed.levels.iter().skip(1) {
+        let parent = executions.last().ok_or(AgentResumeError::Unavailable)?;
+        let link = level.link.as_ref().ok_or(AgentResumeError::Unavailable)?;
+        let dot = agents_db::get_personal_dot(&state.db, &claimed.owner, &level.binding.dot_id)
+            .await?
+            .filter(|dot| dot.active)
+            .ok_or(AgentResumeError::Unavailable)?;
+        let spec: super::spec::AgentSpec = serde_json::from_str(&dot.agent.draft_spec)
+            .map_err(|_| AgentResumeError::Unavailable)?;
+        let chain = Arc::new(
+            parent
+                .chain()
+                .enter(Frame {
+                    principal_id: dot.agent.principal.id.clone(),
+                    name: dot.name,
+                    version: None,
+                    via: Some(CallSite {
+                        turn_id: link.parent_turn_id.clone(),
+                        tool_call_id: link.parent_tool_call_id.clone(),
+                    }),
+                })
+                .map_err(|_| AgentResumeError::Unavailable)?,
+        );
+        let saved = level
+            .suspension
+            .budget_used
+            .tree
+            .as_ref()
+            .ok_or(AgentResumeError::Unavailable)?;
+        let local = spec
+            .main
+            .budget
+            .budget()
+            .intersect(crate::budget::Budget::from_limits(saved.local_limits));
+        executions.push(Arc::new(
+            PersonalDotExecution::new(
+                state.clone(),
+                PersonalExecutionBinding {
+                    identity: PersonalDotIdentity {
+                        owner_user_id: claimed.owner.clone(),
+                        dot_id: level.binding.dot_id.clone(),
+                    },
+                    session_id: level.binding.session_id.clone(),
+                    assistant_turn_id: level.suspension.turn_id.clone(),
+                    model: level.model.clone(),
+                },
+                chain,
+                local,
+                root_execution.meter().clone(),
+            )
+            .map_err(|_| AgentResumeError::Unavailable)?,
+        ));
+    }
+    let mut child_result = None;
+    for index in (1..claimed.levels.len()).rev() {
+        let level = &claimed.levels[index];
+        let execution = executions[index].clone();
+        let actor = Actor::personal_dot(&claimed.owner, user.roles.clone(), &level.binding.dot_id)
+            .with_personal_execution(execution)
+            .map_err(|_| AgentResumeError::Unavailable)?;
+        let mut suspension = level.suspension.clone();
+        suspension.budget_used.tree = Some(
+            root_execution
+                .meter()
+                .snapshot(executions[index].local_budget()),
+        );
+        let resume = ResumeFrom {
+            suspension,
+            decision: claimed.decision.clone(),
+            child_result: child_result.take(),
+        };
+        drive_resumed(
+            state,
+            crate::server::headless::DriveParams {
+                actor,
+                session_id: level.binding.session_id.clone(),
+                assistant_turn_id: level.suspension.turn_id.clone(),
+                model: level.model.clone(),
+                source,
+                history_limit,
+            },
+            resume,
+            claimed.workers[index].take(),
+        )
+        .await;
+        let parent = &claimed.levels[index - 1];
+        let parent_actor =
+            Actor::personal_dot(&claimed.owner, user.roles.clone(), &parent.binding.dot_id)
+                .with_personal_execution(executions[index - 1].clone())
+                .map_err(|_| AgentResumeError::Unavailable)?;
+        let mut ctx = crate::openai_driver::build_tool_context(
+            state,
+            crate::openai_driver::TurnFacts {
+                actor: parent_actor,
+                session_id: parent.binding.session_id.clone(),
+                assistant_turn_id: parent.suspension.turn_id.clone(),
+                model: Some(parent.model.clone()),
+                client_ip: None,
+                chat_feedback: None,
+                pool_access: None,
+                suspendable: true,
+            },
+        );
+        ctx.call_id = Some(parent.suspension.tool_call.id.clone());
+        child_result = Some(
+            super::router::local::personal_result(&ctx, &level.suspension.turn_id)
+                .await
+                .map_err(|_| AgentResumeError::Unavailable)?,
+        );
+    }
+    let mut suspension = claimed.levels.remove(0).suspension;
+    suspension.budget_used.tree = Some(
+        root_execution
+            .meter()
+            .snapshot(root_execution.local_budget()),
+    );
+    Ok(ResumeFrom {
+        suspension,
+        decision: claimed.decision,
+        child_result,
+    })
+}
+
+pub async fn cancel_personal_tree(
+    state: &Arc<RamaState>,
+    owner: &str,
+    root_turn: &str,
+) -> Result<(), DbError> {
+    let root_session: Option<String> = sqlx::query_scalar(
+        "SELECT s.id FROM chat_sessions s JOIN chat_turns t ON t.session_id = s.id
+         WHERE t.id = ? AND t.role = 'assistant' AND s.user_id = ? AND s.principal_id IS NULL",
+    )
+    .bind(root_turn)
+    .bind(owner)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(root_session) = root_session else {
+        return Ok(());
+    };
+    let mut pending = vec![(root_session, root_turn.to_owned(), 0usize)];
+    let mut turns = Vec::new();
+    while let Some((session, turn, depth)) = pending.pop() {
+        if depth < MAX_DEPTH {
+            for child in
+                aiplane_agents::db::child_sessions::child_turns(&state.db, owner, &turn).await?
+            {
+                pending.push((child.session.session_id, child.assistant_turn.id, depth + 1));
+            }
+        }
+        turns.push((session, turn));
+    }
+    for (session, turn) in turns.into_iter().rev() {
+        state.chats.cancel_turn(owner, &session, &turn);
+        if !chat::cancel_suspended_turn(&state.db, &turn).await?
+            && let Some(current) = chat::get_turn(&state.db, &session, &turn).await?
+            && current.status == TurnStatus::InProgress
+            && !state
+                .chats
+                .get(owner, &session)
+                .is_some_and(|worker| worker.turn_id == turn)
+        {
+            chat::finalize_turn(&state.db, &turn, TurnStatus::Cancelled, None).await?;
+        }
+        crate::server::background::reconcile_turn(&state.db, owner, &turn).await?;
+    }
+    Ok(())
+}
+
+pub async fn cancel_personal_runs_for_dot(
+    state: &Arc<RamaState>,
+    owner: &str,
+    dot_id: &str,
+) -> Result<(), DbError> {
+    for turn in
+        aiplane_agents::db::child_sessions::active_roots_for_dot(&state.db, owner, dot_id).await?
+    {
+        cancel_personal_tree(state, owner, &turn).await?;
+    }
+    Ok(())
+}
+
+pub async fn cancel_personal_runs_for_edge(
+    state: &Arc<RamaState>,
+    owner: &str,
+    caller: &str,
+    receiver: &str,
+    old_generation: &str,
+) -> Result<(), DbError> {
+    for turn in aiplane_agents::db::child_sessions::active_roots_for_edge(
+        &state.db,
+        owner,
+        caller,
+        receiver,
+        old_generation,
+    )
+    .await?
+    {
+        cancel_personal_tree(state, owner, &turn).await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

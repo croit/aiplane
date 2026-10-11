@@ -100,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
         .await;
     mount_agent_model(&chat_mock).await;
     mount_architect_model(&chat_mock).await;
+    mount_dot_delegation_model(&chat_mock).await;
     Mock::given(method("POST"))
         .and(path("/systemone"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -1330,20 +1331,85 @@ fn calls(plan: &[(&str, serde_json::Value)]) -> serde_json::Value {
 /// One answer in the shape the request asked for: an SSE stream of one
 /// delta, or a whole completion.
 fn completion(body: &serde_json::Value, delta: serde_json::Value) -> ResponseTemplate {
+    completion_with_usage(body, delta, None)
+}
+
+fn completion_with_usage(
+    body: &serde_json::Value,
+    delta: serde_json::Value,
+    usage: Option<serde_json::Value>,
+) -> ResponseTemplate {
     if body["stream"] == true {
-        let sse = format!(
-            "data: {}\n\ndata: [DONE]\n\n",
+        let mut sse = format!(
+            "data: {}\n\n",
             serde_json::json!({"choices": [{"index": 0, "delta": delta}]})
         );
+        if let Some(usage) = usage {
+            sse.push_str(&format!(
+                "data: {}\n\n",
+                serde_json::json!({"choices": [], "usage": usage})
+            ));
+        }
+        sse.push_str("data: [DONE]\n\n");
         return ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream");
     }
     let mut message = delta;
     message["role"] = serde_json::json!("assistant");
-    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+    let mut response = serde_json::json!({
         "id": "dev-agent",
         "object": "chat.completion",
         "choices": [{ "index": 0, "message": message, "finish_reason": "stop" }],
-    }))
+    });
+    if let Some(usage) = usage {
+        response["usage"] = usage;
+    }
+    ResponseTemplate::new(200).set_body_json(response)
+}
+
+async fn mount_dot_delegation_model(chat_mock: &MockServer) {
+    const ROOT: &str = "Dot delegation approval probe ";
+    const CHILD: &str = "Dot delegated memory approval probe";
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(|request: &wiremock::Request| {
+            serde_json::from_slice::<serde_json::Value>(&request.body).is_ok_and(|body| {
+                body["messages"].as_array().is_some_and(|messages| messages.iter().any(|message| {
+                    message["role"] == "user" && message["content"].as_str().is_some_and(|content| {
+                        content.starts_with(ROOT) || content == CHILD
+                    })
+                }))
+            })
+        })
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            let messages = body["messages"].as_array().unwrap();
+            let receiver = messages.iter().filter(|message| message["role"] == "user")
+                .filter_map(|message| message["content"].as_str())
+                .find_map(|content| content.strip_prefix(ROOT));
+            let (id, tool, arguments, answer) = match receiver {
+                Some(receiver) => (
+                    "dot-delegation", "forward_request",
+                    serde_json::json!({"receiver_dot_id": receiver, "message": CHILD}),
+                    "The receiving Dot completed the explicit task.",
+                ),
+                None => (
+                    "dot-delegated-memory", "remember",
+                    serde_json::json!({"content": "Approved delegated lesson.", "kind": "fact"}),
+                    "The approved delegated lesson was recorded.",
+                ),
+            };
+            let completed = messages.iter().any(|message| message["role"] == "tool" && message["tool_call_id"] == id);
+            let delta = if completed {
+                serde_json::json!({"content": answer})
+            } else {
+                serde_json::json!({"tool_calls": [{"index": 0, "id": id, "type": "function",
+                    "function": {"name": tool, "arguments": arguments.to_string()}}]})
+            };
+            completion_with_usage(&body, delta, Some(serde_json::json!({"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5})))
+        })
+        .with_priority(1)
+        .mount(chat_mock)
+        .await;
 }
 
 /// Seed a handful of realistic, **non-croit** rows so the README

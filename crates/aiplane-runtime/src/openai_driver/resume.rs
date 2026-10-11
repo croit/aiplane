@@ -11,7 +11,6 @@
 use std::time::Instant;
 
 use aiplane_agents::db::agent_audit::AuditKind;
-use aiplane_agents::db::run_sessions;
 use serde_json::{Value, json};
 use session_core::db::{
     self as chat, BudgetUsed, Decision, DenyReason, PendingCall, ToolCallStatus, TurnSuspension,
@@ -99,7 +98,7 @@ pub(super) async fn pause(
     let now = jiff::Timestamp::now();
     let expires_at = match &request.child {
         Some(child) => {
-            check_child(d, ctx, child).await?;
+            check_child(d, ctx, call, child).await?;
             child.expires_at
         }
         None => now + jiff::SignedDuration::from_secs(request.timeout_secs as i64),
@@ -161,13 +160,40 @@ pub(super) async fn pause(
 async fn check_child(
     d: &OpenAiDriver,
     ctx: &SessionContext,
+    call: &ToolCallRef,
     child: &ChildPause,
 ) -> Result<(), TurnError> {
-    let session = run_sessions::run_session_of_turn(&d.state.db, &child.turn_id)
+    let session = aiplane_agents::db::child_sessions::child_of_turn(&d.state.db, &child.turn_id)
         .await
         .map_err(persist_err("run_session_of_turn", &ctx.assistant_turn_id))?;
-    let ours = session
-        .is_some_and(|s| s.parent_turn_id.as_deref() == Some(ctx.assistant_turn_id.as_str()));
+    let ours = match session {
+        Some(aiplane_agents::db::child_sessions::LocalChild::Principal(session)) => {
+            session.parent_turn_id.as_deref() == Some(ctx.assistant_turn_id.as_str())
+        }
+        Some(aiplane_agents::db::child_sessions::LocalChild::Personal(binding)) => {
+            if let Some(execution) = d.tool_ctx.personal_execution.as_ref() {
+                let mut connection = d
+                    .state
+                    .db
+                    .acquire()
+                    .await
+                    .map_err(persist_err("child_connection", &ctx.assistant_turn_id))?;
+                aiplane_agents::db::child_sessions::validate_child_in(
+                    &mut connection,
+                    &execution.identity().owner_user_id,
+                    &child.turn_id,
+                    &ctx.assistant_turn_id,
+                    &call.id,
+                    &binding.link.edge_generation,
+                )
+                .await
+                .map_err(persist_err("validate_child", &ctx.assistant_turn_id))?
+            } else {
+                false
+            }
+        }
+        None => false,
+    };
     let paused = chat::get_suspension(&d.state.db, &child.turn_id)
         .await
         .map_err(persist_err("get_suspension", &ctx.assistant_turn_id))?
@@ -210,6 +236,67 @@ pub(super) async fn resume_into(
     budget: &mut ToolResultBudget,
 ) -> Result<Resumed, TurnError> {
     let suspension = &resume.suspension;
+    if resume.child_result.is_some()
+        && let Some(execution) = tool_ctx.personal_execution.as_ref()
+    {
+        let refused = || {
+            TurnError::Aborted { message: "The cached Dot reply does not match this run's current child binding, consent or tool access. Review the run settings before continuing.".into() }
+        };
+        let child_turn = suspension.child_turn.as_deref().ok_or_else(refused)?;
+        if suspension.tool_call.name != crate::agents::router::FORWARD_TOOL_NAME
+            || tools.get(&suspension.tool_call.name).is_none()
+        {
+            return Err(refused());
+        }
+        crate::agents::router::local::validate_execution(execution)
+            .await
+            .map_err(|_| refused())?;
+        let owner = &execution.identity().owner_user_id;
+        let user = aiplane_core::server::db::users::find_by_id(&d.state.db, owner)
+            .await
+            .map_err(persist_err("cached_reply_owner", &ctx.assistant_turn_id))?
+            .ok_or_else(refused)?;
+        let dot = aiplane_agents::db::agents::get_personal_dot(
+            &d.state.db,
+            owner,
+            &execution.identity().dot_id,
+        )
+        .await
+        .map_err(persist_err("cached_reply_dot", &ctx.assistant_turn_id))?
+        .ok_or_else(refused)?;
+        let spec: crate::agents::spec::AgentSpec =
+            serde_json::from_str(&dot.agent.draft_spec).map_err(|_| refused())?;
+        if !crate::agents::router::local::forward_available(&d.state, &user, &spec)
+            .await
+            .map_err(|_| refused())?
+        {
+            return Err(refused());
+        }
+        let Some(aiplane_agents::db::child_sessions::LocalChild::Personal(child)) =
+            aiplane_agents::db::child_sessions::child_of_turn(&d.state.db, child_turn)
+                .await
+                .map_err(persist_err("cached_reply_child", &ctx.assistant_turn_id))?
+        else {
+            return Err(refused());
+        };
+        let mut connection = d.state.db.acquire().await.map_err(persist_err(
+            "cached_reply_connection",
+            &ctx.assistant_turn_id,
+        ))?;
+        if !aiplane_agents::db::child_sessions::validate_child_in(
+            &mut connection,
+            owner,
+            child_turn,
+            &ctx.assistant_turn_id,
+            &suspension.tool_call.id,
+            &child.link.edge_generation,
+        )
+        .await
+        .map_err(persist_err("cached_reply_binding", &ctx.assistant_turn_id))?
+        {
+            return Err(refused());
+        }
+    }
     messages.extend(suspension.tail.iter().cloned());
     let call = ToolCallRef {
         id: suspension.tool_call.id.clone(),

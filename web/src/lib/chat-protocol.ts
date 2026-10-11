@@ -93,11 +93,32 @@ export interface TurnWithTools {
 export interface ChatSession {
 	id: string;
 	user_id: string;
+	can_delete: boolean;
 	title: string | null;
 	created_at: string;
 	updated_at: string;
 	shared: boolean;
 	pinned: boolean;
+}
+
+export interface ConversationPermissions {
+	can_write: boolean;
+	can_delete: boolean;
+	delegation: { root_session_id: string | null } | null;
+}
+
+export function conversationAccess(
+	session: Pick<ChatSession, 'user_id' | 'shared'> | null,
+	userId: string | null,
+	permissions: ConversationPermissions | null
+): { isOwner: boolean; canWrite: boolean; canFork: boolean } {
+	const known = session !== null && userId !== null;
+	const isOwner = known && session.user_id === userId;
+	return {
+		isOwner,
+		canWrite: isOwner && permissions?.can_write === true && permissions.delegation === null,
+		canFork: known && !isOwner && session.shared && permissions !== null && permissions.delegation === null
+	};
 }
 
 export type ChatEvent =

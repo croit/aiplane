@@ -406,3 +406,6 @@ dot-communication-error-invalid = The communication setting is invalid. Choose a
 dot-communication-error-conflict = The communication permissions changed while you were editing. Reload them and try again.
 dot-communication-error-inactive = Communication can only be enabled when both Dots are active. Activate both Dots and try again.
 dot-activity-communication-changed = Changed Dot communication permissions.
+
+dot-communication-error-busy = A delegated conversation is already running. Wait for it to finish and answer again.
+dot-communication-error-unavailable = This Dot delegation is unavailable. Check the active Dots, communication permissions and tool access before retrying.

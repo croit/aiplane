@@ -8,7 +8,7 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
     let context;
     const dotIds = [];
     try {
-        context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+        context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "de-DE" });
         await context.addCookies([
             { name: "id", value: await devSessionCookie(), url: BASE },
             { name: "lang", value: "en", url: BASE },
@@ -107,6 +107,8 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         await row(harald, "Accepts requests from", clara).getByRole("checkbox").check();
         await save(harald, "Accepts requests from", clara);
         const stale = await save(harald, "Can ask", clara, 409);
+        assert.equal(stale.request().headers()["accept-language"], "en",
+            "API errors must follow the explicitly selected UI language rather than the browser preference");
         assert.equal(stale.request().postDataJSON().expected_generation, beforeNoop.generation,
             "saving another row must not replace this draft's generation");
         try {

@@ -405,3 +405,6 @@ dot-communication-error-invalid = Le paramètre de communication est invalide. C
 dot-communication-error-conflict = Les autorisations de communication ont changé pendant votre modification. Rechargez-les et réessayez.
 dot-communication-error-inactive = La communication ne peut être activée que si les deux Dots sont actifs. Activez les deux Dots et réessayez.
 dot-activity-communication-changed = Autorisations de communication des Dots modifiées.
+
+dot-communication-error-busy = Une conversation déléguée est déjà en cours. Attendez qu’elle se termine, puis répondez à nouveau.
+dot-communication-error-unavailable = Cette délégation entre Dots est indisponible. Vérifiez les Dots actifs, les autorisations de communication et l’accès aux outils avant de réessayer.

@@ -516,6 +516,7 @@ mod tests {
             )),
             agent: None,
             personal_dot: None,
+            personal_execution: None,
             pending_actions: None,
             call_id: None,
         }

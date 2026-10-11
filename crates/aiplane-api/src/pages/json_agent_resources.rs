@@ -33,6 +33,7 @@ use std::sync::Arc;
 use rama::http::service::web::extract::State;
 use rama::http::{Request, Response, StatusCode};
 use serde::Serialize;
+use session_core::i18n::Lang;
 
 use super::json_principals::require_agent_manager;
 use super::tool_toggles::{CapabilityEntry, entries_for_tools, sort_entries};
@@ -100,9 +101,9 @@ fn grantable_tool_ids(state: &RamaState, role_ids: &[String]) -> Vec<String> {
 
 /// The tools a manager in groups `role_ids` may grant, one row per catalog
 /// entry, granting every tool id the entry stands for.
-fn tool_items(state: &RamaState, role_ids: &[String]) -> Vec<GrantableItem> {
+fn tool_items(state: &RamaState, role_ids: &[String], lang: Lang) -> Vec<GrantableItem> {
     let held = grantable_tool_ids(state, role_ids);
-    entries_for_tools(state, &held)
+    entries_for_tools(state, &held, lang)
         .into_iter()
         .map(|entry| {
             let refs: Vec<String> = held
@@ -120,7 +121,7 @@ fn tool_items(state: &RamaState, role_ids: &[String]) -> Vec<GrantableItem> {
 /// The tools a manager in groups `role_ids` may grant, by tool id, each
 /// named as its catalog entry names it.
 pub(super) fn grantable_tools(state: &RamaState, role_ids: &[String]) -> Vec<Ability> {
-    tool_items(state, role_ids)
+    tool_items(state, role_ids, Lang::En)
         .into_iter()
         .flat_map(|item| {
             let entry = item.entry;
@@ -138,11 +139,12 @@ pub(super) fn grantable_tools(state: &RamaState, role_ids: &[String]) -> Vec<Abi
 pub(super) async fn grantable_items(
     state: &RamaState,
     user: &User,
+    lang: Lang,
 ) -> Result<Vec<GrantableItem>, Response> {
     let role_ids = state.rbac.role_ids_for(&user.roles);
     let is_admin = state.rbac.is_admin(&role_ids);
     let admin_page = |url: String| is_admin.then_some(url);
-    let mut items = tool_items(state, &role_ids);
+    let mut items = tool_items(state, &role_ids, lang);
 
     let grantable = state.grantable_tool_ids();
     let mcp_grant = state.mcp_grant_for(&user.roles);
@@ -244,11 +246,12 @@ pub(super) async fn grantable_chat_models(state: &RamaState, user: &User) -> Vec
 }
 
 pub async fn resources(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let user = match require_agent_manager(&state, &req).await {
         Ok(user) => user,
         Err(resp) => return resp,
     };
-    match resources_for(&state, &user).await {
+    match resources_for(&state, &user, lang).await {
         Ok(view) => json_ok(StatusCode::OK, view),
         Err(resp) => resp,
     }
@@ -310,6 +313,7 @@ async fn model_list(state: &RamaState, user: &User, kind: PoolKind) -> Vec<Grant
 pub(super) async fn resources_for(
     state: &RamaState,
     user: &User,
+    lang: Lang,
 ) -> Result<AgentResources, Response> {
     let models = GrantableModels {
         chat: model_list(state, user, PoolKind::Chat).await,
@@ -317,7 +321,7 @@ pub(super) async fn resources_for(
         speech: model_list(state, user, PoolKind::Speech).await,
     };
 
-    let items = grantable_items(state, user).await?;
+    let items = grantable_items(state, user, lang).await?;
 
     let defaults = DefaultModels {
         chat: gateway_default(state, Feature::Chat).await,

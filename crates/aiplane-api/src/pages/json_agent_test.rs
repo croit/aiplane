@@ -319,6 +319,7 @@ pub struct StaffResumeBody {
 /// inbox's answer does: the turn continues on the conversation's stream, the
 /// visitor's and the test chat's alike.
 pub async fn resume_turn(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = session_core::i18n::Lang::from_request(req.headers());
     let user = or_return!(require_agent_manager(&state, &req).await);
     let (agent, _) = or_return!(agent_at(&state, &req, &user, 5, Access::Write).await);
     let (Some(session_id), Some(turn_id)) = (raw_path_segment(&req, 3), raw_path_segment(&req, 1))
@@ -334,6 +335,7 @@ pub async fn resume_turn(State(state): State<Arc<RamaState>>, req: Request) -> R
     super::json_inbox::resume_as_staff(
         state,
         super::json_inbox::StaffDecision {
+            lang,
             agent_id: &agent.principal.id,
             session_id: &session_id,
             turn_id: &turn_id,

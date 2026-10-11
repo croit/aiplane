@@ -75,3 +75,6 @@ tools-browser-notes-heading = Good to know
 tools-browser-note-window = The assistant works in its own window, in a tab group named "Assistant". While the extension is on, its icon is green and Chrome shows a bar saying the browser is being debugged.
 tools-browser-note-open = It only works while the conversation is open in a tab. Switch it off from the extension's icon when you are done.
 tools-browser-note-injection = Pages the assistant reads can contain text aimed at it. In the extension's settings you can limit it to sites you approve.
+
+tool-forward-request-title = Ask another Dot
+tool-forward-request-description = Sends an explicit task to another personal Dot. Both Dots must permit the request; the receiving Dot uses its own tools and approval rules.

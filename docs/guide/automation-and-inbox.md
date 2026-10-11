@@ -101,8 +101,8 @@ An approval request pauses the Dot chat and appears in chat and Inbox. Approve
 once permits only that call's recorded arguments. Current permissions and Dot
 availability are checked again before execution; removing a selected tool or
 disabling it in your account prevents a pending approval from running it.
-An inactive Dot retains its data and conversations while its pending turns
-remain paused. Separate Dot connector identities, organization Dots, automatic memory
+Deactivating a Dot retains its data and conversations and cancels its active
+personal runs and linked delegation work. Separate Dot connector identities, organization Dots, automatic memory
 curation and persistent Dot computers are not available.
 
 ## Configure communication consent
@@ -149,8 +149,9 @@ and run history for the outcome. The conversation's normal stop control can
 stop background work through the same worker registry as chat.
 
 Pausing an automation prevents future triggers; it does not discard an
-existing pending decision. Deactivating its Dot keeps pending Dot calls paused
-and preserves their conversations. An inactive or unavailable existing Dot
+existing pending decision. Deactivating its Dot keeps ordinary pending Dot
+calls paused and preserves conversations. Affected delegation trees are
+cancelled when a participating Dot is deactivated or effective consent changes. An inactive or unavailable existing Dot
 binding remains shown when editing; you may save unrelated changes, reactivate
 the Dot or choose another active assistant. New bindings require an active
 Dot you own.

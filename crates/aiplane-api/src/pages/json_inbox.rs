@@ -135,6 +135,7 @@ pub async fn answer(State(state): State<Arc<RamaState>>, req: Request) -> Respon
             Err(super::chat::ResumeTurnError::Context(err)) => internal(err),
             Err(super::chat::ResumeTurnError::Refused(refused)) => resume_error(
                 aiplane_runtime::agents::resume::AgentResumeError::Refused(refused),
+                lang,
             ),
         };
     }
@@ -150,6 +151,7 @@ pub async fn answer(State(state): State<Arc<RamaState>>, req: Request) -> Respon
             request_id: Some(&id),
             decision,
             user_id: &user.id,
+            lang,
         },
     )
     .await
@@ -158,6 +160,7 @@ pub async fn answer(State(state): State<Arc<RamaState>>, req: Request) -> Respon
 /// A member of staff's decision on a suspended turn of an agent's
 /// conversation.
 pub(super) struct StaffDecision<'a> {
+    pub lang: Lang,
     pub agent_id: &'a str,
     pub session_id: &'a str,
     pub turn_id: &'a str,
@@ -200,7 +203,7 @@ pub(super) async fn resume_as_staff(state: Arc<RamaState>, d: StaffDecision<'_>)
     .await
     {
         Ok(claimed) => claimed,
-        Err(err) => return resume_error(err),
+        Err(err) => return resume_error(err, d.lang),
     };
     embed_rt::spawn_guarded(state, runner, hold, TurnWork::Resume(claimed));
     json_ok(

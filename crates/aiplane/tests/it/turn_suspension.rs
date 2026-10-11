@@ -345,6 +345,185 @@ async fn personal_dot_resume_rechecks_the_users_enabled_tools() {
     dot_memory_approval(DotResumeCase::UserToolDisabled).await;
 }
 
+#[tokio::test]
+async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only_receiver_memory() {
+    use aiplane_agents::db::{
+        agents, dot_delegation, dot_memories, dot_sessions, system_principals,
+    };
+    use aiplane_runtime::agents::router::ForwardRequest;
+    use aiplane_tools::memory::Remember;
+
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("delegation.db");
+    let server = MockServer::start().await;
+    let mut state = boot_with(
+        &db_path,
+        &server.uri(),
+        ToolRegistry::new()
+            .with(Remember)
+            .with(ForwardRequest::personal()),
+        &["remember", "forward_request"],
+    )
+    .await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let mut ids = Vec::new();
+    for (name, spec) in [
+        (
+            "Caller",
+            r#"{"main":{"tools":["forward_request"],"tool_resources":{"forward_request":{"permission":"always_allow"}}}}"#,
+        ),
+        (
+            "Receiver",
+            r#"{"main":{"tools":["remember"],"tool_resources":{"remember":{"permission":"always_ask"}}}}"#,
+        ),
+    ] {
+        let (_, dot) = agents::create_personal_dot(
+            &state.db,
+            &system_principals::NewPrincipal {
+                name,
+                display: name,
+                description: "",
+            },
+            spec,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        ids.push(dot.unwrap().principal.id);
+    }
+    let saved = dot_delegation::set_consent(
+        &state.db,
+        dot_delegation::ConsentEdit {
+            owner_user_id: "alice",
+            dot_id: &ids[0],
+            peer_id: &ids[1],
+            direction: dot_delegation::ConsentDirection::Outbound,
+            enabled: true,
+            expected_generation: None,
+        },
+    )
+    .await
+    .unwrap();
+    let dot_delegation::ConsentSaved::Saved(edge) = saved else {
+        panic!("outbound consent saved");
+    };
+    assert!(matches!(
+        dot_delegation::set_consent(
+            &state.db,
+            dot_delegation::ConsentEdit {
+                owner_user_id: "alice",
+                dot_id: &ids[1],
+                peer_id: &ids[0],
+                direction: dot_delegation::ConsentDirection::Inbound,
+                enabled: true,
+                expected_generation: Some(&edge.generation),
+            }
+        )
+        .await
+        .unwrap(),
+        dot_delegation::ConsentSaved::Saved(_)
+    ));
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(Scripted {
+            deltas: vec![
+                tool_call(
+                    "forward_request",
+                    json!({"receiver_dot_id": ids[1], "message": "Save this explicit lesson"}),
+                ),
+                tool_call(
+                    "remember",
+                    json!({"content": "Receiver approved lesson", "kind": "fact"}),
+                ),
+                json!({"content": "Lesson saved."}),
+                json!({"content": "Receiver completed the task."}),
+            ],
+            served: AtomicUsize::new(0),
+            delay: Duration::ZERO,
+        })
+        .mount(&server)
+        .await;
+    let session_id = conversation(&state).await;
+    assert!(
+        dot_sessions::link(&state.db, "alice", &ids[0], &session_id)
+            .await
+            .unwrap()
+    );
+    let turn_id = submit(&state, &cookie, &session_id).await;
+    let paused = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Suspended).await;
+    assert!(paused.suspension.is_some());
+    let pause = chat::get_suspension(&state.db, &turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let child_turn = pause.child_turn.as_deref().unwrap().to_owned();
+    let Some(aiplane_agents::db::child_sessions::LocalChild::Personal(child)) =
+        aiplane_agents::db::child_sessions::child_of_turn(&state.db, &child_turn)
+            .await
+            .unwrap()
+    else {
+        panic!("actual delegated personal child");
+    };
+    let child_session = child.session.session_id;
+    assert!(
+        dot_memories::list(&state.db, "alice", &ids[1], 10)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+    state = boot_with(
+        &db_path,
+        &server.uri(),
+        ToolRegistry::new()
+            .with(Remember)
+            .with(ForwardRequest::personal()),
+        &["remember", "forward_request"],
+    )
+    .await;
+    let (status, body) = resume(
+        &state,
+        &cookie,
+        &session_id,
+        &turn_id,
+        json!({"decision": "allow_once", "request_id": pause.request_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let completed = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Completed).await;
+    assert_eq!(completed.tool_calls.len(), 1);
+    assert_eq!(completed.tool_calls[0].status, ToolCallStatus::Completed);
+    assert_eq!(
+        chat::get_turn(&state.db, &child_session, &child_turn)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Completed
+    );
+    let notes = dot_memories::list(&state.db, "alice", &ids[1], 10)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].content, "Receiver approved lesson");
+    assert!(
+        dot_memories::list(&state.db, "alice", &ids[0], 10)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        db::user_memories::list_for_user(&state.db, "alice", 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 4);
+}
+
 pub(crate) fn post(uri: String, cookie: &str, body: Value) -> Request {
     common::post_json(&uri, cookie, &body.to_string())
 }

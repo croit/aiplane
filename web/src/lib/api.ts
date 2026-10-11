@@ -10,6 +10,7 @@
  * sent automatically; a 401 means "signed out" and callers decide what
  * to do with it (the layout redirects to the OIDC login).
  */
+import { detect } from './locale.ts';
 
 /** The reasoning-effort scale, least thinking first. */
 export const EFFORTS = ['off', 'low', 'medium', 'high', 'xhigh'] as const;
@@ -199,10 +200,13 @@ function errorEnvelope(detail: string | undefined): { code?: string; message?: s
  * admin surfaces — funnels through here so error envelopes, credentials and
  * headers live in exactly one place. */
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+	const headers = new Headers(init?.headers);
+	if (!headers.has('accept')) headers.set('accept', 'application/json');
+	if (!headers.has('accept-language')) headers.set('accept-language', detect());
 	const res = await fetch(path, {
 		credentials: 'same-origin',
 		...init,
-		headers: { accept: 'application/json', ...init?.headers }
+		headers
 	});
 	if (!res.ok) throw await responseError(res);
 	if (res.status === 204) return undefined as T;
@@ -274,7 +278,7 @@ export const api = {
 
 	/** GET /api/v0/chat/sessions/{id} — full snapshot (owner or shared). */
 	getChatSession: (id: string) =>
-		request<{
+		request<import('./chat-protocol.js').ConversationPermissions & {
 			session: import('./chat-protocol.js').ChatSession;
 			turns: import('./chat-protocol.js').TurnWithTools[];
 			effort: Effort;

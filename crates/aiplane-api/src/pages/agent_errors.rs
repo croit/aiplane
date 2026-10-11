@@ -8,11 +8,26 @@ use rama::http::{Response, StatusCode};
 use super::{internal, json_error};
 use aiplane_runtime::agents::resume::AgentResumeError;
 use aiplane_runtime::suspend::ResumeRefused;
+use session_core::i18n::{Lang, t};
 
 /// A refused resume, in the `/api/v0` envelope. Shared by the staff,
 /// inbox and visitor routes, so all name a refusal the same way.
-pub(super) fn resume_error(err: AgentResumeError) -> Response {
+pub(super) fn resume_error(err: AgentResumeError, lang: Lang) -> Response {
     let (status, code) = match &err {
+        AgentResumeError::Busy => {
+            return json_error(
+                StatusCode::CONFLICT,
+                "turn_in_progress",
+                &t(lang, "dot-communication-error-busy"),
+            );
+        }
+        AgentResumeError::Unavailable => {
+            return json_error(
+                StatusCode::CONFLICT,
+                "dot_unavailable",
+                &t(lang, "dot-communication-error-unavailable"),
+            );
+        }
         AgentResumeError::Refused(ResumeRefused::NotSuspended)
         | AgentResumeError::Refused(ResumeRefused::StaleRequest { .. }) => {
             (StatusCode::CONFLICT, "not_suspended")
@@ -27,4 +42,38 @@ pub(super) fn resume_error(err: AgentResumeError) -> Response {
         }
     };
     json_error(status, code, &err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use session_core::i18n::{Lang, t};
+
+    #[tokio::test]
+    async fn personal_resume_refusals_use_the_requested_language_and_existing_error_envelope() {
+        for lang in [Lang::En, Lang::De] {
+            for (error, code, key) in [
+                (
+                    AgentResumeError::Busy,
+                    "turn_in_progress",
+                    "dot-communication-error-busy",
+                ),
+                (
+                    AgentResumeError::Unavailable,
+                    "dot_unavailable",
+                    "dot-communication-error-unavailable",
+                ),
+            ] {
+                let response = resume_error(error, lang);
+                assert_eq!(response.status(), StatusCode::CONFLICT);
+                let bytes = session_core::chrome::read_body_capped(response.into_body(), 16 * 1024)
+                    .await
+                    .unwrap();
+                let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_ne!(t(lang, key), key);
+                assert_eq!(body["error"]["message"], t(lang, key));
+                assert_eq!(body["error"]["code"], code);
+            }
+        }
+    }
 }

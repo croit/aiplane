@@ -405,3 +405,6 @@ dot-communication-error-invalid = Настройка общения недейс
 dot-communication-error-conflict = Разрешения на общение изменились во время редактирования. Перезагрузите их и повторите попытку.
 dot-communication-error-inactive = Общение можно включить, только если оба Dot активны. Активируйте оба Dot и повторите попытку.
 dot-activity-communication-changed = Разрешения на общение Dot изменены.
+
+dot-communication-error-busy = Делегированный разговор уже выполняется. Дождитесь его завершения и ответьте снова.
+dot-communication-error-unavailable = Это делегирование между Dot недоступно. Перед повторной попыткой проверьте активные Dot, разрешения на связь и доступ к инструментам.

@@ -559,6 +559,7 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
     let principal = actor.principal();
     let agent = actor.agent().cloned();
     let personal_dot = actor.personal_dot_identity().cloned();
+    let personal_execution = actor.personal_execution().cloned();
     // Session paths: whatever the user's groups reach. Bearer paths hand in
     // their own, already narrowed by the token's allowlist.
     let pool_access = pool_access.unwrap_or_else(|| state.pool_access_for_principal(&principal));
@@ -566,6 +567,7 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
         principal,
         agent,
         personal_dot,
+        personal_execution,
         call_id: None,
         token_id: None,
         pool_access,
@@ -633,6 +635,39 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
         // depends on.
         granted_tools: None,
     }
+}
+
+struct PersonalRoundUsage {
+    meter: Option<Arc<crate::budget::SpendMeter>>,
+}
+
+impl PersonalRoundUsage {
+    fn new(meter: Option<Arc<crate::budget::SpendMeter>>) -> Self {
+        Self { meter }
+    }
+    fn record(&mut self, tokens: Option<u64>) {
+        if let Some(meter) = self.meter.take() {
+            meter.record_tokens(tokens);
+        }
+    }
+}
+
+impl Drop for PersonalRoundUsage {
+    fn drop(&mut self) {
+        self.record(None);
+    }
+}
+
+fn known_round_tokens(tokens: (Option<i64>, Option<i64>, Option<i64>)) -> Option<u64> {
+    tokens
+        .2
+        .or_else(|| {
+            tokens
+                .0
+                .zip(tokens.1)
+                .map(|(prompt, completion)| prompt.saturating_add(completion))
+        })
+        .map(|tokens| tokens.max(0) as u64)
 }
 
 #[async_trait]
@@ -1172,6 +1207,9 @@ async fn run_one_turn(
         })?;
         crate::server::tools::catalog::retain_enabled(&mut granted, &disabled);
     }
+    if d.tool_ctx.personal_execution.is_none() {
+        granted.retain(|id| id != crate::agents::router::FORWARD_TOOL_NAME);
+    }
     let granted_source =
         crate::server::tools::GrantedToolSource::new(&every_tool, granted.iter().cloned());
     // An agent run's synthetic tools are no grant: they sit over the
@@ -1307,7 +1345,11 @@ async fn run_one_turn(
             serving.dialect,
         )
         .await;
-    let budget = policy.budget(effort);
+    let personal_execution = d.tool_ctx.personal_execution.as_ref();
+    let budget = personal_execution.map_or_else(
+        || policy.budget(effort),
+        |execution| execution.local_budget(),
+    );
     let injection = policy.injection();
     let max_rounds = budget.rounds();
     // A resumed run continues against what it had spent before the pause.
@@ -1391,6 +1433,7 @@ async fn run_one_turn(
     // Set once the model ignored its final round: the one request past the
     // budget is the closing round (`runner::prepare_closing_round`).
     let mut closing = false;
+    let mut tree_final_sent = false;
     let mut repeated_calls = crate::repeated_calls::RepeatedCallGuard::new();
 
     // Names of the tools that ran this turn, for the gateway's own account of
@@ -1511,6 +1554,24 @@ async fn run_one_turn(
         if limit_hit.is_none() {
             limit_hit = budget.exhausted((d.clock)().duration_since(run_started), tokens_used);
         }
+        if let Some(execution) = personal_execution {
+            if execution.unknown_token_usage(budget) {
+                limit_hit = Some(crate::budget::Limit::Tokens);
+            }
+            crate::agents::router::local::validate_execution(execution)
+                .await
+                .map_err(|error| TurnError::Aborted {
+                    message: error.to_string(),
+                })?;
+            if let Err(limit) = execution.meter().begin_round() {
+                if tree_final_sent {
+                    break;
+                }
+                execution.meter().begin_final_round();
+                tree_final_sent = true;
+                limit_hit = Some(limit);
+            }
+        }
         let final_round = round + 1 == max_rounds || limit_hit.is_some();
 
         // Build the request. `stream: true` so we can forward
@@ -1522,14 +1583,17 @@ async fn run_one_turn(
         // parsed for metrics below and for the compaction trigger (which reads
         // `prompt_tokens` to size the context), and otherwise ignored (its
         // `choices` is empty, so the delta loop skips it). Requested when
-        // *either* usage metrics or compaction is on; omitted only when both
-        // are off, so a fully-disabled gateway doesn't alter the request.
+        // personal turns also need these facts before a receiver introduces
+        // a finite token cap.
         let mut request_body = serde_json::json!({
             "model": ctx.model,
             "messages": messages,
             "stream": true,
         });
-        if (metrics_on || compaction_enabled || budget.tokens().is_some())
+        if (metrics_on
+            || compaction_enabled
+            || budget.tokens().is_some()
+            || personal_execution.is_some())
             && let Some(obj) = request_body.as_object_mut()
         {
             obj.insert(
@@ -1592,10 +1656,31 @@ async fn run_one_turn(
             real_model: &real_model,
             backend,
         };
+        let request_access = if let Some(execution) = personal_execution {
+            let owner = aiplane_core::server::db::users::find_by_id(
+                &d.state.db,
+                &execution.identity().owner_user_id,
+            )
+            .await
+            .map_err(persist_err("find_by_id", &ctx.assistant_turn_id))?
+            .ok_or_else(|| TurnError::Aborted {
+                message:
+                    "The personal Dot owner is unavailable. Restore its owner before continuing."
+                        .into(),
+            })?;
+            let principal = aiplane_core::server::principal::Principal::User {
+                id: owner.id,
+                roles: owner.roles,
+            };
+            crate::persona::personal_dot::current_pool_access(&d.state, &principal, &access)
+                .for_request(&ctx.model)
+        } else {
+            access.clone()
+        };
         let acquired = match d.state.upstreams.route_access_affine(
             &real_model,
             aiplane_core::server::upstreams::PoolKind::Chat,
-            &access,
+            &request_access,
             Some(&affinity),
         ) {
             Ok(acquired) => acquired,
@@ -1640,6 +1725,8 @@ async fn run_one_turn(
             real_model: &real_model,
             backend: Some(&backend_name),
         };
+        let mut tree_usage =
+            PersonalRoundUsage::new(personal_execution.map(|execution| execution.meter().clone()));
         let upstream = match http_req.send().await {
             Ok(upstream) => upstream,
             Err(err) => {
@@ -1990,6 +2077,7 @@ async fn run_one_turn(
                         .map_or(0, |t| t.max(0) as u64);
                     tokens_used += spent;
                     policy.record_spend(spent);
+                    tree_usage.record(known_round_tokens(round_tokens));
                     effort = lower;
                     wrote_any_content = marks.is_some_and(|(content, _)| content > 0);
                     frozen_reasoning_elapsed &= wrote_any_content;
@@ -2000,6 +2088,7 @@ async fn run_one_turn(
                 LoopRetry::Stop => {}
             }
         }
+        tree_usage.record(known_round_tokens(round_tokens));
         if let Some(end) = streamed? {
             return Ok(end);
         }
@@ -2445,7 +2534,8 @@ async fn run_one_turn(
                     rounds: round + 1,
                     seconds: (d.clock)().duration_since(run_started).as_secs(),
                     tokens: tokens_used,
-                    tree: None,
+                    tree: personal_execution
+                        .map(|execution| execution.meter().snapshot(execution.local_budget())),
                 },
             )
             .await?;
@@ -3804,6 +3894,34 @@ where
 /// rather than poisoning the request.
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn personal_round_usage_requires_complete_token_facts_and_marks_abandoned_requests_unknown() {
+        assert_eq!(super::known_round_tokens((None, None, None)), None);
+        assert_eq!(super::known_round_tokens((Some(3), None, None)), None);
+        assert_eq!(super::known_round_tokens((Some(3), Some(2), None)), Some(5));
+        assert_eq!(super::known_round_tokens((None, None, Some(7))), Some(7));
+        let limits =
+            crate::budget::Budget::from_limits(session_core::db::suspensions::BudgetLimits {
+                rounds: 4,
+                seconds: None,
+                tokens: Some(20),
+            });
+        let meter = std::sync::Arc::new(crate::budget::SpendMeter::for_budget(
+            limits,
+            crate::budget::system_clock(),
+            None,
+        ));
+        let mut completed = super::PersonalRoundUsage::new(Some(meter.clone()));
+        completed.record(Some(5));
+        drop(completed);
+        assert_eq!(meter.tokens(), 5);
+        assert!(meter.remaining().is_some());
+        drop(super::PersonalRoundUsage::new(Some(meter.clone())));
+        assert_eq!(meter.tokens(), 5);
+        assert!(!meter.snapshot(limits).usage_known);
+        assert!(meter.remaining().is_none());
+    }
+
     use super::{
         STEER_PREFIX, SessionContext, THINK_TAGS, ToolCallAcc, ToolCallStatus,
         ensure_unique_tool_call_ids, fold_in_steers, inject_ocr_blocks, message_for_history,

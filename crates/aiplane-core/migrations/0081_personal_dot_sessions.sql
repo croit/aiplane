@@ -2,7 +2,17 @@ CREATE TABLE personal_dot_sessions (
     session_id TEXT PRIMARY KEY NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     dot_id TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    parent_turn_id TEXT,
+    parent_tool_call_id TEXT,
+    caller_dot_id TEXT,
+    edge_generation TEXT,
+    CHECK (
+        (parent_turn_id IS NULL AND parent_tool_call_id IS NULL AND caller_dot_id IS NULL AND edge_generation IS NULL)
+        OR
+        (parent_turn_id IS NOT NULL AND parent_tool_call_id IS NOT NULL AND caller_dot_id IS NOT NULL AND edge_generation IS NOT NULL)
+    ),
+    UNIQUE (parent_turn_id, parent_tool_call_id)
 ) STRICT;
 
 CREATE INDEX idx_personal_dot_sessions_owner_dot

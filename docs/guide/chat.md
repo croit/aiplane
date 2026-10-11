@@ -1,6 +1,6 @@
 # Conversations
 
-Use a conversation for a continuing task: its messages, attachments, generated assets and documents belong together. You must be signed in to use browser chat. The owner can change a conversation; another signed-in user can read it when the owner enables sharing.
+Use a conversation for a continuing task: its messages, attachments, generated assets and documents belong together. You must be signed in to use browser chat. The owner can change an ordinary conversation; another signed-in user can read it when the owner enables sharing. Delegated child histories have separate read-only controls.
 
 ## Choose a model and capabilities
 
@@ -58,6 +58,21 @@ A reader sees a read-only conversation and can select **Fork** to copy it into t
 ## Export
 
 Open **Export** in the header and choose Markdown or PDF. Markdown is useful for further processing and documentation; PDF is useful for a fixed reading copy. Access to the export follows access to the conversation.
+
+## Read a delegated history
+
+A delegated personal Dot conversation is private to its owner and remains
+read-only. Read its messages, inspect files or canvas documents, export it, or
+pin it in the sidebar. A suspended tool call shows **Waiting for a human
+decision** with a static pause indicator. Use **Open root conversation** or Inbox to continue,
+approve or stop the work. The child history cannot independently send messages,
+answer decisions, share, fork, edit, retry, delete or change tools and models.
+
+Deleting the root cancels its linked work. Retained child histories remain
+private and read-only; when the root is unavailable, the banner explains that
+there is no root link.
+
+![Private delegated Dot history with root navigation and a pending decision](../img/guide/dot-delegated-history.png)
 
 ## Troubleshooting
 

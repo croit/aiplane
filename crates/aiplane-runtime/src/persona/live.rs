@@ -64,6 +64,25 @@ impl Tool for LivePersonalDotTool {
 
     fn run<'a>(&'a self, mut ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         Box::pin(async move {
+            if let Some(execution) = ctx.personal_execution.as_ref() {
+                let root_turn = crate::agents::router::local::validate_execution(execution).await?;
+                if execution.meter().remaining().is_none()
+                    || execution.unknown_token_usage(execution.local_budget())
+                {
+                    return Err(self.unavailable());
+                }
+                if crate::server::background::for_turn(
+                    &self.state.db,
+                    &execution.identity().owner_user_id,
+                    &root_turn,
+                )
+                .await
+                .map_err(Self::load_error)?
+                .is_some_and(|context| !context.tools_enabled)
+                {
+                    return Err(self.unavailable());
+                }
+            }
             let identity = ctx
                 .personal_dot
                 .as_ref()
@@ -128,18 +147,8 @@ impl Tool for LivePersonalDotTool {
                 CompositeToolSource::new(tools.as_ref(), &layer).with_comfyui(comfyui.as_ref());
             let current = GrantedToolSource::new(&source, granted.iter().cloned());
             let tool = current.get(self.id()).ok_or_else(|| self.unavailable())?;
-            let mut access = self.state.pool_access_for_principal(&principal);
-            if !ctx.pool_access.is_admin {
-                if access.is_admin {
-                    access.role_ids = ctx.pool_access.role_ids.clone();
-                } else {
-                    access
-                        .role_ids
-                        .retain(|id| ctx.pool_access.role_ids.contains(id));
-                }
-                access.is_admin = false;
-            }
-            access.allowed_models = ctx.pool_access.allowed_models.clone();
+            let access =
+                super::personal_dot::current_pool_access(&self.state, &principal, &ctx.pool_access);
             ctx.principal = principal;
             ctx.pool_access = access;
             ctx.granted_tools = Some(Arc::new(granted.into_iter().collect()));
@@ -187,7 +196,7 @@ mod tests {
 
     impl Tool for PrincipalEcho {
         fn id(&self) -> &str {
-            Echo.id()
+            "company_echo"
         }
         fn schema(&self) -> ToolDef {
             Echo.schema()

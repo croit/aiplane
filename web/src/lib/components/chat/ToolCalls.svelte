@@ -1,19 +1,22 @@
 <script lang="ts">
-	import type { ToolCall } from '#lib/chat-protocol.js';
-	import { prettyToolPayload, summarizeToolCalls, TOOL_GROUP_THRESHOLD } from '#lib/chat-transcript.js';
+	import type { ToolCall, Turn } from '#lib/chat-protocol.js';
+	import { prettyToolPayload, summarizeToolCalls, presentedToolCallStatus, TOOL_GROUP_THRESHOLD } from '#lib/chat-transcript.js';
 	import { n, t } from '#lib/i18n.svelte.js';
 
-	let { calls, label = (name: string) => name }: { calls: ToolCall[]; label?: (name: string) => string } = $props();
+	let { calls, turnStatus, label = (name: string) => name }: { calls: ToolCall[]; turnStatus: Turn['status']; label?: (name: string) => string } = $props();
 	const anyRunning = $derived(calls.some((call: ToolCall) => call.status === 'running'));
+	const anyWaiting = $derived(calls.some((call: ToolCall) => presentedToolCallStatus(call.status, turnStatus) === 'waiting'));
 	const anyErrored = $derived(calls.some((call: ToolCall) => call.status === 'errored'));
 
 	function statusLabel(call: ToolCall): string {
+		if (presentedToolCallStatus(call.status, turnStatus) === 'waiting') return t('agents-test-status-suspended');
 		if (call.status === 'errored') return t('render-tool-status-error');
 		if (call.status === 'running') return call.name.startsWith('comfyui_') ? t('render-tools-running') : t('render-tool-status-calling');
 		return t('render-tool-status-used');
 	}
 
 	function groupLabel(): string {
+		if (anyWaiting) return t('agents-test-status-suspended');
 		if (anyRunning) return t('render-tools-running');
 		if (anyErrored) return t('render-tools-errored');
 		return t('render-tools-used');
@@ -23,12 +26,15 @@
 {#snippet callRow(call: ToolCall)}
 	{@const input = prettyToolPayload(call.arguments_json)}
 	{@const output = call.output_json ? prettyToolPayload(call.output_json) : null}
+	{@const status = presentedToolCallStatus(call.status, turnStatus)}
 	<details class="collapse collapse-arrow rounded-lg bg-base-200/60">
 		<summary class="collapse-title flex min-h-8 items-center gap-2 py-1.5 text-sm">
 			{#if call.status === 'completed'}
 				<span class="text-success">✓</span>
 			{:else if call.status === 'errored'}
 				<span class="text-error">✗</span>
+			{:else if status === 'waiting'}
+				<span class="badge badge-ghost badge-xs" aria-hidden="true">Ⅱ</span>
 			{:else}
 				<span class="loading loading-spinner loading-xs"></span>
 			{/if}
@@ -55,7 +61,7 @@
 {#if calls.length > TOOL_GROUP_THRESHOLD}
 	<details class="collapse collapse-arrow rounded-lg bg-base-200/60">
 		<summary class="collapse-title flex min-h-8 items-center gap-2 py-1.5 text-sm">
-			{#if anyRunning}<span class="loading loading-spinner loading-xs"></span>{:else}<span class={anyErrored ? 'text-error' : 'text-success'}>{anyErrored ? '✗' : '✓'}</span>{/if}
+			{#if anyWaiting}<span class="badge badge-ghost badge-xs" aria-hidden="true">Ⅱ</span>{:else if anyRunning}<span class="loading loading-spinner loading-xs"></span>{:else}<span class={anyErrored ? 'text-error' : 'text-success'}>{anyErrored ? '✗' : '✓'}</span>{/if}
 			<span class="text-base-content/60">{groupLabel()}</span>
 			<span class="font-medium">{t('render-tools-summary', { count: calls.length, breakdown: summarizeToolCalls(calls, label) })}</span>
 		</summary>

@@ -26,7 +26,7 @@ use aiplane_core::server::principal::{Principal, SystemPrincipal};
 use aiplane_core::server::run_chain::RunChain;
 
 use crate::agents::profile::AgentSurface;
-use crate::budget::Budget;
+use crate::budget::{Budget, SpendMeter};
 use crate::finish::{FinishContract, FinishTool, IncompleteReason, RunOutcome};
 use crate::server::tools::Tool;
 use crate::server::tools::injection::InjectionScan;
@@ -253,6 +253,7 @@ pub enum Actor {
         id: String,
         roles: Vec<String>,
         dot: PersonalDotIdentity,
+        execution: Option<Arc<PersonalDotExecution>>,
     },
     /// An agent's run, offered exactly its principal's grants.
     Agent(Arc<AgentRun>),
@@ -262,6 +263,78 @@ pub enum Actor {
 pub struct PersonalDotIdentity {
     pub owner_user_id: String,
     pub dot_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonalExecutionBinding {
+    pub identity: PersonalDotIdentity,
+    pub session_id: String,
+    pub assistant_turn_id: String,
+    pub model: String,
+}
+
+pub struct PersonalDotExecution {
+    pub(crate) state: Arc<crate::rama_server::state::RamaState>,
+    binding: PersonalExecutionBinding,
+    chain: Arc<RunChain>,
+    local_budget: Budget,
+    meter: Arc<SpendMeter>,
+}
+
+impl std::fmt::Debug for PersonalDotExecution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersonalDotExecution")
+            .field("binding", &self.binding)
+            .field("chain", &self.chain)
+            .field("local_budget", &self.local_budget)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PersonalDotExecution {
+    pub(crate) fn new(
+        state: Arc<crate::rama_server::state::RamaState>,
+        binding: PersonalExecutionBinding,
+        chain: Arc<RunChain>,
+        local_budget: Budget,
+        meter: Arc<SpendMeter>,
+    ) -> Result<Self, MismatchedRun> {
+        if chain.current().principal_id != binding.identity.dot_id {
+            return Err(MismatchedRun {
+                chain_agent: chain.current().name.clone(),
+                principal: binding.identity.dot_id,
+            });
+        }
+        Ok(Self {
+            state,
+            binding,
+            chain,
+            local_budget,
+            meter,
+        })
+    }
+
+    pub fn binding(&self) -> &PersonalExecutionBinding {
+        &self.binding
+    }
+    pub fn identity(&self) -> &PersonalDotIdentity {
+        &self.binding.identity
+    }
+    pub fn model(&self) -> &str {
+        &self.binding.model
+    }
+    pub fn chain(&self) -> &Arc<RunChain> {
+        &self.chain
+    }
+    pub fn local_budget(&self) -> Budget {
+        self.local_budget
+    }
+    pub fn meter(&self) -> &Arc<SpendMeter> {
+        &self.meter
+    }
+    pub(crate) fn unknown_token_usage(&self, budget: Budget) -> bool {
+        budget.tokens().is_some() && !self.meter.snapshot(budget).usage_known
+    }
 }
 
 impl Actor {
@@ -285,6 +358,7 @@ impl Actor {
                 owner_user_id,
                 dot_id: dot_id.into(),
             },
+            execution: None,
         }
     }
 
@@ -321,6 +395,29 @@ impl Actor {
         match self {
             Self::PersonalDot { dot, .. } => Some(dot),
             Self::Person { .. } | Self::Agent(_) => None,
+        }
+    }
+
+    pub fn personal_execution(&self) -> Option<&Arc<PersonalDotExecution>> {
+        match self {
+            Self::PersonalDot { execution, .. } => execution.as_ref(),
+            Self::Person { .. } | Self::Agent(_) => None,
+        }
+    }
+
+    pub(crate) fn with_personal_execution(
+        mut self,
+        run: Arc<PersonalDotExecution>,
+    ) -> Result<Self, MismatchedRun> {
+        match &mut self {
+            Self::PersonalDot { dot, execution, .. } if dot == run.identity() => {
+                *execution = Some(run);
+                Ok(self)
+            }
+            _ => Err(MismatchedRun {
+                chain_agent: run.chain().current().name.clone(),
+                principal: self.principal().subject_id().to_owned(),
+            }),
         }
     }
 }

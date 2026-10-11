@@ -74,6 +74,10 @@ pub async fn sessions_list(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
+    let delegated_ids = match chat::child_session_ids(&state.db, &user.id).await {
+        Ok(ids) => ids,
+        Err(error) => return internal(error),
+    };
     let scope = match params.dot_id.as_deref() {
         Some(dot_id) => match aiplane_agents::db::dot_sessions::scoped_session_ids(
             &state.db,
@@ -99,6 +103,7 @@ pub async fn sessions_list(
                     .is_none_or(|ids| ids.contains(&hit.session_id))
             })
             .map(|h| SessionMatch {
+                can_delete: !delegated_ids.contains(&h.session_id),
                 id: h.session_id,
                 title: h.title,
                 updated_at: h.updated_at.to_string(),
@@ -111,6 +116,13 @@ pub async fn sessions_list(
     match chat::list_sessions(&state.db, &user.id).await {
         Ok(mut sessions) => {
             sessions.retain(|session| scope.as_ref().is_none_or(|ids| ids.contains(&session.id)));
+            let sessions = sessions
+                .into_iter()
+                .map(|session| ListedSession {
+                    can_delete: !delegated_ids.contains(&session.id),
+                    session,
+                })
+                .collect();
             ok_json(StatusCode::OK, SessionsList::Listed { sessions })
         }
         Err(err) => internal(err),
@@ -128,13 +140,21 @@ pub struct SessionsQuery {
 #[serde(untagged)]
 pub enum SessionsList {
     /// Without `q`: every conversation, pinned first, then most recent.
-    Listed { sessions: Vec<chat::Session> },
+    Listed { sessions: Vec<ListedSession> },
     /// With `q`: title matches first, then content matches.
     Found { sessions: Vec<SessionMatch> },
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ListedSession {
+    #[serde(flatten)]
+    pub session: chat::Session,
+    pub can_delete: bool,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct SessionMatch {
+    pub can_delete: bool,
     pub id: String,
     pub title: Option<String>,
     pub updated_at: String,
@@ -185,6 +205,22 @@ pub async fn session_get(
         Ok(None) => return not_found_conversation(),
         Err(resp) => return resp,
     };
+    let delegated = match session_is_delegated(&state, &session_id).await {
+        Ok(Some(value)) => value,
+        Ok(None) => return not_found_conversation(),
+        Err(error) => return internal(error),
+    };
+    let can_write = session.user_id == user.id && !delegated;
+    let delegation = if delegated {
+        match aiplane_agents::db::child_sessions::root_session_id(&state.db, &user.id, &session_id)
+            .await
+        {
+            Ok(root_session_id) => Some(Delegation { root_session_id }),
+            Err(error) => return internal(error),
+        }
+    } else {
+        None
+    };
     let turns = match chat::list_turns(&state.db, &session_id).await {
         Ok(t) => t,
         Err(err) => {
@@ -230,6 +266,9 @@ pub async fn session_get(
     ok_json(
         StatusCode::OK,
         SessionDetail {
+            can_write,
+            can_delete: can_write,
+            delegation,
             session,
             turns,
             effort,
@@ -241,6 +280,9 @@ pub async fn session_get(
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct SessionDetail {
+    pub can_write: bool,
+    pub can_delete: bool,
+    pub delegation: Option<Delegation>,
     pub session: chat::Session,
     pub turns: Vec<chat::TurnWithTools>,
     /// The conversation's effort level — the stored one, or the default
@@ -251,6 +293,11 @@ pub struct SessionDetail {
     pub compacted_up_to_seq: Option<i64>,
     /// Every file attached to or produced in the conversation.
     pub assets: Vec<SessionAsset>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct Delegation {
+    pub root_session_id: Option<String>,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -274,8 +321,23 @@ pub async fn session_delete(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    if !user_owns(&state, &user.id, &session_id).await {
+    if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
+    }
+    let turns = match chat::list_turns(&state.db, &session_id).await {
+        Ok(turns) => turns,
+        Err(error) => return internal(error),
+    };
+    for turn in turns
+        .iter()
+        .filter(|row| row.turn.role == chat::TurnRole::Assistant)
+    {
+        if let Err(error) =
+            aiplane_runtime::agents::resume::cancel_personal_tree(&state, &user.id, &turn.turn.id)
+                .await
+        {
+            return internal(error);
+        }
     }
     // Deleting the conversation deletes its files.
     let config = state.config();
@@ -362,6 +424,11 @@ pub async fn session_fork(
         Ok(None) => return not_found_conversation(),
         Err(resp) => return resp,
     };
+    match session_is_delegated(&state, &session_id).await {
+        Ok(Some(true)) | Ok(None) => return not_found_conversation(),
+        Ok(Some(false)) => {}
+        Err(error) => return internal(error),
+    }
     if src.user_id == user.id {
         return json_error(
             StatusCode::CONFLICT,
@@ -462,6 +529,9 @@ pub async fn message_send(
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
+    if !user_can_write(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
     // Two request shapes, one code path: JSON `{model, message}` for plain
     // text, multipart/form-data (like the legacy composer) when attachments
     // ride along — they must upload under the user-turn's S3 prefix, which
@@ -656,7 +726,7 @@ pub async fn session_steer(
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
-    if !user_owns(&state, &user.id, &session_id).await {
+    if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     if let Err(error) = super::refuse_if_dot_inactive(&state, &user.id, &session_id).await {
@@ -769,7 +839,7 @@ pub async fn steer_discard(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    if !user_owns(&state, &user.id, &session_id).await {
+    if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let steer = match chat::get_steer(&state.db, &session_id, &steer_id).await {
@@ -818,38 +888,33 @@ pub async fn session_cancel(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    if !user_owns(&state, &user.id, &session_id).await {
+    if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
-    let mut cancelled = session_core::chat_json::cancel_turn(&state.chats, &user.id, &session_id);
-    // No worker, but a turn paused for a decision is the conversation's live
-    // turn all the same: stopping it is giving up on the decision.
-    if !cancelled {
-        cancelled = match chat::suspended_turn_in_session(&state.db, &session_id).await {
-            Ok(Some(turn_id)) => match chat::cancel_suspended_turn(&state.db, &turn_id).await {
-                Ok(done) => {
-                    if done
-                        && let Err(err) = aiplane_runtime::server::background::reconcile_turn(
-                            &state.db, &user.id, &turn_id,
-                        )
-                        .await
-                    {
-                        return internal(err);
-                    }
-                    done
-                }
-                Err(err) => return internal(err),
-            },
-            Ok(None) => false,
-            Err(err) => return internal(err),
-        };
-        if cancelled {
-            let state = state.clone();
-            let user_id = user.id.clone();
-            tokio::spawn(async move {
-                super::start_pending_turns(&state, &user_id).await;
-            });
+    let running = state
+        .chats
+        .get(&user.id, &session_id)
+        .map(|worker| worker.turn_id);
+    let waiting = if running.is_none() {
+        match chat::suspended_turn_in_session(&state.db, &session_id).await {
+            Ok(turn_id) => turn_id,
+            Err(error) => return internal(error),
         }
+    } else {
+        None
+    };
+    let cancelled = running.is_some() || waiting.is_some();
+    if let Some(turn_id) = running.or(waiting) {
+        if let Err(error) =
+            aiplane_runtime::agents::resume::cancel_personal_tree(&state, &user.id, &turn_id).await
+        {
+            return internal(error);
+        }
+        let state = state.clone();
+        let user_id = user.id.clone();
+        tokio::spawn(async move {
+            super::start_pending_turns(&state, &user_id).await;
+        });
     }
     ok_json(StatusCode::OK, Cancelled { cancelled })
 }
@@ -1160,6 +1225,19 @@ async fn user_owns(state: &RamaState, user_id: &str, session_id: &str) -> bool {
     )
 }
 
+async fn user_can_write(state: &RamaState, user_id: &str, session_id: &str) -> bool {
+    chat::is_root_session_owned(&state.db, user_id, session_id)
+        .await
+        .unwrap_or(false)
+}
+
+async fn session_is_delegated(
+    state: &RamaState,
+    session_id: &str,
+) -> Result<Option<bool>, chat::DbError> {
+    chat::session_has_parent(&state.db, session_id).await
+}
+
 async fn readable_session(
     state: &RamaState,
     user_id: &str,
@@ -1199,7 +1277,7 @@ pub async fn turn_delete(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    if !user_owns(&state, &user.id, &session_id).await {
+    if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let turns = match chat::list_turns(&state.db, &session_id).await {
@@ -1267,13 +1345,13 @@ pub async fn turn_retry(
     // Read off the whole request, before `into_parts` takes it apart.
     let lang = Lang::from_request(req.headers());
     let ctx = request_ctx(&state, &req, false);
+    let turn = match load_owned_turn(&state, &user, &session_id, &turn_id).await {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
     let (_, body) = req.into_parts();
     let parsed: RetryBody = match read_json(body, "the retry body").await {
         Ok(p) => p,
-        Err(resp) => return resp,
-    };
-    let turn = match load_owned_turn(&state, &user, &session_id, &turn_id).await {
-        Ok(t) => t,
         Err(resp) => return resp,
     };
     if let Err(response) = refuse_background_mutation(&state, &user, &session_id, lang).await {
@@ -1503,6 +1581,7 @@ async fn start_regeneration_json(
         &worker,
         ctx,
         None,
+        None,
     )
     .await;
     Ok(Regenerated {
@@ -1525,6 +1604,9 @@ async fn load_owned_turn(
     session_id: &str,
     turn_id: &str,
 ) -> Result<chat::Turn, Response> {
+    if !user_can_write(state, &user.id, session_id).await {
+        return Err(not_found_conversation());
+    }
     match chat::get_session(&state.db, &user.id, session_id).await {
         Ok(Some(_)) => {}
         Ok(None) => {
@@ -1554,7 +1636,7 @@ pub async fn session_share(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    if !user_owns(&state, &user.id, &session_id).await {
+    if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let (_, body) = req.into_parts();
@@ -1592,7 +1674,7 @@ pub async fn session_effort(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    if !user_owns(&state, &user.id, &session_id).await {
+    if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let (_, body) = req.into_parts();
@@ -1854,7 +1936,7 @@ pub async fn document_edit(
     use aiplane_core::server::db::documents;
 
     let (_session, user) = require_session_json!(state, req);
-    if !user_owns(&state, &user.id, &session_id).await {
+    if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let (_, body) = req.into_parts();
@@ -1964,7 +2046,7 @@ pub async fn attachment_remove(State(state): State<Arc<RamaState>>, req: Request
     };
     // Owner-only: removing content is a mutation, so a shared (read-only)
     // viewer must not reach it even though they can read the turn.
-    if !user_owns(&state, &user.id, &session_id).await {
+    if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let turn = match chat::get_turn(&state.db, &session_id, &turn_id).await {
@@ -2085,11 +2167,12 @@ pub async fn capabilities_list(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
+    let lang = Lang::from_request(req.headers());
     let (_session, user) = require_session_json!(state, req);
     if !user_owns(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
-    let tools = capability_views(&state, &user, &session_id).await;
+    let tools = capability_views(&state, &user, &session_id, lang).await;
     ok_json(StatusCode::OK, Capabilities { tools })
 }
 
@@ -2122,7 +2205,20 @@ fn tool_state(value: Option<&bool>) -> &'static str {
     }
 }
 
-async fn capability_views(state: &RamaState, user: &User, session_id: &str) -> Vec<CapabilityView> {
+async fn capability_views(
+    state: &RamaState,
+    user: &User,
+    session_id: &str,
+    lang: Lang,
+) -> Vec<CapabilityView> {
+    use aiplane_runtime::persona::personal_dot::{PersonalDotContext, context_for};
+
+    let offers_forward = match context_for(state, user, session_id, true).await {
+        Ok(Some(PersonalDotContext::Active { persona, .. })) => {
+            !persona.offered(&["forward_request".to_owned()]).is_empty()
+        }
+        _ => false,
+    };
     let states =
         aiplane_core::server::db::chat_session_tools::states_for_session(&state.db, session_id)
             .await
@@ -2131,9 +2227,10 @@ async fn capability_views(state: &RamaState, user: &User, session_id: &str) -> V
         aiplane_core::server::db::chat_session_skills::loaded_for_session(&state.db, session_id)
             .await
             .unwrap_or_default();
-    crate::pages::tool_toggles::capabilities_for_user(state, &user.roles, &user.id)
+    crate::pages::tool_toggles::capabilities_for_user(state, &user.roles, &user.id, lang)
         .await
         .into_iter()
+        .filter(|entry| entry.key != "forward_request" || offers_forward)
         .map(|entry| CapabilityView {
             state: if entry.kind == "skill" {
                 if loaded.contains(&entry.key) {
@@ -2172,8 +2269,9 @@ pub async fn capabilities_set(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
+    let lang = Lang::from_request(req.headers());
     let (_session, user) = require_session_json!(state, req);
-    if !user_owns(&state, &user.id, &session_id).await {
+    if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let (_, body) = req.into_parts();
@@ -2181,7 +2279,7 @@ pub async fn capabilities_set(
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    let available = capability_views(&state, &user, &session_id).await;
+    let available = capability_views(&state, &user, &session_id, lang).await;
     let Some(capability) = available
         .iter()
         .find(|entry| entry.kind == parsed.kind && entry.key == parsed.key)

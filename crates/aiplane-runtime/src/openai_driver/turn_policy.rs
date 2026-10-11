@@ -334,7 +334,11 @@ impl<'a> TurnPolicy<'a> {
         granted: &[String],
     ) -> Vec<String> {
         match self {
-            Self::Chat => chat_offer(d, session_id, user_mcp).await,
+            Self::Chat => {
+                let mut offered = chat_offer(d, session_id, user_mcp).await;
+                offered.retain(|id| granted.contains(id));
+                offered
+            }
             Self::Agent(run) => agent_offer(d, run, granted),
             Self::Persona(persona) => persona.offered(granted),
         }

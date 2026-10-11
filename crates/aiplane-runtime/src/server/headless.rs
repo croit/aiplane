@@ -232,10 +232,15 @@ pub async fn drive_with_clock(
 }
 
 async fn person_context(
-    state: &RamaState,
+    state: &Arc<RamaState>,
     p: &mut DriveParams,
+    clock: Clock,
+    resume_checkpoint: Option<&session_core::db::suspensions::TreeBudgetCheckpoint>,
 ) -> Result<Option<Arc<crate::persona::ChatPersona>>, DbError> {
-    use crate::persona::personal_dot::{PersonalDotContext, context_for};
+    use crate::persona::personal_dot::{
+        PersonalDotContext, PersonalTurnContext, initialize_for_turn,
+    };
+    let child_execution = p.actor.personal_execution().cloned();
     let fail = |message: &str| DbError::Decode {
         column: "background_context",
         source: std::io::Error::other(message.to_string()).into(),
@@ -256,7 +261,13 @@ async fn person_context(
     let user = aiplane_core::server::db::users::find_by_id(&state.db, &owner)
         .await?
         .ok_or_else(|| fail("The background owner is unavailable."))?;
-    let background = super::background::for_turn(&state.db, &owner, &p.assistant_turn_id).await?;
+    let source_turn = match child_execution.as_ref() {
+        Some(execution) => crate::agents::router::local::validate_execution(execution)
+            .await
+            .map_err(|error| fail(&error.to_string()))?,
+        None => p.assistant_turn_id.clone(),
+    };
+    let background = super::background::for_turn(&state.db, &owner, &source_turn).await?;
     if background.is_none() && matches!(p.source, UsageSource::Scheduled | UsageSource::Webhook) {
         return Err(fail(
             "The background turn has no durable run context. Inspect its run history before retrying.",
@@ -288,7 +299,21 @@ async fn person_context(
             "The owner's usage limit has been reached. Retry after the limit resets.",
         ));
     }
-    match context_for(state, &user, &p.session_id, tools_enabled).await? {
+    match initialize_for_turn(
+        state,
+        &user,
+        tools_enabled,
+        PersonalTurnContext {
+            session_id: &p.session_id,
+            assistant_turn_id: &p.assistant_turn_id,
+            model: &p.model,
+            clock,
+            resume_checkpoint,
+            child_execution,
+        },
+    )
+    .await?
+    {
         Some(PersonalDotContext::Active { actor, persona }) => {
             p.actor = actor;
             Ok(Some(persona))
@@ -336,7 +361,16 @@ async fn drive_inner(
         None
     };
     let persona = if p.actor.agent().is_none() {
-        match person_context(state, &mut p).await {
+        match person_context(
+            state,
+            &mut p,
+            clock.clone(),
+            resume
+                .as_ref()
+                .and_then(|resume| resume.suspension.budget_used.tree.as_ref()),
+        )
+        .await
+        {
             Ok(persona) => persona,
             Err(error) => {
                 tracing::warn!(turn=%p.assistant_turn_id,%error,"background context unavailable");
@@ -752,9 +786,21 @@ mod tests {
     }
 
     async fn state_for(upstream: &str) -> Arc<RamaState> {
-        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
-            .await
-            .unwrap();
+        state_with_tools(
+            upstream,
+            crate::server::tools::ToolRegistry::new()
+                .with(crate::server::tools::echo::Echo)
+                .with(crate::server::tools::time::CurrentTimestamp),
+            crate::server::tools::echo::granted_to_everyone(),
+        )
+        .await
+    }
+
+    async fn state_with_tools(
+        upstream: &str,
+        tools: crate::server::tools::ToolRegistry,
+        rbac: aiplane_core::server::rbac::Resolver,
+    ) -> Arc<RamaState> {
         let mut pools = HashMap::new();
         pools.insert(
             "pool".to_string(),
@@ -783,25 +829,37 @@ mod tests {
                 }],
             },
         );
+        state_with_pools(pools, tools, rbac).await
+    }
+
+    async fn state_with_pools(
+        pools: HashMap<String, UpstreamPoolConfig>,
+        tools: crate::server::tools::ToolRegistry,
+        rbac: aiplane_core::server::rbac::Resolver,
+    ) -> Arc<RamaState> {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
         let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
-        registry.pools()[0].backends[0].set_models([MODEL.to_string()].into());
-        let config = aiplane_core::server::Config {
+        for pool in registry.pools() {
+            for backend in &pool.backends {
+                backend.set_models([MODEL.to_string()].into());
+            }
+        }
+        let mut config = aiplane_core::server::Config {
             gateway: aiplane_core::server::config::GatewayConfig {
                 upstream_wait_secs: 0,
                 ..Default::default()
             },
             ..Default::default()
         };
+        config.chat.compaction.enabled = false;
         let app = crate::server::AppState::new(
             config,
             db.clone(),
             registry,
-            Arc::new(
-                crate::server::tools::ToolRegistry::new()
-                    .with(crate::server::tools::echo::Echo)
-                    .with(crate::server::tools::time::CurrentTimestamp),
-            ),
-            Arc::new(crate::server::tools::echo::granted_to_everyone()),
+            Arc::new(tools),
+            Arc::new(rbac),
         );
         let sessions = aiplane_core::rama_server::SessionStore::new(db, [7u8; 32]);
         Arc::new(RamaState::new(
@@ -1792,6 +1850,768 @@ mod tests {
             .await
             .unwrap();
         run
+    }
+
+    #[tokio::test]
+    async fn personal_tree_cancel_preserves_other_owner_and_newer_worker() {
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let (session, turn) = open(&state, "medium").await;
+        chat::set_shared(&state.db, "u1", &session, true)
+            .await
+            .unwrap();
+        crate::agents::resume::cancel_personal_tree(&state, "other", &turn)
+            .await
+            .unwrap();
+        assert_eq!(
+            chat::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            chat::TurnStatus::InProgress
+        );
+        let newer = match state.chats.register_background("u1", "newer", &session) {
+            session_core::workers::RegisterOutcome::Registered { worker } => worker,
+            _ => panic!("newer worker registered"),
+        };
+        crate::agents::resume::cancel_personal_tree(&state, "u1", &turn)
+            .await
+            .unwrap();
+        assert_eq!(
+            chat::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            chat::TurnStatus::Cancelled
+        );
+        assert!(!newer.cancel.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(state.chats.get("u1", &session).unwrap().turn_id, "newer");
+        state.chats.clear("u1", &newer);
+    }
+
+    async fn personal_forward_setup() -> (MockServer, Arc<RamaState>, String, String, Vec<String>) {
+        use aiplane_agents::db::{
+            agents, dot_delegation, dot_sessions, system_principals::NewPrincipal,
+        };
+        use aiplane_core::server::rbac::{RbacConfig, Resolver, RoleConfig};
+        let upstream = MockServer::start().await;
+        let tools = crate::server::tools::ToolRegistry::new()
+            .with(crate::server::tools::echo::Echo)
+            .with(crate::agents::router::ForwardRequest::personal());
+        let rbac = Resolver::build(
+            RbacConfig {
+                default_role: Some("dot".into()),
+                mappings: Vec::new(),
+            },
+            vec![RoleConfig {
+                id: "dot".into(),
+                admin: false,
+                tools: vec!["company_echo".into(), "forward_request".into()],
+                models: vec!["*".into()],
+                skills: Vec::new(),
+            }],
+        )
+        .unwrap();
+        let state = state_with_tools(&upstream.uri(), tools, rbac).await;
+        let (session, turn) = open(&state, "high").await;
+        let mut ids = Vec::new();
+        for (name, spec) in [
+            (
+                "Caller",
+                r#"{"main":{"tools":["forward_request"],"tool_resources":{"forward_request":{"permission":"always_allow"}}}}"#,
+            ),
+            (
+                "Receiver",
+                r#"{"main":{"tools":["company_echo"],"tool_resources":{"company_echo":{"permission":"always_ask"}}}}"#,
+            ),
+        ] {
+            let (_, dot) = agents::create_personal_dot(
+                &state.db,
+                &NewPrincipal {
+                    name,
+                    display: name,
+                    description: "",
+                },
+                spec,
+                "u1",
+                4,
+            )
+            .await
+            .unwrap();
+            ids.push(dot.unwrap().principal.id);
+        }
+        assert!(
+            dot_sessions::link(&state.db, "u1", &ids[0], &session)
+                .await
+                .unwrap()
+        );
+        let first = dot_delegation::set_consent(
+            &state.db,
+            dot_delegation::ConsentEdit {
+                owner_user_id: "u1",
+                dot_id: &ids[0],
+                peer_id: &ids[1],
+                direction: dot_delegation::ConsentDirection::Outbound,
+                enabled: true,
+                expected_generation: None,
+            },
+        )
+        .await
+        .unwrap();
+        let dot_delegation::ConsentSaved::Saved(first) = first else {
+            panic!("saved outbound consent");
+        };
+        assert!(matches!(
+            dot_delegation::set_consent(
+                &state.db,
+                dot_delegation::ConsentEdit {
+                    owner_user_id: "u1",
+                    dot_id: &ids[1],
+                    peer_id: &ids[0],
+                    direction: dot_delegation::ConsentDirection::Inbound,
+                    enabled: true,
+                    expected_generation: Some(&first.generation)
+                }
+            )
+            .await
+            .unwrap(),
+            dot_delegation::ConsentSaved::Saved(_)
+        ));
+        let input = chat::list_turns(&state.db, &session)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|turn| turn.turn.role == chat::TurnRole::User)
+            .unwrap()
+            .turn;
+        assert!(
+            chat::update_user_turn_content(
+                &state.db,
+                &session,
+                &input.id,
+                "Do not copy this private parent transcript"
+            )
+            .await
+            .unwrap()
+        );
+        (upstream, state, session, turn, ids)
+    }
+
+    struct PersonalForwardPause {
+        state: Arc<RamaState>,
+        upstream: MockServer,
+        session: String,
+        turn: String,
+        ids: Vec<String>,
+        suspension: chat::TurnSuspension,
+    }
+
+    async fn paused_personal_forward() -> PersonalForwardPause {
+        let (upstream, state, session, turn, ids) = personal_forward_setup().await;
+        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted {
+            deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_dot_id":ids[1],"message":"Explicit child task"}).to_string()}}]}), json!({"tool_calls":[{"index":0,"id":"receiver-echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"child write\"}"}}]})],
+            served: AtomicUsize::new(0), tokens_per_round: Some(5),
+        }).mount(&upstream).await;
+        drive(&state, params(&session, &turn, person())).await;
+        let suspension = chat::get_suspension(&state.db, &turn)
+            .await
+            .unwrap()
+            .unwrap();
+        PersonalForwardPause {
+            state,
+            upstream,
+            session,
+            turn,
+            ids,
+            suspension,
+        }
+    }
+
+    #[tokio::test]
+    async fn personal_model_acquisition_intersects_current_roles_with_the_initial_pool_ceiling() {
+        use crate::server::tools::{Tool, ToolContext, ToolFuture};
+        use aiplane_agents::db::{agents, dot_sessions, system_principals::NewPrincipal};
+        use aiplane_core::server::rbac::{RbacConfig, Resolver, RoleConfig, RoleMapping};
+        struct RevokePoolRole;
+        impl Tool for RevokePoolRole {
+            fn id(&self) -> &str {
+                "company_echo"
+            }
+            fn schema(&self) -> shared::api::ToolDef {
+                crate::server::tools::echo::Echo.schema()
+            }
+            fn run<'a>(&'a self, ctx: ToolContext, _args: Value) -> ToolFuture<'a> {
+                Box::pin(async move {
+                    let owner = ctx.person("company_echo")?;
+                    let mut user = aiplane_core::server::db::users::find_by_id(&ctx.db, owner)
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    user.roles = vec!["new".into()];
+                    aiplane_core::server::db::users::upsert(&ctx.db, &user)
+                        .await
+                        .unwrap();
+                    Ok(json!({"updated":true}))
+                })
+            }
+        }
+        let old = MockServer::start().await;
+        let new = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(Scripted {
+                deltas: vec![
+                    calls(&[("revoke", "company_echo")]),
+                    text("Revoked pool answer"),
+                ],
+                served: AtomicUsize::new(0),
+                tokens_per_round: Some(5),
+            })
+            .mount(&old)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(Scripted {
+                deltas: vec![text("New pool answer")],
+                served: AtomicUsize::new(0),
+                tokens_per_round: Some(5),
+            })
+            .mount(&new)
+            .await;
+        let pools = [("old", old.uri()), ("new", new.uri())]
+            .into_iter()
+            .map(|(role, uri)| {
+                (
+                    role.into(),
+                    UpstreamPoolConfig {
+                        voices: Default::default(),
+                        offer_voices: Vec::new(),
+                        allowed_groups: vec![role.into()],
+                        fallback_offline: None,
+                        compliance: Default::default(),
+                        enforce_limits: true,
+                        kind: PoolKind::Chat,
+                        strategy: PickerStrategy::RoundRobin,
+                        models: Vec::new(),
+                        backend: vec![BackendConfig {
+                            alias: None,
+                            supports_edit: false,
+                            enabled: true,
+                            name: role.into(),
+                            base_url: uri,
+                            api_key_env: None,
+                            api_key: None,
+                            weight: 1,
+                            max_inflight: 16,
+                            health_path: "/models".into(),
+                            models: Vec::new(),
+                        }],
+                    },
+                )
+            })
+            .collect();
+        let rbac = Resolver::build(
+            RbacConfig {
+                default_role: None,
+                mappings: ["old", "new"]
+                    .into_iter()
+                    .map(|role| RoleMapping {
+                        oidc_claim: "groups".into(),
+                        oidc_value: role.into(),
+                        role: role.into(),
+                    })
+                    .collect(),
+            },
+            ["old", "new"]
+                .into_iter()
+                .map(|role| RoleConfig {
+                    id: role.into(),
+                    admin: false,
+                    tools: vec!["company_echo".into()],
+                    models: vec!["*".into()],
+                    skills: Vec::new(),
+                })
+                .collect(),
+        )
+        .unwrap();
+        let state = state_with_pools(
+            pools,
+            crate::server::tools::ToolRegistry::new().with(RevokePoolRole),
+            rbac,
+        )
+        .await;
+        let (session, turn) = open(&state, "high").await;
+        let mut user = aiplane_core::server::db::users::find_by_id(&state.db, "u1")
+            .await
+            .unwrap()
+            .unwrap();
+        user.roles = vec!["old".into()];
+        aiplane_core::server::db::users::upsert(&state.db, &user)
+            .await
+            .unwrap();
+        let (_, dot) = agents::create_personal_dot(&state.db, &NewPrincipal { name:"Caller", display:"Caller", description:"" }, r#"{"main":{"tools":["company_echo"],"tool_resources":{"company_echo":{"permission":"always_allow"}}}}"#, "u1", 4).await.unwrap();
+        assert!(
+            dot_sessions::link(&state.db, "u1", &dot.unwrap().principal.id, &session)
+                .await
+                .unwrap()
+        );
+        drive(
+            &state,
+            params(&session, &turn, Actor::person("u1", vec!["old".into()])),
+        )
+        .await;
+        assert_eq!(old.received_requests().await.unwrap().len(), 1);
+        assert!(new.received_requests().await.unwrap().is_empty());
+        let result = chat::get_turn(&state.db, &session, &turn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, chat::TurnStatus::Errored);
+        assert!(
+            !result
+                .content
+                .as_deref()
+                .unwrap_or("")
+                .contains("pool answer")
+        );
+    }
+
+    #[tokio::test]
+    async fn personal_requests_collect_usage_before_a_receiver_has_a_finite_cap() {
+        let (upstream, state, session, turn, _) = personal_forward_setup().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(Scripted {
+                deltas: vec![text("Root result")],
+                served: AtomicUsize::new(0),
+                tokens_per_round: Some(5),
+            })
+            .mount(&upstream)
+            .await;
+        drive(&state, params(&session, &turn, person())).await;
+        let requests = upstream.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(body["stream_options"]["include_usage"], true);
+    }
+
+    #[tokio::test]
+    async fn personal_finite_receiver_refuses_unknown_usage_before_child_admission() {
+        use aiplane_agents::db::agents;
+        let (upstream, state, session, turn, ids) = personal_forward_setup().await;
+        agents::update_draft(&state.db, &ids[1], r#"{"main":{"budget":{"tokens":100},"tools":["company_echo"],"tool_resources":{"company_echo":{"permission":"always_ask"}}}}"#, "u1", agents::DraftChange::default()).await.unwrap().unwrap();
+        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted {
+            deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_dot_id":ids[1],"message":"Explicit finite task"}).to_string()}}]}), text("Root result")],
+            served: AtomicUsize::new(0), tokens_per_round: None,
+        }).mount(&upstream).await;
+        drive(&state, params(&session, &turn, person())).await;
+        assert!(
+            aiplane_agents::db::child_sessions::child_turns(&state.db, "u1", &turn)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let root = chat::list_turns(&state.db, &session)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|row| row.turn.id == turn)
+            .unwrap();
+        assert_eq!(root.tool_calls[0].status, chat::ToolCallStatus::Errored);
+        assert_eq!(upstream.received_requests().await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn personal_resume_retains_unknown_usage_when_receiver_token_cap_is_tightened() {
+        use aiplane_agents::db::agents;
+        let (upstream, state, session, turn, ids) = personal_forward_setup().await;
+        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted {
+            deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_dot_id":ids[1],"message":"Explicit child task"}).to_string()}}]}), json!({"tool_calls":[{"index":0,"id":"receiver-echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"child write\"}"}}]}), text("Receiver final")],
+            served: AtomicUsize::new(0), tokens_per_round: None,
+        }).mount(&upstream).await;
+        drive(&state, params(&session, &turn, person())).await;
+        let pause = chat::get_suspension(&state.db, &turn)
+            .await
+            .unwrap()
+            .unwrap();
+        let child_turn = pause.child_turn.as_deref().unwrap();
+        let child = chat::get_suspension(&state.db, child_turn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!child.budget_used.tree.as_ref().unwrap().usage_known);
+        agents::update_draft(&state.db, &ids[1], r#"{"main":{"budget":{"tokens":100},"tools":["company_echo"],"tool_resources":{"company_echo":{"permission":"always_ask"}}}}"#, "u1", agents::DraftChange::default()).await.unwrap().unwrap();
+        let claimed = crate::agents::resume::claim_personal(
+            &state,
+            "u1",
+            &turn,
+            Some(&pause.request_id),
+            chat::Decision::AllowOnce,
+        )
+        .await
+        .unwrap();
+        let resumed = crate::agents::resume::run_personal_children(&state, claimed)
+            .await
+            .unwrap();
+        assert!(
+            !resumed
+                .suspension
+                .budget_used
+                .tree
+                .as_ref()
+                .unwrap()
+                .usage_known
+        );
+        let Some(aiplane_agents::db::child_sessions::LocalChild::Personal(binding)) =
+            aiplane_agents::db::child_sessions::child_of_turn(&state.db, child_turn)
+                .await
+                .unwrap()
+        else {
+            panic!("personal child");
+        };
+        let rows = chat::list_turns(&state.db, &binding.session.session_id)
+            .await
+            .unwrap();
+        let child = rows.iter().find(|row| row.turn.id == child_turn).unwrap();
+        assert_eq!(child.tool_calls[0].status, chat::ToolCallStatus::Errored);
+        let requests = upstream.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 3);
+        let closing: Value = serde_json::from_slice(&requests[2].body).unwrap();
+        assert_eq!(closing["tool_choice"], "none");
+    }
+
+    #[tokio::test]
+    async fn personal_receiver_metadata_uses_consent_and_current_forward_access_without_peer_memory()
+     {
+        use crate::persona::personal_dot::{PersonalDotContext, context_for};
+        let (_upstream, state, session, _turn, ids) = personal_forward_setup().await;
+        aiplane_agents::db::dot_memories::insert(
+            &state.db,
+            "u1",
+            &ids[1],
+            aiplane_core::server::db::user_memories::MemoryKind::Fact,
+            "Receiver private project note",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let user = aiplane_core::server::db::users::find_by_id(&state.db, "u1")
+            .await
+            .unwrap()
+            .unwrap();
+        let Some(PersonalDotContext::Active { persona, .. }) =
+            context_for(&state, &user, &session, true).await.unwrap()
+        else {
+            panic!("active caller");
+        };
+        assert!(persona.instructions().contains(&ids[1]));
+        assert!(persona.instructions().contains("Receiver"));
+        assert!(
+            !persona
+                .instructions()
+                .contains("Receiver private project note")
+        );
+        aiplane_core::server::db::user_tool_prefs::set(&state.db, "u1", "forward_request", false)
+            .await
+            .unwrap();
+        let Some(PersonalDotContext::Active { persona, .. }) =
+            context_for(&state, &user, &session, true).await.unwrap()
+        else {
+            panic!("active caller");
+        };
+        assert!(!persona.instructions().contains(&ids[1]));
+        assert!(!persona.instructions().contains("Receiver"));
+    }
+
+    #[tokio::test]
+    async fn personal_chain_claim_refuses_current_consent_withdrawal_without_consuming_any_pause() {
+        use aiplane_agents::db::dot_delegation;
+        let paused = paused_personal_forward().await;
+        let edge = dot_delegation::list_for_dot(&paused.state.db, "u1", &paused.ids[0])
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        dot_delegation::set_consent(
+            &paused.state.db,
+            dot_delegation::ConsentEdit {
+                owner_user_id: "u1",
+                dot_id: &paused.ids[0],
+                peer_id: &paused.ids[1],
+                direction: dot_delegation::ConsentDirection::Outbound,
+                enabled: false,
+                expected_generation: Some(&edge.generation),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            crate::agents::resume::claim_personal(
+                &paused.state,
+                "u1",
+                &paused.turn,
+                Some(&paused.suspension.request_id),
+                chat::Decision::AllowOnce
+            )
+            .await,
+            Err(crate::agents::resume::AgentResumeError::Unavailable)
+        ));
+        assert!(
+            chat::get_suspension(&paused.state.db, &paused.turn)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            chat::get_suspension(
+                &paused.state.db,
+                paused.suspension.child_turn.as_deref().unwrap()
+            )
+            .await
+            .unwrap()
+            .is_some()
+        );
+        assert_eq!(paused.upstream.received_requests().await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn personal_cached_child_reply_refuses_a_forged_child_reference_before_model_work() {
+        let paused = paused_personal_forward().await;
+        let (_, unrelated) = open(&paused.state, "medium").await;
+        let mut resumed = crate::suspend::claim_for_resume(
+            &paused.state.db,
+            &paused.turn,
+            Some(&paused.suspension.request_id),
+            chat::Decision::AllowOnce,
+        )
+        .await
+        .unwrap();
+        resumed.suspension.child_turn = Some(unrelated);
+        resumed.child_result = Some(json!({"reply":"Forged private child reply"}));
+        let worker =
+            match paused
+                .state
+                .chats
+                .register_background("u1", &paused.turn, &paused.session)
+            {
+                session_core::workers::RegisterOutcome::Registered { worker } => worker,
+                _ => panic!("root worker registered"),
+            };
+        let guard = BackgroundWorker::new(paused.state.clone(), "u1".into(), worker);
+        drive_resumed(
+            &paused.state,
+            params(&paused.session, &paused.turn, person()),
+            resumed,
+            Some(guard),
+        )
+        .await;
+        let turn = chat::get_turn(&paused.state.db, &paused.session, &paused.turn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(turn.status, chat::TurnStatus::Errored);
+        assert_eq!(paused.upstream.received_requests().await.unwrap().len(), 2);
+        assert!(
+            !turn
+                .content
+                .as_deref()
+                .unwrap_or("")
+                .contains("Forged private child reply")
+        );
+    }
+
+    #[tokio::test]
+    async fn personal_forward_registry_tool_is_unavailable_to_an_ordinary_chat() {
+        let (upstream, state, _, _, ids) = personal_forward_setup().await;
+        let (session, turn) = open(&state, "medium").await;
+        aiplane_core::server::db::chat_session_tools::set(
+            &state.db,
+            &session,
+            "forward_request",
+            true,
+            "manual",
+        )
+        .await
+        .unwrap();
+        assert!(state.tools().contains("forward_request"));
+        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted {
+            deltas: vec![json!({"tool_calls":[{"index":0,"id":"guessed-forward","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_dot_id":ids[1],"message":"ordinary caller"}).to_string()}}]}), text("No delegation")],
+            served: AtomicUsize::new(0), tokens_per_round: Some(5),
+        }).mount(&upstream).await;
+        drive(&state, params(&session, &turn, person())).await;
+        let requests = upstream.received_requests().await.unwrap();
+        let first: Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert!(!first["tools"].as_array().is_some_and(|tools| {
+            tools
+                .iter()
+                .any(|tool| tool["function"]["name"] == "forward_request")
+        }));
+        let done = chat::get_turn_with_tools(&state.db, &session, &turn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(done.tool_calls[0].status, chat::ToolCallStatus::Errored);
+        assert!(
+            aiplane_agents::db::child_sessions::child_turns(&state.db, "u1", &turn)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn personal_forward_child_approval_pauses_the_root_without_copying_history() {
+        let (upstream, state, session, turn, ids) = personal_forward_setup().await;
+        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted { deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_dot_id":ids[1],"message":"Research the explicit task"}).to_string()}}]}), json!({"tool_calls":[{"index":0,"id":"receiver-echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"child write\"}"}}]}), text("Receiver result"), text("Root result")], served:AtomicUsize::new(0), tokens_per_round:Some(5) }).mount(&upstream).await;
+        drive(&state, params(&session, &turn, person())).await;
+        let top = chat::get_suspension(&state.db, &turn)
+            .await
+            .unwrap()
+            .expect("root waits on actual child approval");
+        let budget = top
+            .budget_used
+            .tree
+            .as_ref()
+            .expect("durable aggregate budget");
+        assert_eq!(budget.rounds, 2);
+        assert_eq!(budget.tokens, 10);
+        assert!(budget.usage_known);
+        let child_turn = top.child_turn.as_deref().unwrap();
+        let Some(aiplane_agents::db::child_sessions::LocalChild::Personal(child)) =
+            aiplane_agents::db::child_sessions::child_of_turn(&state.db, child_turn)
+                .await
+                .unwrap()
+        else {
+            panic!("actual private personal child");
+        };
+        assert_eq!(child.session.dot_id, ids[1]);
+        assert_eq!(child.link.parent_tool_call_id, "delegate");
+        let leaf = chat::get_suspension(&state.db, child_turn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(leaf.tool_call.name, "company_echo");
+        let requests = upstream.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2);
+        let receiver: Value = serde_json::from_slice(&requests[1].body).unwrap();
+        let messages = receiver["messages"].to_string();
+        assert!(messages.contains("Receiver"));
+        assert!(messages.contains("Research the explicit task"));
+        assert!(!messages.contains("private parent transcript"));
+        assert_eq!(receiver["tools"][0]["function"]["name"], "company_echo");
+        let worker = match state.chats.register_background("u1", &turn, &session) {
+            session_core::workers::RegisterOutcome::Registered { worker } => worker,
+            _ => panic!("root resume worker registered"),
+        };
+        let root_guard = BackgroundWorker::new(state.clone(), "u1".into(), worker);
+        assert!(
+            crate::agents::resume::claim_personal(
+                &state,
+                "u1",
+                &turn,
+                Some("stale"),
+                chat::Decision::AllowOnce
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            chat::get_suspension(&state.db, &turn)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            chat::get_suspension(&state.db, child_turn)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let child_worker =
+            match state
+                .chats
+                .register_background("u1", child_turn, &child.session.session_id)
+            {
+                session_core::workers::RegisterOutcome::Registered { worker } => worker,
+                _ => panic!("child blocker registered"),
+            };
+        assert!(matches!(
+            crate::agents::resume::claim_personal(
+                &state,
+                "u1",
+                &turn,
+                Some(&top.request_id),
+                chat::Decision::AllowOnce
+            )
+            .await,
+            Err(crate::agents::resume::AgentResumeError::Busy)
+        ));
+        assert!(
+            chat::get_suspension(&state.db, &turn)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            chat::get_suspension(&state.db, child_turn)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        state.chats.clear("u1", &child_worker);
+        let claimed = crate::agents::resume::claim_personal(
+            &state,
+            "u1",
+            &turn,
+            Some(&top.request_id),
+            chat::Decision::AllowOnce,
+        )
+        .await
+        .unwrap();
+        assert!(
+            chat::get_suspension(&state.db, &turn)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            chat::get_suspension(&state.db, child_turn)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let resumed = crate::agents::resume::run_personal_children(&state, claimed)
+            .await
+            .unwrap();
+        assert!(resumed.child_result.is_some());
+        assert!(resumed.suspension.budget_used.tree.as_ref().unwrap().tokens > 10);
+        drive_resumed(
+            &state,
+            params(&session, &turn, person()),
+            resumed,
+            Some(root_guard),
+        )
+        .await;
+        assert_eq!(
+            chat::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .content
+                .as_deref(),
+            Some("Root result")
+        );
+        assert_eq!(
+            chat::get_turn(&state.db, &child.session.session_id, child_turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .content
+                .as_deref(),
+            Some("Receiver result")
+        );
     }
 
     #[tokio::test]

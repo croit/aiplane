@@ -1901,7 +1901,7 @@ mod tests {
 
     impl Tool for SequentialStep {
         fn id(&self) -> &str {
-            &self.0.name
+            "phase_step"
         }
         fn schema(&self) -> shared::api::ToolDef {
             self.0.schema()
@@ -1910,30 +1910,39 @@ mod tests {
             ToolPhase::ActsOnState
         }
         fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
-            self.0.run(ctx, args)
+            Box::pin(async move {
+                Step {
+                    name: ctx
+                        .call_id
+                        .clone()
+                        .expect("the runner supplies the call ID"),
+                    log: self.0.log.clone(),
+                    meet: self.0.meet.clone(),
+                }
+                .run(ctx, args)
+                .await
+            })
         }
     }
 
     #[tokio::test]
     async fn actual_registry_phases_serialize_allowed_calls_and_never_run_denied_calls() {
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let step = |name: &str| {
-            SequentialStep(Step {
-                name: name.into(),
+        let registry = ToolRegistry::new()
+            .with(SequentialStep(Step {
+                name: "phase_step".into(),
                 log: log.clone(),
                 meet: None,
-            })
-        };
-        let registry = ToolRegistry::new()
-            .with(step("forward_a"))
-            .with(step("forward_b"))
-            .with(step("forward_denied"));
-        let source = crate::server::tools::GrantedToolSource::new(
-            &registry,
-            ["forward_a".into(), "forward_b".into()],
-        );
-        let calls = ["forward_a", "forward_b", "forward_denied"].map(|name| ToolCallRef {
-            id: name.into(),
+            }))
+            .with(Echo);
+        let source = crate::server::tools::GrantedToolSource::new(&registry, ["phase_step".into()]);
+        let calls = [
+            ("forward_a", "phase_step"),
+            ("forward_b", "phase_step"),
+            ("forward_denied", "company_echo"),
+        ]
+        .map(|(id, name)| ToolCallRef {
+            id: id.into(),
             name: name.into(),
             arguments_raw: "{}".into(),
         });

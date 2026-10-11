@@ -37,14 +37,29 @@ scripted model responses:
 - `spa-dots-communication.test.mjs`: same-owner directed consent, one-row
   saves, unchanged generations, retained conflict drafts, inactive revocation
   and mobile/keyboard layout. This suite checks consent configuration, not
-  personal delegation execution.
+  personal delegation execution. Its German-browser/English-interface case
+  verifies that API errors follow the selected interface language.
+- `spa-dots-delegation.test.mjs`: actual two-Dot execution, root Inbox
+  approval, receiver-only memory writes, private read-only child history,
+  root navigation and mobile layout.
 
 Run these suites sequentially when checking the four-active-Dot limit:
 
 ```bash
 CHROMIUM_CHANNEL=chrome mise exec -- node --test --test-concurrency=1 \
   e2e/spa-dots.test.mjs e2e/spa-dots-background.test.mjs e2e/spa-dots-actions.test.mjs \
-  e2e/spa-dots-permissions.test.mjs e2e/spa-dots-communication.test.mjs
+  e2e/spa-dots-permissions.test.mjs e2e/spa-dots-communication.test.mjs \
+  e2e/spa-dots-delegation.test.mjs
+```
+
+To refresh the delegated-history documentation screenshot, use a fresh isolated
+`dev-ui` fixture: the capture creates actual Dots named Harald and Clara, runs
+the same tested delegation, and records the verified route in the existing
+capture manifest. It does not use a production database.
+
+```bash
+DOCS_DOT_DELEGATION_CAPTURE=docs/img/guide/dot-delegated-history.png \
+  CHROMIUM_CHANNEL=chrome mise exec -- node --test e2e/spa-dots-delegation.test.mjs
 ```
 
 The `e2e` mise task finds Playwright in the mise-installed `npm:@playwright/cli` package; export `PLAYWRIGHT_DIR` only to override it.

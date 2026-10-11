@@ -125,3 +125,12 @@ async fn dot_session_tombstone_keeps_binding_without_retaining_deleted_owner_dat
         .unwrap();
     assert_eq!(count, 0);
 }
+
+#[tokio::test]
+async fn child_binding_requires_complete_unique_relationship() {
+    let pool = open(Path::new(":memory:")).await.unwrap();
+    pool.execute(sqlx::raw_sql("INSERT INTO users(id,email,created_at,updated_at) VALUES('owner','owner@example.test','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'); INSERT INTO chat_sessions(id,user_id,created_at,updated_at) VALUES('child','owner','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'),('other','owner','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');")).await.unwrap();
+    assert!(sqlx::query("INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at,parent_turn_id) VALUES('child','owner','receiver','2026-01-01T00:00:00Z','parent')").execute(&pool).await.is_err());
+    sqlx::query("INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at,parent_turn_id,parent_tool_call_id,caller_dot_id,edge_generation) VALUES('child','owner','receiver','2026-01-01T00:00:00Z','parent','call','caller','generation')").execute(&pool).await.unwrap();
+    assert!(sqlx::query("INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at,parent_turn_id,parent_tool_call_id,caller_dot_id,edge_generation) VALUES('other','owner','receiver','2026-01-01T00:00:00Z','parent','call','caller','generation')").execute(&pool).await.is_err());
+}

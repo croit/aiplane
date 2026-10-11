@@ -4161,3 +4161,768 @@ async fn an_over_budget_message_says_when_to_retry() {
     assert!(retry_after > 0);
     assert!(body_string(resp).await.contains("rate_limited"));
 }
+
+#[tokio::test]
+async fn delegated_child_history_is_private_and_has_no_independent_mutations() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let root = chat::create_session(&state.db, "alice").await.unwrap();
+    let child = chat::create_session(&state.db, "alice").await.unwrap();
+    chat::create_turn_pair_if_idle(
+        &state.db,
+        &root.id,
+        "root-user",
+        "root-assistant",
+        "Explicit request",
+        "model-a",
+        true,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    chat::create_turn_pair_if_idle(
+        &state.db,
+        &child.id,
+        "child-user",
+        "child-assistant",
+        "Delegated task",
+        "model-a",
+        true,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    sqlx::query("UPDATE chat_sessions SET parent_turn_id = 'root-assistant' WHERE id = ?")
+        .bind(&child.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let router = router(state.clone());
+    let resp = router
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}", child.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let detail: Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(detail["can_write"], false);
+    assert_eq!(detail["can_delete"], false);
+    assert!(detail["delegation"].is_object());
+    assert_eq!(detail["delegation"]["root_session_id"], Value::Null);
+    let resp = router
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}", root.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let ordinary: Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(ordinary["can_write"], true);
+    assert_eq!(ordinary["can_delete"], true);
+    assert_eq!(ordinary["delegation"], Value::Null);
+    let resp = router
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/chat/sessions".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let list: Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    let listed = list["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == child.id)
+        .unwrap();
+    assert_eq!(listed["can_delete"], false);
+    for (method, suffix, body) in [
+        (Method::DELETE, "", None),
+        (
+            Method::POST,
+            "/messages",
+            Some(r#"{"model":"model-a","message":"Bypass"}"#),
+        ),
+        (Method::POST, "/cancel", None),
+        (Method::POST, "/share", Some(r#"{"shared":true}"#)),
+        (Method::POST, "/effort", Some(r#"{"effort":"high"}"#)),
+        (Method::POST, "/capabilities", Some(r#"{"tools":[]}"#)),
+        (
+            Method::POST,
+            "/turns/child-assistant/retry",
+            Some(r#"{"model":"model-a"}"#),
+        ),
+        (
+            Method::POST,
+            "/turns/child-user/edit",
+            Some(r#"{"model":"model-a","message":"Overwrite"}"#),
+        ),
+        (
+            Method::POST,
+            "/turns/child-assistant/resume",
+            Some(r#"{"decision":"allow_once"}"#),
+        ),
+        (Method::POST, "/steer", Some(r#"{"message":"Bypass"}"#)),
+        (Method::POST, "/steer/missing/discard", None),
+        (Method::DELETE, "/turns/child-user", None),
+        (
+            Method::DELETE,
+            "/turns/child-user/attachments/missing.txt",
+            None,
+        ),
+        (
+            Method::PUT,
+            "/documents/missing",
+            Some(r#"{"content":"Overwrite"}"#),
+        ),
+        (Method::POST, "/fork", None),
+    ] {
+        let resp = router
+            .serve(json_req(
+                method.clone(),
+                format!("/api/v0/chat/sessions/{}{suffix}", child.id),
+                &cookie,
+                body.map(str::to_owned),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "{method} {suffix}: {}",
+            body_string(resp).await
+        );
+    }
+    assert_eq!(
+        chat::list_turns(&state.db, &child.id).await.unwrap().len(),
+        2
+    );
+    assert!(
+        !chat::get_session(&state.db, "alice", &child.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .shared
+    );
+    let resp = router
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/pin", child.id),
+            &cookie,
+            Some(r#"{"pinned":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let malformed_upload = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/v0/chat/sessions/{}/messages", child.id))
+        .header(header::COOKIE, format!("id={cookie}"))
+        .header(
+            header::CONTENT_TYPE,
+            "multipart/form-data; boundary=fixture",
+        )
+        .body(Body::from("malformed multipart body"))
+        .unwrap();
+    assert_eq!(
+        router.serve(malformed_upload).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    for channel in ["ask", "browser", "location"] {
+        let resp = router
+            .serve(json_req(
+                Method::POST,
+                format!("/api/v0/me/{channel}/feedback/child-assistant"),
+                &cookie,
+                Some("invalid JSON".into()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "{channel}: {}",
+            body_string(resp).await
+        );
+    }
+    let mut location = state.location_feedback.register("child-assistant");
+    let resp = router
+        .serve(json_req(
+            Method::POST,
+            "/api/v0/me/location/feedback/child-assistant".into(),
+            &cookie,
+            Some(r#"{"lat":52.5,"lon":13.4}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert!(
+        db::users::find_location(&state.db, "alice")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(
+        location.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+}
+
+#[tokio::test]
+async fn delegated_child_history_reports_verified_root_search_and_shared_viewer_rights() {
+    use aiplane_agents::db::{
+        agents,
+        dot_delegation::{self, ConsentDirection, ConsentEdit, ConsentSaved},
+        dot_sessions::{self, NewPersonalChild},
+        system_principals::NewPrincipal,
+    };
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let bob = common::seed_session(&state, "bob", "bob@example.com").await;
+    let mut ids = Vec::new();
+    for name in ["sender", "receiver"] {
+        let (_, dot) = agents::create_personal_dot(
+            &state.db,
+            &NewPrincipal {
+                name,
+                display: name,
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        ids.push(dot.unwrap().principal.id);
+    }
+    let caller = &ids[0];
+    let receiver = &ids[1];
+    let ConsentSaved::Saved(first) = dot_delegation::set_consent(
+        &state.db,
+        ConsentEdit {
+            owner_user_id: "alice",
+            dot_id: caller,
+            peer_id: receiver,
+            direction: ConsentDirection::Outbound,
+            enabled: true,
+            expected_generation: None,
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("caller consent failed");
+    };
+    let ConsentSaved::Saved(edge) = dot_delegation::set_consent(
+        &state.db,
+        ConsentEdit {
+            owner_user_id: "alice",
+            dot_id: receiver,
+            peer_id: caller,
+            direction: ConsentDirection::Inbound,
+            enabled: true,
+            expected_generation: Some(&first.generation),
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("receiver consent failed");
+    };
+    let root = chat::create_session(&state.db, "alice").await.unwrap();
+    assert!(
+        dot_sessions::link(&state.db, "alice", caller, &root.id)
+            .await
+            .unwrap()
+    );
+    chat::create_assistant_turn_in_progress(&state.db, &root.id, "parent", "model-a")
+        .await
+        .unwrap();
+    chat::insert_running_tool_call(&state.db, "parent", "forward", "forward_request", "{}")
+        .await
+        .unwrap();
+    let child = dot_sessions::open_child(
+        &state.db,
+        NewPersonalChild {
+            owner_user_id: "alice",
+            caller_dot_id: caller,
+            receiver_dot_id: receiver,
+            parent_turn_id: "parent",
+            parent_tool_call_id: "forward",
+            edge_generation: &edge.generation,
+            title: "Delegation fixture",
+            message: "Delegation fixture",
+            model: "model-a",
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let router = router(state.clone());
+    let path = format!("/api/v0/chat/sessions/{}", child.session.session_id);
+    let resp = router
+        .serve(json_req(Method::GET, path.clone(), &cookie, None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let detail: Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(detail["delegation"]["root_session_id"], root.id);
+    assert_eq!(detail["can_write"], false);
+    assert_eq!(
+        router
+            .serve(json_req(Method::GET, path.clone(), &bob, None))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    for suffix in ["/capabilities", "/documents", "/export.md"] {
+        assert_eq!(
+            router
+                .serve(json_req(
+                    Method::GET,
+                    format!("{path}{suffix}"),
+                    &cookie,
+                    None
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+    }
+    let resp = router
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/chat/sessions?q=Delegation".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let found: Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    let hit = found["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == child.session.session_id)
+        .unwrap();
+    assert_eq!(hit["can_delete"], false);
+    let ordinary = chat::create_session(&state.db, "alice").await.unwrap();
+    assert!(
+        chat::set_shared(&state.db, "alice", &ordinary.id, true)
+            .await
+            .unwrap()
+    );
+    let resp = router
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}", ordinary.id),
+            &bob,
+            None,
+        ))
+        .await
+        .unwrap();
+    let shared: Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(shared["can_write"], false);
+    assert_eq!(shared["can_delete"], false);
+    assert_eq!(shared["delegation"], Value::Null);
+}
+
+#[tokio::test]
+async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
+    use aiplane_agents::db::{
+        agents,
+        dot_delegation::{self, ConsentDirection, ConsentEdit, ConsentSaved},
+        dot_sessions::{self, NewPersonalChild},
+        system_principals::NewPrincipal,
+    };
+    for action in [
+        "revoke",
+        "deactivate",
+        "delete_dot",
+        "delete_root",
+        "cancel_root",
+    ] {
+        let rbac = Arc::new(
+            Resolver::build(
+                RbacConfig {
+                    default_role: Some("admin".into()),
+                    mappings: vec![],
+                },
+                vec![RoleConfig {
+                    id: "admin".into(),
+                    admin: true,
+                    models: vec![],
+                    tools: vec![],
+                    skills: vec![],
+                }],
+            )
+            .unwrap(),
+        );
+        let state =
+            state_with_chat_access("http://unused.invalid", Arc::new(ToolRegistry::new()), rbac)
+                .await;
+        let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+        let state = Arc::new(state);
+        let mut ids = Vec::new();
+        for name in ["sender", "receiver"] {
+            let (_, dot) = agents::create_personal_dot(
+                &state.db,
+                &NewPrincipal {
+                    name,
+                    display: name,
+                    description: "",
+                },
+                r#"{"main":{}}"#,
+                "alice",
+                4,
+            )
+            .await
+            .unwrap();
+            ids.push(dot.unwrap().principal.id);
+        }
+        let caller = &ids[0];
+        let receiver = &ids[1];
+        let ConsentSaved::Saved(first) = dot_delegation::set_consent(
+            &state.db,
+            ConsentEdit {
+                owner_user_id: "alice",
+                dot_id: caller,
+                peer_id: receiver,
+                direction: ConsentDirection::Outbound,
+                enabled: true,
+                expected_generation: None,
+            },
+        )
+        .await
+        .unwrap() else {
+            panic!("caller consent failed");
+        };
+        let ConsentSaved::Saved(edge) = dot_delegation::set_consent(
+            &state.db,
+            ConsentEdit {
+                owner_user_id: "alice",
+                dot_id: receiver,
+                peer_id: caller,
+                direction: ConsentDirection::Inbound,
+                enabled: true,
+                expected_generation: Some(&first.generation),
+            },
+        )
+        .await
+        .unwrap() else {
+            panic!("receiver consent failed");
+        };
+        let root = chat::create_session(&state.db, "alice").await.unwrap();
+        assert!(
+            dot_sessions::link(&state.db, "alice", caller, &root.id)
+                .await
+                .unwrap()
+        );
+        chat::create_assistant_turn_in_progress(&state.db, &root.id, "original-parent", "model-a")
+            .await
+            .unwrap();
+        chat::insert_running_tool_call(
+            &state.db,
+            "original-parent",
+            "forward",
+            "forward_request",
+            "{}",
+        )
+        .await
+        .unwrap();
+        let child = dot_sessions::open_child(
+            &state.db,
+            NewPersonalChild {
+                owner_user_id: "alice",
+                caller_dot_id: caller,
+                receiver_dot_id: receiver,
+                parent_turn_id: "original-parent",
+                parent_tool_call_id: "forward",
+                edge_generation: &edge.generation,
+                title: "Delegation",
+                message: "Explicit text",
+                model: "model-a",
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let router = router(state.clone());
+        let (method, path, body) = match action {
+            "revoke" => {
+                let path = format!("/api/v0/dots/{caller}/communication");
+                let resp = router.serve(json_req(Method::PUT, path.clone(), &cookie, Some(serde_json::json!({"peer_id":receiver,"direction":"outbound","enabled":true,"expected_generation":edge.generation}).to_string()))).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+                assert_eq!(
+                    chat::get_turn(
+                        &state.db,
+                        &child.session.session_id,
+                        &child.assistant_turn.id
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                    chat::TurnStatus::InProgress
+                );
+                (Method::PUT, path, Some(serde_json::json!({"peer_id":receiver,"direction":"outbound","enabled":false,"expected_generation":edge.generation}).to_string()))
+            }
+            "deactivate" => (
+                Method::PUT,
+                format!("/api/v0/dots/{receiver}/active"),
+                Some(r#"{"active":false}"#.into()),
+            ),
+            "delete_dot" => (Method::DELETE, format!("/api/v0/agents/{receiver}"), None),
+            "delete_root" => (
+                Method::DELETE,
+                format!("/api/v0/chat/sessions/{}", root.id),
+                None,
+            ),
+            "cancel_root" => {
+                let now = jiff::Timestamp::now();
+                assert!(
+                    chat::suspend_turn(
+                        &state.db,
+                        &chat::TurnSuspension {
+                            turn_id: "original-parent".into(),
+                            request_id: "root-decision".into(),
+                            kind: chat::SuspensionKind::Approval,
+                            message: None,
+                            tool_call: chat::PendingCall {
+                                id: "forward".into(),
+                                name: "forward_request".into(),
+                                arguments: "{}".into(),
+                                actions: None
+                            },
+                            tail: vec![],
+                            budget_used: Default::default(),
+                            child_turn: Some(child.assistant_turn.id.clone()),
+                            on_timeout: chat::TimeoutFallback::Deny,
+                            expires_at: now,
+                            created_at: now,
+                            run_context: None,
+                        }
+                    )
+                    .await
+                    .unwrap()
+                );
+                (
+                    Method::POST,
+                    format!("/api/v0/chat/sessions/{}/cancel", root.id),
+                    None,
+                )
+            }
+            _ => unreachable!(),
+        };
+        if matches!(action, "revoke" | "deactivate" | "delete_dot") {
+            sqlx::query("UPDATE chat_turns SET status = 'completed' WHERE id = 'original-parent'")
+                .execute(&state.db)
+                .await
+                .unwrap();
+            chat::create_assistant_turn_in_progress(
+                &state.db,
+                &root.id,
+                "unrelated-new-turn",
+                "model-a",
+            )
+            .await
+            .unwrap();
+        }
+        let resp = router
+            .serve(json_req(method, path, &cookie, body))
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "{action}: {}",
+            body_string(resp).await
+        );
+        let child_turn = chat::get_turn(
+            &state.db,
+            &child.session.session_id,
+            &child.assistant_turn.id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(child_turn.status, chat::TurnStatus::Cancelled, "{action}");
+        if matches!(action, "revoke" | "deactivate" | "delete_dot") {
+            assert_eq!(
+                chat::get_turn(&state.db, &root.id, "unrelated-new-turn")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                chat::TurnStatus::InProgress,
+                "{action}"
+            );
+        }
+    }
+}
+async fn assert_personal_forward_capability(
+    dot_spec: Option<&str>,
+    active: bool,
+    granted: bool,
+    expected: bool,
+) {
+    use aiplane_agents::db::{agents, dot_sessions, system_principals::NewPrincipal};
+    let tools = Arc::new(
+        ToolRegistry::new()
+            .with(CurrentTimestamp)
+            .with(aiplane_runtime::agents::router::ForwardRequest::personal()),
+    );
+    let mut grants = vec!["get_current_timestamp".to_owned()];
+    if granted {
+        grants.push("forward_request".to_owned());
+    }
+    let rbac = Arc::new(
+        Resolver::build(
+            RbacConfig {
+                default_role: Some("member".into()),
+                mappings: Vec::new(),
+            },
+            vec![RoleConfig {
+                id: "member".into(),
+                admin: false,
+                tools: grants,
+                models: Vec::new(),
+                skills: Vec::new(),
+            }],
+        )
+        .unwrap(),
+    );
+    let state = state_with_chat_access("http://unused.invalid", tools, rbac).await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    if let Some(spec) = dot_spec {
+        let (_, dot) = agents::create_personal_dot(
+            &state.db,
+            &NewPrincipal {
+                name: "capability-dot",
+                display: "Capability Dot",
+                description: "",
+            },
+            spec,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        let dot = dot.unwrap();
+        assert!(
+            dot_sessions::link(&state.db, "alice", &dot.principal.id, &session.id)
+                .await
+                .unwrap()
+        );
+        if !active {
+            assert!(
+                agents::set_personal_dot_active(&state.db, &dot.principal.id, "alice", false, 4)
+                    .await
+                    .unwrap()
+            );
+        }
+    }
+    let state = Arc::new(state);
+    let app = router(state.clone());
+    let uri = format!("/api/v0/chat/sessions/{}/capabilities", session.id);
+    let response = app
+        .serve(json_req(Method::GET, uri.clone(), &cookie, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = serde_json::from_str(&body_string(response).await).unwrap();
+    let entries = body["tools"].as_array().unwrap();
+    assert_eq!(
+        entries.iter().any(|tool| tool["key"] == "forward_request"),
+        expected
+    );
+    let timestamp = entries
+        .iter()
+        .find(|tool| tool["key"] == "get_current_timestamp")
+        .unwrap();
+    assert_eq!(timestamp["state"], "auto");
+    let response = app
+        .serve(json_req(
+            Method::POST,
+            uri.clone(),
+            &cookie,
+            Some(r#"{"kind":"tool","key":"forward_request","state":"on"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        if expected {
+            StatusCode::OK
+        } else {
+            StatusCode::NOT_FOUND
+        }
+    );
+    let overlays =
+        aiplane_core::server::db::chat_session_tools::states_for_session(&state.db, &session.id)
+            .await
+            .unwrap();
+    assert_eq!(overlays.get("forward_request"), expected.then_some(&true));
+    let response = app
+        .serve(json_req(
+            Method::POST,
+            uri,
+            &cookie,
+            Some(r#"{"kind":"tool","key":"get_current_timestamp","state":"off"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        aiplane_core::server::db::chat_session_tools::states_for_session(&state.db, &session.id)
+            .await
+            .unwrap()
+            .get("get_current_timestamp"),
+        Some(&false)
+    );
+}
+
+#[tokio::test]
+async fn ordinary_chat_capabilities_exclude_personal_forward_requests() {
+    assert_personal_forward_capability(None, true, true, false).await;
+}
+
+#[tokio::test]
+async fn selected_active_dot_chat_capabilities_allow_personal_forward_requests() {
+    assert_personal_forward_capability(
+        Some(r#"{"main":{"tools":["forward_request"]}}"#),
+        true,
+        true,
+        true,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn unselected_or_inactive_dot_chat_capabilities_exclude_personal_forward_requests() {
+    assert_personal_forward_capability(Some(r#"{"main":{"tools":[]}}"#), true, true, false).await;
+    assert_personal_forward_capability(
+        Some(r#"{"main":{"tools":["forward_request"]}}"#),
+        false,
+        true,
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dot_chat_capabilities_do_not_expand_personal_forward_request_grants() {
+    assert_personal_forward_capability(
+        Some(r#"{"main":{"tools":["forward_request"]}}"#),
+        true,
+        false,
+        false,
+    )
+    .await;
+}

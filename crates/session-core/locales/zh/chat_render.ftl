@@ -86,3 +86,7 @@ chat-render-canvas-assets-count = { $count } 个文件
 chat-render-canvas-assets-empty = 此对话中还没有文件。
 chat-render-canvas-asset-download = 下载文件
 chat-render-canvas-close-title = 关闭画布
+
+chat-render-delegated-readonly-banner = 委派的对话 — 只读历史记录。请通过主对话或收件箱继续、批准或停止此工作。
+chat-render-delegated-root-link = 打开主对话
+chat-render-delegated-root-unavailable = 主对话不可用。此历史记录仍为只读。

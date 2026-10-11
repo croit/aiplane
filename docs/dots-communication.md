@@ -2,11 +2,12 @@
 
 ## Status and requirement
 
-Implementation in progress. The owner-scoped directed consent store and web
-configuration are implemented. Personal Dot communication is not connected to
-the local agent dispatcher. The execution design below provides bounded
-request/reply delegation with durable pauses using existing mechanisms; a saved
-consent alone does not establish an executable communication channel.
+Personal same-owner request/reply delegation is implemented through the existing
+local dispatcher, directed consent configuration, durable chat suspensions and
+Inbox. State-based runtime and API tests cover child execution, atomic chain
+claims, restart continuation, current permissions and exact-tree cancellation.
+Chrome verifies owner approval and private read-only receiver history. A saved
+consent alone does not authorize a tool invocation.
 
 ## Implemented consent configuration
 
@@ -43,42 +44,48 @@ Initial scope: personal Dots belonging to the same user. Organization Dots may c
 | `aiplane-runtime/src/agents/spec/model.rs`; `spec/route_kinds.rs` | Route targets distinguish local Agent, Human, external A2A and Loop. Routes render a task and bound state values; the child receives that task, not an automatic transcript copy. The current source uses `RouteTarget::Agent`, not a named `LocalRouteTarget` type. |
 | `aiplane-core/src/server/run_chain.rs` | `MAX_DEPTH = 3` includes the root. `RunChain::enter` rejects both excessive depth and an already-present principal, including indirect cycles. Frames retain principal/version and parent tool-call attribution. |
 | `aiplane-runtime/src/suspend.rs`; `router.rs::dispatch_result` | `ChildPause` carries the child's assistant turn and expiry. The parent waits on the child's actual durable suspension; completed results are returned as data and dispatched/finished audit events are recorded. |
-| `openai_driver/resume.rs::check_child`; `agents/resume.rs` | Child pauses are checked against principal run-session parent linkage and an actual suspension. Resume claims the pause chain and distinguishes staff/participant authorization. This linkage is currently principal-session specific. |
+| `aiplane-agents/src/db/child_sessions.rs`; `openai_driver/resume.rs::check_child`; `agents/resume.rs` | One typed child resolver recognizes principal sessions and personal Dot bindings. Durable claims verify exact parent turn/tool call and, for personal children, owner, caller/receiver and consent generation. Existing principal staff/participant authorization remains separate from personal owner settlement. |
 | `agents/access.rs::effective_access` | Admin has write access. Other people need existing shares; read/write additionally require agent-management permission, while respond can survive without it. This is management/decision access, not a generic right for any Dot to invoke another. |
 | `server/grant_holding.rs`; `principal.rs` | `a2a_caller` refers to permission for a remote principal to call a particular agent; granting requires target write access. `a2a_agent` refers to an external card URL and is administrator-controlled. These grants are not directional local Dot communication rules. |
 | `agents/a2a.rs`; `agents/a2a_client/mod.rs` | Remote A2A exposes bearer-authenticated agent cards/JSON-RPC and checks external-target grants. Local communication does not need those HTTP routes, system tokens or public cards. |
 | `aiplane-agents/src/db/{a2a_contexts,agent_a2a_tasks}.rs` | Remote contexts carry caller/token facts; remote pending tasks carry card URL/task/context IDs. They are not a general local mailbox. |
 | `persona/personal_dot.rs`; `server/headless.rs` | Personal Dot execution uses the user-owned private session and user authority narrowed by the Dot's rules, with separate Dot memories. It must not be routed through principal-only execution that loses this ceiling. |
 
-The actual local dispatcher is reusable, but its published-principal profile loader and parent-child/resume accessors require an explicit personal-Dot branch. Merely selecting a Dot principal as a route target would drop the current personal execution model. Existing public A2A permission fields cannot safely stand in for the new local delegation boundary.
+The local target resolver selects either the published principal profile or
+the personal Dot execution context. Merely selecting a Dot principal as a
+published route target would drop the personal execution model. Existing
+public A2A permission fields do not establish local Dot consent.
 
 ## Personal execution integration
 
-The existing `ForwardRequest` schema accepts no arguments: published routes
-render their task from state. Personal delegation needs an explicit receiver
-and bounded message schema while using the same local dispatch machinery.
-`ToolContext::chain` currently reads only `AgentRun`; personal actors have no
-`AgentRun` because they must keep the user principal. Personal execution must
-carry call-chain facts without impersonating a system principal.
+Published `ForwardRequest` routes render their task from state and accept no
+arguments. The personal variant uses the same tool ID and local dispatch
+machinery with explicit `receiver_dot_id` and `message` arguments; unknown
+fields, an empty message or more than 16,000 UTF-8 bytes are rejected.
+`PersonalDotExecution` carries the actual immutable binding, model, call chain,
+local budget and shared spend meter while retaining the user principal.
+`ToolContext::chain` resolves either execution kind.
 
 The personal child opens an ordinary private user-owned session bound to the
 receiver Dot. Receiver context resolves its own selected tools and memories
 under current user authority. The caller's selected tools do not replace the
 receiver's selection; both sides still require current user grants and explicit
-edge consent. An optional child link belongs in the existing agent-layer
-personal session association, with exact parent turn/call and edge generation.
+edge consent. The immutable child link is stored in the existing agent-layer personal
+session association, with exact parent turn/call and consent generation.
 
-Principal child lookup and user Inbox answering currently follow different
-paths. A shared resolver must recognize both child owner kinds and reuse the
-existing deepest-child claim/resume flow. The root waiting item represents the
-pending delegation; independently actionable parent and child cards must not
-claim the same chain twice. Personal child results come from persisted turn
-content, status and suspension in runtime; runtime cannot call an API helper.
+The shared child resolver supports both owner kinds. The root waiting item
+represents the pending delegation; child history cannot independently settle
+it. Personal child results come from persisted turn content, status and
+suspension in runtime; runtime does not call an API helper. The Chat API
+reserves the root worker before selecting ordinary or personal chain claim.
+Personal claim reserves all child workers, validates every recorded level and
+claims the exact pause chain in one transaction. Child continuation runs
+asynchronously before handing its result to the existing root worker.
 
-Current per-turn budgets are not a remaining tree budget. Before claiming an
-aggregate cap, delegation must pass the actual remaining parent allowance and
-account for child charges through shared runtime accounting. Reusing the
-existing `Budget.capped` without remaining usage would not establish that cap.
+Delegation uses the existing `SpendMeter` with one shared tree checkpoint.
+Each child intersects its local budget with the tree's remaining allowance.
+The final section describes accounting boundaries and overshoot; a finite
+model-request allowance is not a monetary ceiling.
 
 ## Shared mechanisms
 
@@ -110,6 +117,18 @@ Treat the message and eventual answer as untrusted content. Frame them as task d
 
 Personal Dots currently have no independent saved model choice. The first call uses the initiating turn's actual selected model only after checking that it is usable by the receiver's owner and applying existing model/pool limits; refuse if unavailable rather than invent a model. Principal receivers retain the model in their actual validated profile. Model selection does not grant tools or select a credential.
 
+## Receiver discovery
+
+An initialized personal Dot sees actual IDs, names and descriptions for active
+same-owner receivers with both current directed consents. The caller must have
+selected and be permitted to use `forward_request`; otherwise no receivers are
+offered. Discovery reads one owner-scoped peer batch. Receiver metadata and the
+Dot's own memory share a 16,000-byte JSON context budget: whole receiver entries
+are included first, followed by up to 40 own notes. `omitted_receivers` reports
+excluded entries. Discovery never includes peer memory, transcripts or secrets.
+Ordinary chats and personal contexts without initialized execution omit this
+tool. Published agents keep their existing route-driven variant.
+
 ## Calls, budgets and durable waiting
 
 Extend the existing local `forward_request` path with a typed Dot target and explicit task input. Existing agent route callers retain their current schema/route behavior; the actual personal-Dot tool source offers its authorized targets through the same local dispatcher. Do not expose public A2A endpoints or mint tokens to make an internal call.
@@ -118,7 +137,7 @@ Enter the receiver frame in the caller's existing chain before opening child wor
 
 If the child needs approval, propagate its durable `ChildPause` to the parent with the actual child expiry. The receiving authority settles that child action, then the parent continues with the minimal result. A parent delegation approval and a child external-write approval are different decisions: approving the request does not approve the receiver's tools. The same-owner first slice uses the owner's existing Inbox; organization settlement uses its explicit authorized responders when implemented.
 
-Stop/cancel must settle the linked parent/child chain consistently using the shared lifecycle. Repeated resume claims cannot duplicate an already-created child or rerun its completed side effects. Deactivation pauses new work and continuation; revocation must produce an actionable refusal without leaving an orphan wait. Restart handling must reconcile recorded child linkage using existing suspension/startup mechanisms, not assume a continuously running process.
+Stopping or deleting a root cancels its verified linked work. Deactivating or deleting a participating Dot, or changing the effective consent generation, cancels affected delegation trees; an identical consent save preserves them. Cleanup follows immutable parent turns even when a root is shared or an intermediate child has already completed. Independent child mutation remains unavailable. Restart continuation validates recorded linkage and current consent before atomically claiming the chain and never reruns a completed child effect.
 
 Audit dispatched/finished/denied/revoked events with caller, receiver, parent/child turn, edge generation and outcome; omit task content and secrets from activity details. Usage retains the actual payer and source through the existing run chain. Personal same-owner delegation is charged to that user, with Dot attribution in the chain; no separate per-Dot budget or usage dashboard is claimed. Organization billing ownership needs the existing principal payer resolved explicitly before that phase.
 
@@ -145,7 +164,15 @@ State-based tests use actual in-memory SQLite identities/sessions, registries an
 - Organization phase refuses different organizations, removed members, ungranted receivers and user-credential/memory fallback. Shares alone never create communication consent.
 - API ownership isolation, stale-generation conflict, inactive saved selections and accessible mobile/keyboard flow use actual resource data.
 
-Current source gaps are material: ordinary local dispatch loads published principal profiles; personal Dot child linkage and staff/participant resume are not yet unified; available user Dot tools do not expose communication; direction-specific consent does not exist; a tree-wide budget guarantee must be checked against actual remaining-budget accounting. These prerequisites are implementation work, not supported behavior. The existing remote A2A context/task records are sufficient for their remote protocol but should not be overloaded with invented local card URLs or tokens.
+The Chat API and Inbox settlement tests cover restart, receiver-only memory
+writes and exact root/child relationships. Ordinary chat cannot discover or
+enable the personal communication tool. Finite local token budgets fail closed
+when upstream usage is unknown, including after durable restoration. Model
+routing rechecks current pool access before each personal request without
+widening the original turn's authority. Organization ownership, credentials
+and authorized responders remain prerequisites for organization delegation.
+Remote A2A context/task records retain their remote protocol; they are not a
+local mailbox.
 
 ## Shared suspension claim contract
 
@@ -160,8 +187,8 @@ together. These helpers carry generic chat data and no Dot ownership types.
 
 Shared resume uses the existing suspension store with request-aware deletion and one
 transaction for the entire verified chain. A stale request or unavailable
-ancestor leaves every pause and status intact. This building block precedes
-personal Dot delegation and has existing single-turn and principal-chain callers.
+ancestor leaves every pause and status intact. The same building block serves
+single-turn, principal-chain and personal-chain callers.
 
 `session_core::db::get_suspension_in(connection, turn_id)` reads the same typed
 row inside the caller transaction. `claim_suspension_in(connection, turn_id,
@@ -178,10 +205,38 @@ State-based tests cover stale requests, terminal turns, transaction rollback,
 all-level commit, invalid decisions and missing ancestors. Runtime errors keep
 the existing resume refusal types. Session-core remains owner-agnostic.
 
-The subsequent personal communication implementation uses a new bounded text
+Personal communication uses bounded text
 input of at most 16,000 UTF-8 bytes because no delegation-message limit exists
 in the current dispatcher. Replies retain the existing tool-result budgets.
 Finite token budgets stop additional tool-bearing work when actual upstream
 usage is unavailable; model-round boundaries can still overshoot a token
 allowance. Shared accounting must preserve one tree checkpoint across durable
 pauses without adding historical child charges twice.
+
+## Delegated history admission
+
+A delegated personal child remains private owner-readable history. Independent
+submit, retry, edit, share, fork, delete, approval, cancellation, attachment,
+capability, effort, document and browser-feedback mutations are refused. Pinning
+changes only the owner's sidebar and keeps the existing owner check. Root-chain
+resume and cancellation verify the immutable child links before acting.
+
+The existing chat detail response carries `can_write`, `can_delete` and
+`delegation`. A delegated detail has `delegation.root_session_id` only when the
+bounded actual private same-owner parent chain resolves; an unavailable root is
+`null`. Missing metadata grants no write authority in the browser. List and
+search results carry `can_delete`. The existing transcript, read-only document
+canvas and suspension rendering remain the history surface. Browser action
+execution and feedback follow the current server-supplied write authority.
+
+The shared `SpendMeter` accounts for the delegation tree while each receiver
+retains its local `Budget`. Round admission uses an atomic reservation; time is
+previously charged elapsed time plus elapsed time since restoration, including
+child execution. Time between the durable snapshot and restoration is not
+added. Tokens add actual reported usage. A durable `BudgetUsed.tree` snapshot retains the original aggregate and
+local limits, charges and whether usage is known. Restoration cannot widen
+those limits or re-add previously recorded child usage. Missing usage prevents
+additional work under a finite token cap. Each turn may still make its existing
+single bounded final answer request after exhaustion, with `tool_choice: none`; its
+actual usage is recorded. This is an admission limit on tool-bearing work,
+with possible final answer and model-round overshoot, not a monetary ceiling.

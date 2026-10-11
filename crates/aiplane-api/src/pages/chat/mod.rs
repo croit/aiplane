@@ -340,6 +340,7 @@ async fn submit_once(
         &worker,
         req.clone(),
         None,
+        None,
     )
     .await;
 
@@ -580,6 +581,7 @@ async fn start_pending_turn(state: &Arc<RamaState>, pending: &chat::PendingTurn)
             secure: pending.secure,
             voice_mode: pending.voice,
         },
+        None,
         None,
     )
     .await;
@@ -852,7 +854,15 @@ async fn spawn_assistant_worker(
     worker: &session_core::workers::ActiveWorker,
     req: RequestCtx,
     resume: Option<aiplane_runtime::suspend::ResumeFrom>,
+    worker_guard: Option<aiplane_runtime::server::headless::BackgroundWorker>,
 ) {
+    let worker_guard = worker_guard.unwrap_or_else(|| {
+        aiplane_runtime::server::headless::BackgroundWorker::new(
+            state.clone(),
+            user.id.clone(),
+            worker.clone(),
+        )
+    });
     // Per-conversation tool overlay. The driver re-resolves the allowed-tool
     // set per round via `allowed_tools_for_session` (core ∪ this-conversation's
     // enabled, intersected with the user's RBAC grant), so a mid-turn
@@ -861,8 +871,26 @@ async fn spawn_assistant_worker(
     // uses the unfiltered per-user set. Everything but the two interactive
     // handles below is shared with the headless scheduler via
     // `build_tool_context`.
-    use aiplane_runtime::persona::personal_dot::{PersonalDotContext, context_for};
-    let dot_context = context_for(state, user, session_id, true).await;
+    use aiplane_runtime::persona::personal_dot::{
+        PersonalDotContext, PersonalTurnContext, initialize_for_turn,
+    };
+    let clock = aiplane_runtime::budget::system_clock();
+    let dot_context = initialize_for_turn(
+        state,
+        user,
+        true,
+        PersonalTurnContext {
+            session_id,
+            assistant_turn_id,
+            model,
+            clock: clock.clone(),
+            resume_checkpoint: resume
+                .as_ref()
+                .and_then(|resume| resume.suspension.budget_used.tree.as_ref()),
+            child_execution: None,
+        },
+    )
+    .await;
     let (actor, persona) = match dot_context {
         Ok(Some(PersonalDotContext::Active { actor, persona })) => (actor, Some(persona)),
         Ok(None) => (
@@ -907,7 +935,7 @@ async fn spawn_assistant_worker(
         source: aiplane_core::server::db::usage::UsageSource::Chat,
         history_limit: None,
         voice_mode: req.voice_mode,
-        clock: aiplane_runtime::budget::system_clock(),
+        clock,
         resume,
         persona,
     });
@@ -921,16 +949,13 @@ async fn spawn_assistant_worker(
         steers: worker.steers.clone(),
     };
     let worker_state = state.clone();
-    let worker_for_task = worker.clone();
     let user_id_for_clear = user.id.clone();
     let pool_for_worker = state.db.clone();
     let session_id_for_push = session_id.to_string();
     let turn_id_for_push = assistant_turn_id.to_string();
     tokio::spawn(async move {
         session_core::worker::run_session_turn(pool_for_worker, driver, driver_ctx).await;
-        worker_state
-            .chats
-            .clear(&user_id_for_clear, &worker_for_task);
+        drop(worker_guard);
         // Turn's done — ping the user's subscribed browsers (no-op unless push
         // is enabled and they opted in). Runs after the worker so the row is
         // finalized and the status is readable.
@@ -970,6 +995,70 @@ pub(crate) enum ResumeTurnError {
     Context(aiplane_core::server::db::DbError),
 }
 
+impl From<aiplane_runtime::agents::resume::AgentResumeError> for ResumeTurnError {
+    fn from(error: aiplane_runtime::agents::resume::AgentResumeError) -> Self {
+        use aiplane_runtime::agents::resume::AgentResumeError;
+        match error {
+            AgentResumeError::Busy => Self::Busy,
+            AgentResumeError::Unavailable => Self::Unavailable,
+            AgentResumeError::Refused(error) => Self::Refused(error),
+            AgentResumeError::Db(error) => Self::Context(error),
+            AgentResumeError::StaffOnly { .. } | AgentResumeError::ParticipantOnly { .. } => {
+                Self::Unavailable
+            }
+        }
+    }
+}
+
+enum RootResume {
+    Ordinary(Box<aiplane_runtime::suspend::ResumeFrom>),
+    Personal(aiplane_runtime::agents::resume::ClaimedPersonalResume),
+}
+
+impl RootResume {
+    async fn claim(
+        state: &Arc<RamaState>,
+        owner: &str,
+        turn_id: &str,
+        request_id: Option<&str>,
+        decision: chat::Decision,
+    ) -> Result<Self, ResumeTurnError> {
+        let suspension = chat::get_suspension(&state.db, turn_id)
+            .await
+            .map_err(|error| ResumeTurnError::Context(error.into()))?
+            .ok_or(ResumeTurnError::Refused(
+                aiplane_runtime::suspend::ResumeRefused::NotSuspended,
+            ))?;
+        if suspension.child_turn.is_some() {
+            aiplane_runtime::agents::resume::claim_personal(
+                state, owner, turn_id, request_id, decision,
+            )
+            .await
+            .map(Self::Personal)
+            .map_err(Into::into)
+        } else {
+            aiplane_runtime::suspend::claim_for_resume(&state.db, turn_id, request_id, decision)
+                .await
+                .map(|resume| Self::Ordinary(Box::new(resume)))
+                .map_err(ResumeTurnError::Refused)
+        }
+    }
+
+    async fn continue_children(
+        self,
+        state: &Arc<RamaState>,
+    ) -> Result<aiplane_runtime::suspend::ResumeFrom, ResumeTurnError> {
+        match self {
+            Self::Ordinary(resume) => Ok(*resume),
+            Self::Personal(claimed) => {
+                aiplane_runtime::agents::resume::run_personal_children(state, claimed)
+                    .await
+                    .map_err(Into::into)
+            }
+        }
+    }
+}
+
 /// Continue a suspended turn with `decision`, through the same worker
 /// machinery as a fresh message.
 ///
@@ -984,7 +1073,7 @@ pub(crate) async fn resume_turn(
     decision: chat::Decision,
     req: RequestCtx,
 ) -> Result<(), ResumeTurnError> {
-    use aiplane_runtime::suspend::{ResumeRefused, claim_for_resume};
+    use aiplane_runtime::suspend::ResumeRefused;
     // Only an assistant turn, which always names its model, can be suspended.
     let Some(model) = turn.model.clone() else {
         return Err(ResumeTurnError::Refused(ResumeRefused::NotSuspended));
@@ -1019,9 +1108,7 @@ pub(crate) async fn resume_turn(
             user.id.clone(),
             worker,
         );
-        let resume = claim_for_resume(&state.db, &turn.id, request_id, decision)
-            .await
-            .map_err(ResumeTurnError::Refused)?;
+        let resume = RootResume::claim(state, &user.id, &turn.id, request_id, decision).await?;
         let state = state.clone();
         let params = aiplane_runtime::server::headless::DriveParams {
             actor,
@@ -1032,6 +1119,13 @@ pub(crate) async fn resume_turn(
             history_limit: background.history_limit,
         };
         tokio::spawn(async move {
+            let resume = match resume.continue_children(&state).await {
+                Ok(resume) => resume,
+                Err(error) => {
+                    tracing::warn!(turn = %params.assistant_turn_id, ?error, "continuing the personal background delegation failed");
+                    return;
+                }
+            };
             aiplane_runtime::server::headless::drive_resumed(&state, params, resume, Some(worker))
                 .await;
         });
@@ -1048,29 +1142,40 @@ pub(crate) async fn resume_turn(
             return Err(ResumeTurnError::Busy);
         }
     };
-    let resume = match claim_for_resume(&state.db, &turn.id, request_id, decision).await {
-        Ok(resume) => resume,
-        Err(refused) => {
-            state.chats.clear(&user.id, &worker);
-            return Err(ResumeTurnError::Refused(refused));
-        }
-    };
-    tracing::info!(
-        turn = %turn.id,
-        decision = ?resume.decision.kind(),
-        "resuming a suspended turn"
+    let worker_guard = aiplane_runtime::server::headless::BackgroundWorker::new(
+        state.clone(),
+        user.id.clone(),
+        worker.clone(),
     );
-    spawn_assistant_worker(
-        state,
-        user,
-        &turn.session_id,
-        &turn.id,
-        &model,
-        &worker,
-        req,
-        Some(resume),
-    )
-    .await;
+    let resume = match RootResume::claim(state, &user.id, &turn.id, request_id, decision).await {
+        Ok(resume) => resume,
+        Err(error) => return Err(error),
+    };
+    let state = state.clone();
+    let user = user.clone();
+    let turn = turn.clone();
+    tokio::spawn(async move {
+        let resume = match resume.continue_children(&state).await {
+            Ok(resume) => resume,
+            Err(error) => {
+                tracing::warn!(turn = %turn.id, ?error, "continuing the personal chat delegation failed");
+                return;
+            }
+        };
+        tracing::info!(turn = %turn.id, decision = ?resume.decision.kind(), "resuming a suspended turn");
+        spawn_assistant_worker(
+            &state,
+            &user,
+            &turn.session_id,
+            &turn.id,
+            &model,
+            &worker,
+            req,
+            Some(resume),
+            Some(worker_guard),
+        )
+        .await;
+    });
     Ok(())
 }
 

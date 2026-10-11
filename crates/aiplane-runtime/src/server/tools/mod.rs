@@ -15,6 +15,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use serde_json::Value;
 use shared::api::ToolDef;
@@ -41,6 +42,7 @@ pub use registry::{GrantedToolSource, ToolPhase, ToolRegistry, ToolSource};
 /// preferences) through the trait signature each time we add one.
 #[derive(Clone)]
 pub struct ToolContext {
+    pub personal_execution: Option<Arc<crate::agent_run::PersonalDotExecution>>,
     /// Who the tool acts for. A person on the chat page and on a `gwk_`
     /// bearer; a system principal on a `gws_` bearer. Scope rows by
     /// [`Principal::subject_id`]; a tool that acts *for a person* must go
@@ -224,6 +226,7 @@ impl ToolContext {
             granted_tools: None,
             agent: None,
             personal_dot: None,
+            personal_execution: None,
             call_id: None,
         }
     }
@@ -248,7 +251,14 @@ impl ToolContext {
 
     /// The agent call chain this call runs in, inside an agent run.
     pub fn chain(&self) -> Option<&aiplane_core::server::run_chain::RunChain> {
-        self.agent.as_deref().map(|run| run.chain().as_ref())
+        self.agent
+            .as_deref()
+            .map(|run| run.chain().as_ref())
+            .or_else(|| {
+                self.personal_execution
+                    .as_ref()
+                    .map(|run| run.chain().as_ref())
+            })
     }
 
     /// The person this tool acts for, or the refusal to hand the model when
@@ -575,7 +585,7 @@ pub(crate) mod tests {
 
     impl Tool for PhasedEcho {
         fn id(&self) -> &str {
-            echo::Echo.id()
+            "company_echo"
         }
         fn schema(&self) -> shared::api::ToolDef {
             echo::Echo.schema()

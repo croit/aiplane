@@ -392,6 +392,11 @@ pub async fn get_personal_dot(
     row.as_ref().map(map_personal_dot).transpose()
 }
 
+pub async fn personal_dot_owner(pool: &Pool, id: &str) -> Result<Option<String>, DbError> {
+    Ok(sqlx::query_scalar("SELECT d.owner_user_id FROM personal_dots d JOIN agents a ON a.principal_id = d.principal_id WHERE d.principal_id = ?")
+        .bind(id).fetch_optional(pool).await?)
+}
+
 pub async fn get(pool: &Pool, id: &str) -> Result<Option<AgentRow>, DbError> {
     let row = sqlx::query(&format!(
         "SELECT {} FROM agents a JOIN system_principals p ON p.id = a.principal_id
@@ -1084,6 +1089,32 @@ mod tests {
         .await
         .unwrap();
         let id = &dot.unwrap().principal.id;
+        assert_eq!(
+            personal_dot_owner(&pool, id).await.unwrap().as_deref(),
+            Some("alice")
+        );
+        assert!(
+            personal_dot_owner(&pool, "missing")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let ordinary = agent(&pool, "Ordinary", "alice").await;
+        assert!(
+            personal_dot_owner(&pool, &ordinary.principal.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        sqlx::query("UPDATE system_principals SET created_by = 'someone_else' WHERE id = ?")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            personal_dot_owner(&pool, id).await.unwrap().as_deref(),
+            Some("alice")
+        );
         let after = r#"{"main":{"tools":["recall"]}}"#;
         assert_eq!(
             update_personal_dot_draft(&pool, id, "bob", before, after)

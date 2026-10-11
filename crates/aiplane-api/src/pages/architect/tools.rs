@@ -32,6 +32,7 @@ use aiplane_runtime::agents::assist::{ReviewContext, apply_changes, changes_sche
 use aiplane_runtime::rama_server::state::RamaState;
 use aiplane_runtime::server::model_choices::gateway_default;
 use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture};
+use session_core::i18n::Lang;
 
 /// The largest refusal body read back into a tool error.
 const MAX_REFUSAL_BYTES: usize = 64 * 1024;
@@ -196,7 +197,7 @@ impl Tool for ArchitectTool {
             let out = match self.kind {
                 Kind::ListAgents => list_agents(ctx).await,
                 Kind::ReadAgent => read_agent(ctx, parse(args)?).await,
-                Kind::ListGrantable => resources_for(&ctx.state, &ctx.user)
+                Kind::ListGrantable => resources_for(&ctx.state, &ctx.user, Lang::En)
                     .await
                     .map(|resources| json!(resources))
                     .map_err(Refusal::from),
