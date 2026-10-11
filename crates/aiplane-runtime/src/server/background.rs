@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
+use super::scheduled::ScheduleOwner;
 use aiplane_core::server::db::usage::UsageSource;
 use aiplane_core::server::db::{DbError, Pool};
 use sqlx::Row;
@@ -12,7 +13,72 @@ pub struct BackgroundTurn {
     pub tools_enabled: bool,
 }
 
-const MATCHED_RUNS: &str = "SELECT 'scheduled' AS source, r.id AS run_id, r.session_id, r.tools_enabled AS snapshot_tools, r.history_limit, a.user_id AS owner, a.tools_enabled AS current_tools, a.dot_id, s.user_id AS session_owner, s.principal_id, s.shared, p.dot_id AS session_dot FROM scheduled_runs r LEFT JOIN scheduled_actions a ON a.id=r.action_id LEFT JOIN chat_sessions s ON s.id=r.session_id LEFT JOIN personal_dot_sessions p ON p.session_id=s.id WHERE r.assistant_turn_id=? UNION ALL SELECT 'webhook', r.id, r.session_id, r.tools_enabled, r.history_limit, a.user_id, a.tools_enabled, a.dot_id, s.user_id, s.principal_id, s.shared, p.dot_id FROM webhook_runs r LEFT JOIN webhooks a ON a.id=r.webhook_id LEFT JOIN chat_sessions s ON s.id=r.session_id LEFT JOIN personal_dot_sessions p ON p.session_id=s.id WHERE r.assistant_turn_id=?";
+const MATCHED_RUNS: &str = "SELECT 'scheduled' AS source, r.id AS run_id, r.session_id,
+    r.tools_enabled AS snapshot_tools, r.history_limit, a.user_id AS owner,
+    a.principal_id AS owner_principal, a.tools_enabled AS current_tools, a.dot_id,
+    s.user_id AS session_owner, s.principal_id, s.shared, s.agent_version,
+    s.visitor_id, s.parent_turn_id, p.dot_id AS session_dot,
+    r.agent_version AS run_agent_version, a.agent_version AS current_agent_version,
+    r.configuration_generation AS run_generation, a.configuration_generation AS current_generation
+    FROM scheduled_runs r LEFT JOIN scheduled_actions a ON a.id=r.action_id
+    LEFT JOIN chat_sessions s ON s.id=r.session_id
+    LEFT JOIN personal_dot_sessions p ON p.session_id=s.id WHERE r.assistant_turn_id=?
+    UNION ALL SELECT 'webhook', r.id, r.session_id, r.tools_enabled, r.history_limit,
+    a.user_id, NULL, a.tools_enabled, a.dot_id, s.user_id, s.principal_id, s.shared,
+    s.agent_version, s.visitor_id, s.parent_turn_id, p.dot_id, NULL, NULL, NULL, NULL
+    FROM webhook_runs r LEFT JOIN webhooks a ON a.id=r.webhook_id
+    LEFT JOIN chat_sessions s ON s.id=r.session_id
+    LEFT JOIN personal_dot_sessions p ON p.session_id=s.id WHERE r.assistant_turn_id=?";
+
+fn has_original_run_pin(row: &sqlx::sqlite::SqliteRow) -> Result<bool, DbError> {
+    let run_version: Option<i64> = row.try_get("run_agent_version")?;
+    let session_version: Option<i64> = row.try_get("agent_version")?;
+    Ok(row.try_get::<String, _>("source")? == "scheduled"
+        && run_version.is_some_and(|version| version > 0)
+        && run_version == session_version)
+}
+
+fn owner_matches(row: &sqlx::sqlite::SqliteRow, expected: &ScheduleOwner) -> Result<bool, DbError> {
+    let user: Option<String> = row.try_get("owner")?;
+    let owner_principal: Option<String> = row.try_get("owner_principal")?;
+    let session_user: Option<String> = row.try_get("session_owner")?;
+    let session_principal: Option<String> = row.try_get("principal_id")?;
+    Ok(match expected {
+        ScheduleOwner::User(id) => {
+            user.as_ref() == Some(id)
+                && session_user.as_ref() == Some(id)
+                && owner_principal.is_none()
+                && session_principal.is_none()
+        }
+        ScheduleOwner::Principal(id) => {
+            user.is_none()
+                && session_user.is_none()
+                && owner_principal.as_ref() == Some(id)
+                && session_principal.as_ref() == Some(id)
+                && !row.try_get::<bool, _>("shared")?
+                && has_original_run_pin(row)?
+                && row.try_get::<Option<String>, _>("visitor_id")?.is_none()
+                && row
+                    .try_get::<Option<String>, _>("parent_turn_id")?
+                    .is_none()
+        }
+    })
+}
+
+fn current_configuration_matches(row: &sqlx::sqlite::SqliteRow) -> Result<bool, DbError> {
+    if row.try_get::<String, _>("source")? != "scheduled" {
+        return Ok(true);
+    }
+    let run_generation: Option<String> = row.try_get("run_generation")?;
+    let current_generation: Option<String> = row.try_get("current_generation")?;
+    let run_version: Option<i64> = row.try_get("run_agent_version")?;
+    let current_version: Option<i64> = row.try_get("current_agent_version")?;
+    Ok(run_generation
+        .as_ref()
+        .is_some_and(|generation| !generation.is_empty())
+        && run_generation == current_generation
+        && run_version == current_version)
+}
 
 fn invalid(message: &str) -> DbError {
     DbError::Decode {
@@ -23,7 +89,7 @@ fn invalid(message: &str) -> DbError {
 
 pub async fn for_turn(
     db: &Pool,
-    user_id: &str,
+    owner: &ScheduleOwner,
     assistant_turn_id: &str,
 ) -> Result<Option<BackgroundTurn>, DbError> {
     let rows = sqlx::query(MATCHED_RUNS)
@@ -40,19 +106,16 @@ pub async fn for_turn(
         ));
     }
     let row = &rows[0];
-    let owner: Option<String> = row.try_get("owner")?;
-    let session_owner: Option<String> = row.try_get("session_owner")?;
-    let principal: Option<String> = row.try_get("principal_id")?;
     let dot: Option<String> = row.try_get("dot_id")?;
     let session_dot: Option<String> = row.try_get("session_dot")?;
-    if owner.as_deref() != Some(user_id)
-        || session_owner.as_deref() != Some(user_id)
-        || principal.is_some()
-        || row.try_get::<bool, _>("shared")?
-        || dot != session_dot
-    {
+    if !owner_matches(row, owner)? || row.try_get::<bool, _>("shared")? || dot != session_dot {
         return Err(invalid(
             "The background run no longer matches its owner and conversation binding. Restore its original binding before continuing.",
+        ));
+    }
+    if !current_configuration_matches(row)? {
+        return Err(invalid(
+            "The background run's configuration changed. Start a new run with the current configuration before continuing.",
         ));
     }
     let session_id: String = row.try_get("session_id")?;
@@ -83,41 +146,38 @@ pub async fn for_turn(
     }))
 }
 
-pub async fn reconcile_turn(
-    db: &Pool,
-    user_id: &str,
+async fn structural_run_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    owner: &ScheduleOwner,
     assistant_turn_id: &str,
-) -> Result<(), DbError> {
-    let mut tx = aiplane_agents::db::WriteTx::begin(db).await?;
+) -> Result<Option<(sqlx::sqlite::SqliteRow, sqlx::sqlite::SqliteRow)>, DbError> {
     let rows = sqlx::query(MATCHED_RUNS)
         .bind(assistant_turn_id)
         .bind(assistant_turn_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut **tx)
         .await?;
     if rows.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     if rows.len() != 1 {
         return Err(invalid(
             "The background turn has multiple run bindings. Correct its run history before reconciling.",
         ));
     }
-    let row = &rows[0];
-    if row.try_get::<Option<String>, _>("owner")?.as_deref() != Some(user_id)
-        || row
-            .try_get::<Option<String>, _>("session_owner")?
-            .as_deref()
-            != Some(user_id)
-    {
+    let row = rows
+        .into_iter()
+        .next()
+        .expect("exactly one binding checked");
+    if !owner_matches(&row, owner)? {
         return Err(invalid(
-            "The background result does not belong to this user.",
+            "The background result does not belong to this owner.",
         ));
     }
     let turn = sqlx::query(
         "SELECT status,error_message,session_id FROM chat_turns WHERE id=? AND role='assistant'",
     )
     .bind(assistant_turn_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?
     .ok_or_else(|| invalid("The background assistant turn is unavailable."))?;
     if turn.try_get::<String, _>("session_id")? != row.try_get::<String, _>("session_id")? {
@@ -125,6 +185,28 @@ pub async fn reconcile_turn(
             "The background assistant turn does not match its run's conversation.",
         ));
     }
+    Ok(Some((row, turn)))
+}
+
+pub(crate) async fn validate_turn_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    owner: &ScheduleOwner,
+    assistant_turn_id: &str,
+) -> Result<(), DbError> {
+    structural_run_in(tx, owner, assistant_turn_id)
+        .await
+        .map(|_| ())
+}
+
+pub async fn reconcile_turn(
+    db: &Pool,
+    owner: &ScheduleOwner,
+    assistant_turn_id: &str,
+) -> Result<(), DbError> {
+    let mut tx = aiplane_agents::db::WriteTx::begin(db).await?;
+    let Some((row, turn)) = structural_run_in(&mut tx, owner, assistant_turn_id).await? else {
+        return Ok(());
+    };
     let status: String = turn.try_get("status")?;
     let mut error: Option<String> = turn.try_get("error_message")?;
     let status = match status.as_str() {
@@ -133,7 +215,7 @@ pub async fn reconcile_turn(
         "suspended" => "waiting",
         "cancelled" => {
             error.get_or_insert_with(|| {
-                "The run was cancelled while waiting for a decision.".into()
+                session_core::i18n::t(session_core::i18n::Lang::En, "chat-error-run-cancelled")
             });
             "error"
         }
@@ -158,8 +240,27 @@ pub async fn reconcile_turn(
         .bind(&run_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query(&format!("UPDATE {triggers} SET last_status=?,last_error=?,{last_at}=(SELECT fired_at FROM {runs} WHERE id=?),last_session_id=(SELECT session_id FROM {runs} WHERE id=?) WHERE id=(SELECT {foreign} FROM {runs} WHERE id=?) AND (SELECT id FROM {runs} WHERE {foreign}={triggers}.id ORDER BY rtrim(fired_at,'Z') DESC,rowid DESC LIMIT 1)=?"))
-    .bind(status).bind(&error).bind(&run_id).bind(&run_id).bind(&run_id).bind(&run_id).execute(&mut *tx).await?;
+    let generation_guard = if source == "scheduled" {
+        " AND configuration_generation=(SELECT configuration_generation FROM scheduled_runs WHERE id=?)"
+    } else {
+        ""
+    };
+    let summary = format!(
+        "UPDATE {triggers} SET last_status=?,last_error=?,{last_at}=(SELECT fired_at FROM {runs} WHERE id=?),last_session_id=(SELECT session_id FROM {runs} WHERE id=?) WHERE id=(SELECT {foreign} FROM {runs} WHERE id=?) AND (SELECT id FROM {runs} WHERE {foreign}={triggers}.id ORDER BY rtrim(fired_at,'Z') DESC,rowid DESC LIMIT 1)=?{generation_guard}"
+    );
+    let summary = sqlx::query(&summary)
+        .bind(status)
+        .bind(&error)
+        .bind(&run_id)
+        .bind(&run_id)
+        .bind(&run_id)
+        .bind(&run_id);
+    let summary = if source == "scheduled" {
+        summary.bind(&run_id)
+    } else {
+        summary
+    };
+    summary.execute(&mut *tx).await?;
     tx.commit().await
 }
 
@@ -180,14 +281,26 @@ pub async fn reconcile_interrupted_waiting(db: &Pool, source: UsageSource) -> Re
     let mut cursor = i64::MIN;
     let mut changed = 0u64;
     while cursor < max_row {
-        let rows=sqlx::query(&format!("SELECT r.rowid AS cursor,a.user_id,r.assistant_turn_id FROM {runs} r JOIN {triggers} a ON a.id=r.{foreign} JOIN chat_turns t ON t.id=r.assistant_turn_id WHERE r.rowid>? AND r.rowid<=? AND r.status='waiting' AND t.status IN ('completed','cancelled','errored') ORDER BY r.rowid LIMIT 128"))
+        let principal_column = if matches!(source, UsageSource::Scheduled) {
+            "a.principal_id"
+        } else {
+            "NULL"
+        };
+        let rows=sqlx::query(&format!("SELECT r.rowid AS cursor,a.user_id,{principal_column} AS owner_principal,r.assistant_turn_id FROM {runs} r JOIN {triggers} a ON a.id=r.{foreign} JOIN chat_turns t ON t.id=r.assistant_turn_id WHERE r.rowid>? AND r.rowid<=? AND r.status='waiting' AND t.status IN ('completed','cancelled','errored') ORDER BY r.rowid LIMIT 128"))
             .bind(cursor).bind(max_row).fetch_all(db).await?;
         if rows.is_empty() {
             break;
         }
         for row in rows {
             cursor = row.try_get("cursor")?;
-            let owner: String = row.try_get("user_id")?;
+            let owner = match (
+                row.try_get::<Option<String>, _>("user_id")?,
+                row.try_get::<Option<String>, _>("owner_principal")?,
+            ) {
+                (Some(user), None) => ScheduleOwner::User(user),
+                (None, Some(principal)) => ScheduleOwner::Principal(principal),
+                _ => return Err(invalid("The background owner is unavailable.")),
+            };
             let turn: String = row.try_get("assistant_turn_id")?;
             reconcile_turn(db, &owner, &turn).await?;
             changed += 1;
@@ -226,25 +339,252 @@ mod tests {
             .await
             .unwrap();
         sqlx::query("INSERT INTO scheduled_actions(id,user_id,name,prompt,model,cron,timezone,tools_enabled,created_at,updated_at) VALUES('action','owner','job','prompt','model','* * * * *','UTC',1,?,?)").bind(now.to_string()).bind(now.to_string()).execute(&db).await.unwrap();
-        sqlx::query("INSERT INTO scheduled_runs(id,action_id,fired_at,session_id,assistant_turn_id,tools_enabled,history_limit,created_at) VALUES('run','action',?,?, 'turn',1,6,?)").bind(now.to_string()).bind(&session.id).bind(now.to_string()).execute(&db).await.unwrap();
+        sqlx::query("INSERT INTO scheduled_runs(id,action_id,fired_at,session_id,assistant_turn_id,tools_enabled,history_limit,configuration_generation,created_at) SELECT 'run',id,?,?, 'turn',1,6,configuration_generation,? FROM scheduled_actions WHERE id='action'").bind(now.to_string()).bind(&session.id).bind(now.to_string()).execute(&db).await.unwrap();
         db
+    }
+
+    async fn principal_fixture() -> (Pool, String, String) {
+        use aiplane_agents::db::{run_sessions, system_principals};
+        let db = fixture().await;
+        let principal = system_principals::create(
+            &db,
+            &system_principals::NewPrincipal {
+                name: "scheduled-principal",
+                display: "Harald",
+                description: "Scheduled owner proof",
+            },
+            "owner",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let session = run_sessions::create_principal_session(
+            &db,
+            &run_sessions::NewRunSession {
+                principal_id: &principal.id,
+                title: None,
+                parent_turn_id: None,
+                agent_version: Some(7),
+            },
+        )
+        .await
+        .unwrap();
+        chat::create_assistant_turn_in_progress(&db, &session.id, "principal-turn", "model")
+            .await
+            .unwrap();
+        let now = Timestamp::now().to_string();
+        sqlx::query("INSERT INTO scheduled_actions(id,principal_id,created_by,agent_version,configuration_generation,name,prompt,model,cron,timezone,tools_enabled,next_run_at,created_at,updated_at) VALUES('principal-action',?,'owner',7,'original','job','prompt',NULL,'* * * * *','UTC',1,'2999-01-01T00:00:00Z',?,?)")
+            .bind(&principal.id).bind(&now).bind(&now).execute(&db).await.unwrap();
+        sqlx::query("INSERT INTO scheduled_runs(id,action_id,fired_at,session_id,assistant_turn_id,tools_enabled,history_limit,agent_version,configuration_generation,created_at) VALUES('principal-run','principal-action',?,?,'principal-turn',1,6,7,'original',?)")
+            .bind(&now).bind(&session.id).bind(&now).execute(&db).await.unwrap();
+        (db, principal.id, session.id)
+    }
+
+    #[tokio::test]
+    async fn principal_background_dispatch_requires_exact_current_generation_and_published_pin() {
+        for mutation in [
+            "UPDATE scheduled_actions SET configuration_generation='replacement' WHERE id='principal-action'",
+            "UPDATE scheduled_runs SET configuration_generation='replacement' WHERE id='principal-run'",
+            "UPDATE scheduled_runs SET agent_version=8 WHERE id='principal-run'",
+            "UPDATE scheduled_actions SET agent_version=8 WHERE id='principal-action'",
+            "UPDATE chat_sessions SET agent_version=8 WHERE id=(SELECT session_id FROM scheduled_runs WHERE id='principal-run')",
+        ] {
+            let (db, principal, _) = principal_fixture().await;
+            let owner = ScheduleOwner::Principal(principal);
+            let context = for_turn(&db, &owner, "principal-turn")
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(context.source, UsageSource::Scheduled);
+            assert_eq!(context.history_limit, Some(6));
+            assert!(context.tools_enabled);
+            assert!(
+                for_turn(&db, &ScheduleOwner::User("owner".into()), "principal-turn")
+                    .await
+                    .is_err()
+            );
+            sqlx::query(mutation).execute(&db).await.unwrap();
+            assert!(
+                for_turn(&db, &owner, "principal-turn").await.is_err(),
+                "{mutation}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn principal_structural_cancel_reconciles_stale_disabled_run_without_touching_new_configuration()
+     {
+        let (db, principal, _) = principal_fixture().await;
+        let owner = ScheduleOwner::Principal(principal.clone());
+        chat::finalize_turn(&db, "principal-turn", chat::TurnStatus::Suspended, None)
+            .await
+            .unwrap();
+        reconcile_turn(&db, &owner, "principal-turn").await.unwrap();
+        sqlx::query("UPDATE scheduled_actions SET configuration_generation='replacement',agent_version=8,enabled=0,last_status='new-configuration',last_error='retained' WHERE id='principal-action'").execute(&db).await.unwrap();
+        sqlx::query("UPDATE system_principals SET disabled_at=? WHERE id=?")
+            .bind(Timestamp::now().to_string())
+            .bind(&principal)
+            .execute(&db)
+            .await
+            .unwrap();
+        chat::finalize_turn(&db, "principal-turn", chat::TurnStatus::Cancelled, None)
+            .await
+            .unwrap();
+        reconcile_turn(&db, &owner, "principal-turn").await.unwrap();
+        let run = sqlx::query("SELECT status,error,configuration_generation,agent_version FROM scheduled_runs WHERE id='principal-run'").fetch_one(&db).await.unwrap();
+        assert_eq!(run.get::<String, _>("status"), "error");
+        assert!(run.get::<String, _>("error").contains("cancelled"));
+        assert_eq!(run.get::<String, _>("configuration_generation"), "original");
+        assert_eq!(run.get::<i64, _>("agent_version"), 7);
+        let action = sqlx::query("SELECT enabled,last_status,last_error,next_run_at,configuration_generation FROM scheduled_actions WHERE id='principal-action'").fetch_one(&db).await.unwrap();
+        assert!(!action.get::<bool, _>("enabled"));
+        assert_eq!(action.get::<String, _>("last_status"), "new-configuration");
+        assert_eq!(action.get::<String, _>("last_error"), "retained");
+        assert_eq!(
+            action.get::<String, _>("next_run_at"),
+            "2999-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            action.get::<String, _>("configuration_generation"),
+            "replacement"
+        );
+    }
+
+    #[tokio::test]
+    async fn principal_structural_reconciliation_requires_original_run_session_pin() {
+        for mutation in [
+            "UPDATE scheduled_runs SET agent_version=8 WHERE id='principal-run'",
+            "UPDATE chat_sessions SET agent_version=8 WHERE id=(SELECT session_id FROM scheduled_runs WHERE id='principal-run')",
+        ] {
+            let (db, principal, _) = principal_fixture().await;
+            chat::finalize_turn(&db, "principal-turn", chat::TurnStatus::Cancelled, None)
+                .await
+                .unwrap();
+            sqlx::query(mutation).execute(&db).await.unwrap();
+            assert!(
+                reconcile_turn(&db, &ScheduleOwner::Principal(principal), "principal-turn")
+                    .await
+                    .is_err(),
+                "{mutation}"
+            );
+            let status: Option<String> =
+                sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id='principal-run'")
+                    .fetch_one(&db)
+                    .await
+                    .unwrap();
+            assert!(status.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn structural_validation_in_uses_current_transaction_without_execution_admission() {
+        let (db, principal, _) = principal_fixture().await;
+        let owner = ScheduleOwner::Principal(principal);
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&db).await.unwrap();
+        sqlx::query("UPDATE scheduled_actions SET configuration_generation='replacement',agent_version=8,enabled=0 WHERE id='principal-action'").execute(&mut *tx).await.unwrap();
+        validate_turn_in(&mut tx, &owner, "principal-turn")
+            .await
+            .unwrap();
+        validate_turn_in(&mut tx, &owner, "unbound-turn")
+            .await
+            .unwrap();
+        sqlx::query("UPDATE scheduled_runs SET agent_version=8 WHERE id='principal-run'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            validate_turn_in(&mut tx, &owner, "principal-turn")
+                .await
+                .is_err()
+        );
+        drop(tx);
+        let version: i64 =
+            sqlx::query_scalar("SELECT agent_version FROM scheduled_runs WHERE id='principal-run'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(version, 7);
+    }
+
+    #[tokio::test]
+    async fn startup_reconciles_principal_terminal_history_after_generation_change() {
+        let (db, _, _) = principal_fixture().await;
+        sqlx::query("UPDATE scheduled_runs SET status='waiting' WHERE id='principal-run'")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE scheduled_actions SET enabled=0,configuration_generation='replacement',last_status='new-configuration' WHERE id='principal-action'").execute(&db).await.unwrap();
+        chat::finalize_turn(&db, "principal-turn", chat::TurnStatus::Suspended, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            reconcile_interrupted_waiting(&db, UsageSource::Scheduled)
+                .await
+                .unwrap(),
+            0
+        );
+        chat::finalize_turn(
+            &db,
+            "principal-turn",
+            chat::TurnStatus::Errored,
+            Some("interrupted"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            reconcile_interrupted_waiting(&db, UsageSource::Scheduled)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            reconcile_interrupted_waiting(&db, UsageSource::Scheduled)
+                .await
+                .unwrap(),
+            0
+        );
+        let run: String =
+            sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id='principal-run'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(run, "error");
+        let summary: String = sqlx::query_scalar(
+            "SELECT last_status FROM scheduled_actions WHERE id='principal-action'",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(summary, "new-configuration");
     }
 
     #[tokio::test]
     async fn background_turn_keeps_source_history_and_intersects_current_tools() {
         let db = fixture().await;
-        let ctx = for_turn(&db, "owner", "turn").await.unwrap().unwrap();
+        let ctx = for_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(ctx.source, UsageSource::Scheduled);
         assert_eq!(ctx.history_limit, Some(6));
         assert!(ctx.tools_enabled);
-        assert!(for_turn(&db, "other", "turn").await.is_err());
-        assert!(for_turn(&db, "owner", "unknown").await.unwrap().is_none());
+        assert!(
+            for_turn(&db, &ScheduleOwner::User("other".into()), "turn")
+                .await
+                .is_err()
+        );
+        assert!(
+            for_turn(&db, &ScheduleOwner::User("owner".into()), "unknown")
+                .await
+                .unwrap()
+                .is_none()
+        );
         sqlx::query("UPDATE scheduled_actions SET tools_enabled=0,enabled=0")
             .execute(&db)
             .await
             .unwrap();
         assert!(
-            !for_turn(&db, "owner", "turn")
+            !for_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
                 .await
                 .unwrap()
                 .unwrap()
@@ -259,7 +599,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            !for_turn(&db, "owner", "turn")
+            !for_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
                 .await
                 .unwrap()
                 .unwrap()
@@ -274,15 +614,25 @@ mod tests {
             .execute(&db)
             .await
             .unwrap();
-        assert!(for_turn(&db, "owner", "turn").await.is_err());
+        assert!(
+            for_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+                .await
+                .is_err()
+        );
         db.close().await;
-        assert!(for_turn(&db, "owner", "turn").await.is_err());
+        assert!(
+            for_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn reconcile_waiting_completed_and_cancelled_exact_run() {
         let db = fixture().await;
-        reconcile_turn(&db, "owner", "turn").await.unwrap();
+        reconcile_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+            .await
+            .unwrap();
         let status: Option<String> =
             sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id='run'")
                 .fetch_one(&db)
@@ -292,7 +642,9 @@ mod tests {
         chat::finalize_turn(&db, "turn", chat::TurnStatus::Suspended, None)
             .await
             .unwrap();
-        reconcile_turn(&db, "owner", "turn").await.unwrap();
+        reconcile_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+            .await
+            .unwrap();
         let status: String = sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id='run'")
             .fetch_one(&db)
             .await
@@ -301,7 +653,9 @@ mod tests {
         chat::finalize_turn(&db, "turn", chat::TurnStatus::Completed, None)
             .await
             .unwrap();
-        reconcile_turn(&db, "owner", "turn").await.unwrap();
+        reconcile_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+            .await
+            .unwrap();
         let status: String = sqlx::query_scalar("SELECT last_status FROM scheduled_actions")
             .fetch_one(&db)
             .await
@@ -310,7 +664,9 @@ mod tests {
         chat::finalize_turn(&db, "turn", chat::TurnStatus::Cancelled, None)
             .await
             .unwrap();
-        reconcile_turn(&db, "owner", "turn").await.unwrap();
+        reconcile_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+            .await
+            .unwrap();
         let status: String = sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id='run'")
             .fetch_one(&db)
             .await
@@ -329,7 +685,9 @@ mod tests {
         chat::finalize_turn(&db, "turn", chat::TurnStatus::Completed, None)
             .await
             .unwrap();
-        reconcile_turn(&db, "owner", "turn").await.unwrap();
+        reconcile_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+            .await
+            .unwrap();
         let status: String = sqlx::query_scalar("SELECT last_status FROM scheduled_actions")
             .fetch_one(&db)
             .await
@@ -348,19 +706,32 @@ mod tests {
         let now = Timestamp::now().to_string();
         sqlx::query("INSERT INTO webhooks(id,user_id,name,prompt,model,tools_enabled,secret_hash,created_at,updated_at) VALUES('hook','owner','events','prompt','model',1,'unique',?,?)").bind(&now).bind(&now).execute(&db).await.unwrap();
         sqlx::query("INSERT INTO webhook_runs(id,webhook_id,fired_at,session_id,assistant_turn_id,tools_enabled,history_limit,prompt,payload,source,created_at) SELECT 'hook-run','hook',?,session_id,'turn',1,4,'prompt','payload','fire',? FROM scheduled_runs WHERE id='run'").bind(&now).bind(&now).execute(&db).await.unwrap();
-        assert!(for_turn(&db, "owner", "turn").await.is_err());
-        assert!(reconcile_turn(&db, "owner", "turn").await.is_err());
+        assert!(
+            for_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+                .await
+                .is_err()
+        );
+        assert!(
+            reconcile_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+                .await
+                .is_err()
+        );
         sqlx::query("DELETE FROM scheduled_runs WHERE id='run'")
             .execute(&db)
             .await
             .unwrap();
-        let context = for_turn(&db, "owner", "turn").await.unwrap().unwrap();
+        let context = for_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(context.source, UsageSource::Webhook);
         assert_eq!(context.history_limit, Some(4));
         chat::finalize_turn(&db, "turn", chat::TurnStatus::Completed, None)
             .await
             .unwrap();
-        reconcile_turn(&db, "owner", "turn").await.unwrap();
+        reconcile_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+            .await
+            .unwrap();
         let status: String = sqlx::query_scalar("SELECT last_status FROM webhooks WHERE id='hook'")
             .fetch_one(&db)
             .await
@@ -375,11 +746,17 @@ mod tests {
             .execute(&db)
             .await
             .unwrap();
-        assert!(for_turn(&db, "owner", "turn").await.is_err());
+        assert!(
+            for_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+                .await
+                .is_err()
+        );
         chat::finalize_turn(&db, "turn", chat::TurnStatus::Cancelled, None)
             .await
             .unwrap();
-        reconcile_turn(&db, "owner", "turn").await.unwrap();
+        reconcile_turn(&db, &ScheduleOwner::User("owner".into()), "turn")
+            .await
+            .unwrap();
         let status: String = sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id='run'")
             .fetch_one(&db)
             .await

@@ -104,3 +104,11 @@ scheduled-run-chat-deleted = чат удалён
 scheduled-run-status-ok = ок
 scheduled-run-status-error = ошибка
 scheduled-run-status-pending = выполняется
+
+scheduled-organization-version = Опубликованная версия
+scheduled-error-invalid-configuration = Проверьте выбранную опубликованную версию, модель, режим беседы и настройки инструментов, затем сохраните снова.
+scheduled-error-configuration-conflict = Это запланированное действие изменилось. Загрузите его текущие настройки перед повторным сохранением.
+scheduled-error-identity-retained = У этого Dot ещё есть запланированные действия. Остановите ожидающие запуски и удалите эти действия, прежде чем удалять Dot.
+scheduled-organization-fresh = Каждый запуск начинает новый приватный разговор. Модель и доступ к инструментам определяются выбранной опубликованной версией.
+scheduled-organization-model-missing = В этой опубликованной версии модель не указана.
+scheduled-organization-version-required = Перед сохранением выберите доступную опубликованную версию.

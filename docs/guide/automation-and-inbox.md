@@ -137,8 +137,9 @@ Deactivating a Dot retains its data and conversations and cancels its active
 personal runs and linked delegation work. Organization Dots support member
 configuration, their own connected identities, private draft or published conversations and
 scoped memory. See [Organization Dots](../dots-organizations.md) for their
-current access requirements. Organization automation, automatic memory curation
-and persistent Dot computers are not available.
+current access requirements. Organization Dots also support scheduled work as
+described below. Organization webhooks, automatic memory curation and persistent
+Dot computers are not available.
 
 ## Configure communication consent
 
@@ -206,3 +207,49 @@ limits remain attached to your account rather than a separate Dot budget.
 - **Webhook returns accepted but there is no useful output:** inspect run history; HTTP 202 only acknowledges acceptance.
 - **Webhook returns not found:** verify the current secret URL and active state.
 - **A run waits for a decision:** check the inbox or linked conversation and answer the pending request.
+
+
+## Schedule work for an organization Dot
+
+![An organization schedule uses the actual published Dot version and an explicit timezone.](../img/guide/dot-organization-schedule.png)
+
+1. Open the organization Dot's agent editor with current membership and Write
+   access, then choose **Scheduled actions**. This opens `/scheduled?principal_id=<id>`.
+2. Choose **New scheduled action** and enter its name and prompt.
+3. Select an actual published version. The form shows that snapshot's authored
+   model when present; it does not offer your personal model list. Publish a
+   version before creating the schedule.
+4. Choose timing and explicitly set the timezone. Use the preview to inspect
+   upcoming fires, and decide whether tools are enabled.
+5. Save. The schedule card identifies the Dot and pinned version and provides
+   its run history and edit controls.
+
+Each fire starts a fresh private conversation owned by the Dot principal.
+Conversation reuse and organization webhooks are unavailable. The schedule
+survives deletion of the user who created it. The Dot's current model, tool and
+connector grants govern execution; your personal credentials and preferences
+are not runtime context. A later publication does not move an existing
+schedule's pin. Edit the schedule to choose another version.
+
+Current membership and Write access are required to list, configure and inspect
+these schedules. Personal Dot manager permission is not required. If a save
+reports a conflict, reload the current action before saving again. Inactive
+Dots and disabled principals can still be configured by their current writers;
+they cannot dispatch new work.
+
+Open a recorded conversation from the card or run history. It opens the Dot's
+**Try it → Test chat**, where the actual private history supplies the source
+and captured version. A waiting run can be answered in the private chat or the
+Inbox by a current member writer. Enabling tools does not approve a tool call.
+
+**Pause** prevents future fires and preserves an admitted waiting turn. Use
+**Stop** in Test chat to cancel its exact running or waiting turn. Stop remains
+available to a current member writer after deactivation, grant removal or a
+schedule edit. Editing execution configuration invalidates the old run's
+configuration authority; stopping it still performs cleanup. **New
+conversation** only changes the conversation being viewed.
+
+A schedule with a running, waiting or starting run cannot be deleted. Stop or
+settle its run, then delete it. A Dot that owns schedules cannot be deleted
+until those schedules are deleted, including schedules whose runs have ended.
+Deleting a schedule removes its recorded run history.

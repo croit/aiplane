@@ -137,6 +137,20 @@ pub async fn gateway_default(state: &AppState, feature: Feature) -> Option<Strin
     feature_defaults::resolve(configured.as_deref(), &offered)
 }
 
+pub async fn gateway_default_in(
+    state: &AppState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    feature: Feature,
+) -> Result<Option<String>, aiplane_core::server::db::DbError> {
+    let offered: Vec<String> = offered_in(state, tx, feature.pool_kind(), &PoolAccess::all())
+        .await?
+        .into_iter()
+        .map(|choice| choice.id)
+        .collect();
+    let configured = feature_defaults::get_in(tx, feature).await?;
+    Ok(feature_defaults::resolve(configured.as_deref(), &offered))
+}
+
 fn feature_of(kind: PoolKind) -> Option<Feature> {
     Feature::ALL.into_iter().find(|f| f.pool_kind() == kind)
 }
@@ -439,5 +453,53 @@ pub(super) mod tests {
         let routed = offered(&state, PoolKind::Chat, &agent(&["auto"])).await;
         assert_eq!(ids(&routed), ["auto"]);
         assert!(routed[0].grantable(), "a granted route reaches its members");
+    }
+    #[tokio::test]
+    async fn transactional_gateway_default_reads_uncommitted_setting_with_one_connection() {
+        let mut state = state().await;
+        state.db = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with((*state.db.connect_options()).clone())
+            .await
+            .unwrap();
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO app_settings(key,value,updated_at) VALUES('default_model.chat','vip-model',?)")
+            .bind(jiff::Timestamp::now().to_string()).execute(&mut *tx).await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                super::gateway_default_in(&state, &mut tx, Feature::Chat)
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .as_deref(),
+            Some("vip-model")
+        );
+        sqlx::query("UPDATE app_settings SET value='auto' WHERE key='default_model.chat'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(
+            super::gateway_default_in(&state, &mut tx, Feature::Chat)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("auto")
+        );
+        sqlx::query("UPDATE app_settings SET value='missing' WHERE key='default_model.chat'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(
+            super::gateway_default_in(&state, &mut tx, Feature::Chat)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("auto")
+        );
+        drop(tx);
     }
 }

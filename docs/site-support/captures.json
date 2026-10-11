@@ -321,5 +321,18 @@
     "width": 2128,
     "height": 1262,
     "data": "Synthetic dev-ui fixture; actual Engineering organization Writer without personal Dot management. Harald Draft's private conversation uses actual published version 1, with a real answer and settled source-aware debug. Captured by spa-dots-organization-draft.test.mjs with DOCS_ORG_DOT_PUBLISHED_CAPTURE."
+  },
+  {
+    "file": "docs/img/guide/dot-organization-schedule.png",
+    "route": "/scheduled/new?principal_id=6a926f7a-214a-45bf-987f-aaaf207ea8c5",
+    "selector": "form",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2800,
+    "height": 1900,
+    "data": "Synthetic dev-ui organization member and actual published Dot; real schedule form with pinned version and explicit UTC timezone."
   }
 ]

@@ -157,8 +157,16 @@ Membership alone grants no Dot share. Members with agent-management permission
 open the shared creation dialog to create a named Dot; existing write access permits activation changes within
 the independent organization cap. Configuration opens the existing
 `/agents/<id>/setup/start` flow and editor. Organization owner metadata controls
-the return link and configuration-only notice. Test chat, test suites, website
-and external-channel controls are unavailable for these Dots. Current writers
+the return link and organization-specific controls. Current member writers use
+**Try it → Test chat** for private saved-draft or published conversations. The
+server returns their actual source and pinned version; newer publishing does
+not replace that version. **Scheduled actions** opens the existing schedule list
+under the Dot’s actual principal scope. Organization schedules select a real
+published version and explicit timezone, show its authored model without an
+employee override, and open fresh private principal conversations. Their
+Back/Cancel/save navigation preserves that scope. Test suites, website and
+external-channel controls
+are unavailable for these Dots. Current writers
 manage the Dot’s own OAuth identity in **Setup** through the existing connection
 panel. Organization choices contain no user identity; OAuth completion leaves
 the account unselected until Save. The returned action capabilities govern
@@ -372,7 +380,20 @@ Invariants worth knowing before you touch either side:
 - **A suspended turn is answered over JSON, not the stream.** `POST /api/v0/chat/sessions/{id}/turns/{turn_id}/resume` takes `{"decision": "allow_once" | "deny" | "value", "value"?: …, "request_id"?: …}`; owner-only, `202` once the turn's worker runs again, after which the client re-attaches. `409 not_suspended` when the turn is not waiting or `request_id` names an older pause, `400 decision_not_offered` for a decision its `options` lack, `409 turn_in_progress` when no slot is free. A message sent into a paused conversation is refused with `409 decision_pending`, and `…/cancel` on it gives the decision up; the chat page keeps the draft in its composer but will not send it meanwhile, and says why (`pausedTurn`, `chat-composer-paused`). The chat page draws a paused turn as the [suspension card](#suspension-card), led by `chat-waiting-*` and showing the waiting call's arguments from the transcript; only the owner gets its buttons. A person's paused run (a scheduled action or a webhook) is answered from the [inbox](#inbox), which calls this same resume.
 - **The stream ends at `turn_finalized` / `suspended` / `idle`.** The server closes there, so `chat.svelte.ts` closes the `EventSource` too, and fires `onTurnFinalized` on `turn_finalized` and `suspended` alike (the turn stopped running) — letting it auto-reconnect would loop snapshot/idle forever on a quiet session. `applyEvent` folds `suspended` into the turn (`status: suspended`, `suspension`), as a snapshot's row carries it. After a submit (or any suspected change) `attach()` reopens, and the fresh snapshot is the replay.
 - **An interrupted worker leaves a terminal turn.** The shared worker harness catches driver and tool panics, records the assistant turn and any still-running tool calls as `errored`, and broadcasts `Finalized`; its caller then releases the worker slot. On attach, if the owner has no live worker, the events handler also errors any already-present `in_progress` assistant turns before sending the snapshot. It targets only turn IDs read before rechecking the worker registry, so a newly starting turn cannot be mistaken for an orphan. Viewers of a shared conversation never perform this recovery because they cannot see the owner's worker in their own registry lookup.
-- **Every scheduled or webhook run links its chat and ends terminal.** A run's history row gets its `session_id` the moment the chat is opened (webhooks at `record_run_start`, schedules via `attach_run_session`, which also moves the action's `last_session_id` so a reusing schedule keeps its thread); closing a run with no session never erases that link. The scheduler wraps each run in a panic guard, so the row is always closed through `record`. A process that dies mid-run leaves rows pending; `sweep_interrupted_runs` closes them at startup as `error` — before the scheduler's first tick and before the server accepts webhook fires, so nothing live can be caught by it — and corrects the list row when the orphan was the newest run. The runs lists join `chat_sessions` and report `chat_deleted`; list rows get `last_chat_deleted`, and the SPA shows "chat deleted" rather than linking to a 404.
+- **Organization schedule history uses private principal chat.** Scoped lists
+  use `GET /api/v0/scheduled?principal_id={id}` and the returned target Dot,
+  versions and write capability. The same schedule editor hides user model and
+  conversation-reuse controls for this scope. Version and timezone are explicit;
+  the model display uses that published spec, with missing data shown as missing.
+  Edit and toggle requests compare the actual configuration generation. User
+  and personal-Dot forms keep their existing model and reuse choices. A single
+  organization run links to the existing agent Test chat through `test_session`;
+  multiple runs use the shared runs list. Each organization fire opens a fresh
+  private conversation, and run history shows its captured published version.
+  Cancelled turns reconcile to run `error`; disabling a schedule prevents future
+  fires without cancelling or approving a pending turn. Organization webhooks
+  and conversation reuse are unavailable.
+- **Every scheduled or webhook run links its chat and ends terminal.** A run's history row gets its `session_id` the moment the chat is opened (webhooks at `record_run_start`, schedules via `attach_run_session`, which also moves the action's `last_session_id` so a reusing schedule keeps its thread); closing a run with no session never erases that link. The scheduler wraps each run in a panic guard, so the row is always closed through `record`. A process that dies mid-run leaves rows pending; `sweep_interrupted_runs` closes them at startup as `error` — before the scheduler's first tick and before the server accepts webhook fires, so nothing live can be caught by it — and corrects the list row when the orphan was the newest run and the schedule configuration generation still matches. The runs lists join `chat_sessions` and report `chat_deleted`; list rows get `last_chat_deleted`, and the SPA shows "chat deleted" rather than linking to a 404.
 - **A reusing schedule or webhook can continue in any of its owner's chats.** Reuse always meant "append to `last_session_id`"; the form's *Continue in* picker (`LinkedChatPicker`) sets that pointer directly through `linked_session_id` on create/update — an id links that chat, `""` lets the next run open a fresh one, an absent field leaves it alone (a run may have moved it since the form opened). The server accepts only the caller's own chat, and only with `reuse_conversation` on. The picker starts on `last_session_id` even before reuse is switched on, because that is where a reusing run would continue; a deleted one reads as "a new chat", which is what the next run does.
 - **The public embed stream speaks the same frames, buffered.** `GET /api/v0/embed/events` (visitor token, read with `fetch` streaming) sends `snapshot`, then either `idle` or — once the running turn is terminal — its whole answer as one `turn_delta` with `full: true` and `turn_finalized`. When the conversation waits for a decision, or the running turn pauses, the stream ends with `suspended` (the visitor view above) instead. A request staff answer has empty `options`: the widget shows that it waits and re-attaches every 10 s until the answer arrives. The visitor answers a `secure_input` with `POST /api/v0/embed/resume {request_id, decision, value?}` (the widget's masked code field) and re-attaches. A host page's signed identity token goes to `POST /api/v0/embed/identity {token}`. A message sent meanwhile is queued (`placement: "queued"`) and shows in the snapshot's `waiting_turn_ids`. Tool calls, reasoning and unfinished answers are stripped from what a visitor receives. See [`agent-visitors.md`](agent-visitors.md) and [agent-run suspend](agent-hil.md#suspend-and-resume).
 - **Markdown is the wire format.** The server sends text; the client renders it (`marked` → `DOMPurify` → `{@html}`). Model output is untrusted input like any other, so the sanitise step is not optional.
@@ -701,7 +722,8 @@ are in `web/src/lib/components/agents/`.
   selector uses actual ownership and live-version data. Returned source and
   `agent_version` remain attached to the conversation after later publishing.
   Changing source resets the conversation; source/reset controls are disabled
-  during submission, live work and response submission. An unsaved draft buffer
+  during submission, live work, response submission and initial history metadata
+  loading. An unsaved draft buffer
   is flagged with a Save button only for draft execution, and a `ConversationController` opened on
   `GET …/test/{session}/events` (`createConversationController(id,
   eventsUrl)`) folds the frames, exactly as the chat page does. The
@@ -720,7 +742,20 @@ are in `web/src/lib/components/agents/`.
   verdict, the routing decision, sub-agent calls with outcome, and tool-call
   decisions; the newest answer's is shown otherwise. Slots and gates are the
   conversation's as they are when the view is read. "New conversation"
-  forgets the conversation.
+  forgets the conversation and clears its `test_session` query; it does not
+  cancel a server turn. A schedule's history link opens the same component at
+  `/agents/{id}?tab=try&test_session={session_id}`. Its initial transcript comes
+  from the private events stream; source and version come from an actual
+  stopped-turn debug response. While they are unknown, source controls,
+  draft-specific hints and submission are hidden or disabled. The existing
+  composer snippet offers **Stop** for a streamed running or suspended turn,
+  sending its exact `turn_id` to `POST …/test/{session}/cancel`. Current
+  organization member Write and structural private-run proof govern that
+  cancellation even when activation or execution configuration has changed.
+  A component conversation epoch invalidates outstanding submit, answer and
+  stop responses after query changes or unmounting. Debug reads retain their
+  own controller and read-set identity, so an older response cannot update a
+  new conversation or restore its history URL.
 - **It fills the window.** Try it → Test chat is a
   [bounded viewport](#bounded-viewport) like the chat: the agent page passes
   the height down a flex column (`AgentShell` → the tab's content →

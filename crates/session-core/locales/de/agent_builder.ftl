@@ -433,13 +433,13 @@ dot-access-unavailable = Dieses ausgewählte Werkzeug ist nicht verfügbar. Entf
 dot-connection-reload = Verbindungen neu laden
 
 dot-connection-local-unavailable = Die lokalen Zugangsdaten dieses Dots können nicht verwendet werden.
-agent-configuration-error-conflict = Der Entwurf oder die Ressourcenberechtigungen des Agents haben sich geändert. Lade die aktuelle Konfiguration neu, bevor du erneut speicherst oder veröffentlichst.
-agent-management-error-permission-required = Für die Verwaltung von Agents benötigst du eine Berechtigung. Bitte einen Administrator, die Agent-Verwaltung für eine deiner Gruppen zu aktivieren.
+agent-configuration-error-conflict = Der Entwurf oder die Ressourcenberechtigungen des Agents haben sich geändert. Laden Sie die aktuelle Konfiguration neu, bevor Sie erneut speichern oder veröffentlichen.
+agent-management-error-permission-required = Für die Verwaltung von Agents benötigen Sie eine Berechtigung. Bitten Sie einen Administrator, die Agent-Verwaltung für eine Ihrer Gruppen zu aktivieren.
 dot-memory-reload = Wissen neu laden
 dot-memory-own-scope = Notizen für diesen Dot. Andere Dots können sie nicht lesen.
 dot-memory-organization-scope = Gemeinsames Wissen dieser Organisation. Ihre Dots können diese Notizen lesen.
 dot-memory-error-byte-limit = Diese Notiz ist länger als 2.000 UTF-8-Bytes. Kürze sie vor dem Speichern.
-dot-memory-error-scope = Wähle, ob diese Notiz dem Dot oder seiner Organisation gehört, und versuche es erneut.
+dot-memory-error-scope = Wählen Sie, ob diese Notiz dem Dot oder seiner Organisation gehört, und versuchen Sie es erneut.
 dot-memory-error-shared-write = Gemeinsame Organisationsnotizen erfordern aktuelle Mitgliedschaft, Schreibzugriff und Gateway-Administrationsrechte. Bitte einen berechtigten Administrator um diese Änderung.
 
 agents-test-source = Quelle der Unterhaltung

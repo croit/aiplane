@@ -2,7 +2,7 @@
  * Small helpers shared by the SPA's admin views: same-origin JSON fetches
  * with the error envelope surfaced as an Error.
  */
-import { request, ApiError } from './api';
+import { request, ApiError } from './api.ts';
 
 /** Admin-surface fetch: same transport as `api.*`, but admin error
  * envelopes surface as plain Errors with the server's message. */

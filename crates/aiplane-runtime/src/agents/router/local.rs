@@ -253,9 +253,13 @@ pub(super) async fn dispatch_personal(
     let actor = Actor::personal_dot(owner, user.roles, &child.session.dot_id)
         .with_personal_execution(child_execution)
         .map_err(|error| ToolError::Failed(error.to_string()))?;
-    let background = crate::server::background::for_turn(&state.db, owner, &root_turn)
-        .await
-        .map_err(db_error)?;
+    let background = crate::server::background::for_turn(
+        &state.db,
+        &crate::server::scheduled::ScheduleOwner::User(owner.to_owned()),
+        &root_turn,
+    )
+    .await
+    .map_err(db_error)?;
     let source = background.as_ref().map_or(
         aiplane_core::server::db::usage::UsageSource::Chat,
         |context| context.source,

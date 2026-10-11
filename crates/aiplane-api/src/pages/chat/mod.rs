@@ -1078,12 +1078,16 @@ pub(crate) async fn resume_turn(
     let Some(model) = turn.model.clone() else {
         return Err(ResumeTurnError::Refused(ResumeRefused::NotSuspended));
     };
-    let background = aiplane_runtime::server::background::for_turn(&state.db, &user.id, &turn.id)
-        .await
-        .map_err(|error| match error {
-            aiplane_core::server::db::DbError::Decode { .. } => ResumeTurnError::Unavailable,
-            error => ResumeTurnError::Context(error),
-        })?;
+    let background = aiplane_runtime::server::background::for_turn(
+        &state.db,
+        &aiplane_runtime::server::scheduled::ScheduleOwner::User(user.id.clone()),
+        &turn.id,
+    )
+    .await
+    .map_err(|error| match error {
+        aiplane_core::server::db::DbError::Decode { .. } => ResumeTurnError::Unavailable,
+        error => ResumeTurnError::Context(error),
+    })?;
     if let Some(background) = background {
         use aiplane_runtime::persona::personal_dot::{PersonalDotContext, context_for};
         let actor = match context_for(state, user, &turn.session_id, background.tools_enabled)

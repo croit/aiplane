@@ -498,6 +498,18 @@ pub async fn finalize_turn(
     status: TurnStatus,
     error_message: Option<&str>,
 ) -> Result<(), DbError> {
+    let mut tx = pool.begin().await?;
+    finalize_turn_in(&mut tx, turn_id, status, error_message).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn finalize_turn_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+    status: TurnStatus,
+    error_message: Option<&str>,
+) -> Result<(), DbError> {
     if status == TurnStatus::InProgress {
         return Err(DbError::Decode {
             column: "status",
@@ -513,8 +525,16 @@ pub async fn finalize_turn(
     .bind(error_message)
     .bind(Timestamp::now().to_string())
     .bind(turn_id)
-    .execute(pool)
+    .execute(&mut *connection)
     .await?;
+    if status == TurnStatus::Cancelled {
+        error_running_tool_calls_in(
+            connection,
+            turn_id,
+            &crate::i18n::t(crate::i18n::Lang::En, "chat-error-run-cancelled"),
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -526,7 +546,6 @@ pub async fn error_interrupted_turn(
     message: &str,
 ) -> Result<bool, DbError> {
     let now = Timestamp::now().to_string();
-    let output_json = serde_json::Value::String(message.to_string()).to_string();
     let mut tx = pool.begin().await?;
     let changed = sqlx::query(
         r#"UPDATE chat_turns
@@ -541,19 +560,28 @@ pub async fn error_interrupted_turn(
     .rows_affected()
         > 0;
     if changed {
-        sqlx::query(
-            r#"UPDATE chat_tool_calls
-               SET status = 'errored', output_json = COALESCE(output_json, ?), completed_at = ?
-               WHERE turn_id = ? AND status = 'running'"#,
-        )
-        .bind(output_json)
-        .bind(&now)
-        .bind(turn_id)
-        .execute(&mut *tx)
-        .await?;
+        error_running_tool_calls_in(&mut tx, turn_id, message).await?;
     }
     tx.commit().await?;
     Ok(changed)
+}
+
+pub(super) async fn error_running_tool_calls_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+    message: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"UPDATE chat_tool_calls
+           SET status = 'errored', output_json = COALESCE(output_json, ?), completed_at = ?
+           WHERE turn_id = ? AND status = 'running'"#,
+    )
+    .bind(serde_json::Value::String(message.to_owned()).to_string())
+    .bind(Timestamp::now().to_string())
+    .bind(turn_id)
+    .execute(connection)
+    .await?;
+    Ok(())
 }
 
 /// All turns in a session, oldest first, each carrying its tool calls

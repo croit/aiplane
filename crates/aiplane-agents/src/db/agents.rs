@@ -989,12 +989,23 @@ pub async fn publish_in(
 
 /// Newest first.
 pub async fn versions(pool: &Pool, id: &str) -> Result<Vec<VersionRow>, DbError> {
+    versions_with(pool, id).await
+}
+
+pub async fn versions_in(tx: &mut WriteTx, id: &str) -> Result<Vec<VersionRow>, DbError> {
+    versions_with(&mut **tx, id).await
+}
+
+async fn versions_with<'e, E>(executor: E, id: &str) -> Result<Vec<VersionRow>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let rows = sqlx::query(
         "SELECT version, spec, published_by, published_at FROM agent_versions
           WHERE principal_id = ? ORDER BY version DESC",
     )
     .bind(id)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     rows.iter().map(map_version).collect()
 }
@@ -2214,5 +2225,58 @@ mod tests {
         assert_eq!(get(&pool, id).await.unwrap().unwrap().live_version, Some(1));
         assert_eq!(version(&pool, id, 1).await.unwrap(), Some(first));
         assert!(version(&pool, id, 2).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn versions_in_reads_same_transaction_pins_order_and_rolls_back() {
+        let pool = pool().await;
+        let first = agent(&pool, "versions-in-first", "alice").await;
+        let other = agent(&pool, "versions-in-other", "alice").await;
+        publish(
+            &pool,
+            &first.principal.id,
+            r#"{"main":{"model":"first"}}"#,
+            "alice",
+        )
+        .await
+        .unwrap();
+        publish(
+            &pool,
+            &other.principal.id,
+            r#"{"main":{"model":"other"}}"#,
+            "alice",
+        )
+        .await
+        .unwrap();
+        let original = versions(&pool, &first.principal.id).await.unwrap();
+        let mut tx = WriteTx::begin(&pool).await.unwrap();
+        assert_eq!(
+            publish_in(
+                &mut tx,
+                &first.principal.id,
+                r#"{"main":{"model":"second"}}"#,
+                "bob"
+            )
+            .await
+            .unwrap(),
+            Some(2)
+        );
+        let observed = versions_in(&mut tx, &first.principal.id).await.unwrap();
+        assert_eq!(
+            observed.iter().map(|row| row.version).collect::<Vec<_>>(),
+            vec![2, 1]
+        );
+        assert_eq!(observed[0].published_by, "bob");
+        assert_eq!(observed[0].spec, r#"{"main":{"model":"second"}}"#);
+        assert_eq!(observed[1], original[0]);
+        assert!(versions_in(&mut tx, "missing").await.unwrap().is_empty());
+        let other_rows = versions_in(&mut tx, &other.principal.id).await.unwrap();
+        assert_eq!(other_rows.len(), 1);
+        assert_eq!(other_rows[0].spec, r#"{"main":{"model":"other"}}"#);
+        drop(tx);
+        assert_eq!(
+            versions(&pool, &first.principal.id).await.unwrap(),
+            original
+        );
     }
 }

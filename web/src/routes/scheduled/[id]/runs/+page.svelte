@@ -2,9 +2,9 @@
 	import { onMount } from 'svelte';
 	import DotAssociation from '#lib/components/dots/DotAssociation.svelte';
 	import { page } from '$app/state';
-	import { adminJson } from '#lib/admin-client.js';
+	import { runLinks } from '#lib/run-links.js';
 	import { locale, t } from '#lib/i18n.svelte.js';
-	import { formatScheduledRun, type ScheduledAction, type ScheduledRun } from '#lib/scheduled.js';
+	import { scheduledApi, formatScheduledRun, type ScheduledAction, type ScheduledRun } from '#lib/scheduled.js';
 
 	/**
 	 * One schedule's run history — the list of chats it produced.
@@ -19,6 +19,7 @@
 	let runs = $state<ScheduledRun[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	const listHref = $derived(`/scheduled${action?.principal_id || page.url.searchParams.get('principal_id') ? `?principal_id=${encodeURIComponent(action?.principal_id ?? page.url.searchParams.get('principal_id')!)}` : ''}`);
 
 	function runTime(value: string): string {
 		return formatScheduledRun(value, locale.current, action?.timezone ?? 'UTC');
@@ -26,9 +27,7 @@
 
 	onMount(async () => {
 		try {
-			const data = await adminJson<{ action: ScheduledAction; runs: ScheduledRun[] }>(
-				`/api/v0/scheduled/${page.params.id}/runs`
-			);
+			const data = await scheduledApi.runs(page.params.id!);
 			action = data.action;
 			runs = data.runs;
 			error = null;
@@ -43,7 +42,7 @@
 <svelte:head><title>{t('scheduled-runs-page-title')}</title></svelte:head>
 
 <div class="w-full max-w-4xl">
-	<a class="link link-hover text-sm text-base-content/60" href="/scheduled">← {t('scheduled-back')}</a>
+	<a class="link link-hover text-sm text-base-content/60" href={listHref}>← {t('scheduled-back')}</a>
 	<h1 class="m-0 mt-2 text-2xl font-bold">{action ? t('scheduled-runs-heading', { name: action.name }) : t('scheduled-runs-page-title')}</h1>
 	<p class="mt-2 text-sm text-base-content/60">{t('scheduled-runs-intro')}</p>
 
@@ -65,6 +64,7 @@
 										{t(run.status === 'ok' ? 'scheduled-run-status-ok' : run.status === 'error' ? 'scheduled-run-status-error' : run.status === 'waiting' ? 'dot-background-waiting' : 'scheduled-run-status-pending')}
 									</span>
 								</div>
+								{#if run.agent_version}<p class="text-xs text-base-content/60">{t('agents-test-source-published', { version: run.agent_version })}</p>{/if}
 								{#if run.error}<p class="mt-0.5 text-xs text-error">{run.error}</p>{/if}
 							</div>
 							<div class="flex shrink-0 items-center gap-3 self-end text-sm sm:self-auto">
@@ -72,7 +72,7 @@
 								{#if run.chat_deleted}
 									<span class="badge badge-sm badge-outline text-base-content/60">{t('scheduled-run-chat-deleted')}</span>
 								{:else if run.session_id}
-									<a class="link link-hover" href="/chat/{run.session_id}">{t('scheduled-run-open')}</a>
+									<a class="link link-hover" href={runLinks({ id: run.id, last_session_id: run.session_id, run_count: 1, chat_count: 1 }, '/scheduled', { principalId: action.principal_id }).chat!}>{t('scheduled-run-open')}</a>
 								{/if}
 							</div>
 						</li>

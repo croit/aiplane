@@ -289,10 +289,12 @@ impl Tool for ScheduleAction {
                 NewAction {
                     dot_id: ctx.personal_dot.as_ref().map(|dot| dot.dot_id.clone()),
                     linked_session_id: None,
-                    user_id: ctx.person(self.id())?.to_string(),
+                    owner: scheduled::ScheduleOwner::User(ctx.person(self.id())?.to_string()),
+                    created_by: ctx.person(self.id())?.to_string(),
+                    agent_version: None,
                     name: name.to_string(),
                     prompt: prompt.to_string(),
-                    model,
+                    model: Some(model),
                     cron: cron.as_str().to_string(),
                     timezone,
                     // Never from the model: see the module docs. A model-created
@@ -405,15 +407,19 @@ impl Tool for DeleteScheduledAction {
             // Scoped read first: this both tells us the name (for a
             // confirmation the user can actually judge) and makes another
             // user's action indistinguishable from a nonexistent one.
-            let action = scheduled::get(&ctx.db, ctx.person(self.id())?, id)
-                .await
-                .map_err(|e| ToolError::Failed(format!("reading the scheduled action: {e}")))?
-                .ok_or_else(|| {
-                    ToolError::InvalidArgs(format!(
-                        "no scheduled action `{id}` — call `list_scheduled_actions` \
+            let action = scheduled::get(
+                &ctx.db,
+                &scheduled::ScheduleOwner::User(ctx.person(self.id())?.into()),
+                id,
+            )
+            .await
+            .map_err(|e| ToolError::Failed(format!("reading the scheduled action: {e}")))?
+            .ok_or_else(|| {
+                ToolError::InvalidArgs(format!(
+                    "no scheduled action `{id}` — call `list_scheduled_actions` \
                          to see the ids"
-                    ))
-                })?;
+                ))
+            })?;
 
             let preview = format!(
                 "“{}”: {}",
@@ -426,13 +432,22 @@ impl Tool for DeleteScheduledAction {
                 return Ok(pause);
             }
 
-            let removed = scheduled::delete(&ctx.db, ctx.person(self.id())?, id)
-                .await
-                .map_err(|e| ToolError::Failed(format!("deleting the scheduled action: {e}")))?;
+            let removed = scheduled::delete(
+                &ctx.db,
+                &scheduled::ScheduleOwner::User(ctx.person(self.id())?.into()),
+                id,
+            )
+            .await
+            .map_err(|e| ToolError::Failed(format!("deleting the scheduled action: {e}")))?;
             let removed = match removed {
                 scheduled::DeleteOutcome::Deleted => true,
                 scheduled::DeleteOutcome::Missing => false,
-                scheduled::DeleteOutcome::Pending => return Err(ToolError::Failed("The automation is running or waiting for approval; finish or stop its turn before deleting it".into())),
+                scheduled::DeleteOutcome::Pending => {
+                    return Err(ToolError::Failed(session_core::i18n::t(
+                        session_core::i18n::Lang::En,
+                        "dot-background-error-pending-delete",
+                    )));
+                }
             };
             Ok(json!({
                 "deleted": removed,
@@ -496,10 +511,12 @@ mod tests {
             NewAction {
                 dot_id: None,
                 linked_session_id: None,
-                user_id: "u1".into(),
+                owner: scheduled::ScheduleOwner::User("u1".into()),
+                created_by: "u1".into(),
+                agent_version: None,
                 name: "Nightly".into(),
                 prompt: "check".into(),
-                model: "qwen-32b".into(),
+                model: Some("qwen-32b".into()),
                 cron: "0 3 * * *".into(),
                 timezone: "UTC".into(),
                 tools_enabled: false,
@@ -770,10 +787,12 @@ mod tests {
                 NewAction {
                     dot_id: None,
                     linked_session_id: None,
-                    user_id: user.into(),
+                    owner: scheduled::ScheduleOwner::User(user.into()),
+                    created_by: user.into(),
+                    agent_version: None,
                     name: name.into(),
                     prompt: "p".into(),
-                    model: "qwen-32b".into(),
+                    model: Some("qwen-32b".into()),
                     cron: "0 8 * * 1".into(),
                     timezone: "Europe/Berlin".into(),
                     tools_enabled: false,
@@ -829,10 +848,12 @@ mod tests {
             NewAction {
                 dot_id: None,
                 linked_session_id: None,
-                user_id: "u2".into(),
+                owner: scheduled::ScheduleOwner::User("u2".into()),
+                created_by: "u2".into(),
+                agent_version: None,
                 name: "Theirs".into(),
                 prompt: "p".into(),
-                model: "m".into(),
+                model: Some("m".into()),
                 cron: "0 8 * * 1".into(),
                 timezone: "UTC".into(),
                 tools_enabled: false,

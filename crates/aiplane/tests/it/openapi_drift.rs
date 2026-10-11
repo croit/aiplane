@@ -39,6 +39,46 @@ async fn served_document() -> serde_json::Value {
     serde_json::from_slice(&common::read_body(response).await).unwrap()
 }
 
+#[tokio::test]
+async fn organization_schedule_and_private_stop_contracts_require_exact_configuration_and_turn() {
+    let document = served_document().await;
+    let paths = &document["paths"];
+    let create = json_body(
+        &document,
+        &paths["/api/v0/scheduled"]["post"]["requestBody"]["content"],
+    );
+    assert!(create["properties"]["principal_id"].is_object());
+    assert!(create["properties"]["agent_version"].is_object());
+    assert!(
+        !create["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "model")
+    );
+    for (path, method) in [
+        ("/api/v0/scheduled/{id}", "put"),
+        ("/api/v0/scheduled/{id}/toggle", "post"),
+    ] {
+        let operation = &paths[path][method];
+        let body = json_body(&document, &operation["requestBody"]["content"]);
+        assert!(
+            body["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "expected_configuration_generation")
+        );
+        assert!(operation["responses"]["409"].is_object());
+    }
+    let stop = &paths["/api/v0/agents/{id}/test/{session}/cancel"]["post"];
+    assert_eq!(stop["x-aiplane-access"], "session");
+    let body = json_body(&document, &stop["requestBody"]["content"]);
+    assert_eq!(body["required"], serde_json::json!(["turn_id"]));
+    let reply = json_body(&document, &stop["responses"]["200"]["content"]);
+    assert!(reply["properties"]["ok"].is_object());
+}
+
 /// The schema a `$ref` names, out of `components/schemas`.
 fn resolved<'a>(
     document: &'a serde_json::Value,

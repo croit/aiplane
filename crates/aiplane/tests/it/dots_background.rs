@@ -78,7 +78,12 @@ async fn dot_background_bindings_are_owned_and_linked_chats_match() {
             Some(&fx.alice),
             Method::PUT,
             &format!("/api/v0/scheduled/{id}"),
-            Some(schedule(None, None)),
+            Some({
+                let mut body = schedule(None, None);
+                body["expected_configuration_generation"] =
+                    action["configuration_generation"].clone();
+                body
+            }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{updated}");
@@ -114,7 +119,12 @@ async fn dot_background_unchanged_inactive_bindings_can_be_edited_but_not_newly_
             Some(&fx.alice),
             Method::PUT,
             &format!("/api/v0/scheduled/{}", action["id"].as_str().unwrap()),
-            Some(schedule(Some(dot), None)),
+            Some({
+                let mut body = schedule(Some(dot), None);
+                body["expected_configuration_generation"] =
+                    action["configuration_generation"].clone();
+                body
+            }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{updated}");
@@ -156,10 +166,14 @@ async fn scheduled_delete_conflicts_with_the_exact_running_turn_and_then_succeed
     assert_eq!(status, StatusCode::CONFLICT, "{error}");
     assert_eq!(error["error"]["type"], "run_pending");
     assert!(
-        scheduled::get(&fx.state.db, "alice", id)
-            .await
-            .unwrap()
-            .is_some()
+        scheduled::get(
+            &fx.state.db,
+            &scheduled::ScheduleOwner::User("alice".into()),
+            id
+        )
+        .await
+        .unwrap()
+        .is_some()
     );
     chat::finalize_turn(
         &fx.state.db,

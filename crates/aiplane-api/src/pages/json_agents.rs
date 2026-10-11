@@ -342,7 +342,7 @@ pub struct VersionView {
     pub published_at: Timestamp,
 }
 
-fn version_view(v: &agents_db::VersionRow) -> VersionView {
+pub(crate) fn version_view(v: &agents_db::VersionRow) -> VersionView {
     VersionView {
         version: v.version,
         spec: parse_spec(&v.spec),
@@ -1570,6 +1570,24 @@ pub async fn delete(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         Err(error) => return internal(error),
     }
     let mut tx = or_return!(begin_write(&state, &user, &agent.principal.id).await);
+    let schedules = or_return!(
+        aiplane_runtime::server::scheduled::list_for_owner_in(
+            &mut tx,
+            &aiplane_runtime::server::scheduled::ScheduleOwner::Principal(
+                agent.principal.id.clone()
+            ),
+        )
+        .await
+        .map_err(internal)
+    );
+    if !schedules.is_empty() {
+        let lang = Lang::from_request(req.headers());
+        return json_error(
+            StatusCode::CONFLICT,
+            "identity_retained",
+            &t(lang, "scheduled-error-identity-retained"),
+        );
+    }
     let result = agents_db::delete_in(&mut tx, &agent.principal.id, &user.id).await;
     if let Ok(changed) = &result {
         or_return!(tx.commit().await.map_err(internal));

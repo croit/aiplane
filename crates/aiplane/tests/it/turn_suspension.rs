@@ -1240,10 +1240,12 @@ async fn background_resume_busy_leaves_original_approval_unclaimed_for_retry() {
     let action = scheduled::create(
         &state.db,
         scheduled::NewAction {
-            user_id: "alice".into(),
+            owner: scheduled::ScheduleOwner::User("alice".into()),
+            created_by: "alice".into(),
+            agent_version: None,
             name: "Approval".into(),
             prompt: "echo something".into(),
-            model: "model-a".into(),
+            model: Some("model-a".into()),
             cron: "* * * * *".into(),
             timezone: "UTC".into(),
             tools_enabled: true,

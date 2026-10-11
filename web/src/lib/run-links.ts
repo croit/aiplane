@@ -28,6 +28,7 @@ export interface RunLinks {
 }
 
 export interface RunLinkOptions {
+	principalId?: string | null;
 	/**
 	 * Does a run record something the chat it opened does not show?
 	 *
@@ -56,11 +57,11 @@ export interface RunLinkOptions {
 export function runLinks(
 	source: RunLinkSource,
 	section: string,
-	{ runsCarryMore = false }: RunLinkOptions = {}
+	{ runsCarryMore = false, principalId = null }: RunLinkOptions = {}
 ): RunLinks {
 	const chat =
 		source.chat_count <= 1 && source.last_session_id && !source.last_chat_deleted
-			? `/chat/${source.last_session_id}`
+			? principalId ? `/agents/${encodeURIComponent(principalId)}?tab=try&test_session=${encodeURIComponent(source.last_session_id)}` : `/chat/${source.last_session_id}`
 			: null;
 	const everythingIsInTheChatLink = chat !== null && source.run_count <= 1 && !runsCarryMore;
 	return {

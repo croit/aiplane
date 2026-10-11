@@ -81,7 +81,7 @@ impl Tool for LivePersonalDotTool {
                 }
                 if crate::server::background::for_turn(
                     &self.state.db,
-                    &execution.identity().owner_user_id,
+                    &crate::server::scheduled::ScheduleOwner::User(execution.identity().owner_user_id.clone()),
                     &root_turn,
                 )
                 .await
@@ -102,7 +102,7 @@ impl Tool for LivePersonalDotTool {
             if let Some(turn_id) = ctx.assistant_turn_id.as_deref()
                 && crate::server::background::for_turn(
                     &self.state.db,
-                    &identity.owner_user_id,
+                    &crate::server::scheduled::ScheduleOwner::User(identity.owner_user_id.clone()),
                     turn_id,
                 )
                 .await
@@ -801,7 +801,7 @@ mod tests {
         .unwrap();
         let now = jiff::Timestamp::now().to_string();
         sqlx::query("INSERT INTO scheduled_actions(id,user_id,dot_id,name,prompt,model,cron,timezone,tools_enabled,created_at,updated_at) VALUES('action','owner',?,'job','prompt','model','* * * * *','UTC',1,?,?)").bind(&identity.dot_id).bind(&now).bind(&now).execute(&tool.state.db).await.unwrap();
-        sqlx::query("INSERT INTO scheduled_runs(id,action_id,fired_at,session_id,assistant_turn_id,tools_enabled,created_at) VALUES('run','action',?,?,'live-turn',1,?)").bind(&now).bind(&session.id).bind(&now).execute(&tool.state.db).await.unwrap();
+        sqlx::query("INSERT INTO scheduled_runs(id,action_id,fired_at,session_id,assistant_turn_id,tools_enabled,configuration_generation,agent_version,created_at) SELECT 'run',id,?,?,'live-turn',tools_enabled,configuration_generation,agent_version,? FROM scheduled_actions WHERE id='action'").bind(&now).bind(&session.id).bind(&now).execute(&tool.state.db).await.unwrap();
         ctx.assistant_turn_id = Some("live-turn".into());
         ctx.session_id = Some(session.id);
         assert_eq!(

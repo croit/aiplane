@@ -53,3 +53,5 @@ chat-attempt-reason-loop = das Modell hat sich wiederholt
 chat-attempt-reason-repeated_call = immer wieder derselbe Tool-Aufruf
 chat-attempt-retry = Neuer Versuch mit Denkaufwand { $effort } (Versuch { $n })
 chat-loop-exhausted = Das Modell hat sich bei allen { $attempts } Versuchen wiederholt, auch mit weniger Denkaufwand. Formuliere die Frage bitte anders oder teile sie auf.
+
+chat-error-run-cancelled = Der Run wurde abgebrochen.

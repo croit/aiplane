@@ -3,6 +3,21 @@ import test from 'node:test';
 
 import { runLinks, type RunLinkSource } from './run-links.ts';
 
+test('Organization schedule links open the actual principal history in the existing TestChat', () => {
+	const source: RunLinkSource = { id: 'schedule', last_session_id: 'private/session', last_chat_deleted: false, run_count: 1, chat_count: 1 };
+	assert.deepEqual(runLinks(source, '/scheduled', { principalId: 'principal/id' }), {
+		chat: '/agents/principal%2Fid?tab=try&test_session=private%2Fsession', runs: null
+	});
+	assert.deepEqual(runLinks({ ...source, run_count: 2, chat_count: 2 }, '/scheduled', { principalId: 'principal/id' }), {
+		chat: null, runs: '/scheduled/schedule/runs'
+	});
+	assert.deepEqual(runLinks({ ...source, last_chat_deleted: true }, '/scheduled', { principalId: 'principal/id' }), {
+		chat: null, runs: '/scheduled/schedule/runs'
+	});
+	assert.deepEqual(runLinks(source, '/scheduled'), { chat: '/chat/private/session', runs: null });
+	assert.deepEqual(runLinks(source, '/webhooks'), { chat: '/chat/private/session', runs: null });
+});
+
 const source = (fields: Partial<RunLinkSource>): RunLinkSource => ({
 	id: 'row-1',
 	last_session_id: null,

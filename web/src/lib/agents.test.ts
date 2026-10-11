@@ -434,6 +434,19 @@ test('private test chat sends explicit draft and published sources and retains a
     ]);
 });
 
+test('private test chat cancellation addresses the actual private session and turn', async (context) => {
+    const { agentsApi } = await import('./agents.ts');
+    const original = globalThis.fetch;
+    let actual: unknown;
+    globalThis.fetch = async (input, init) => {
+        actual = { path: String(input), method: init?.method, body: JSON.parse(String(init?.body)) };
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    };
+    context.after(() => globalThis.fetch = original);
+    assert.deepEqual(await agentsApi.cancelTestConversation('principal/id', 'private/session', 'pending-turn'), { ok: true });
+    assert.deepEqual(actual, { path: '/api/v0/agents/principal%2Fid/test/private%2Fsession/cancel', method: 'POST', body: { turn_id: 'pending-turn' } });
+});
+
 test('private test chat debug preserves actual published source and agent version', async (context) => {
     const { agentsApi } = await import('./agents.ts');
     const original = globalThis.fetch;

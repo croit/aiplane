@@ -2049,3 +2049,376 @@ async fn organization_private_published_debug_rechecks_membership_after_waiting_
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert!(body.get("debug").is_none());
 }
+
+fn organization_schedule_body(dot: &str) -> Value {
+    json!({"principal_id":dot,"agent_version":1,"name":"Incident review","prompt":"Review incidents",
+        "cron":"0 9 * * *","timezone":"Europe/Berlin","tools_enabled":true,
+        "reuse_conversation":false,"reuse_rounds":5})
+}
+
+#[tokio::test]
+async fn organization_schedule_inventory_create_and_history_use_current_member_write() {
+    let (fx, _upstream, _org, dot) = private_published_organization().await;
+    aiplane_core::server::db::gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
+        .await
+        .unwrap();
+    let path = format!("/api/v0/scheduled?principal_id={dot}");
+    let (status, inventory) = fx.get(&fx.alice, &path).await;
+    assert_eq!(status, StatusCode::OK, "{inventory}");
+    assert_eq!(inventory["principal_id"], dot);
+    assert_eq!(inventory["can_write"], true);
+    assert_eq!(inventory["models"], json!([]));
+    assert_eq!(inventory["default_timezone"], Value::Null);
+    assert_eq!(inventory["dots"][0]["id"], dot);
+    assert_eq!(inventory["versions"][0]["version"], 1);
+    let (status, action) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/scheduled",
+            organization_schedule_body(&dot),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{action}");
+    assert_eq!(action["principal_id"], dot);
+    assert_eq!(action["agent_version"], 1);
+    assert_eq!(action["model"], Value::Null);
+    assert!(
+        action["configuration_generation"]
+            .as_str()
+            .is_some_and(|generation| !generation.is_empty())
+    );
+    let runs = format!("/api/v0/scheduled/{}/runs", id(&action));
+    assert_eq!(fx.get(&fx.alice, &runs).await.0, StatusCode::OK);
+    for cookie in [&fx.bob, &fx.root] {
+        let (status, denied) = fx.get(cookie, &runs).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{denied}");
+        assert!(denied.get("runs").is_none());
+    }
+    sqlx::query("DELETE FROM organization_groups WHERE organization_id=(SELECT organization_id FROM dots WHERE principal_id=?)")
+        .bind(&dot).execute(&fx.state.db).await.unwrap();
+    assert_eq!(fx.get(&fx.alice, &runs).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn organization_schedule_rejects_employee_model_reuse_and_stale_edit() {
+    let (fx, _upstream, _org, dot) = private_published_organization().await;
+    for invalid in [
+        json!({"model":"m"}),
+        json!({"reuse_conversation":true}),
+        json!({"agent_version":0}),
+        json!({"agent_version":999}),
+    ] {
+        let mut body = organization_schedule_body(&dot);
+        for (key, value) in invalid.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        let (status, denied) = fx.post(&fx.alice, "/api/v0/scheduled", body).await;
+        assert!(status.is_client_error(), "{status}: {denied}");
+    }
+    let (status, action) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/scheduled",
+            organization_schedule_body(&dot),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{action}");
+    let endpoint = format!("/api/v0/scheduled/{}/toggle", id(&action));
+    let (status, disabled)=fx.post(&fx.alice,&endpoint,json!({"enabled":false,"expected_configuration_generation":action["configuration_generation"]})).await;
+    assert_eq!(status, StatusCode::OK, "{disabled}");
+    assert_eq!(
+        disabled["configuration_generation"],
+        action["configuration_generation"]
+    );
+    let (status, denied) = fx
+        .post(
+            &fx.alice,
+            &endpoint,
+            json!({"enabled":true,"expected_configuration_generation":"stale"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{denied}");
+    let (status, denied) = fx.post(&fx.alice, &endpoint, json!({"enabled":true})).await;
+    assert!(status.is_client_error(), "{status}: {denied}");
+}
+
+#[tokio::test]
+async fn organization_retained_schedule_refuses_dot_deletion_until_source_deleted() {
+    use aiplane_runtime::server::scheduled::{self, NewAction, ScheduleOwner};
+    let (fx, _upstream, _org, dot) = private_published_organization().await;
+    let action = scheduled::create(
+        &fx.state.db,
+        NewAction {
+            owner: ScheduleOwner::Principal(dot.clone()),
+            created_by: "alice".into(),
+            dot_id: None,
+            name: "Retained schedule".into(),
+            prompt: "Review incidents".into(),
+            model: None,
+            agent_version: Some(1),
+            cron: "0 9 * * *".into(),
+            timezone: "Europe/Berlin".into(),
+            tools_enabled: true,
+            reuse_conversation: false,
+            reuse_rounds: 5,
+            next_run_at: None,
+            linked_session_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let endpoint = format!("/api/v0/agents/{dot}");
+    let (status, denied) = fx
+        .send(Some(&fx.alice), Method::DELETE, &endpoint, None)
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{denied}");
+    assert!(
+        aiplane_agents::db::agents::get(&fx.state.db, &dot)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        scheduled::delete(&fx.state.db, &action.owner, &action.id)
+            .await
+            .unwrap(),
+        scheduled::DeleteOutcome::Deleted
+    );
+    assert_eq!(
+        fx.send(Some(&fx.alice), Method::DELETE, &endpoint, None)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn organization_private_cancel_is_current_writer_structural_even_after_deactivation() {
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let (fx, upstream, _org, dot) = private_published_organization().await;
+    upstream.reset().await;
+    let delta = json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"cancel-time","type":"function","function":{"name":super::agents::TIME,"arguments":"{}"}}]}}]});
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!("data: {delta}\n\ndata: [DONE]\n\n"),
+            "text/event-stream",
+        ))
+        .mount(&upstream)
+        .await;
+    let mut spec = super::agents::spec("Ask before reading time");
+    spec["main"]["tool_resources"] = json!({(super::agents::TIME):{"permission":"always_ask"}});
+    assert_eq!(fx.put_draft(&fx.alice, &dot, spec).await.0, StatusCode::OK);
+    assert_eq!(fx.publish(&fx.alice, &dot).await.0, StatusCode::CREATED);
+    let (status, started) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/agents/{dot}/test/messages"),
+            json!({"message":"Ask for time","source":"published"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{started}");
+    let session = started["session_id"].as_str().unwrap();
+    let turn = started["turn_id"].as_str().unwrap();
+    let settled = crate::common::test_chat_settled(&fx.state, &fx.alice, &dot, session, turn).await;
+    assert_eq!(settled["status"], "suspended", "{settled}");
+    let endpoint = format!("/api/v0/agents/{dot}/test/{session}/cancel");
+    let body = json!({"turn_id":turn});
+    for cookie in [&fx.bob, &fx.root] {
+        assert_eq!(
+            fx.post(cookie, &endpoint, body.clone()).await.0,
+            StatusCode::NOT_FOUND
+        );
+        assert!(
+            session_core::db::get_suspension(&fx.state.db, turn)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+    sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+        .bind(&dot)
+        .execute(&fx.state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE system_principals SET disabled_at='2026-10-11T09:00:00Z' WHERE id=?")
+        .bind(&dot)
+        .execute(&fx.state.db)
+        .await
+        .unwrap();
+    let (status, cancelled) = fx.post(&fx.alice, &endpoint, body).await;
+    assert_eq!(status, StatusCode::OK, "{cancelled}");
+    assert_eq!(cancelled, json!({"ok":true}));
+    assert!(
+        session_core::db::get_suspension(&fx.state.db, turn)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        session_core::db::get_turn(&fx.state.db, session, turn)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        session_core::db::TurnStatus::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn organization_scheduled_pause_stop_cleans_stale_generation_and_unlocks_deletion() {
+    use aiplane_runtime::server::scheduled::{self, NewAction, ScheduleOwner};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let (fx, upstream, org, dot) = private_published_organization().await;
+    upstream.reset().await;
+    let delta = json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"scheduled-stop-time","type":"function","function":{"name":super::agents::TIME,"arguments":"{}"}}]}}]});
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!("data: {delta}\n\ndata: [DONE]\n\n"),
+            "text/event-stream",
+        ))
+        .mount(&upstream)
+        .await;
+    let mut spec = super::agents::spec("Ask before reading time");
+    spec["main"]["tool_resources"] = json!({(super::agents::TIME):{"permission":"always_ask"}});
+    assert_eq!(fx.put_draft(&fx.alice, &dot, spec).await.0, StatusCode::OK);
+    assert_eq!(fx.publish(&fx.alice, &dot).await.0, StatusCode::CREATED);
+    let action = scheduled::create(
+        &fx.state.db,
+        NewAction {
+            owner: ScheduleOwner::Principal(dot.clone()),
+            created_by: "alice".into(),
+            dot_id: None,
+            name: "Pending schedule".into(),
+            prompt: "Ask for time".into(),
+            model: None,
+            agent_version: Some(2),
+            cron: "0 9 * * *".into(),
+            timezone: "Europe/Berlin".into(),
+            tools_enabled: true,
+            reuse_conversation: false,
+            reuse_rounds: 5,
+            next_run_at: Some("2020-01-01T09:00:00Z".parse().unwrap()),
+            linked_session_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    scheduled::worker::spawn(std::sync::Arc::new(fx.state.clone()));
+    let mut captured = None;
+    for _ in 0..200 {
+        if let Some(run) = scheduled::list_runs(&fx.state.db, &action.id, 1)
+            .await
+            .unwrap()
+            .first()
+            && let (Some(session), Some(turn)) = (&run.session_id, &run.assistant_turn_id)
+            && session_core::db::get_suspension(&fx.state.db, turn)
+                .await
+                .unwrap()
+                .is_some()
+        {
+            captured = Some((session.clone(), turn.clone()));
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let (session, turn) = captured.expect("finite scheduled approval pause");
+    let source = format!("/api/v0/scheduled/{}", action.id);
+    assert_eq!(
+        fx.send(Some(&fx.alice), Method::DELETE, &source, None)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    let endpoint = format!("/api/v0/agents/{dot}/test/{session}/cancel");
+    assert_eq!(
+        fx.post(&fx.alice, &endpoint, json!({"turn_id":"missing"}))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let ordinary = session_core::db::create_session(&fx.state.db, "alice")
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.post(
+            &fx.alice,
+            &format!("/api/v0/agents/{dot}/test/{}/cancel", ordinary.id),
+            json!({"turn_id":turn})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    sqlx::query("DELETE FROM organization_groups WHERE organization_id=?")
+        .bind(id(&org))
+        .execute(&fx.state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.post(&fx.alice, &endpoint, json!({"turn_id":turn}))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert!(
+        session_core::db::get_suspension(&fx.state.db, &turn)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    sqlx::query(
+        "INSERT INTO organization_groups(organization_id,gateway_group) VALUES(?,'managers')",
+    )
+    .bind(id(&org))
+    .execute(&fx.state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE scheduled_actions SET configuration_generation='edited-after-admission' WHERE id=?",
+    )
+    .bind(&action.id)
+    .execute(&fx.state.db)
+    .await
+    .unwrap();
+    let (status, cancelled) = fx.post(&fx.alice, &endpoint, json!({"turn_id":turn})).await;
+    assert_eq!(status, StatusCode::OK, "{cancelled}");
+    assert!(
+        session_core::db::get_suspension(&fx.state.db, &turn)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        scheduled::list_runs(&fx.state.db, &action.id, 1)
+            .await
+            .unwrap()[0]
+            .status
+            .as_deref(),
+        Some("error")
+    );
+    assert_eq!(
+        fx.send(Some(&fx.alice), Method::DELETE, &source, None)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        fx.send(
+            Some(&fx.alice),
+            Method::DELETE,
+            &format!("/api/v0/agents/{dot}"),
+            None
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+}

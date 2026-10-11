@@ -84,7 +84,7 @@ test("Organization membership and Dot configuration reuse the existing editor wi
         assert.deepEqual(dot.dot.owner, { kind: "organization", id: organization.id, name: externalName });
         assert.notEqual(dot.name, "Harald");
         await page.waitForURL((url) => url.pathname === `/agents/${dotId}/setup/start`);
-        await page.getByText("Members with Write access can use its saved draft or a published version in a private conversation.", { exact: false }).waitFor();
+        await page.getByText(`Organization: ${externalName} Members with Write access can configure this organization Dot, use its saved draft or a published version in a private conversation, and schedule work on a selected published version. Automated test suites, delegation, organization webhooks and external channels are unavailable.`, { exact: true }).waitFor();
         assert.equal(await page.getByRole("button", { name: "Website", exact: true }).count(), 0);
         const personal = await admin.request.get(`${BASE}/api/v0/dots/${dotId}/access`);
         assert.equal(personal.status(), 404);

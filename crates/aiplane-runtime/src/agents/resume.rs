@@ -431,6 +431,15 @@ async fn fail(state: &RamaState, levels: &[Level], message: &str) {
         {
             tracing::warn!(error = %err, %turn, "erroring a resumed agent turn that cannot run");
         }
+        if let Err(err) = crate::server::background::reconcile_turn(
+            &state.db,
+            &crate::server::scheduled::ScheduleOwner::Principal(level.session.principal_id.clone()),
+            turn,
+        )
+        .await
+        {
+            tracing::warn!(error = %err, %turn, "reconciling a resumed agent turn that cannot run");
+        }
     }
 }
 
@@ -616,6 +625,14 @@ pub async fn run_claimed(
         let answer = end_unanswered(&state.db, innermost, lang)
             .await
             .map_err(DbError::from)?;
+        crate::server::background::reconcile_turn(
+            &state.db,
+            &crate::server::scheduled::ScheduleOwner::Principal(
+                levels[0].session.principal_id.clone(),
+            ),
+            &innermost.turn_id,
+        )
+        .await?;
         run_queued(state, &profiles[0], &opened).await?;
         return Ok(AgentReply {
             session_id: opened.session_id.clone(),
@@ -1011,9 +1028,12 @@ async fn run_personal_children_inner(
         .await?
         .ok_or(AgentResumeError::Unavailable)?;
     let root = &claimed.levels[0];
-    let background =
-        crate::server::background::for_turn(&state.db, &claimed.owner, &root.suspension.turn_id)
-            .await?;
+    let background = crate::server::background::for_turn(
+        &state.db,
+        &crate::server::scheduled::ScheduleOwner::User(claimed.owner.clone()),
+        &root.suspension.turn_id,
+    )
+    .await?;
     let enabled = background
         .as_ref()
         .is_none_or(|context| context.tools_enabled);
@@ -1167,6 +1187,93 @@ async fn run_personal_children_inner(
     })
 }
 
+pub async fn cancel_private_turn(
+    state: &Arc<RamaState>,
+    initiator_user_id: &str,
+    principal_id: &str,
+    session_id: &str,
+    turn_id: &str,
+) -> Result<bool, AgentRunError> {
+    use aiplane_agents::db::agents::{Access, DotOwner};
+    use aiplane_core::server::db::WriteTx;
+    let mut tx = WriteTx::begin(&state.db).await?;
+    let organization = matches!(
+        agents_db::dot_owner_in(&mut tx, principal_id).await?,
+        Some(DotOwner::Organization(_))
+    );
+    let access = if organization {
+        super::access::organization_access_in(state, &mut tx, principal_id, initiator_user_id)
+            .await?
+    } else {
+        super::access::effective_access_in(state, &mut tx, principal_id, initiator_user_id).await?
+    };
+    if access != Some(Access::Write) {
+        return Ok(false);
+    }
+    let Some(session) =
+        run_sessions::get_principal_session_in(&mut tx, principal_id, session_id).await?
+    else {
+        return Ok(false);
+    };
+    let Some(version) = session.agent_version.filter(|version| {
+        if organization {
+            *version >= 0
+        } else {
+            *version == 0
+        }
+    }) else {
+        return Ok(false);
+    };
+    if run_sessions::get_private_principal_session_in(&mut tx, principal_id, session_id, version)
+        .await?
+        .is_none()
+    {
+        return Ok(false);
+    }
+    let status: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM chat_turns WHERE id=? AND session_id=? AND role='assistant'",
+    )
+    .bind(turn_id)
+    .bind(session_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(aiplane_core::server::db::DbError::from)?;
+    if !matches!(status.as_deref(), Some("suspended" | "in_progress")) {
+        return Ok(false);
+    }
+    crate::server::background::validate_turn_in(
+        &mut tx,
+        &crate::server::scheduled::ScheduleOwner::Principal(principal_id.to_owned()),
+        turn_id,
+    )
+    .await?;
+    match status.as_deref() {
+        Some("suspended") => {
+            if !chat::cancel_suspended_turn_in(&mut tx, turn_id)
+                .await
+                .map_err(DbError::from)?
+            {
+                return Ok(false);
+            }
+        }
+        Some("in_progress") => {
+            chat::finalize_turn_in(&mut tx, turn_id, TurnStatus::Cancelled, None)
+                .await
+                .map_err(DbError::from)?
+        }
+        _ => return Ok(false),
+    }
+    tx.commit().await?;
+    state.chats.cancel_turn(principal_id, session_id, turn_id);
+    crate::server::background::reconcile_turn(
+        &state.db,
+        &crate::server::scheduled::ScheduleOwner::Principal(principal_id.to_owned()),
+        turn_id,
+    )
+    .await?;
+    Ok(true)
+}
+
 pub async fn cancel_personal_tree(
     state: &Arc<RamaState>,
     owner: &str,
@@ -1207,7 +1314,12 @@ pub async fn cancel_personal_tree(
         {
             chat::finalize_turn(&state.db, &turn, TurnStatus::Cancelled, None).await?;
         }
-        crate::server::background::reconcile_turn(&state.db, owner, &turn).await?;
+        crate::server::background::reconcile_turn(
+            &state.db,
+            &crate::server::scheduled::ScheduleOwner::User(owner.to_owned()),
+            &turn,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -1532,5 +1644,438 @@ mod tests {
                 TurnStatus::InProgress
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod private_cancel_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn private_cancel_requires_current_writer_but_not_execution_authority() {
+        use aiplane_agents::db::{agents, system_principals};
+        use aiplane_core::server::db::gateway_groups;
+        let upstream = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&upstream.uri()).await;
+        let (profile, params) =
+            crate::server::headless::tests::organization_draft_fixture(&state).await;
+        let principal = &profile.principal.id;
+        let Some(agents::DotOwner::Organization(organization)) =
+            agents::dot_owner(&state.db, principal).await.unwrap()
+        else {
+            panic!("organization expected");
+        };
+        gateway_groups::upsert_group(&state.db, "writers", "", false, true)
+            .await
+            .unwrap();
+        gateway_groups::set_can_manage_agents(&state.db, "writers", true)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO organization_groups(organization_id,gateway_group) VALUES(?,'writers')",
+        )
+        .bind(&organization)
+        .execute(&state.db)
+        .await
+        .unwrap();
+        assert!(
+            !cancel_private_turn(
+                &state,
+                "creator",
+                principal,
+                &params.session_id,
+                "foreign-turn"
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !cancel_private_turn(
+                &state,
+                "missing-user",
+                principal,
+                &params.session_id,
+                &params.assistant_turn_id
+            )
+            .await
+            .unwrap()
+        );
+        gateway_groups::set_can_manage_agents(&state.db, "writers", false)
+            .await
+            .unwrap();
+        assert!(
+            !cancel_private_turn(
+                &state,
+                "creator",
+                principal,
+                &params.session_id,
+                &params.assistant_turn_id
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(
+            chat::get_turn(&state.db, &params.session_id, &params.assistant_turn_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::InProgress
+        );
+        gateway_groups::set_can_manage_agents(&state.db, "writers", true)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+            .bind(principal)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE system_principals SET disabled_at=? WHERE id=?")
+            .bind(jiff::Timestamp::now().to_string())
+            .bind(principal)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        system_principals::remove_grant(
+            &state.db,
+            principal,
+            aiplane_core::server::principal::GrantKind::Model,
+            &profile.model,
+            "creator",
+        )
+        .await
+        .unwrap();
+        assert!(
+            cancel_private_turn(
+                &state,
+                "creator",
+                principal,
+                &params.session_id,
+                &params.assistant_turn_id
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(
+            chat::get_turn(&state.db, &params.session_id, &params.assistant_turn_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::Cancelled
+        );
+        assert!(
+            !cancel_private_turn(
+                &state,
+                "creator",
+                principal,
+                &params.session_id,
+                &params.assistant_turn_id
+            )
+            .await
+            .unwrap()
+        );
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
+    async fn scheduled_pause(state: &Arc<RamaState>, kind: SuspensionKind) -> (Level, String) {
+        use crate::server::scheduled::{self, ScheduleOwner};
+        use aiplane_core::server::db::WriteTx;
+        let (base, _) = crate::server::headless::tests::organization_draft_fixture(state).await;
+        let mut spec = json!({"main":{"model":base.model}});
+        spec["state"] = json!({"issue":{"type":"enum","values":["refund"],"set_by":["llm"],"description":"Actual request kind"}});
+        spec["routes"] = json!({"people":{"when":{"slot":"issue","eq":"refund"},"human":{}}});
+        super::super::spec_cache::CompiledSpec::compile(1, spec.clone())
+            .parts()
+            .unwrap();
+        let version =
+            agents_db::publish(&state.db, &base.principal.id, &spec.to_string(), "creator")
+                .await
+                .unwrap()
+                .unwrap();
+        let due = jiff::Timestamp::now();
+        let action = scheduled::create(
+            &state.db,
+            scheduled::NewAction {
+                owner: ScheduleOwner::Principal(base.principal.id.clone()),
+                created_by: "creator".into(),
+                dot_id: None,
+                agent_version: Some(version),
+                name: "Actual schedule".into(),
+                prompt: "Actual request".into(),
+                model: None,
+                cron: "* * * * *".into(),
+                timezone: "UTC".into(),
+                tools_enabled: true,
+                reuse_conversation: false,
+                reuse_rounds: 0,
+                next_run_at: Some(due),
+                linked_session_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        let history = scheduled::claim_due_in(
+            &mut tx,
+            &action.id,
+            due,
+            &action.configuration_generation,
+            None,
+            due,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        tx.commit().await.unwrap();
+        let profile = RunProfile::load_scheduled(state, &history.id, &Default::default())
+            .await
+            .unwrap();
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        let (session, turn) = crate::server::headless::open_principal_session_in(
+            &mut tx,
+            crate::server::headless::OpenParams {
+                owner: crate::server::headless::Owner::Run {
+                    principal_id: &profile.principal.id,
+                    parent_turn_id: None,
+                    agent_version: Some(version),
+                },
+                title: &action.name,
+                prompt: &action.prompt,
+                model: &profile.model,
+                existing_session: None,
+                dot_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        scheduled::attach_run_turn_in(&mut tx, &history.id, &session, &turn, true, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let chain = Arc::new(RunChain::root(
+            &session,
+            None,
+            Frame::for_principal(&profile.principal, Some(version)),
+        ));
+        let params = profile.drive_params(&session, &turn, chain).unwrap();
+        let crate::agent_run::Actor::Agent(run) = params.actor else {
+            panic!("principal expected");
+        };
+        let tool = if kind == SuspensionKind::HumanAnswer {
+            "request_human"
+        } else {
+            "company_echo"
+        };
+        chat::insert_running_tool_call(&state.db, &turn, "actual-call", tool, "{}")
+            .await
+            .unwrap();
+        let pause = TurnSuspension {
+            turn_id: turn.clone(),
+            request_id: "actual-request".into(),
+            kind,
+            message: None,
+            tool_call: chat::PendingCall {
+                id: "actual-call".into(),
+                name: tool.into(),
+                arguments: "{}".into(),
+                actions: None,
+                execution_facts: None,
+            },
+            tail: vec![],
+            budget_used: chat::BudgetUsed::default(),
+            child_turn: None,
+            on_timeout: chat::TimeoutFallback::Deny,
+            expires_at: due,
+            created_at: due,
+            run_context: Some(
+                OrganizationResumeAuthority::capture(&run)
+                    .unwrap()
+                    .attach_to(None)
+                    .unwrap(),
+            ),
+        };
+        assert!(chat::suspend_turn(&state.db, &pause).await.unwrap());
+        crate::server::background::reconcile_turn(&state.db, &action.owner, &turn)
+            .await
+            .unwrap();
+        let session =
+            run_sessions::get_principal_session(&state.db, &profile.principal.id, &session)
+                .await
+                .unwrap()
+                .unwrap();
+        (
+            Level {
+                session,
+                suspension: pause,
+            },
+            history.id,
+        )
+    }
+
+    #[tokio::test]
+    async fn scheduled_claimed_failure_terminalizes_the_exact_run_history() {
+        let upstream = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&upstream.uri()).await;
+        let (level, run) = scheduled_pause(&state, SuspensionKind::Approval).await;
+        chat::claim_suspension(
+            &state.db,
+            &level.suspension.turn_id,
+            &level.suspension.request_id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        fail(
+            &state,
+            std::slice::from_ref(&level),
+            "Actual rebuilding failure",
+        )
+        .await;
+        assert_eq!(
+            chat::get_turn(&state.db, &level.session.id, &level.suspension.turn_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::Errored
+        );
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id=?")
+                .bind(run)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(status.as_deref(), Some("error"));
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn scheduled_human_timeout_terminalizes_history_without_a_model_request() {
+        let upstream = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&upstream.uri()).await;
+        let (level, run) = scheduled_pause(&state, SuspensionKind::HumanAnswer).await;
+        let claimed = claim(
+            &state,
+            AgentResume {
+                agent_id: &level.session.principal_id,
+                session_id: &level.session.id,
+                turn_id: &level.suspension.turn_id,
+                request_id: Some(&level.suspension.request_id),
+                decision: Decision::Deny {
+                    reason: DenyReason::Timeout,
+                },
+                by: ResumedBy::Timeout,
+            },
+        )
+        .await
+        .unwrap();
+        let reply = run_claimed(&state, claimed, Default::default())
+            .await
+            .unwrap();
+        assert_eq!(reply.status, TurnStatus::Completed);
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id=?")
+                .bind(run)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(status.as_deref(), Some("ok"));
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn private_cancel_rejects_a_corrupted_original_schedule_pin_before_mutation() {
+        use aiplane_core::server::db::gateway_groups;
+        let upstream = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&upstream.uri()).await;
+        let (level, run) = scheduled_pause(&state, SuspensionKind::Approval).await;
+        let Some(agents_db::DotOwner::Organization(organization)) =
+            agents_db::dot_owner(&state.db, &level.session.principal_id)
+                .await
+                .unwrap()
+        else {
+            panic!("organization expected");
+        };
+        gateway_groups::upsert_group(&state.db, "writers", "", false, true)
+            .await
+            .unwrap();
+        gateway_groups::set_can_manage_agents(&state.db, "writers", true)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO organization_groups(organization_id,gateway_group) VALUES(?,'writers')",
+        )
+        .bind(organization)
+        .execute(&state.db)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE scheduled_runs SET agent_version=agent_version+1 WHERE id=?")
+            .bind(&run)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let result = cancel_private_turn(
+            &state,
+            "creator",
+            &level.session.principal_id,
+            &level.session.id,
+            &level.suspension.turn_id,
+        )
+        .await;
+        assert!(!matches!(result, Ok(true)));
+        assert_eq!(
+            chat::get_suspension(&state.db, &level.suspension.turn_id)
+                .await
+                .unwrap(),
+            Some(level.suspension.clone())
+        );
+        assert_eq!(
+            chat::get_turn(&state.db, &level.session.id, &level.suspension.turn_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::Suspended
+        );
+        let original_version = level.session.agent_version.unwrap();
+        let original = agents_db::version(&state.db, &level.session.principal_id, original_version)
+            .await
+            .unwrap()
+            .unwrap();
+        let new_version = agents_db::publish(
+            &state.db,
+            &level.session.principal_id,
+            &original.spec,
+            "creator",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        sqlx::query("UPDATE scheduled_runs SET agent_version=? WHERE id=?")
+            .bind(original_version)
+            .bind(&run)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE scheduled_actions SET agent_version=?,configuration_generation='authored-change' WHERE id=(SELECT action_id FROM scheduled_runs WHERE id=?)").bind(new_version).bind(&run).execute(&state.db).await.unwrap();
+        assert!(
+            cancel_private_turn(
+                &state,
+                "creator",
+                &level.session.principal_id,
+                &level.session.id,
+                &level.suspension.turn_id
+            )
+            .await
+            .unwrap()
+        );
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id=?")
+                .bind(&run)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(status.as_deref(), Some("error"));
+        assert!(upstream.received_requests().await.unwrap().is_empty());
     }
 }

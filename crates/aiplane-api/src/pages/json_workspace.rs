@@ -12,7 +12,7 @@ use rama::http::service::web::extract::{Path, State};
 use rama::http::{Request, Response, StatusCode};
 
 use super::json_dots::{self, DotView};
-use aiplane_agents::db::{agents as dots_db, dot_sessions};
+use aiplane_agents::db::{WriteTx, agents as dots_db, dot_sessions};
 use aiplane_core::server::auth::token as auth_token;
 use aiplane_core::server::db;
 use aiplane_runtime::openai_driver;
@@ -194,6 +194,19 @@ async fn flag_deleted_last_chats<'a>(
     Ok(())
 }
 
+async fn flag_deleted_last_chats_in<'a>(
+    tx: &mut WriteTx,
+    rows: impl IntoIterator<Item = (Option<&'a str>, &'a mut Option<bool>)>,
+) -> Result<(), db::DbError> {
+    let rows: Vec<_> = rows.into_iter().collect();
+    let ids: Vec<&str> = rows.iter().filter_map(|(id, _)| *id).collect();
+    let existing = session_core::db::existing_session_ids_in(tx, &ids).await?;
+    for (id, flag) in rows {
+        *flag = Some(id.is_some_and(|id| !existing.contains(id)));
+    }
+    Ok(())
+}
+
 /// One scheduled action as the list, create, update and runs routes return it.
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct ActionView {
@@ -201,10 +214,13 @@ pub struct ActionView {
     pub chat_count: i64,
     pub id: String,
     pub dot_id: Option<String>,
+    pub principal_id: Option<String>,
+    pub agent_version: Option<i64>,
+    pub configuration_generation: String,
     pub dot: Option<DotView>,
     pub name: String,
     pub prompt: String,
-    pub model: String,
+    pub model: Option<String>,
     /// 5-field cron expression.
     pub cron: String,
     /// The cron expression in words.
@@ -237,12 +253,15 @@ pub struct ModelOption {
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct ScheduledList {
+    pub principal_id: Option<String>,
+    pub can_write: bool,
+    pub versions: Vec<super::json_agents::VersionView>,
     pub dots: Vec<DotView>,
     pub actions: Vec<ActionView>,
     /// The chat models an action can run on.
     pub models: Vec<ModelOption>,
     /// The caller's timezone, `UTC` when unset.
-    pub default_timezone: String,
+    pub default_timezone: Option<String>,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -254,6 +273,8 @@ pub struct ScheduledRuns {
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct ScheduledRunView {
+    pub configuration_generation: Option<String>,
+    pub agent_version: Option<i64>,
     pub id: String,
     pub fired_at: String,
     pub status: Option<String>,
@@ -281,15 +302,6 @@ pub struct CronPreview {
     pub upcoming: Vec<String>,
 }
 
-fn action_json(a: &scheduled::ScheduledAction) -> ActionView {
-    action_json_with_counts(a, (0, 0))
-}
-
-/// `action_json` plus the action's `(runs, chats)` totals.
-///
-/// The two differ for a `reuse_conversation` schedule — many runs, one
-/// conversation — and the list row uses exactly that difference to decide
-/// whether to link to *the* chat or to the run history.
 fn action_json_with_counts(
     a: &scheduled::ScheduledAction,
     (run_count, chat_count): (i64, i64),
@@ -302,6 +314,12 @@ fn action_json_with_counts(
         chat_count,
         id: a.id.clone(),
         dot_id: a.dot_id.clone(),
+        principal_id: match &a.owner {
+            scheduled::ScheduleOwner::User(_) => None,
+            scheduled::ScheduleOwner::Principal(id) => Some(id.clone()),
+        },
+        agent_version: a.agent_version,
+        configuration_generation: a.configuration_generation.clone(),
         dot: None,
         name: a.name.clone(),
         prompt: a.prompt.clone(),
@@ -335,51 +353,263 @@ fn chat_model_options(state: &RamaState) -> Vec<ModelOption> {
         .collect()
 }
 
+fn schedule_unavailable(lang: Lang) -> Response {
+    not_found(t(lang, "scheduled-toast-not-found"))
+}
+
+fn invalid_schedule(lang: Lang) -> Response {
+    bad_request(t(lang, "scheduled-error-invalid-configuration"))
+}
+
+fn schedule_conflict(lang: Lang) -> Response {
+    json_error(
+        StatusCode::CONFLICT,
+        "configuration_conflict",
+        &t(lang, "scheduled-error-configuration-conflict"),
+    )
+}
+
+async fn schedule_access_in(
+    state: &RamaState,
+    tx: &mut WriteTx,
+    user_id: &str,
+    owner: &scheduled::ScheduleOwner,
+    lang: Lang,
+) -> Result<(), Response> {
+    let admitted = match owner {
+        scheduled::ScheduleOwner::User(id) => {
+            id == user_id
+                && aiplane_runtime::agents::access::current_user_policy_in(state, tx, user_id)
+                    .await
+                    .map_err(internal)?
+                    .is_some()
+        }
+        scheduled::ScheduleOwner::Principal(id) => {
+            aiplane_runtime::agents::access::organization_access_in(state, tx, id, user_id)
+                .await
+                .map_err(internal)?
+                == Some(dots_db::Access::Write)
+        }
+    };
+    if admitted {
+        Ok(())
+    } else {
+        Err(schedule_unavailable(lang))
+    }
+}
+
+async fn schedule_dot_in(
+    tx: &mut WriteTx,
+    owner: &scheduled::ScheduleOwner,
+    dot_id: Option<&str>,
+) -> Result<Option<DotView>, db::DbError> {
+    let id = match owner {
+        scheduled::ScheduleOwner::User(_) => dot_id,
+        scheduled::ScheduleOwner::Principal(id) => Some(id.as_str()),
+    };
+    let Some(id) = id else { return Ok(None) };
+    let Some(metadata) = dots_db::get_dot_metadata_in(tx, id).await? else {
+        return Ok(None);
+    };
+    let owner_matches = match owner {
+        scheduled::ScheduleOwner::User(user) => {
+            metadata.owner == dots_db::DotOwner::User(user.clone())
+        }
+        scheduled::ScheduleOwner::Principal(principal) => {
+            id == principal && matches!(metadata.owner, dots_db::DotOwner::Organization(_))
+        }
+    };
+    if !owner_matches {
+        return Ok(None);
+    };
+    let Some(agent) = dots_db::get_in(tx, id).await? else {
+        return Ok(None);
+    };
+    Ok(Some(DotView {
+        id: id.into(),
+        name: metadata.name,
+        display: agent.principal.display,
+        description: agent.principal.description,
+        active: metadata.active,
+    }))
+}
+
+async fn scheduled_view_in(
+    tx: &mut WriteTx,
+    action: &scheduled::ScheduledAction,
+) -> Result<ActionView, db::DbError> {
+    let counts = scheduled::run_counts_for_owner_in(tx, &action.owner).await?;
+    let mut view =
+        action_json_with_counts(action, counts.get(&action.id).copied().unwrap_or((0, 0)));
+    view.dot = schedule_dot_in(tx, &action.owner, action.dot_id.as_deref()).await?;
+    flag_deleted_last_chats_in(
+        tx,
+        [(view.last_session_id.as_deref(), &mut view.last_chat_deleted)],
+    )
+    .await?;
+    Ok(view)
+}
+
+async fn schedule_body_in(
+    state: &RamaState,
+    tx: &mut WriteTx,
+    owner: &scheduled::ScheduleOwner,
+    parsed: &ScheduledBody,
+    previous_dot: Option<&str>,
+    lang: Lang,
+) -> Result<Option<Option<String>>, Response> {
+    if validate_scheduled(parsed).is_err() {
+        return Err(invalid_schedule(lang));
+    };
+    match owner {
+        scheduled::ScheduleOwner::Principal(id) => {
+            if parsed.principal_id.as_deref() != Some(id.as_str())
+                || parsed.model.is_some()
+                || parsed.dot_id.is_some()
+                || parsed.reuse_conversation
+                || parsed.linked_session_id.is_some()
+                || parsed.timezone.trim().is_empty()
+                || parsed.agent_version.is_none_or(|v| v <= 0)
+            {
+                return Err(invalid_schedule(lang));
+            }
+            let _admitted = aiplane_runtime::agents::profile::organization_schedule_version_in(
+                state,
+                tx,
+                id,
+                parsed.agent_version.expect("positive version checked"),
+            )
+            .await
+            .map_err(|error| match error {
+                aiplane_runtime::agents::profile::AgentRunError::Db(error) => internal(error),
+                _ => invalid_schedule(lang),
+            })?;
+            Ok(Some(None))
+        }
+        scheduled::ScheduleOwner::User(user) => {
+            if parsed.principal_id.is_some()
+                || parsed.agent_version.is_some()
+                || parsed
+                    .model
+                    .as_deref()
+                    .is_none_or(|model| model.trim().is_empty())
+            {
+                return Err(invalid_schedule(lang));
+            };
+            if !dot_sessions::binding_valid(tx, user, parsed.dot_id.as_deref(), previous_dot)
+                .await
+                .map_err(internal)?
+            {
+                return Err(bad_request(t(lang, "dot-background-error-binding")));
+            };
+            let Some(requested) = parsed.linked_session_id.as_deref().map(str::trim) else {
+                return Ok(None);
+            };
+            if requested.is_empty() {
+                return Ok(Some(None));
+            };
+            if !parsed.reuse_conversation
+                || !dot_sessions::session_matches(tx, user, requested, parsed.dot_id.as_deref())
+                    .await
+                    .map_err(internal)?
+            {
+                return Err(bad_request(t(lang, "dot-background-error-linked")));
+            };
+            Ok(Some(Some(requested.into())))
+        }
+    }
+}
+
 /// GET /api/v0/scheduled — the caller's actions.
 pub async fn scheduled_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    let rows = match scheduled::list_for_user(&state.db, &user.id).await {
-        Ok(rows) => rows,
-        Err(err) => return internal(err),
+    let lang = Lang::from_request(req.headers());
+    let principal_id = super::query_map(&req).get("principal_id").cloned();
+    let owner = principal_id
+        .as_ref()
+        .map(|id| scheduled::ScheduleOwner::Principal(id.clone()))
+        .unwrap_or_else(|| scheduled::ScheduleOwner::User(user.id.clone()));
+    let personal_dots = if principal_id.is_none() {
+        match dots_db::list_personal_dots(&state.db, &user.id).await {
+            Ok(rows) => rows.iter().map(json_dots::view).collect(),
+            Err(error) => return internal(error),
+        }
+    } else {
+        Vec::new()
     };
-    // One grouped query for the whole list, not one per row.
-    let counts = match scheduled::run_counts_for_user(&state.db, &user.id).await {
-        Ok(counts) => counts,
-        Err(err) => return internal(err),
-    };
-    let mut actions: Vec<_> = rows
-        .iter()
-        .map(|a| action_json_with_counts(a, counts.get(&a.id).copied().unwrap_or((0, 0))))
-        .collect();
-    let dots = match dots_db::list_personal_dots(&state.db, &user.id).await {
-        Ok(dots) => dots.iter().map(json_dots::view).collect::<Vec<_>>(),
-        Err(error) => return internal(error),
-    };
-    for row in &mut actions {
-        row.dot = dots
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        schedule_access_in(&state, &mut tx, &user.id, &owner, lang).await?;
+        let rows = scheduled::list_for_owner_in(&mut tx, &owner)
+            .await
+            .map_err(internal)?;
+        let counts = scheduled::run_counts_for_owner_in(&mut tx, &owner)
+            .await
+            .map_err(internal)?;
+        let (dots, versions, models, default_timezone) = if let Some(id) = &principal_id {
+            let dot = schedule_dot_in(&mut tx, &owner, None)
+                .await
+                .map_err(internal)?
+                .ok_or_else(|| schedule_unavailable(lang))?;
+            let versions = dots_db::versions_in(&mut tx, id)
+                .await
+                .map_err(internal)?
+                .iter()
+                .map(super::json_agents::version_view)
+                .collect();
+            (vec![dot], versions, Vec::new(), None)
+        } else {
+            (
+                personal_dots,
+                Vec::new(),
+                chat_model_options(&state),
+                Some(user.timezone.as_deref().unwrap_or("UTC").into()),
+            )
+        };
+        let mut actions: Vec<ActionView> = rows
             .iter()
-            .find(|dot| Some(&dot.id) == row.dot_id.as_ref())
-            .cloned();
+            .map(|action| {
+                let mut view = action_json_with_counts(
+                    action,
+                    counts.get(&action.id).copied().unwrap_or((0, 0)),
+                );
+                view.dot = dots
+                    .iter()
+                    .find(|dot| {
+                        principal_id.as_deref() == Some(dot.id.as_str())
+                            || action.dot_id.as_deref() == Some(dot.id.as_str())
+                    })
+                    .cloned();
+                view
+            })
+            .collect();
+        flag_deleted_last_chats_in(
+            &mut tx,
+            actions.iter_mut().map(|action| {
+                (
+                    action.last_session_id.as_deref(),
+                    &mut action.last_chat_deleted,
+                )
+            }),
+        )
+        .await
+        .map_err(internal)?;
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(
+            StatusCode::OK,
+            ScheduledList {
+                principal_id,
+                can_write: true,
+                versions,
+                dots,
+                actions,
+                models,
+                default_timezone,
+            },
+        ))
     }
-    if let Err(err) = flag_deleted_last_chats(
-        &state.db,
-        actions
-            .iter_mut()
-            .map(|a| (a.last_session_id.as_deref(), &mut a.last_chat_deleted)),
-    )
     .await
-    {
-        return internal(err);
-    }
-    json_ok(
-        StatusCode::OK,
-        ScheduledList {
-            dots,
-            actions,
-            models: chat_model_options(&state),
-            default_timezone: user.timezone.as_deref().unwrap_or("UTC").to_string(),
-        },
-    )
+    .unwrap_or_else(|response| response)
 }
 
 /// GET /api/v0/scheduled/{id}/runs — one schedule's run history.
@@ -394,30 +624,40 @@ pub async fn scheduled_runs(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    let action = match scheduled::get(&state.db, &user.id, &id).await {
-        Ok(Some(a)) => a,
-        Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such action"),
-        Err(err) => return internal(err),
-    };
-    let mut action_view = action_json(&action);
-    action_view.dot = match bound_dot_view(&state.db, &user.id, action.dot_id.as_deref()).await {
-        Ok(dot) => dot,
-        Err(error) => return internal(error),
-    };
-    match scheduled::list_runs(&state.db, &action.id, 50).await {
-        Ok(runs) => json_ok(
+    let lang = Lang::from_request(req.headers());
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let action = scheduled::get_by_id_in(&mut tx, &id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| schedule_unavailable(lang))?;
+        schedule_access_in(&state, &mut tx, &user.id, &action.owner, lang).await?;
+        let action_view = scheduled_view_in(&mut tx, &action)
+            .await
+            .map_err(internal)?;
+        let runs = scheduled::list_runs_in(&mut tx, &action.id, 50)
+            .await
+            .map_err(internal)?
+            .iter()
+            .map(scheduled_run_json)
+            .collect();
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(
             StatusCode::OK,
             ScheduledRuns {
                 action: action_view,
-                runs: runs.iter().map(scheduled_run_json).collect(),
+                runs,
             },
-        ),
-        Err(err) => internal(err),
+        ))
     }
+    .await
+    .unwrap_or_else(|response| response)
 }
 
 fn scheduled_run_json(r: &scheduled::ScheduledRun) -> ScheduledRunView {
     ScheduledRunView {
+        configuration_generation: r.configuration_generation.clone(),
+        agent_version: r.agent_version,
         id: r.id.clone(),
         fired_at: r.fired_at.to_string(),
         status: r.status.clone(),
@@ -431,10 +671,15 @@ fn scheduled_run_json(r: &scheduled::ScheduledRun) -> ScheduledRunView {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 pub struct ScheduledBody {
     #[serde(default)]
+    pub principal_id: Option<String>,
+    #[serde(default)]
+    pub agent_version: Option<i64>,
+    #[serde(default)]
     pub dot_id: Option<String>,
     pub name: String,
     pub prompt: String,
-    pub model: String,
+    #[serde(default)]
+    pub model: Option<String>,
     pub cron: String,
     #[serde(default)]
     pub timezone: String,
@@ -444,10 +689,15 @@ pub struct ScheduledBody {
     pub reuse_conversation: bool,
     #[serde(default)]
     pub reuse_rounds: i64,
-    /// The chat a reusing row continues in: an id links that chat, `""` lets
-    /// the next run open a fresh one, absent leaves the link as it is.
     #[serde(default)]
     pub linked_session_id: Option<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct ScheduledUpdateBody {
+    #[serde(flatten)]
+    pub action: ScheduledBody,
+    pub expected_configuration_generation: String,
 }
 
 async fn compute_next(cron: &str, tz_name: &str) -> Result<Option<jiff::Timestamp>, String> {
@@ -461,70 +711,54 @@ async fn compute_next(cron: &str, tz_name: &str) -> Result<Option<jiff::Timestam
 pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
-    let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return bad_request(msg),
-    };
-    let parsed: ScheduledBody = match serde_json::from_slice(&bytes) {
-        Ok(p) => p,
-        Err(err) => return bad_request(format!("parsing the action body: {err}")),
-    };
-    if let Err(msg) = validate_scheduled(&parsed) {
-        return bad_request(msg);
+    let parsed: ScheduledBody =
+        or_return!(super::read_json(req.into_body(), "the scheduled action").await);
+    let owner = parsed
+        .principal_id
+        .as_ref()
+        .map(|id| scheduled::ScheduleOwner::Principal(id.clone()))
+        .unwrap_or_else(|| scheduled::ScheduleOwner::User(user.id.clone()));
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        schedule_access_in(&state, &mut tx, &user.id, &owner, lang).await?;
+        let link = schedule_body_in(&state, &mut tx, &owner, &parsed, None, lang).await?;
+        let timezone = if parsed.timezone.trim().is_empty() {
+            user.timezone.clone().unwrap_or_else(|| "UTC".into())
+        } else {
+            parsed.timezone.trim().into()
+        };
+        let next = compute_next(&parsed.cron, &timezone)
+            .await
+            .map_err(|_| invalid_schedule(lang))?;
+        let action = scheduled::create_in(
+            &mut tx,
+            scheduled::NewAction {
+                owner,
+                created_by: user.id.clone(),
+                dot_id: parsed.dot_id,
+                linked_session_id: link.flatten(),
+                name: parsed.name.trim().into(),
+                prompt: parsed.prompt,
+                model: parsed.model,
+                agent_version: parsed.agent_version,
+                cron: parsed.cron,
+                timezone,
+                tools_enabled: parsed.tools_enabled,
+                reuse_conversation: parsed.reuse_conversation,
+                reuse_rounds: parsed.reuse_rounds,
+                next_run_at: next,
+            },
+        )
+        .await
+        .map_err(internal)?;
+        let view = scheduled_view_in(&mut tx, &action)
+            .await
+            .map_err(internal)?;
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(StatusCode::CREATED, view))
     }
-    if let Err(response) =
-        validate_dot_binding(&state.db, &user.id, parsed.dot_id.as_deref(), None, lang).await
-    {
-        return response;
-    }
-    let link = match resolve_linked_session(
-        &state.db,
-        &user.id,
-        parsed.reuse_conversation,
-        parsed.linked_session_id.as_deref(),
-        parsed.dot_id.as_deref(),
-        lang,
-    )
     .await
-    {
-        Ok(link) => link,
-        Err(resp) => return resp,
-    };
-    let tz = if parsed.timezone.trim().is_empty() {
-        user.timezone.clone().unwrap_or_else(|| "UTC".into())
-    } else {
-        parsed.timezone.trim().to_string()
-    };
-    let next = match compute_next(&parsed.cron, &tz).await {
-        Ok(n) => n,
-        Err(e) => return bad_request(e),
-    };
-    let new = scheduled::NewAction {
-        dot_id: parsed.dot_id.clone(),
-        linked_session_id: link.flatten(),
-        user_id: user.id.clone(),
-        name: parsed.name.trim().to_string(),
-        prompt: parsed.prompt,
-        model: parsed.model,
-        cron: parsed.cron,
-        timezone: tz,
-        tools_enabled: parsed.tools_enabled,
-        reuse_conversation: parsed.reuse_conversation,
-        reuse_rounds: parsed.reuse_rounds,
-        next_run_at: next,
-    };
-    let a = match scheduled::create(&state.db, new).await {
-        Ok(a) => a,
-        Err(err) => return internal(err),
-    };
-
-    let mut row = action_json(&a);
-    row.dot = match bound_dot_view(&state.db, &user.id, row.dot_id.as_deref()).await {
-        Ok(dot) => dot,
-        Err(error) => return internal(error),
-    };
-    json_ok(StatusCode::CREATED, row)
+    .unwrap_or_else(|response| response)
 }
 
 /// What a body's `linked_session_id` asks for: `None` leaves the link alone,
@@ -604,9 +838,6 @@ fn validate_scheduled(parsed: &ScheduledBody) -> Result<(), String> {
     if prompt.is_empty() || prompt.len() > 8000 {
         return Err("`prompt` must be 1..=8000 characters".into());
     }
-    if parsed.model.trim().is_empty() {
-        return Err("`model` must not be empty".into());
-    }
     Ok(())
 }
 
@@ -618,111 +849,84 @@ pub async fn scheduled_update(
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
-    let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return bad_request(msg),
-    };
-    let parsed: ScheduledBody = match serde_json::from_slice(&bytes) {
-        Ok(p) => p,
-        Err(err) => return bad_request(format!("parsing the action body: {err}")),
-    };
-    if let Err(msg) = validate_scheduled(&parsed) {
-        return bad_request(msg);
+    let body: ScheduledUpdateBody =
+        or_return!(super::read_json(req.into_body(), "the scheduled action").await);
+    let parsed = body.action;
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let previous = scheduled::get_by_id_in(&mut tx, &id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| schedule_unavailable(lang))?;
+        schedule_access_in(&state, &mut tx, &user.id, &previous.owner, lang).await?;
+        if previous.configuration_generation != body.expected_configuration_generation {
+            return Err(schedule_conflict(lang));
+        };
+        let link = schedule_body_in(
+            &state,
+            &mut tx,
+            &previous.owner,
+            &parsed,
+            previous.dot_id.as_deref(),
+            lang,
+        )
+        .await?;
+        let timezone = if parsed.timezone.trim().is_empty() {
+            user.timezone.clone().unwrap_or_else(|| "UTC".into())
+        } else {
+            parsed.timezone.trim().into()
+        };
+        let next = compute_next(&parsed.cron, &timezone)
+            .await
+            .map_err(|_| invalid_schedule(lang))?;
+        let edit = scheduled::EditAction {
+            dot_id: parsed.dot_id,
+            linked_session_id: link,
+            name: parsed.name.trim().into(),
+            prompt: parsed.prompt,
+            model: parsed.model,
+            agent_version: parsed.agent_version,
+            cron: parsed.cron,
+            timezone,
+            tools_enabled: parsed.tools_enabled,
+            reuse_conversation: parsed.reuse_conversation,
+            reuse_rounds: parsed.reuse_rounds,
+            next_run_at: next,
+        };
+        let result = scheduled::update_in(
+            &mut tx,
+            &previous.owner,
+            &id,
+            &body.expected_configuration_generation,
+            &edit,
+        )
+        .await
+        .map_err(internal)?;
+        let action = match result {
+            scheduled::EditOutcome::Saved(row) => row,
+            scheduled::EditOutcome::Missing => return Err(schedule_unavailable(lang)),
+            scheduled::EditOutcome::Conflict => return Err(schedule_conflict(lang)),
+        };
+        let view = scheduled_view_in(&mut tx, &action)
+            .await
+            .map_err(internal)?;
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(StatusCode::OK, Updated::Row(Box::new(view))))
     }
-    let previous = match scheduled::get(&state.db, &user.id, &id).await {
-        Ok(Some(row)) => row,
-        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
-        Err(error) => return internal(error),
-    };
-    if let Err(response) = validate_dot_binding(
-        &state.db,
-        &user.id,
-        parsed.dot_id.as_deref(),
-        previous.dot_id.as_deref(),
-        lang,
-    )
     .await
-    {
-        return response;
-    }
-    let link = match resolve_linked_session(
-        &state.db,
-        &user.id,
-        parsed.reuse_conversation,
-        parsed.linked_session_id.as_deref(),
-        parsed.dot_id.as_deref(),
-        lang,
-    )
-    .await
-    {
-        Ok(link) => link,
-        Err(resp) => return resp,
-    };
-    // Same fallback the create and preview paths apply. Without it a body that
-    // omits `timezone` 400s here while succeeding there.
-    let tz = if parsed.timezone.trim().is_empty() {
-        user.timezone.clone().unwrap_or_else(|| "UTC".into())
-    } else {
-        parsed.timezone.trim().to_string()
-    };
-    let next = match compute_next(&parsed.cron, &tz).await {
-        Ok(n) => n,
-        Err(e) => return bad_request(e),
-    };
-    let edit = scheduled::EditAction {
-        dot_id: parsed.dot_id.clone(),
-        linked_session_id: link,
-        name: parsed.name.trim().to_string(),
-        prompt: parsed.prompt,
-        model: parsed.model,
-        cron: parsed.cron,
-        timezone: tz,
-        tools_enabled: parsed.tools_enabled,
-        reuse_conversation: parsed.reuse_conversation,
-        reuse_rounds: parsed.reuse_rounds,
-        next_run_at: next,
-    };
-    match scheduled::update(&state.db, &user.id, &id, edit).await {
-        Ok(true) => {
-            let a = scheduled::get(&state.db, &user.id, &id)
-                .await
-                .ok()
-                .flatten();
-            match a {
-                Some(a) => {
-                    // An edited action keeps the runs it already has, so the
-                    // response must not report them as zero.
-                    let counts = scheduled::run_counts_for_user(&state.db, &user.id)
-                        .await
-                        .ok()
-                        .and_then(|counts| counts.get(&a.id).copied())
-                        .unwrap_or((0, 0));
-                    let mut row = action_json_with_counts(&a, counts);
-                    row.dot = match bound_dot_view(&state.db, &user.id, row.dot_id.as_deref()).await
-                    {
-                        Ok(dot) => dot,
-                        Err(error) => return internal(error),
-                    };
-                    if let Err(err) = flag_deleted_last_chats(
-                        &state.db,
-                        [(row.last_session_id.as_deref(), &mut row.last_chat_deleted)],
-                    )
-                    .await
-                    {
-                        return internal(err);
-                    }
-                    json_ok(StatusCode::OK, Updated::Row(Box::new(row)))
-                }
-                None => json_ok(
-                    StatusCode::OK,
-                    Updated::<ActionView>::Acknowledged(super::Done::OK),
-                ),
-            }
-        }
-        Ok(false) => json_error(StatusCode::NOT_FOUND, "not_found", "no such action"),
-        Err(err) => internal(err),
-    }
+    .unwrap_or_else(|response| response)
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct ScheduledEnabledBody {
+    pub enabled: bool,
+    pub expected_configuration_generation: String,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ScheduledEnabledView {
+    pub enabled: bool,
+    pub configuration_generation: String,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
@@ -738,40 +942,49 @@ pub async fn scheduled_toggle(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    let (_, body) = req.into_parts();
-    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
-        Ok(b) => b,
-        Err(msg) => return bad_request(msg),
-    };
-    let parsed: EnabledBody = match serde_json::from_slice(&bytes) {
-        Ok(p) => p,
-        Err(err) => return bad_request(format!("parsing the toggle body: {err}")),
-    };
-    let Some(action) = scheduled::get(&state.db, &user.id, &id)
+    let lang = Lang::from_request(req.headers());
+    let parsed: ScheduledEnabledBody =
+        or_return!(super::read_json(req.into_body(), "the scheduled action toggle").await);
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let action = scheduled::get_by_id_in(&mut tx, &id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| schedule_unavailable(lang))?;
+        schedule_access_in(&state, &mut tx, &user.id, &action.owner, lang).await?;
+        let next = if parsed.enabled {
+            compute_next(&action.cron, &action.timezone)
+                .await
+                .map_err(|_| invalid_schedule(lang))?
+        } else {
+            None
+        };
+        let result = scheduled::set_enabled_in(
+            &mut tx,
+            &action.owner,
+            &id,
+            &parsed.expected_configuration_generation,
+            parsed.enabled,
+            next,
+        )
         .await
-        .ok()
-        .flatten()
-    else {
-        return json_error(StatusCode::NOT_FOUND, "not_found", "no such action");
-    };
-    let next = if parsed.enabled {
-        match compute_next(&action.cron, &action.timezone).await {
-            Ok(n) => n,
-            Err(e) => return bad_request(e),
-        }
-    } else {
-        None
-    };
-    match scheduled::set_enabled(&state.db, &user.id, &id, parsed.enabled, next).await {
-        Ok(true) => json_ok(
+        .map_err(internal)?;
+        let row = match result {
+            scheduled::EditOutcome::Saved(row) => row,
+            scheduled::EditOutcome::Missing => return Err(schedule_unavailable(lang)),
+            scheduled::EditOutcome::Conflict => return Err(schedule_conflict(lang)),
+        };
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(
             StatusCode::OK,
-            EnabledBody {
-                enabled: parsed.enabled,
+            ScheduledEnabledView {
+                enabled: row.enabled,
+                configuration_generation: row.configuration_generation,
             },
-        ),
-        Ok(false) => json_error(StatusCode::NOT_FOUND, "not_found", "no such action"),
-        Err(err) => internal(err),
+        ))
     }
+    .await
+    .unwrap_or_else(|response| response)
 }
 
 /// DELETE /api/v0/scheduled/{id}
@@ -782,21 +995,34 @@ pub async fn scheduled_delete(
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
-    match scheduled::delete(&state.db, &user.id, &id).await {
-        Ok(scheduled::DeleteOutcome::Deleted) => Response::builder()
-            .status(StatusCode::NO_CONTENT)
-            .body(rama::http::Body::empty())
-            .expect("static empty response"),
-        Ok(scheduled::DeleteOutcome::Missing) => {
-            json_error(StatusCode::NOT_FOUND, "not_found", "no such action")
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let action = scheduled::get_by_id_in(&mut tx, &id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| schedule_unavailable(lang))?;
+        schedule_access_in(&state, &mut tx, &user.id, &action.owner, lang).await?;
+        match scheduled::delete_in(&mut tx, &action.owner, &id)
+            .await
+            .map_err(internal)?
+        {
+            scheduled::DeleteOutcome::Missing => Err(schedule_unavailable(lang)),
+            scheduled::DeleteOutcome::Pending => Err(json_error(
+                StatusCode::CONFLICT,
+                "run_pending",
+                &t(lang, "dot-background-error-pending-delete"),
+            )),
+            scheduled::DeleteOutcome::Deleted => {
+                tx.commit().await.map_err(internal)?;
+                Ok(Response::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body(rama::http::Body::empty())
+                    .expect("static empty response"))
+            }
         }
-        Ok(scheduled::DeleteOutcome::Pending) => json_error(
-            StatusCode::CONFLICT,
-            "run_pending",
-            &t(lang, "dot-background-error-pending-delete"),
-        ),
-        Err(err) => internal(err),
     }
+    .await
+    .unwrap_or_else(|response| response)
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]

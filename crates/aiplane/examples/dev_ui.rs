@@ -818,7 +818,9 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .map_err(|e| anyhow::anyhow!("parse bind address: {e}"))?;
     // `router::serve` binds the socket and listens until SIGINT / panic.
-    router::serve(Arc::new(state), addr).await?;
+    let state = Arc::new(state);
+    aiplane_runtime::server::scheduled::worker::spawn(state.clone());
+    router::serve(state, addr).await?;
     drop(chat_mock);
     drop(voice_mock);
     drop(erp_mock);
@@ -1971,10 +1973,12 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
         let action = scheduled::create(
             &state.db,
             NewAction {
-                user_id: "dev".into(),
+                owner: scheduled::ScheduleOwner::User("dev".into()),
+                created_by: "dev".into(),
                 name: name.into(),
                 prompt: prompt.into(),
-                model: "demo-model".into(),
+                model: Some("demo-model".into()),
+                agent_version: None,
                 cron: cron.into(),
                 timezone: "Europe/Berlin".into(),
                 tools_enabled: true,
@@ -2009,17 +2013,16 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             let run_id = scheduled::record_run_start(&state.db, &action.id).await?;
             scheduled::attach_run_turn(&state.db, &run_id, &session, &turn, true, Some(5)).await?;
             chatdb::append_content(&state.db, &turn, "Here is the digest for this run.").await?;
-            chatdb::finalize_turn(&state.db, &turn, TurnStatus::Completed, None).await?;
 
             // The last run of the dependency report failed, so the page has a
             // failure to render as well as successes.
             let failed = reuse && run + 1 == runs;
             let (status, error) = if failed {
-                ("error", Some("upstream timed out after 60s"))
+                (TurnStatus::Errored, Some("upstream timed out after 60s"))
             } else {
-                ("ok", None)
+                (TurnStatus::Completed, None)
             };
-            scheduled::finish_run(&state.db, &run_id, status, Some(&session), error).await?;
+            chatdb::finalize_turn(&state.db, &turn, status, error).await?;
             // Seeded in a tight loop, so every run would carry the same
             // timestamp and the history page would look broken. Space them a
             // day apart, oldest first, the way real fires arrive.
@@ -2031,13 +2034,10 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
                 .bind(&run_id)
                 .execute(&state.db)
                 .await?;
-            scheduled::mark_ran(
+            aiplane_runtime::server::background::reconcile_turn(
                 &state.db,
-                &action.id,
-                status,
-                Some(&session),
-                Some(next.parse()?),
-                error,
+                &scheduled::ScheduleOwner::User("dev".into()),
+                &turn,
             )
             .await?;
         }

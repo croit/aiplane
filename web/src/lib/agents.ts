@@ -418,6 +418,8 @@ export const agentsApi = {
 		),
 	testEventsUrl: (id: string, sessionId: string) =>
 		`/api/v0/agents/${encodeURIComponent(id)}/test/${encodeURIComponent(sessionId)}/events`,
+	cancelTestConversation: (id: string, sessionId: string, turnId: string) =>
+		call<{ ok: true }>(`/api/v0/agents/${encodeURIComponent(id)}/test/${encodeURIComponent(sessionId)}/cancel`, json('POST', { turn_id: turnId })),
 	testTurnView: (id: string, sessionId: string, turnId: string) =>
 		call<TestTurnView>(`/api/v0/agents/${id}/test/${sessionId}/turns/${turnId}/debug`),
 	resumeTurn: (id: string, sessionId: string, turnId: string, requestId: string, answer: Answer) =>

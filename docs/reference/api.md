@@ -160,7 +160,7 @@ Examples of its task families:
 | `/api/v0/scheduled*`, `/api/v0/webhooks*`, `/api/v0/inbox*` | Automation and durable decisions; [automation guide](../guide/automation-and-inbox.md). |
 | `/api/v0/agents*` | Agent drafts, grants, evaluation, publication and observation; agent guides. |
 | `/api/v0/dots*` | List/create/active-state require resolved `can_manage_dots`; owner-scoped access remains enforced. The four connection routes additionally admit organization member writers for explicit own-principal OAuth management; they return independent action capabilities and no user credential. The memory routes also admit organization member readers and writers through current membership and existing shares; shared-note writes additionally require gateway administration. Remaining routes retain personal ownership. Personal Dot lifecycle, tool selection, tool/action approval rules, private chats, memory and activity; scheduled actions and webhooks can run as an owned Dot; [AIplane Dots](../dots.md). |
-| `/api/v0/organizations*` | Current group-derived membership, organization details and named organization Dot creation/activation. Creation requires membership and agent-management permission; configuration uses existing agent shares and principal grants. Organization member writers can run private saved-draft conversations through the existing agent test routes; published and automated execution remain unavailable; [organization Dots](../dots-organizations.md). |
+| `/api/v0/organizations*` | Current group-derived membership, organization details and named organization Dot creation/activation. Creation requires membership and agent-management permission; configuration uses existing agent shares and principal grants. Organization member writers can run private saved-draft and pinned published conversations through the existing agent test routes; [organization Dots](../dots-organizations.md). |
 | `/api/v0/rag*` | Knowledge collections, snapshots, indexing and profiles; [knowledge](../admin/knowledge.md). |
 | `/api/v0/admin/*` | Administrative models, grants, settings and catalogs; administration guides. |
 | `/api/v0/setup/*` | Verified setup/recovery state machine. |
@@ -294,6 +294,65 @@ stops new firings while allowing a pending decision to settle; deleting a
 trigger with a nonterminal run returns `409`. Running background turns can be
 watched and stopped through the existing conversation endpoints; interactive
 messages, steering and history rewrites are refused while that turn runs.
+
+### Organization scheduled actions
+
+`GET /api/v0/scheduled?principal_id={dot_id}` selects an organization Dot's
+schedule inventory. Without that query, the route lists the authenticated
+user's schedules. The scoped response contains `principal_id`, `can_write`,
+`actions`, the actual target in `dots`, and its published `versions` using the
+existing agent version shape. Organization responses have `models: []` and
+`default_timezone: null`; the client must supply a timezone. An empty schedule
+list still returns the actual Dot and its versions.
+
+Creation uses the existing `POST /api/v0/scheduled` route. For an organization
+Dot, send `principal_id`, a positive `agent_version`, `name`, `prompt`, `cron`,
+`timezone`, `tools_enabled`, `reuse_conversation: false` and `reuse_rounds`.
+Omit `model`, `dot_id` and `linked_session_id`. The model comes from the pinned
+published spec and the operator's agent model configuration, under the Dot
+principal's current grants. Each fire opens a fresh private principal-owned
+conversation. Organization webhooks and conversation reuse are unavailable.
+
+The returned action includes `principal_id`, `agent_version` and
+`configuration_generation`; its `model` and `dot_id` are null. Ownership is
+immutable. The schedule belongs to the principal and survives deletion of its
+creating user. Inventory, creation, edits, toggles, deletion and run history
+require current organization membership and effective Write access, checked in
+the operation's transaction. Nonmember administrator recovery rights do not
+expose these private surfaces. Personal Dot management permission is not a
+prerequisite.
+
+`PUT /api/v0/scheduled/{id}` requires the complete configuration and
+`expected_configuration_generation` from the returned action. Organization
+updates retain the same `principal_id`. `POST /api/v0/scheduled/{id}/toggle`
+requires `{enabled,expected_configuration_generation}` and returns
+`{enabled,configuration_generation}`. These generation requirements also apply
+to user-owned schedules. Missing fields are rejected; stale generations return
+409. Execution configuration changes rotate the generation. Identical saves,
+name-only changes and pause/resume retain it.
+
+`GET /api/v0/scheduled/{id}/runs` derives scope from the stored action; no
+principal query is required. It returns the actual action and up to 50 runs,
+including `session_id`, `assistant_turn_id`, `agent_version` and
+`configuration_generation`. Older user runs may have null version and
+generation snapshots. The organization UI opens a recorded conversation at
+`/agents/{principal_id}?tab=try&test_session={session_id}`. Its source and pinned
+version are obtained from the private history endpoints.
+
+Pausing prevents new fires and preserves an admitted pending decision.
+Changing execution configuration invalidates a pending run's former dispatch
+authority. To stop a running or suspended private turn, use
+`POST /api/v0/agents/{id}/test/{session}/cancel` with `{turn_id}`. The exact
+assistant turn must belong to that private conversation; current member Write
+access is required. Cancellation remains available after deactivation,
+principal disablement, grant removal or configuration changes. Success returns
+`{ok:true}`; an unavailable turn returns 404. Ordinary agents can use this route
+for their private draft conversations.
+
+Deleting a schedule with a running, waiting or starting run returns 409.
+Stop or settle it before retrying. Deleting a Dot with retained principal-owned
+schedules also returns 409: delete those schedules first, even if their runs
+have finished. Schedule deletion removes its recorded run history.
 
 ## Public entry points and credentials
 
@@ -458,6 +517,7 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/agents/{id}/test-runs/{run}` |
 | `POST /api/v0/agents/{id}/test/messages` |
 | `GET /api/v0/agents/{id}/test/{session}/events` |
+| `POST /api/v0/agents/{id}/test/{session}/cancel` |
 | `GET /api/v0/agents/{id}/test/{session}/turns/{turn}/debug` |
 | `GET /api/v0/agents/{id}/tests` |
 | `POST /api/v0/agents/{id}/tests` |

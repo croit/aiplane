@@ -342,6 +342,8 @@ The mise task builds the SPA and sets `AIPLANE_STATIC_DIR`.
 This runs the `dev_ui` example (`crates/aiplane/examples/dev_ui.rs`), which boots the real rama gateway on `127.0.0.1:8080` against:
 
 - an **in-memory SQLite**;
+- the existing **scheduled-action worker**, so authored cron jobs fire against
+  the same mock model and durable run-history path used by the UI;
 - an in-process **`wiremock` chat pool** that serves `GET /models` (advertising `demo-model` + `demo-model-pro`) and `POST /chat/completions` (a streaming variant emitting two SSE deltas + `[DONE]`, plus non-streaming and feedback-extraction variants);
 - a published agent (`website-helper`, on the `chat` pool) with a fixed embed key for `http://localhost:8000`, so the embed widget example works: `python3 -m http.server 8000 -d examples/embed`, then open `http://localhost:8000/` (see [`embed.md`](embed.md));
 - a **scripted agent model** on the chat mock, so every agent flow runs end to end: it answers only requests that offer an agent's synthetic tools (and the test-case judge, always "passed") and acts on the visitor's last message — an email address sets `email` and requests a verification code, "invoice"/"billing" sets `issue` and calls `forward_request`, "human"/"person" calls `request_human`, and a routed sub-agent calls `finish`. `website-helper` is wired for all of it: an `otp` verifier on a mock **Demo ERP** MCP connector (`erp`, agent scope) that accepts the code `123456`, a `billing` route behind that verifier to the published sub-agent `billing-helper`, and a `staff` handoff route that `eng@example.com` answers through a `respond` share (log in with the printed non-admin cookie to answer it from `/inbox`);

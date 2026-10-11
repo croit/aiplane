@@ -51,3 +51,5 @@ chat-attempt-reason-loop = 模型开始重复自身
 chat-attempt-reason-repeated_call = 反复进行同一个工具调用
 chat-attempt-retry = 以思考强度 { $effort } 重新尝试（第 { $n } 次）
 chat-loop-exhausted = 模型在全部 { $attempts } 次尝试中都在重复，即使降低了思考强度。请换一种方式提问，或将问题拆分成更小的部分。
+
+chat-error-run-cancelled = 运行已取消。

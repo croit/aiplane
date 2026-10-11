@@ -485,11 +485,20 @@ pub async fn claim_suspension_in(
 /// Give up on a paused turn: it ends `cancelled`, like a stopped one, and its
 /// waiting call is recorded as never run. Returns whether anything was paused.
 pub async fn cancel_suspended_turn(pool: &Pool, turn_id: &str) -> Result<bool, DbError> {
-    let now = Timestamp::now().to_string();
     let mut tx = pool.begin().await?;
+    let cancelled = cancel_suspended_turn_in(&mut tx, turn_id).await?;
+    tx.commit().await?;
+    Ok(cancelled)
+}
+
+pub async fn cancel_suspended_turn_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+) -> Result<bool, DbError> {
+    let now = Timestamp::now().to_string();
     let removed = sqlx::query("DELETE FROM chat_turn_suspensions WHERE turn_id = ?")
         .bind(turn_id)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await?
         .rows_affected()
         > 0;
@@ -502,21 +511,14 @@ pub async fn cancel_suspended_turn(pool: &Pool, turn_id: &str) -> Result<bool, D
     )
     .bind(&now)
     .bind(turn_id)
-    .execute(&mut *tx)
+    .execute(&mut *connection)
     .await?;
-    sqlx::query(
-        r#"UPDATE chat_tool_calls
-           SET status = 'errored',
-               output_json = COALESCE(output_json, ?),
-               completed_at = ?
-           WHERE turn_id = ? AND status = 'running'"#,
+    super::turns::error_running_tool_calls_in(
+        connection,
+        turn_id,
+        &crate::i18n::t(crate::i18n::Lang::En, "chat-error-run-cancelled"),
     )
-    .bind(serde_json::Value::String("Cancelled while waiting for a decision.".into()).to_string())
-    .bind(&now)
-    .bind(turn_id)
-    .execute(&mut *tx)
     .await?;
-    tx.commit().await?;
     Ok(true)
 }
 
@@ -1269,6 +1271,64 @@ mod tests {
             Decision::Deny {
                 reason: DenyReason::Timeout
             }
+        );
+    }
+    #[tokio::test]
+    async fn cancellation_and_finalization_share_the_callers_transaction() {
+        let pool = pool().await;
+        let paused_session = running_turn(&pool, "paused").await;
+        let active_session = running_turn(&pool, "active").await;
+        suspend_turn(&pool, &suspension("paused", in_an_hour()))
+            .await
+            .unwrap();
+        let before = get_suspension(&pool, "paused").await.unwrap().unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        assert!(cancel_suspended_turn_in(&mut tx, "paused").await.unwrap());
+        super::super::finalize_turn_in(&mut tx, "active", TurnStatus::Cancelled, None)
+            .await
+            .unwrap();
+        tx.rollback().await.unwrap();
+        assert_eq!(get_suspension(&pool, "paused").await.unwrap(), Some(before));
+        assert_eq!(
+            get_turn(&pool, &active_session, "active")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::InProgress
+        );
+        assert_eq!(
+            get_turn_with_tools(&pool, &active_session, "active")
+                .await
+                .unwrap()
+                .unwrap()
+                .tool_calls[0]
+                .status,
+            ToolCallStatus::Running
+        );
+        let mut tx = pool.begin().await.unwrap();
+        assert!(cancel_suspended_turn_in(&mut tx, "paused").await.unwrap());
+        assert!(!cancel_suspended_turn_in(&mut tx, "paused").await.unwrap());
+        super::super::finalize_turn_in(&mut tx, "active", TurnStatus::Cancelled, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let paused = get_turn_with_tools(&pool, &paused_session, "paused")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(paused.turn.status, TurnStatus::Cancelled);
+        assert!(paused.suspension.is_none());
+        assert_eq!(paused.tool_calls[0].status, ToolCallStatus::Errored);
+        let active = get_turn_with_tools(&pool, &active_session, "active")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(active.turn.status, TurnStatus::Cancelled);
+        assert_eq!(active.tool_calls[0].status, ToolCallStatus::Errored);
+        assert_eq!(
+            active.tool_calls[0].output_json.as_deref(),
+            Some("\"The run was cancelled.\"")
         );
     }
 }

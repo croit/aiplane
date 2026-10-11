@@ -31,8 +31,8 @@ async fn running_background() -> (Fx, String) {
     sqlx::query("INSERT INTO scheduled_actions(id,user_id,name,prompt,model,cron,timezone,dot_id,created_at,updated_at)
         VALUES('action','alice','Work','Work','m','0 * * * *','UTC',?,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
         .bind(dot).execute(&fx.state.db).await.unwrap();
-    sqlx::query("INSERT INTO scheduled_runs(id,action_id,fired_at,session_id,assistant_turn_id,tools_enabled,created_at)
-        VALUES('run','action','2026-01-01T00:00:00Z',?,'reply',0,'2026-01-01T00:00:00Z')")
+    sqlx::query("INSERT INTO scheduled_runs(id,action_id,fired_at,session_id,assistant_turn_id,tools_enabled,configuration_generation,agent_version,created_at)
+        SELECT 'run',id,'2026-01-01T00:00:00Z',?,'reply',0,configuration_generation,agent_version,'2026-01-01T00:00:00Z' FROM scheduled_actions WHERE id='action'")
         .bind(&session).execute(&fx.state.db).await.unwrap();
     (fx, session)
 }

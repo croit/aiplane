@@ -1083,6 +1083,38 @@ fn organization_published_admission_uses_the_existing_private_opener_and_source_
     );
 }
 
+#[test]
+fn organization_schedules_and_private_stop_use_shared_admission() {
+    assert_within(
+        "Only the scheduled worker may admit an organization schedule through its exact recorded source.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/agents/profile.rs",
+                why: "the shared loader defines exact scheduled-source admission",
+            },
+            Allowed {
+                path: "aiplane-runtime/src/server/scheduled/worker.rs",
+                why: "the existing worker opens and attaches the private principal turn in one transaction",
+            },
+        ],
+        &scan(&["load_scheduled("], |source| source.code.as_str()),
+    );
+    assert_within(
+        "Private Stop must use the background structural proof in its mutation transaction.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/server/background.rs",
+                why: "the existing background matcher owns original run and session proof",
+            },
+            Allowed {
+                path: "aiplane-runtime/src/agents/resume.rs",
+                why: "the private cancellation gate validates the binding before turn mutation",
+            },
+        ],
+        &scan(&["validate_turn_in("], |source| source.code.as_str()),
+    );
+}
+
 /// `.run(<context>, …)`: a `Tool::run` call, told from other `run` methods
 /// by its first argument being a tool context.
 fn tool_run_calls(src: &Source) -> Vec<usize> {

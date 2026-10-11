@@ -1102,7 +1102,7 @@ pub async fn session_events(
             {
                 match aiplane_runtime::server::background::for_turn(
                     &state.db,
-                    &user.id,
+                    &aiplane_runtime::server::scheduled::ScheduleOwner::User(user.id.clone()),
                     &turn.turn.id,
                 )
                 .await
@@ -1463,10 +1463,14 @@ async fn refuse_background_mutation(
             chat::TurnStatus::InProgress | chat::TurnStatus::Suspended
         )
     }) {
-        if aiplane_runtime::server::background::for_turn(&state.db, &user.id, &turn.turn.id)
-            .await
-            .map_err(internal)?
-            .is_some()
+        if aiplane_runtime::server::background::for_turn(
+            &state.db,
+            &aiplane_runtime::server::scheduled::ScheduleOwner::User(user.id.clone()),
+            &turn.turn.id,
+        )
+        .await
+        .map_err(internal)?
+        .is_some()
         {
             return Err(submit_refusal(SubmitTurnError::BackgroundBusy, lang));
         }

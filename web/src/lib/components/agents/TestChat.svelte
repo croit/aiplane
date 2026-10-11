@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { agentsApi, readFailure, settleAnswered, testTurnLabel, turnsToRead, type AgentError, type PrivateChatSource, type Spec, type TestDebug, type TestTurnView } from '#lib/agents.js';
 	import { createConversationController, type ConversationController } from '#lib/chat.svelte.js';
 	import { waitingFrom, waitingLead, type Answer, type SuspensionView } from '#lib/suspension.js';
@@ -12,7 +12,7 @@
 	 * Private agent conversations use the saved draft or the organization's
 	 * published version. The server pins the source for each conversation.
 	 */
-	let { agentId, spec = {}, dirty, onsave, onturn, organization = false, sources = ['draft'], liveVersion = null }: {
+	let { agentId, spec = {}, dirty, onsave, onturn, organization = false, sources = ['draft'], liveVersion = null, initialSessionId = null, onsession }: {
 		agentId: string;
 		spec?: Spec;
 		dirty: boolean;
@@ -21,6 +21,8 @@
 		organization?: boolean;
 		sources?: PrivateChatSource[];
 		liveVersion?: number | null;
+		initialSessionId?: string | null;
+		onsession?: (sessionId: string | null) => void;
 	} = $props();
 
 	let controller = $state<ConversationController | null>(null);
@@ -30,6 +32,10 @@
 	let selected = $state<string | null>(null);
 	let error = $state<string | null>(null);
 	let sending = $state(false);
+	let stopping = $state(false);
+	let historyLoading = $state(false);
+	let lastExternalSession: string | null | undefined;
+	let conversationEpoch = 0;
 	let answering = $state<string | null>(null);
 	// Pauses just answered, by the request answered: their old
 	// debug view is gone, and a new one is read once the stream shows the
@@ -38,12 +44,27 @@
 	let reading = new Set<string>();
 
 	const turns = $derived(controller?.state.turns ?? []);
+	const stoppable = $derived(turns.findLast((live) => live.turn.role === 'assistant' && (live.turn.status === 'in_progress' || live.turn.status === 'suspended'))?.turn.id ?? null);
 	const working = $derived(controller?.state.liveTurnId != null);
-	const busy = $derived(working || sending || answering !== null);
+	const busy = $derived(working || sending || stopping || historyLoading || answering !== null);
 	const offeredSources = $derived(conversation?.source === 'published' && !sources.includes('published') ? [...sources, 'published' as const] : sources);
 	const publishedVersion = $derived(conversation?.source === 'published' ? conversation.agent_version : liveVersion);
 	const latest = $derived(turns.findLast((live) => views[live.turn.id])?.turn.id ?? null);
 	const shown = $derived(views[selected ?? latest ?? '']?.debug ?? null);
+
+	$effect(() => {
+		const sessionId = initialSessionId;
+		if (lastExternalSession === sessionId) return;
+		lastExternalSession = sessionId;
+		untrack(() => {
+			if (controller?.id === sessionId) return;
+			clearConversation();
+			if (sessionId) {
+				historyLoading = true;
+				open(sessionId).attach();
+			}
+		});
+	});
 
 	$effect(() => {
 		const debug = latest ? views[latest]?.debug : null;
@@ -62,12 +83,20 @@
 	async function readStopped() {
 		const c = controller;
 		if (!c) return;
+		const currentReading = reading;
 		answered = settleAnswered(c.state.turns, answered);
-		const ids = turnsToRead(c.state.turns, views, answered).filter((id) => !reading.has(id));
+		const ids = turnsToRead(c.state.turns, views, answered).filter((id) => !currentReading.has(id));
 		if (!ids.length) return;
-		for (const id of ids) reading.add(id);
+		for (const id of ids) currentReading.add(id);
 		try {
-			for (const id of ids) views[id] = await agentsApi.testTurnView(agentId, c.id, id);
+			for (const id of ids) {
+				const view = await agentsApi.testTurnView(agentId, c.id, id);
+				if (controller !== c) return;
+				views[id] = view;
+				conversation = { source: view.source, agent_version: view.agent_version };
+				source = view.source;
+				historyLoading = false;
+			}
 			// The output filter may have rewritten the answer after the turn's
 			// row was final; a fresh snapshot shows what a visitor would get.
 			if (controller === c) c.attach();
@@ -77,9 +106,9 @@
 			// end reads it again.
 			if (failure === 'retry') {
 				if (controller === c) c.attach();
-			} else error = failure;
+			} else if (controller === c) error = failure;
 		} finally {
-			for (const id of ids) reading.delete(id);
+			for (const id of ids) currentReading.delete(id);
 		}
 	}
 
@@ -92,43 +121,52 @@
 
 	async function send(message: string): Promise<boolean> {
 		if (busy) return false;
+		const epoch = conversationEpoch;
 		sending = true;
 		error = null;
 		selected = null;
 		try {
 			const sent = await agentsApi.sendTestMessage(agentId, message, controller?.id ?? null, conversation?.source ?? source);
+			if (conversationEpoch !== epoch) return false;
 			conversation = { source: sent.source, agent_version: sent.agent_version };
 			source = sent.source;
 			(controller?.id === sent.session_id ? controller : open(sent.session_id)).attach();
+			onsession?.(sent.session_id);
 			return true;
 		} catch (err) {
-			error = (err as AgentError).message;
+			if (conversationEpoch === epoch) error = (err as AgentError).message;
 			return false;
 		} finally {
-			sending = false;
+			if (conversationEpoch === epoch) sending = false;
 		}
 	}
 
 	async function answer(turnId: string, waiting: SuspensionView, decision: Answer): Promise<boolean> {
-		if (!controller) return false;
+		const c = controller;
+		if (!c) return false;
+		const epoch = conversationEpoch;
 		answering = turnId;
 		error = null;
 		try {
-			await agentsApi.resumeTurn(agentId, controller.id, turnId, waiting.request_id, decision);
+			await agentsApi.resumeTurn(agentId, c.id, turnId, waiting.request_id, decision);
+			if (conversationEpoch !== epoch) return false;
 			answered[turnId] = waiting.request_id;
 			delete views[turnId];
-			controller.attach();
+			c.attach();
 			return true;
 		} catch (err) {
-			error = (err as AgentError).message;
+			if (conversationEpoch === epoch) error = (err as AgentError).message;
 			return false;
 		} finally {
-			answering = null;
+			if (conversationEpoch === epoch) answering = null;
 		}
 	}
 
-	function reset() {
-		if (busy) return;
+	function clearConversation() {
+		conversationEpoch += 1;
+		sending = false;
+		answering = null;
+		stopping = false;
 		onturn?.(null);
 		controller?.destroy();
 		controller = null;
@@ -138,9 +176,32 @@
 		answered = {};
 		selected = null;
 		error = null;
+		historyLoading = false;
+		reading = new Set();
 	}
 
-	onDestroy(() => controller?.destroy());
+	function reset() {
+		if (busy) return;
+		clearConversation();
+		lastExternalSession = null;
+		onsession?.(null);
+	}
+
+	async function stop() {
+		const c = controller;
+		const turnId = stoppable;
+		if (!c || !turnId || stopping) return;
+		const epoch = conversationEpoch;
+		stopping = true;
+		try {
+			await agentsApi.cancelTestConversation(agentId, c.id, turnId);
+			if (conversationEpoch === epoch) c.attach();
+		} catch (err) {
+			if (conversationEpoch === epoch) error = (err as AgentError).message;
+		} finally { if (conversationEpoch === epoch) stopping = false; }
+	}
+
+	onDestroy(() => { conversationEpoch += 1; controller?.destroy(); });
 </script>
 
 <div data-test-chat class="flex min-h-0 flex-1 flex-col gap-3">
@@ -148,7 +209,7 @@
 		<p class="text-sm text-base-content/70">{t(organization ? 'agents-test-organization-intro' : 'agents-test-intro')}</p>
 		<button class="btn btn-ghost btn-sm ml-auto" type="button" onclick={reset} disabled={!turns.length || busy}>{t('agents-test-new')}</button>
 	</div>
-	{#if organization}
+	{#if organization && !historyLoading}
 		<label class="fieldset w-fit max-w-full">
 			<span class="fieldset-legend">{t('agents-test-source')}</span>
 			<select class="select select-sm max-w-full" value={source} disabled={busy} onchange={(event) => { if (busy) return; const next = event.currentTarget.value as PrivateChatSource; reset(); source = next; }}>
@@ -159,7 +220,8 @@
 		</label>
 		{#if conversation}<p class="text-sm text-base-content/70">{conversation.source === 'draft' ? t('agents-test-conversation-draft') : t('agents-test-conversation-published', { version: conversation.agent_version })}</p>{/if}
 	{/if}
-	{#if dirty && source === 'draft'}
+	{#if historyLoading}<p class="flex items-center gap-2 text-sm text-base-content/70"><span class="loading loading-spinner loading-sm"></span>{t('dot-activity-loading-more')}</p>{/if}
+	{#if dirty && !historyLoading && source === 'draft'}
 		<div class="alert alert-warning alert-soft text-sm">
 			<span>{t('agents-test-unsaved')}</span>
 			<button class="btn btn-sm" type="button" onclick={() => void onsave()}>{t('agents-save')}</button>
@@ -172,7 +234,7 @@
 			<StreamedChat
 				{turns}
 				{working}
-				disabled={sending || answering !== null}
+				disabled={sending || stopping || historyLoading || answering !== null}
 				empty={t(organization ? 'agents-test-organization-empty' : 'agents-test-empty')}
 				placeholder={t(organization ? 'embed-input-label' : 'agents-test-placeholder')}
 				sendLabel={t('agents-test-send')}
@@ -181,6 +243,9 @@
 				highlighted={selected}
 				onsend={send}
 			>
+				{#snippet composer()}
+					{#if stoppable}<button class="btn btn-error" type="button" onclick={stop} disabled={stopping || answering !== null}>{t('render-composer-stop')}</button>{/if}
+				{/snippet}
 				{#snippet below(live)}
 					{#if live.turn.status !== 'in_progress'}
 						<div class="chat-footer flex items-center gap-2 text-xs opacity-70">
@@ -198,7 +263,7 @@
 							class="col-start-2 mt-1 w-full max-w-md"
 							waiting={waitingFrom(waiting, live.tool_calls, views[live.turn.id]?.handoff ?? null)}
 							lead={t(waitingLead(waiting.kind, 'test'), { tool: waiting.tool ?? '' })}
-							note={waiting.kind === 'human_answer' ? t(organization ? (source === 'published' ? 'agents-test-organization-published-handoff' : 'agents-test-organization-draft-handoff') : 'agents-test-handoff-inbox-hint') : null}
+								note={!historyLoading && waiting.kind === 'human_answer' ? t(organization ? (source === 'published' ? 'agents-test-organization-published-handoff' : 'agents-test-organization-draft-handoff') : 'agents-test-handoff-inbox-hint') : null}
 							busy={answering === live.turn.id}
 							onanswer={(decision) => answer(live.turn.id, waiting, decision)}
 						/>

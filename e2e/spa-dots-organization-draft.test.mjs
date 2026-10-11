@@ -142,6 +142,8 @@ test("An organization Writer uses private saved-draft chat without personal perm
         const source = chat.getByRole("combobox", { name: "Conversation source", exact: true });
         assert.equal(await source.inputValue(), "draft");
         await source.selectOption("published");
+        await page.waitForURL((url) => !url.searchParams.has("test_session"));
+        assert.equal(await source.inputValue(), "published");
         await composer.fill("Organization published private probe");
         const heldPost = new Promise((resolve) => { releasePost = resolve; });
         const messagesUrl = `${BASE}/api/v0/agents/${dotId}/test/messages`;
@@ -229,6 +231,38 @@ test("An organization Writer uses private saved-draft chat without personal perm
         await chat.getByRole("button", { name: "New conversation", exact: true }).click();
         assert.equal(await source.inputValue(), "draft");
         assert.equal(await chat.getByText(`This private conversation uses published version ${liveVersion}.`, { exact: true }).count(), 0);
+        const abandonedPost = new Promise((resolve) => { releasePost = resolve; });
+        await page.route(messagesUrl, async (route) => {
+            if (route.request().method() === "POST") await abandonedPost;
+            await route.continue();
+        });
+        await composer.fill("A reply from the previous chat must not reattach after navigation");
+        const abandonedRequest = page.waitForRequest((request) => request.method() === "POST" && request.url() === messagesUrl);
+        const abandonedResponse = page.waitForResponse((response) => response.request().method() === "POST" && response.url() === messagesUrl);
+        await composer.press("Enter");
+        await abandonedRequest;
+        await page.getByRole("tab", { name: "Setup", exact: true }).click();
+        await page.waitForURL((url) => url.searchParams.get("tab") === "setup");
+        await page.locator("[data-test-chat]").waitFor({ state: "detached" });
+        assert.equal(await page.locator("[data-test-chat]").count(), 0);
+        await page.getByRole("tab", { name: "Try it", exact: true }).click();
+        await composer.waitFor();
+        releasePost();
+        releasePost = null;
+        const detachedResponse = await abandonedResponse;
+        assert.equal(detachedResponse.status(), 202);
+        const detached = await detachedResponse.json();
+        await page.unroute(messagesUrl);
+        let detachedDebug;
+        for (let attempt = 0; attempt < 60; attempt++) {
+            detachedDebug = await member.request.get(`${BASE}/api/v0/agents/${dotId}/test/${detached.session_id}/turns/${detached.turn_id}/debug`, { timeout: 5000 });
+            if (detachedDebug.status() !== 409) break;
+            await page.waitForTimeout(250);
+        }
+        assert.equal(detachedDebug.status(), 200);
+        assert.equal(new URL(page.url()).searchParams.has("test_session"), false);
+        assert.equal(await chat.getByText("A reply from the previous chat must not reattach after navigation", { exact: true }).count(), 0);
+        assert.equal(await source.inputValue(), "draft");
         await page.setViewportSize({ width: 390, height: 844 });
         await composer.focus();
         assert.equal(await composer.evaluate((element) => element === document.activeElement), true);
@@ -260,7 +294,13 @@ test("An organization Writer uses private saved-draft chat without personal perm
         try {
             if (admin) {
                 try {
-                    if (dotId) await admin.request.delete(`${BASE}/api/v0/agents/${dotId}`, { timeout: 5000 });
+                    if (organization && originalGroup) {
+                        const restoredMembership = await admin.request.put(`${BASE}/api/v0/admin/organizations/${organization.id}`, {
+                            data: { name: organization.name, description: organization.description, member_groups: [originalGroup.name], expected_revision: organization.revision }, timeout: 5000,
+                        });
+                        if (restoredMembership.status() === 200) organization = (await restoredMembership.json()).organization;
+                    }
+                    if (member && dotId) await member.request.delete(`${BASE}/api/v0/agents/${dotId}`, { timeout: 5000 });
                     if (organization) await admin.request.put(`${BASE}/api/v0/admin/organizations/${organization.id}`, {
                         data: { name: organization.name, description: organization.description, member_groups: [], expected_revision: organization.revision }, timeout: 5000,
                     });

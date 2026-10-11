@@ -18,7 +18,63 @@ CREATE TABLE personal_dot_sessions (
 CREATE INDEX idx_personal_dot_sessions_owner_dot
     ON personal_dot_sessions (owner_user_id, dot_id, created_at DESC);
 
-ALTER TABLE scheduled_actions ADD COLUMN dot_id TEXT;
+CREATE TEMP TABLE dot_scheduled_runs_preserved AS SELECT * FROM scheduled_runs;
+CREATE TABLE scheduled_actions_new (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    principal_id TEXT REFERENCES system_principals(id) ON DELETE RESTRICT,
+    created_by TEXT,
+    dot_id TEXT,
+    agent_version INTEGER,
+    configuration_generation TEXT NOT NULL DEFAULT (lower(hex(randomblob(16))))
+        CHECK (length(configuration_generation) > 0),
+    name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    model TEXT,
+    cron TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    tools_enabled INTEGER NOT NULL DEFAULT 1,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    next_run_at TEXT,
+    last_run_at TEXT,
+    last_status TEXT,
+    last_session_id TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    reuse_conversation INTEGER NOT NULL DEFAULT 0,
+    reuse_rounds INTEGER NOT NULL DEFAULT 5,
+    CHECK (
+        (user_id IS NOT NULL AND principal_id IS NULL AND model IS NOT NULL AND agent_version IS NULL)
+        OR
+        (user_id IS NULL AND principal_id IS NOT NULL AND model IS NULL AND dot_id IS NULL
+         AND agent_version IS NOT NULL AND agent_version > 0 AND reuse_conversation = 0)
+    )
+);
+INSERT INTO scheduled_actions_new
+    (id, user_id, name, prompt, model, cron, timezone, tools_enabled, enabled,
+     next_run_at, last_run_at, last_status, last_session_id, last_error,
+     created_at, updated_at, reuse_conversation, reuse_rounds)
+SELECT id, user_id, name, prompt, model, cron, timezone, tools_enabled, enabled,
+       next_run_at, last_run_at, last_status, last_session_id, last_error,
+       created_at, updated_at, reuse_conversation, reuse_rounds
+FROM scheduled_actions;
+DROP TABLE scheduled_actions;
+ALTER TABLE scheduled_actions_new RENAME TO scheduled_actions;
+DELETE FROM scheduled_runs;
+INSERT INTO scheduled_runs (id, action_id, fired_at, status, session_id, error, created_at)
+SELECT id, action_id, fired_at, status, session_id, error, created_at
+FROM dot_scheduled_runs_preserved;
+DROP TABLE dot_scheduled_runs_preserved;
+CREATE INDEX scheduled_actions_due ON scheduled_actions(enabled, next_run_at);
+CREATE INDEX scheduled_actions_user ON scheduled_actions(user_id, created_at DESC);
+CREATE INDEX scheduled_actions_principal ON scheduled_actions(principal_id, created_at DESC);
+CREATE TRIGGER scheduled_actions_owner_immutable
+BEFORE UPDATE OF user_id, principal_id ON scheduled_actions
+WHEN NEW.user_id IS NOT OLD.user_id OR NEW.principal_id IS NOT OLD.principal_id
+BEGIN
+    SELECT RAISE(ABORT, 'The scheduled action owner is immutable');
+END;
 ALTER TABLE webhooks ADD COLUMN dot_id TEXT;
 
 ALTER TABLE scheduled_runs ADD COLUMN assistant_turn_id TEXT;
@@ -26,6 +82,10 @@ ALTER TABLE scheduled_runs ADD COLUMN tools_enabled INTEGER NOT NULL DEFAULT 0
     CHECK (tools_enabled IN (0, 1));
 ALTER TABLE scheduled_runs ADD COLUMN history_limit INTEGER
     CHECK (history_limit IS NULL OR history_limit >= 0);
+ALTER TABLE scheduled_runs ADD COLUMN configuration_generation TEXT
+    CHECK (configuration_generation IS NULL OR length(configuration_generation) > 0);
+ALTER TABLE scheduled_runs ADD COLUMN agent_version INTEGER
+    CHECK (agent_version IS NULL OR (agent_version > 0 AND configuration_generation IS NOT NULL));
 CREATE UNIQUE INDEX scheduled_runs_assistant_turn ON scheduled_runs (assistant_turn_id)
     WHERE assistant_turn_id IS NOT NULL;
 

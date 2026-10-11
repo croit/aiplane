@@ -325,7 +325,12 @@ pub(super) async fn finalize_run(
         let Some(turn_id) = run.assistant_turn_id else {
             return Ok(());
         };
-        aiplane_runtime::server::background::reconcile_turn(&state.db, owner_id, &turn_id).await
+        aiplane_runtime::server::background::reconcile_turn(
+            &state.db,
+            &aiplane_runtime::server::scheduled::ScheduleOwner::User(owner_id.to_owned()),
+            &turn_id,
+        )
+        .await
     }
     .await;
     if let Err(error) = result {

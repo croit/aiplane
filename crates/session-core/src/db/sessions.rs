@@ -262,6 +262,14 @@ pub async fn existing_session_ids(
     pool: &Pool,
     ids: &[&str],
 ) -> Result<std::collections::HashSet<String>, DbError> {
+    let mut connection = pool.acquire().await?;
+    existing_session_ids_in(&mut connection, ids).await
+}
+
+pub async fn existing_session_ids_in(
+    connection: &mut sqlx::SqliteConnection,
+    ids: &[&str],
+) -> Result<std::collections::HashSet<String>, DbError> {
     if ids.is_empty() {
         return Ok(std::collections::HashSet::new());
     }
@@ -271,7 +279,7 @@ pub async fn existing_session_ids(
     for id in ids {
         query = query.bind(*id);
     }
-    Ok(query.fetch_all(pool).await?.into_iter().collect())
+    Ok(query.fetch_all(connection).await?.into_iter().collect())
 }
 
 /// Delete a session (cascades to turns + tool_calls). Returns true iff
@@ -292,6 +300,39 @@ pub async fn delete_session(pool: &Pool, user_id: &str, session_id: &str) -> Res
 mod tests {
     use super::*;
     use crate::db::tests::pool;
+
+    #[tokio::test]
+    async fn existing_session_ids_in_sees_uncommitted_rows_and_preserves_rollback() {
+        let pool = pool().await;
+        let kept = create_session(&pool, "u1").await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let pending = create_session_in(&mut tx, "u1").await.unwrap();
+        let ids = [&*kept.id, &*pending.id, "missing", &*kept.id];
+        assert_eq!(
+            existing_session_ids_in(&mut tx, &ids).await.unwrap(),
+            std::collections::HashSet::from([kept.id.clone(), pending.id.clone()]),
+        );
+        assert!(
+            existing_session_ids_in(&mut tx, &[])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        sqlx::query("DELETE FROM chat_sessions WHERE id=?")
+            .bind(&kept.id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(
+            existing_session_ids_in(&mut tx, &ids).await.unwrap(),
+            std::collections::HashSet::from([pending.id.clone()]),
+        );
+        tx.rollback().await.unwrap();
+        assert_eq!(
+            existing_session_ids(&pool, &ids).await.unwrap(),
+            std::collections::HashSet::from([kept.id])
+        );
+    }
 
     async fn completed_turn(pool: &Pool, session_id: &str, text: &str) -> String {
         let id = Uuid::new_v4().to_string();

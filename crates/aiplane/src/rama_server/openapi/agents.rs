@@ -204,6 +204,10 @@ pub(super) fn operations() -> Vec<Op> {
         get("/api/v0/agents/{id}/test/{session}/events", Access::Session)
             .ok(sse::<session_core::chat_json::ChatEvent>())
             .errors(&[400, 403, 404]),
+        post("/api/v0/agents/{id}/test/{session}/cancel", Access::Session)
+            .body(json::<test_chat::PrivateTurnCancelBody>())
+            .ok(json::<crate::rama_server::pages::Done>())
+            .errors(&[400, 403, 404]),
         get(
             "/api/v0/agents/{id}/test/{session}/turns/{turn}/debug",
             Access::Session,

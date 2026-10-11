@@ -152,6 +152,7 @@ pub enum Role {
 pub struct RunProfile {
     organization: Option<(String, Arc<RamaState>)>,
     original_spec: Option<Value>,
+    admission: OrganizationAdmission,
     pub principal: SystemPrincipal,
     pub version: i64,
     pub model: String,
@@ -180,6 +181,7 @@ pub enum SpecSource {
 enum ProfilePurpose {
     Generic,
     Private,
+    Scheduled,
 }
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
@@ -187,6 +189,84 @@ enum ProfilePurpose {
 enum OrganizationSpecSource {
     Draft,
     Published { version: i64 },
+}
+
+pub async fn organization_schedule_version_in(
+    state: &crate::server::AppState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    principal_id: &str,
+    version: i64,
+) -> Result<(Value, String), AgentRunError> {
+    let unavailable = || AgentRunError::OrganizationExecutionUnavailable(principal_id.to_owned());
+    if version <= 0
+        || !matches!(
+            agents_db::dot_owner_in(tx, principal_id).await?,
+            Some(agents_db::DotOwner::Organization(_))
+        )
+    {
+        return Err(unavailable());
+    }
+    let row = sp::get_in(tx, principal_id)
+        .await?
+        .ok_or_else(unavailable)?;
+    let grants = sp::grants_in(tx, principal_id).await?;
+    let pools: Vec<_> = grants
+        .iter()
+        .filter(|grant| grant.kind == GrantKind::Model)
+        .filter_map(|grant| {
+            grant.pools.as_ref().map(|pools| {
+                (
+                    grant.reference.clone(),
+                    pools.iter().cloned().collect::<BTreeSet<_>>(),
+                )
+            })
+        })
+        .collect();
+    let principal = SystemPrincipal {
+        id: row.id,
+        name: row.name,
+        grants: Arc::new(
+            GrantSet::new(
+                grants
+                    .into_iter()
+                    .map(|grant| (grant.kind, grant.reference)),
+            )
+            .with_model_pools(pools),
+        ),
+    };
+    let version_row = agents_db::version_in(tx, principal_id, version)
+        .await?
+        .ok_or_else(unavailable)?;
+    let spec: Value = serde_json::from_str(&version_row.spec).map_err(|_| unavailable())?;
+    let compiled = CompiledSpec::compile(version, spec.clone());
+    let parts = compiled.parts().map_err(|_| unavailable())?;
+    let model = match parts.agent.main_model() {
+        Some(model) => model.to_owned(),
+        None => crate::server::model_choices::gateway_default_in(
+            state,
+            tx,
+            aiplane_core::server::feature_defaults::Feature::Chat,
+        )
+        .await?
+        .ok_or_else(unavailable)?,
+    };
+    if !principal.grants.has(GrantKind::Model, &model) {
+        return Err(unavailable());
+    }
+    let access = PoolAccess::for_system_models(&principal, [model.as_str()]);
+    if !crate::server::model_choices::offered_in(
+        state,
+        tx,
+        aiplane_core::server::upstreams::PoolKind::Chat,
+        &access,
+    )
+    .await?
+    .iter()
+    .any(|choice| choice.id == model)
+    {
+        return Err(unavailable());
+    }
+    Ok((spec, model))
 }
 
 impl RunProfile {
@@ -260,6 +340,71 @@ impl RunProfile {
         .await
     }
 
+    pub(crate) async fn load_scheduled(
+        state: &Arc<RamaState>,
+        run_id: &str,
+        options: &RunOptions,
+    ) -> Result<Self, AgentRunError> {
+        use crate::server::scheduled::{self, ScheduleOwner};
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
+        let (action, run) = scheduled::get_for_run_in(&mut tx, run_id)
+            .await?
+            .ok_or_else(|| AgentRunError::OrganizationExecutionUnavailable(run_id.to_owned()))?;
+        let ScheduleOwner::Principal(principal) = &action.owner else {
+            return Err(AgentRunError::OrganizationExecutionUnavailable(
+                run_id.to_owned(),
+            ));
+        };
+        let unavailable = || AgentRunError::OrganizationExecutionUnavailable(principal.clone());
+        let version = action
+            .agent_version
+            .filter(|version| *version > 0)
+            .ok_or_else(unavailable)?;
+        if !action.enabled
+            || action.reuse_conversation
+            || action.dot_id.is_some()
+            || action.model.is_some()
+            || run.configuration_generation.as_deref()
+                != Some(action.configuration_generation.as_str())
+            || run.agent_version != Some(version)
+            || run.status.is_some()
+            || run.assistant_turn_id.is_some()
+        {
+            return Err(unavailable());
+        }
+        let (spec, model) =
+            organization_schedule_version_in(state, &mut tx, principal, version).await?;
+        tx.commit().await?;
+        let mut profile = Self::load_source_for(
+            state,
+            principal,
+            SpecSource::Pinned(version),
+            Role::Main,
+            options,
+            None,
+            ProfilePurpose::Scheduled,
+        )
+        .await?;
+        if profile.organization.is_none()
+            || profile.original_spec.as_ref() != Some(&spec)
+            || profile.model != model
+        {
+            return Err(unavailable());
+        }
+        profile.admission = OrganizationAdmission::Scheduled {
+            action_id: action.id,
+            run_id: run.id,
+            configuration_generation: action.configuration_generation,
+        };
+        if !run.tools_enabled {
+            let surface =
+                Arc::get_mut(&mut profile.surface).expect("newly loaded profile owns its surface");
+            surface.tools.clear();
+            surface.synthetic.clear();
+        }
+        Ok(profile)
+    }
+
     async fn load_source(
         state: &Arc<RamaState>,
         agent_id: &str,
@@ -292,7 +437,7 @@ impl RunProfile {
         let organization = match agents_db::dot_owner(&state.db, agent_id).await? {
             Some(agents_db::DotOwner::Organization(id))
                 if matches!(&source, SpecSource::Draft(_))
-                    || matches!(purpose, ProfilePurpose::Private) =>
+                    || matches!(purpose, ProfilePurpose::Private | ProfilePurpose::Scheduled) =>
             {
                 Some((id, state.clone()))
             }
@@ -481,7 +626,7 @@ impl RunProfile {
             Role::Main => ToolBinds::from_spec(spec),
             Role::SubAgent { route_binds } => ToolBinds::from_spec(spec).with_route(route_binds),
         };
-        let surface = AgentSurface {
+        let mut surface = AgentSurface {
             brief: Brief {
                 display,
                 instructions: spec.main.instructions.clone(),
@@ -499,6 +644,19 @@ impl RunProfile {
             spend: options.spend.clone(),
         };
         if let Some(saved) = authority
+            && let OrganizationAdmission::Scheduled { run_id, .. } = &saved.admission
+        {
+            let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
+            let (action, run) = crate::server::scheduled::get_for_run_in(&mut tx, run_id)
+                .await?
+                .ok_or_else(|| saved.unavailable())?;
+            if !run.tools_enabled || !action.tools_enabled {
+                surface.tools.clear();
+                surface.synthetic.clear();
+            }
+            tx.commit().await?;
+        }
+        if let Some(saved) = authority
             && saved.synthetic_tools != synthetic_dependencies(&surface.synthetic)
         {
             return Err(saved.unavailable());
@@ -506,6 +664,9 @@ impl RunProfile {
         Ok(Self {
             organization,
             original_spec,
+            admission: authority
+                .map(|saved| saved.admission.clone())
+                .unwrap_or(OrganizationAdmission::PrivateChat),
             budget: spec.main.budget.budget(),
             principal,
             version,
@@ -561,7 +722,10 @@ impl RunProfile {
             session_id: session_id.to_string(),
             assistant_turn_id: assistant_turn_id.to_string(),
             model: self.model.clone(),
-            source: UsageSource::Agent,
+            source: match self.admission {
+                OrganizationAdmission::PrivateChat => UsageSource::Agent,
+                OrganizationAdmission::Scheduled { .. } => UsageSource::Scheduled,
+            },
             history_limit: None,
         })
     }
@@ -578,6 +742,17 @@ struct OrganizationGrant {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum OrganizationAdmission {
+    PrivateChat,
+    Scheduled {
+        action_id: String,
+        run_id: String,
+        configuration_generation: String,
+    },
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OrganizationResumeAuthority {
     pub(crate) principal_id: String,
@@ -585,6 +760,7 @@ pub(crate) struct OrganizationResumeAuthority {
     pub(crate) session_id: String,
     pub(crate) assistant_turn_id: String,
     source: OrganizationSpecSource,
+    admission: OrganizationAdmission,
     spec: Value,
     pub(crate) model: String,
     grants: Vec<OrganizationGrant>,
@@ -620,6 +796,7 @@ impl OrganizationResumeAuthority {
                     version: profile.version,
                 }
             },
+            admission: profile.admission.clone(),
             spec: draft,
             model: profile.model.clone(),
             grants: profile
@@ -696,6 +873,30 @@ impl OrganizationResumeAuthority {
                 return Err(self.unavailable());
             }
         }
+        if let OrganizationAdmission::Scheduled {
+            action_id,
+            run_id,
+            configuration_generation,
+        } = &self.admission
+        {
+            let Some((action, run)) = crate::server::scheduled::get_for_run_in(tx, run_id).await?
+            else {
+                return Err(self.unavailable());
+            };
+            if action.id != *action_id
+                || action.owner
+                    != crate::server::scheduled::ScheduleOwner::Principal(self.principal_id.clone())
+                || action.agent_version != Some(version)
+                || action.configuration_generation != *configuration_generation
+                || run.configuration_generation.as_ref() != Some(configuration_generation)
+                || run.agent_version != Some(version)
+                || run.session_id.as_deref() != Some(self.session_id.as_str())
+                || run.assistant_turn_id.as_deref() != Some(self.assistant_turn_id.as_str())
+                || version <= 0
+            {
+                return Err(self.unavailable());
+            }
+        }
         Ok(version)
     }
 
@@ -749,7 +950,7 @@ pub(crate) async fn validate_organization_resume_in(
         &authority.session_id,
         &authority.assistant_turn_id,
         version,
-        OrganizationAdmission::Live,
+        OrganizationTurnState::Live,
     )
     .await?;
     if !current.grants.has(GrantKind::Model, &authority.model) {
@@ -850,17 +1051,17 @@ pub async fn validate_organization_turn_in(
     tx: &mut aiplane_core::server::db::WriteTx,
     run: &AgentRun,
 ) -> Result<SystemPrincipal, AgentRunError> {
-    validate_organization_context_in(tx, run, OrganizationAdmission::Live).await
+    validate_organization_context_in(tx, run, OrganizationTurnState::Live).await
 }
 
 pub async fn validate_organization_compaction_in(
     tx: &mut aiplane_core::server::db::WriteTx,
     run: &AgentRun,
 ) -> Result<SystemPrincipal, AgentRunError> {
-    validate_organization_context_in(tx, run, OrganizationAdmission::Compaction).await
+    validate_organization_context_in(tx, run, OrganizationTurnState::Compaction).await
 }
 
-enum OrganizationAdmission {
+enum OrganizationTurnState {
     Live,
     Compaction,
 }
@@ -868,7 +1069,7 @@ enum OrganizationAdmission {
 async fn validate_organization_context_in(
     tx: &mut aiplane_core::server::db::WriteTx,
     run: &AgentRun,
-    admission: OrganizationAdmission,
+    admission: OrganizationTurnState,
 ) -> Result<SystemPrincipal, AgentRunError> {
     let initial = run.system_principal();
     let unavailable = || AgentRunError::OrganizationExecutionUnavailable(initial.id.clone());
@@ -901,7 +1102,7 @@ async fn validate_organization_authority_in(
     session_id: &str,
     assistant_turn_id: &str,
     version: i64,
-    admission: OrganizationAdmission,
+    admission: OrganizationTurnState,
 ) -> Result<SystemPrincipal, AgentRunError> {
     let unavailable = || AgentRunError::OrganizationExecutionUnavailable(initial.id.clone());
     let dot = agents_db::get_dot_metadata_in(tx, &initial.id)
@@ -929,12 +1130,12 @@ async fn validate_organization_authority_in(
     .bind(version)
     .bind(assistant_turn_id)
     .bind(match admission {
-        OrganizationAdmission::Live => "in_progress",
-        OrganizationAdmission::Compaction => "completed",
+        OrganizationTurnState::Live => "in_progress",
+        OrganizationTurnState::Compaction => "completed",
     })
     .bind(match admission {
-        OrganizationAdmission::Live => "suspended",
-        OrganizationAdmission::Compaction => "completed",
+        OrganizationTurnState::Live => "suspended",
+        OrganizationTurnState::Compaction => "completed",
     })
     .fetch_one(&mut **tx)
     .await
@@ -1986,5 +2187,150 @@ mod tests {
         malformed[super::ORGANIZATION_RESUME_KEY]["source"] =
             serde_json::json!({"kind":"published","version":0});
         assert!(super::OrganizationResumeAuthority::from_context(Some(&malformed)).is_none());
+    }
+    #[tokio::test]
+    async fn organization_authority_requires_explicit_private_or_scheduled_admission() {
+        let server = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&server.uri()).await;
+        let (_, params) = crate::server::headless::tests::organization_draft_fixture(&state).await;
+        let crate::agent_run::Actor::Agent(run) = params.actor else {
+            panic!("principal expected");
+        };
+        let authority = super::OrganizationResumeAuthority::capture(&run).unwrap();
+        let context = authority.attach_to(None).unwrap();
+        assert_eq!(
+            context[super::ORGANIZATION_RESUME_KEY]["admission"],
+            serde_json::json!({"kind":"private_chat"})
+        );
+        let mut missing = context.clone();
+        missing[super::ORGANIZATION_RESUME_KEY]
+            .as_object_mut()
+            .unwrap()
+            .remove("admission");
+        assert!(super::OrganizationResumeAuthority::from_context(Some(&missing)).is_none());
+        let mut unknown = context.clone();
+        unknown[super::ORGANIZATION_RESUME_KEY]["admission"] =
+            serde_json::json!({"kind":"employee"});
+        assert!(super::OrganizationResumeAuthority::from_context(Some(&unknown)).is_none());
+        let mut fabricated = context;
+        fabricated[super::ORGANIZATION_RESUME_KEY]["admission"] = serde_json::json!({"kind":"scheduled","action_id":"missing-action","run_id":"missing-run","configuration_generation":"missing-generation"});
+        let saved = super::OrganizationResumeAuthority::from_context(Some(&fabricated)).unwrap();
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        assert!(
+            super::validate_organization_resume_in(&mut tx, &saved)
+                .await
+                .is_err()
+        );
+        drop(tx);
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn organization_schedule_configuration_uses_current_grants_without_execution_activation()
+    {
+        let server = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&server.uri()).await;
+        let (profile, _) = crate::server::headless::tests::organization_draft_fixture(&state).await;
+        let spec = profile.original_spec.clone().unwrap();
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        let version =
+            agents_db::publish_in(&mut tx, &profile.principal.id, &spec.to_string(), "creator")
+                .await
+                .unwrap()
+                .unwrap();
+        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+            .bind(&profile.principal.id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE system_principals SET disabled_at=? WHERE id=?")
+            .bind(jiff::Timestamp::now().to_string())
+            .bind(&profile.principal.id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let (actual, model) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            super::organization_schedule_version_in(
+                &state,
+                &mut tx,
+                &profile.principal.id,
+                version,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(actual, spec);
+        assert_eq!(model, profile.model);
+        for missing in [0, -1, version + 1] {
+            assert!(
+                super::organization_schedule_version_in(
+                    &state,
+                    &mut tx,
+                    &profile.principal.id,
+                    missing
+                )
+                .await
+                .is_err()
+            );
+        }
+        let mut default_spec = spec.clone();
+        default_spec["main"]
+            .as_object_mut()
+            .unwrap()
+            .remove("model");
+        let default_version = agents_db::publish_in(
+            &mut tx,
+            &profile.principal.id,
+            &default_spec.to_string(),
+            "creator",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            super::organization_schedule_version_in(
+                &state,
+                &mut tx,
+                &profile.principal.id,
+                default_version
+            )
+            .await
+            .unwrap(),
+            (default_spec, profile.model.clone())
+        );
+        sqlx::query("UPDATE principal_grants SET pools='[]' WHERE principal_id=? AND kind='model' AND ref=?").bind(&profile.principal.id).bind(&profile.model).execute(&mut *tx).await.unwrap();
+        assert!(
+            super::organization_schedule_version_in(
+                &state,
+                &mut tx,
+                &profile.principal.id,
+                version
+            )
+            .await
+            .is_err()
+        );
+        sqlx::query("DELETE FROM principal_grants WHERE principal_id=? AND kind='model'")
+            .bind(&profile.principal.id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            super::organization_schedule_version_in(
+                &state,
+                &mut tx,
+                &profile.principal.id,
+                version
+            )
+            .await
+            .is_err()
+        );
+        drop(tx);
+        assert!(server.received_requests().await.unwrap().is_empty());
     }
 }

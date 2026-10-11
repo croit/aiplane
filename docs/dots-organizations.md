@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Organization ownership, group-derived membership, independent active limits and configuration are implemented. Current organization Dots can be created, shared, configured and published through the existing agent mechanisms. Current member writers can authorize and explicitly select each Dot’s own OAuth connection. Active organization Dots with enabled principals can run saved drafts or published versions in private test conversations for current member writers. Durable Dot notes and shared organization knowledge are available through the existing memory panel and tools. Published private conversations retain their original version and expose waiting decisions only to current member writers. Automated test suites, delegation, automation and external channels remain unavailable.
+Organization ownership, group-derived membership, independent active limits and configuration are implemented. Current organization Dots can be created, shared, configured and published through the existing agent mechanisms. Current member writers can authorize and explicitly select each Dot’s own OAuth connection. Active organization Dots with enabled principals can run saved drafts or published versions in private test conversations for current member writers. Durable Dot notes and shared organization knowledge are available through the existing memory panel and tools. Published private conversations retain their original version and expose waiting decisions only to current member writers. Scheduled organization work uses explicitly pinned published versions, fresh private principal conversations and the existing cron worker. Automated test suites, delegation, organization webhooks and external channels remain unavailable.
 
 The remaining sections distinguish the implemented ownership and configuration foundation from the adopted execution and knowledge design. Creating a gateway group or naming an ordinary agent after a company does not create organization ownership.
 
@@ -25,7 +25,7 @@ The confirmed product requirements are explicit organization ownership, an indep
 | `aiplane-tools/src/memory.rs`; `server/tools/mod.rs::ToolContext::person` | Personal memory tools require a user actor. | Organization tools use a typed principal context; passing an employee ID never establishes organization authority. |
 | `aiplane-agents/src/db/dot_memories.rs` | Typed Dot and shared organization notes checked through the actual immutable owner. | Preserve current ownership isolation when adding typed organization scopes. |
 | `aiplane-agents/src/db/agent_state.rs` | Typed slots scoped to a run session. | Session state does not supply durable organization-wide memory. |
-| `aiplane-runtime/src/server/scheduled/mod.rs`; `server/webhooks.rs` | Trigger records currently have a user owner and optional personal Dot binding. | Organization background execution needs a principal-owner bridge in these mechanisms. Existing user trigger ownership is insufficient. |
+| `aiplane-runtime/src/server/scheduled/mod.rs`; `server/webhooks.rs` | Schedules have immutable User or Principal ownership; webhooks retain user ownership and optional personal Dot binding. | Organization schedules reuse the principal path and exact configuration proof. Organization webhooks require a separate extension. |
 
 Principal tool inventories use `SystemPrincipal.grants` through `AppState::allowed_tools_for_principal`. The loaded grant set is a snapshot. `RunProfile` reloads it when loading a run; this alone is not proof that every invocation in an already running turn observes a subsequent revocation. Organization implementation must include the live check described below.
 
@@ -127,6 +127,75 @@ lists remain bounded to 500 notes. New human saves use the memory tools'
 
 ## Run ownership, background execution and limits
 
+### Scheduled organization work
+
+Organization schedules extend the existing scheduled-action storage, cron
+worker, form and run history. Organization webhooks remain unavailable.
+
+- A schedule has exactly one immutable owner: User or Principal. An organization
+  schedule belongs to the Dot's actual principal. Its configuring employee is
+  attribution only; deleting that employee does not delete the schedule.
+- Creation, configuration, history and positive pending decisions require
+  current organization membership and Write access in the final transaction.
+  Automatic cron fire uses the configured schedule's own authority, without
+  impersonating an employee or requiring that employee to stay online.
+- An organization schedule explicitly selects a real positive published version.
+  It retains that version until an authorized edit selects another. The model
+  comes from that version's typed AgentSpec and current principal grants;
+  there is no employee model override or credential fallback. If the published
+  specification omits its main model, the existing gateway chat default is
+  resolved and checked against current principal model and pool grants.
+  Configuration may be saved while the Dot or principal is inactive; dispatch
+  still requires both to be enabled.
+- The first slice opens fresh private principal conversations. Existing user
+  and personal-Dot conversation reuse remains available. Organization reuse
+  requires its subsequent exact-principal, version and configuration inventory
+  bridge; the user-owned chat picker cannot supply that authority.
+- Configuration has an opaque generation changed by authored execution edits,
+  independent of timestamps and worker bookkeeping. Claiming a due schedule
+  compares its enabled state, due time and generation and inserts the existing
+  run-history row in the same transaction. Opening the principal conversation
+  and attaching its exact assistant turn are also atomic. Edits and toggles
+  require the returned `expected_configuration_generation`; stale requests
+  return a conflict. Renaming, toggling and worker bookkeeping do not replace
+  the authored execution generation.
+- The existing strict organization run authority records its real admission:
+  private web conversation or an exact scheduled action, run and configuration
+  generation. Scheduled dispatch, restart and resume recheck that proof through
+  the common organization validator. Publishing another version cannot rebase
+  the captured source, model, grants or credentials.
+- Disable stops future fires. An admitted pending run remains answerable;
+  Stop or cancellation addresses that run through the existing turn lifecycle.
+  An authored execution change invalidates an older generation for further
+  work. Current Dot/principal activation, grants and credential generations
+  remain required for dispatch and positive resume.
+- Physical deletion of a Dot or principal is refused while it owns retained
+  schedules. Delete schedules through the existing pending-run guard first;
+  terminal source deletion removes its run history. Deactivation remains
+  available. Organization deletion has no API and retains its existing FK
+  restriction.
+- Organization run links reopen the existing private Test chat through an
+  actual session query. Source and version come from the existing stopped-turn
+  debug response; the page admits current member writers and never links a
+  principal conversation into personal `/chat` history. **Stop** addresses the
+  exact assistant turn, including suspended decisions. Cancellation atomically
+  closes its pending suspension and running tool records, then cancels the
+  worker and reconciles its original run. This structural cleanup remains
+  available after deactivation, grant revocation or configuration changes;
+  it still requires current member Write access and the original private
+  conversation and published-version binding.
+
+#### Shared mechanisms
+
+Use `scheduled_actions` and `scheduled_runs`, `WriteTx`, the existing cron
+evaluator and scheduler, `headless::open_principal_session_in`, `RunProfile`,
+`OrganizationResumeAuthority`, `GrantedToolSource`, current principal model
+and MCP credential proofs, `SessionWorkers`, `AgentWorker`, principal metering,
+`background::for_turn` and exact reconciliation, `chat_turn_suspensions`, the
+member-writer Inbox, `ScheduleForm`, the existing version selector and private
+`TestChat`/`StreamedChat`. Extend these mechanisms rather than introducing a
+scheduler, identity store, approval queue or conversation renderer.
+
 Organization conversations use existing principal sessions. Pin the actual AgentSpec version and retain current principal grants as the authority ceiling. The requesting/approving user is audit attribution, not conversation owner or execution principal.
 
 Extend existing schedule/webhook records with a neutral, mutually exclusive user/principal owner and typed runtime owner resolution. A principal owner must resolve to the actual organization Dot and organization before dispatch. Existing ordinary and personal user paths keep their owner checks. The organization path uses `RunProfile`/principal tools and returns history through existing agent conversation surfaces.
@@ -154,8 +223,7 @@ Reuse existing `/api/v0/agents/{id}` configuration, grants, shares, conversation
 Credential management reuses the identity mechanism and existing integration cards. Current organization connection choices contain only that Dot’s own principal and live connection. Organization-wide credential provisioning and selection remain unavailable. Its response contains selected identity, catalogue key/name/auth, status and nullable verified account label; no secrets or invented provider identity.
 
 The implemented web flow covers configuration, own OAuth management, scoped
-memory and private draft or published conversations. Background runs remain adopted
-implementation requirements:
+memory, private draft or published conversations and scheduled organization work:
 
 1. An administrator creates an organization with its actual configured name and selects real gateway groups from the existing group selector. The screen explains that selected groups supply membership and shares still determine access.
 2. A qualified member opens that organization, creates a named Dot and uses the existing agent editor/model selector. The actual organization owner is shown.
@@ -163,8 +231,9 @@ implementation requirements:
 4. A current member writer opens **Setup** in the existing agent editor and connects an account for the Dot through supported OAuth, then explicitly saves that connection. The provider controls the account; missing verified labels are shown as unavailable.
 5. The member configures existing tool/action rules and shares. Responders appear as eligible actual members or bound groups. The screen shows which effective rights each share permits.
 6. A current member reader opens **Setup → Dot memory** to inspect own and shared notes. A member writer can edit the Dot's own notes; shared edits also require gateway administration rights. New saves are bounded to 2,000 UTF-8 bytes.
-7. A current member writer opens **Try it → Test chat** and starts a private saved-draft or published conversation. Pending decisions can be answered in that test chat. Published private approvals, human answers and secure input also appear in the member-writer Inbox; version-0 conversations are excluded. Background triggers require their separate owner/resume bridge.
-8. Removing membership removes access; disabling the Dot stops/refuses its work. Missing credentials remain visible and require an explicit reconnect/selection.
+7. A current member writer opens **Try it → Test chat** and starts a private saved-draft or published conversation. Pending decisions can be answered in that test chat. Published private approvals, human answers and secure input also appear in the member-writer Inbox; version-0 conversations are excluded. The conversation’s Stop control cancels its exact active or suspended turn.
+8. From the Dot, open its scheduled actions and select a retained published version, prompt, cron expression and explicit timezone. The form displays the version’s configured model and creates fresh private conversations. Open run history to inspect or stop the actual conversation. Disabling the schedule prevents future fires; an already admitted pending decision can still be resolved.
+9. Removing membership removes access; disabling the Dot stops/refuses further dispatch. Missing credentials remain visible and require an explicit reconnect/selection. Delete retained schedules before deleting their Dot, and stop nonterminal runs before deleting their schedule.
 
 The coordinator confirms this walkthrough against seeded real data before UI implementation. All new strings use the six canonical Fluent catalogues. Reuse existing model, resource, permission, connector-status and share labels.
 
@@ -174,8 +243,9 @@ Organization Dots include metadata, immutable Dot ownership,
 current membership and the existing private agent configuration surfaces.
 Current member writers can manage the Dot’s own OAuth credentials and run its
 saved draft or published version in a private principal conversation. Typed durable memory includes
-its own notes and shared organization knowledge. Organization triggers and
-external execution require their respective owner admission paths.
+its own notes and shared organization knowledge. Organization schedules have
+explicit principal ownership and published-version admission. Organization
+webhooks and external execution require their respective owner admission paths.
 
 The authenticated navigation entry `/organizations` shows the actual membership
 inventory or an empty state. Its visibility does not assert membership and is
@@ -186,7 +256,7 @@ Activation uses `POST /api/v0/organizations/{id}/dots/{dot_id}/active` with
 `{active:boolean}` and returns the existing agent view with typed Dot metadata.
 It requires current write access, an actual Dot belonging to that organization,
 and the existing capacity check in the same transaction. Personal activation
-retains its existing route and exact owner check. Automated and external callers remain unavailable. Private draft or published
+retains its existing route and exact owner check. Organization webhooks, delegation and external callers remain unavailable. Private draft or published
 execution requires activation, an enabled principal, member Write access and
 explicit model/tool grants.
 
@@ -390,15 +460,16 @@ State-based SQLite and mocked-upstream tests cover own-principal OAuth,
 mid-turn grant removal and deactivation, identity and catalogue changes,
 approval persistence across restart, current responder membership, private
 principal conversations and Dot-attributed usage. Preserve ordinary principal
-and personal Dot execution tests. Background scheduling follows this verified
-web slice through the existing workers.
+and personal Dot execution tests. Background scheduling uses the same authority proof through the existing
+workers, with its captured action, run and configuration generation.
 
 ## Private published version and source contract
 
 Private published conversations use **Try it → Test chat** through its existing
 renderer and authenticated private opener. Current member Write admission
 is required; publication does not enable public,
-visitor, embedded, delegated, automated or test-suite entry points.
+visitor, embedded, delegated or test-suite entry points. Scheduled work has its
+separate exact-source admission described above.
 
 The source control offers Saved draft and, when an actual live version exists,
 Published version with that returned number. Saved draft is the initial choice.
@@ -419,8 +490,8 @@ are part of this unreleased contract.
 
 Generic organization Live/Pinned profile loading remains unavailable to other
 callers. The existing loader implementation is reused behind explicit private
-admission; permitting one authenticated web surface does not authorize another
-entry point to create private-looking principal rows.
+admission or the exact scheduled-source admission; permitting one entry point
+does not authorize another to create private-looking principal rows.
 
 Published private approvals, human answers and secure input use the existing
 Inbox only after current member Write access and exact private source/session proof. Read, Respond and nonmember

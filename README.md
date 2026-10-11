@@ -247,7 +247,8 @@ artifact is `target/frontend/build/`; ship it alongside the binary and set
 artifact and does not need Python or Node to serve the application.
 
 For development, use `mise run dev` for the web UI and gateway, or `mise run
-dev-ui` for the isolated browser fixture. See the
+dev-ui` for the isolated browser fixture, including the actual cron worker
+against mock model backends and an in-memory database. See the
 [developer workflow](docs/dev-workflow.md).
 
 ## Contributing and support

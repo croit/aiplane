@@ -98,6 +98,8 @@
 	</div>
 {/if}
 
+{#if ws.writable && organizationDot}<a class="btn btn-sm w-fit" href={`/scheduled?principal_id=${encodeURIComponent(ws.id)}`}>{t('scheduled-heading')}</a>{/if}
+
 {#if tab === 'setup' && ws.writable && organizationDot}
 	{#key organizationDot.id}
 		<DotConnectionsPanel dot={organizationDot} onchange={() => void ws.refresh(true).catch((error) => ws.fail(error))} />
@@ -130,7 +132,7 @@
 	{:else if sub === 'grants' && ws.detail}
 		<GrantsPanel agentId={ws.id} grants={ws.detail.grants} resources={ws.resources} writable={ws.writable} onchanged={() => ws.refresh(true)} />
 	{:else if sub === 'test' && capabilities.draftChat}
-		<TestChat agentId={ws.id} spec={ws.spec} dirty={ws.dirty} organization={!!organizationDot} sources={testChatSources(ws.detail)} liveVersion={ws.detail?.live_version ?? null} onturn={(debug) => (ws.lastDebug = debug)} onsave={save} />
+		<TestChat agentId={ws.id} spec={ws.spec} dirty={ws.dirty} organization={!!organizationDot} sources={testChatSources(ws.detail)} liveVersion={ws.detail?.live_version ?? null} initialSessionId={param('test_session')} onsession={(sessionId) => navigate({ test_session: sessionId })} onturn={(debug) => (ws.lastDebug = debug)} onsave={save} />
 	{:else if sub === 'tests' && capabilities.execution && ws.detail}
 		<TestsPanel agentId={ws.id} versions={ws.versions} liveVersion={ws.detail.live_version} dirty={ws.dirty} writable={ws.writable} onsave={save} />
 	{:else if sub === 'analytics'}

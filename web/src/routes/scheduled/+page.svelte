@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { adminJson } from '#lib/admin-client.js';
+	import { scheduledApi } from '#lib/scheduled.js';
 	import ScheduledActionRow from '#lib/components/scheduled/ScheduledActionRow.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 	import type { ScheduledData } from '#lib/scheduled.js';
@@ -21,7 +21,7 @@
 
 	async function refresh() {
 		try {
-			data = await adminJson<ScheduledData>('/api/v0/scheduled');
+			data = await scheduledApi.list(page.url.searchParams.get('principal_id'));
 			error = null;
 		} catch (caught) {
 			error = String(caught);
@@ -45,7 +45,7 @@
 	<section class="space-y-3">
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<h2 class="text-xl font-semibold">{t('scheduled-list-heading')}</h2>
-			<a class="btn btn-primary btn-sm" href="/scheduled/new">{t('scheduled-create-heading')}</a>
+			{#if data?.can_write}<a class="btn btn-primary btn-sm" href={`/scheduled/new${data?.principal_id ? `?principal_id=${encodeURIComponent(data.principal_id)}` : ''}`}>{t('scheduled-create-heading')}</a>{/if}
 		</div>
 		{#if loading}
 			<div class="skeleton h-28 w-full"></div>

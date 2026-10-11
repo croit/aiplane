@@ -1,9 +1,8 @@
 <script lang="ts">
-	import { adminDelete, adminPost } from '#lib/admin-client.js';
 	import { locale, t } from '#lib/i18n.svelte.js';
 	import DotAssociation from '#lib/components/dots/DotAssociation.svelte';
 	import { runLinks } from '#lib/run-links.js';
-	import { formatScheduledRun, type ScheduledAction } from '#lib/scheduled.js';
+	import { scheduledApi, formatScheduledRun, type ScheduledAction } from '#lib/scheduled.js';
 
 	/**
 	 * One schedule on `/scheduled`.
@@ -20,7 +19,7 @@
 		onnotice: (message: string) => void;
 	}>();
 
-	let links = $derived(runLinks(action, '/scheduled'));
+	let links = $derived(runLinks(action, '/scheduled', { principalId: action.principal_id }));
 
 	function runTime(value: string): string {
 		return formatScheduledRun(value, locale.current, action.timezone);
@@ -28,7 +27,7 @@
 
 	async function toggle() {
 		try {
-			await adminPost(`/api/v0/scheduled/${action.id}/toggle`, { enabled: !action.enabled });
+			await scheduledApi.toggle(action.id, !action.enabled, action.configuration_generation);
 			await onchanged();
 		} catch (caught) {
 			onnotice(String(caught));
@@ -38,7 +37,7 @@
 	async function remove() {
 		if (!confirm(t('scheduled-delete-confirm'))) return;
 		try {
-			await adminDelete(`/api/v0/scheduled/${action.id}`);
+			await scheduledApi.remove(action.id);
 			await onchanged();
 		} catch (caught) {
 			onnotice(String(caught));
@@ -56,9 +55,10 @@
 					{#if action.reuse_conversation}<span class="badge badge-ghost badge-sm">{t('scheduled-badge-reuses-chat')}</span>{/if}
 				</div>
 				<DotAssociation binding={action} />
+				{#if action.principal_id && action.dot}<a class="link link-hover text-sm" href={`/agents/${encodeURIComponent(action.principal_id)}`}>{action.dot.display || action.dot.name}</a>{/if}
 				<p class="mt-1 line-clamp-2 text-sm text-base-content/70">{action.prompt}</p>
 				<div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-base-content/60">
-					<span class="font-mono">{action.model}</span>
+					{#if action.principal_id && action.agent_version}<span>{t('agents-test-source-published', { version: action.agent_version })}</span>{:else}<span class="font-mono">{action.model}</span>{/if}
 					<span>·</span>
 					<span>{action.schedule_summary} ({action.timezone})</span>
 					<span>·</span>
@@ -73,7 +73,7 @@
 				{#if action.last_error}<p class="mt-1 text-xs text-error">{t('scheduled-last-error', { error: action.last_error })}</p>{/if}
 			</div>
 			<div class="flex flex-wrap gap-2">
-				<a class="btn btn-sm" href="/scheduled/{action.id}/edit">{t('scheduled-edit-title')}</a>
+				<a class="btn btn-sm" href={`/scheduled/${encodeURIComponent(action.id)}/edit${action.principal_id ? `?principal_id=${encodeURIComponent(action.principal_id)}` : ''}`}>{t('scheduled-edit-title')}</a>
 				<button class="btn btn-sm" type="button" onclick={toggle}>{action.enabled ? t('scheduled-pause-title') : t('scheduled-resume-title')}</button>
 				<button class="btn btn-outline btn-error btn-sm" type="button" onclick={remove}>{t('scheduled-delete-title')}</button>
 			</div>

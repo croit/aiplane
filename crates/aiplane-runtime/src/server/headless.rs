@@ -319,7 +319,12 @@ async fn person_context(
             .map_err(|error| fail(&error.to_string()))?,
         None => p.assistant_turn_id.clone(),
     };
-    let background = super::background::for_turn(&state.db, &owner, &source_turn).await?;
+    let background = super::background::for_turn(
+        &state.db,
+        &crate::server::scheduled::ScheduleOwner::User(owner.clone()),
+        &source_turn,
+    )
+    .await?;
     if background.is_none() && matches!(p.source, UsageSource::Scheduled | UsageSource::Webhook) {
         return Err(fail(
             "The background turn has no durable run context. Inspect its run history before retrying.",
@@ -433,9 +438,12 @@ async fn drive_inner(
                 )
                 .await;
                 if let Some(owner) = p.actor.person_id() {
-                    let _ =
-                        super::background::reconcile_turn(&state.db, owner, &p.assistant_turn_id)
-                            .await;
+                    let _ = super::background::reconcile_turn(
+                        &state.db,
+                        &crate::server::scheduled::ScheduleOwner::User(owner.to_owned()),
+                        &p.assistant_turn_id,
+                    )
+                    .await;
                 }
                 return None;
             }
@@ -497,7 +505,9 @@ async fn drive_inner(
         .as_ref()
         .map(|run| AgentWorker::of(state, run.chain(), &p.session_id, &p.assistant_turn_id));
     let person = p.actor.person_id().map(str::to_string);
-    let owner_for_reconcile = person.clone();
+    let owner_for_reconcile = person
+        .clone()
+        .map(crate::server::scheduled::ScheduleOwner::User);
     let person_worker = if reserved_worker.is_some() {
         reserved_worker
     } else if let Some(owner) = person.as_deref() {
@@ -520,9 +530,12 @@ async fn drive_inner(
                         "The conversation already has a running worker. Retry after it finishes.",
                     )
                     .await;
-                    let _ =
-                        super::background::reconcile_turn(&state.db, owner, &p.assistant_turn_id)
-                            .await;
+                    let _ = super::background::reconcile_turn(
+                        &state.db,
+                        &crate::server::scheduled::ScheduleOwner::User(owner.to_owned()),
+                        &p.assistant_turn_id,
+                    )
+                    .await;
                 }
                 return None;
             }
@@ -601,6 +614,17 @@ async fn drive_inner(
         turn_started(state, &agent, &session_id, &assistant_turn_id, resumed).await;
         session_core::worker::run_session_turn(state.db.clone(), driver, ctx).await;
         turn_finished(state, &agent, &session_id, &assistant_turn_id).await;
+        if let Err(error) = super::background::reconcile_turn(
+            &state.db,
+            &crate::server::scheduled::ScheduleOwner::Principal(
+                agent.system_principal().id.clone(),
+            ),
+            &assistant_turn_id,
+        )
+        .await
+        {
+            tracing::error!(%error,turn=%assistant_turn_id,"reconciling principal background turn");
+        }
     }
     .instrument(span)
     .await;
@@ -2035,10 +2059,12 @@ pub(crate) mod tests {
         let action = scheduled::create(
             &state.db,
             NewAction {
-                user_id: "u1".into(),
+                owner: crate::server::scheduled::ScheduleOwner::User("u1".into()),
+                created_by: "u1".into(),
+                agent_version: None,
                 name: "job".into(),
                 prompt: "prompt".into(),
-                model: MODEL.into(),
+                model: Some(MODEL.into()),
                 cron: "* * * * *".into(),
                 timezone: "UTC".into(),
                 tools_enabled,

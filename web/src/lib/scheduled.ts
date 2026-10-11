@@ -11,12 +11,17 @@ export interface ScheduleFields {
 
 import type { Dot } from './dot-state.ts';
 import type { DotBinding } from './dot-background.ts';
+import type { AgentVersion } from './agents.ts';
+import { adminJson, adminPost, adminPut, adminDelete } from './admin-client.ts';
 
 export interface ScheduledAction extends DotBinding {
 	id: string;
 	name: string;
 	prompt: string;
-	model: string;
+	model: string | null;
+	principal_id: string | null;
+	agent_version: number | null;
+	configuration_generation: string;
 	cron: string;
 	schedule_summary: string;
 	timezone: string;
@@ -39,6 +44,8 @@ export interface ScheduledAction extends DotBinding {
 
 /** One recorded fire, as `/api/v0/scheduled/{id}/runs` returns it. */
 export interface ScheduledRun {
+	agent_version: number | null;
+	configuration_generation: string | null;
 	id: string;
 	fired_at: string;
 	/** `null` only while a run is still in flight. */
@@ -54,7 +61,40 @@ export interface ScheduledData {
 	actions: ScheduledAction[];
 	dots: Dot[];
 	models: ChatModelOption[];
-	default_timezone: string;
+	default_timezone: string | null;
+	principal_id: string | null;
+	can_write: boolean;
+	versions: AgentVersion[];
+}
+
+export interface ScheduledBody {
+	name: string;
+	prompt: string;
+	cron: string;
+	timezone: string;
+	tools_enabled: boolean;
+	reuse_conversation: boolean;
+	reuse_rounds: number;
+	model?: string;
+	dot_id?: string | null;
+	principal_id?: string;
+	agent_version?: number;
+	linked_session_id?: string | null;
+}
+
+export const scheduledApi = {
+	list: (principalId?: string | null) => adminJson<ScheduledData>(`/api/v0/scheduled${principalId ? `?principal_id=${encodeURIComponent(principalId)}` : ''}`),
+	create: (body: ScheduledBody) => adminPost('/api/v0/scheduled', body),
+	update: (id: string, body: ScheduledBody & { expected_configuration_generation: string }) => adminPut(`/api/v0/scheduled/${encodeURIComponent(id)}`, body),
+	toggle: (id: string, enabled: boolean, generation: string) => adminPost<{ enabled: boolean; configuration_generation: string }>(`/api/v0/scheduled/${encodeURIComponent(id)}/toggle`, { enabled, expected_configuration_generation: generation }),
+	remove: (id: string) => adminDelete(`/api/v0/scheduled/${encodeURIComponent(id)}`),
+	runs: (id: string) => adminJson<{ action: ScheduledAction; runs: ScheduledRun[] }>(`/api/v0/scheduled/${encodeURIComponent(id)}/runs`),
+	preview: (cron: string, timezone: string) => adminPost<{ summary: string; upcoming: string[] }>('/api/v0/scheduled/preview', { cron, timezone })
+};
+
+export function scheduledVersionModel(versions: AgentVersion[], version: number | null): string | null {
+	const model = versions.find((candidate) => candidate.version === version)?.spec.main?.model;
+	return typeof model === 'string' && model.trim() ? model : null;
 }
 
 export const defaultSchedule = (): ScheduleFields => ({

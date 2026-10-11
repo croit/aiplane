@@ -93,23 +93,25 @@ pub(super) fn operations() -> Vec<Op> {
         delete("/api/v0/memories/{id}", Access::Session)
             .no_content()
             .errors(&[404]),
-        get("/api/v0/scheduled", Access::Session).ok(json::<workspace::ScheduledList>()),
+        get("/api/v0/scheduled", Access::Session)
+            .ok(json::<workspace::ScheduledList>())
+            .errors(&[400, 403, 404]),
         post("/api/v0/scheduled", Access::Session)
             .body(json::<workspace::ScheduledBody>())
             .created(json::<workspace::ActionView>())
-            .errors(&[400]),
+            .errors(&[400, 403, 404]),
         post("/api/v0/scheduled/preview", Access::Session)
             .body(json::<workspace::CronPreviewBody>())
             .ok(json::<workspace::CronPreview>())
             .errors(&[400]),
         put("/api/v0/scheduled/{id}", Access::Session)
-            .body(json::<workspace::ScheduledBody>())
+            .body(json::<workspace::ScheduledUpdateBody>())
             .ok(json::<workspace::Updated<workspace::ActionView>>())
-            .errors(&[400, 404]),
+            .errors(&[400, 403, 404, 409]),
         post("/api/v0/scheduled/{id}/toggle", Access::Session)
-            .body(json::<workspace::EnabledBody>())
-            .ok(json::<workspace::EnabledBody>())
-            .errors(&[400, 404]),
+            .body(json::<workspace::ScheduledEnabledBody>())
+            .ok(json::<workspace::ScheduledEnabledView>())
+            .errors(&[400, 403, 404, 409]),
         delete("/api/v0/scheduled/{id}", Access::Session)
             .no_content()
             .errors(&[404, 409]),

@@ -233,10 +233,27 @@ async fn request_human_hands_off_to_a_responder_whose_answer_reaches_the_visitor
     )
     .await
     .unwrap();
-    let sam = Viewer {
-        user_id: "sam".into(),
-        groups: vec!["support".into()],
+    use aiplane_core::server::db::{gateway_groups, users};
+    gateway_groups::upsert_group(world.db(), "support", "", false, false)
+        .await
+        .unwrap();
+    gateway_groups::set_mappings_for_group(world.db(), "support", &["support".into()])
+        .await
+        .unwrap();
+    let now = jiff::Timestamp::now();
+    let sam_user = users::User {
+        id: "sam".into(),
+        email: "sam@example.com".into(),
+        name: None,
+        roles: vec!["support".into()],
+        created_at: now,
+        updated_at: now,
+        timezone: None,
+        speech_voice: None,
     };
+    users::upsert(world.db(), &sam_user).await.unwrap();
+    world.state.reload_rbac().await;
+    let sam = Viewer::of(&world.state, &sam_user);
     let items = inbox::list(&world.state, &sam).await.unwrap();
     assert_eq!(items.len(), 1);
     let item = &items[0];
@@ -523,11 +540,13 @@ async fn a_persons_paused_run_is_their_own_inbox_item() {
     let action = crate::server::scheduled::create(
         world.db(),
         crate::server::scheduled::NewAction {
-            user_id: "u1".into(),
+            owner: crate::server::scheduled::ScheduleOwner::User("u1".into()),
+            created_by: "u1".into(),
+            agent_version: None,
             dot_id: None,
             name: "Nightly refunds".into(),
             prompt: "Refund what is due.".into(),
-            model: "support-model".into(),
+            model: Some("support-model".into()),
             cron: "0 0 * * *".into(),
             timezone: "UTC".into(),
             tools_enabled: true,

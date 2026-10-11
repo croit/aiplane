@@ -1535,16 +1535,12 @@ async fn workspace_surfaces_round_trip() {
     assert_eq!(deleted_flag(&gone.id), true);
 
     // The list row learns it too, so it never links into the deleted chat.
-    aiplane_runtime::server::scheduled::mark_ran(
-        &state.db,
-        action_id,
-        "ok",
-        Some(&gone.id),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+    sqlx::query("UPDATE scheduled_actions SET last_session_id = ? WHERE id = ?")
+        .bind(&gone.id)
+        .bind(action_id)
+        .execute(&state.db)
+        .await
+        .unwrap();
     let resp = app
         .serve(req(
             rama::http::Method::GET,
@@ -1721,7 +1717,13 @@ async fn schedules_and_webhooks_continue_in_a_linked_chat() {
         StatusCode::BAD_REQUEST,
         "a fresh-chat schedule has nothing to continue in"
     );
-    assert!(err.to_string().contains("reuse_conversation"), "{err}");
+    assert!(
+        err.to_string().contains(&session_core::i18n::t(
+            session_core::i18n::Lang::En,
+            "dot-background-error-linked"
+        )),
+        "{err}"
+    );
 
     let (status, err) = send(
         rama::http::Method::POST,
@@ -1747,7 +1749,11 @@ async fn schedules_and_webhooks_continue_in_a_linked_chat() {
     let (status, kept) = send(
         rama::http::Method::PUT,
         format!("/api/v0/scheduled/{action_id}"),
-        keep.into(),
+        {
+            let mut body: serde_json::Value = serde_json::from_str(keep).unwrap();
+            body["expected_configuration_generation"] = created["configuration_generation"].clone();
+            body.to_string()
+        },
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{kept}");
@@ -1755,7 +1761,11 @@ async fn schedules_and_webhooks_continue_in_a_linked_chat() {
     let (_, cleared) = send(
         rama::http::Method::PUT,
         format!("/api/v0/scheduled/{action_id}"),
-        schedule(true, ""),
+        {
+            let mut body: serde_json::Value = serde_json::from_str(&schedule(true, "")).unwrap();
+            body["expected_configuration_generation"] = kept["configuration_generation"].clone();
+            body.to_string()
+        },
     )
     .await;
     assert!(cleared["last_session_id"].is_null(), "{cleared}");

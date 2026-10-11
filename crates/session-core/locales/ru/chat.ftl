@@ -51,3 +51,5 @@ chat-attempt-reason-loop = модель начала повторяться
 chat-attempt-reason-repeated_call = один и тот же вызов инструмента снова и снова
 chat-attempt-retry = Новая попытка с уровнем размышлений { $effort } (попытка { $n })
 chat-loop-exhausted = Модель повторялась во всех попытках ({ $attempts }), даже с меньшим уровнем размышлений. Сформулируйте вопрос иначе или разбейте его на части.
+
+chat-error-run-cancelled = Выполнение отменено.

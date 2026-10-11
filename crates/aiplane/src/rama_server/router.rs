@@ -381,6 +381,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             "/api/v0/agents/{id}/test/{session}/events",
             pages::json_agent_test::events,
         )
+        .with_post(
+            "/api/v0/agents/{id}/test/{session}/cancel",
+            pages::json_agent_test::cancel_turn,
+        )
         .with_get(
             "/api/v0/agents/{id}/test/{session}/turns/{turn}/debug",
             pages::json_agent_test::turn_debug,

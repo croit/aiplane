@@ -442,3 +442,32 @@ pub async fn resume_turn(State(state): State<Arc<RamaState>>, req: Request) -> R
     )
     .await
 }
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct PrivateTurnCancelBody {
+    pub turn_id: String,
+}
+
+pub async fn cancel_turn(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
+    let user = or_return!(require_agent_manager(&state, &req).await);
+    let (agent, _) = or_return!(agent_at(&state, &req, &user, 3, Access::Write).await);
+    let Some(session_id) = raw_path_segment(&req, 1) else {
+        return not_found(t(lang, "organization-error-not-found"));
+    };
+    let body: PrivateTurnCancelBody =
+        or_return!(super::read_json(req.into_body(), "the private turn cancellation").await);
+    match aiplane_runtime::agents::resume::cancel_private_turn(
+        &state,
+        &user.id,
+        &agent.principal.id,
+        &session_id,
+        &body.turn_id,
+    )
+    .await
+    {
+        Ok(true) => json_ok(StatusCode::OK, super::Done::OK),
+        Ok(false) => not_found(t(lang, "organization-error-not-found")),
+        Err(error) => run_error(error, lang),
+    }
+}

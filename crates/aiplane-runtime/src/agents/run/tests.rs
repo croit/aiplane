@@ -336,6 +336,16 @@ impl World {
             Arc::new(aiplane_core::server::rbac::Resolver::empty()),
         );
         let sessions = aiplane_core::rama_server::SessionStore::new(db.clone(), [7u8; 32]);
+        use aiplane_core::server::db::gateway_groups;
+        gateway_groups::upsert_group(&db, "managers", "", false, false)
+            .await
+            .unwrap();
+        gateway_groups::set_can_manage_agents(&db, "managers", true)
+            .await
+            .unwrap();
+        gateway_groups::set_mappings_for_group(&db, "managers", &["managers".into()])
+            .await
+            .unwrap();
         let now = jiff::Timestamp::now();
         aiplane_core::server::db::users::upsert(
             &db,
@@ -343,7 +353,7 @@ impl World {
                 id: "u1".into(),
                 email: "owner@example.com".into(),
                 name: None,
-                roles: vec![],
+                roles: vec!["managers".into()],
                 created_at: now,
                 updated_at: now,
                 timezone: None,
@@ -357,9 +367,11 @@ impl World {
         } else {
             aiplane_core::server::usage::UsageHandle::disabled()
         };
-        Self {
+        let world = Self {
             state: Arc::new(RamaState::new(app, sessions, usage)),
-        }
+        };
+        world.state.reload_rbac().await;
+        world
     }
 
     fn db(&self) -> &aiplane_core::server::db::Pool {
