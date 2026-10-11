@@ -63,7 +63,7 @@ Add one explicit directed Dot delegation edge, checked by this resolver and the 
 
 Default deny in both directions. For caller A to ask receiver B, A must explicitly allow outgoing delegation to B, and B must explicitly accept incoming delegation from A. Same-owner personal Dots can be configured by that owner; no edge is created merely because both exist. A→B does not imply B→A.
 
-Use one row per ordered pair in `dot_delegation_edges(caller_dot_id, receiver_dot_id, outbound_enabled, inbound_enabled, generation, updated_at)`. Both choices are separately presented on their respective Dot, default false, and require current manage/owner access to the corresponding endpoint. Generation changes on either decision. Enforce actual ownership/organization equality at save and invocation, not solely a client filter. Delete identity edges when either Dot is deleted while retaining nonsecret audit facts. Amend the one unreleased Dot migration and fixtures once; no per-package migration.
+Use one row per ordered pair in `dot_delegation_edges(caller_dot_id, receiver_dot_id, outbound_enabled, inbound_enabled, generation, updated_at)`. Both choices are separately presented on their respective Dot, default false, and require current manage/owner access to the corresponding endpoint. Generation changes on effective consent changes. Identical saves preserve it after checking the supplied generation; stale identical saves still conflict. Enabling a new consent requires both Dots active, while revocation and unchanged inactive configuration remain possible. Enforce actual ownership/organization equality at save and invocation, not solely a client filter. Delete identity edges when either Dot is deleted while retaining nonsecret audit facts. Amend the one unreleased Dot migration and fixtures once; no per-package migration.
 
 Record the authorized edge ID/generation, caller/receiver IDs, parent assistant turn/tool-call IDs and the receiver's child turn with existing dispatch/suspension context. Add parent-turn and caller-Dot linkage to the existing personal Dot session association where needed; use a shared agent-layer accessor for verified child relationships. Do not make session-core know a Dot. No new queue or message store is needed: the child user turn holds the bounded explicit task and the existing result/suspension stores hold outcome and wait state.
 
@@ -117,3 +117,33 @@ State-based tests use actual in-memory SQLite identities/sessions, registries an
 - API ownership isolation, stale-generation conflict, inactive saved selections and accessible mobile/keyboard flow use actual resource data.
 
 Current source gaps are material: ordinary local dispatch loads published principal profiles; personal Dot child linkage and staff/participant resume are not yet unified; available user Dot tools do not expose communication; direction-specific consent does not exist; a tree-wide budget guarantee must be checked against actual remaining-budget accounting. These prerequisites are implementation work, not supported behavior. The existing remote A2A context/task records are sufficient for their remote protocol but should not be overloaded with invented local card URLs or tokens.
+
+## Shared suspension claim contract
+
+Shared resume uses the existing suspension store with request-aware deletion and one
+transaction for the entire verified chain. A stale request or unavailable
+ancestor leaves every pause and status intact. This building block precedes
+personal Dot delegation and has existing single-turn and principal-chain callers.
+
+`session_core::db::get_suspension_in(connection, turn_id)` reads the same typed
+row inside the caller transaction. `claim_suspension_in(connection, turn_id,
+expected_request_id)` deletes only that request while the actual turn is
+suspended and flips that turn to in-progress. The pool-level claimant takes
+an expected request ID and reuses the same helper in its transaction.
+Runtime validates the offered decision inside the transaction through
+`claim_for_resume_in`; the existing single-turn wrapper uses it. The current
+principal-chain claimant validates each stored parent/child pause and claims
+the exact deepest request and all exact ancestors in one existing `WriteTx`.
+No new approval store, decision type, ownership model or schema is introduced.
+
+State-based tests cover stale requests, terminal turns, transaction rollback,
+all-level commit, invalid decisions and missing ancestors. Runtime errors keep
+the existing resume refusal types. Session-core remains owner-agnostic.
+
+The subsequent personal communication implementation uses a new bounded text
+input of at most 16,000 UTF-8 bytes because no delegation-message limit exists
+in the current dispatcher. Replies retain the existing tool-result budgets.
+Finite token budgets stop additional tool-bearing work when actual upstream
+usage is unavailable; model-round boundaries can still overshoot a token
+allowance. Shared accounting must preserve one tree checkpoint across durable
+pauses without adding historical child charges twice.

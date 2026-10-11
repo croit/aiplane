@@ -31,6 +31,7 @@ by tests that read the workspace's own source, in
 | `model_tool_calls_dispatch_only_through_the_grant` | only the chat/agent driver, its resume path and the `/v1` loops hand calls to the runner, and each still builds its gate (`GrantedToolSource`, `DiscoverableToolSource`); `Tool::run` is called directly only by the runner and the listed wrappers/verifiers | `GrantedToolSource` (+ `RunToolSource` over it), `DiscoverableToolSource` |
 | `personal_dot_calls_revalidate_access_before_execution` | the personal Dot source wraps an initially granted tool, and dispatch keeps the live owner, active Dot, selected tools and approval checks | `LivePersonalDotTool`, `GrantedToolSource`, `Permissions`, `AskFirst` |
 | `action_rules_classify_and_validate_before_using_shared_approvals` | permission and approval gates validate classified actions before resolving or accepting approval | `Tool::classify_actions`, `validate_actions`, `Permissions`, `AskFirst` |
+| `agent_resume_claims_use_one_request_aware_transaction` | a paused agent chain uses one transaction and request-aware connection claims, avoiding independently committed levels | `WriteTx`, `claim_for_resume_in`, `claim_suspension_in` |
 
 How they work: each production `.rs` file under `crates/` (not `tests/`,
 `tests.rs`, `examples/`, or a `#[cfg(test)]` item) is masked — comments
@@ -176,6 +177,9 @@ background admission cannot rewrite history or leave a partial prompt. Approval
 continuation uses actual suspension rows and a mocked upstream, asserting the
 resulting Dot memory and exact run state. A busy resume leaves the original
 approval unclaimed for retry; abandoned reservations clear their own worker.
+Fixtures that declare scheduled or webhook usage create the matching durable
+run and attach its actual session and turn before execution. A usage-source
+label alone does not establish background execution authority.
 
 `web/src/lib/dot-background.test.ts` and `background-api.test.ts` cover real
 choice availability and query semantics. `e2e/spa-dots-background.test.mjs`

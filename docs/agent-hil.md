@@ -76,8 +76,11 @@ and answers is the conversation's.
   `RunChain`'s `MAX_DEPTH` levels, each level's session naming the level above
   as its parent), checks `request_id` against the conversation's row, the
   decision against the innermost kind's options and the answerer against
-  `answered_by()`, then claims the innermost row (the race two answers run)
-  and every ancestor.
+  `answered_by()`, then rechecks the exact pause snapshots and session links
+  inside one write transaction. It claims the innermost request and every
+  ancestor by their expected request IDs and commits them together. A changed
+  or missing ancestor, invalid decision or conflicting claim leaves every
+  suspension and turn status intact.
 - `run_claimed` rebuilds each level from its session (owner, pinned version; a
   test conversation's draft) and its parent's pause (the chain is
   `RunChain::root` plus one `enter` per level, `CallSite` = the parent's turn

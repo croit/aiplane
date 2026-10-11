@@ -194,7 +194,22 @@ pub async fn claim_for_resume(
     request_id: Option<&str>,
     decision: Decision,
 ) -> Result<ResumeFrom, ResumeRefused> {
-    let current = chat::get_suspension(db, turn_id)
+    let mut tx = db
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(chat::DbError::from)?;
+    let resumed = claim_for_resume_in(&mut tx, turn_id, request_id, decision).await?;
+    tx.commit().await.map_err(chat::DbError::from)?;
+    Ok(resumed)
+}
+
+pub async fn claim_for_resume_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+    request_id: Option<&str>,
+    decision: Decision,
+) -> Result<ResumeFrom, ResumeRefused> {
+    let current = chat::suspensions::get_suspension_in(connection, turn_id)
         .await?
         .ok_or(ResumeRefused::NotSuspended)?;
     if let Some(asked) = request_id
@@ -212,10 +227,11 @@ pub async fn claim_for_resume(
             offered,
         });
     }
-    let suspension = chat::claim_suspension(db, turn_id)
-        .await?
-        .filter(|claimed| claimed.request_id == current.request_id)
-        .ok_or(ResumeRefused::NotSuspended)?;
+    let suspension =
+        chat::suspensions::claim_suspension_in(connection, turn_id, &current.request_id)
+            .await?
+            .filter(|claimed| claimed.request_id == current.request_id)
+            .ok_or(ResumeRefused::NotSuspended)?;
     Ok(ResumeFrom {
         suspension,
         decision,
@@ -334,5 +350,47 @@ mod tests {
             claim_for_resume(&db, "t1", None, Decision::AllowOnce).await,
             Err(ResumeRefused::NotSuspended)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_connection_claim_rolls_back_with_its_callers_transaction() {
+        let (db, session_id) = suspended_turn().await;
+        let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let resumed = claim_for_resume_in(&mut tx, "t1", Some("req-1"), Decision::AllowOnce)
+            .await
+            .unwrap();
+        assert_eq!(resumed.suspension.request_id, "req-1");
+        tx.rollback().await.unwrap();
+        assert!(still_suspended(&db).await);
+        assert_eq!(
+            chat::get_turn(&db, &session_id, "t1")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::Suspended
+        );
+    }
+
+    #[tokio::test]
+    async fn a_connection_claim_refuses_stale_and_unoffered_decisions_without_consuming() {
+        let (db, _) = suspended_turn().await;
+        let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        assert!(matches!(
+            claim_for_resume_in(&mut tx, "t1", Some("old"), Decision::AllowOnce).await,
+            Err(ResumeRefused::StaleRequest { .. })
+        ));
+        assert!(matches!(
+            claim_for_resume_in(
+                &mut tx,
+                "t1",
+                Some("req-1"),
+                Decision::Value { value: "x".into() }
+            )
+            .await,
+            Err(ResumeRefused::NotOffered { .. })
+        ));
+        tx.commit().await.unwrap();
+        assert!(still_suspended(&db).await);
     }
 }

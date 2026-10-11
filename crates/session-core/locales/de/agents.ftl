@@ -2,12 +2,12 @@
 
 agent-output-withheld = Diese Antwort kann ich nicht geben, weil sie Angaben enthielt, die ich für Sie nicht bestätigen konnte. Bitte formulieren Sie Ihre Frage um oder wenden Sie sich an den Support.
 agent-output-redacted = [entfernt]
-dot-error-name-taken = Ein persönlicher Dot mit diesem Namen existiert bereits in deinem Konto. Wähle einen anderen Namen.
-dot-error-name-invalid = Gib einen Namen mit höchstens 80 Zeichen ohne Steuerzeichen ein.
-dot-error-active-limit = Das Limit für aktive persönliche Dots ist erreicht. Deaktiviere einen Dot, bevor du einen weiteren erstellst.
-dot-error-not-found = Dieser persönliche Dot ist in deinem Konto nicht verfügbar.
+dot-error-name-taken = Ein persönlicher Dot mit diesem Namen existiert bereits in Ihrem Konto. Wählen Sie einen anderen Namen.
+dot-error-name-invalid = Geben Sie einen Namen mit höchstens 80 Zeichen ohne Steuerzeichen ein.
+dot-error-active-limit = Das Limit für aktive persönliche Dots ist erreicht. Deaktivieren Sie einen Dot, bevor Sie einen weiteren erstellen.
+dot-error-not-found = Dieser persönliche Dot ist in Ihrem Konto nicht verfügbar.
 dot-error-id-missing = In der Anfrage fehlt eine Dot-ID.
-dot-memory-error-kind = Wähle als Erinnerungsart Präferenz, Projekt oder Fakt.
+dot-memory-error-kind = Wählen Sie als Erinnerungsart Präferenz, Projekt oder Fakt.
 dot-memory-error-empty = Der Inhalt der Erinnerung darf nicht leer sein.
 dot-memory-error-id-missing = In der Anfrage fehlt eine Dot- oder Erinnerungs-ID.
 
@@ -27,7 +27,7 @@ agent-embed-not-waiting = Der Assistent wartet gerade nicht auf eine Antwort von
 agent-embed-message-waiting = Ihre vorherige Nachricht wartet noch auf den Assistenten. Bitte warten Sie seine Antwort ab, bevor Sie eine weitere senden.
 
 agent-a2a-input-required = Ein Partnerdienst benötigt noch eine Angabe, um fortzufahren. Geben Sie sie hier ein; sie geht nur an diesen Dienst.
-dot-error-inactive = Dieser Dot ist deaktiviert. Aktiviere ihn, bevor du eine Unterhaltung startest.
+dot-error-inactive = Dieser Dot ist deaktiviert. Aktivieren Sie ihn, bevor Sie eine Unterhaltung starten.
 dot-action-chat = Chat
 dot-action-chat-opening = Chat wird geöffnet …
 dot-activity-session-started = Dot-Chat gestartet.

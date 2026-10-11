@@ -882,6 +882,20 @@ fn action_rules_classify_and_validate_before_using_shared_approvals() {
 }
 
 #[test]
+fn agent_resume_claims_use_one_request_aware_transaction() {
+    let source = production_sources()
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/agents/resume.rs")
+        .expect("the shared agent resume implementation must exist");
+    assert!(source.code.contains("WriteTx::begin("));
+    assert!(source.code.contains("claim_for_resume_in("));
+    assert!(source.code.contains("claim_suspension_in("));
+    assert!(source.code.contains(".commit()"));
+    assert!(!source.code.contains("claim_for_resume("));
+    assert!(!source.code.contains("chat::claim_suspension("));
+}
+
+#[test]
 fn personal_dot_calls_revalidate_access_before_execution() {
     let source = production_sources()
         .iter()

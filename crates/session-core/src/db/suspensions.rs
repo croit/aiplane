@@ -384,11 +384,19 @@ pub async fn suspend_turn(pool: &Pool, suspension: &TurnSuspension) -> Result<bo
 
 /// The suspension a turn is paused on, if any.
 pub async fn get_suspension(pool: &Pool, turn_id: &str) -> Result<Option<TurnSuspension>, DbError> {
+    let mut connection = pool.acquire().await?;
+    get_suspension_in(&mut connection, turn_id).await
+}
+
+pub async fn get_suspension_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+) -> Result<Option<TurnSuspension>, DbError> {
     let row = sqlx::query(&format!(
         "SELECT {SUSPENSION_COLUMNS} FROM chat_turn_suspensions WHERE turn_id = ?"
     ))
     .bind(turn_id)
-    .fetch_optional(pool)
+    .fetch_optional(connection)
     .await?;
     row.as_ref().map(map_suspension).transpose()
 }
@@ -416,25 +424,38 @@ pub async fn set_suspension_run_context(
 pub async fn claim_suspension(
     pool: &Pool,
     turn_id: &str,
+    expected_request_id: &str,
 ) -> Result<Option<TurnSuspension>, DbError> {
     let mut tx = pool.begin().await?;
+    let suspension = claim_suspension_in(&mut tx, turn_id, expected_request_id).await?;
+    tx.commit().await?;
+    Ok(suspension)
+}
+
+pub async fn claim_suspension_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+    expected_request_id: &str,
+) -> Result<Option<TurnSuspension>, DbError> {
     let row = sqlx::query(&format!(
-        "DELETE FROM chat_turn_suspensions WHERE turn_id = ? RETURNING {SUSPENSION_COLUMNS}"
+        "DELETE FROM chat_turn_suspensions WHERE turn_id = ? AND request_id = ?
+         AND EXISTS (SELECT 1 FROM chat_turns WHERE id = chat_turn_suspensions.turn_id
+                     AND status = 'suspended') RETURNING {SUSPENSION_COLUMNS}"
     ))
     .bind(turn_id)
-    .fetch_optional(&mut *tx)
+    .bind(expected_request_id)
+    .fetch_optional(&mut *connection)
     .await?;
     let Some(row) = row else {
         return Ok(None);
     };
     let suspension = map_suspension(&row)?;
     sqlx::query(
-        r#"UPDATE chat_turns SET status = 'in_progress' WHERE id = ? AND status = 'suspended'"#,
+        r#"UPDATE chat_turns SET status = 'in_progress' WHERE id = ? AND status = 'suspended' RETURNING id"#,
     )
     .bind(turn_id)
-    .execute(&mut *tx)
+    .fetch_one(connection)
     .await?;
-    tx.commit().await?;
     Ok(Some(suspension))
 }
 
@@ -718,7 +739,7 @@ mod tests {
             Some(context.clone())
         );
         assert_eq!(
-            claim_suspension(&pool, "a1")
+            claim_suspension(&pool, "a1", "req-a1")
                 .await
                 .unwrap()
                 .unwrap()
@@ -790,10 +811,127 @@ mod tests {
         let row = suspension("a1", in_an_hour());
         suspend_turn(&pool, &row).await.unwrap();
 
-        assert_eq!(claim_suspension(&pool, "a1").await.unwrap(), Some(row));
-        assert_eq!(claim_suspension(&pool, "a1").await.unwrap(), None);
+        assert_eq!(
+            claim_suspension(&pool, "a1", "req-a1").await.unwrap(),
+            Some(row)
+        );
+        assert_eq!(claim_suspension(&pool, "a1", "req-a1").await.unwrap(), None);
         let turn = get_turn(&pool, &session_id, "a1").await.unwrap().unwrap();
         assert_eq!(turn.status, TurnStatus::InProgress);
+    }
+
+    #[tokio::test]
+    async fn a_stale_request_cannot_claim_the_current_pause() {
+        let pool = pool().await;
+        let session = running_turn(&pool, "a1").await;
+        let row = suspension("a1", in_an_hour());
+        suspend_turn(&pool, &row).await.unwrap();
+        assert!(
+            claim_suspension(&pool, "a1", "previous-request")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(get_suspension(&pool, "a1").await.unwrap(), Some(row));
+        assert_eq!(
+            get_turn(&pool, &session, "a1")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::Suspended
+        );
+    }
+
+    #[tokio::test]
+    async fn connection_claims_commit_together_and_rollback_together() {
+        let pool = pool().await;
+        for turn in ["parent", "child"] {
+            running_turn(&pool, turn).await;
+            suspend_turn(&pool, &suspension(turn, in_an_hour()))
+                .await
+                .unwrap();
+        }
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            claim_suspension_in(&mut tx, "child", "req-child")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            claim_suspension_in(&mut tx, "parent", "stale-parent")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        tx.rollback().await.unwrap();
+        for turn in ["parent", "child"] {
+            assert!(get_suspension(&pool, turn).await.unwrap().is_some());
+        }
+        let mut tx = pool.begin().await.unwrap();
+        for turn in ["child", "parent"] {
+            let row = get_suspension_in(&mut tx, turn).await.unwrap().unwrap();
+            assert_eq!(
+                claim_suspension_in(&mut tx, turn, &row.request_id)
+                    .await
+                    .unwrap(),
+                Some(row)
+            );
+        }
+        tx.commit().await.unwrap();
+        for turn in ["parent", "child"] {
+            assert!(get_suspension(&pool, turn).await.unwrap().is_none());
+            let status: String = sqlx::query_scalar("SELECT status FROM chat_turns WHERE id = ?")
+                .bind(turn)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(status, "in_progress");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_terminal_turn_cannot_be_claimed_from_a_leftover_pause() {
+        let pool = pool().await;
+        running_turn(&pool, "a1").await;
+        let row = suspension("a1", in_an_hour());
+        suspend_turn(&pool, &row).await.unwrap();
+        sqlx::query("UPDATE chat_turns SET status = 'cancelled' WHERE id = 'a1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            claim_suspension(&pool, "a1", &row.request_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(get_suspension(&pool, "a1").await.unwrap(), Some(row));
+    }
+
+    #[tokio::test]
+    async fn a_failed_status_transition_rolls_back_the_claimed_pause() {
+        let pool = pool().await;
+        let session = running_turn(&pool, "a1").await;
+        let row = suspension("a1", in_an_hour());
+        suspend_turn(&pool, &row).await.unwrap();
+        sqlx::query("CREATE TRIGGER cancel_during_claim AFTER DELETE ON chat_turn_suspensions BEGIN UPDATE chat_turns SET status = 'cancelled' WHERE id = OLD.turn_id; END")
+            .execute(&pool).await.unwrap();
+        assert!(
+            claim_suspension(&pool, "a1", &row.request_id)
+                .await
+                .is_err()
+        );
+        assert_eq!(get_suspension(&pool, "a1").await.unwrap(), Some(row));
+        assert_eq!(
+            get_turn(&pool, &session, "a1")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::Suspended
+        );
     }
 
     /// A restart must not take a paused turn for a crashed one: its waiting
@@ -955,7 +1093,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(take_next_for_user(&pool, "u1", &[]).await.unwrap(), None);
-        claim_suspension(&pool, "a1").await.unwrap();
+        claim_suspension(&pool, "a1", "req-a1").await.unwrap();
         assert_eq!(
             take_next_for_user(&pool, "u1", &[])
                 .await

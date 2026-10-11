@@ -789,8 +789,11 @@ call only while the turn lives in memory; this pause is durable.
 - **Resuming.** `suspend::claim_for_resume` checks the decision against the
   kind's options (`approval`: allow once / deny; `secure_input`,
   `human_answer`: value / deny) and the optional `request_id`, then deletes the
-  row and flips the turn back to `in_progress` atomically, so a decision is
-  claimed once. The chat path reserves the worker slot *before* claiming. The
+  exact request row and flips a suspended turn back to `in_progress` in
+  the same transaction. A stale request cannot consume a newer pause, and a
+  failed status transition rolls back the deletion. The connection-capable
+  helpers let agent chains claim every verified level in one transaction;
+  an unavailable ancestor leaves the entire chain paused. The chat path reserves the worker slot *before* claiming. The
   driver (`OpenAiDriver::resume`) rebuilds history and the system message as
   for any turn, appends `tail`, settles the waiting call and continues the
   round loop at the stored round count — and against the stored seconds and

@@ -520,6 +520,31 @@ async fn a_persons_paused_run_is_their_own_inbox_item() {
     .await
     .unwrap();
     gateway_tools_for(&world, "u1").await;
+    let action = crate::server::scheduled::create(
+        world.db(),
+        crate::server::scheduled::NewAction {
+            user_id: "u1".into(),
+            dot_id: None,
+            name: "Nightly refunds".into(),
+            prompt: "Refund what is due.".into(),
+            model: "support-model".into(),
+            cron: "0 0 * * *".into(),
+            timezone: "UTC".into(),
+            tools_enabled: true,
+            reuse_conversation: false,
+            reuse_rounds: 3,
+            next_run_at: None,
+            linked_session_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let run = crate::server::scheduled::record_run_start(world.db(), &action.id)
+        .await
+        .unwrap();
+    crate::server::scheduled::attach_run_turn(world.db(), &run, &session, &turn, true, None)
+        .await
+        .unwrap();
     crate::server::headless::drive(
         &world.state,
         crate::server::headless::DriveParams {

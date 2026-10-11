@@ -43,7 +43,7 @@ use super::router::{Caller, dispatch_result};
 use super::run::{AgentReply, OpenedTurn, drive_opened, drive_opened_from, root_chain};
 use crate::rama_server::state::RamaState;
 use crate::server::headless::drive_resumed;
-use crate::suspend::{ResumeFrom, ResumeRefused, claim_for_resume};
+use crate::suspend::{ResumeFrom, ResumeRefused, claim_for_resume_in};
 
 /// Who gives the decision, for the rules on who may and for the audit row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,31 +210,72 @@ pub async fn claim(
         _ => {}
     }
 
+    let mut tx = aiplane_agents::db::WriteTx::begin(db).await?;
+    for level in &levels {
+        validate_session(&mut tx, level).await?;
+        if chat::get_suspension_in(&mut tx, &level.suspension.turn_id)
+            .await?
+            .as_ref()
+            != Some(&level.suspension)
+        {
+            return Err(not_suspended());
+        }
+    }
     let innermost = levels.len() - 1;
-    let claimed = claim_for_resume(
-        db,
+    let claimed = claim_for_resume_in(
+        &mut tx,
         &levels[innermost].suspension.turn_id,
-        None,
+        Some(&levels[innermost].suspension.request_id),
         resume.decision.clone(),
     )
     .await?;
     levels[innermost].suspension = claimed.suspension;
     for i in (0..innermost).rev() {
-        match chat::claim_suspension(db, &levels[i].suspension.turn_id).await? {
-            Some(row) => levels[i].suspension = row,
-            None => {
-                let message = "a parent turn of this paused sub-agent run was settled by \
-                               something else while the decision was being claimed";
-                fail(state, &levels[i + 1..], message).await;
-                return Err(not_suspended());
-            }
-        }
+        let row = chat::claim_suspension_in(
+            &mut tx,
+            &levels[i].suspension.turn_id,
+            &levels[i].suspension.request_id,
+        )
+        .await?
+        .filter(|row| row == &levels[i].suspension)
+        .ok_or_else(not_suspended)?;
+        levels[i].suspension = row;
     }
+    for level in &levels {
+        validate_session(&mut tx, level).await?;
+    }
+    tx.commit().await?;
     Ok(ClaimedResume {
         levels,
         decision: resume.decision,
         by: resume.by,
     })
+}
+
+async fn validate_session(
+    connection: &mut sqlx::SqliteConnection,
+    level: &Level,
+) -> Result<(), AgentResumeError> {
+    let valid: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM chat_turns t
+         JOIN chat_sessions s ON s.id = t.session_id
+         WHERE t.id = ? AND t.role = 'assistant' AND s.id = ?
+           AND s.principal_id = ? AND s.parent_turn_id IS ?
+           AND s.agent_version IS ? AND s.visitor_id IS ?)",
+    )
+    .bind(&level.suspension.turn_id)
+    .bind(&level.session.id)
+    .bind(&level.session.principal_id)
+    .bind(level.session.parent_turn_id.as_deref())
+    .bind(level.session.agent_version)
+    .bind(level.session.visitor_id.as_deref())
+    .fetch_one(connection)
+    .await
+    .map_err(DbError::from)?;
+    if !valid {
+        return Err(not_suspended());
+    }
+    Ok(())
 }
 
 /// Error every claimed turn of `levels`, so none is left `in_progress`
@@ -565,6 +606,212 @@ pub async fn resume_expired(state: &Arc<RamaState>) {
             Err(err) => {
                 tracing::debug!(turn = %e.turn_id, %err, "expired agent request already settled");
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aiplane_agents::db::system_principals::{self, NewPrincipal};
+    use aiplane_core::server::upstreams::UpstreamRegistry;
+    use session_core::db::{BudgetUsed, PendingCall, TimeoutFallback};
+
+    async fn paused_chain() -> (RamaState, String, String) {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let principal = system_principals::create(
+            &db,
+            &NewPrincipal {
+                name: "claim-test",
+                display: "Claim test",
+                description: "",
+            },
+            "tester",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let root = run_sessions::create_principal_session(
+            &db,
+            &run_sessions::NewRunSession {
+                principal_id: &principal.id,
+                title: None,
+                parent_turn_id: None,
+                agent_version: None,
+            },
+        )
+        .await
+        .unwrap();
+        chat::create_assistant_turn_in_progress(&db, &root.id, "parent", "m")
+            .await
+            .unwrap();
+        let child = run_sessions::create_principal_session(
+            &db,
+            &run_sessions::NewRunSession {
+                principal_id: &principal.id,
+                title: None,
+                parent_turn_id: Some("parent"),
+                agent_version: None,
+            },
+        )
+        .await
+        .unwrap();
+        chat::create_assistant_turn_in_progress(&db, &child.id, "child", "m")
+            .await
+            .unwrap();
+        for (turn, child_turn) in [("child", None), ("parent", Some("child".into()))] {
+            let now = jiff::Timestamp::now();
+            chat::suspend_turn(
+                &db,
+                &TurnSuspension {
+                    turn_id: turn.into(),
+                    request_id: format!("req-{turn}"),
+                    kind: session_core::db::SuspensionKind::Approval,
+                    message: None,
+                    tool_call: PendingCall {
+                        id: format!("call-{turn}"),
+                        name: "company_echo".into(),
+                        arguments: "{}".into(),
+                        actions: None,
+                    },
+                    tail: Vec::new(),
+                    budget_used: BudgetUsed::default(),
+                    child_turn,
+                    on_timeout: TimeoutFallback::Deny,
+                    expires_at: now,
+                    created_at: now,
+                    run_context: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let app = crate::server::AppState::new(
+            Default::default(),
+            db.clone(),
+            UpstreamRegistry::new(&Default::default()).unwrap(),
+            Arc::new(crate::server::tools::ToolRegistry::new()),
+            Arc::new(crate::server::tools::echo::granted_to_everyone()),
+        );
+        let state = RamaState::new(
+            app,
+            aiplane_core::rama_server::SessionStore::new(db, [7; 32]),
+            aiplane_core::server::usage::UsageHandle::disabled(),
+        );
+        (state, principal.id, root.id)
+    }
+
+    async fn resume_chain(
+        state: &RamaState,
+        principal: &str,
+        session: &str,
+        decision: Decision,
+    ) -> Result<ClaimedResume, AgentResumeError> {
+        claim(
+            state,
+            AgentResume {
+                agent_id: principal,
+                session_id: session,
+                turn_id: "parent",
+                request_id: Some("req-parent"),
+                decision,
+                by: ResumedBy::Staff {
+                    user_id: "tester".into(),
+                },
+            },
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_missing_ancestor_during_claim_preserves_the_entire_chain() {
+        let (state, principal, session) = paused_chain().await;
+        sqlx::query("CREATE TRIGGER remove_parent AFTER DELETE ON chat_turn_suspensions WHEN OLD.turn_id = 'child' BEGIN DELETE FROM chat_turn_suspensions WHERE turn_id = 'parent'; END")
+            .execute(&state.db).await.unwrap();
+        assert!(
+            resume_chain(&state, &principal, &session, Decision::AllowOnce)
+                .await
+                .is_err()
+        );
+        for turn in ["parent", "child"] {
+            assert!(
+                chat::get_suspension(&state.db, turn)
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_changed_ancestor_request_during_claim_preserves_the_entire_chain() {
+        let (state, principal, session) = paused_chain().await;
+        sqlx::query("CREATE TRIGGER change_parent AFTER DELETE ON chat_turn_suspensions WHEN OLD.turn_id = 'child' BEGIN UPDATE chat_turn_suspensions SET request_id = 'new-parent' WHERE turn_id = 'parent'; END")
+            .execute(&state.db).await.unwrap();
+        assert!(
+            resume_chain(&state, &principal, &session, Decision::AllowOnce)
+                .await
+                .is_err()
+        );
+        for turn in ["parent", "child"] {
+            assert_eq!(
+                chat::get_suspension(&state.db, turn)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .request_id,
+                format!("req-{turn}")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unoffered_deepest_decision_preserves_the_entire_chain() {
+        let (state, principal, session) = paused_chain().await;
+        assert!(matches!(
+            resume_chain(
+                &state,
+                &principal,
+                &session,
+                Decision::Value { value: "x".into() }
+            )
+            .await,
+            Err(AgentResumeError::Refused(ResumeRefused::NotOffered { .. }))
+        ));
+        for turn in ["parent", "child"] {
+            assert!(
+                chat::get_suspension(&state.db, turn)
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_successful_chain_claim_consumes_all_exact_requests() {
+        let (state, principal, session) = paused_chain().await;
+        let claimed = resume_chain(&state, &principal, &session, Decision::AllowOnce)
+            .await
+            .unwrap();
+        assert_eq!(claimed.levels.len(), 2);
+        for level in claimed.levels {
+            assert!(
+                chat::get_suspension(&state.db, &level.suspension.turn_id)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(
+                chat::get_turn(&state.db, &level.session.id, &level.suspension.turn_id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                TurnStatus::InProgress
+            );
         }
     }
 }
