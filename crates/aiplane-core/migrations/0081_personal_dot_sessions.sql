@@ -37,11 +37,42 @@ ALTER TABLE webhook_runs ADD COLUMN history_limit INTEGER
 CREATE UNIQUE INDEX webhook_runs_assistant_turn ON webhook_runs (assistant_turn_id)
     WHERE assistant_turn_id IS NOT NULL;
 
+CREATE TEMP TABLE dot_mcp_catalog_tools_preserved AS SELECT * FROM mcp_connector_tools;
+CREATE TABLE mcp_catalog_connectors_new (
+    key                  TEXT PRIMARY KEY NOT NULL,
+    name                 TEXT NOT NULL,
+    description          TEXT,
+    icon                 TEXT,
+    category             TEXT,
+    url                  TEXT NOT NULL,
+    auth                 TEXT NOT NULL DEFAULT 'oauth2',
+    use_dcr              INTEGER NOT NULL DEFAULT 1,
+    client_id            TEXT,
+    client_secret_ct     BLOB,
+    client_secret_nonce  BLOB,
+    authorize_url        TEXT,
+    token_url            TEXT,
+    registration_url     TEXT,
+    scopes_json          TEXT NOT NULL DEFAULT '[]',
+    enabled              INTEGER NOT NULL DEFAULT 0,
+    seeded               INTEGER NOT NULL DEFAULT 0,
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+, scope TEXT NOT NULL DEFAULT 'per_user', audit INTEGER NOT NULL DEFAULT 0, allowed_groups TEXT NOT NULL DEFAULT '[]', dispatch_generation TEXT NOT NULL DEFAULT (lower(hex(randomblob(4)))||'-'||lower(hex(randomblob(2)))||'-4'||substr(lower(hex(randomblob(2))),2)||'-'||substr('89ab',1+abs(random()%4),1)||substr(lower(hex(randomblob(2))),2)||'-'||lower(hex(randomblob(6)))) CHECK (length(dispatch_generation)>0)) STRICT;
+INSERT INTO mcp_catalog_connectors_new (key, name, description, icon, category, url, auth, use_dcr, client_id, client_secret_ct, client_secret_nonce, authorize_url, token_url, registration_url, scopes_json, enabled, seeded, created_at, updated_at, scope, audit, allowed_groups) SELECT key, name, description, icon, category, url, auth, use_dcr, client_id, client_secret_ct, client_secret_nonce, authorize_url, token_url, registration_url, scopes_json, enabled, seeded, created_at, updated_at, scope, audit, allowed_groups FROM mcp_catalog_connectors;
+DROP TABLE mcp_catalog_connectors;
+ALTER TABLE mcp_catalog_connectors_new RENAME TO mcp_catalog_connectors;
+DELETE FROM mcp_connector_tools;
+INSERT INTO mcp_connector_tools(connector_key,tool_id,description,seen_at)
+SELECT connector_key,tool_id,description,seen_at FROM dot_mcp_catalog_tools_preserved;
+DROP TABLE dot_mcp_catalog_tools_preserved;
+
 CREATE TABLE mcp_connections (
  id TEXT PRIMARY KEY NOT NULL,
  user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
  principal_id TEXT REFERENCES system_principals(id) ON DELETE CASCADE,
  connector_key TEXT NOT NULL,
+ catalog_generation TEXT,
  generation TEXT NOT NULL,
  authorization_generation TEXT,
  authorization_expires_at TEXT,
@@ -82,6 +113,8 @@ UPDATE mcp_connections SET
  authorization_expires_at=(SELECT p.expires_at FROM dot_mcp_pending_preserved p WHERE p.user_id=mcp_connections.user_id AND p.connector_key=mcp_connections.connector_key)
 WHERE EXISTS(SELECT 1 FROM dot_mcp_pending_preserved p WHERE p.user_id=mcp_connections.user_id AND p.connector_key=mcp_connections.connector_key);
 
+UPDATE mcp_connections SET catalog_generation=(SELECT dispatch_generation FROM mcp_catalog_connectors WHERE key=mcp_connections.connector_key);
+
 CREATE TABLE pending_mcp_oauth_new (
  state TEXT PRIMARY KEY NOT NULL,
  initiator_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -89,6 +122,7 @@ CREATE TABLE pending_mcp_oauth_new (
  principal_id TEXT REFERENCES system_principals(id) ON DELETE CASCADE,
  subject_principal_id TEXT REFERENCES system_principals(id) ON DELETE CASCADE,
  connector_key TEXT NOT NULL,
+ catalog_generation TEXT,
  connection_id TEXT NOT NULL REFERENCES mcp_connections(id) ON DELETE CASCADE,
  authorization_generation TEXT NOT NULL, expected_connection_generation TEXT NOT NULL,
  pkce_verifier TEXT NOT NULL, redirect_uri TEXT NOT NULL, token_url TEXT NOT NULL,
@@ -97,9 +131,9 @@ CREATE TABLE pending_mcp_oauth_new (
  CHECK ((user_id IS NOT NULL AND principal_id IS NULL) OR (user_id IS NULL AND principal_id IS NOT NULL))
 ) STRICT;
 INSERT INTO pending_mcp_oauth_new
- (state,initiator_user_id,user_id,connector_key,connection_id,authorization_generation,expected_connection_generation,
+ (state,initiator_user_id,user_id,connector_key,catalog_generation,connection_id,authorization_generation,expected_connection_generation,
  pkce_verifier,redirect_uri,token_url,resource,dcr_client_id,dcr_client_secret_ct,dcr_client_secret_nonce,return_to,created_at,expires_at)
-SELECT p.state,p.user_id,p.user_id,p.connector_key,c.id,p.authorization_generation,c.generation,
+SELECT p.state,p.user_id,p.user_id,p.connector_key,c.catalog_generation,c.id,p.authorization_generation,c.generation,
  p.pkce_verifier,p.redirect_uri,p.token_url,p.resource,p.dcr_client_id,p.dcr_client_secret_ct,p.dcr_client_secret_nonce,p.return_to,p.created_at,p.expires_at
 FROM dot_mcp_pending_preserved p JOIN mcp_connections c ON c.user_id=p.user_id AND c.connector_key=p.connector_key;
 DROP TABLE pending_mcp_oauth;

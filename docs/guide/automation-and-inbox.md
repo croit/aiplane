@@ -93,6 +93,13 @@ your personal connection remains. Pending calls retain their original
 connection and generation: after a selection change or reauthorization,
 request a new call and approval. Ordinary token refresh preserves the generation.
 
+Changing the connector's server or authentication configuration also makes
+previous credentials unavailable. Reload connections, reconnect the affected
+account, then explicitly save the identity you want the Dot to use. Your
+personal account and the Dot account reconnect separately. Returning the
+connector to its previous server does not reactivate earlier credentials or
+pending approvals. Display-name changes do not require reconnection.
+
 If the connector is disabled, removed or outside your connector permissions,
 **Reload connections** retains the Dot's actual local credentials under their
 stored connector key. You can disconnect them with Personal Dot manager

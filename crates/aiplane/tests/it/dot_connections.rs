@@ -16,10 +16,15 @@ async fn setup(fx: &Fx) -> String {
     created["dot"]["id"].as_str().unwrap().to_owned()
 }
 
-fn connection(owner: ConnectionOwner) -> NewConnection {
+async fn connection(fx: &Fx, owner: ConnectionOwner) -> NewConnection {
     NewConnection {
         owner,
         connector_key: "workspace".into(),
+        catalog_generation: aiplane_core::server::db::mcp_catalog::get(&fx.state.db, "workspace")
+            .await
+            .unwrap()
+            .unwrap()
+            .dispatch_generation,
         access_token_ct: vec![0, 1, 255],
         access_token_nonce: vec![2],
         refresh_token_ct: Some(vec![3]),
@@ -40,6 +45,79 @@ fn row(body: &Value) -> &Value {
         .iter()
         .find(|row| row["key"] == "workspace")
         .unwrap()
+}
+
+#[tokio::test]
+async fn changed_catalogue_resource_requires_reauthorization_without_erasing_credentials() {
+    let fx = fixture().await;
+    let dot = setup(&fx).await;
+    let user = mcp_connections::upsert_connection(
+        &fx.state.db,
+        connection(&fx, ConnectionOwner::User("alice".into())).await,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let own = mcp_connections::upsert_connection(
+        &fx.state.db,
+        connection(&fx, ConnectionOwner::Principal(dot.clone())).await,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let path = format!("/api/v0/dots/{dot}/connections/workspace");
+    let (status, selected) = fx.send(Some(&fx.alice), Method::PUT, &path, Some(json!({
+        "mode":"principal","expected_binding_generation":null,"connection_id":own.connection_id,"connection_generation":own.generation
+    }))).await;
+    assert_eq!(status, StatusCode::OK, "{selected}");
+    super::dot_oauth::change_catalogue_url(&fx, "https://replacement.example.test/mcp").await;
+    for (mode, identity) in [("principal", &own), ("user", &user)] {
+        let (status, rejected) = fx
+            .send(
+                Some(&fx.alice),
+                Method::PUT,
+                &path,
+                Some(json!({
+                    "mode": mode,
+                    "expected_binding_generation": row(&selected)["selected"]["binding_generation"],
+                    "connection_id": identity.connection_id,
+                    "connection_generation": identity.generation
+                })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{rejected}");
+        assert_eq!(rejected["error"]["code"], "connection_unavailable");
+    }
+    let (status, inventory) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{dot}/connections"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{inventory}");
+    let account = row(&inventory);
+    for (credential, identity) in [("user_connection", &user), ("principal_connection", &own)] {
+        assert_eq!(account[credential]["id"], identity.connection_id);
+        assert_eq!(account[credential]["generation"], identity.generation);
+        assert_eq!(account[credential]["needs_reauth"], true);
+    }
+    assert_eq!(account["can_connect"], true);
+    assert_eq!(account["can_disconnect"], true);
+    assert_eq!(account["selected"]["connection_id"], Value::Null);
+    assert_eq!(
+        account["selected"]["binding_generation"],
+        row(&selected)["selected"]["binding_generation"]
+    );
+    let (status, integrations) = fx.get(&fx.alice, "/api/v0/integrations").await;
+    assert_eq!(status, StatusCode::OK, "{integrations}");
+    let ordinary = integrations["connectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["key"] == "workspace")
+        .unwrap();
+    assert_eq!(ordinary["connected"], true);
+    assert_eq!(ordinary["errored"], true);
+    assert_eq!(ordinary["needs_reauth"], true);
+    assert_eq!(ordinary["tools"], Value::Null);
+    assert_eq!(ordinary["tool_error"], Value::Null);
 }
 
 #[tokio::test]
@@ -76,15 +154,17 @@ async fn personal_dot_identity_selection_and_disconnect_preserve_the_user_accoun
     let dot = setup(&fx).await;
     let user = mcp_connections::upsert_connection(
         &fx.state.db,
-        connection(ConnectionOwner::User("alice".into())),
+        connection(&fx, ConnectionOwner::User("alice".into())).await,
     )
     .await
+    .unwrap()
     .unwrap();
     let own = mcp_connections::upsert_connection(
         &fx.state.db,
-        connection(ConnectionOwner::Principal(dot.clone())),
+        connection(&fx, ConnectionOwner::Principal(dot.clone())).await,
     )
     .await
+    .unwrap()
     .unwrap();
     let path = format!("/api/v0/dots/{dot}/connections/workspace");
     let selection = json!({"mode":"principal","expected_binding_generation":null,"connection_id":own.connection_id,"connection_generation":own.generation});
@@ -168,9 +248,10 @@ async fn disabled_connector_hides_resource_metadata_but_allows_owned_local_disco
     let dot = setup(&fx).await;
     let own = mcp_connections::upsert_connection(
         &fx.state.db,
-        connection(ConnectionOwner::Principal(dot.clone())),
+        connection(&fx, ConnectionOwner::Principal(dot.clone())).await,
     )
     .await
+    .unwrap()
     .unwrap();
     let path = format!("/api/v0/dots/{dot}/connections/workspace");
     let (status, _) = fx
@@ -235,15 +316,17 @@ async fn unselected_owned_credentials_remain_erasable_without_catalogue_access()
         let dot = setup(&fx).await;
         let user = mcp_connections::upsert_connection(
             &fx.state.db,
-            connection(ConnectionOwner::User("alice".into())),
+            connection(&fx, ConnectionOwner::User("alice".into())).await,
         )
         .await
+        .unwrap()
         .unwrap();
         let own = mcp_connections::upsert_connection(
             &fx.state.db,
-            connection(ConnectionOwner::Principal(dot.clone())),
+            connection(&fx, ConnectionOwner::Principal(dot.clone())).await,
         )
         .await
+        .unwrap()
         .unwrap();
         match restriction {
             "disabled" => {

@@ -45,6 +45,7 @@ use aiplane_features::server::skills::{SkillStore, UserSkillStore};
 use aiplane_runtime::server::AppState;
 use aiplane_runtime::server::comfyui_tool::ComfyuiHandle;
 use aiplane_tools::{enable_tools, read_skill};
+use anyhow::Context;
 use jiff::{Timestamp, ToSpan};
 use rama::net::address::SocketAddress;
 use wiremock::matchers::{method, path};
@@ -1128,6 +1129,10 @@ async fn seed_dot_workspace(state: &RamaState, origin: &str) -> anyhow::Result<(
     )
     .await?;
     mcp_catalog::set_enabled(&state.db, "dot-workspace", true).await?;
+    let catalog_generation = mcp_catalog::get(&state.db, "dot-workspace")
+        .await?
+        .context("the seeded Dot Workspace connector is missing")?
+        .dispatch_generation;
     let users = ["dev", "eng"];
     #[cfg(debug_assertions)]
     let users = users
@@ -1140,6 +1145,7 @@ async fn seed_dot_workspace(state: &RamaState, origin: &str) -> anyhow::Result<(
             mcp_connections::NewConnection {
                 owner: mcp_connections::ConnectionOwner::User(user.into()),
                 connector_key: "dot-workspace".into(),
+                catalog_generation: catalog_generation.clone(),
                 access_token_ct: sealed.ciphertext,
                 access_token_nonce: sealed.nonce,
                 refresh_token_ct: None,
@@ -1152,7 +1158,10 @@ async fn seed_dot_workspace(state: &RamaState, origin: &str) -> anyhow::Result<(
                 token_url: Some(format!("{origin}/token")),
             },
         )
-        .await?;
+        .await?
+        .context(
+            "the seeded Dot Workspace connector changed while connecting its fixture account",
+        )?;
     }
     Ok(())
 }

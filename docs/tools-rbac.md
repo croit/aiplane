@@ -349,6 +349,15 @@ request-time schemas and execution come from the caller's live user layer.
 Global connectors intentionally use one shared credential, but still apply
 each user's RBAC, connector ACL, tool modes, and token states separately.
 
+Owned connections and pending OAuth carry the catalogue dispatch generation
+under which authorization started. Shared and owned tool caches and suspended
+MCP calls also retain the actual resource generation. Changes to applicable
+server/authentication configuration invalidate these earlier facts; token
+refresh preserves credential generation only while the catalogue provenance
+still matches. Final dispatch reloads current user or active principal grants
+and resource authority in the existing write transaction. Late handshakes
+cannot publish stale tool metadata. See [Dot identities](dots-identities.md#catalogue-dispatch-fence).
+
 Authoring per-tool grants needs a tool list, and an MCP server's tools are only
 visible while connected on some user's behalf — which an admin editing a group
 cannot do. So `mcp_connector_tools` caches what each connector reported the last

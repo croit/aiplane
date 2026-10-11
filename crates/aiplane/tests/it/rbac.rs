@@ -734,6 +734,7 @@ async fn mcp_connector_gating() {
     use jiff::Timestamp;
     let mut c = Connector {
         key: "net-tools".into(),
+        dispatch_generation: "connector-gating-fixture".into(),
         name: "Network tools".into(),
         description: None,
         icon: None,

@@ -39,17 +39,26 @@ pub(crate) async fn record_personal_tool_call(
     tool: &str,
     allowed: bool,
     policy: &str,
-    identity: Option<&crate::server::tools::mcp::StoredMcpIdentity>,
+    identity: Option<&crate::server::tools::mcp::McpDispatchFacts>,
 ) -> bool {
     let mut detail = json!({"tool": tool, "call_id": call_id, "decision": if allowed { "allowed" } else { "denied" }, "policy": policy});
     if let Some(identity) = identity {
-        detail["identity"] = json!({
-            "owner": identity.connection.owner,
-            "connector_key": identity.connection.connector_key,
-            "connection_id": identity.connection.connection_id,
-            "generation": identity.connection.generation,
-            "binding_generation": identity.binding_generation,
-        });
+        detail["identity"] = match identity {
+            crate::server::tools::mcp::McpDispatchFacts::Owned(identity) => json!({
+                "owner": identity.connection.owner,
+                "connector_key": identity.connection.connector_key,
+                "connection_id": identity.connection.connection_id,
+                "generation": identity.connection.generation,
+                "binding_generation": identity.binding_generation,
+                "catalog_generation": identity.catalog_generation,
+            }),
+            crate::server::tools::mcp::McpDispatchFacts::Shared {
+                connector_key,
+                catalog_generation,
+            } => json!({
+                "connector_key": connector_key, "catalog_generation": catalog_generation,
+            }),
+        };
     }
     ctx.audit_event(AuditKind::ToolCall, None, detail)
         .await

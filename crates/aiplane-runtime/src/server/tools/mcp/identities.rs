@@ -19,9 +19,38 @@ use serde::{Deserialize, Serialize};
 pub struct StoredMcpIdentity {
     pub connection: ConnectionIdentity,
     pub binding_generation: Option<String>,
+    pub catalog_generation: String,
 }
 
-pub async fn authorization_admitted_in(
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum McpDispatchFacts {
+    Owned(StoredMcpIdentity),
+    Shared {
+        connector_key: String,
+        catalog_generation: String,
+    },
+}
+
+impl McpDispatchFacts {
+    fn connector_key(&self) -> &str {
+        match self {
+            Self::Owned(identity) => &identity.connection.connector_key,
+            Self::Shared { connector_key, .. } => connector_key,
+        }
+    }
+
+    fn catalog_generation(&self) -> &str {
+        match self {
+            Self::Owned(identity) => &identity.catalog_generation,
+            Self::Shared {
+                catalog_generation, ..
+            } => catalog_generation,
+        }
+    }
+}
+
+pub async fn connection_admitted_in(
     state: &AppState,
     tx: &mut WriteTx,
     initiator: &str,
@@ -38,17 +67,33 @@ pub async fn authorization_admitted_in(
     let roles = state.role_ids_for(&user.roles);
     if !connector.enabled
         || !connector.is_per_user()
-        || connector.auth != AuthKind::OAuth2
         || !connector.allows(&roles, state.rbac.is_admin(&roles))
     {
         return Ok(false);
     }
     match owner {
         ConnectionOwner::User(id) => Ok(id == initiator && subject.is_none()),
-        ConnectionOwner::Principal(id) => Ok(subject == Some(id.as_str())
+        ConnectionOwner::Principal(id) => Ok(connector.auth == AuthKind::OAuth2
+            && subject == Some(id.as_str())
             && state.rbac.can_manage_dots(&roles)
             && dot_connections::owned_dot_in(tx, initiator, id, false).await?),
     }
+}
+
+pub async fn authorization_admitted_in(
+    state: &AppState,
+    tx: &mut WriteTx,
+    initiator: &str,
+    owner: &ConnectionOwner,
+    key: &str,
+    subject: Option<&str>,
+) -> Result<bool, DbError> {
+    if !connection_admitted_in(state, tx, initiator, owner, key, subject).await? {
+        return Ok(false);
+    }
+    Ok(mcp_catalog::get_in(tx, key)
+        .await?
+        .is_some_and(|connector| connector.auth == AuthKind::OAuth2))
 }
 
 pub async fn selected_personal_connection(
@@ -101,7 +146,8 @@ async fn selected_in(
     let Some(connection) = mcp_connections::get_connection_in(tx, &owner, key).await? else {
         return Ok(None);
     };
-    if connection.is_errored()
+    if connection.catalog_generation.as_deref() != Some(connector.dispatch_generation.as_str())
+        || connection.is_errored()
         || connection.access_token_ct.is_none()
         || connection.access_token_nonce.is_none()
         || binding
@@ -113,16 +159,17 @@ async fn selected_in(
     Ok(Some(StoredMcpIdentity {
         connection: connection.identity(),
         binding_generation: binding.map(|b| b.binding_generation),
+        catalog_generation: connector.dispatch_generation,
     }))
 }
 
-pub(crate) async fn validate_identity(
+pub(crate) async fn validate_dispatch(
     ctx: &ToolContext,
-    identity: &StoredMcpIdentity,
+    dispatch: &McpDispatchFacts,
     id: &str,
     rbac: &aiplane_core::server::rbac::Resolver,
 ) -> Result<(), ToolError> {
-    let facts = Some(serde_json::json!(identity));
+    let facts = Some(serde_json::json!(dispatch));
     super::super::ask_first::validate_execution_facts(ctx, id, &facts)?;
     if let Some(execution) = ctx.personal_execution.as_ref() {
         crate::agents::router::local::validate_execution(execution).await?;
@@ -131,34 +178,72 @@ pub(crate) async fn validate_identity(
         }
     }
     let mut tx = WriteTx::begin(&ctx.db).await.map_err(load_error)?;
-    let aiplane_core::server::principal::Principal::User { id: user_id, .. } = &ctx.principal
-    else {
-        return Err(unavailable(id));
-    };
-    let Some(user) = users::find_by_id_in(&mut tx, user_id)
+    let Some(connector) = mcp_catalog::get_in(&mut tx, dispatch.connector_key())
         .await
         .map_err(load_error)?
     else {
         return Err(unavailable(id));
     };
-    let Some(connector) = mcp_catalog::get_in(&mut tx, &identity.connection.connector_key)
-        .await
-        .map_err(load_error)?
-    else {
+    if !connector.enabled || connector.dispatch_generation != dispatch.catalog_generation() {
         return Err(unavailable(id));
-    };
-    let roles = rbac.role_ids_for(&user.roles);
-    let family = super::super::catalog::entry_key_for(id);
-    if !connector.enabled
-        || !connector.is_per_user()
-        || !connector.allows(&roles, rbac.is_admin(&roles))
-        || !rbac
-            .mcp_grant(&roles, super::MCP_ID_PREFIX)
-            .allows(id, family)
+    }
+    if ctx
+        .granted_tools
+        .as_ref()
+        .is_some_and(|granted| !granted.contains(id))
     {
         return Err(unavailable(id));
     }
-
+    match &ctx.principal {
+        aiplane_core::server::principal::Principal::User { id: user_id, .. } => {
+            let Some(user) = users::find_by_id_in(&mut tx, user_id)
+                .await
+                .map_err(load_error)?
+            else {
+                return Err(unavailable(id));
+            };
+            let roles = rbac.role_ids_for(&user.roles);
+            if !connector.allows(&roles, rbac.is_admin(&roles))
+                || !rbac
+                    .mcp_grant(&roles, super::MCP_ID_PREFIX)
+                    .allows(id, super::super::catalog::entry_key_for(id))
+            {
+                return Err(unavailable(id));
+            }
+            match dispatch {
+                McpDispatchFacts::Owned(_) if connector.is_per_user() => {}
+                McpDispatchFacts::Shared { .. }
+                    if connector.scope == mcp_catalog::Scope::Global => {}
+                _ => return Err(unavailable(id)),
+            }
+        }
+        aiplane_core::server::principal::Principal::System(initial) => {
+            let Some(principal) =
+                aiplane_agents::db::system_principals::load_active_in(&mut tx, &initial.id)
+                    .await
+                    .map_err(load_error)?
+            else {
+                return Err(unavailable(id));
+            };
+            if !matches!(dispatch, McpDispatchFacts::Shared { .. })
+                || !connector.has_shared_identity()
+                || !initial.grants.has(
+                    aiplane_core::server::principal::GrantKind::Connector,
+                    &connector.key,
+                )
+                || !principal.grants.has(
+                    aiplane_core::server::principal::GrantKind::Connector,
+                    &connector.key,
+                )
+            {
+                return Err(unavailable(id));
+            }
+        }
+    }
+    let McpDispatchFacts::Owned(identity) = dispatch else {
+        tx.commit().await.map_err(load_error)?;
+        return Ok(());
+    };
     let Some(connection) = mcp_connections::get_connection_in(
         &mut tx,
         &identity.connection.owner,
@@ -169,7 +254,8 @@ pub(crate) async fn validate_identity(
     else {
         return Err(unavailable(id));
     };
-    if connection.is_errored()
+    if connection.catalog_generation.as_deref() != Some(dispatch.catalog_generation())
+        || connection.is_errored()
         || connection.identity() != identity.connection
         || connection.access_token_ct.is_none()
         || connection.access_token_nonce.is_none()
@@ -257,14 +343,19 @@ pub async fn layer_for_personal_dot(
                 Ok(tools) => tools
                     .into_iter()
                     .filter_map(|tool| {
-                        let (current, rbac) = tool.identity.as_ref()?;
-                        (current.connection == selected.connection).then(|| {
-                            std::sync::Arc::new(
-                                (*tool)
-                                    .clone()
-                                    .with_identity(selected.clone(), rbac.clone()),
-                            )
-                        })
+                        let (McpDispatchFacts::Owned(current), rbac) = tool.identity.as_ref()?
+                        else {
+                            return None;
+                        };
+                        (current.connection == selected.connection
+                            && current.catalog_generation == selected.catalog_generation)
+                            .then(|| {
+                                std::sync::Arc::new(
+                                    (*tool)
+                                        .clone()
+                                        .with_identity(selected.clone(), rbac.clone()),
+                                )
+                            })
                     })
                     .collect::<Vec<_>>(),
                 Err(_) => continue,
@@ -313,6 +404,24 @@ pub async fn save_personal_selection_in(
     {
         return Ok(None);
     }
+    if !dot_connections::owned_dot_in(tx, selection.owner_user_id, selection.dot_id, false).await? {
+        return Ok(Some(dot_connections::SaveOutcome::Missing));
+    }
+    let selected_owner = match selection.identity_mode {
+        dot_connections::IdentityMode::User => {
+            ConnectionOwner::User(selection.owner_user_id.to_owned())
+        }
+        dot_connections::IdentityMode::Principal => {
+            ConnectionOwner::Principal(selection.dot_id.to_owned())
+        }
+    };
+    let current =
+        mcp_connections::get_connection_in(tx, &selected_owner, selection.connector_key).await?;
+    if !current.is_some_and(|connection| {
+        connection.catalog_generation.as_deref() == Some(connector.dispatch_generation.as_str())
+    }) {
+        return Ok(Some(dot_connections::SaveOutcome::Unavailable));
+    }
     Ok(Some(dot_connections::save_in(tx, selection).await?))
 }
 
@@ -351,7 +460,7 @@ mod tests {
             speech_voice: None,
         };
         users::upsert(&db, &user).await.unwrap();
-        sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,allowed_groups,enabled,created_at,updated_at) VALUES('fixture','Fixture','https://provider.test/mcp','oauth2','per_user','[\"member\"]',1,?,?)").bind(now.to_string()).bind(now.to_string()).execute(&db).await.unwrap();
+        sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,allowed_groups,enabled,created_at,updated_at,dispatch_generation) VALUES('fixture','Fixture','https://provider.test/mcp','oauth2','per_user','[\"member\"]',1,?,?,?)").bind(now.to_string()).bind(now.to_string()).bind(uuid::Uuid::new_v4().to_string()).execute(&db).await.unwrap();
         let (_, dot) = agents::create_personal_dot(
             &db,
             &NewPrincipal {
@@ -392,11 +501,17 @@ mod tests {
                 .unwrap(),
             ),
         );
+        let catalog_generation = mcp_catalog::get(&db, "fixture")
+            .await
+            .unwrap()
+            .unwrap()
+            .dispatch_generation;
         let credential = |owner, secret: &str| {
             let sealed = state.crypto.seal(secret.as_bytes()).unwrap();
             mcp_connections::NewConnection {
                 owner,
                 connector_key: "fixture".into(),
+                catalog_generation: catalog_generation.clone(),
                 access_token_ct: sealed.ciphertext,
                 access_token_nonce: sealed.nonce,
                 refresh_token_ct: None,
@@ -421,7 +536,7 @@ mod tests {
         )
         .await
         .unwrap();
-        (state, user, dot, personal, own)
+        (state, user, dot, personal.unwrap(), own.unwrap())
     }
 
     #[tokio::test]
@@ -786,10 +901,15 @@ mod tests {
                 .get("mcp__fixture__lookup")
                 .unwrap()
                 .execution_facts(),
-            Some(json!(StoredMcpIdentity {
+            Some(json!(McpDispatchFacts::Owned(StoredMcpIdentity {
                 connection: personal.clone(),
-                binding_generation: None
-            }))
+                binding_generation: None,
+                catalog_generation: mcp_catalog::get(&state.db, "fixture")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .dispatch_generation,
+            })))
         );
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         let Some(dot_connections::SaveOutcome::Saved(Some(binding))) = save_personal_selection_in(
@@ -831,7 +951,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             event.detail["identity"],
-            json!({"owner":own.owner,"connector_key":"fixture","connection_id":own.connection_id,"generation":own.generation,"binding_generation":binding.binding_generation})
+            json!({"owner":own.owner,"connector_key":"fixture","connection_id":own.connection_id,"generation":own.generation,"binding_generation":binding.binding_generation,"catalog_generation":mcp_catalog::get(&state.db,"fixture").await.unwrap().unwrap().dispatch_generation})
         );
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         let Some(dot_connections::SaveOutcome::Saved(Some(user_binding))) =
@@ -874,10 +994,15 @@ mod tests {
             user_binding.binding_generation
         );
         ctx.pending_execution_facts = Some(crate::server::tools::PendingExecutionFacts {
-            execution_facts: Some(json!(StoredMcpIdentity {
+            execution_facts: Some(json!(McpDispatchFacts::Owned(StoredMcpIdentity {
                 connection: own,
-                binding_generation: Some(binding.binding_generation)
-            })),
+                binding_generation: Some(binding.binding_generation),
+                catalog_generation: mcp_catalog::get(&state.db, "fixture")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .dispatch_generation,
+            }))),
         });
         let result = runner::execute_tool_calls(
             &source,
@@ -942,6 +1067,11 @@ mod tests {
             StoredMcpIdentity {
                 connection: personal.clone(),
                 binding_generation: None,
+                catalog_generation: mcp_catalog::get(&state.db, "fixture")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .dispatch_generation,
             },
             state.rbac.clone(),
         );
@@ -976,11 +1106,17 @@ mod tests {
             .unwrap();
         assert!(tool.run(ctx.clone(), json!({})).await.is_err());
         let sealed = state.crypto.seal(b"replacement-token").unwrap();
+        let catalog_generation = mcp_catalog::get(&state.db, "fixture")
+            .await
+            .unwrap()
+            .unwrap()
+            .dispatch_generation;
         let replacement = mcp_connections::upsert_connection(
             &state.db,
             mcp_connections::NewConnection {
                 owner: personal.owner.clone(),
                 connector_key: "fixture".into(),
+                catalog_generation,
                 access_token_ct: sealed.ciphertext,
                 access_token_nonce: sealed.nonce,
                 refresh_token_ct: None,
@@ -995,6 +1131,7 @@ mod tests {
         )
         .await
         .unwrap();
+        let replacement = replacement.unwrap();
         assert_ne!(replacement.generation, personal.generation);
         assert!(tool.run(ctx, json!({})).await.is_err());
         let requests = server.received_requests().await.unwrap();

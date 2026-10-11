@@ -188,6 +188,16 @@ pub async fn get(pool: &Pool, id: &str) -> Result<Option<PrincipalRow>, DbError>
     row.as_ref().map(map_principal).transpose()
 }
 
+pub async fn get_in(tx: &mut WriteTx, id: &str) -> Result<Option<PrincipalRow>, DbError> {
+    let row = sqlx::query(&format!(
+        "SELECT {PRINCIPAL_COLS} FROM system_principals WHERE id = ?"
+    ))
+    .bind(id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    row.as_ref().map(map_principal).transpose()
+}
+
 /// Disable a principal and revoke every token it holds, in one transaction.
 /// `Ok(false)` when there is no such principal or it was already disabled.
 pub async fn disable(pool: &Pool, id: &str, actor_id: &str) -> Result<bool, DbError> {
@@ -235,29 +245,35 @@ pub async fn grants(pool: &Pool, principal_id: &str) -> Result<Vec<GrantRow>, Db
     .bind(principal_id)
     .fetch_all(pool)
     .await?;
-    rows.iter()
-        .map(|row| {
-            let kind: String = row.try_get("kind")?;
-            Ok(GrantRow {
-                kind: GrantKind::parse(&kind).ok_or_else(|| DbError::Decode {
-                    column: "kind",
-                    source: anyhow::anyhow!("unknown grant kind `{kind}`"),
-                })?,
-                reference: row.try_get("ref")?,
-                granted_by: row.try_get("granted_by")?,
-                granted_at: super::parse_ts(row.try_get("granted_at")?, "granted_at")?,
-                pools: row
-                    .try_get::<Option<String>, _>("pools")?
-                    .map(|text| {
-                        serde_json::from_str(&text).map_err(|e| DbError::Decode {
-                            column: "pools",
-                            source: e.into(),
-                        })
-                    })
-                    .transpose()?,
+    rows.iter().map(map_grant).collect()
+}
+
+fn map_grant(row: &SqliteRow) -> Result<GrantRow, DbError> {
+    let kind: String = row.try_get("kind")?;
+    Ok(GrantRow {
+        kind: GrantKind::parse(&kind).ok_or_else(|| DbError::Decode {
+            column: "kind",
+            source: anyhow::anyhow!("unknown grant kind `{kind}`"),
+        })?,
+        reference: row.try_get("ref")?,
+        granted_by: row.try_get("granted_by")?,
+        granted_at: super::parse_ts(row.try_get("granted_at")?, "granted_at")?,
+        pools: row
+            .try_get::<Option<String>, _>("pools")?
+            .map(|text| {
+                serde_json::from_str(&text).map_err(|e| DbError::Decode {
+                    column: "pools",
+                    source: e.into(),
+                })
             })
-        })
-        .collect()
+            .transpose()?,
+    })
+}
+
+pub async fn grants_in(tx: &mut WriteTx, principal_id: &str) -> Result<Vec<GrantRow>, DbError> {
+    let rows = sqlx::query("SELECT kind, ref, granted_by, granted_at, pools FROM principal_grants WHERE principal_id = ? ORDER BY kind, ref")
+        .bind(principal_id).fetch_all(&mut **tx).await?;
+    rows.iter().map(map_grant).collect()
 }
 
 /// Add one grant, not narrowed to pools. `Ok(false)` when it was already
@@ -421,6 +437,23 @@ pub async fn load_active(pool: &Pool, id: &str) -> Result<Option<SystemPrincipal
         return Ok(None);
     };
     let grants = grants(pool, id).await?;
+    Ok(Some(active_principal(row, grants)))
+}
+
+pub async fn load_active_in(
+    tx: &mut WriteTx,
+    id: &str,
+) -> Result<Option<SystemPrincipal>, DbError> {
+    let Some(row) = get_in(tx, id)
+        .await?
+        .filter(|row| row.disabled_at.is_none())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(active_principal(row, grants_in(tx, id).await?)))
+}
+
+fn active_principal(row: PrincipalRow, grants: Vec<GrantRow>) -> SystemPrincipal {
     let scoped: Vec<(String, std::collections::BTreeSet<String>)> = grants
         .iter()
         .filter(|g| g.kind == GrantKind::Model)
@@ -430,14 +463,14 @@ pub async fn load_active(pool: &Pool, id: &str) -> Result<Option<SystemPrincipal
                 .map(|p| (g.reference.clone(), p.iter().cloned().collect()))
         })
         .collect();
-    Ok(Some(SystemPrincipal {
+    SystemPrincipal {
         id: row.id,
         name: row.name,
         grants: std::sync::Arc::new(
             GrantSet::new(grants.into_iter().map(|g| (g.kind, g.reference)))
                 .with_model_pools(scoped),
         ),
-    }))
+    }
 }
 
 pub async fn insert_token(
@@ -590,6 +623,55 @@ mod tests {
 
     fn in_days(days: i64) -> Timestamp {
         Timestamp::now() + jiff::SignedDuration::from_hours(24 * days)
+    }
+
+    #[tokio::test]
+    async fn active_principal_transaction_reads_current_grants_and_disable_state() {
+        let db = pool().await;
+        let principal = principal(&db, "transaction-reader").await;
+        add_grant(&db, &principal.id, GrantKind::Connector, "crm", "admin")
+            .await
+            .unwrap();
+        let mut tx = WriteTx::begin(&db).await.unwrap();
+        assert_eq!(
+            get_in(&mut tx, &principal.id).await.unwrap().unwrap(),
+            principal
+        );
+        assert_eq!(grants_in(&mut tx, &principal.id).await.unwrap().len(), 1);
+        assert!(
+            load_active_in(&mut tx, &principal.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .grants
+                .has(GrantKind::Connector, "crm")
+        );
+        tx.commit().await.unwrap();
+        remove_grant(&db, &principal.id, GrantKind::Connector, "crm", "admin")
+            .await
+            .unwrap();
+        let mut tx = WriteTx::begin(&db).await.unwrap();
+        assert!(
+            load_active_in(&mut tx, &principal.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .grants
+                .is_empty()
+        );
+        assert!(get_in(&mut tx, "missing").await.unwrap().is_none());
+        assert!(load_active_in(&mut tx, "missing").await.unwrap().is_none());
+        tx.commit().await.unwrap();
+        disable(&db, &principal.id, "admin").await.unwrap();
+        let mut tx = WriteTx::begin(&db).await.unwrap();
+        assert!(
+            load_active_in(&mut tx, &principal.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(get_in(&mut tx, &principal.id).await.unwrap().is_some());
+        tx.commit().await.unwrap();
     }
 
     #[test]

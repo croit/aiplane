@@ -162,7 +162,7 @@ impl Tool for LivePersonalDotTool {
             ctx.granted_tools = Some(Arc::new(granted.into_iter().collect()));
             if fresh {
                 admission_recorded = true;
-                let identity = tool.execution_facts().and_then(|facts| serde_json::from_value::<crate::server::tools::mcp::StoredMcpIdentity>(facts).ok());
+                let identity = tool.execution_facts().and_then(|facts| serde_json::from_value::<crate::server::tools::mcp::McpDispatchFacts>(facts).ok());
                 if !crate::agents::audit::record_personal_tool_call(&ctx, ctx.call_id.as_deref(), self.id(), true, "granted", identity.as_ref()).await {
                     return Err(ToolError::AuditUnavailable);
                 }

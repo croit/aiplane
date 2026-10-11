@@ -750,12 +750,7 @@ pub async fn admin_connectors_save(State(state): State<Arc<RamaState>>, req: Req
         .unwrap_or_else(|| parsed.client_secret.trim().to_string());
     // Seal a newly entered secret; blank keeps the stored one.
     let (secret_ct, secret_nonce) = if secret.is_empty() {
-        (
-            existing.as_ref().and_then(|c| c.client_secret_ct.clone()),
-            existing
-                .as_ref()
-                .and_then(|c| c.client_secret_nonce.clone()),
-        )
+        (None, None)
     } else {
         match state.crypto.seal_str(&secret) {
             Ok(s) => (Some(s.ciphertext), Some(s.nonce)),
@@ -992,7 +987,11 @@ pub async fn integrations_list(State(state): State<Arc<RamaState>>, req: Request
         let connection = connections.get(&c.key);
         let connected =
             connection.is_some_and(|row| row.status != db::mcp_connections::STATUS_PENDING);
-        let (tools, tool_error) = if c.is_global() || connected {
+        let proven = connection.is_some_and(|row| {
+            row.catalog_generation.as_deref() == Some(c.dispatch_generation.as_str())
+        });
+        let stale = connected && !proven;
+        let (tools, tool_error) = if c.is_global() || (connected && proven) {
             match state.mcp.connector_tool_infos(&user.id, c).await {
                 Ok(tools) => (
                     Some(
@@ -1022,8 +1021,8 @@ pub async fn integrations_list(State(state): State<Arc<RamaState>>, req: Request
             is_global: c.is_global(),
             needs_setup: c.needs_setup(),
             connected,
-            errored: connection.is_some_and(|connection| connection.is_errored()),
-            needs_reauth: connection.is_some_and(|connection| connection.needs_reauth()),
+            errored: stale || connection.is_some_and(|connection| connection.is_errored()),
+            needs_reauth: stale || connection.is_some_and(|connection| connection.needs_reauth()),
             tools,
             tool_error,
         });
@@ -1084,6 +1083,7 @@ pub async fn integrations_connect_token(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
+    let lang = session_core::i18n::Lang::from_headers(req.headers());
     let (_session, user) = require_session_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
     // never percent-decodes them, and a connector key is stored with its case intact.
@@ -1146,6 +1146,7 @@ pub async fn integrations_connect_token(
         Err(err) => return internal(err),
     };
     let new = db::mcp_connections::NewConnection {
+        catalog_generation: connector.dispatch_generation.clone(),
         owner: db::mcp_connections::ConnectionOwner::User(user.id.clone()),
         connector_key: key.clone(),
         access_token_ct: sealed.ciphertext,
@@ -1159,8 +1160,35 @@ pub async fn integrations_connect_token(
         dcr_client_secret_nonce: None,
         token_url: None,
     };
-    if let Err(err) = db::mcp_connections::upsert_connection(&state.db, new).await {
-        return internal(err);
+    let saved = async {
+        let mut tx = db::WriteTx::begin(&state.db).await?;
+        let owner = db::mcp_connections::ConnectionOwner::User(user.id.clone());
+        if !aiplane_runtime::server::tools::mcp::identities::connection_admitted_in(
+            &state, &mut tx, &user.id, &owner, &key, None,
+        )
+        .await?
+        {
+            return Ok(None);
+        }
+        let current = db::mcp_catalog::get_in(&mut tx, &key).await?;
+        if !current.is_some_and(|c| c.auth == db::mcp_catalog::AuthKind::StaticBearer) {
+            return Ok(None);
+        }
+        let saved = db::mcp_connections::upsert_connection_in(&mut tx, new).await?;
+        tx.commit().await?;
+        Ok::<_, db::DbError>(saved)
+    }
+    .await;
+    match saved {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return json_error(
+                StatusCode::CONFLICT,
+                "conflict",
+                &session_core::i18n::t(lang, "integrations-error-auth-expired"),
+            );
+        }
+        Err(err) => return internal(err),
     }
     state
         .mcp

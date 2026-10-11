@@ -202,8 +202,10 @@ outcome. It does not assert that the provider accepted the action. The final
 MCP check either validates that same identity or refuses execution; a changed
 selection cannot substitute another account. Resuming the recorded call keeps
 its original admission event. The identity contains no tokens, provider email,
-secret arguments or generic tool metadata. Shared catalogue credentials have
-no connection-generation stamp in this implementation.
+secret arguments or generic tool metadata. Owned MCP identities also contain
+the actual catalogue generation. Shared catalogue identities contain only
+their connector key and catalogue generation; they have no owned connection
+ID. These facts bind the attempted call to the admitted resource configuration.
 
 `for_principal` — the decision trail the agent's GET, the test-chat debug view
 and the evaluation read — leaves out the content kinds (`AuditKind::is_content`:

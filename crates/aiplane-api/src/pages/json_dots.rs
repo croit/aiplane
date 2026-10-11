@@ -116,6 +116,7 @@ pub struct DotAuthorizationView {
 
 fn credential_view(
     connection: Option<&aiplane_core::server::db::mcp_connections::Connection>,
+    catalog_generation: Option<&str>,
 ) -> DotCredentialView {
     DotCredentialView {
         id: connection.map(|row| row.id.clone()),
@@ -124,7 +125,11 @@ fn credential_view(
             !row.is_errored() && row.access_token_ct.is_some() && row.access_token_nonce.is_some()
         }),
         errored: connection.is_some_and(|row| row.is_errored() && row.status != "pending"),
-        needs_reauth: connection.is_some_and(|row| row.needs_reauth()),
+        needs_reauth: connection.is_some_and(|row| {
+            row.needs_reauth()
+                || catalog_generation
+                    .is_some_and(|generation| row.catalog_generation.as_deref() != Some(generation))
+        }),
         authorizing: connection.is_some_and(|row| {
             row.authorization_expires_at
                 .is_some_and(|expiry| jiff::Timestamp::now() < expiry)
@@ -195,7 +200,14 @@ async fn connections_view(
             .or_else(|| selected.map(|row| row.generation.clone()));
         let selected_id = selected
             .filter(|row| Some(row.generation.as_str()) == generation.as_deref())
+            .filter(|row| {
+                connector.is_some_and(|connector| {
+                    row.catalog_generation.as_deref()
+                        == Some(connector.dispatch_generation.as_str())
+                })
+            })
             .map(|row| row.id.clone());
+        let catalog_generation = connector.map(|row| row.dispatch_generation.as_str());
         connections.push(DotConnectionView {
             key,
             connector: connector.map(|row| DotConnectorView {
@@ -220,8 +232,9 @@ async fn connections_view(
                 connection_id: selected_id,
                 connection_generation: generation,
             },
-            user_connection: credential_view(user_connection.as_ref()),
-            principal_connection: principal_connection.map(|row| credential_view(Some(row))),
+            user_connection: credential_view(user_connection.as_ref(), catalog_generation),
+            principal_connection: principal_connection
+                .map(|row| credential_view(Some(row), catalog_generation)),
             can_connect: state.rbac.can_manage_dots(&roles)
                 && connector.is_some_and(|row| !row.needs_setup()),
             can_disconnect: state.rbac.can_manage_dots(&roles) && principal_connection.is_some(),
@@ -862,11 +875,14 @@ async fn access_view(
                     .execution_facts()
                     .and_then(|facts| {
                         serde_json::from_value::<
-                            aiplane_runtime::server::tools::mcp::identities::StoredMcpIdentity,
+                            aiplane_runtime::server::tools::mcp::identities::McpDispatchFacts,
                         >(facts)
                         .ok()
                     })
                     .is_some_and(|facts| {
+                        let aiplane_runtime::server::tools::mcp::identities::McpDispatchFacts::Owned(facts) = facts else {
+                            return false;
+                        };
                         matches!(
                             facts.connection.owner,
                             aiplane_core::server::db::mcp_connections::ConnectionOwner::Principal(

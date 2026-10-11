@@ -57,6 +57,15 @@ endpoints; concurrent or repeated callbacks cannot reuse the state. Expired
 states are removed without returning an authorization. Start **Connect** again
 when the callback reports an expired or unknown authorization.
 
+Connections retain the catalogue resource generation under which they were
+authorized. Changes to the server, authentication, scope or applicable OAuth
+configuration require reconnecting user and Dot accounts separately. Stale
+credentials remain locally disconnectable and are not sent to the changed
+server. In-flight authorization or refresh cannot overwrite a connection after
+its catalogue resource changes. Returning to an earlier configuration does
+not revive earlier credentials. Cosmetic edits and encryption-key resealing
+preserve resource identity.
+
 ---
 
 ## Scope: per-user vs global

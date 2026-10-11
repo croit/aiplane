@@ -491,6 +491,15 @@ mod tests {
         let (old, now, no_fallback) = keys();
         sqlx::query("INSERT INTO users(id,email,roles_json,created_at,updated_at) VALUES('u','u@example.test','[]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES('p','principal','Principal','u','2026-01-01T00:00:00Z')").execute(&pool).await.unwrap();
+        let catalog_secret = old.seal(b"catalog-client-secret").unwrap();
+        sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,client_secret_ct,client_secret_nonce,created_at,updated_at) VALUES('gmail','Actual Gmail','https://gmail.example.test/mcp','oauth2','per_user',?,?,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+            .bind(&catalog_secret.ciphertext).bind(&catalog_secret.nonce).execute(&pool).await.unwrap();
+        let catalog_generation: String = sqlx::query_scalar(
+            "SELECT dispatch_generation FROM mcp_catalog_connectors WHERE key='gmail'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         for owner in [
             ConnectionOwner::User("u".into()),
             ConnectionOwner::Principal("p".into()),
@@ -503,6 +512,7 @@ mod tests {
                 NewConnection {
                     owner,
                     connector_key: "gmail".into(),
+                    catalog_generation: catalog_generation.clone(),
                     access_token_ct: access.ciphertext,
                     access_token_nonce: access.nonce,
                     refresh_token_ct: Some(refresh.ciphertext),
@@ -516,9 +526,38 @@ mod tests {
                 },
             )
             .await
+            .unwrap()
             .unwrap();
         }
-        assert_eq!(legacy_sealed_values(&pool, &now).await.unwrap(), 6);
+        let credentials_before: Vec<(String, Option<String>)> =
+            sqlx::query_as("SELECT generation,catalog_generation FROM mcp_connections ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(legacy_sealed_values(&pool, &now).await.unwrap(), 7);
+        assert_eq!(
+            sqlx::query_as::<_, (String, Option<String>)>(
+                "SELECT generation,catalog_generation FROM mcp_connections ORDER BY id"
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap(),
+            credentials_before
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT dispatch_generation FROM mcp_catalog_connectors WHERE key='gmail'"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            catalog_generation
+        );
+        let (nonce, ciphertext): (Vec<u8>, Vec<u8>) = sqlx::query_as("SELECT client_secret_nonce,client_secret_ct FROM mcp_catalog_connectors WHERE key='gmail'").fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            no_fallback.open(&nonce, &ciphertext).unwrap(),
+            b"catalog-client-secret"
+        );
         for owner in [
             ConnectionOwner::User("u".into()),
             ConnectionOwner::Principal("p".into()),

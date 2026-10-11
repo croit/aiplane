@@ -39,7 +39,7 @@ use shared::api::ToolDef;
 use super::{Tool, ToolContext, ToolError, ToolFuture, ToolResult, tool_content_parts};
 
 pub mod identities;
-pub use identities::StoredMcpIdentity;
+pub use identities::{McpDispatchFacts, StoredMcpIdentity};
 pub mod manager;
 pub(crate) mod spill;
 pub mod worker;
@@ -70,7 +70,7 @@ pub(crate) struct McpConnection {
 /// One MCP-server tool, adapted to the gateway's [`Tool`] trait.
 #[derive(Clone)]
 pub struct McpTool {
-    identity: Option<(StoredMcpIdentity, Arc<aiplane_core::server::rbac::Resolver>)>,
+    identity: Option<(McpDispatchFacts, Arc<aiplane_core::server::rbac::Resolver>)>,
     /// Namespaced id = registry key = OpenAI function name the model calls.
     registry_id: String,
     /// The server's own tool name — what we pass to `tools/call`.
@@ -93,7 +93,15 @@ impl McpTool {
         identity: StoredMcpIdentity,
         rbac: Arc<aiplane_core::server::rbac::Resolver>,
     ) -> Self {
-        self.identity = Some((identity, rbac));
+        self.identity = Some((McpDispatchFacts::Owned(identity), rbac));
+        self
+    }
+    pub(crate) fn with_dispatch_facts(
+        mut self,
+        facts: McpDispatchFacts,
+        rbac: Arc<aiplane_core::server::rbac::Resolver>,
+    ) -> Self {
+        self.identity = Some((facts, rbac));
         self
     }
     /// The server's own (un-namespaced) tool name.
@@ -157,7 +165,7 @@ impl Tool for McpTool {
             params.arguments = args.as_object().cloned();
 
             if let Some((identity, rbac)) = &identity {
-                identities::validate_identity(&ctx, identity, &id, rbac).await?;
+                identities::validate_dispatch(&ctx, identity, &id, rbac).await?;
             } else {
                 super::ask_first::validate_execution_facts(&ctx, &id, &None)?;
             }

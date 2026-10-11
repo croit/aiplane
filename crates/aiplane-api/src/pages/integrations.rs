@@ -32,7 +32,9 @@ use aiplane_core::server::db::mcp_connections::{
 };
 use aiplane_core::server::db::{WriteTx, users::User};
 use aiplane_runtime::rama_server::state::RamaState;
-use aiplane_runtime::server::tools::mcp::identities::authorization_admitted_in;
+use aiplane_runtime::server::tools::mcp::identities::{
+    authorization_admitted_in, connection_admitted_in,
+};
 use session_core::i18n::{self, Lang, t, t_args};
 
 // ---------------------------------------------------------------------------
@@ -125,6 +127,7 @@ pub async fn connect_for_owner(
             }
         };
         let new = NewConnection {
+            catalog_generation: connector.dispatch_generation.clone(),
             owner: owner.clone(),
             connector_key: key.to_owned(),
             access_token_ct: empty.ciphertext,
@@ -138,12 +141,49 @@ pub async fn connect_for_owner(
             dcr_client_secret_nonce: None,
             token_url: None,
         };
-        if let Err(err) = mcp_connections::upsert_connection(&state.db, new).await {
-            return flow_error_page(
-                lang,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("saving connection: {err}"),
-            );
+        let saved = async {
+            let mut tx = WriteTx::begin(&state.db).await?;
+            if !connection_admitted_in(
+                state,
+                &mut tx,
+                &user.id,
+                &owner,
+                key,
+                subject_principal_id.as_deref(),
+            )
+            .await?
+            {
+                return Ok(None);
+            }
+            let current = mcp_catalog::get_in(&mut tx, key).await?;
+            if !current.is_some_and(|c| c.auth == AuthKind::None) {
+                return Ok(None);
+            }
+            let saved = mcp_connections::upsert_connection_in(&mut tx, new).await?;
+            tx.commit().await?;
+            Ok::<_, aiplane_core::server::db::DbError>(saved)
+        }
+        .await;
+        match saved {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return flow_error_page(
+                    lang,
+                    StatusCode::CONFLICT,
+                    &t(lang, "integrations-error-auth-expired"),
+                );
+            }
+            Err(err) => {
+                return flow_error_page(
+                    lang,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &t_args(
+                        lang,
+                        "integrations-error-saving-connection",
+                        &i18n::args([("error", err.to_string().into())]),
+                    ),
+                );
+            }
         }
         state
             .mcp
@@ -263,6 +303,7 @@ pub async fn connect_for_owner(
     };
 
     let new = NewAuthorization {
+        catalog_generation: connector.dispatch_generation.clone(),
         state: oauth_state,
         initiator_user_id: user.id.clone(),
         owner: owner.clone(),
@@ -305,7 +346,12 @@ pub async fn connect_for_owner(
                 return Ok(StatusCode::CONFLICT);
             }
         }
-        mcp_connections::begin_authorization_in(&mut tx, new).await?;
+        if mcp_connections::begin_authorization_in(&mut tx, new)
+            .await?
+            .is_none()
+        {
+            return Ok(StatusCode::CONFLICT);
+        }
         tx.commit().await?;
         Ok::<StatusCode, aiplane_core::server::db::DbError>(StatusCode::OK)
     }
@@ -429,7 +475,11 @@ pub async fn integrations_callback(
         );
     }
     let connector = match mcp_catalog::get(&state.db, &pending.connector_key).await {
-        Ok(Some(c)) => c,
+        Ok(Some(c))
+            if pending.catalog_generation.as_deref() == Some(c.dispatch_generation.as_str()) =>
+        {
+            c
+        }
         _ => {
             retire_authorization(&state, &pending).await;
             return flow_error_page(
@@ -554,7 +604,16 @@ pub async fn integrations_callback(
         tokens.scopes.clone()
     };
 
+    let Some(catalog_generation) = pending.catalog_generation.clone() else {
+        retire_authorization(&state, &pending).await;
+        return flow_error_page(
+            lang,
+            StatusCode::CONFLICT,
+            &t(lang, "integrations-error-auth-expired"),
+        );
+    };
     let new = NewConnection {
+        catalog_generation,
         owner: pending.owner.clone(),
         connector_key: pending.connector_key.clone(),
         access_token_ct: access.ciphertext,

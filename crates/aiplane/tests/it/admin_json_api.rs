@@ -704,6 +704,11 @@ async fn groups_list_carries_families_and_cached_mcp_tools() {
     aiplane_core::server::db::mcp_catalog::replace_tools(
         &state.db,
         "slack",
+        &aiplane_core::server::db::mcp_catalog::get(&state.db, "slack")
+            .await
+            .unwrap()
+            .unwrap()
+            .dispatch_generation,
         &[aiplane_core::server::db::mcp_catalog::CachedTool {
             tool_id: "mcp__slack__post".into(),
             description: "Post a message".into(),

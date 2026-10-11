@@ -240,15 +240,20 @@ mod tests {
     }
 
     fn identity_facts(generation: &str, binding_generation: Option<&str>) -> Value {
-        serde_json::to_value(crate::server::tools::mcp::StoredMcpIdentity {
-            connection: aiplane_core::server::db::mcp_connections::ConnectionIdentity {
-                owner: aiplane_core::server::db::mcp_connections::ConnectionOwner::User("u".into()),
-                connector_key: "fixture".into(),
-                connection_id: "connection-one".into(),
-                generation: generation.into(),
+        serde_json::to_value(crate::server::tools::mcp::McpDispatchFacts::Owned(
+            crate::server::tools::mcp::StoredMcpIdentity {
+                connection: aiplane_core::server::db::mcp_connections::ConnectionIdentity {
+                    owner: aiplane_core::server::db::mcp_connections::ConnectionOwner::User(
+                        "u".into(),
+                    ),
+                    connector_key: "fixture".into(),
+                    connection_id: "connection-one".into(),
+                    generation: generation.into(),
+                },
+                binding_generation: binding_generation.map(str::to_owned),
+                catalog_generation: "catalog-one".into(),
             },
-            binding_generation: binding_generation.map(str::to_owned),
-        })
+        ))
         .unwrap()
     }
 

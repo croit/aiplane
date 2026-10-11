@@ -50,6 +50,11 @@ scripted model responses:
   falling back to the user's connection. A second case disables the actual
   connector, reloads and erases only the Dot's local credentials for both a
   selected and a never-selected connection; the user's account is retained.
+  A third case changes the actual catalogue server, verifies reconnect status
+  and unavailable selection, reconnects and explicitly selects the Dot account,
+  then checks that restoring the earlier URL does not revive old credentials.
+  This leaves the synthetic user credential stale; start a fresh isolated
+  fixture before repeating the complete suite.
 
 Run these suites sequentially when checking the four-active-Dot limit:
 

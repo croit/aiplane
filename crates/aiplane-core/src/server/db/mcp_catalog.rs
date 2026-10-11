@@ -15,7 +15,7 @@ use jiff::Timestamp;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
-use crate::server::db::{DbError, Pool};
+use crate::server::db::{DbError, Pool, WriteTx};
 
 /// OAuth/auth scheme a connector uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +85,7 @@ impl Scope {
 #[derive(Debug, Clone)]
 pub struct Connector {
     pub key: String,
+    pub dispatch_generation: String,
     pub name: String,
     pub description: Option<String>,
     pub icon: Option<String>,
@@ -209,6 +210,7 @@ fn map_row(row: &SqliteRow) -> Result<Connector, DbError> {
     let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
     Ok(Connector {
         key: row.try_get("key")?,
+        dispatch_generation: row.try_get("dispatch_generation")?,
         name: row.try_get("name")?,
         description: row.try_get("description")?,
         icon: row.try_get("icon")?,
@@ -236,7 +238,7 @@ fn map_row(row: &SqliteRow) -> Result<Connector, DbError> {
     })
 }
 
-const COLS: &str = "key, name, description, icon, category, url, auth, scope, audit, use_dcr, \
+const COLS: &str = "key, dispatch_generation, name, description, icon, category, url, auth, scope, audit, use_dcr, \
      client_id, client_secret_ct, client_secret_nonce, authorize_url, token_url, \
      registration_url, scopes_json, allowed_groups, enabled, seeded, created_at, updated_at";
 
@@ -275,6 +277,7 @@ pub async fn get_in(tx: &mut super::WriteTx, key: &str) -> Result<Option<Connect
 
 /// Insert a new admin-created connector (enabled = 0, seeded = 0).
 pub async fn create(pool: &Pool, input: ConnectorInput) -> Result<(), DbError> {
+    validate_secret(&input)?;
     let now = Timestamp::now().to_string();
     let scopes_json = serde_json::to_string(&input.scopes).unwrap_or_else(|_| "[]".into());
     let allowed_groups_json =
@@ -284,8 +287,8 @@ pub async fn create(pool: &Pool, input: ConnectorInput) -> Result<(), DbError> {
               (key, name, description, icon, category, url, auth, scope, audit, use_dcr,
                client_id, client_secret_ct, client_secret_nonce, authorize_url,
                token_url, registration_url, scopes_json, allowed_groups,
-               enabled, seeded, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)"#,
+               enabled, seeded, created_at, updated_at, dispatch_generation)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)"#,
     )
     .bind(&input.key)
     .bind(&input.name)
@@ -307,6 +310,7 @@ pub async fn create(pool: &Pool, input: ConnectorInput) -> Result<(), DbError> {
     .bind(&allowed_groups_json)
     .bind(&now)
     .bind(&now)
+    .bind(uuid::Uuid::new_v4().to_string())
     .execute(pool)
     .await?;
     Ok(())
@@ -315,52 +319,80 @@ pub async fn create(pool: &Pool, input: ConnectorInput) -> Result<(), DbError> {
 /// Update an existing connector's editable fields. When `client_secret_ct` is
 /// `None` the stored secret is left untouched (so an edit that doesn't retype
 /// the secret keeps it); pass `Some(empty-marker)` semantics are not used here.
-pub async fn update(pool: &Pool, key: &str, input: ConnectorInput) -> Result<bool, DbError> {
-    let now = Timestamp::now().to_string();
-    let scopes_json = serde_json::to_string(&input.scopes).unwrap_or_else(|_| "[]".into());
-    let allowed_groups_json =
-        serde_json::to_string(&input.allowed_groups).unwrap_or_else(|_| "[]".into());
-    // Only overwrite the secret columns when a new secret was supplied.
-    let set_secret = input.client_secret_ct.is_some();
-    let sql = if set_secret {
-        r#"UPDATE mcp_catalog_connectors SET
-               name = ?, description = ?, icon = ?, category = ?, url = ?, auth = ?,
-               scope = ?, audit = ?, use_dcr = ?, client_id = ?, client_secret_ct = ?, client_secret_nonce = ?,
-               authorize_url = ?, token_url = ?, registration_url = ?, scopes_json = ?,
-               allowed_groups = ?, updated_at = ?
-           WHERE key = ?"#
-    } else {
-        r#"UPDATE mcp_catalog_connectors SET
-               name = ?, description = ?, icon = ?, category = ?, url = ?, auth = ?,
-               scope = ?, audit = ?, use_dcr = ?, client_id = ?, authorize_url = ?, token_url = ?,
-               registration_url = ?, scopes_json = ?, allowed_groups = ?, updated_at = ?
-           WHERE key = ?"#
-    };
-    let mut q = sqlx::query(sql)
-        .bind(&input.name)
-        .bind(&input.description)
-        .bind(&input.icon)
-        .bind(&input.category)
-        .bind(&input.url)
-        .bind(input.auth.as_str())
-        .bind(input.scope.as_str())
-        .bind(input.audit as i64)
-        .bind(input.use_dcr as i64)
-        .bind(&input.client_id);
-    if set_secret {
-        q = q
-            .bind(&input.client_secret_ct)
-            .bind(&input.client_secret_nonce);
+fn canonical_scopes(scopes: &[String]) -> Vec<&str> {
+    let mut scopes: Vec<_> = scopes.iter().map(String::as_str).collect();
+    scopes.sort_unstable();
+    scopes.dedup();
+    scopes
+}
+
+fn dispatch_changed(current: &Connector, input: &ConnectorInput) -> bool {
+    if current.url != input.url || current.auth != input.auth || current.scope != input.scope {
+        return true;
     }
-    q = q
-        .bind(&input.authorize_url)
-        .bind(&input.token_url)
-        .bind(&input.registration_url)
-        .bind(&scopes_json)
-        .bind(&allowed_groups_json)
-        .bind(&now)
-        .bind(key);
-    Ok(q.execute(pool).await?.rows_affected() > 0)
+    let secret_changed = current.client_secret_ct != input.client_secret_ct
+        || current.client_secret_nonce != input.client_secret_nonce;
+    match input.auth {
+        AuthKind::None => false,
+        AuthKind::StaticBearer => input.scope != Scope::PerUser && secret_changed,
+        AuthKind::OAuth2 => {
+            secret_changed
+                || current.use_dcr != input.use_dcr
+                || current.client_id != input.client_id
+                || current.authorize_url != input.authorize_url
+                || current.token_url != input.token_url
+                || current.registration_url != input.registration_url
+                || canonical_scopes(&current.scopes) != canonical_scopes(&input.scopes)
+        }
+    }
+}
+
+fn validate_secret(input: &ConnectorInput) -> Result<(), DbError> {
+    if input.client_secret_ct.is_some() != input.client_secret_nonce.is_some() {
+        return Err(DbError::Decode {
+            column: "client_secret",
+            source: anyhow::anyhow!("client secret requires both ciphertext and nonce"),
+        });
+    }
+    Ok(())
+}
+
+pub async fn dispatch_matches_in(
+    tx: &mut WriteTx,
+    key: &str,
+    expected_generation: &str,
+) -> Result<bool, DbError> {
+    Ok(get_in(tx, key)
+        .await?
+        .is_some_and(|c| c.dispatch_generation == expected_generation))
+}
+
+pub async fn update(pool: &Pool, key: &str, mut input: ConnectorInput) -> Result<bool, DbError> {
+    validate_secret(&input)?;
+    let mut tx = WriteTx::begin(pool).await?;
+    let Some(current) = get_in(&mut tx, key).await? else {
+        tx.commit().await?;
+        return Ok(false);
+    };
+    if input.client_secret_ct.is_none() {
+        input.client_secret_ct = current.client_secret_ct.clone();
+        input.client_secret_nonce = current.client_secret_nonce.clone();
+    }
+    let generation = if dispatch_changed(&current, &input) {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        current.dispatch_generation
+    };
+    let affected = sqlx::query("UPDATE mcp_catalog_connectors SET name=?,description=?,icon=?,category=?,url=?,auth=?,scope=?,audit=?,use_dcr=?,client_id=?,client_secret_ct=?,client_secret_nonce=?,authorize_url=?,token_url=?,registration_url=?,scopes_json=?,allowed_groups=?,updated_at=?,dispatch_generation=? WHERE key=?")
+        .bind(&input.name).bind(&input.description).bind(&input.icon).bind(&input.category).bind(&input.url)
+        .bind(input.auth.as_str()).bind(input.scope.as_str()).bind(input.audit as i64).bind(input.use_dcr as i64)
+        .bind(&input.client_id).bind(&input.client_secret_ct).bind(&input.client_secret_nonce)
+        .bind(&input.authorize_url).bind(&input.token_url).bind(&input.registration_url)
+        .bind(serde_json::to_string(&input.scopes).expect("string vector serializes"))
+        .bind(serde_json::to_string(&input.allowed_groups).expect("string vector serializes"))
+        .bind(Timestamp::now().to_string()).bind(generation).bind(key).execute(&mut *tx).await?.rows_affected();
+    tx.commit().await?;
+    Ok(affected == 1)
 }
 
 /// Flip a connector on/off.
@@ -615,8 +647,8 @@ pub async fn seed_defaults(pool: &Pool) -> Result<u64, DbError> {
         let affected = sqlx::query(
             r#"INSERT INTO mcp_catalog_connectors
                   (key, name, description, icon, category, url, auth, scope, audit, use_dcr,
-                   authorize_url, token_url, scopes_json, enabled, seeded, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+                   authorize_url, token_url, scopes_json, enabled, seeded, created_at, updated_at, dispatch_generation)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)
                ON CONFLICT(key) DO NOTHING"#,
         )
         .bind(d.key)
@@ -634,6 +666,7 @@ pub async fn seed_defaults(pool: &Pool) -> Result<u64, DbError> {
         .bind(&scopes_json)
         .bind(&now)
         .bind(&now)
+        .bind(uuid::Uuid::new_v4().to_string())
         .execute(pool)
         .await?
         .rows_affected();
@@ -663,10 +696,15 @@ pub struct CachedTool {
 pub async fn replace_tools(
     pool: &Pool,
     connector_key: &str,
+    expected_generation: &str,
     tools: &[CachedTool],
-) -> Result<(), DbError> {
+) -> Result<bool, DbError> {
     let now = Timestamp::now().to_string();
-    let mut tx = pool.begin().await?;
+    let mut tx = WriteTx::begin(pool).await?;
+    if !dispatch_matches_in(&mut tx, connector_key, expected_generation).await? {
+        tx.commit().await?;
+        return Ok(false);
+    }
     sqlx::query("DELETE FROM mcp_connector_tools WHERE connector_key = ?")
         .bind(connector_key)
         .execute(&mut *tx)
@@ -684,7 +722,7 @@ pub async fn replace_tools(
         .await?;
     }
     tx.commit().await?;
-    Ok(())
+    Ok(true)
 }
 
 /// Every connector's cached tools, keyed by connector. Admin surfaces only —
@@ -1049,15 +1087,29 @@ mod tests {
         replace_tools(
             &pool,
             "slack",
+            &get(&pool, "slack")
+                .await
+                .unwrap()
+                .unwrap()
+                .dispatch_generation,
             &[tool("mcp__slack__post"), tool("mcp__slack__read")],
         )
         .await
         .unwrap();
         // A later connection that sees fewer tools must not leave the old ones
         // behind, or the picker offers grants for tools that no longer exist.
-        replace_tools(&pool, "slack", &[tool("mcp__slack__post")])
-            .await
-            .unwrap();
+        replace_tools(
+            &pool,
+            "slack",
+            &get(&pool, "slack")
+                .await
+                .unwrap()
+                .unwrap()
+                .dispatch_generation,
+            &[tool("mcp__slack__post")],
+        )
+        .await
+        .unwrap();
         let cached = all_tools(&pool).await.unwrap();
         assert_eq!(
             cached,
@@ -1071,9 +1123,18 @@ mod tests {
             .await
             .unwrap();
         seed_connector(&pool, "slack").await;
-        replace_tools(&pool, "slack", &[tool("mcp__slack__post")])
-            .await
-            .unwrap();
+        replace_tools(
+            &pool,
+            "slack",
+            &get(&pool, "slack")
+                .await
+                .unwrap()
+                .unwrap()
+                .dispatch_generation,
+            &[tool("mcp__slack__post")],
+        )
+        .await
+        .unwrap();
         delete(&pool, "slack").await.unwrap();
         assert!(all_tools(&pool).await.unwrap().is_empty());
     }
@@ -1091,5 +1152,225 @@ mod tests {
         assert_eq!(actual.allowed_groups, expected.allowed_groups);
         assert!(get_in(&mut tx, "missing").await.unwrap().is_none());
         tx.commit().await.unwrap();
+    }
+
+    fn dispatch_input(auth: AuthKind, scope: Scope) -> ConnectorInput {
+        ConnectorInput {
+            key: "dispatch".into(),
+            name: "Dispatch".into(),
+            description: None,
+            icon: None,
+            category: None,
+            url: "https://provider.test/mcp".into(),
+            auth,
+            scope,
+            audit: false,
+            use_dcr: false,
+            client_id: Some("client".into()),
+            client_secret_ct: Some(vec![1, 2]),
+            client_secret_nonce: Some(vec![3, 4]),
+            authorize_url: None,
+            token_url: None,
+            registration_url: None,
+            scopes: vec!["read".into(), "write".into()],
+            allowed_groups: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_generation_tracks_effective_configuration_not_management_metadata() {
+        let p = pool().await;
+        create(&p, dispatch_input(AuthKind::OAuth2, Scope::PerUser))
+            .await
+            .unwrap();
+        let original = get(&p, "dispatch")
+            .await
+            .unwrap()
+            .unwrap()
+            .dispatch_generation;
+        assert!(!original.is_empty());
+        let mut cosmetic = dispatch_input(AuthKind::OAuth2, Scope::PerUser);
+        cosmetic.name = "Renamed".into();
+        cosmetic.audit = true;
+        cosmetic.allowed_groups = vec!["engineering".into()];
+        cosmetic.scopes = vec!["write".into(), "read".into(), "read".into()];
+        cosmetic.client_secret_ct = None;
+        cosmetic.client_secret_nonce = None;
+        update(&p, "dispatch", cosmetic).await.unwrap();
+        set_enabled(&p, "dispatch", true).await.unwrap();
+        let retained = get(&p, "dispatch").await.unwrap().unwrap();
+        assert_eq!(retained.dispatch_generation, original);
+        assert_eq!(retained.client_secret_ct, Some(vec![1, 2]));
+        let mut changed = dispatch_input(AuthKind::OAuth2, Scope::PerUser);
+        changed.url = "https://replacement.test/mcp".into();
+        update(&p, "dispatch", changed).await.unwrap();
+        let replacement = get(&p, "dispatch")
+            .await
+            .unwrap()
+            .unwrap()
+            .dispatch_generation;
+        assert_ne!(replacement, original);
+        update(
+            &p,
+            "dispatch",
+            dispatch_input(AuthKind::OAuth2, Scope::PerUser),
+        )
+        .await
+        .unwrap();
+        let restored = get(&p, "dispatch")
+            .await
+            .unwrap()
+            .unwrap()
+            .dispatch_generation;
+        assert_ne!(restored, original);
+        assert_ne!(restored, replacement);
+        delete(&p, "dispatch").await.unwrap();
+        create(&p, dispatch_input(AuthKind::OAuth2, Scope::PerUser))
+            .await
+            .unwrap();
+        assert_ne!(
+            get(&p, "dispatch")
+                .await
+                .unwrap()
+                .unwrap()
+                .dispatch_generation,
+            restored
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_generation_ignores_unused_auth_fields_and_fences_cached_tools() {
+        let p = pool().await;
+        create(&p, dispatch_input(AuthKind::None, Scope::Global))
+            .await
+            .unwrap();
+        let original = get(&p, "dispatch")
+            .await
+            .unwrap()
+            .unwrap()
+            .dispatch_generation;
+        let mut unused = dispatch_input(AuthKind::None, Scope::Global);
+        unused.use_dcr = true;
+        unused.client_id = Some("unused".into());
+        unused.token_url = Some("https://unused.test/token".into());
+        unused.client_secret_ct = Some(vec![9]);
+        unused.client_secret_nonce = Some(vec![8]);
+        update(&p, "dispatch", unused).await.unwrap();
+        assert_eq!(
+            get(&p, "dispatch")
+                .await
+                .unwrap()
+                .unwrap()
+                .dispatch_generation,
+            original
+        );
+        assert!(
+            replace_tools(&p, "dispatch", &original, &[tool("current")])
+                .await
+                .unwrap()
+        );
+        let mut changed = dispatch_input(AuthKind::None, Scope::Global);
+        changed.url = "https://replacement.test/mcp".into();
+        update(&p, "dispatch", changed).await.unwrap();
+        assert!(
+            !replace_tools(&p, "dispatch", &original, &[tool("stale")])
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            all_tools(&p).await.unwrap(),
+            vec![("dispatch".into(), tool("current"))]
+        );
+        let mut tx = super::super::WriteTx::begin(&p).await.unwrap();
+        assert!(
+            !dispatch_matches_in(&mut tx, "dispatch", &original)
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dispatch_generation_rotates_each_effective_oauth_field() {
+        let changes: [fn(&mut ConnectorInput); 9] = [
+            |i| i.use_dcr = true,
+            |i| i.client_id = Some("replacement".into()),
+            |i| i.client_secret_ct = Some(vec![9]),
+            |i| i.client_secret_nonce = Some(vec![9]),
+            |i| i.authorize_url = Some("https://provider.test/authorize".into()),
+            |i| i.token_url = Some("https://provider.test/token".into()),
+            |i| i.registration_url = Some("https://provider.test/register".into()),
+            |i| i.scopes.push("admin".into()),
+            |i| i.scope = Scope::Global,
+        ];
+        for change in changes {
+            let p = pool().await;
+            create(&p, dispatch_input(AuthKind::OAuth2, Scope::PerUser))
+                .await
+                .unwrap();
+            let old = get(&p, "dispatch")
+                .await
+                .unwrap()
+                .unwrap()
+                .dispatch_generation;
+            let mut input = dispatch_input(AuthKind::OAuth2, Scope::PerUser);
+            change(&mut input);
+            update(&p, "dispatch", input).await.unwrap();
+            assert_ne!(
+                get(&p, "dispatch")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .dispatch_generation,
+                old
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_generation_static_secret_depends_on_actual_identity_scope() {
+        for scope in [Scope::Global, Scope::Agent, Scope::PerUser] {
+            let p = pool().await;
+            create(&p, dispatch_input(AuthKind::StaticBearer, scope))
+                .await
+                .unwrap();
+            let old = get(&p, "dispatch")
+                .await
+                .unwrap()
+                .unwrap()
+                .dispatch_generation;
+            let mut input = dispatch_input(AuthKind::StaticBearer, scope);
+            input.client_secret_ct = Some(vec![9]);
+            update(&p, "dispatch", input).await.unwrap();
+            assert_eq!(
+                get(&p, "dispatch")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .dispatch_generation
+                    == old,
+                scope == Scope::PerUser
+            );
+        }
+        let p = pool().await;
+        create(&p, dispatch_input(AuthKind::None, Scope::Global))
+            .await
+            .unwrap();
+        let old = get(&p, "dispatch")
+            .await
+            .unwrap()
+            .unwrap()
+            .dispatch_generation;
+        let mut invalid = dispatch_input(AuthKind::None, Scope::Global);
+        invalid.client_secret_nonce = None;
+        assert!(update(&p, "dispatch", invalid).await.is_err());
+        assert_eq!(
+            get(&p, "dispatch")
+                .await
+                .unwrap()
+                .unwrap()
+                .dispatch_generation,
+            old
+        );
     }
 }

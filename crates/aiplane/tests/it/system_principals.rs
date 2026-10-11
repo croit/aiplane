@@ -489,6 +489,11 @@ async fn fixture_with_usage(metered: bool) -> Fixture {
                     user.into(),
                 ),
                 connector_key: PER_USER.into(),
+                catalog_generation: mcp_catalog::get(&pool, PER_USER)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .dispatch_generation,
                 access_token_ct: sealed.ciphertext,
                 access_token_nonce: sealed.nonce,
                 refresh_token_ct: None,
@@ -502,6 +507,7 @@ async fn fixture_with_usage(metered: bool) -> Fixture {
             },
         )
         .await
+        .unwrap()
         .unwrap();
     }
 

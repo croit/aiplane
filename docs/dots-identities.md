@@ -23,11 +23,11 @@ A search of schema and ownership/accessors found no organization entity or typed
 
 Reuse the catalogue, MCP manager and live tool inventory; crypto sealing and existing token fields; OAuth discovery/PKCE/state/callback/refresh; pinned and guarded network requests; `AgentSpec` tools and approval rules; principal grants; agent user/group shares; gateway-group RBAC; activity and MCP audit; existing user session identity and error/translation conventions.
 
-The neutral typed `ConnectionOwner::User(id) | Principal(id)` lives in `aiplane-core::server::db::mcp_connections`. The MCP manager uses owner and credential generation to fence its cache and refresh writes. `aiplane-runtime::server::tools::mcp::identities` resolves one selected connection before composing a personal Dot's tools. The core connection layer imports no Dot, organization or runtime types.
+The neutral typed `ConnectionOwner::User(id) | Principal(id)` lives in `aiplane-core::server::db::mcp_connections`. The MCP manager uses owner, credential generation and actual catalogue dispatch generation to fence its cache and refresh writes. `aiplane-runtime::server::tools::mcp::identities` resolves one selected connection before composing a personal Dot's tools. The core connection layer imports no Dot, organization or runtime types.
 
 The canonical `aiplane-core::server::db::WriteTx` provides the same `BEGIN IMMEDIATE` transaction to credential and agent accessors. `session-core::db::suspensions::PendingCall.execution_facts` stores opaque execution facts in the existing pending-call JSON. Tool wrappers preserve these facts; they are excluded from approval presentation and model messages.
 
-The existing `agent_audit` ToolCall/ToolResult events provide admission and outcome attribution. A state-backed personal tool source records admission after resolving the current tool; the call-policy and runner refusal paths use that same writer. Its optional identity is a whitelist of the actual typed MCP connection and binding generations, never generic metadata. It describes an attempt, and resumed calls retain their original event. See [Agent activity log](agent-activity-log.md).
+The existing `agent_audit` ToolCall/ToolResult events provide admission and outcome attribution. A state-backed personal tool source records admission after resolving the current tool; the call-policy and runner refusal paths use that same writer. Its optional identity is a whitelist of the actual typed MCP connection, binding and catalogue generations, never generic metadata. It describes an attempt, and resumed calls retain their original event. See [Agent activity log](agent-activity-log.md).
 
 Organization metadata is a distinct typed owner entity in `aiplane-agents`, with membership derived from the existing gateway-group resolver and links to named gateway groups. Do not create another role/grant engine or reinterpret every gateway group as an organization automatically. `session-core` remains owner-agnostic.
 
@@ -107,15 +107,13 @@ Organization tests prove mapped membership and shares intersect, user deletion d
 - No generic verified provider-account lookup exists; account display may remain unavailable. Separate external actor identities require separately authorized provider accounts, not generated Dot names.
 - No organization entity exists. Typed metadata and group-derived membership are proposed; quotas, organization memory and user-owned-session replacement are not implemented by naming an organization.
 - Personal Dot-owned OAuth credentials use the generalized store and selected runtime layer. Organization principal execution still uses its existing shared-resource path until organization ownership is implemented.
-- Credential generation fences cover user and principal OAuth connections in `mcp_connections`. Gateway-shared catalogue credentials have no corresponding connection generation; fencing pending calls across operator replacement of those shared credentials remains a required implementation item.
-- Catalogue URL/authentication changes are not part of owned OAuth credential generations. The owned cache and final connection check therefore do not yet bind a credential to a particular catalogue resource version. Resource-version fencing must cover both shared credentials and owned connections before claiming that catalogue replacement invalidates every pending or cached call.
 - OAuth flow supports the existing catalogue/provider features. Static credentials, provider account chooser hints and external account provisioning must be included only when a real supported path is verified.
 - Organization background approval and conversation ownership cannot borrow personal Dot sessions. That bridge is a separate prerequisite, while personal Dot credential selection can ship independently.
 
-## Adopted catalogue dispatch fence: pending implementation
+## Catalogue dispatch fence
 
-Add a persisted opaque dispatch generation to each catalogue connector. Change
-it atomically when the actual URL, authentication kind, scope, effective shared
+Each catalogue connector has a persisted opaque dispatch generation. It changes
+atomically when the actual URL, authentication kind, scope, effective shared
 secret or applicable OAuth client, DCR, endpoint or requested-scope configuration
 changes. Name, description, icon, category, audit, enablement and allowed-group
 edits preserve that generation; current authorization still checks enablement
@@ -124,8 +122,8 @@ restoration of a previously deleted default. Returning to an older URL cannot
 restore an older generation. Crypto resealing preserves resource and credential
 generations.
 
-Bind an owned credential and its pending OAuth reservation to the actual
-catalogue generation used to authorize it. Verify that provenance before token
+An owned credential and its pending OAuth reservation retain the actual
+catalogue generation used to authorize them. Provenance is checked before token
 exchange or refresh and again in the final conditional write transaction. A
 resource change requires explicit reauthorization; neither a fresh cache nor
 an old connection may forward the earlier token to the changed resource.
@@ -133,10 +131,12 @@ The one unreleased migration initializes existing connections from their
 actual catalogue key. Orphaned connections remain unavailable and locally
 erasable.
 
-Extend the existing typed MCP execution facts with owned/shared dispatch
-variants and the actual catalogue generation. Include that generation in both
-cache keys, validate it after handshake before publishing tools or caching, and
-check it with current user/principal/Dot authority immediately before dispatch.
+The existing typed MCP execution facts have owned/shared dispatch variants
+and the actual catalogue generation. Both cache keys include that generation.
+After handshake, the manager checks it before publishing tools or caching;
+dispatch checks it with current user/principal/Dot authority in the final
+admission transaction. A held tool reference, pending approval or late
+handshake cannot adopt a replacement resource, including an A→B→A URL change.
 Facts contain no endpoint, token, ciphertext or secret-derived fingerprint.
 Existing pending-call comparisons and approvals retain their original
 arguments and authority facts. No second dispatcher, cache or approval store

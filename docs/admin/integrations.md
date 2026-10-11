@@ -28,6 +28,14 @@ OAuth fields include client JSON, client ID, write-only client secret, dynamic c
 
 Allowed groups restrict connector availability. Audit logging is a separate checkbox. The enable action is disabled while a connector needs setup. Edit changes its configuration; Disable stops offering it; Delete requires confirmation. **Restore defaults** has a confirmation and restores the built-in connector definitions—review your configuration before using it.
 
+Changing the server URL, authentication type, scope, effective shared secret
+or applicable OAuth configuration invalidates earlier cached calls and pending
+approvals. Owned user and Dot credentials require a new connection to the
+changed resource. Changing the URL back does not reactivate them. Display
+fields, audit settings and allowed groups preserve resource identity; current
+enablement and group permissions are checked before execution. A request
+already admitted to an external server may finish after a configuration change.
+
 ## Inspect connector audit records
 
 Enable audit logging on the connector, then open its Audit screen at `/admin/connectors/<key>/audit`. It shows timestamp, user, tool, outcome and detail. Detail can contain tool arguments or an error; treat the records as potentially sensitive operational data.

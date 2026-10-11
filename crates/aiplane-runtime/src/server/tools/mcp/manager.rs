@@ -62,8 +62,14 @@ const MAX_CACHE_ENTRIES: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum CacheKey {
-    Owned(ConnectionIdentity),
-    Shared(String),
+    Owned {
+        identity: ConnectionIdentity,
+        catalog_generation: String,
+    },
+    Shared {
+        connector_key: String,
+        catalog_generation: String,
+    },
 }
 
 struct Cached {
@@ -158,11 +164,24 @@ impl McpConnectionManager {
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     }
-    fn global_cache_key(connector_key: &str) -> CacheKey {
-        CacheKey::Shared(connector_key.to_owned())
+    fn global_cache_key(connector: &Connector) -> CacheKey {
+        CacheKey::Shared {
+            connector_key: connector.key.clone(),
+            catalog_generation: connector.dispatch_generation.clone(),
+        }
     }
     pub async fn invalidate(&self, owner: &ConnectionOwner, connector_key: &str) {
-        self.cache.lock().await.retain(|key,_| !matches!(key,CacheKey::Owned(identity) if &identity.owner==owner && identity.connector_key==connector_key));
+        self.cache.lock().await.retain(|key,_| !matches!(key,CacheKey::Owned { identity, .. } if &identity.owner==owner && identity.connector_key==connector_key));
+    }
+
+    async fn current_connector(&self, expected: &Connector) -> Result<Connector, String> {
+        mcp_catalog::get(&self.db, &expected.key)
+            .await
+            .map_err(|error| format!("loading connector: {error}"))?
+            .filter(|current| {
+                current.enabled && current.dispatch_generation == expected.dispatch_generation
+            })
+            .ok_or_else(|| "connector configuration is unavailable or changed".to_string())
     }
 
     /// Record what this connector exposes, so the admin group editor can offer
@@ -170,9 +189,13 @@ impl McpConnectionManager {
     ///
     /// A connector's tool list lives on the server and is only ever seen while
     /// connected on some user's behalf, which an admin editing a group cannot
-    /// do. Best-effort on purpose: a write failure must not fail the turn, and a
-    /// connector nobody has connected simply has nothing to offer yet.
-    async fn record_catalog_tools(&self, connector_key: &str, tools: &[Arc<McpTool>]) {
+    /// do. A connector nobody has connected has nothing to offer yet.
+    async fn record_catalog_tools(
+        &self,
+        connector_key: &str,
+        catalog_generation: &str,
+        tools: &[Arc<McpTool>],
+    ) -> Result<bool, String> {
         use crate::server::tools::Tool;
         let cached: Vec<mcp_catalog::CachedTool> = tools
             .iter()
@@ -181,10 +204,9 @@ impl McpConnectionManager {
                 description: t.schema().function.description,
             })
             .collect();
-        if let Err(err) = mcp_catalog::replace_tools(&self.db, connector_key, &cached).await {
-            tracing::warn!(connector = %connector_key, error = %err,
-                "could not cache the connector's tool list for the admin picker");
-        }
+        mcp_catalog::replace_tools(&self.db, connector_key, catalog_generation, &cached)
+            .await
+            .map_err(|error| format!("recording connector tools: {error}"))
     }
 
     /// Return the cached tools for `ck` if still within [`CACHE_TTL`].
@@ -402,13 +424,23 @@ impl McpConnectionManager {
         owner: &ConnectionOwner,
         connector: &Connector,
     ) -> Result<Vec<Arc<McpTool>>, String> {
+        let current_connector = self.current_connector(connector).await?;
+        let connector = &current_connector;
         let conn = mcp_connections::get_connection(&self.db, owner, &connector.key)
             .await
             .map_err(|e| format!("loading connection: {e}"))?
             .filter(|c| c.status == mcp_connections::STATUS_CONNECTED)
             .ok_or_else(|| "not connected".to_string())?;
+        if conn.catalog_generation.as_deref() != Some(connector.dispatch_generation.as_str()) {
+            return Err(
+                "connection belongs to an unavailable connector configuration; reconnect".into(),
+            );
+        }
         let identity = conn.identity();
-        let ck = CacheKey::Owned(identity.clone());
+        let ck = CacheKey::Owned {
+            identity: identity.clone(),
+            catalog_generation: connector.dispatch_generation.clone(),
+        };
         if let Some(tools) = self.cache_lookup(&ck).await {
             return Ok(tools);
         }
@@ -452,7 +484,9 @@ impl McpConnectionManager {
             .await
             .map_err(|e| format!("checking connection: {e}"))?;
         if !current.is_some_and(|c| {
-            c.status == mcp_connections::STATUS_CONNECTED && c.identity() == identity
+            c.status == mcp_connections::STATUS_CONNECTED
+                && c.identity() == identity
+                && c.catalog_generation.as_deref() == Some(connector.dispatch_generation.as_str())
         }) {
             return Err("connection changed while connecting".into());
         }
@@ -463,12 +497,18 @@ impl McpConnectionManager {
                     StoredMcpIdentity {
                         connection: identity.clone(),
                         binding_generation: None,
+                        catalog_generation: connector.dispatch_generation.clone(),
                     },
                     self.rbac.clone(),
                 ))
             })
             .collect();
-        self.record_catalog_tools(&connector.key, &tools).await;
+        if !self
+            .record_catalog_tools(&connector.key, &connector.dispatch_generation, &tools)
+            .await?
+        {
+            return Err("connector changed while connecting".into());
+        }
         self.cache_store(ck, tools.clone()).await;
         Ok(tools)
     }
@@ -484,7 +524,9 @@ impl McpConnectionManager {
         &self,
         connector: &Connector,
     ) -> Result<Vec<Arc<McpTool>>, String> {
-        let ck = Self::global_cache_key(&connector.key);
+        let current_connector = self.current_connector(connector).await?;
+        let connector = &current_connector;
+        let ck = Self::global_cache_key(connector);
         if let Some(tools) = self.cache_lookup(&ck).await {
             return Ok(tools);
         }
@@ -503,8 +545,24 @@ impl McpConnectionManager {
             }
         };
         let ConnectedServer { conn: _live, tools } = connected;
-        let tools: Vec<Arc<McpTool>> = tools.into_iter().map(Arc::new).collect();
-        self.record_catalog_tools(&connector.key, &tools).await;
+        let tools: Vec<Arc<McpTool>> = tools
+            .into_iter()
+            .map(|tool| {
+                Arc::new(tool.with_dispatch_facts(
+                    super::McpDispatchFacts::Shared {
+                        connector_key: connector.key.clone(),
+                        catalog_generation: connector.dispatch_generation.clone(),
+                    },
+                    self.rbac.clone(),
+                ))
+            })
+            .collect();
+        if !self
+            .record_catalog_tools(&connector.key, &connector.dispatch_generation, &tools)
+            .await?
+        {
+            return Err("connector changed while connecting".into());
+        }
         self.cache_store(ck, tools.clone()).await;
         Ok(tools)
     }
@@ -520,6 +578,15 @@ impl McpConnectionManager {
         connector: &Connector,
         conn: &Connection,
     ) -> Result<(String, bool), TokenError> {
+        self.current_connector(connector)
+            .await
+            .map_err(TokenError::transient)?;
+        if conn.catalog_generation.as_deref() != Some(connector.dispatch_generation.as_str()) {
+            return Err(TokenError {
+                message: "connector configuration changed; reconnect".into(),
+                needs_reauth: true,
+            });
+        }
         let fresh_enough = conn
             .token_expires_at
             .map(|exp| exp > Timestamp::now() + jiff::Span::new().seconds(REFRESH_SKEW_SECS))
@@ -534,8 +601,14 @@ impl McpConnectionManager {
                 // re-failing every turn, and the store asks for a new sign-in
                 // instead of showing a stale "connected".
                 Err(err) => {
-                    let _ =
-                        mcp_connections::mark_error(&self.db, &conn.identity(), &err, true).await;
+                    let _ = mcp_connections::mark_error(
+                        &self.db,
+                        &conn.identity(),
+                        &connector.dispatch_generation,
+                        &err,
+                        true,
+                    )
+                    .await;
                     Err(TokenError {
                         message: err,
                         needs_reauth: true,
@@ -601,6 +674,15 @@ impl McpConnectionManager {
             .map_err(|e| TokenError::transient(format!("loading connection: {e}")))?
             .filter(|c| c.status == mcp_connections::STATUS_CONNECTED)
             .ok_or_else(|| TokenError::transient("not connected"))?;
+        self.current_connector(connector)
+            .await
+            .map_err(TokenError::transient)?;
+        if conn.catalog_generation.as_deref() != Some(connector.dispatch_generation.as_str()) {
+            return Err(TokenError {
+                message: "connector configuration changed; reconnect".into(),
+                needs_reauth: true,
+            });
+        }
         let identity = conn.identity();
         let result: Result<String, TokenError> = async {
             if !force
@@ -683,6 +765,7 @@ impl McpConnectionManager {
             let saved = mcp_connections::update_tokens(
                 &self.db,
                 &identity,
+                &connector.dispatch_generation,
                 RefreshTokens {
                     access_token_ct: &access_sealed.ciphertext,
                     access_token_nonce: &access_sealed.nonce,
@@ -703,9 +786,14 @@ impl McpConnectionManager {
         }
         .await;
         if let Err(err) = &result {
-            let _ =
-                mcp_connections::mark_error(&self.db, &identity, &err.message, err.needs_reauth)
-                    .await;
+            let _ = mcp_connections::mark_error(
+                &self.db,
+                &identity,
+                &connector.dispatch_generation,
+                &err.message,
+                err.needs_reauth,
+            )
+            .await;
         }
         result
     }
@@ -1316,6 +1404,7 @@ mod tests {
         let now = Timestamp::now();
         Connector {
             key: "discord".into(),
+            dispatch_generation: uuid::Uuid::new_v4().to_string(),
             name: "Discord".into(),
             description: None,
             icon: None,
@@ -1386,8 +1475,8 @@ mod tests {
         let mut connector = global_connector(AuthKind::OAuth2);
         connector.scope = Scope::PerUser;
         connector.url = server.uri();
-        sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,enabled,created_at,updated_at) VALUES(?,?,?,'oauth2','per_user',1,?,?)")
-            .bind(&connector.key).bind(&connector.name).bind(&connector.url).bind(connector.created_at.to_string()).bind(connector.updated_at.to_string()).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,enabled,created_at,updated_at,dispatch_generation) VALUES(?,?,?,'oauth2','per_user',1,?,?,?)")
+            .bind(&connector.key).bind(&connector.name).bind(&connector.url).bind(connector.created_at.to_string()).bind(connector.updated_at.to_string()).bind(&connector.dispatch_generation).execute(&pool).await.unwrap();
         for (user, secret) in [("alice", "alice-secret"), ("bob", "bob-secret")] {
             sqlx::query("INSERT INTO users (id, email, roles_json, created_at, updated_at) VALUES (?, ?, '[]', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')")
                 .bind(user)
@@ -1401,6 +1490,7 @@ mod tests {
                 mcp_connections::NewConnection {
                     owner: ConnectionOwner::User(user.into()),
                     connector_key: connector.key.clone(),
+                    catalog_generation: connector.dispatch_generation.clone(),
                     access_token_ct: sealed.ciphertext,
                     access_token_nonce: sealed.nonce,
                     refresh_token_ct: None,
@@ -1529,7 +1619,283 @@ mod tests {
         .await
         .unwrap();
         mcp_catalog::set_enabled(pool, "crm", true).await.unwrap();
+        for user in ["u", "u1"] {
+            sqlx::query("INSERT OR IGNORE INTO users(id,email,roles_json,created_at,updated_at) VALUES (?,?,'[]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+                .bind(user).bind(format!("{user}@example.com")).execute(pool).await.unwrap();
+        }
         server
+    }
+
+    fn catalog_input(connector: &Connector, url: String) -> mcp_catalog::ConnectorInput {
+        mcp_catalog::ConnectorInput {
+            key: connector.key.clone(),
+            name: connector.name.clone(),
+            description: connector.description.clone(),
+            icon: connector.icon.clone(),
+            category: connector.category.clone(),
+            url,
+            auth: connector.auth,
+            scope: connector.scope,
+            audit: connector.audit,
+            use_dcr: connector.use_dcr,
+            client_id: connector.client_id.clone(),
+            client_secret_ct: None,
+            client_secret_nonce: None,
+            authorize_url: connector.authorize_url.clone(),
+            token_url: connector.token_url.clone(),
+            registration_url: connector.registration_url.clone(),
+            scopes: connector.scopes.clone(),
+            allowed_groups: connector.allowed_groups.clone(),
+        }
+    }
+
+    #[tokio::test]
+    async fn catalog_generation_fences_held_shared_tool_after_url_round_trip() {
+        let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let original_server = destructive_connector(&pool, calls.clone()).await;
+        let replacement_server = MockServer::start().await;
+        let mgr =
+            McpConnectionManager::new(pool.clone(), Arc::new(Crypto::ephemeral()), fixture_rbac());
+        let original = mcp_catalog::get(&pool, "crm").await.unwrap().unwrap();
+        let held = mgr.ensure_global(&original).await.unwrap().remove(0);
+        held.run(ToolContext::for_test(pool.clone()), serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(calls.swap(0, std::sync::atomic::Ordering::SeqCst), 1);
+        for url in [replacement_server.uri(), original_server.uri()] {
+            assert!(
+                mcp_catalog::update(&pool, "crm", catalog_input(&original, url))
+                    .await
+                    .unwrap()
+            );
+        }
+        let result = held
+            .run(ToolContext::for_test(pool.clone()), serde_json::json!({}))
+            .await;
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(
+            result.is_err(),
+            "a restored URL must not revive the original held tool"
+        );
+        assert!(
+            replacement_server
+                .received_requests()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_generation_never_forwards_owned_old_credentials_to_new_url() {
+        let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let _original_server = destructive_connector(&pool, calls.clone()).await;
+        let replacement_server = MockServer::start().await;
+        let mut connector = mcp_catalog::get(&pool, "crm").await.unwrap().unwrap();
+        connector.auth = AuthKind::OAuth2;
+        connector.scope = Scope::PerUser;
+        assert!(
+            mcp_catalog::update(
+                &pool,
+                "crm",
+                catalog_input(&connector, connector.url.clone())
+            )
+            .await
+            .unwrap()
+        );
+        let connector = mcp_catalog::get(&pool, "crm").await.unwrap().unwrap();
+        sqlx::query("INSERT INTO users (id,email,roles_json,created_at,updated_at) VALUES ('owner','owner@example.com','[]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+            .execute(&pool).await.unwrap();
+        let crypto = Arc::new(Crypto::ephemeral());
+        let sealed = crypto.seal_str("owned-generation-fixture-token").unwrap();
+        mcp_connections::upsert_connection(
+            &pool,
+            mcp_connections::NewConnection {
+                owner: ConnectionOwner::User("owner".into()),
+                connector_key: connector.key.clone(),
+                catalog_generation: connector.dispatch_generation.clone(),
+                access_token_ct: sealed.ciphertext,
+                access_token_nonce: sealed.nonce,
+                refresh_token_ct: None,
+                refresh_token_nonce: None,
+                token_expires_at: None,
+                scopes: vec![],
+                dcr_client_id: None,
+                dcr_client_secret_ct: None,
+                dcr_client_secret_nonce: None,
+                token_url: None,
+            },
+        )
+        .await
+        .unwrap();
+        let mgr = McpConnectionManager::new(pool.clone(), crypto, fixture_rbac());
+        let owner = ConnectionOwner::User("owner".into());
+        let held = mgr
+            .ensure_connection(&owner, &connector)
+            .await
+            .unwrap()
+            .remove(0);
+        let mut initial_ctx = ToolContext::for_test(pool.clone());
+        initial_ctx.principal = ToolContext::test_user("owner");
+        held.run(initial_ctx, serde_json::json!({})).await.unwrap();
+        assert_eq!(calls.swap(0, std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(
+            mcp_catalog::update(
+                &pool,
+                "crm",
+                catalog_input(&connector, replacement_server.uri())
+            )
+            .await
+            .unwrap()
+        );
+        let current = mcp_catalog::get(&pool, "crm").await.unwrap().unwrap();
+        mgr.invalidate(&owner, "crm").await;
+        let newly_offered = mgr.ensure_connection(&owner, &current).await;
+        let mut ctx = ToolContext::for_test(pool);
+        ctx.principal = ToolContext::test_user("owner");
+        let held_result = held.run(ctx, serde_json::json!({})).await;
+        assert!(
+            replacement_server
+                .received_requests()
+                .await
+                .unwrap()
+                .is_empty(),
+            "old credential must not be sent to a replacement endpoint"
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(newly_offered.is_err());
+        assert!(held_result.is_err());
+    }
+
+    #[tokio::test]
+    async fn catalog_generation_shared_resume_retains_original_facts_and_live_principal_grants() {
+        use aiplane_agents::db::system_principals;
+        use aiplane_core::server::principal::{GrantKind, Principal};
+        let db = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let _server = destructive_connector(&db, calls.clone()).await;
+        let mgr =
+            McpConnectionManager::new(db.clone(), Arc::new(Crypto::ephemeral()), fixture_rbac());
+        let connector = mcp_catalog::get(&db, "crm").await.unwrap().unwrap();
+        let tool = mgr.ensure_global(&connector).await.unwrap().remove(0);
+        let original_facts = tool.execution_facts();
+        let mut ctx = ToolContext::for_test(db.clone());
+        ctx.pending_execution_facts = Some(crate::server::tools::PendingExecutionFacts {
+            execution_facts: original_facts.clone(),
+        });
+        tool.run(ctx.clone(), serde_json::json!({})).await.unwrap();
+        assert_eq!(calls.swap(0, std::sync::atomic::Ordering::SeqCst), 1);
+        let row = system_principals::create(
+            &db,
+            &system_principals::NewPrincipal {
+                name: "catalog-principal",
+                display: "Catalog principal",
+                description: "",
+            },
+            "admin",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        system_principals::add_grant(&db, &row.id, GrantKind::Connector, "crm", "admin")
+            .await
+            .unwrap();
+        ctx.principal = Principal::System(
+            system_principals::load_active(&db, &row.id)
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+        tool.run(ctx.clone(), serde_json::json!({})).await.unwrap();
+        assert_eq!(calls.swap(0, std::sync::atomic::Ordering::SeqCst), 1);
+        system_principals::remove_grant(&db, &row.id, GrantKind::Connector, "crm", "admin")
+            .await
+            .unwrap();
+        assert!(tool.run(ctx.clone(), serde_json::json!({})).await.is_err());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        system_principals::add_grant(&db, &row.id, GrantKind::Connector, "crm", "admin")
+            .await
+            .unwrap();
+        system_principals::disable(&db, &row.id, "admin")
+            .await
+            .unwrap();
+        assert!(tool.run(ctx.clone(), serde_json::json!({})).await.is_err());
+        ctx.principal = ToolContext::test_user("u");
+        let mut input = catalog_input(&connector, connector.url.clone());
+        input.name = "Actual renamed connector".into();
+        mcp_catalog::update(&db, "crm", input).await.unwrap();
+        tool.run(ctx.clone(), serde_json::json!({})).await.unwrap();
+        assert_eq!(calls.swap(0, std::sync::atomic::Ordering::SeqCst), 1);
+        mcp_catalog::update(
+            &db,
+            "crm",
+            catalog_input(&connector, "http://127.0.0.1:1/replaced".into()),
+        )
+        .await
+        .unwrap();
+        assert!(tool.run(ctx, serde_json::json!({})).await.is_err());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(tool.execution_facts(), original_facts);
+    }
+
+    #[tokio::test]
+    async fn catalog_generation_late_handshake_cannot_publish_stale_cache_or_catalog_tools() {
+        let db = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let _initial = destructive_connector(&db, calls).await;
+        let server = MockServer::start().await;
+        let listed = Arc::new(tokio::sync::Notify::new());
+        let observed = listed.clone();
+        Mock::given(method("POST")).respond_with(move |request: &wiremock::Request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            let result = match body["method"].as_str() {
+                Some("initialize") => serde_json::json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"late","version":"1"}}),
+                Some("notifications/initialized") => return ResponseTemplate::new(202),
+                Some("tools/list") => {
+                    observed.notify_one();
+                    return ResponseTemplate::new(200).insert_header("content-type","application/json")
+                        .set_body_json(serde_json::json!({"jsonrpc":"2.0","id":body["id"],"result":{"tools":[{"name":"stale","description":"Stale handshake","inputSchema":{"type":"object"}}]}}))
+                        .set_delay(Duration::from_millis(200));
+                }
+                other => panic!("unexpected method: {other:?}"),
+            };
+            ResponseTemplate::new(200).insert_header("content-type","application/json")
+                .set_body_json(serde_json::json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
+        }).mount(&server).await;
+        let original = mcp_catalog::get(&db, "crm").await.unwrap().unwrap();
+        mcp_catalog::update(&db, "crm", catalog_input(&original, server.uri()))
+            .await
+            .unwrap();
+        let snapshot = mcp_catalog::get(&db, "crm").await.unwrap().unwrap();
+        let mgr =
+            McpConnectionManager::new(db.clone(), Arc::new(Crypto::ephemeral()), fixture_rbac());
+        let worker = mgr.clone();
+        let connecting = tokio::spawn(async move { worker.ensure_global(&snapshot).await });
+        tokio::time::timeout(Duration::from_secs(2), listed.notified())
+            .await
+            .unwrap();
+        mcp_catalog::update(&db, "crm", catalog_input(&original, original.url.clone()))
+            .await
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), connecting)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        assert!(mgr.cache.lock().await.is_empty());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM mcp_connector_tools WHERE connector_key='crm'"
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -1609,7 +1975,18 @@ mod tests {
         // OAuth2 is per-user; a global connector can't use it. ensure_global
         // must reject it up front (defensive — admin save also blocks it).
         let mgr = manager().await;
-        let err = match mgr.ensure_global(&global_connector(AuthKind::OAuth2)).await {
+        let configured = global_connector(AuthKind::OAuth2);
+        mcp_catalog::create(&mgr.db, catalog_input(&configured, configured.url.clone()))
+            .await
+            .unwrap();
+        mcp_catalog::set_enabled(&mgr.db, &configured.key, true)
+            .await
+            .unwrap();
+        let configured = mcp_catalog::get(&mgr.db, &configured.key)
+            .await
+            .unwrap()
+            .unwrap();
+        let err = match mgr.ensure_global(&configured).await {
             Ok(_) => panic!("expected OAuth2 global to be rejected"),
             Err(e) => e,
         };
@@ -1620,10 +1997,18 @@ mod tests {
     async fn global_static_bearer_without_token_errors() {
         // StaticBearer global connector needs its shared token on the row.
         let mgr = manager().await;
-        let err = match mgr
-            .ensure_global(&global_connector(AuthKind::StaticBearer))
+        let configured = global_connector(AuthKind::StaticBearer);
+        mcp_catalog::create(&mgr.db, catalog_input(&configured, configured.url.clone()))
             .await
-        {
+            .unwrap();
+        mcp_catalog::set_enabled(&mgr.db, &configured.key, true)
+            .await
+            .unwrap();
+        let configured = mcp_catalog::get(&mgr.db, &configured.key)
+            .await
+            .unwrap()
+            .unwrap();
+        let err = match mgr.ensure_global(&configured).await {
             Ok(_) => panic!("expected static_bearer-without-token to error"),
             Err(e) => e,
         };
@@ -1738,21 +2123,22 @@ mod tests {
 
     #[test]
     fn global_cache_key_is_user_independent() {
-        // The shared connection is keyed by connector alone, and can't collide
-        // with any per-user key (those start with a non-empty user id).
-        assert_eq!(
-            McpConnectionManager::global_cache_key("discord"),
-            McpConnectionManager::global_cache_key("discord")
-        );
-        assert_ne!(
-            McpConnectionManager::global_cache_key("discord"),
-            CacheKey::Owned(ConnectionIdentity {
-                owner: ConnectionOwner::User("discord".into()),
-                connector_key: "discord".into(),
-                connection_id: "id".into(),
-                generation: "generation".into()
-            })
-        );
+        let connector = global_connector(AuthKind::None);
+        let shared = McpConnectionManager::global_cache_key(&connector);
+        assert_eq!(shared, McpConnectionManager::global_cache_key(&connector));
+        let owned = CacheKey::Owned {
+            identity: ConnectionIdentity {
+                owner: ConnectionOwner::User("u1".into()),
+                connector_key: connector.key.clone(),
+                connection_id: "connection".into(),
+                generation: "credential".into(),
+            },
+            catalog_generation: connector.dispatch_generation.clone(),
+        };
+        assert_ne!(shared, owned);
+        let mut changed = connector.clone();
+        changed.dispatch_generation = uuid::Uuid::new_v4().to_string();
+        assert_ne!(shared, McpConnectionManager::global_cache_key(&changed));
     }
 
     #[test]
@@ -1854,73 +2240,101 @@ mod tests {
         // `connected_keys`, stops silently re-failing (and log-spamming) every
         // turn, and the store UI asks for a new sign-in — the only thing that
         // actually fixes it — instead of showing a stale green "connected".
-        let mgr = manager().await;
-        // FK: mcp_connections User ownership references users(id).
-        sqlx::query(
-            "INSERT INTO users (id, email, roles_json, created_at, updated_at) \
+        for auth in [AuthKind::OAuth2, AuthKind::StaticBearer] {
+            let mgr = manager().await;
+            let server = MockServer::start().await;
+            // FK: mcp_connections User ownership references users(id).
+            sqlx::query(
+                "INSERT INTO users (id, email, roles_json, created_at, updated_at) \
              VALUES ('u1','u@e','[]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
-        )
-        .execute(&mgr.db)
-        .await
-        .unwrap();
-        // Seal the token under a different ephemeral key than the manager's, so
-        // the manager can't open it — exactly the production key-drift scenario.
-        let sealed = Crypto::ephemeral().seal_str("stale-token").unwrap();
-        mcp_connections::upsert_connection(
-            &mgr.db,
-            mcp_connections::NewConnection {
-                owner: ConnectionOwner::User("u1".into()),
-                connector_key: "discord".into(),
-                access_token_ct: sealed.ciphertext,
-                access_token_nonce: sealed.nonce,
-                refresh_token_ct: None,
-                refresh_token_nonce: None,
-                token_expires_at: None, // no expiry → fresh_enough → decrypt path
-                scopes: vec![],
-                dcr_client_id: None,
-                dcr_client_secret_ct: None,
-                dcr_client_secret_nonce: None,
-                token_url: None,
-            },
-        )
-        .await
-        .unwrap();
-        let connector = global_connector(AuthKind::OAuth2);
-        let conn = mcp_connections::get_connection(
-            &mgr.db,
-            &ConnectionOwner::User("u1".into()),
-            "discord",
-        )
-        .await
-        .unwrap()
-        .expect("connection was just inserted");
-        assert_eq!(conn.status, "connected", "starts life connected");
-
-        let err = mgr
-            .access_token(&ConnectionOwner::User("u1".into()), &connector, &conn)
+            )
+            .execute(&mgr.db)
             .await
-            .expect_err("decrypt under the wrong key must fail");
-        assert!(
-            err.needs_reauth,
-            "an unreadable credential is only fixable by authorizing again"
-        );
+            .unwrap();
+            // Seal the token under a different ephemeral key than the manager's, so
+            // the manager can't open it — exactly the production key-drift scenario.
+            let sealed = Crypto::ephemeral().seal_str("stale-token").unwrap();
+            let mut connector = global_connector(auth);
+            connector.url = server.uri();
+            connector.scope = Scope::PerUser;
+            mcp_catalog::create(&mgr.db, catalog_input(&connector, connector.url.clone()))
+                .await
+                .unwrap();
+            mcp_catalog::set_enabled(&mgr.db, &connector.key, true)
+                .await
+                .unwrap();
+            let connector = mcp_catalog::get(&mgr.db, &connector.key)
+                .await
+                .unwrap()
+                .unwrap();
+            mcp_connections::upsert_connection(
+                &mgr.db,
+                mcp_connections::NewConnection {
+                    owner: ConnectionOwner::User("u1".into()),
+                    connector_key: "discord".into(),
+                    catalog_generation: connector.dispatch_generation.clone(),
+                    access_token_ct: sealed.ciphertext,
+                    access_token_nonce: sealed.nonce,
+                    refresh_token_ct: None,
+                    refresh_token_nonce: None,
+                    token_expires_at: None, // no expiry → fresh_enough → decrypt path
+                    scopes: vec![],
+                    dcr_client_id: None,
+                    dcr_client_secret_ct: None,
+                    dcr_client_secret_nonce: None,
+                    token_url: None,
+                },
+            )
+            .await
+            .unwrap();
+            let conn = mcp_connections::get_connection(
+                &mgr.db,
+                &ConnectionOwner::User("u1".into()),
+                "discord",
+            )
+            .await
+            .unwrap()
+            .expect("connection was just inserted");
+            assert_eq!(conn.status, "connected", "starts life connected");
 
-        let after = mcp_connections::get_connection(
-            &mgr.db,
-            &ConnectionOwner::User("u1".into()),
-            "discord",
-        )
-        .await
-        .unwrap()
-        .expect("connection still present");
-        assert_eq!(
-            after.status,
-            mcp_connections::STATUS_REAUTH,
-            "a non-self-healing decrypt failure must ask the user to reconnect"
-        );
-        assert!(
-            after.last_error.unwrap_or_default().contains("decrypt"),
-            "last_error should record the decrypt failure"
-        );
+            let err = mgr
+                .access_token(&ConnectionOwner::User("u1".into()), &connector, &conn)
+                .await
+                .expect_err("decrypt under the wrong key must fail");
+            assert!(
+                err.needs_reauth,
+                "an unreadable credential is only fixable by authorizing again"
+            );
+
+            let after = mcp_connections::get_connection(
+                &mgr.db,
+                &ConnectionOwner::User("u1".into()),
+                "discord",
+            )
+            .await
+            .unwrap()
+            .expect("connection still present");
+            assert_eq!(
+                after.status,
+                mcp_connections::STATUS_REAUTH,
+                "a non-self-healing decrypt failure must ask the user to reconnect"
+            );
+            assert!(
+                after.last_error.unwrap_or_default().contains("decrypt"),
+                "last_error should record the decrypt failure"
+            );
+            assert!(
+                mgr.ensure_connection(&ConnectionOwner::User("u1".into()), &connector)
+                    .await
+                    .is_err()
+            );
+            assert!(
+                mcp_connections::connected_keys(&mgr.db, &ConnectionOwner::User("u1".into()))
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(server.received_requests().await.unwrap().is_empty());
+        }
     }
 }

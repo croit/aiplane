@@ -8,6 +8,124 @@ use std::path::Path;
 const SCHEMA: &str = include_str!("fixtures/schema_after_dot_sessions.txt");
 
 #[tokio::test]
+async fn connector_catalogue_upgrade_preserves_tool_cache_and_pins_known_provenance() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .in_memory(true)
+                .foreign_keys(false),
+        )
+        .await
+        .unwrap();
+    let migrations = sqlx::migrate!("./migrations");
+    for migration in migrations.iter().filter(|migration| migration.version < 81) {
+        pool.execute(sqlx::raw_sql(&migration.sql)).await.unwrap();
+    }
+    pool.execute("PRAGMA foreign_keys = ON").await.unwrap();
+    pool.execute(sqlx::raw_sql(
+        "INSERT INTO users(id,email,created_at,updated_at) VALUES('owner','owner@example.test','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+         INSERT INTO mcp_catalog_connectors(key,name,url,client_secret_ct,client_secret_nonce,created_at,updated_at) VALUES('workspace','Actual Workspace','https://workspace.example.test/mcp',x'0001ff',x'0203','2026-01-01T00:00:00Z','2026-02-01T00:00:00Z');
+         INSERT INTO mcp_connector_tools(connector_key,tool_id,description,seen_at) VALUES('workspace','mcp__workspace__read','Actual tool description','2026-02-01T00:00:00Z');
+         INSERT INTO user_mcp_connections(id,user_id,connector_key,status,access_token_ct,access_token_nonce,created_at,updated_at) VALUES('known','owner','workspace','connected',x'0405',x'0607','2026-01-01T00:00:00Z','2026-02-01T00:00:00Z'),('orphan','owner','retired','connected',x'0809',x'0a0b','2026-01-01T00:00:00Z','2026-02-01T00:00:00Z');
+         INSERT INTO pending_mcp_oauth(state,user_id,connector_key,pkce_verifier,redirect_uri,token_url,created_at,expires_at) VALUES('known-state','owner','workspace','verifier','https://plane.example/integrations/callback','https://provider.example/token','2026-03-01T00:00:00Z','2026-03-01T00:10:00Z'),('orphan-state','owner','retired','verifier','https://plane.example/integrations/callback','https://retired.example/token','2026-03-01T00:00:00Z','2026-03-01T00:10:00Z');"
+    )).await.unwrap();
+    pool.execute(sqlx::raw_sql(
+        &migrations.iter().find(|m| m.version == 81).unwrap().sql,
+    ))
+    .await
+    .unwrap();
+    let catalog = sqlx::query("SELECT * FROM mcp_catalog_connectors WHERE key='workspace'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let generation: String = catalog.try_get("dispatch_generation").unwrap();
+    assert!(!generation.is_empty());
+    assert_eq!(
+        catalog.get::<Vec<u8>, _>("client_secret_ct"),
+        vec![0, 1, 255]
+    );
+    assert_eq!(catalog.get::<Vec<u8>, _>("client_secret_nonce"), vec![2, 3]);
+    assert_eq!(
+        catalog.get::<String, _>("updated_at"),
+        "2026-02-01T00:00:00Z"
+    );
+    let tool = sqlx::query("SELECT * FROM mcp_connector_tools WHERE connector_key='workspace'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tool.get::<String, _>("tool_id"), "mcp__workspace__read");
+    assert_eq!(
+        tool.get::<String, _>("description"),
+        "Actual tool description"
+    );
+    for (table, identifier, known, orphan) in [
+        ("mcp_connections", "id", "known", "orphan"),
+        ("pending_mcp_oauth", "state", "known-state", "orphan-state"),
+    ] {
+        let sql = format!("SELECT catalog_generation FROM {table} WHERE {identifier}=?");
+        assert_eq!(
+            sqlx::query_scalar::<_, Option<String>>(&sql)
+                .bind(known)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(generation.as_str())
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, Option<String>>(&sql)
+                .bind(orphan)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            None
+        );
+    }
+    assert!(
+        sqlx::query(
+            "UPDATE mcp_catalog_connectors SET dispatch_generation='' WHERE key='workspace'"
+        )
+        .execute(&pool)
+        .await
+        .is_err()
+    );
+    assert!(
+        sqlx::query(
+            "UPDATE mcp_catalog_connectors SET dispatch_generation=NULL WHERE key='workspace'"
+        )
+        .execute(&pool)
+        .await
+        .is_err()
+    );
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    sqlx::query("DELETE FROM mcp_catalog_connectors WHERE key='workspace'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mcp_connector_tools")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mcp_connections")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        2
+    );
+}
+
+#[tokio::test]
 async fn connector_upgrade_preserves_sealed_credentials_and_newest_authorization() {
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .in_memory(true)
@@ -134,7 +252,8 @@ async fn dot_background_schema_matches_its_fixture() {
                         'scheduled_runs_assistant_turn', 'webhook_runs_assistant_turn',
                         'mcp_connections', 'mcp_connections_user_connector',
                         'mcp_connections_principal_connector', 'pending_mcp_oauth',
-                        'idx_pending_mcp_oauth_expires', 'dot_connector_bindings')
+                        'idx_pending_mcp_oauth_expires', 'dot_connector_bindings',
+                        'mcp_catalog_connectors', 'mcp_connector_tools')
          ORDER BY type, name",
     )
     .fetch_all(&pool)

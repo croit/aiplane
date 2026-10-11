@@ -183,9 +183,15 @@ mod tests {
         .await
         .unwrap();
         let dot = dot.unwrap().principal.id;
+        let catalog_generation = db::mcp_catalog::get(&pool, "fixture")
+            .await
+            .unwrap()
+            .unwrap()
+            .dispatch_generation;
         let credential = |owner| NewConnection {
             owner,
             connector_key: "fixture".into(),
+            catalog_generation: catalog_generation.clone(),
             access_token_ct: vec![1],
             access_token_nonce: vec![2],
             refresh_token_ct: None,
@@ -202,12 +208,14 @@ mod tests {
             credential(ConnectionOwner::User("owner".into())),
         )
         .await
+        .unwrap()
         .unwrap();
         let own = mcp_connections::upsert_connection(
             &pool,
             credential(ConnectionOwner::Principal(dot.clone())),
         )
         .await
+        .unwrap()
         .unwrap();
         (pool, dot, user.generation, own.generation)
     }

@@ -106,7 +106,8 @@ test("Personal Dot OAuth connects without selecting, saves explicitly and discon
         const actualTools = (await accessResponse.json()).tools.filter((tool) => tool.connector_key === key);
         assert.ok(actualTools.some((tool) => tool.id.endsWith("read_workspace")), "the selected credential must expose the real MCP read tool");
         assert.ok(actualTools.some((tool) => tool.id.endsWith("write_workspace")), "the selected credential must expose the real MCP write tool");
-        assert.ok(actualTools.every((tool) => tool.available && tool.identity === "principal"));
+        assert.ok(actualTools.every((tool) => tool.available && tool.identity === "principal"),
+            JSON.stringify(actualTools.map(({ id, available, identity }) => ({ id, available, identity }))));
 
         if (capture) {
             await page.evaluate(() => document.fonts.ready);
@@ -308,6 +309,164 @@ test("An owner reloads and erases selected or never-selected local Dot credentia
                                 const row = (await response.json()).connections.find((item) => item.key === key);
                                 if (row?.principal_connection?.id) await context.request.delete(`${BASE}/api/v0/dots/${dotId}/connections/${key}`, {
                                     data: { connection_id: row.principal_connection.id, connection_generation: row.principal_connection.generation }, timeout: 5000,
+                                });
+                            }
+                        } finally {
+                            await context.request.put(`${BASE}/api/v0/dots/${dotId}/active`, { data: { active: false }, timeout: 5000 });
+                        }
+                    }
+                }
+            }
+        } finally {
+            try { await context?.close(); } finally { await browser.close(); }
+        }
+    }
+});
+
+test("Catalog resource rotation requires own reauthorization and explicit selection without repairing the User account", async () => {
+    assert.ok(await gatewayIsUp(), `gateway is not reachable at ${BASE}`);
+    const browser = await launchBrowser();
+    let context;
+    let dotId;
+    let originalCatalog;
+    let restoreCatalog = false;
+    const key = "dot-workspace";
+    const catalogUrl = `${BASE}/api/v0/admin/connectors`;
+    const catalogBody = (row, baseUrl) => ({
+        key: row.key, title: row.title, description: row.description ?? "", icon: row.icon ?? "",
+        category: row.category ?? "", base_url: baseUrl, scope: row.scope, auth_type: row.auth_type,
+        scopes: row.scopes, client_id: row.client_id ?? "", client_secret: "", client_json: "",
+        use_dcr: row.use_dcr, authorize_url: row.authorize_url ?? "", token_url: row.token_url ?? "",
+        registration_url: row.registration_url ?? "", groups: row.groups, audit: row.audit, overwrite: true,
+    });
+    try {
+        context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "de-DE" });
+        await context.addCookies([
+            { name: "id", value: await devSessionCookie(), url: BASE },
+            { name: "lang", value: "en", url: BASE },
+        ]);
+        const catalogResponse = await context.request.get(catalogUrl);
+        assert.equal(catalogResponse.status(), 200);
+        originalCatalog = (await catalogResponse.json()).connectors.find((row) => row.key === key);
+        assert.ok(originalCatalog);
+        assert.equal(originalCatalog.enabled, true);
+        const created = await context.request.post(`${BASE}/api/v0/dots`, {
+            data: { name: `resource-harald-${Date.now()}`, display: "Harald" },
+        });
+        assert.equal(created.status(), 201);
+        dotId = (await created.json()).dot.id;
+        const inventoryUrl = `${BASE}/api/v0/dots/${dotId}/connections`;
+        const connectionUrl = `${inventoryUrl}/${key}`;
+        const inventory = async () => {
+            const response = await context.request.get(inventoryUrl);
+            assert.equal(response.status(), 200);
+            const row = (await response.json()).connections.find((item) => item.key === key);
+            assert.ok(row);
+            return row;
+        };
+        const initial = await inventory();
+        assert.equal(initial.user_connection.connected, true);
+        assert.equal(initial.user_connection.needs_reauth, false);
+        const page = await context.newPage();
+        await page.goto(`${BASE}/dots?dot_id=${dotId}`, { waitUntil: "networkidle" });
+        const access = page.locator(`[id="dot-${dotId}"]`).locator("details").filter({ has: page.getByText("Access and approvals", { exact: true }) });
+        const row = access.getByRole("region", { name: initial.connector.title, exact: true });
+        async function authorize(button) {
+            const provider = page.waitForRequest((request) => request.method() === "GET"
+                && request.isNavigationRequest() && new URL(request.url()).pathname === "/authorize");
+            const callback = page.waitForResponse((response) => new URL(response.url()).pathname === "/integrations/callback");
+            const started = page.waitForResponse((response) => response.request().method() === "POST" && response.url() === `${connectionUrl}/connect`);
+            await row.getByRole("button", { name: button, exact: true }).click();
+            assert.equal((await started).status(), 200);
+            assert.ok(new URL((await provider).url()).searchParams.get("state"));
+            assert.equal((await callback).status(), 303);
+            await page.waitForURL((url) => url.pathname === "/dots" && url.searchParams.get("dot_id") === dotId);
+            await row.getByRole("combobox").waitFor();
+        }
+        await authorize("Connect");
+        const connected = await inventory();
+        await row.getByRole("combobox").selectOption("principal");
+        const saved = page.waitForResponse((response) => response.request().method() === "PUT" && response.url() === connectionUrl);
+        await row.getByRole("button", { name: "Save", exact: true }).click();
+        const initialSave = await saved;
+        let initialSaveError;
+        if (initialSave.status() !== 200) {
+            const body = await initialSave.json();
+            initialSaveError = { type: body.error?.type, message: body.error?.message };
+        }
+        assert.equal(initialSave.status(), 200, JSON.stringify(initialSaveError));
+        await row.getByRole("status").getByText("Connector identity saved.", { exact: true }).waitFor();
+        const selected = await inventory();
+        assert.equal(selected.selected.connection_id, connected.principal_connection.id);
+        const changedUrl = new URL(originalCatalog.base_url);
+        changedUrl.searchParams.set("resource-version", "2");
+        restoreCatalog = true;
+        const updated = await context.request.put(catalogUrl, { data: catalogBody(originalCatalog, changedUrl.href) });
+        let updateError;
+        if (updated.status() !== 200) {
+            const body = await updated.json();
+            updateError = { type: body.error?.type, message: body.error?.message };
+        }
+        assert.equal(updated.status(), 200, JSON.stringify(updateError));
+        await access.getByRole("button", { name: "Reload connections", exact: true }).click();
+        await row.getByText("The saved connection is unavailable. Connect that identity or explicitly select another available connection.", { exact: true }).waitFor();
+        const stale = await inventory();
+        for (const owner of ["principal_connection", "user_connection"]) {
+            assert.equal(stale[owner].connected, true, "local credentials remain stored after resource rotation");
+            assert.equal(stale[owner].needs_reauth, true);
+            assert.equal(stale[owner].id, selected[owner].id);
+            assert.equal(stale[owner].generation, selected[owner].generation);
+            assert.equal(stale[owner].account_label, null);
+        }
+        assert.equal(stale.selected.connection_id, null);
+        assert.equal(stale.selected.binding_generation, selected.selected.binding_generation);
+        assert.equal(stale.selected.connection_generation, selected.selected.connection_generation);
+        assert.equal(await row.getByText("Connected", { exact: true }).count(), 0);
+        assert.equal(await row.getByRole("button", { name: "Save", exact: true }).isDisabled(), true);
+        assert.equal(await row.getByRole("button", { name: "Disconnect", exact: true }).isEnabled(), true);
+        await authorize("Reconnect");
+        const authorized = await inventory();
+        assert.notEqual(authorized.principal_connection.generation, connected.principal_connection.generation);
+        assert.equal(authorized.principal_connection.needs_reauth, false);
+        assert.equal(authorized.selected.connection_id, null, "reauthorizing must not silently repair the saved selection");
+        assert.equal(authorized.selected.binding_generation, selected.selected.binding_generation);
+        assert.equal(authorized.selected.connection_generation, selected.selected.connection_generation);
+        assert.deepEqual(authorized.user_connection, stale.user_connection, "own reauthorization must not repair the User account");
+        const rebound = page.waitForResponse((response) => response.request().method() === "PUT" && response.url() === connectionUrl);
+        await row.getByRole("button", { name: "Save", exact: true }).click();
+        const response = await rebound;
+        assert.equal(response.status(), 200);
+        assert.deepEqual(response.request().postDataJSON(), {
+            mode: "principal", expected_binding_generation: selected.selected.binding_generation,
+            connection_id: authorized.principal_connection.id, connection_generation: authorized.principal_connection.generation,
+        });
+        await row.getByRole("status").getByText("Connector identity saved.", { exact: true }).waitFor();
+        const fresh = await inventory();
+        assert.equal(fresh.selected.connection_id, authorized.principal_connection.id);
+        assert.equal(fresh.selected.connection_generation, authorized.principal_connection.generation);
+        assert.deepEqual(fresh.user_connection, stale.user_connection);
+        await page.setViewportSize({ width: 390, height: 844 });
+        assert.ok(await page.locator("main").evaluate((element) => element.scrollWidth <= element.clientWidth));
+        assert.equal((await context.request.put(catalogUrl, { data: catalogBody(originalCatalog, originalCatalog.base_url) })).status(), 200);
+        restoreCatalog = false;
+        const restored = await inventory();
+        assert.equal(restored.user_connection.needs_reauth, true, "restoring the old URL must not revive the original User credential");
+        assert.equal(restored.user_connection.generation, initial.user_connection.generation);
+        assert.equal(restored.principal_connection.needs_reauth, true, "the new authorization is pinned to the second resource version");
+        assert.equal(restored.selected.connection_id, null);
+    } finally {
+        try {
+            if (context) {
+                try {
+                    if (restoreCatalog && originalCatalog) await context.request.put(catalogUrl, { data: catalogBody(originalCatalog, originalCatalog.base_url), timeout: 5000 });
+                } finally {
+                    if (dotId) {
+                        try {
+                            const response = await context.request.get(`${BASE}/api/v0/dots/${dotId}/connections`, { timeout: 5000 });
+                            if (response.ok()) {
+                                const own = (await response.json()).connections.find((item) => item.key === key)?.principal_connection;
+                                if (own?.id) await context.request.delete(`${BASE}/api/v0/dots/${dotId}/connections/${key}`, {
+                                    data: { connection_id: own.id, connection_generation: own.generation }, timeout: 5000,
                                 });
                             }
                         } finally {
