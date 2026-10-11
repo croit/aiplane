@@ -64,6 +64,8 @@ nav:
       - Advanced spec: agent-guide/spec-reference.md
   - Dots:
       - Product and architecture: dots.md
+      - Organizations: dots-organizations.md
+      - Connector identities: dots-identities.md
   - Administration:
       - Models and routing: admin/models.md
       - Access: admin/access.md

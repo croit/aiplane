@@ -37,6 +37,40 @@ Builder permission does not itself give an agent permission to use every model o
 
 Pool allowed groups, collection allowed groups, connector allowed groups, tool grants and skill grants serve different resources. A tool being listed in a permission matrix does not establish that its external service is configured or reachable.
 
+## Organization membership and Dot limits
+
+Organization metadata is administered through
+`/api/v0/admin/organizations`, or use **Access & limits → Organizations**
+(`/admin/organizations`). Select actual gateway groups as membership
+sources. Existing OIDC mappings continue to resolve those groups; the
+organization does not introduce a second identity roster. Empty bindings
+provide no membership. Deleting a bound gateway group removes that binding;
+recreating a group with the same name does not restore it.
+
+Choose **Create organization** to open its metadata dialog. Existing cards
+edit the organization's actual name, description and selected member groups.
+
+![Organization administration with configured member groups. The image uses synthetic data in the real application.](../img/guide/organizations-admin.png)
+
+Metadata edits require the organization's returned revision. A concurrent
+metadata or binding change returns a conflict rather than overwriting the
+newer choice. The administrator can repair an organization with no members.
+Creator attribution does not determine ownership: deleting the creator's
+account leaves the organization and its organization-owned Dots intact.
+
+Members need **Agent manager** and a write share to configure an existing
+organization Dot. A member with Agent manager can create one and receives its
+initial write share. **Personal Dot manager** controls personal Dot lifecycle
+independently. Membership alone exposes neither a Dot configuration nor its
+principal grants. Administration retains configuration recovery access.
+
+`dots.max_active_per_organization` defaults to four, independently of
+`dots.max_active_per_user`. Each limit counts stored active Dots, including
+idle ones. Deactivating a Dot frees a slot; publishing an organization Dot
+does not enable execution. Organization execution, selected organization
+credentials and organization knowledge require their remaining implementation
+packages. See [organization Dots](../dots-organizations.md).
+
 ## Inspect users and impersonation
 
 Open `/admin/users` to see user identity, observed OIDC groups, resolved gateway roles and join time. Use these values to diagnose a missing permission rather than guessing which identity-provider claim was received.

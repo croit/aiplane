@@ -217,6 +217,23 @@ pub async fn claim(
     }
 
     let mut tx = aiplane_agents::db::WriteTx::begin(db).await?;
+    if let ResumedBy::Staff { user_id } = &resume.by {
+        let root = levels.first().ok_or_else(not_suspended)?;
+        if super::access::effective_access_in(state, &mut tx, &root.session.principal_id, user_id)
+            .await?
+            .is_none()
+        {
+            return Err(not_suspended());
+        }
+    }
+    for level in &levels {
+        if matches!(
+            agents_db::dot_owner_in(&mut tx, &level.session.principal_id).await?,
+            Some(agents_db::DotOwner::Organization(_))
+        ) {
+            return Err(not_suspended());
+        }
+    }
     for level in &levels {
         validate_session(&mut tx, level).await?;
         if chat::get_suspension_in(&mut tx, &level.suspension.turn_id)
@@ -635,7 +652,7 @@ async fn validate_personal_level_in(
 ) -> Result<(), AgentResumeError> {
     let valid: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM chat_turns t JOIN chat_sessions s ON s.id = t.session_id
-         JOIN personal_dot_sessions p ON p.session_id = s.id JOIN personal_dots d ON d.principal_id = p.dot_id
+         JOIN personal_dot_sessions p ON p.session_id = s.id JOIN dots d ON d.principal_id = p.dot_id
          JOIN system_principals principal ON principal.id = d.principal_id
          WHERE t.id = ? AND t.role = 'assistant' AND t.model = ? AND s.id = ? AND s.user_id = ?
            AND s.principal_id IS NULL AND s.shared = 0 AND p.owner_user_id = ? AND p.dot_id = ?
@@ -1089,7 +1106,7 @@ pub async fn cancel_personal_runs_for_edge(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiplane_agents::db::system_principals::{self, NewPrincipal};
+    use aiplane_agents::db::system_principals::NewPrincipal;
     use aiplane_core::server::upstreams::UpstreamRegistry;
     use session_core::db::{BudgetUsed, PendingCall, TimeoutFallback};
 
@@ -1097,18 +1114,20 @@ mod tests {
         let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
             .await
             .unwrap();
-        let principal = system_principals::create(
+        let principal = agents_db::create(
             &db,
             &NewPrincipal {
                 name: "claim-test",
                 display: "Claim test",
                 description: "",
             },
+            "{}",
             "tester",
         )
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .principal;
         let root = run_sessions::create_principal_session(
             &db,
             &run_sessions::NewRunSession {
@@ -1165,6 +1184,25 @@ mod tests {
             .await
             .unwrap();
         }
+        aiplane_core::server::db::gateway_groups::upsert_group(&db, "test-admin", "", true, true)
+            .await
+            .unwrap();
+        let now = jiff::Timestamp::now();
+        aiplane_core::server::db::users::upsert(
+            &db,
+            &aiplane_core::server::db::users::User {
+                id: "tester".into(),
+                email: "tester@example.com".into(),
+                name: None,
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
         let app = crate::server::AppState::new(
             Default::default(),
             db.clone(),
@@ -1200,6 +1238,67 @@ mod tests {
             },
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn revoked_staff_policy_preserves_all_pauses_until_current_access_is_restored() {
+        let (state, principal, session) = paused_chain().await;
+        agents_db::set_share(
+            &state.db,
+            &principal,
+            agents_db::SubjectKind::User,
+            "tester",
+            agents_db::Access::Write,
+            "tester",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            crate::agents::access::effective_access(&state, &principal, "tester")
+                .await
+                .unwrap(),
+            Some(agents_db::Access::Write)
+        );
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE gateway_groups SET is_admin = 0, can_manage_agents = 0 WHERE name = 'test-admin'")
+            .execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        assert!(
+            resume_chain(&state, &principal, &session, Decision::AllowOnce)
+                .await
+                .is_err()
+        );
+        for turn in ["parent", "child"] {
+            assert_eq!(
+                chat::get_suspension(&state.db, turn)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .request_id,
+                format!("req-{turn}")
+            );
+        }
+        aiplane_core::server::db::gateway_groups::set_can_manage_agents(
+            &state.db,
+            "test-admin",
+            true,
+        )
+        .await
+        .unwrap();
+        let claimed = resume_chain(&state, &principal, &session, Decision::AllowOnce)
+            .await
+            .unwrap();
+        assert_eq!(claimed.levels.len(), 2);
+        for turn in ["parent", "child"] {
+            assert!(
+                chat::get_suspension(&state.db, turn)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
     }
 
     #[tokio::test]

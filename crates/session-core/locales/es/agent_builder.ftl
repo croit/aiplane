@@ -433,3 +433,5 @@ dot-access-unavailable = Esta herramienta seleccionada no está disponible. Quí
 dot-connection-reload = Recargar conexiones
 
 dot-connection-local-unavailable = Las credenciales locales de este Dot no se pueden utilizar.
+agent-configuration-error-conflict = El borrador o los permisos de recursos del agente han cambiado. Recarga su configuración actual antes de volver a guardar o publicar.
+agent-management-error-permission-required = La gestión de agentes requiere permiso. Pide a un administrador que la habilite para uno de tus grupos.

@@ -223,8 +223,11 @@ Personal Dot lifecycle management and directed communication consent changes
 require `can_manage_dots`, enabled through
 **Administration → Access → Groups**. Admins hold this permission; fresh groups
 default to disabled. It is independent of agent management and tool grants.
-The active count defaults to four per user and is operator-configurable under
-**Administration → Settings → Access**.
+The active count defaults to four per user and four per organization, configured
+independently by `dots.max_active_per_user` and
+`dots.max_active_per_organization` under
+**Administration → Settings → Access**. Idle active Dots count toward their
+owner’s limit; deactivated Dots do not.
 
 To build from source, install [mise](https://mise.jdx.dev/) and run:
 

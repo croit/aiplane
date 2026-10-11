@@ -1,5 +1,7 @@
 <script lang="ts">
-	import type { Spec } from '#lib/agents.js';
+	import { agentUiCapabilities, type Spec } from '#lib/agents.js';
+	import { useWorkspace } from '#lib/agent-workspace.svelte.js';
+	import { t } from '#lib/i18n.svelte.js';
 	import type { StepKey } from '#lib/agent-setup.js';
 	import AbilitiesStep from './AbilitiesStep.svelte';
 	import BasicsStep from './BasicsStep.svelte';
@@ -17,6 +19,8 @@
 	 * Apply. The step components themselves never know which.
 	 */
 	let { step, spec = $bindable(), onfix }: { step: StepKey; spec: Spec; onfix: (step: StepKey | null) => void } = $props();
+	const ws = useWorkspace();
+	const capabilities = $derived(agentUiCapabilities(ws.detail));
 </script>
 
 {#if step === 'start'}
@@ -33,8 +37,10 @@
 	<IdentityStep bind:spec />
 {:else if step === 'routes'}
 	<RoutesStep bind:spec />
-{:else if step === 'site'}
+{:else if step === 'site' && capabilities.site}
 	<SiteStep bind:spec />
+{:else if step === 'site'}
+	<div class="alert alert-info"><span>{t('organization-configuration-only')}</span></div>
 {:else}
 	<ReviewStep bind:spec {onfix} />
 {/if}

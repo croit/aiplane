@@ -434,3 +434,5 @@ dot-access-unavailable = This selected tool is unavailable. Remove it before sav
 dot-connection-reload = Reload connections
 
 dot-connection-local-unavailable = This Dot’s local credentials are unavailable for use.
+agent-configuration-error-conflict = The agent's draft or resource grants changed. Reload its current configuration before saving or publishing again.
+agent-management-error-permission-required = Managing agents requires permission. Ask an administrator to enable agent management for one of your groups.

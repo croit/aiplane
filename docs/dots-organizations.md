@@ -2,7 +2,9 @@
 
 ## Status and scope
 
-Adopted implementation design under the maintainer's delegated product decisions. Organization ownership, organization membership, organization credentials and organization memory are proposed capabilities. They are not available by creating a gateway group or naming an existing agent after a company.
+Organization ownership, group-derived membership, independent active limits and configuration are implemented. Current organization Dots can be created, shared, configured and published through the existing agent mechanisms. Organization conversations, automation, external channels, connector authorization and memory remain unavailable until their respective implementation packages establish the required owner and live-authority checks.
+
+The remaining sections distinguish the implemented ownership and configuration foundation from the adopted credential, execution and knowledge design. Creating a gateway group or naming an ordinary agent after a company does not create organization ownership.
 
 The confirmed product requirements are explicit organization ownership, an independent named Dot identity, selected organization or Dot credentials, limited autonomy with approvals, durable isolated knowledge, and operation through the web interface. A personal Dot may select its owner's account or a separate Dot account. Organization execution must never adopt a member's credentials, tool grants or personal memory.
 
@@ -43,13 +45,13 @@ Reuse these mechanisms before adding their organization callers:
 
 New shared contracts are a typed organization owner, actual group-derived membership, an access resolver intersecting membership with existing shares, and a live organization execution check. They belong in the agent/runtime layers. Neutral connection ownership belongs in core. `session-core` must receive no organization types or agent-table queries.
 
-## Proposed owner and membership data model
+## Owner and membership data model
 
 ### Organization metadata
 
-Add `organizations` in the existing migration set with `id`, actual configured `name`, `description`, `created_by`, `created_at` and `updated_at`. `created_by` records the operator action; its creator's deletion must not delete the organization.
+`organizations` stores `id`, actual configured `name`, `description`, `revision`, `created_by`, `created_at` and `updated_at`. `created_by` records the operator action without a user foreign key; deleting that user preserves the organization.
 
-Add `organization_groups(organization_id, gateway_group)` with foreign keys and a unique ordered pair. Membership is the intersection of these selected group names and the person's freshly resolved gateway groups. There is no new user membership roster, OIDC mapping engine or role vocabulary.
+`organization_groups(organization_id, gateway_group)` has foreign keys and a unique ordered pair. Membership is the intersection of these selected group names and the person's freshly resolved gateway groups. There is no separate user membership roster, OIDC mapping engine or role vocabulary. Removing a bound group rotates the organization revision in the same transaction; recreating its name does not restore the removed binding.
 
 Organization creation and membership editing require existing gateway administration rights. Deleting a linked gateway group removes that membership source and immediately prevents access for people with no remaining qualifying group. An organization with no member groups is recoverable through explicit operator administration; it is not silently accessible to every user.
 
@@ -57,7 +59,7 @@ Organization creation and membership editing require existing gateway administra
 
 Adopted shared storage contract: generalize the existing personal Dot ownership record to a `dots` record linked to the existing agent/principal. Keep the existing name and active state, and use mutually exclusive `owner_user_id` and `organization_id` foreign keys with a CHECK requiring exactly one owner. Expose `DotOwner::User(id) | Organization(id)` in `aiplane-agents`.
 
-This is the adopted amendment, not a claim about current schema. It avoids separate personal and organization ownership tables that could both claim the same principal. Update existing personal accessors and their actual callers in the same vertical slice. Do not add a compatibility view or accept both owners. Personal owner APIs retain user-only authorization.
+The database enforces this exclusive owner and prevents changes to either owner or principal ID. Personal accessors and APIs require an actual user owner. Organization configuration uses the same agent and principal records, with their typed organization owner.
 
 The owner is fixed at creation. Moving a Dot between user and organization is outside this slice because it changes credential, knowledge, history and payer boundaries. Shares do not change the owner. Group names and `created_by` do not change the owner.
 
@@ -110,20 +112,24 @@ Keep existing agent run metering and root-agent budgets. Organisation-wide usage
 
 For active counts, use the same transactional capacity mechanism as personal Dot creation/reactivation, grouped by typed owner. The default is four active Dots per organization. Add `dots.max_active_per_organization` beside the existing `dots.max_active_per_user` setting and use the same operator settings surface. Lowering a cap blocks future activation rather than inventing a global parallel-run cap. Multiple conversations may execute independently under existing worker and spend limits.
 
-## Proposed API and actual-data UI flow
+## API and actual-data UI flow
 
-New organization endpoints are needed because there is no organization entity API:
+The configuration foundation exposes these organization endpoints:
 
 - `GET /api/v0/organizations`: authorized actual organizations with actual names and effective management rights.
 - `POST /api/v0/admin/organizations`: administrator creates metadata and selected existing gateway-group bindings atomically.
-- `PUT /api/v0/admin/organizations/{id}`: administrator updates metadata and bindings with the existing CAS/revision convention where supported; introduce a concrete revision only if required by the actual editor.
+- `GET /api/v0/admin/organizations`: administrator inventory with actual selected groups and the existing group catalogue.
+- `PUT /api/v0/admin/organizations/{id}`: administrator updates metadata and bindings with the returned `expected_revision`; stale edits return a conflict.
+- `GET /api/v0/organizations/{id}`: current member inventory with actual metadata, active usage and readable shared Dots.
 - `POST /api/v0/organizations/{id}/dots`: membership plus existing agent-management permission creates the Dot, principal, typed ownership and initial write share in one transaction, subject to capacity.
+- `POST /api/v0/organizations/{id}/dots/{dot_id}/active`: current member writer activates or deactivates the actual organization-owned Dot under the independent cap.
 
 Reuse existing `/api/v0/agents/{id}` configuration, grants, shares, conversation and Inbox routes through the combined owner access decision. Extend the Dot inventory/access card with typed owner data where actual organization rows are shown. Do not make personal `/dots/{id}` handlers accept organization IDs without changing their documented authorization contract.
 
-Credential endpoints reuse the identity proposal and existing integration cards. Organization connection choices contain only actual permitted Dot/organization principals and their live connections. Return selected identity, catalogue key/name/auth, status and nullable verified account label; no secrets or invented provider identity.
+The planned credential extension reuses the identity mechanism and existing integration cards. Organization connection choices must contain only actual permitted Dot/organization principals and their live connections. Its response contains selected identity, catalogue key/name/auth, status and nullable verified account label; no secrets or invented provider identity.
 
-Walkthrough:
+The first three steps describe configuration; credential management and runs
+in the later steps remain adopted implementation requirements:
 
 1. An administrator creates an organization with its actual configured name and selects real gateway groups from the existing group selector. The screen explains that selected groups supply membership and shares still determine access.
 2. A qualified member opens that organization, creates a named Dot and uses the existing agent editor/model selector. The actual organization owner is shown.
@@ -134,6 +140,39 @@ Walkthrough:
 7. Removing membership removes access; disabling the Dot stops/refuses its work. Missing credentials remain visible and require an explicit reconnect/selection.
 
 The coordinator confirms this walkthrough against seeded real data before UI implementation. All new strings use the six canonical Fluent catalogues. Reuse existing model, resource, permission, connector-status and share labels.
+
+## Adopted foundation contracts
+
+The first organization package includes metadata, immutable Dot ownership,
+current membership and the existing private agent configuration surfaces.
+Organization execution, credentials, memory and triggers remain unavailable
+until their explicit principal admission paths are implemented.
+
+The authenticated navigation entry `/organizations` shows the actual membership
+inventory or an empty state. Its visibility does not assert membership and is
+independent of the personal Dot management flag. Administrator metadata
+recovery uses `/admin/organizations` under the existing Access section.
+
+Activation uses `POST /api/v0/organizations/{id}/dots/{dot_id}/active` with
+`{active:boolean}` and returns the existing agent view with typed Dot metadata.
+It requires current write access, an actual Dot belonging to that organization,
+and the existing capacity check in the same transaction. Personal activation
+retains its existing route and exact owner check. Neither activation nor
+publishing bypasses the temporary organization execution refusal.
+
+Current group mapping and manager/admin flags are loaded with the existing
+gateway-group snapshot SQL in the admission `WriteTx`. A temporary Resolver
+reuses the existing snapshot builder and actual bootstrap-admin configuration;
+it does not change the installation's cached Resolver. Membership, shares and
+the mutation or staff claim use this same transaction. The independently
+cached skill overlay is not a transactional authorization proof.
+
+Resource selectors and grant writes reuse actual principal grant references
+and the manager's grant ceiling. A grant is permission, not evidence that a
+tool supports organization execution. No new universal principal-capability
+metadata is inferred. Organization-owned account selection and personal-only
+tool replacement require their real callers in the later execution package;
+the foundation offers no employee or shared-account fallback.
 
 ## Implementation phase order and tests
 
@@ -170,3 +209,102 @@ Coordinator verifies real organization/group/credential metadata, mobile and key
 - Direct personal-to-organization or other cross-owner communication remains excluded until explicit approval. Internal organization Dot communication can reuse directed consent after the typed organization ownership foundation is implemented and its principal execution callers are covered.
 - Personal-to-organization knowledge transfer requires an explicit reviewed privacy flow and is excluded.
 - Provider-specific account provisioning, organization discovery from OIDC, automatic employee credential import and additional approval/queue subsystems are excluded.
+
+### Configuration and member search boundaries
+
+The foundation configures organization Dots through the existing agent workspace. Execution remains unavailable until the organization principal bridge is complete. The resource catalogue describes actual grant permissions; it does not claim that every tool supports organization execution. Organization connector grants and inventory remain unavailable until a selected organization credential is represented explicitly.
+
+Share-subject suggestions reuse the existing response cap of eight. Organization candidate reads reuse the same user mapper, escaped search and ranking, in transaction pages capped at fifty. Current membership is checked before suggestions are included. A search examines at most one thousand matching candidates; if an actual continuation remains at that boundary, its response carries `truncated=true` and the UI requests a narrower query. The search does not enumerate the user roster or introduce another OIDC mapping mechanism.
+
+## Per-Dot organization OAuth implementation contract
+
+The first organization credential package uses each Dot's own existing
+principal. `mcp_connections`, `pending_mcp_oauth` and
+`dot_connector_bindings` already represent that credential owner, its initiating
+person and the saved selection. This package needs no additional token store
+or organization-wide credential principal. Selecting a shared organization
+credential requires its separately defined provisioning and inventory caller.
+
+Generalize the existing canonical `/api/v0/dots/{id}/connections` routes by
+typed Dot ownership. Other personal Dot endpoints retain their personal
+authorization contract. The organization editor uses those same connection
+routes and existing integration controls. Organization rows offer only an
+explicit principal identity, never the employee's connection. An absent
+binding or credential is unavailable; it cannot fall back to the employee or
+gateway identity.
+
+Reuse `current_user_policy_in`, `effective_access_in`, `dot_owner_in` and
+`organizations::is_member_in` in one `WriteTx`. Organization credential
+management requires actual current membership and Write access. Administrator
+configuration recovery alone does not grant credential access. Personal
+management retains actual personal ownership and `can_manage_dots`.
+Inactive Dots remain configurable; active and enabled principal state govern
+execution independently.
+
+The existing `authorization_admitted_in` helper supplies the shared proof
+before discovery, reservation, callback exchange and conditional credential
+save. Selection and local erasure use the same current authority. No SQLite
+transaction spans remote HTTP. Recheck membership and generations when the
+remote result is committed. Local erasure remains available to a current
+authorized member when a connector has been removed or made unavailable.
+
+The connection remains owned by the Dot principal when its creator is deleted.
+Deleting an OAuth initiator cancels that person's pending authorization through
+the existing initiator foreign key; it does not transfer or erase an already
+saved organization credential. Existing owner-keyed refresh locks, cache keys,
+catalogue dispatch fences and conditional writes remain authoritative.
+
+Organization execution requires its own selected-connection admission caller.
+The existing ordinary principal layer intentionally selects granted shared
+resources and cannot establish explicit organization identity. That execution
+package must resolve the persisted principal selection through the existing
+MCP manager, enforce current principal grants and binding/credential/catalogue
+generations, and prove that employee preferences and tokens are never read.
+
+Tests cover member Write access without the personal Dot flag, rejection of
+Read/Respond/nonmember and administrator-only recovery, membership loss before
+exchange and save, user-mode and cross-organization rejection, inactive
+management, generation conflicts, local erasure after catalogue removal,
+creator deletion and pending-initiator deletion. Mocked provider responses and
+real encrypted storage supply the evidence; account labels remain unavailable
+unless a provider-supported response verifies them.
+
+## First executable organization web slice
+
+Use the existing agent test-chat surface, `Actor::Agent`, its independent
+system principal and a private principal-owned run conversation. The initiating
+person and responder supply audit attribution; neither becomes the execution
+identity. Existing `GrantedToolSource`, agent spec selection, agent budgets,
+metering, activity and staff suspension claims remain shared mechanisms.
+
+The current ordinary principal MCP layer selects shared connections, and its
+System dispatch branch accepts shared execution facts. The organization
+runtime must compose its explicitly selected principal connection and admit
+the corresponding owned execution facts. Existing current principal connector
+grants and catalogue-generation checks remain required in addition to the
+organization binding and credential checks.
+
+The initial `RunToolSource` principal grant set is a ceiling. Before each
+organization tool call, intersect it with current principal grants and verify
+the actual immutable organization owner, Dot activation and enabled principal.
+A fresh tool inventory alone does not prove that a retained tool reference
+has current permission.
+
+The current driver refreshes the execution context for personal Dots. Extend
+that existing refresh mechanism to a fully initialized organization context
+before main-model acquisition and the actual guard, verifier and side-call
+models. Directly constructed agent runs and headless dispatch must use the
+same context. Remove the profile, direct-headless and resume refusals only
+when all their real callers establish that proof.
+
+Personal memory tools require a person actor; do not supply an employee actor
+to make them work. Organization knowledge needs its explicit later owner
+scope. The first executable web slice must prove that model requests contain
+no employee profile and no member token or gateway credential fallback.
+
+State-based SQLite and mocked-upstream tests cover own-principal OAuth,
+mid-turn grant removal and deactivation, identity and catalogue changes,
+approval persistence across restart, current responder membership, private
+principal conversations and Dot-attributed usage. Preserve ordinary principal
+and personal Dot execution tests. Background scheduling follows this verified
+web slice through the existing workers.

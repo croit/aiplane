@@ -35,7 +35,7 @@ pub async fn list(
     limit: i64,
 ) -> Result<Option<Vec<Memory>>, DbError> {
     let owned = sqlx::query_scalar::<_, i64>(
-        "SELECT EXISTS(SELECT 1 FROM personal_dots WHERE principal_id = ? AND owner_user_id = ?)",
+        "SELECT EXISTS(SELECT 1 FROM dots WHERE principal_id = ? AND owner_user_id = ?)",
     )
     .bind(dot_id)
     .bind(owner_user_id)
@@ -46,7 +46,7 @@ pub async fn list(
     }
     let rows = sqlx::query(
         "SELECT m.id, m.kind, m.content, m.created_at FROM personal_dot_memories m
-         JOIN personal_dots d ON d.principal_id = m.dot_id
+         JOIN dots d ON d.principal_id = m.dot_id
          WHERE d.owner_user_id = ? AND d.principal_id = ?
          ORDER BY m.created_at DESC LIMIT ?",
     )
@@ -70,7 +70,7 @@ pub async fn get(
 ) -> Result<Option<Memory>, DbError> {
     let row = sqlx::query(
         "SELECT m.id, m.kind, m.content, m.created_at FROM personal_dot_memories m
-         JOIN personal_dots d ON d.principal_id = m.dot_id
+         JOIN dots d ON d.principal_id = m.dot_id
          WHERE m.id = ? AND d.owner_user_id = ? AND d.principal_id = ?",
     )
     .bind(id)
@@ -90,7 +90,7 @@ pub async fn insert(
     content: &str,
 ) -> Result<Option<Memory>, DbError> {
     let owned = sqlx::query_scalar::<_, i64>(
-        "SELECT EXISTS(SELECT 1 FROM personal_dots WHERE principal_id = ? AND owner_user_id = ?)",
+        "SELECT EXISTS(SELECT 1 FROM dots WHERE principal_id = ? AND owner_user_id = ?)",
     )
     .bind(dot_id)
     .bind(owner_user_id)
@@ -132,7 +132,7 @@ pub async fn update(
     let affected = sqlx::query(
         "UPDATE personal_dot_memories SET kind = ?, content = ?, updated_at = ?
          WHERE id = ? AND dot_id = ? AND EXISTS (
-           SELECT 1 FROM personal_dots d WHERE d.principal_id = ? AND d.owner_user_id = ?)",
+           SELECT 1 FROM dots d WHERE d.principal_id = ? AND d.owner_user_id = ?)",
     )
     .bind(kind.as_str())
     .bind(content)
@@ -164,7 +164,7 @@ pub async fn delete(
 ) -> Result<bool, DbError> {
     let affected = sqlx::query(
         "DELETE FROM personal_dot_memories WHERE id = ? AND dot_id = ? AND EXISTS (
-           SELECT 1 FROM personal_dots d WHERE d.principal_id = ? AND d.owner_user_id = ?)",
+           SELECT 1 FROM dots d WHERE d.principal_id = ? AND d.owner_user_id = ?)",
     )
     .bind(id)
     .bind(dot_id)
@@ -179,7 +179,7 @@ pub async fn delete(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::agents::{self, PersonalDotCreate};
+    use crate::db::agents::{self, DotCreate};
     use crate::db::system_principals::NewPrincipal;
     use aiplane_core::server::db::open;
     use aiplane_core::server::db::user_memories;
@@ -218,7 +218,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(result, PersonalDotCreate::Created);
+        assert_eq!(result, DotCreate::Created);
         (pool, dot.unwrap().principal.id)
     }
 
@@ -301,12 +301,11 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        let dots: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM personal_dots WHERE principal_id = ?")
-                .bind(&dot)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let dots: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dots WHERE principal_id = ?")
+            .bind(&dot)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         let memories: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM personal_dot_memories WHERE dot_id = ?")
                 .bind(&dot)

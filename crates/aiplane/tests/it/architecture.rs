@@ -1045,6 +1045,10 @@ const ACTIVITY_LOG_WRITERS: &[Allowed] = &[
         why: "agent create, draft, publish, live version, shares and delete",
     },
     Allowed {
+        path: "aiplane-agents/src/db/organizations.rs",
+        why: "organization metadata and group bindings are audited on their own management transaction",
+    },
+    Allowed {
         path: "aiplane-agents/src/db/system_principals.rs",
         why: "principal create and disable, grants, tokens",
     },

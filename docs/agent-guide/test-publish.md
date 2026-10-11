@@ -4,6 +4,12 @@ Testing examines the saved draft or a selected published snapshot. Publication c
 
 You need agent-management permission and access to the agent; editing test cases or publishing requires write access. The model, tools, connectors and collections used by a test must be available to its principal.
 
+Organization Dot configuration uses the existing draft and publication
+mechanisms, but organization execution is unavailable. Test and run admission
+refuse these Dots before model dispatch. A published version or active Dot is
+not evidence of an executable organization assistant. Organization membership
+also narrows share access; see [permissions](permissions.md#organization-dot-configuration).
+
 ## Try the saved draft
 
 1. Open `/agents/<id>?tab=try&sub=test`.

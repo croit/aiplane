@@ -276,3 +276,6 @@ settings-invalid-ip-network-prefix-not-number = длина префикса не
 settings-invalid-ip-network-address = адрес не распознан
 settings-invalid-ip-network-mapped-prefix = для сети IPv4-mapped нужен префикс не меньше 96
 settings-invalid-ip-network-prefix-too-long = длина префикса больше { $max }
+
+settings-f-dots-max_active_per_organization = Активные Dots на организацию
+settings-f-dots-max_active_per_organization-help = Максимальное количество активных Dots организации, включая ожидающих работы. По умолчанию: 4.

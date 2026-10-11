@@ -1,7 +1,7 @@
 <script lang="ts">
 	import AiSuggestion from '#lib/components/ui/AiSuggestion.svelte';
-	import { agentsApi, type AgentError, type Spec } from '#lib/agents.js';
-	import { SECTIONS, checklist, setupErrorMessage, summary, type StepKey } from '#lib/agent-setup.js';
+	import { agentsApi, agentUiCapabilities, type AgentError, type Spec } from '#lib/agents.js';
+	import { visibleSetupSteps, checklist, setupErrorMessage, summary, type StepKey } from '#lib/agent-setup.js';
 	import { useWorkspace } from '#lib/agent-workspace.svelte.js';
 	import { t } from '#lib/i18n.svelte.js';
 	import SetupChecklist from './SetupChecklist.svelte';
@@ -10,8 +10,10 @@
 	let { spec = $bindable(), onfix }: { spec: Spec; onfix: (step: StepKey | null) => void } = $props();
 	const ws = useWorkspace();
 
+	const capabilities = $derived(agentUiCapabilities(ws.detail));
+	const sections = $derived(visibleSetupSteps(ws.detail).filter((step) => step !== 'start' && step !== 'review'));
 	const ctx = $derived({ tr: t, grants: ws.grants, resources: ws.resources, agents: ws.agents });
-	const todos = $derived(checklist(spec, ws.dirty ? [] : (ws.detail?.publish_issues ?? []), ws.resources?.defaults));
+	const todos = $derived(checklist(spec, ws.dirty ? [] : (ws.detail?.publish_issues ?? []), ws.resources?.defaults, ws.detail));
 	const name = $derived(spec.profile?.display || ws.detail?.display || ws.detail?.name || '');
 
 	const tests = $derived(ws.suggestion?.steps.tests ?? []);
@@ -42,7 +44,7 @@
 <div class="flex flex-col gap-5">
 	<p class="m-0 text-base-content/70">{t('agents-setup-review-lead', { name })}</p>
 	<dl class="card m-0 grid gap-x-4 gap-y-2 p-4 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
-		{#each SECTIONS as step (step)}
+		{#each sections as step (step)}
 			<dt class="font-semibold">{t(`agents-setup-step-${step}`)}</dt>
 			<dd class="m-0 break-words text-base-content/80">{summary(step, spec, ctx)}</dd>
 		{/each}
@@ -51,7 +53,7 @@
 		<h3 class="m-0 text-base font-semibold">{t('agents-setup-checklist')}</h3>
 		<SetupChecklist {todos} {spec} {onfix} />
 	</section>
-	{#if tests.length}
+	{#if capabilities.execution && tests.length}
 		<AiSuggestion label={t('agents-setup-suggest-tests')}>
 			{#if unsaved.length > 1}
 				<button class="btn btn-sm btn-primary mb-2" type="button" disabled={!ws.writable || savingAll} onclick={() => void saveAll()}>
@@ -76,5 +78,5 @@
 			{#if testError}<p class="m-0 mt-2 text-error" role="alert">{testError}</p>{/if}
 		</AiSuggestion>
 	{/if}
-	<a class="link link-primary text-sm" href="/agents/{ws.id}?tab=try">{t('agents-setup-review-try')}</a>
+	{#if capabilities.execution}<a class="link link-primary text-sm" href="/agents/{ws.id}?tab=try">{t('agents-setup-review-try')}</a>{/if}
 </div>

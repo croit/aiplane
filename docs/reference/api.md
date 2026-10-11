@@ -160,6 +160,7 @@ Examples of its task families:
 | `/api/v0/scheduled*`, `/api/v0/webhooks*`, `/api/v0/inbox*` | Automation and durable decisions; [automation guide](../guide/automation-and-inbox.md). |
 | `/api/v0/agents*` | Agent drafts, grants, evaluation, publication and observation; agent guides. |
 | `/api/v0/dots*` | List/create/active-state require resolved `can_manage_dots`; owner-scoped access remains enforced. Personal Dot lifecycle, tool selection, tool/action approval rules, private chats, memory and activity; scheduled actions and webhooks can run as an owned Dot; [AIplane Dots](../dots.md). |
+| `/api/v0/organizations*` | Current group-derived membership, organization details and named organization Dot creation/activation. Creation requires membership and agent-management permission; configuration uses existing agent shares and principal grants. Organization execution is unavailable until its principal bridge is implemented; [organization Dots](../dots-organizations.md). |
 | `/api/v0/rag*` | Knowledge collections, snapshots, indexing and profiles; [knowledge](../admin/knowledge.md). |
 | `/api/v0/admin/*` | Administrative models, grants, settings and catalogs; administration guides. |
 | `/api/v0/setup/*` | Verified setup/recovery state machine. |
@@ -171,6 +172,40 @@ Use it as the machine-readable contract for the exact build you are calling.
 Most `/api/v0` refusals return an `error` object with a readable `message` and
 machine-readable `type` and `code`; validation responses may also include
 field-level issues. Check each operation's OpenAPI response schema for details.
+
+### Organization ownership and configuration
+
+Administrators create and edit organization metadata through
+`/api/v0/admin/organizations`. `member_groups` contains actual gateway-group
+names. An empty list grants no membership. Updates require the opaque
+`expected_revision` returned by the server; a stale revision returns `409`
+without replacing metadata or group bindings.
+
+Member organization lists contain actual memberships. Dot configuration access
+intersects that membership with the existing user/group share and
+agent-management permission. Membership alone does not expose a Dot's
+configuration. Respond-only shares supply existing Inbox standing rather than
+the agent configuration response. Administrator recovery remains available
+through the existing administration and agent-management surfaces.
+
+Agent summaries carry nullable `dot` metadata with the persisted Dot name,
+typed owner and active state. A Dot's organization owner is immutable. The
+organization detail reports its total active count and configured limit, while
+its Dot list includes only configurations the caller may read. Active idle
+Dots count towards the limit. Creation and activation enforce that limit in
+the same transaction as the current authority check.
+
+`GET /api/v0/agent-resources?agent_id={id}` resolves the actual target agent's
+configuration inventory. Organization connector choices and direct connector
+grants remain unavailable until an explicit organization credential can be
+selected. Publishing or activating an organization Dot does not enable its
+execution; test and run admission refuse it without invoking a model.
+
+Organization share suggestions use the existing eight-result cap and check
+current membership before including users. A search examines at most one
+thousand matching candidates. When more candidates remain at that boundary,
+`truncated` is `true`; narrow the query before relying on the result. Group
+suggestions contain the organization's actual bound groups.
 
 ### Conversation events
 
@@ -291,6 +326,9 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/admin/models` |
 | `PUT /api/v0/admin/models` |
 | `DELETE /api/v0/admin/models/{name}` |
+| `GET /api/v0/admin/organizations` |
+| `POST /api/v0/admin/organizations` |
+| `PUT /api/v0/admin/organizations/{id}` |
 | `PUT /api/v0/admin/pools` |
 | `DELETE /api/v0/admin/pools/{name}` |
 | `POST /api/v0/admin/pools/{name}/rename` |
@@ -315,6 +353,10 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/agent-resources` |
 | `GET /api/v0/agents` |
 | `POST /api/v0/agents` |
+| `GET /api/v0/organizations` |
+| `GET /api/v0/organizations/{id}` |
+| `POST /api/v0/organizations/{id}/dots` |
+| `POST /api/v0/organizations/{id}/dots/{dot}/active` |
 | `GET /api/v0/dots` |
 | `POST /api/v0/dots` |
 | `PUT /api/v0/dots/{id}/active` |

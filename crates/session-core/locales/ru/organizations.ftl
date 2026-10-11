@@ -1,0 +1,22 @@
+organization-error-invalid = Проверьте имя и группы участников, затем отправьте исправленную форму.
+organization-error-conflict = Организация была изменена. Загрузите актуальные настройки перед повторным сохранением.
+organization-error-not-found = Эта организация недоступна. Проверьте адрес или попросите администратора проверить ваш доступ.
+organization-error-permission-required = Нужны членство в организации и право управления агентами. Попросите администратора проверить ваши группы.
+organization-error-active-limit = Организация достигла лимита активных Dots. Деактивируйте Dot или попросите администратора увеличить лимит.
+organization-error-name-conflict = В этой организации уже есть Dot с таким именем. Выберите другое имя.
+organization-error-admin-required = Только администраторы могут управлять настройками организации. Попросите администратора внести это изменение.
+organization-error-execution-unavailable = Dots организации можно настроить, но их выполнение недоступно в этой установке. Перед запуском этого Dot обратитесь к администратору.
+organizations-heading = Организации
+organizations-empty = Вам не доступна ни одна организация.
+organization-create = Создать организацию
+organization-member-groups = Группы участников
+organization-membership-explanation = Членство в группе даёт доступ к организации. Доступ к Dot и разрешения на инструменты настраиваются отдельно.
+organization-no-members = Для этой организации не настроены группы участников.
+organization-reload = Обновить организацию
+organization-saved = Организация сохранена.
+organization-dots-empty = В этой организации вам не предоставлен доступ к Dot.
+organization-active-count = Активно { $count } из { $limit } Dot
+organization-owned-by = Организация: { $name }
+organization-configuration-only = Этот Dot организации можно настроить и опубликовать. Разговоры, автоматизация и внешние каналы недоступны.
+organization-share-search-truncated = Достигнут предел поиска. Введите более точное имя или полный адрес электронной почты.
+

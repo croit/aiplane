@@ -22,7 +22,11 @@ export type Spec = Record<string, any>;
 /** One problem the server found in a spec, at a dotted/indexed path such as `main.tools[0]`. */
 export type SpecIssue = ApiIssue;
 
+export type OrganizationOwner = { kind: 'organization'; id: string; name: string };
+export interface AgentDotMetadata { owner: OrganizationOwner | { kind: 'user'; id: string }; name: string; active: boolean }
+
 export interface AgentSummary {
+	dot: AgentDotMetadata | null;
 	id: string;
 	name: string;
 	display: string;
@@ -34,6 +38,19 @@ export interface AgentSummary {
 	/** `null` until the agent was published once. */
 	live_version: number | null;
 	access: 'read' | 'write';
+}
+
+export function organizationOwner(agent: Pick<AgentSummary, 'dot'> | null | undefined): OrganizationOwner | null {
+    return agent?.dot?.owner.kind === 'organization' ? agent.dot.owner : null;
+}
+
+export function agentPublicName(agent: Pick<AgentSummary, 'dot' | 'name'>): string {
+    return agent.dot?.name ?? agent.name;
+}
+
+export function agentUiCapabilities(agent: Pick<AgentSummary, 'dot'> | null | undefined) {
+    const enabled = !!agent && !organizationOwner(agent);
+    return { execution: enabled, site: enabled, channels: enabled, embed: enabled };
 }
 
 export interface Grant {
@@ -60,6 +77,7 @@ export interface Share {
 
 /** What `GET /api/v0/agents/{id}/share-subjects?q=` found: a search, never the roster (nothing under two characters, a few matches, an address only for an exact one). */
 export interface ShareSubjectMatches {
+	truncated: boolean;
 	users: { id: string; name: string | null; email?: string }[];
 	groups: string[];
 }
@@ -371,7 +389,7 @@ export const agentsApi = {
 		call<{ added: boolean }>(`/api/v0/system-principals/${id}/grants`, json('POST', { kind, ref })),
 	revokeGrant: (id: string, kind: GrantKind, ref: string) =>
 		call<void>(`/api/v0/system-principals/${id}/grants/revoke`, json('POST', { kind, ref })),
-	resources: () => call<AgentResources>('/api/v0/agent-resources'),
+	resources: (id?: string) => call<AgentResources>(`/api/v0/agent-resources${id ? `?agent_id=${encodeURIComponent(id)}` : ''}`),
 	suggest: (id: string, body: { scenario: string; template?: string; current_draft?: Spec }) =>
 		call<AssistSuggestion>(`/api/v0/agents/${id}/assist/suggest`, json('POST', body)),
 	improve: (id: string, field: ImproveField, text: string) =>

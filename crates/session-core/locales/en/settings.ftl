@@ -288,3 +288,6 @@ settings-invalid-ip-network-prefix-not-number = the prefix length is not a numbe
 settings-invalid-ip-network-address = the address does not parse
 settings-invalid-ip-network-mapped-prefix = an IPv4-mapped network needs a prefix of 96 or more
 settings-invalid-ip-network-prefix-too-long = the prefix length exceeds { $max }
+
+settings-f-dots-max_active_per_organization = Active Dots per organization
+settings-f-dots-max_active_per_organization-help = Maximum number of active Dots an organization may own, including idle Dots. Default: 4.

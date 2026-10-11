@@ -692,7 +692,7 @@ async fn a_person_without_agent_management_cannot_create_or_configure() {
         body["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("can_manage_agents"),
+            .contains("enable agent management"),
         "{body}"
     );
     for uri in [
@@ -921,6 +921,12 @@ async fn headless_run(
     actor: aiplane_runtime::agent_run::Actor,
 ) -> Value {
     use aiplane_runtime::server::headless::{self, DriveParams, OpenParams};
+    let source = if actor.agent().is_some() {
+        aiplane_core::server::db::usage::UsageSource::Agent
+    } else {
+        aiplane_core::server::db::usage::UsageSource::Chat
+    };
+    let before = fx.upstream.received_requests().await.unwrap().len();
     let (session_id, turn_id) = headless::open_session(
         &fx.state.db,
         OpenParams {
@@ -938,14 +944,21 @@ async fn headless_run(
         &Arc::new(fx.state.clone()),
         DriveParams {
             actor,
-            session_id,
-            assistant_turn_id: turn_id,
+            session_id: session_id.clone(),
+            assistant_turn_id: turn_id.clone(),
             model: "model-a".into(),
-            source: aiplane_core::server::db::usage::UsageSource::Scheduled,
+            source,
             history_limit: None,
         },
     )
     .await;
+    let turn = session_core::db::get_turn(&fx.state.db, &session_id, &turn_id)
+        .await
+        .unwrap();
+    assert!(
+        fx.upstream.received_requests().await.unwrap().len() > before,
+        "headless upstream was not called; owner={owner:?}, persisted_turn={turn:?}"
+    );
     fx.last_upstream_body().await
 }
 

@@ -277,3 +277,6 @@ settings-invalid-ip-network-prefix-not-number = la longueur de préfixe n’est 
 settings-invalid-ip-network-address = l’adresse est invalide
 settings-invalid-ip-network-mapped-prefix = un réseau IPv4 mappé exige un préfixe d’au moins 96
 settings-invalid-ip-network-prefix-too-long = la longueur de préfixe dépasse { $max }
+
+settings-f-dots-max_active_per_organization = Dots actifs par organisation
+settings-f-dots-max_active_per_organization-help = Nombre maximal de Dots actifs appartenant à une organisation, y compris les Dots inactifs en attente. Valeur par défaut : 4.

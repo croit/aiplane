@@ -15,14 +15,19 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use aiplane_agents::db::agents::{self as agents_db, Access};
-use aiplane_core::server::db::{DbError, automatic_routes, mcp_catalog, rag as rag_db, users};
+use aiplane_core::server::db::{
+    DbError, WriteTx, automatic_routes, mcp_catalog, rag as rag_db, users,
+};
 use aiplane_core::server::principal::{GrantKind, GrantSet, SystemPrincipal};
 use aiplane_core::server::upstreams::{PoolAccess, PoolKind};
 
 use crate::agents::access::effective_access;
 use crate::rama_server::state::RamaState;
-use crate::server::model_choices::{self, ModelChoice};
 use crate::server::tools::mcp::MCP_ID_PREFIX;
+use crate::server::{
+    AppState,
+    model_choices::{self, ModelChoice},
+};
 
 /// Why a grant could not be judged held: the resource does not exist, the
 /// reference is not one, or only an admin may grant it.
@@ -38,9 +43,130 @@ pub enum HoldRefusal {
     Db(#[from] DbError),
 }
 
+pub struct GrantScope {
+    pub pools: Option<Vec<String>>,
+}
+
+enum HoldingSource<'a> {
+    Pool,
+    Transaction(&'a mut WriteTx),
+}
+
+impl HoldingSource<'_> {
+    async fn connector(
+        &mut self,
+        state: &AppState,
+        reference: &str,
+    ) -> Result<Option<mcp_catalog::Connector>, DbError> {
+        match self {
+            Self::Pool => mcp_catalog::get(&state.db, reference).await,
+            Self::Transaction(tx) => mcp_catalog::get_in(tx, reference).await,
+        }
+    }
+
+    async fn collection(
+        &mut self,
+        state: &AppState,
+        id: i64,
+    ) -> Result<Option<rag_db::Collection>, DbError> {
+        match self {
+            Self::Pool => rag_db::find_collection_by_id(&state.db, id).await,
+            Self::Transaction(tx) => rag_db::find_collection_by_id_in(tx, id).await,
+        }
+    }
+
+    async fn agent_exists(&mut self, state: &AppState, reference: &str) -> Result<bool, DbError> {
+        match self {
+            Self::Pool => Ok(agents_db::get(&state.db, reference).await?.is_some()),
+            Self::Transaction(tx) => Ok(agents_db::get_in(tx, reference).await?.is_some()),
+        }
+    }
+
+    async fn access(
+        &mut self,
+        state: &RamaState,
+        reference: &str,
+        user_id: &str,
+    ) -> Result<Option<Access>, DbError> {
+        match self {
+            Self::Pool => effective_access(state, reference, user_id).await,
+            Self::Transaction(tx) => {
+                crate::agents::access::effective_access_in(state, tx, reference, user_id).await
+            }
+        }
+    }
+
+    async fn choices(
+        &mut self,
+        state: &AppState,
+        kind: PoolKind,
+        access: &PoolAccess,
+    ) -> Result<Vec<ModelChoice>, DbError> {
+        match self {
+            Self::Pool => Ok(model_choices::offered(state, kind, access).await),
+            Self::Transaction(tx) => model_choices::offered_in(state, tx, kind, access).await,
+        }
+    }
+
+    async fn is_automatic_route(&mut self, state: &AppState, model: &str) -> Result<bool, DbError> {
+        match self {
+            Self::Pool => Ok(automatic_routes::get(&state.db, model).await?.is_some()),
+            Self::Transaction(tx) => Ok(automatic_routes::all_in(tx)
+                .await?
+                .iter()
+                .any(|route| route.alias == model)),
+        }
+    }
+}
+
+pub async fn grant_scope_in(
+    state: &RamaState,
+    tx: &mut WriteTx,
+    user_id: &str,
+    kind: GrantKind,
+    reference: &str,
+) -> Result<Option<GrantScope>, HoldRefusal> {
+    let Some((user, policy)) =
+        crate::agents::access::current_user_policy_in(state, tx, user_id).await?
+    else {
+        return Ok(None);
+    };
+    let mut app = (**state).clone();
+    app.rbac = Arc::new(policy);
+    let mut source = HoldingSource::Transaction(tx);
+    if !held(state, &app, &mut source, &user, kind, reference).await? {
+        return Ok(None);
+    }
+    let pools = if kind == GrantKind::Model {
+        model_pools(&app, &mut source, &user, reference).await?
+    } else {
+        None
+    };
+    Ok(Some(GrantScope { pools }))
+}
+
 /// Whether `user` holds `kind` `reference` today.
 pub async fn holds(
     state: &RamaState,
+    user: &users::User,
+    kind: GrantKind,
+    reference: &str,
+) -> Result<bool, HoldRefusal> {
+    held(
+        state,
+        state,
+        &mut HoldingSource::Pool,
+        user,
+        kind,
+        reference,
+    )
+    .await
+}
+
+async fn held(
+    authority: &RamaState,
+    state: &AppState,
+    source: &mut HoldingSource<'_>,
     user: &users::User,
     kind: GrantKind,
     reference: &str,
@@ -62,7 +188,7 @@ pub async fn holds(
             held.iter().any(|id| id == reference)
         }
         GrantKind::Connector => {
-            let connector = match mcp_catalog::get(&state.db, reference).await? {
+            let connector = match source.connector(state, reference).await? {
                 Some(c) if c.enabled => c,
                 _ => return Err(missing(format!("enabled connector `{reference}`"))),
             };
@@ -106,7 +232,7 @@ pub async fn holds(
                     "a RAG collection is granted by its numeric id, not `{reference}`"
                 )));
             };
-            let Some(collection) = rag_db::find_collection_by_id(&state.db, id).await? else {
+            let Some(collection) = source.collection(state, id).await? else {
                 return Err(missing(format!("RAG collection with id {id}")));
             };
             state
@@ -114,20 +240,29 @@ pub async fn holds(
                 .resource_allowed(&role_ids, &collection.allowed_groups)
         }
         GrantKind::Model => {
-            if offers(state, &PoolAccess::all(), reference).await.is_none() {
+            if offers(state, source, &PoolAccess::all(), reference)
+                .await?
+                .is_none()
+            {
                 return Err(missing(format!("model `{reference}`")));
             }
-            offers(state, &state.pool_access_for(&user.roles), reference)
-                .await
-                .is_some_and(|choice| choice.grantable())
+            offers(
+                state,
+                source,
+                &state.pool_access_for(&user.roles),
+                reference,
+            )
+            .await?
+            .is_some_and(|choice| choice.grantable())
         }
         GrantKind::A2aCaller => {
             // Letting another platform call an agent is a change to that
             // agent, so it takes what changing it takes: a `write` share.
-            if agents_db::get(&state.db, reference).await?.is_none() {
+            if !source.agent_exists(state, reference).await? {
                 return Err(missing(format!("agent `{reference}`")));
             }
-            effective_access(state, reference, &user.id, &role_ids)
+            source
+                .access(authority, reference, &user.id)
                 .await?
                 .is_some_and(|a| a >= Access::Write)
         }
@@ -166,12 +301,21 @@ pub async fn model_grant_pools(
     user: &users::User,
     model: &str,
 ) -> Result<Option<Vec<String>>, DbError> {
+    model_pools(state, &mut HoldingSource::Pool, user, model).await
+}
+
+async fn model_pools(
+    state: &AppState,
+    source: &mut HoldingSource<'_>,
+    user: &users::User,
+    model: &str,
+) -> Result<Option<Vec<String>>, DbError> {
     if state.rbac.is_admin(&state.rbac.role_ids_for(&user.roles)) {
         return Ok(None);
     }
-    let kinds = match automatic_routes::get(&state.db, model).await? {
-        Some(_) => vec![PoolKind::Chat, PoolKind::SystemOne],
-        None => kinds_of(state, model).await,
+    let kinds = match source.is_automatic_route(state, model).await? {
+        true => vec![PoolKind::Chat, PoolKind::SystemOne],
+        false => kinds_of(state, source, model).await?,
     };
     Ok(Some(state.upstreams.pools_of_kinds(
         &kinds,
@@ -180,33 +324,44 @@ pub async fn model_grant_pools(
 }
 
 /// The kinds of model `model` is offered as anywhere on the gateway.
-async fn kinds_of(state: &RamaState, model: &str) -> Vec<PoolKind> {
+async fn kinds_of(
+    state: &AppState,
+    source: &mut HoldingSource<'_>,
+    model: &str,
+) -> Result<Vec<PoolKind>, DbError> {
     let mut kinds = Vec::new();
     for kind in grantable_kinds() {
-        if model_choices::offered(state, kind, &PoolAccess::all())
-            .await
+        if source
+            .choices(state, kind, &PoolAccess::all())
+            .await?
             .iter()
             .any(|c| c.id == model)
         {
             kinds.push(kind);
         }
     }
-    kinds
+    Ok(kinds)
 }
 
 /// The choice named `model` among the models of every kind an agent can use
 /// that `access` may pick (`server::model_choices`).
-async fn offers(state: &RamaState, access: &PoolAccess, model: &str) -> Option<ModelChoice> {
+async fn offers(
+    state: &AppState,
+    source: &mut HoldingSource<'_>,
+    access: &PoolAccess,
+    model: &str,
+) -> Result<Option<ModelChoice>, DbError> {
     for kind in grantable_kinds() {
-        if let Some(found) = model_choices::offered(state, kind, access)
-            .await
+        if let Some(found) = source
+            .choices(state, kind, access)
+            .await?
             .into_iter()
             .find(|c| c.id == model)
         {
-            return Some(found);
+            return Ok(Some(found));
         }
     }
-    None
+    Ok(None)
 }
 
 /// The kinds of model a model grant can name: every kind a request can
@@ -399,6 +554,189 @@ pub async fn capped_for_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn transactional_grant_scope_uses_current_policy_resources_and_model_pools() {
+        use aiplane_core::server::db::{WriteTx, gateway_groups};
+        let mut app = model_choices::tests::state().await;
+        app.db = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with((*app.db.connect_options()).clone())
+            .await
+            .unwrap();
+        let pool = app
+            .upstreams
+            .pools()
+            .into_iter()
+            .find(|pool| pool.name == "open")
+            .unwrap();
+        pool.backends[0].set_models(["open-model".into(), "alternate-model".into()].into());
+        gateway_groups::upsert_group(&app.db, "vip", "", false, false)
+            .await
+            .unwrap();
+        gateway_groups::set_mappings_for_group(&app.db, "vip", &["claim-vip".into()])
+            .await
+            .unwrap();
+        gateway_groups::set_tools_for_group(&app.db, "vip", &[format!("{MCP_ID_PREFIX}actual")])
+            .await
+            .unwrap();
+        gateway_groups::upsert_group(&app.db, "admin", "", true, false)
+            .await
+            .unwrap();
+        gateway_groups::set_mappings_for_group(&app.db, "admin", &["claim-admin".into()])
+            .await
+            .unwrap();
+        let now = jiff::Timestamp::now();
+        for (id, role) in [("manager", "claim-vip"), ("admin", "claim-admin")] {
+            users::upsert(
+                &app.db,
+                &users::User {
+                    id: id.into(),
+                    email: format!("{id}@example.com"),
+                    name: None,
+                    roles: vec![role.into()],
+                    created_at: now,
+                    updated_at: now,
+                    timezone: None,
+                    speech_voice: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        mcp_catalog::create(
+            &app.db,
+            mcp_catalog::ConnectorInput {
+                key: "actual".into(),
+                name: "Actual connector".into(),
+                description: None,
+                icon: None,
+                category: None,
+                url: "https://connector.example.com/mcp".into(),
+                auth: mcp_catalog::AuthKind::None,
+                scope: mcp_catalog::Scope::Global,
+                audit: false,
+                use_dcr: false,
+                client_id: None,
+                client_secret_ct: None,
+                client_secret_nonce: None,
+                authorize_url: None,
+                token_url: None,
+                registration_url: None,
+                scopes: vec![],
+                allowed_groups: vec!["vip".into()],
+            },
+        )
+        .await
+        .unwrap();
+        mcp_catalog::set_enabled(&app.db, "actual", true)
+            .await
+            .unwrap();
+        let collection = rag_db::create_collection(
+            &app.db,
+            &rag_db::NewCollection {
+                name: "Actual collection".into(),
+                description: None,
+                git_url: "https://example.com/repository.git".into(),
+                git_ref: "main".into(),
+                pat: None,
+                source: Default::default(),
+                profile_id: None,
+                extraction_model: None,
+                embedding_model: "embedding-model".into(),
+                include_globs: vec![],
+                exclude_globs: vec![],
+                chunk_size: 800,
+                chunk_overlap: 100,
+                search_mode: rag_db::SearchMode::Versioned,
+                refresh_interval_mins: 0,
+            },
+        )
+        .await
+        .unwrap();
+        rag_db::set_allowed_groups(&app.db, collection.id, &["vip".into()])
+            .await
+            .unwrap();
+        app.rbac = Arc::new(aiplane_core::server::rbac::Resolver::from_snapshot(
+            gateway_groups::load_snapshot(&app.db).await.unwrap(),
+            vec![],
+        ));
+        let state = RamaState::new(
+            app.clone(),
+            aiplane_core::rama_server::SessionStore::new(app.db.clone(), [4; 32]),
+            aiplane_core::server::usage::UsageHandle::disabled(),
+        );
+        let mut tx = WriteTx::begin(&state.db).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let scope = grant_scope_in(&state, &mut tx, "manager", GrantKind::Model, "vip-model").await.unwrap().unwrap();
+            assert_eq!(scope.pools.unwrap().into_iter().collect::<BTreeSet<_>>(), BTreeSet::from(["open".into(), "vip".into()]));
+            assert!(grant_scope_in(&state, &mut tx, "admin", GrantKind::Model, "vip-model").await.unwrap().unwrap().pools.is_none());
+            assert!(grant_scope_in(&state, &mut tx, "missing-user", GrantKind::Model, "vip-model").await.unwrap().is_none());
+            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::Connector, "actual").await.unwrap().is_some());
+            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::RagCollection, &collection.id.to_string()).await.unwrap().is_some());
+            sqlx::query("UPDATE mcp_catalog_connectors SET enabled=0 WHERE key='actual'").execute(&mut *tx).await.unwrap();
+            assert!(matches!(grant_scope_in(&state, &mut tx, "manager", GrantKind::Connector, "actual").await, Err(HoldRefusal::Missing(_))));
+            sqlx::query("UPDATE rag_collections SET allowed_groups='[\"other\"]' WHERE id=?").bind(collection.id).execute(&mut *tx).await.unwrap();
+            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::RagCollection, &collection.id.to_string()).await.unwrap().is_none());
+            sqlx::query("DELETE FROM oidc_group_mappings WHERE gateway_group='vip'").execute(&mut *tx).await.unwrap();
+            assert!(grant_scope_in(&state, &mut tx, "manager", GrantKind::Model, "vip-model").await.unwrap().is_none());
+            sqlx::query("UPDATE automatic_route_candidates SET target='alternate-model' WHERE route_alias='auto' AND key='vip-model'").execute(&mut *tx).await.unwrap();
+            let scope = grant_scope_in(&state, &mut tx, "manager", GrantKind::Model, "auto").await.unwrap().unwrap();
+            assert_eq!(scope.pools.unwrap().into_iter().collect::<BTreeSet<_>>(), BTreeSet::from(["open".into(), "selector".into()]));
+            sqlx::query("UPDATE users SET roles_json='[]' WHERE id='admin'").execute(&mut *tx).await.unwrap();
+            assert!(grant_scope_in(&state, &mut tx, "admin", GrantKind::Model, "vip-model").await.unwrap().is_none());
+        }).await.expect("transactional grant reads must use the held connection");
+        drop(tx);
+        assert!(
+            holds(
+                &state,
+                &users::find_by_id(&state.db, "manager")
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                GrantKind::Model,
+                "vip-model"
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn transactional_a2a_grant_requires_current_organization_membership_and_share() {
+        let (state, _, dot) = crate::agents::access::tests::fixture().await;
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        assert!(
+            grant_scope_in(&state, &mut tx, "creator", GrantKind::A2aCaller, &dot)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            grant_scope_in(&state, &mut tx, "outsider", GrantKind::A2aCaller, &dot)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        sqlx::query("DELETE FROM oidc_group_mappings WHERE gateway_group='members'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            grant_scope_in(&state, &mut tx, "creator", GrantKind::A2aCaller, &dot)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            grant_scope_in(&state, &mut tx, "admin", GrantKind::A2aCaller, &dot)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
 
     #[test]
     fn every_public_kind_is_grantable_and_ocr_is_not() {

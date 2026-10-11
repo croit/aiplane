@@ -305,6 +305,7 @@ test('a grant option is labelled by its title, with the reference when one item 
 
 test('a share subject is picked from what the search found, by name where there is one', () => {
 	const found = {
+		truncated: false,
 		users: [
 			{ id: 'u1', name: 'Ada' },
 			{ id: 'u2', name: null, email: 'sam@example.com' },
@@ -358,4 +359,39 @@ test('an answered pause is read again only once the stream shows it moved on', (
 test('a debug view that is not ready yet is retried, any other failure is shown', () => {
 	assert.equal(readFailure({ status: 409, code: 'turn_in_progress', message: 'running', issues: [] }), 'retry');
 	assert.equal(readFailure({ status: 404, code: 'not_found', message: 'gone', issues: [] }), 'gone');
+});
+
+test('agent UI uses actual organization ownership for configuration-only capabilities', async () => {
+    const { agentUiCapabilities } = await import('./agents.ts');
+    const ordinary = { dot: null };
+    const personal = { dot: { owner: { kind: 'user' as const, id: 'owner' }, name: 'Harald', active: true } };
+    const organization = { dot: { owner: { kind: 'organization' as const, id: 'org', name: 'Acme Support' }, name: 'Harald', active: false } };
+    assert.deepEqual(agentUiCapabilities(ordinary), { execution: true, site: true, channels: true, embed: true });
+    assert.deepEqual(agentUiCapabilities(personal), agentUiCapabilities(ordinary));
+    assert.deepEqual(agentUiCapabilities(organization), { execution: false, site: false, channels: false, embed: false });
+    assert.deepEqual(agentUiCapabilities(null), { execution: false, site: false, channels: false, embed: false });
+});
+
+test('agent owner presentation preserves authored Dot name and actual organization return path', async () => {
+    const { organizationOwner, agentPublicName } = await import('./agents.ts');
+    const org = { id: 'actual/org', name: 'Acme Support', kind: 'organization' as const };
+    const dot = { name: 'internal-principal-id', display: 'Harald Support', dot: { owner: org, name: 'Harald', active: true } };
+    assert.deepEqual(organizationOwner(dot), org);
+    assert.equal(agentPublicName(dot), 'Harald');
+    assert.equal(organizationOwner({ ...dot, dot: null }), null);
+    assert.equal(agentPublicName({ ...dot, dot: null }), 'internal-principal-id');
+});
+
+test('agent resource API scopes the existing inventory by the actual target ID', async (context) => {
+    const { agentsApi } = await import('./agents.ts');
+    const fetchOriginal = globalThis.fetch;
+    const paths: string[] = [];
+    globalThis.fetch = async (input) => {
+        paths.push(String(input));
+        return new Response(JSON.stringify({ models: {}, defaults: {}, items: [] }), { status: 200 });
+    };
+    context.after(() => globalThis.fetch = fetchOriginal);
+    await agentsApi.resources('actual/agent');
+    await agentsApi.resources();
+    assert.deepEqual(paths, ['/api/v0/agent-resources?agent_id=actual%2Fagent', '/api/v0/agent-resources']);
 });

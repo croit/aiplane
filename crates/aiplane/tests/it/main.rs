@@ -46,6 +46,7 @@ mod metrics;
 mod oidc_integration;
 mod openai_responses;
 mod openapi_drift;
+mod organizations;
 mod proxy;
 mod push_routes;
 mod rag;

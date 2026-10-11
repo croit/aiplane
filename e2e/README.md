@@ -29,6 +29,13 @@ scripted model responses:
 - `spa-dots-permissions.test.mjs`: independent group permission, live grant/revocation,
   personal lifecycle without agent management; uses the seeded Engineering member
   session supplied through `AIPLANE_DOT_MEMBER_SESSION_COOKIE`.
+- `spa-dots-organizations.test.mjs`: actual organization creation and group
+  selection, revision conflict with retained draft, scoped agent configuration
+  and publication, unavailable execution/channel controls, independent member
+  management rights, four-active-Dot capacity, deactivation, membership
+  revocation and mobile layout. The member case requires the seeded Engineering
+  session through `AIPLANE_DOT_MEMBER_SESSION_COOKIE`; it restores its temporary
+  group permissions and removes its created Dots.
 - `spa-dots-actions.test.mjs`: action inheritance and overrides, reload,
   correction of unavailable rules, and revocation between pause and approval.
   Its browser probe validates permission refusal; the fixture does not execute

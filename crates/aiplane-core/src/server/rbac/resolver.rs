@@ -162,6 +162,17 @@ impl Resolver {
         }
     }
 
+    pub fn with_snapshot(&self, snapshot: GroupSnapshot) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(build_snapshot(
+                &snapshot,
+                &self.bootstrap_admin_groups,
+            ))),
+            skill_overlay: self.skill_overlay.clone(),
+            bootstrap_admin_groups: self.bootstrap_admin_groups.clone(),
+        }
+    }
+
     /// Swap in a freshly-loaded DB snapshot after an admin edit. Bootstrap
     /// admins are re-applied. Skills are handled separately via
     /// [`Self::set_skill_grant_overlay`].
@@ -629,6 +640,56 @@ mod tests {
         fn has(&self, id: &str) -> bool {
             self.0.iter().any(|i| i == id)
         }
+    }
+
+    #[test]
+    fn independent_current_snapshot_preserves_bootstrap_and_existing_skill_overlay() {
+        use crate::server::db::gateway_groups::GroupRow;
+        let snapshot = GroupSnapshot {
+            groups: vec![GroupRow {
+                name: "members".into(),
+                description: "".into(),
+                is_admin: false,
+                is_default: false,
+                can_manage_agents: true,
+                can_manage_dots: false,
+            }],
+            mappings: vec![("claim".into(), "members".into())],
+            tool_grants: vec![("members".into(), "company_echo".into())],
+        };
+        let cached = Resolver::from_snapshot(snapshot.clone(), vec!["break-glass".into()]);
+        cached.set_skill_grant_overlay(vec![("actual_skill".into(), "members".into())]);
+        let independent = cached.with_snapshot(snapshot.clone());
+        let roles = independent.role_ids_for(&["claim".into()]);
+        assert!(independent.can_manage_agents(&roles));
+        assert_eq!(
+            independent.allowed_skills(&roles, &Registered::of(&["actual_skill"])),
+            vec!["actual_skill"]
+        );
+        let mut changed = snapshot;
+        changed.groups[0].can_manage_agents = false;
+        changed.groups[0].is_admin = false;
+        changed.mappings.clear();
+        changed.tool_grants.clear();
+        let revoked = cached.with_snapshot(changed);
+        assert!(revoked.role_ids_for(&["claim".into()]).is_empty());
+        assert!(!revoked.can_manage_agents(&revoked.role_ids_for(&["claim".into()])));
+        assert!(cached.can_manage_agents(&cached.role_ids_for(&["claim".into()])));
+        let bootstrap = revoked.role_ids_for(&["break-glass".into()]);
+        assert!(revoked.is_admin(&bootstrap));
+        assert!(revoked.can_manage_agents(&bootstrap));
+        cached.set_skill_grant_overlay(vec![("next_skill".into(), "members".into())]);
+        assert_eq!(
+            independent.allowed_skills(&roles, &Registered::of(&["next_skill"])),
+            vec!["next_skill"]
+        );
+        assert_eq!(
+            cached.allowed_tools(
+                &cached.role_ids_for(&["claim".into()]),
+                &Registered::of(&["company_echo"])
+            ),
+            vec!["company_echo"]
+        );
     }
 
     fn role(id: &str, tools: &[&str]) -> RoleConfig {

@@ -2,7 +2,7 @@
 
 ## Status
 
-Personal Dots can select their user's OAuth connection or a separately authorized connection owned by their Dot principal. Storage, runtime selection, JSON endpoints and the web controls extend the existing MCP authorization mechanism. The real Chrome scenario exercises authorization, explicit selection, actual tool discovery and isolated disconnect. Organization ownership and credentials remain proposed capabilities. Connecting an account does not provision a provider account.
+Personal Dots can select their user's OAuth connection or a separately authorized connection owned by their Dot principal. Storage, runtime selection, JSON endpoints and the web controls extend the existing MCP authorization mechanism. The real Chrome scenario exercises authorization, explicit selection, actual tool discovery and isolated disconnect. Organization ownership, group-derived membership and configuration are implemented. Organization connection management and execution remain unavailable pending their identity and runtime packages. Connecting an account does not provision a provider account.
 
 ## Verified source baseline
 
@@ -17,7 +17,7 @@ Personal Dots can select their user's OAuth connection or a separately authorize
 | `aiplane-agents/src/db/agents.rs` | Agent definitions and user/group shares with read/write/respond access; last-write-share protection. Personal Dot ownership is explicitly a user. |
 | `aiplane-core/src/server/db/gateway_groups.rs`; migration `0044_gateway_groups.sql` | IdP-independent groups, OIDC mappings, tool/model rights and administration. A group is an authorization unit, not a tenant or organization owner. |
 
-A search of schema and ownership/accessors found no organization entity or typed organization membership. Group shares do not establish a separate organization's ownership or data boundary. Connection records also lack a verified provider email/display identity. Neither absence should be hidden by invented labels.
+The `organizations` and `organization_groups` tables provide explicit ownership and membership sources. The canonical `dots` record has exactly one immutable user or organization owner; existing shares narrow organization access after current membership is checked. A gateway group alone does not establish organization ownership. Connection records lack a generic verified provider email/display identity; absent labels remain unavailable.
 
 ## Shared mechanisms
 
@@ -43,11 +43,11 @@ An explicit identity choice applies to future calls. Store the resolved connecti
 
 ## Minimum schema amendment
 
-The personal slice amends unreleased migration `0081_personal_dot_sessions.sql`, its schema fixture and checksum. Organization tables described below remain proposals.
+The connection store is defined in unreleased migration `0081_personal_dot_sessions.sql`, its schema fixture and checksum. Organization ownership and membership are defined in `0080_personal_dots.sql`; organization credential selection remains a subsequent implementation package.
 
 - Generalize `user_mcp_connections` to `mcp_connections`, preserving existing user records, token/scopes/status fields and timestamps. Add mutually exclusive nullable `user_id` and `principal_id`, each with a real cascading foreign key, plus partial uniqueness for owner and connector. The typed owner is derived from exactly one nonnull field. No compatibility view or second token store.
 - Extend `pending_mcp_oauth` with the target connection owner, initiating user ID, Dot ID where applicable and immutable authorization generation. Pending state stores the chosen target; callback query parameters cannot change it. Preserve token endpoint, resource, PKCE, DCR fields, expiry and safe return path.
-- `dot_connector_bindings(dot_id, connector_key, identity_mode, connection_generation, binding_generation, updated_at)` constrains the mode to `user` or `principal`, with uniqueness per Dot/connector and a cascading personal-Dot foreign key. This table stores identity selection; tool/action policy stays in `AgentSpec`. An implicit user selection has no binding row. An unchanged effective save preserves its generation; an explicit switch back retains a real row and changes its generation.
+- `dot_connector_bindings(dot_id, connector_key, identity_mode, connection_generation, binding_generation, updated_at)` constrains the mode to `user` or `principal`, with uniqueness per Dot/connector and a cascading foreign key to the canonical Dot record. This table stores identity selection; tool/action policy stays in `AgentSpec`. An implicit personal user selection has no binding row. An unchanged effective save preserves its generation; an explicit switch back retains a real row and changes its generation.
 - Give each connection a generation changed on reauthorization, revoke or replacement. Include it in live-cache keys and suspended-call identity facts. Serialize refresh by typed owner and connector; refresh preserves generation while disconnect/reconnect changes it.
 - Add organization metadata and organization-to-gateway-group membership bindings, plus an organization-Dot ownership record linking existing principal/agent to exactly one organization. Organization rows have their actual configured name. Avoid polymorphic IDs with no integrity checks.
 - If organization-shared OAuth accounts are included, allocate one managed system principal per organization as their credential owner. Organization Dots select that explicit principal or their own principal; all secrets remain in the same `mcp_connections` table.
@@ -105,8 +105,8 @@ Organization tests prove mapped membership and shares intersect, user deletion d
 ## Verified gaps and implementation constraints
 
 - No generic verified provider-account lookup exists; account display may remain unavailable. Separate external actor identities require separately authorized provider accounts, not generated Dot names.
-- No organization entity exists. Typed metadata and group-derived membership are proposed; quotas, organization memory and user-owned-session replacement are not implemented by naming an organization.
-- Personal Dot-owned OAuth credentials use the generalized store and selected runtime layer. Organization principal execution still uses its existing shared-resource path until organization ownership is implemented.
+- Organization metadata, group-derived membership and independent active limits are implemented. Organization memory and background execution remain unavailable.
+- Personal Dot-owned OAuth credentials use the generalized store and selected runtime layer. Organization execution is refused before a model call until its explicit own-credential and live principal-authority bridge is implemented. Ordinary agents retain their existing shared-resource path.
 - OAuth flow supports the existing catalogue/provider features. Static credentials, provider account chooser hints and external account provisioning must be included only when a real supported path is verified.
 - Organization background approval and conversation ownership cannot borrow personal Dot sessions. That bridge is a separate prerequisite, while personal Dot credential selection can ship independently.
 

@@ -18,6 +18,7 @@
 //! `/api/v0/system-principals/{id}/grants` with the grant-time cap (`docs/agents.md` → "Principals");
 //! those routes check the share here too ([`guard_principal`]).
 
+use session_core::i18n::{Lang, t};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -60,9 +61,17 @@ async fn access(
     id: &str,
     need: Access,
 ) -> Result<Option<Access>, Response> {
-    let held = effective_access(state, id, &user.id, &group_ids(state, user))
+    let held = effective_access(state, id, &user.id)
         .await
         .map_err(internal)?;
+    require_held(held, id, need)
+}
+
+pub(super) fn require_held(
+    held: Option<Access>,
+    id: &str,
+    need: Access,
+) -> Result<Option<Access>, Response> {
     match held {
         Some(a) if a >= need => Ok(Some(a)),
         Some(a) if a >= Access::Read => Err(json_error(
@@ -75,6 +84,21 @@ async fn access(
             "there is no agent `{id}` shared with you — ask its owner for a share"
         ))),
     }
+}
+
+pub(super) async fn begin_write(
+    state: &RamaState,
+    user: &users::User,
+    id: &str,
+) -> Result<aiplane_core::server::db::WriteTx, Response> {
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+        .await
+        .map_err(internal)?;
+    let held = aiplane_runtime::agents::access::effective_access_in(state, &mut tx, id, &user.id)
+        .await
+        .map_err(internal)?;
+    require_held(held, id, Access::Write)?;
+    Ok(tx)
 }
 
 /// The agent named by the path segment `from_end` back, if the caller holds
@@ -156,6 +180,90 @@ pub struct AgentView {
     pub live_version: Option<i64>,
     /// The caller's access to the agent.
     pub access: &'static str,
+    pub dot: Option<AgentDotView>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DotOwnerView {
+    User { id: String },
+    Organization { id: String, name: String },
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct AgentDotView {
+    pub owner: DotOwnerView,
+    pub name: String,
+    pub active: bool,
+}
+
+pub(super) async fn agent_views(
+    state: &RamaState,
+    rows: &[(agents_db::AgentRow, Access)],
+) -> Result<Vec<AgentView>, Response> {
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+        .await
+        .map_err(internal)?;
+    let views = agent_views_in(&mut tx, rows).await?;
+    tx.commit().await.map_err(internal)?;
+    Ok(views)
+}
+
+pub(super) async fn agent_views_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    rows: &[(agents_db::AgentRow, Access)],
+) -> Result<Vec<AgentView>, Response> {
+    let ids = rows
+        .iter()
+        .map(|(a, _)| a.principal.id.clone())
+        .collect::<Vec<_>>();
+    let metadata = agents_db::dot_metadata_for_agents_in(tx, &ids)
+        .await
+        .map_err(internal)?;
+    let organizations = aiplane_agents::db::organizations::list_admin_in(tx)
+        .await
+        .map_err(internal)?;
+    let names = organizations
+        .into_iter()
+        .map(|row| (row.organization.id, row.organization.name))
+        .collect::<std::collections::HashMap<_, _>>();
+    rows.iter()
+        .map(|(agent, access)| {
+            let mut view = agent_view(agent, *access);
+            if let Some(dot) = metadata.get(&agent.principal.id) {
+                let owner = match &dot.owner {
+                    agents_db::DotOwner::User(id) => DotOwnerView::User { id: id.clone() },
+                    agents_db::DotOwner::Organization(id) => {
+                        let Some(name) = names.get(id) else {
+                            return Err(internal(
+                                "organization owner disappeared while reading agent metadata",
+                            ));
+                        };
+                        DotOwnerView::Organization {
+                            id: id.clone(),
+                            name: name.clone(),
+                        }
+                    }
+                };
+                view.dot = Some(AgentDotView {
+                    owner,
+                    name: dot.name.clone(),
+                    active: dot.active,
+                });
+            }
+            Ok(view)
+        })
+        .collect()
+}
+
+pub(super) async fn agent_view_for(
+    state: &RamaState,
+    agent: &agents_db::AgentRow,
+    access: Access,
+) -> Result<AgentView, Response> {
+    Ok(agent_views(state, &[(agent.clone(), access)])
+        .await?
+        .remove(0))
 }
 
 pub(super) fn agent_view(a: &agents_db::AgentRow, access: Access) -> AgentView {
@@ -171,11 +279,16 @@ pub(super) fn agent_view(a: &agents_db::AgentRow, access: Access) -> AgentView {
         disabled_at: p.disabled_at,
         live_version: a.live_version,
         access: access.as_str(),
+        dot: None,
     }
 }
 
-pub(super) fn agent_json(a: &agents_db::AgentRow, access: Access) -> Value {
-    json!(agent_view(a, access))
+pub(super) async fn agent_json(
+    state: &RamaState,
+    a: &agents_db::AgentRow,
+    access: Access,
+) -> Result<Value, Response> {
+    Ok(json!(agent_view_for(state, a, access).await?))
 }
 
 /// One share of an agent.
@@ -377,8 +490,14 @@ async fn require_valid(
 /// an admin.
 pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let user = or_return!(require_agent_manager(&state, &req).await);
-    let rows = or_return!(visible_agents(&state, &user).await);
-    let agents = rows.iter().map(|(a, acc)| agent_view(a, *acc)).collect();
+    let mut tx = or_return!(
+        aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .map_err(internal)
+    );
+    let rows = or_return!(visible_agents_in(&state, &mut tx, &user.id).await);
+    let agents = or_return!(agent_views_in(&mut tx, &rows).await);
+    or_return!(tx.commit().await.map_err(internal));
     json_ok(StatusCode::OK, AgentList { agents })
 }
 
@@ -393,15 +512,71 @@ pub(super) async fn visible_agents(
     state: &RamaState,
     user: &users::User,
 ) -> Result<Vec<(agents_db::AgentRow, Access)>, Response> {
-    let groups = group_ids(state, user);
-    if state.rbac.is_admin(&groups) {
-        agents_db::list_all(&state.db)
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+        .await
+        .map_err(internal)?;
+    let rows = visible_agents_in(state, &mut tx, &user.id).await?;
+    tx.commit().await.map_err(internal)?;
+    Ok(rows)
+}
+
+pub(super) async fn visible_agents_in(
+    state: &RamaState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    user_id: &str,
+) -> Result<Vec<(agents_db::AgentRow, Access)>, Response> {
+    let Some((current, policy)) =
+        aiplane_runtime::agents::access::current_user_policy_in(state, tx, user_id)
             .await
-            .map(|rows| rows.into_iter().map(|a| (a, Access::Write)).collect())
-    } else {
-        agents_db::list_shared_with(&state.db, &user.id, &groups).await
+            .map_err(internal)?
+    else {
+        return Ok(Vec::new());
+    };
+    let groups = policy.role_ids_for(&current.roles);
+    let admin = policy.is_admin(&groups);
+    if !policy.can_manage_agents(&groups) {
+        return Ok(Vec::new());
     }
-    .map_err(internal)
+    let rows = if admin {
+        agents_db::list_all_in(tx)
+            .await
+            .map_err(internal)?
+            .into_iter()
+            .map(|row| (row, Access::Write))
+            .collect::<Vec<_>>()
+    } else {
+        agents_db::list_shared_with_in(tx, user_id, &groups)
+            .await
+            .map_err(internal)?
+    };
+    if admin {
+        return Ok(rows);
+    }
+    let ids = rows
+        .iter()
+        .map(|(row, _)| row.principal.id.clone())
+        .collect::<Vec<_>>();
+    let metadata = agents_db::dot_metadata_for_agents_in(tx, &ids)
+        .await
+        .map_err(internal)?;
+    let memberships = aiplane_agents::db::organizations::list_for_groups_in(tx, &groups)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|row| row.id)
+        .collect::<std::collections::HashSet<_>>();
+    Ok(rows
+        .into_iter()
+        .filter(|(row, access)| {
+            *access >= Access::Read
+                && metadata
+                    .get(&row.principal.id)
+                    .is_none_or(|dot| match &dot.owner {
+                        agents_db::DotOwner::User(_) => true,
+                        agents_db::DotOwner::Organization(id) => memberships.contains(id),
+                    })
+        })
+        .collect())
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -476,7 +651,7 @@ pub(super) async fn create_agent(
     .await;
     match created {
         Ok(Some(a)) => Ok(CreatedAgent {
-            agent: agent_view(&a, Access::Write),
+            agent: agent_view_for(state, &a, Access::Write).await?,
             draft_spec: spec,
         }),
         Ok(None) => Err(json_error(
@@ -541,7 +716,7 @@ pub async fn detail(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         StatusCode::OK,
         AgentDetailReply {
             agent: AgentDetail {
-                agent: agent_view(&agent, held),
+                agent: or_return!(agent_view_for(&state, &agent, held).await),
                 draft_spec: draft,
                 live_spec,
                 limits,
@@ -603,10 +778,20 @@ pub struct SavedDraft {
 /// PUT /api/v0/agents/{id}/draft — replace the draft. What the live version
 /// serves does not change.
 pub async fn update_draft(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let user = or_return!(require_agent_manager(&state, &req).await);
     let (agent, _) = or_return!(agent_at(&state, &req, &user, 1, Access::Write).await);
     let body: DraftBody = or_return!(super::read_json(req.into_body(), "the draft body").await);
-    match save_draft(&state, &user, &agent, body.spec, DraftChange::default()).await {
+    match save_draft(
+        &state,
+        &user,
+        &agent,
+        body.spec,
+        DraftChange::default(),
+        lang,
+    )
+    .await
+    {
         Ok(saved) => json_ok(StatusCode::OK, saved),
         Err(resp) => resp,
     }
@@ -620,11 +805,30 @@ pub(super) async fn save_draft(
     agent: &agents_db::AgentRow,
     mut spec: Value,
     change: DraftChange<'_>,
+    lang: Lang,
 ) -> Result<SavedDraft, Response> {
     let id = &agent.principal.id;
+    let validated_grants = sp_db::grants(&state.db, id).await.map_err(internal)?;
     require_valid(state, id, &spec, Stage::Draft, "save the draft").await?;
     seal_secrets(state, &mut spec)?;
-    match agents_db::update_draft(&state.db, id, &spec.to_string(), &user.id, change).await {
+    let mut tx = begin_write(state, user, id).await?;
+    if sp_db::grants_in(&mut tx, id).await.map_err(internal)? != validated_grants {
+        return Err(json_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            &t(lang, "agent-configuration-error-conflict"),
+        ));
+    }
+    let saved = agents_db::update_draft_in(&mut tx, id, &spec.to_string(), &user.id, change)
+        .await
+        .map_err(internal)?;
+    for (kind, reference) in change.revoking {
+        sp_db::remove_grant_in(&mut tx, id, *kind, reference, &user.id)
+            .await
+            .map_err(internal)?;
+    }
+    tx.commit().await.map_err(internal)?;
+    match Ok::<_, aiplane_core::server::db::DbError>(saved) {
         Ok(Some(saved)) => Ok(SavedDraft {
             draft_spec: spec,
             live_version: agent.live_version,
@@ -691,6 +895,7 @@ fn uses_grant(
 /// the activity log names the restore and those grants, and each revocation
 /// records its own `grant_removed`.
 pub async fn restore_draft(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let user = or_return!(require_agent_manager(&state, &req).await);
     let (agent, _) = or_return!(agent_at(&state, &req, &user, 2, Access::Write).await);
     let body: RestoreBody = or_return!(super::read_json(req.into_body(), "the restore body").await);
@@ -733,12 +938,8 @@ pub async fn restore_draft(State(state): State<Arc<RamaState>>, req: Request) ->
         revoking: &revoking,
         ..DraftChange::default()
     };
-    let saved = or_return!(save_draft(&state, &user, &agent, restored, change).await);
-    for (kind, reference) in &revoking {
-        if let Err(err) = sp_db::remove_grant(&state.db, id, *kind, reference, &user.id).await {
-            return internal(err);
-        }
-    }
+    let saved = or_return!(save_draft(&state, &user, &agent, restored, change, lang).await);
+
     let revoked = revoking
         .iter()
         .map(|(kind, reference)| GrantRef {
@@ -767,14 +968,34 @@ pub struct GrantRef {
 /// POST /api/v0/agents/{id}/publish — validate the draft for running and
 /// snapshot it as the next version, which becomes live.
 pub async fn publish(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let user = or_return!(require_agent_manager(&state, &req).await);
     let (agent, _) = or_return!(agent_at(&state, &req, &user, 1, Access::Write).await);
     let id = &agent.principal.id;
     let draft = parse_spec(&agent.draft_spec);
+    let validated_grants = or_return!(sp_db::grants(&state.db, id).await.map_err(internal));
     let checked =
         or_return!(require_valid(&state, id, &draft, Stage::Publish, "publish the agent").await);
     or_return!(super::json_agent_tests::require_green_suite(&state, &agent, &checked).await);
-    match agents_db::publish(&state.db, id, &agent.draft_spec, &user.id).await {
+    let mut tx = or_return!(begin_write(&state, &user, id).await);
+    let current = or_return!(agents_db::get_in(&mut tx, id).await.map_err(internal));
+    let grants = or_return!(sp_db::grants_in(&mut tx, id).await.map_err(internal));
+    if current
+        .as_ref()
+        .is_none_or(|current| current.draft_spec != agent.draft_spec)
+        || grants != validated_grants
+    {
+        return json_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            &t(lang, "agent-configuration-error-conflict"),
+        );
+    }
+    let result = agents_db::publish_in(&mut tx, id, &agent.draft_spec, &user.id).await;
+    if result.is_ok() {
+        or_return!(tx.commit().await.map_err(internal));
+    }
+    match result {
         Ok(Some(version)) => json_ok(
             StatusCode::CREATED,
             Published {
@@ -933,7 +1154,12 @@ pub async fn set_live(State(state): State<Arc<RamaState>>, req: Request) -> Resp
     let id = agent.principal.id;
     let body: LiveBody =
         or_return!(super::read_json(req.into_body(), "the live-version body").await);
-    match agents_db::set_live(&state.db, &id, body.version, &user.id).await {
+    let mut tx = or_return!(begin_write(&state, &user, &id).await);
+    let result = agents_db::set_live_in(&mut tx, &id, body.version, &user.id).await;
+    if result.is_ok() {
+        or_return!(tx.commit().await.map_err(internal));
+    }
+    match result {
         Ok(true) => json_ok(
             StatusCode::OK,
             LiveVersion {
@@ -978,41 +1204,100 @@ const SUBJECT_MATCHES: usize = 8;
 /// is not shown; the share route says so when it may not.
 pub async fn share_subjects(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let user = or_return!(require_agent_manager(&state, &req).await);
-    or_return!(agent_at(&state, &req, &user, 1, Access::Write).await);
+    let (agent, _) = or_return!(agent_at(&state, &req, &user, 1, Access::Write).await);
     let q = super::query_map(&req)
         .get("q")
-        .map(|q| q.trim().to_string())
+        .map(|q| q.trim().to_owned())
         .unwrap_or_default();
-    if q.chars().count() < SUBJECT_QUERY_MIN_CHARS {
-        return json_ok(
-            StatusCode::OK,
-            ShareSubjects {
-                users: Vec::new(),
-                groups: Vec::new(),
-            },
-        );
-    }
-    let found = match users::search(&state.db, &q, SUBJECT_MATCHES as i64).await {
-        Ok(found) => found,
-        Err(err) => return internal(err),
+    let mut tx = or_return!(begin_write(&state, &user, &agent.principal.id).await);
+    let policy = state.rbac.with_snapshot(or_return!(
+        aiplane_core::server::db::gateway_groups::load_snapshot_in(&mut tx)
+            .await
+            .map_err(internal)
+    ));
+    let owner = or_return!(
+        agents_db::dot_owner_in(&mut tx, &agent.principal.id)
+            .await
+            .map_err(internal)
+    );
+    let org = match owner {
+        Some(agents_db::DotOwner::Organization(id)) => Some(id),
+        _ => None,
     };
-    let users = found
-        .into_iter()
-        .map(|u| SubjectUser {
-            email: u.email.eq_ignore_ascii_case(&q).then_some(u.email),
-            id: u.id,
-            name: u.name,
-        })
-        .collect();
-    let needle = q.to_lowercase();
-    let groups: Vec<String> = state
-        .rbac
-        .group_names()
-        .into_iter()
-        .filter(|g| g.to_lowercase().contains(&needle))
-        .take(SUBJECT_MATCHES)
-        .collect();
-    json_ok(StatusCode::OK, ShareSubjects { users, groups })
+    let mut response = ShareSubjects {
+        users: Vec::new(),
+        groups: Vec::new(),
+        truncated: false,
+    };
+    if q.chars().count() >= SUBJECT_QUERY_MIN_CHARS {
+        let mut offset = 0;
+        for _ in 0..20 {
+            let limit = if org.is_some() {
+                50
+            } else {
+                SUBJECT_MATCHES as u32
+            };
+            let page = or_return!(
+                users::search_page_in(&mut tx, &q, limit, offset)
+                    .await
+                    .map_err(internal)
+            );
+            for user in page.users {
+                if let Some(id) = &org {
+                    let eligible = or_return!(
+                        aiplane_agents::db::organizations::is_member_in(
+                            &mut tx,
+                            id,
+                            &policy.role_ids_for(&user.roles)
+                        )
+                        .await
+                        .map_err(internal)
+                    );
+                    if !eligible {
+                        continue;
+                    }
+                }
+                response.users.push(SubjectUser {
+                    email: user.email.eq_ignore_ascii_case(&q).then_some(user.email),
+                    id: user.id,
+                    name: user.name,
+                });
+                if response.users.len() == SUBJECT_MATCHES {
+                    break;
+                }
+            }
+            if org.is_none() || response.users.len() == SUBJECT_MATCHES {
+                break;
+            }
+            let Some(next) = page.next_offset else {
+                break;
+            };
+            offset = next;
+            if offset >= 1000 {
+                response.truncated = true;
+                break;
+            }
+        }
+        let group_names = if let Some(id) = &org {
+            or_return!(
+                aiplane_agents::db::organizations::get_admin_in(&mut tx, id)
+                    .await
+                    .map_err(internal)
+            )
+            .map(|org| org.member_groups)
+            .unwrap_or_default()
+        } else {
+            policy.group_names()
+        };
+        let needle = q.to_lowercase();
+        response.groups = group_names
+            .into_iter()
+            .filter(|name| name.to_lowercase().contains(&needle))
+            .take(SUBJECT_MATCHES)
+            .collect();
+    }
+    or_return!(tx.commit().await.map_err(internal));
+    json_ok(StatusCode::OK, response)
 }
 
 /// Users and groups matching a share-subject search.
@@ -1020,6 +1305,7 @@ pub async fn share_subjects(State(state): State<Arc<RamaState>>, req: Request) -
 pub struct ShareSubjects {
     pub users: Vec<SubjectUser>,
     pub groups: Vec<String>,
+    pub truncated: bool,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -1102,6 +1388,69 @@ async fn require_share_subject(
     ))
 }
 
+async fn require_share_subject_in(
+    state: &RamaState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    agent_id: &str,
+    kind: SubjectKind,
+    subject: &str,
+    access: Access,
+    lang: Lang,
+) -> Result<(), Response> {
+    let policy = state.rbac.with_snapshot(
+        aiplane_core::server::db::gateway_groups::load_snapshot_in(tx)
+            .await
+            .map_err(internal)?,
+    );
+    let owner = agents_db::dot_owner_in(tx, agent_id)
+        .await
+        .map_err(internal)?;
+    let org = match owner {
+        Some(agents_db::DotOwner::Organization(id)) => Some(id),
+        _ => None,
+    };
+    let held = match kind {
+        SubjectKind::User => {
+            let user = users::find_by_id_in(tx, subject)
+                .await
+                .map_err(internal)?
+                .ok_or_else(|| not_found(format!("there is no user `{subject}`")))?;
+            let groups = policy.role_ids_for(&user.roles);
+            if let Some(id) = &org
+                && !aiplane_agents::db::organizations::is_member_in(tx, id, &groups)
+                    .await
+                    .map_err(internal)?
+            {
+                return Err(not_found(t(lang, "organization-error-not-found")));
+            }
+            policy.can_manage_agents(&groups)
+        }
+        SubjectKind::Group => {
+            if !policy.has_group(subject) {
+                return Err(not_found(format!("there is no group `{subject}`")));
+            }
+            if let Some(id) = &org {
+                let row = aiplane_agents::db::organizations::get_admin_in(tx, id)
+                    .await
+                    .map_err(internal)?;
+                if !row.is_some_and(|row| row.member_groups.iter().any(|group| group == subject)) {
+                    return Err(not_found(t(lang, "organization-error-not-found")));
+                }
+            }
+            policy.can_manage_agents(&[subject.to_owned()])
+        }
+    };
+    if held || !access.needs_agent_manager() {
+        Ok(())
+    } else {
+        Err(json_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "share_needs_agent_manager",
+            &t(lang, "organization-error-permission-required"),
+        ))
+    }
+}
+
 fn last_writer() -> Response {
     json_error(
         StatusCode::CONFLICT,
@@ -1113,6 +1462,7 @@ fn last_writer() -> Response {
 
 /// POST /api/v0/agents/{id}/shares — add a share or change its access.
 pub async fn share(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let user = or_return!(require_agent_manager(&state, &req).await);
     let (agent, _) = or_return!(agent_at(&state, &req, &user, 1, Access::Write).await);
     let body: ShareBody = or_return!(super::read_json(req.into_body(), "the share body").await);
@@ -1122,8 +1472,21 @@ pub async fn share(State(state): State<Arc<RamaState>>, req: Request) -> Respons
         _ => return bad_request("a share needs `access`: `respond`, `read` or `write`"),
     };
     or_return!(require_share_subject(&state, kind, subject, access).await);
-    let changed = agents_db::set_share(
-        &state.db,
+    let mut tx = or_return!(begin_write(&state, &user, &agent.principal.id).await);
+    or_return!(
+        require_share_subject_in(
+            &state,
+            &mut tx,
+            &agent.principal.id,
+            kind,
+            subject,
+            access,
+            lang
+        )
+        .await
+    );
+    let changed = agents_db::set_share_in(
+        &mut tx,
         &agent.principal.id,
         kind,
         subject,
@@ -1131,6 +1494,9 @@ pub async fn share(State(state): State<Arc<RamaState>>, req: Request) -> Respons
         &user.id,
     )
     .await;
+    if changed.is_ok() {
+        or_return!(tx.commit().await.map_err(internal));
+    }
     state.grant_caps.invalidate();
     match changed {
         Ok(ShareChange::LastWriter) => last_writer(),
@@ -1164,8 +1530,12 @@ pub async fn revoke_share(State(state): State<Arc<RamaState>>, req: Request) -> 
     let (agent, _) = or_return!(agent_at(&state, &req, &user, 2, Access::Write).await);
     let body: ShareBody = or_return!(super::read_json(req.into_body(), "the share body").await);
     let (kind, subject) = or_return!(parse_subject(&body));
+    let mut tx = or_return!(begin_write(&state, &user, &agent.principal.id).await);
     let removed =
-        agents_db::remove_share(&state.db, &agent.principal.id, kind, subject, &user.id).await;
+        agents_db::remove_share_in(&mut tx, &agent.principal.id, kind, subject, &user.id).await;
+    if removed.is_ok() {
+        or_return!(tx.commit().await.map_err(internal));
+    }
     state.grant_caps.invalidate();
     match removed {
         Ok(ShareChange::LastWriter) => last_writer(),
@@ -1199,7 +1569,15 @@ pub async fn delete(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         Ok(None) => {}
         Err(error) => return internal(error),
     }
-    match agents_db::delete(&state.db, &agent.principal.id, &user.id).await {
+    let mut tx = or_return!(begin_write(&state, &user, &agent.principal.id).await);
+    let result = agents_db::delete_in(&mut tx, &agent.principal.id, &user.id).await;
+    if let Ok(changed) = &result {
+        or_return!(tx.commit().await.map_err(internal));
+        if *changed {
+            aiplane_agents::db::embed_keys::origins_changed();
+        }
+    }
+    match result {
         Ok(_) => no_content(),
         Err(err) => internal(err),
     }

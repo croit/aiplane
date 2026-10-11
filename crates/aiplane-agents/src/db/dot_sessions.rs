@@ -147,7 +147,7 @@ pub async fn link(
     let mut tx = WriteTx::begin(pool).await?;
     let valid: bool = sqlx::query_scalar(
         "SELECT EXISTS(
-            SELECT 1 FROM personal_dots d
+            SELECT 1 FROM dots d
             JOIN chat_sessions s ON s.id = ?
             WHERE d.principal_id = ? AND d.owner_user_id = ? AND d.active = 1
               AND s.user_id = ? AND s.principal_id IS NULL
@@ -209,7 +209,7 @@ pub async fn for_session(
     let row = sqlx::query(
         "SELECT p.session_id, p.owner_user_id, p.dot_id, COALESCE(d.active, 0) AS active
          FROM personal_dot_sessions p
-         LEFT JOIN personal_dots d ON d.principal_id = p.dot_id AND d.owner_user_id = p.owner_user_id
+         LEFT JOIN dots d ON d.principal_id = p.dot_id AND d.owner_user_id = p.owner_user_id
          JOIN chat_sessions s ON s.id = p.session_id
          WHERE p.session_id = ? AND p.owner_user_id = ? AND s.user_id = ?
            AND s.principal_id IS NULL",
@@ -240,7 +240,7 @@ pub async fn binding_valid(
         return Ok(true);
     }
     Ok(sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM personal_dots WHERE principal_id = ? AND owner_user_id = ? AND active = 1)",
+        "SELECT EXISTS(SELECT 1 FROM dots WHERE principal_id = ? AND owner_user_id = ? AND active = 1)",
     ).bind(dot_id).bind(owner_user_id).fetch_one(connection).await?)
 }
 
@@ -288,7 +288,7 @@ pub async fn scoped_session_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::agents::{self, PersonalDotCreate};
+    use crate::db::agents::{self, DotCreate};
     use crate::db::system_principals::NewPrincipal;
     use aiplane_core::server::db::open;
     use aiplane_core::server::db::users::{self, User};
@@ -328,7 +328,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(result, PersonalDotCreate::Created);
+        assert_eq!(result, DotCreate::Created);
         row.unwrap().principal.id
     }
 

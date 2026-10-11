@@ -6,6 +6,115 @@ use sqlx::{Executor, Row};
 use std::path::Path;
 
 #[tokio::test]
+async fn organization_dot_ownership_is_exclusive_immutable_and_independent_of_creator() {
+    let pool = open(Path::new(":memory:")).await.unwrap();
+    pool.execute("INSERT INTO users(id,email,roles_json,created_at,updated_at) VALUES('creator','creator@example.test','[]','2026-01-01','2026-01-01')").await.unwrap();
+    for id in ["acme", "other"] {
+        sqlx::query("INSERT INTO organizations(id,name,description,revision,created_by,created_at,updated_at) VALUES(?,?,'','initial','creator','2026-01-01','2026-01-01')")
+            .bind(id).bind(id).execute(&pool).await.unwrap();
+    }
+    for id in ["personal", "organization", "invalid"] {
+        sqlx::query("INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES(?,?,?,'creator','2026-01-01')")
+            .bind(id).bind(id).bind(id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO agents(principal_id,draft_spec,created_at,updated_at) VALUES(?,'{}','2026-01-01','2026-01-01')")
+            .bind(id).execute(&pool).await.unwrap();
+    }
+    pool.execute("INSERT INTO dots(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('personal','creator',NULL,'Harald','2026-01-01','2026-01-01'),('organization',NULL,'acme','Harald','2026-01-01','2026-01-01')").await.unwrap();
+    for (user, organization) in [(None, None), (Some("creator"), Some("acme"))] {
+        assert!(sqlx::query("INSERT INTO dots(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('invalid',?,?,'Invalid','2026-01-01','2026-01-01')")
+            .bind(user).bind(organization).execute(&pool).await.is_err());
+    }
+    assert!(
+        pool.execute("UPDATE dots SET principal_id='invalid' WHERE principal_id='organization'")
+            .await
+            .is_err()
+    );
+    assert!(
+        pool.execute("UPDATE dots SET organization_id='other' WHERE principal_id='organization'")
+            .await
+            .is_err()
+    );
+    assert!(pool.execute("UPDATE dots SET owner_user_id=NULL,organization_id='acme' WHERE principal_id='personal'").await.is_err());
+    pool.execute("DELETE FROM users WHERE id='creator'")
+        .await
+        .unwrap();
+    for table in ["dots", "agents", "system_principals"] {
+        let key = if table == "system_principals" {
+            "id"
+        } else {
+            "principal_id"
+        };
+        let ids: Vec<String> =
+            sqlx::query_scalar(&format!("SELECT {key} FROM {table} ORDER BY {key}"))
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(!ids.contains(&"personal".to_owned()), "{table}");
+        assert!(ids.contains(&"organization".to_owned()), "{table}");
+    }
+    let organizations: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM organizations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(organizations, 2);
+    assert!(
+        pool.execute("DELETE FROM organizations WHERE id='acme'")
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn organization_dot_schema_matches_its_fixture() {
+    let pool = open(Path::new(":memory:")).await.unwrap();
+    let rows = sqlx::query(
+        "SELECT type, name, sql FROM sqlite_schema
+         WHERE name IN ('organizations', 'organization_groups', 'dots',
+             'idx_organization_groups_group', 'idx_dots_user_name',
+             'idx_dots_organization_name', 'idx_dots_user_active',
+             'idx_dots_organization_active', 'dots_reject_owner_update',
+             'organization_groups_rotate_revision_after_insert',
+             'organization_groups_rotate_revision_after_delete',
+             'organization_groups_reject_update',
+             'personal_dots_delete_principals_before_owner_delete')
+         ORDER BY type, name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 13);
+    let actual = rows
+        .iter()
+        .map(|row| {
+            let kind: String = row.get("type");
+            let name: String = row.get("name");
+            let sql: String = row.get("sql");
+            format!(
+                "{kind} {name}: {}\n",
+                sql.split_whitespace().collect::<Vec<_>>().join(" ")
+            )
+        })
+        .collect::<String>();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schema_after_dot_organizations.txt");
+    if std::env::var_os("UPDATE_SCHEMA_FIXTURE").is_some() {
+        std::fs::write(fixture, actual).unwrap();
+    } else {
+        assert_eq!(
+            actual,
+            include_str!("fixtures/schema_after_dot_organizations.txt")
+        );
+    }
+}
+
+#[tokio::test]
 async fn personal_dot_management_is_false_for_existing_groups() {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)

@@ -208,7 +208,7 @@ pub async fn embeddable_origins(pool: &Pool) -> Result<HashSet<String>, DbError>
 /// costs a cache a reload, never a stale answer.
 static ORIGINS_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-pub(crate) fn origins_changed() {
+pub fn origins_changed() {
     ORIGINS_GENERATION.fetch_add(1, Ordering::SeqCst);
 }
 

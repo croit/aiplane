@@ -18,10 +18,39 @@ use crate::rama_server::pages::json_agent_tests as tests;
 use crate::rama_server::pages::json_agents as agents;
 use crate::rama_server::pages::json_embed_keys as embed_keys;
 use crate::rama_server::pages::json_inbox as inbox;
+use crate::rama_server::pages::json_organizations as organizations;
 use crate::rama_server::pages::json_principals as principals;
 
 pub(super) fn operations() -> Vec<Op> {
     vec![
+        get("/api/v0/admin/organizations", Access::Admin)
+            .ok(json::<organizations::AdminOrganizationList>())
+            .errors(&[404]),
+        post("/api/v0/admin/organizations", Access::Admin)
+            .body(json::<organizations::OrganizationBody>())
+            .created(json::<organizations::AdminOrganizationReply>())
+            .errors(&[400, 404, 413]),
+        put("/api/v0/admin/organizations/{id}", Access::Admin)
+            .body(json::<organizations::OrganizationEditBody>())
+            .ok(json::<organizations::AdminOrganizationReply>())
+            .errors(&[400, 404, 409, 413]),
+        get("/api/v0/organizations", Access::Session)
+            .ok(json::<organizations::OrganizationList>())
+            .errors(&[404]),
+        get("/api/v0/organizations/{id}", Access::Session)
+            .ok(json::<organizations::OrganizationDetail>())
+            .errors(&[400, 404]),
+        post("/api/v0/organizations/{id}/dots", Access::Session)
+            .body(json::<organizations::OrganizationDotBody>())
+            .created(json::<organizations::OrganizationDotReply>())
+            .errors(&[400, 403, 404, 409, 413]),
+        post(
+            "/api/v0/organizations/{id}/dots/{dot}/active",
+            Access::Session,
+        )
+        .body(json::<organizations::OrganizationDotActiveBody>())
+        .ok(json::<organizations::OrganizationDotReply>())
+        .errors(&[400, 404, 409, 413]),
         get("/api/v0/system-principals", Access::Session)
             .ok(json::<principals::PrincipalList>())
             .errors(&[403]),
@@ -58,8 +87,9 @@ pub(super) fn operations() -> Vec<Op> {
         .no_content()
         .errors(&[400, 403, 404]),
         get("/api/v0/agent-resources", Access::Session)
+            .query::<resources::AgentResourcesQuery>()
             .ok(json::<resources::AgentResources>())
-            .errors(&[403]),
+            .errors(&[403, 404]),
         post("/api/v0/agent-architect", Access::Session)
             .body(json::<architect::StartBody>())
             .ok(json::<architect::ArchitectConversation>())
@@ -159,14 +189,14 @@ pub(super) fn operations() -> Vec<Op> {
         put("/api/v0/agents/{id}/draft", Access::Session)
             .body(json::<agents::DraftBody>())
             .ok(json::<agents::SavedDraft>())
-            .errors(&[400, 403, 404, 422]),
+            .errors(&[400, 403, 404, 409, 422]),
         post("/api/v0/agents/{id}/draft/restore", Access::Session)
             .body(json::<agents::RestoreBody>())
             .ok(json::<agents::RestoredDraft>())
-            .errors(&[400, 403, 404, 422]),
+            .errors(&[400, 403, 404, 409, 422]),
         post("/api/v0/agents/{id}/publish", Access::Session)
             .created(json::<agents::Published>())
-            .errors(&[400, 403, 404, 422]),
+            .errors(&[400, 403, 404, 409, 422]),
         post("/api/v0/agents/{id}/test/messages", Access::Session)
             .body(json::<test_chat::TestMessageBody>())
             .accepted(json::<test_chat::TestTurnStarted>())

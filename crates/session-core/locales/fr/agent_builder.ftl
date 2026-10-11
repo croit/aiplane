@@ -433,3 +433,5 @@ dot-access-unavailable = Cet outil sélectionné est indisponible. Retirez-le av
 dot-connection-reload = Recharger les connexions
 
 dot-connection-local-unavailable = Les identifiants locaux de ce Dot ne peuvent pas être utilisés.
+agent-configuration-error-conflict = Le brouillon ou les autorisations de ressources de l’agent ont changé. Rechargez sa configuration actuelle avant d’enregistrer ou de publier à nouveau.
+agent-management-error-permission-required = La gestion des agents nécessite une autorisation. Demandez à un administrateur de l’activer pour l’un de vos groupes.

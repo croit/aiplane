@@ -15,7 +15,7 @@
  * descriptions of the slots the assistant manages) is English, like the
  * structured system prompt it ends up in (`docs/agent-runs.md` → "The system message"). Text a person reads comes from the catalogs.
  */
-import { grantable, type AgentError, type AgentResources, type Grant, type GrantableItem, type GrantableKind, type ModelDefaults, type ModelKind, type Spec, type SpecIssue } from './agents.ts';
+import { agentUiCapabilities, type AgentSummary, grantable, type AgentError, type AgentResources, type Grant, type GrantableItem, type GrantableKind, type ModelDefaults, type ModelKind, type Spec, type SpecIssue } from './agents.ts';
 import { modelSelectOptions } from './model-option.ts';
 import type { SearchOption } from './searchable-select.ts';
 import templates from './agent-templates.json' with { type: 'json' };
@@ -27,6 +27,11 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 /* ---- steps ---------------------------------------------------------- */
 
 export const STEPS = ['start', 'basics', 'scope', 'abilities', 'slots', 'identity', 'routes', 'site', 'review'] as const;
+export function visibleSetupSteps(agent: Pick<AgentSummary, 'dot'> | null | undefined): readonly StepKey[] {
+    if (!agent) return [];
+    return agentUiCapabilities(agent).site ? STEPS : STEPS.filter((step) => step !== 'site');
+}
+
 export type StepKey = (typeof STEPS)[number];
 /** The steps the overview lists as sections: everything but the start and the review. */
 export const SECTIONS = STEPS.slice(1, -1) as readonly StepKey[];
@@ -1166,7 +1171,7 @@ export function stepForPath(path: string): StepKey | null {
 	return null;
 }
 
-export function checklist(spec: Spec, publishIssues: SpecIssue[] = [], defaults?: ModelDefaults | null): Todo[] {
+export function checklist(spec: Spec, publishIssues: SpecIssue[] = [], defaults?: ModelDefaults | null, agent?: Pick<AgentSummary, 'dot'> | null): Todo[] {
 	const todos: Todo[] = [];
 	const basics = readBasics(spec);
 	if (!basics.model && !defaults?.chat) todos.push({ step: 'basics', key: 'agents-setup-todo-model', blocking: true });
@@ -1179,13 +1184,14 @@ export function checklist(spec: Spec, publishIssues: SpecIssue[] = [], defaults?
 			todos.push({ step: 'routes', key: 'agents-setup-rule-no-target', args: { topic: rule.topic }, blocking: true });
 		}
 	}
-	if (!readSite(spec).length) todos.push({ step: 'site', key: 'agents-setup-todo-site', blocking: false });
+	if ((!agent || agentUiCapabilities(agent).site) && !readSite(spec).length) todos.push({ step: 'site', key: 'agents-setup-todo-site', blocking: false });
 	const seen = new Set<string>();
 	for (const issue of publishIssues) {
 		const message = issue.path ? `${issue.path}: ${issue.message}` : issue.message;
 		if (seen.has(message)) continue;
 		seen.add(message);
-		todos.push({ step: stepForPath(issue.path), key: null, message, blocking: true });
+		const step = stepForPath(issue.path);
+		todos.push({ step: step === 'site' && agent && !agentUiCapabilities(agent).site ? null : step, key: null, message, blocking: true });
 	}
 	return todos;
 }

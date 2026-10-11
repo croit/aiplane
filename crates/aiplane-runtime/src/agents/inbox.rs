@@ -180,7 +180,7 @@ pub async fn agent_standing(
     agent_id: &str,
 ) -> Result<Option<Standing>, DbError> {
     Ok(
-        super::access::effective_access(state, agent_id, &viewer.user_id, &viewer.groups)
+        super::access::effective_access(state, agent_id, &viewer.user_id)
             .await?
             .map(|access| match access {
                 Access::Respond => Standing::Responder,
@@ -290,11 +290,22 @@ async fn agent_answerers(state: &RamaState, agent_id: &str) -> Result<Vec<String
     }
     let mut out = BTreeSet::new();
     for user in users::list_all(&state.db).await? {
-        let viewer = Viewer::of(state, &user);
-        let named = direct.contains(&user.id) || viewer.groups.iter().any(|g| groups.contains(g));
-        if named && agent_standing(state, &viewer, agent_id).await?.is_some() {
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
+        let Some((user, policy)) =
+            super::access::current_user_policy_in(state, &mut tx, &user.id).await?
+        else {
+            continue;
+        };
+        let current_groups = policy.role_ids_for(&user.roles);
+        let named = direct.contains(&user.id) || current_groups.iter().any(|g| groups.contains(g));
+        if named
+            && super::access::effective_access_in(state, &mut tx, agent_id, &user.id)
+                .await?
+                .is_some()
+        {
             out.insert(user.id);
         }
+        tx.commit().await?;
     }
     Ok(out.into_iter().collect())
 }
@@ -542,6 +553,54 @@ impl InboxList {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn named_group_recipients_use_current_policy_without_notifying_unshared_admins() {
+        use aiplane_agents::db::agents::{self, Access, SubjectKind};
+        use aiplane_core::server::db::gateway_groups;
+        let (state, _, dot) = crate::agents::access::tests::fixture().await;
+        agents::remove_share(&state.db, &dot, SubjectKind::User, "responder", "creator")
+            .await
+            .unwrap();
+        agents::remove_share(&state.db, &dot, SubjectKind::User, "outsider", "creator")
+            .await
+            .unwrap();
+        agents::set_share(
+            &state.db,
+            &dot,
+            SubjectKind::Group,
+            "responders",
+            Access::Respond,
+            "creator",
+        )
+        .await
+        .unwrap();
+        gateway_groups::set_mappings_for_group(&state.db, "responders", &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            super::agent_answerers(&state, &dot).await.unwrap(),
+            vec!["creator"]
+        );
+        gateway_groups::set_mappings_for_group(
+            &state.db,
+            "responders",
+            &["claim-outsiders".into()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            super::agent_answerers(&state, &dot).await.unwrap(),
+            vec!["creator", "outsider"]
+        );
+        gateway_groups::set_mappings_for_group(&state.db, "responders", &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            super::agent_answerers(&state, &dot).await.unwrap(),
+            vec!["creator"]
+        );
+    }
+
     #[tokio::test]
     async fn personal_inbox_does_not_follow_a_forged_other_owner_child_reference() {
         let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))

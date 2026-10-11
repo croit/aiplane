@@ -130,4 +130,4 @@ First deliver the shared revision/conditional claim/durable application seam; th
 - The proposed daily cadence and finite limits are chosen recommendations requiring parent contract confirmation. Model selection is deliberately explicit because no dedicated curation default exists.
 - Safe optimized coverage cannot be proved by an LLM's claim that every source was preserved. Keep canonical notes and a source manifest, preserve uncovered manual content, and show excluded sources; do not label the output complete knowledge.
 - A universal guarantee that arbitrary manually entered text contains no secrets is unavailable. Known secure origins are excluded and selection/review is explicit; no speculative detector or safety claim is included.
-- Organization storage and execution are separate proposed slices. This design supplies no organization membership, shared-memory promotion or employee-profile access.
+- Organization metadata and membership belong to the implemented configuration foundation. Organization memory and execution require their own slices; this curation design supplies no shared-memory promotion or employee-profile access.

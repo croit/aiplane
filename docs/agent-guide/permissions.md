@@ -43,6 +43,28 @@ Read and write recipients must be agent managers because those rights expose the
 
 Share access is sensitive because it can expose visitor conversation content. Choose the narrow access needed for a responder, and review the existing table after each change.
 
+## Organization Dot configuration
+
+An organization Dot uses these same grants, shares and spec controls. Its
+persisted organization owner supplies an additional membership boundary:
+current membership and an appropriate share are both required. Read and write
+still require agent-management permission. Respond access supplies authorized
+Inbox standing without exposing the configuration. Administration retains
+configuration recovery rights.
+
+Organization share searches suggest eligible current members and the
+organization's bound groups. Results are capped at eight users and eight
+groups. A broad search can reach its bounded candidate budget before finding
+a member; when `truncated` is true, narrow the query. Absence from that partial
+result does not establish absence of an eligible account.
+
+The resource inventory describes configuration grants. Organization connector
+inventory and direct connector grants are unavailable until an explicit
+organization credential can be selected. Organization execution remains
+unavailable; saving, publishing or activating its configuration does not start
+a model or give it an employee's account. See [organization
+Dots](../dots-organizations.md) for the implementation boundary.
+
 ## Troubleshooting
 
 | Symptom | Check |

@@ -143,7 +143,7 @@ DROP TABLE dot_mcp_pending_preserved;
 DROP TABLE user_mcp_connections;
 
 CREATE TABLE dot_connector_bindings (
-    dot_id TEXT NOT NULL REFERENCES personal_dots(principal_id) ON DELETE CASCADE,
+    dot_id TEXT NOT NULL REFERENCES dots(principal_id) ON DELETE CASCADE,
     connector_key TEXT NOT NULL,
     identity_mode TEXT NOT NULL CHECK (identity_mode IN ('user', 'principal')),
     connection_generation TEXT NOT NULL,

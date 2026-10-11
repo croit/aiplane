@@ -287,6 +287,31 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         )
         .with_get("/api/v0/agents", pages::json_agents::list)
         .with_post("/api/v0/agents", pages::json_agents::create)
+        .with_get(
+            "/api/v0/admin/organizations",
+            pages::json_organizations::admin_list,
+        )
+        .with_post(
+            "/api/v0/admin/organizations",
+            pages::json_organizations::admin_create,
+        )
+        .with_put(
+            "/api/v0/admin/organizations/{id}",
+            pages::json_organizations::admin_update,
+        )
+        .with_get("/api/v0/organizations", pages::json_organizations::list)
+        .with_get(
+            "/api/v0/organizations/{id}",
+            pages::json_organizations::detail,
+        )
+        .with_post(
+            "/api/v0/organizations/{id}/dots",
+            pages::json_organizations::create_dot,
+        )
+        .with_post(
+            "/api/v0/organizations/{id}/dots/{dot}/active",
+            pages::json_organizations::set_active,
+        )
         .with_get("/api/v0/dots", pages::json_dots::list)
         .with_post("/api/v0/dots", pages::json_dots::create)
         .with_get("/api/v0/dots/{id}/access", pages::json_dots::access_get)

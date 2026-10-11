@@ -501,6 +501,7 @@ pub mod json_agents;
 pub mod json_dots;
 pub mod json_embed_keys;
 pub mod json_inbox;
+pub mod json_organizations;
 pub mod json_principals;
 pub mod json_skills;
 pub mod json_tokens;

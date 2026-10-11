@@ -1,20 +1,71 @@
 ALTER TABLE gateway_groups ADD COLUMN can_manage_dots INTEGER NOT NULL DEFAULT 0 CHECK (can_manage_dots IN (0, 1));
 
-CREATE TABLE personal_dots (
-    principal_id TEXT PRIMARY KEY NOT NULL REFERENCES agents(principal_id) ON DELETE CASCADE,
-    owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+CREATE TABLE organizations (
+    id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
-    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    description TEXT NOT NULL,
+    revision TEXT NOT NULL CHECK (length(revision) > 0),
+    created_by TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 ) STRICT;
 
-CREATE UNIQUE INDEX idx_personal_dots_owner_name ON personal_dots (owner_user_id, name);
-CREATE INDEX idx_personal_dots_owner_active ON personal_dots (owner_user_id, active);
+CREATE TABLE organization_groups (
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    gateway_group TEXT NOT NULL REFERENCES gateway_groups(name) ON DELETE CASCADE,
+    PRIMARY KEY (organization_id, gateway_group)
+) STRICT;
+
+CREATE INDEX idx_organization_groups_group ON organization_groups (gateway_group);
+
+CREATE TRIGGER organization_groups_rotate_revision_after_insert
+AFTER INSERT ON organization_groups
+BEGIN
+    UPDATE organizations SET revision = lower(hex(randomblob(16))),
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE id = NEW.organization_id;
+END;
+
+CREATE TRIGGER organization_groups_rotate_revision_after_delete
+AFTER DELETE ON organization_groups
+BEGIN
+    UPDATE organizations SET revision = lower(hex(randomblob(16))),
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE id = OLD.organization_id;
+END;
+
+CREATE TRIGGER organization_groups_reject_update
+BEFORE UPDATE ON organization_groups
+BEGIN
+    SELECT RAISE(ABORT, 'Organization membership bindings must be replaced');
+END;
+
+CREATE TABLE dots (
+    principal_id TEXT PRIMARY KEY NOT NULL REFERENCES agents(principal_id) ON DELETE CASCADE,
+    owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    organization_id TEXT REFERENCES organizations(id) ON DELETE RESTRICT,
+    name TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK ((owner_user_id IS NOT NULL) <> (organization_id IS NOT NULL))
+) STRICT;
+
+CREATE UNIQUE INDEX idx_dots_user_name ON dots (owner_user_id, name) WHERE owner_user_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_dots_organization_name ON dots (organization_id, name) WHERE organization_id IS NOT NULL;
+CREATE INDEX idx_dots_user_active ON dots (owner_user_id, active) WHERE owner_user_id IS NOT NULL;
+CREATE INDEX idx_dots_organization_active ON dots (organization_id, active) WHERE organization_id IS NOT NULL;
+
+CREATE TRIGGER dots_reject_owner_update
+BEFORE UPDATE OF principal_id, owner_user_id, organization_id ON dots
+WHEN NEW.principal_id IS NOT OLD.principal_id OR NEW.owner_user_id IS NOT OLD.owner_user_id OR NEW.organization_id IS NOT OLD.organization_id
+BEGIN
+    SELECT RAISE(ABORT, 'Dot ownership is immutable');
+END;
 
 CREATE TABLE dot_delegation_edges (
-    caller_dot_id TEXT NOT NULL REFERENCES personal_dots(principal_id) ON DELETE CASCADE,
-    receiver_dot_id TEXT NOT NULL REFERENCES personal_dots(principal_id) ON DELETE CASCADE,
+    caller_dot_id TEXT NOT NULL REFERENCES dots(principal_id) ON DELETE CASCADE,
+    receiver_dot_id TEXT NOT NULL REFERENCES dots(principal_id) ON DELETE CASCADE,
     outbound_enabled INTEGER NOT NULL DEFAULT 0 CHECK (outbound_enabled IN (0, 1)),
     inbound_enabled INTEGER NOT NULL DEFAULT 0 CHECK (inbound_enabled IN (0, 1)),
     generation TEXT NOT NULL,
@@ -27,7 +78,7 @@ CREATE INDEX idx_dot_delegation_edges_receiver ON dot_delegation_edges (receiver
 
 CREATE TABLE personal_dot_memories (
     id TEXT PRIMARY KEY NOT NULL,
-    dot_id TEXT NOT NULL REFERENCES personal_dots(principal_id) ON DELETE CASCADE,
+    dot_id TEXT NOT NULL REFERENCES dots(principal_id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('preference', 'project', 'fact')),
     content TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -42,6 +93,6 @@ BEFORE DELETE ON users
 BEGIN
     DELETE FROM system_principals
     WHERE id IN (
-        SELECT principal_id FROM personal_dots WHERE owner_user_id = OLD.id
+        SELECT principal_id FROM dots WHERE owner_user_id = OLD.id
     );
 END;

@@ -351,7 +351,7 @@ async fn a_non_manager_can_neither_create_list_read_nor_share() {
         body["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("can_manage_agents"),
+            .contains("enable agent management"),
         "{body}"
     );
     assert_eq!(
@@ -673,7 +673,7 @@ async fn share_subjects_are_searched_not_listed() {
     assert_eq!(status, StatusCode::OK, "{short}");
     assert_eq!(
         short,
-        json!({ "users": [], "groups": [] }),
+        json!({ "users": [], "groups": [], "truncated": false }),
         "one character finds nothing"
     );
 
@@ -754,13 +754,8 @@ async fn a_manager_who_loses_the_permission_loses_the_agent_despite_the_share() 
         .await
         .unwrap();
     fx.state.reload_rbac().await;
-    let user = users::find_by_id(&fx.state.db, "alice")
-        .await
-        .unwrap()
-        .unwrap();
-    let groups = fx.state.rbac.role_ids_for(&user.roles);
     assert_eq!(
-        aiplane_runtime::agents::access::effective_access(&fx.state, &id, "alice", &groups)
+        aiplane_runtime::agents::access::effective_access(&fx.state, &id, "alice")
             .await
             .unwrap(),
         None
@@ -775,7 +770,7 @@ async fn a_manager_who_loses_the_permission_loses_the_agent_despite_the_share() 
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(
-        aiplane_runtime::agents::access::effective_access(&fx.state, &id, "alice", &groups)
+        aiplane_runtime::agents::access::effective_access(&fx.state, &id, "alice")
             .await
             .unwrap(),
         Some(aiplane_agents::db::agents::Access::Respond),

@@ -1,0 +1,22 @@
+organization-error-invalid = 请检查名称和成员组，然后提交修正后的表单。
+organization-error-conflict = 组织已发生更改。请重新加载当前设置后再保存。
+organization-error-not-found = 此组织不可用。请检查地址，或请管理员检查你的访问权限。
+organization-error-permission-required = 你需要是组织成员并拥有代理管理权限。请管理员检查你的所属组。
+organization-error-active-limit = 组织已达到启用 Dot 的数量上限。请停用一个 Dot，或请管理员提高上限。
+organization-error-name-conflict = 此组织已有同名 Dot。请选择其他名称。
+organization-error-admin-required = 只有管理员可以管理组织设置。请管理员进行此更改。
+organization-error-execution-unavailable = 组织 Dot 可以配置，但此部署暂时不支持运行。启动此 Dot 前，请联系管理员。
+organizations-heading = 组织
+organizations-empty = 你没有可访问的组织。
+organization-create = 创建组织
+organization-member-groups = 成员组
+organization-membership-explanation = 组成员身份提供组织访问权限。Dot 共享权限和工具授权需要单独配置。
+organization-no-members = 此组织尚未配置成员组。
+organization-reload = 重新加载组织
+organization-saved = 组织已保存。
+organization-dots-empty = 此组织中没有与你共享的 Dot。
+organization-active-count = 已激活 { $count } 个 Dot，上限 { $limit } 个
+organization-owned-by = 组织：{ $name }
+organization-configuration-only = 此组织 Dot 可以配置和发布。对话、自动化和外部渠道暂不可用。
+organization-share-search-truncated = 搜索已达到上限。请输入更具体的名称或完整的电子邮件地址。
+

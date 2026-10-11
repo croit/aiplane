@@ -143,11 +143,30 @@ see unregistered image, GeoIP, and sandbox tools as read-only rows linking to
 the matching operator setup page. These placeholder rows are not offered to
 the model or persisted as user tool preferences.
 
-The admin sidebar has one **Access & limits** entry. Its four path-backed tabs
-keep `/admin/users`, `/admin/tokens`, `/admin/groups` and `/admin/limits` at
-their existing URLs, with their existing forms and APIs. The Limits tab follows
+The admin sidebar has one **Access & limits** entry. Its path-backed tabs
+open `/admin/users`, `/admin/tokens`, `/admin/groups`, `/admin/organizations`
+and `/admin/limits`, with their own forms and APIs. The Limits tab follows
 the optional limits feature switch. Group grant and identity subtabs remain
 inside the Groups tab. `/admin/settings` stays a separate sidebar page.
+
+The authenticated Workspace navigation includes **Organizations**
+(`/organizations`). It lists actual organizations for which the current user
+is a member. Each `/organizations/<id>` page shows the returned name,
+description, organization-wide active usage and readable shared Dots.
+Membership alone grants no Dot share. Members with agent-management permission
+open the shared creation dialog to create a named Dot; existing write access permits activation changes within
+the independent organization cap. Configuration opens the existing
+`/agents/<id>/setup/start` flow and editor. Organization owner metadata controls
+the return link and configuration-only notice. Test chat, test suites, website
+and external-channel controls are unavailable for these Dots.
+
+`/admin/organizations` edits actual organization metadata and selected existing
+gateway groups. Metadata saves send the returned revision. A conflict preserves
+the local draft until an explicit reload. Empty group bindings grant no member
+access, and removing a bound group changes the organization revision. The
+forms use the shared group selector and existing six-language catalogs. Creation
+uses the existing shared Modal; existing organization cards retain their
+metadata editor.
 
 The Notifications tab shows device controls when Web Push initialized. If the
 feature is configured but its sender failed to initialize, the tab shows an

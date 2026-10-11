@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import type { Spec } from '#lib/agents.js';
+	import { agentUiCapabilities, type Spec } from '#lib/agents.js';
 	import { useWorkspace } from '#lib/agent-workspace.svelte.js';
 	import { t } from '#lib/i18n.svelte.js';
 	import AgentEditor from './AgentEditor.svelte';
@@ -28,6 +28,7 @@
 	 */
 	const ws = useWorkspace();
 
+	const capabilities = $derived(agentUiCapabilities(ws.detail));
 	const TABS = {
 		setup: [] as string[],
 		try: ['test', 'tests'],
@@ -35,10 +36,11 @@
 		settings: ['versions', 'sharing']
 	} as const;
 	type Tab = keyof typeof TABS;
+	const tabs = $derived((Object.keys(TABS) as Tab[]).filter((name) => name !== 'try' || capabilities.execution));
 	const ADVANCED = ['edit', 'canvas', 'json', 'grants'] as const;
 
 	const param = (name: string) => page.url.searchParams.get(name);
-	const tab = $derived((Object.keys(TABS) as Tab[]).find((x) => x === param('tab')) ?? 'setup');
+	const tab = $derived(tabs.find((x) => x === param('tab')) ?? 'setup');
 	const advanced = $derived(tab === 'setup' && param('view') === 'advanced');
 	const subs = $derived<readonly string[]>(advanced ? ADVANCED : TABS[tab]);
 	const sub = $derived(subs.find((x) => x === param('sub')) ?? subs[0] ?? '');
@@ -60,7 +62,7 @@
 </script>
 
 <div role="tablist" class="tabs tabs-border w-full overflow-x-auto border-b border-base-300">
-	{#each Object.keys(TABS) as name (name)}
+	{#each tabs as name (name)}
 		<button role="tab" type="button" class="tab whitespace-nowrap" class:tab-active={tab === name} aria-selected={tab === name} onclick={() => navigate({ tab: name, sub: null, view: null })}>
 			{t(`agents-tab-${name}`)}
 		</button>
@@ -93,7 +95,7 @@
 	{:else if sub === 'edit'}
 		{#key ws.formKey}
 			<fieldset disabled={!ws.writable} class="min-w-0">
-				<AgentEditor bind:spec={ws.spec} issues={ws.shownIssues} granted={ws.granted} agents={ws.agents} ongrants={toGrants} />
+				<AgentEditor bind:spec={ws.spec} issues={ws.shownIssues} granted={ws.granted} agents={ws.agents} ongrants={toGrants} {capabilities} />
 			</fieldset>
 		{/key}
 	{:else if sub === 'canvas'}
@@ -128,8 +130,8 @@
 	{:else if sub === 'sharing' && ws.detail}
 		<div class="space-y-6">
 			<SharingPanel agentId={ws.id} shares={ws.detail.shares} writable={ws.writable} onchanged={() => ws.refresh(true)} />
-			<ChannelsPanel agentId={ws.id} writable={ws.writable} />
-			<EmbedKeysPanel agentId={ws.id} writable={ws.writable} />
+			{#if capabilities.channels}<ChannelsPanel agentId={ws.id} writable={ws.writable} />{/if}
+			{#if capabilities.embed}<EmbedKeysPanel agentId={ws.id} writable={ws.writable} />{/if}
 		</div>
 	{/if}
 </div>

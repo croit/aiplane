@@ -278,3 +278,6 @@ settings-invalid-ip-network-prefix-not-number = la longitud del prefijo no es un
 settings-invalid-ip-network-address = la dirección no es válida
 settings-invalid-ip-network-mapped-prefix = una red IPv4 mapeada necesita un prefijo de 96 o más
 settings-invalid-ip-network-prefix-too-long = la longitud del prefijo supera { $max }
+
+settings-f-dots-max_active_per_organization = Dots activos por organización
+settings-f-dots-max_active_per_organization-help = Número máximo de Dots activos de una organización, incluidos los que están en espera. Valor predeterminado: 4.

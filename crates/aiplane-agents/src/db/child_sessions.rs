@@ -36,7 +36,7 @@ pub async fn child_of_turn_in(
         p.parent_turn_id, p.parent_tool_call_id, p.caller_dot_id, p.edge_generation
         FROM personal_dot_sessions p JOIN chat_sessions s ON s.id = p.session_id
         JOIN chat_turns t ON t.session_id = s.id AND t.id = ?
-        LEFT JOIN personal_dots d ON d.principal_id = p.dot_id AND d.owner_user_id = p.owner_user_id
+        LEFT JOIN dots d ON d.principal_id = p.dot_id AND d.owner_user_id = p.owner_user_id
         WHERE s.user_id = p.owner_user_id AND s.principal_id IS NULL AND s.shared = 0
           AND p.parent_turn_id IS NOT NULL AND s.parent_turn_id = p.parent_turn_id AND t.role = 'assistant'")
         .bind(child_turn_id).fetch_optional(connection).await?;

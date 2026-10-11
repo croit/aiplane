@@ -28,6 +28,7 @@
 //! A test conversation is recorded as version [`DRAFT_VERSION`], so its pauses
 //! never reach the Inbox; the manager answers them in the test chat.
 
+use session_core::i18n::{Lang, t};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,7 +40,7 @@ use serde_json::{Value, json};
 use super::json_agents::{agent_at, parse_spec};
 use super::json_principals::require_agent_manager;
 use super::{bad_request, internal, json_error, json_ok, not_found, raw_path_segment};
-use aiplane_agents::db::agents::{Access, AgentRow};
+use aiplane_agents::db::agents::{self as agents_db, Access, AgentRow};
 use aiplane_agents::db::run_sessions;
 use aiplane_runtime::agents::embed::{self as embed_rt, TurnWork};
 use aiplane_runtime::agents::profile::{AgentRunError, RunOptions};
@@ -83,8 +84,18 @@ pub struct TurnDebugView {
     pub handoff: Option<Value>,
 }
 
-fn run_error(err: AgentRunError) -> Response {
+fn run_error(err: AgentRunError, lang: Lang) -> Response {
+    if matches!(&err, AgentRunError::OrganizationExecutionUnavailable(_)) {
+        return json_error(
+            StatusCode::FORBIDDEN,
+            "organization_execution_unavailable",
+            &t(lang, "organization-error-execution-unavailable"),
+        );
+    }
     let (status, code) = match &err {
+        AgentRunError::OrganizationExecutionUnavailable(_) => {
+            unreachable!("organization refusal returned before classification")
+        }
         AgentRunError::Unavailable(_) => (StatusCode::NOT_FOUND, "agent_unavailable"),
         AgentRunError::UnknownSession { .. } => (StatusCode::NOT_FOUND, "unknown_session"),
         AgentRunError::DecisionPending { .. } => (StatusCode::CONFLICT, "decision_pending"),
@@ -118,8 +129,20 @@ fn empty_message() -> Response {
 
 /// POST /api/v0/agents/{id}/test/messages
 pub async fn send_message(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let user = or_return!(require_agent_manager(&state, &req).await);
     let (agent, _) = or_return!(agent_at(&state, &req, &user, 2, Access::Write).await);
+    let owner = or_return!(
+        agents_db::dot_owner(&state.db, &agent.principal.id)
+            .await
+            .map_err(internal)
+    );
+    if matches!(owner, Some(agents_db::DotOwner::Organization(_))) {
+        return run_error(
+            AgentRunError::OrganizationExecutionUnavailable(agent.principal.id.clone()),
+            lang,
+        );
+    }
     let body: TestMessageBody =
         or_return!(super::read_json(req.into_body(), "the test message").await);
     if body.message.trim().is_empty() {
@@ -138,7 +161,7 @@ pub async fn send_message(State(state): State<Arc<RamaState>>, req: Request) -> 
     .await
     {
         Ok(started) => started,
-        Err(err) => return run_error(err),
+        Err(err) => return run_error(err, lang),
     };
     let out = TestTurnStarted {
         session_id: started.turn.session_id.clone(),
@@ -285,7 +308,7 @@ pub(super) async fn draft_test_turn(
         RunOptions::default(),
     )
     .await
-    .map_err(run_error)?;
+    .map_err(|error| run_error(error, Lang::En))?;
     let view = turn_view(state, agent, &reply.session_id, &reply.turn_id).await?;
     Ok(json!({
         "session_id": reply.session_id,

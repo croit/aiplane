@@ -433,3 +433,5 @@ dot-access-unavailable = 此所选工具不可用。保存访问设置前请移�
 dot-connection-reload = 重新加载连接
 
 dot-connection-local-unavailable = 此 Dot 的本地凭据不可使用。
+agent-configuration-error-conflict = 智能体的草稿或资源权限已更改。请重新加载当前配置，然后再保存或发布。
+agent-management-error-permission-required = 管理智能体需要权限。请联系管理员，为你所属的某个组启用智能体管理权限。

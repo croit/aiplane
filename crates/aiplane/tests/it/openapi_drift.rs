@@ -81,6 +81,72 @@ async fn every_operation_is_declared_with_its_access_and_responses() {
 }
 
 #[tokio::test]
+async fn organization_operations_describe_current_typed_configuration_contracts() {
+    let document = served_document().await;
+    let paths = &document["paths"];
+    for (path, method, access, success) in [
+        ("/api/v0/admin/organizations", "get", "admin", "200"),
+        ("/api/v0/admin/organizations", "post", "admin", "201"),
+        ("/api/v0/admin/organizations/{id}", "put", "admin", "200"),
+        ("/api/v0/organizations", "get", "session", "200"),
+        ("/api/v0/organizations/{id}", "get", "session", "200"),
+        ("/api/v0/organizations/{id}/dots", "post", "session", "201"),
+        (
+            "/api/v0/organizations/{id}/dots/{dot}/active",
+            "post",
+            "session",
+            "200",
+        ),
+    ] {
+        let operation = &paths[path][method];
+        assert_eq!(operation["x-aiplane-access"], access, "{method} {path}");
+        assert!(
+            operation["x-aiplane-undeclared"].is_null(),
+            "{method} {path}"
+        );
+        let reply = json_body(&document, &operation["responses"][success]["content"]);
+        assert!(reply["properties"].is_object(), "{method} {path}");
+    }
+
+    let edit = &paths["/api/v0/admin/organizations/{id}"]["put"];
+    let body = json_body(&document, &edit["requestBody"]["content"]);
+    assert_eq!(body["properties"]["expected_revision"]["type"], "string");
+    assert_eq!(body["properties"]["member_groups"]["type"], "array");
+    assert!(edit["responses"]["409"].is_object());
+
+    let detail = json_body(
+        &document,
+        &paths["/api/v0/organizations/{id}"]["get"]["responses"]["200"]["content"],
+    );
+    for field in [
+        "organization",
+        "dots",
+        "active_count",
+        "active_limit",
+        "can_create_dot",
+    ] {
+        assert!(detail["properties"].get(field).is_some(), "missing {field}");
+    }
+    let agent = resolved(&document, &detail["properties"]["dots"]["items"]);
+    assert!(agent["properties"].get("dot").is_some());
+    let subjects = json_body(
+        &document,
+        &paths["/api/v0/agents/{id}/share-subjects"]["get"]["responses"]["200"]["content"],
+    );
+    assert_eq!(subjects["properties"]["truncated"]["type"], "boolean");
+
+    let resources = &paths["/api/v0/agent-resources"]["get"];
+    assert!(
+        resources["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|parameter| { parameter["name"] == "agent_id" && parameter["in"] == "query" })
+    );
+    assert!(resources["responses"]["404"].is_object());
+}
+
+#[tokio::test]
 async fn the_groups_save_body_is_the_handlers_own_type() {
     let document = served_document().await;
     let save = &document["paths"]["/api/v0/admin/groups"]["put"];

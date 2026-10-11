@@ -12,7 +12,7 @@ use serde_json::json;
 use session_core::i18n::{Lang, t};
 
 use super::{bad_request, internal, json_error, json_ok, not_found, raw_path_segment};
-use aiplane_agents::db::agents::{self as agents_db, PersonalDotCreate};
+use aiplane_agents::db::agents::{self as agents_db, DotCreate};
 use aiplane_agents::db::dot_delegation::{self, ConsentDirection, ConsentEdit, ConsentSaved};
 use aiplane_agents::db::system_principals::NewPrincipal;
 use aiplane_runtime::agents::spec::AgentSpec;
@@ -759,23 +759,23 @@ pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Respon
     )
     .await
     {
-        Ok((PersonalDotCreate::Created, Some(agent))) => json_ok(
+        Ok((DotCreate::Created, Some(agent))) => json_ok(
             StatusCode::CREATED,
             json!({ "dot": { "id": agent.principal.id, "name": name,
                 "display": agent.principal.display, "description": agent.principal.description,
                 "active": true } }),
         ),
-        Ok((PersonalDotCreate::NameTaken, _)) => json_error(
+        Ok((DotCreate::NameTaken, _)) => json_error(
             StatusCode::CONFLICT,
             "conflict",
             &t(lang, "dot-error-name-taken"),
         ),
-        Ok((PersonalDotCreate::ActiveLimit, _)) => json_error(
+        Ok((DotCreate::ActiveLimit, _)) => json_error(
             StatusCode::CONFLICT,
             "active_dot_limit",
             &t(lang, "dot-error-active-limit"),
         ),
-        Ok((PersonalDotCreate::Created, None)) => internal("created Dot could not be loaded"),
+        Ok((DotCreate::Created, None)) => internal("created Dot could not be loaded"),
         Err(error) => internal(error),
     }
 }

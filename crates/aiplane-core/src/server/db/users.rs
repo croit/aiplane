@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
-use super::{DbError, Pool};
+use super::{DbError, Pool, WriteTx};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct User {
@@ -129,6 +129,46 @@ pub async fn list_all(pool: &Pool) -> Result<Vec<User>, DbError> {
 /// person to share with without handing anyone the roster: the caller decides
 /// how short a query it serves and what of each match it shows.
 pub async fn search(pool: &Pool, query: &str, limit: i64) -> Result<Vec<User>, DbError> {
+    search_with(pool, query, limit, 0).await
+}
+
+pub struct UserSearchPage {
+    pub users: Vec<User>,
+    pub next_offset: Option<u64>,
+}
+
+pub async fn search_page_in(
+    tx: &mut WriteTx,
+    query: &str,
+    limit: u32,
+    offset: u64,
+) -> Result<UserSearchPage, DbError> {
+    let limit = limit.min(50);
+    if limit == 0 {
+        return Ok(UserSearchPage {
+            users: Vec::new(),
+            next_offset: None,
+        });
+    }
+    let sql_offset = i64::try_from(offset).map_err(|source| DbError::Decode {
+        column: "search_offset",
+        source: source.into(),
+    })?;
+    let mut users = search_with(&mut **tx, query, i64::from(limit) + 1, sql_offset).await?;
+    let next_offset = (users.len() > limit as usize).then_some(offset + u64::from(limit));
+    users.truncate(limit as usize);
+    Ok(UserSearchPage { users, next_offset })
+}
+
+async fn search_with<'e, E>(
+    executor: E,
+    query: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<User>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let pattern = format!(
         "%{}%",
         query
@@ -141,12 +181,13 @@ pub async fn search(pool: &Pool, query: &str, limit: i64) -> Result<Vec<User>, D
         r#"SELECT * FROM users
            WHERE lower(coalesce(name, '')) LIKE ?1 ESCAPE '\' OR lower(email) LIKE ?1 ESCAPE '\'
            ORDER BY lower(email) = lower(?2) DESC, lower(coalesce(name, email)), id
-           LIMIT ?3"#,
+           LIMIT ?3 OFFSET ?4"#,
     )
     .bind(&pattern)
     .bind(query)
     .bind(limit)
-    .fetch_all(pool)
+    .bind(offset)
+    .fetch_all(executor)
     .await?;
     rows.iter().map(map_row).collect()
 }
@@ -342,6 +383,77 @@ mod tests {
             "wildcards are literal"
         );
         assert_eq!(ids(search(&pool, "d_a", 10).await.unwrap()), ["u3"]);
+    }
+
+    #[tokio::test]
+    async fn transactional_search_pages_are_capped_ordered_and_finite() {
+        let pool = pool().await;
+        for index in 0..53 {
+            let id = format!("candidate-{index:03}");
+            let mut user = fixture(&id);
+            user.name = Some("Candidate".into());
+            upsert(&pool, &user).await.unwrap();
+        }
+        let expected = search(&pool, "Candidate", 100).await.unwrap();
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        let first = search_page_in(&mut tx, "Candidate", 500, 0).await.unwrap();
+        assert_eq!(first.users.len(), 50);
+        assert_eq!(first.next_offset, Some(50));
+        assert_eq!(first.users, expected[..50]);
+        let second = search_page_in(&mut tx, "Candidate", 50, first.next_offset.unwrap())
+            .await
+            .unwrap();
+        assert_eq!(second.users, expected[50..]);
+        assert_eq!(second.next_offset, None);
+        assert!(
+            search_page_in(&mut tx, "Candidate", 0, 0)
+                .await
+                .unwrap()
+                .users
+                .is_empty()
+        );
+        assert!(
+            search_page_in(&mut tx, "Candidate", 50, 100)
+                .await
+                .unwrap()
+                .users
+                .is_empty()
+        );
+        assert!(
+            search_page_in(&mut tx, "%", 50, 0)
+                .await
+                .unwrap()
+                .users
+                .is_empty()
+        );
+        tx.commit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn transactional_search_pages_use_current_rows_and_exact_address_ranking() {
+        let pool = pool().await;
+        for id in ["first", "last"] {
+            upsert(&pool, &fixture(id)).await.unwrap();
+        }
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        sqlx::query(r#"UPDATE users SET name='last@example.com',roles_json='["current-role"]' WHERE id='first'"#)
+            .execute(&mut *tx).await.unwrap();
+        let page = search_page_in(&mut tx, "last@example.com", 1, 0)
+            .await
+            .unwrap();
+        assert_eq!(page.users[0].id, "last");
+        assert_eq!(page.next_offset, Some(1));
+        let next = search_page_in(&mut tx, "last@example.com", 1, 1)
+            .await
+            .unwrap();
+        assert_eq!(next.users[0].id, "first");
+        assert_eq!(next.users[0].roles, ["current-role"]);
+        assert_eq!(next.next_offset, None);
+        drop(tx);
+        assert_eq!(
+            find_by_id(&pool, "first").await.unwrap().unwrap().roles,
+            ["engineering"]
+        );
     }
 
     #[tokio::test]

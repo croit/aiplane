@@ -3,7 +3,7 @@
 Status: implementation in progress; personal Dot ownership, active lifecycle,
 the first web management page, manually managed Dot memory, recent activity,
 owner-scoped memory/activity APIs, private Dot chat sessions, and personal
-tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented.
+tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; organization execution and credentials require the subsequent runtime and identity packages.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -70,8 +70,9 @@ a slot is available. The Access and approvals disclosure offers selected tools
 with `Allow` or `Ask before each call`; unselected tools are denied. Connector
 identity labels identify the selected user, Dot or shared connection. Supported
 personal OAuth connectors may use a separately authorized Dot connection;
-connecting and selecting it are separate operations. Organisation-owned Dots
-remain unimplemented. An owned local credential remains visible for explicit
+connecting and selecting it are separate operations. Organization Dots have
+explicit organization ownership and a configuration surface; their execution
+and connection management remain unavailable. An owned local credential remains visible for explicit
 disconnect after catalogue access is lost, including credentials never selected
 for execution. Restricted catalogue and user-account details stay hidden.
 Active
@@ -405,12 +406,15 @@ The concrete Rust type and schema are implementation choices. They must keep
 the crate dependency direction intact and must not make `session-core` aware
 of Dot ownership.
 
-The personal-Dot slice stores the user-facing name and active state in a
-`personal_dots` row keyed by the existing agent principal. User-facing names
+The canonical `dots` table stores the user-facing name and active state,
+keyed by the existing agent principal with exactly one immutable user or
+organization owner. User-facing names
 are unique per owner, while the system principal retains a generated unique
-internal name; two users can therefore each name a Dot "Harald". Organization
-ownership still needs its own design because AIplane has no organization
-entity in the current data model.
+internal name; two users can therefore each name a Dot "Harald". Explicit
+`organizations` metadata and selected `organization_groups` provide the
+organization ownership and membership boundary. See [organization
+Dots](dots-organizations.md) for the implemented configuration foundation and
+remaining credential and execution requirements.
 
 ## Identity and authorization flow
 
@@ -467,10 +471,12 @@ must still refuse to run on a path where nobody can resume it; enabling tools
 on a schedule or webhook is not itself approval. Organization-owned runs need
 an explicitly authorized approval owner and continuation path.
 
-Exact built-in action categories, whether creating a draft is itself a write,
-and which organization members may approve are open design decisions. Until
-those are decided, the implementation must not silently enable external
-write actions.
+Action categories come from each tool's actual declared action catalogue.
+Personal tool policies and approvals are implemented as described above.
+Organization approval standing intersects current membership with the existing
+respond or stronger share; its runtime continuation must be implemented before
+organization execution becomes available. No organization publication enables
+external actions by itself.
 
 ## Background work and memory curation
 
@@ -673,21 +679,19 @@ documentation and generated artifacts together.
 
 ## Open decisions
 
-1. Does an organization have its own active Dot cap, separate from personal
-   limits?
-2. Which exact action categories are always approval-required or prohibited?
-   Who may approve organization actions?
-3. For personal MCP identity, does "use my identity" reuse the existing
-   `/tools/integrations` authorization, while "Dot identity" starts a separate
-   OAuth flow? Which connector auth modes must work for Dot-owned identities?
-4. How frequently may memory curation run, what evidence may it read, and are
-   changes written automatically or reviewed by the user?
-5. Does the Dot workspace need arbitrary structured collections, or are
-   documents/files plus typed records sufficient? What size and retention
-   bounds apply?
-6. Must the Dot computer persist across process/container restarts, or only
-   across agent runs? Which network destinations may it access?
-7. What concurrent-run ceiling and resource budget should operators configure?
+The following adopted designs define the remaining implementation work:
+
+- [Organization Dots](dots-organizations.md) defines an independent active
+  cap, member/share approval standing and isolated principal execution.
+- [Dot identities](dots-identities.md) defines the reused user OAuth account
+  and explicitly selected own OAuth account. Personal selection is implemented.
+- [Memory curation](dots-memory-curation.md) defines source selection and
+  reviewed optimization; its background job remains to be implemented.
+- [Persistent workspace](dots-workspace.md) and [browser
+  handover](dots-browser-handover.md) define durable files, an isolated
+  computer and human control; implementation and runner verification remain.
+- Existing worker, run-budget and spend limits bound execution. The active
+  Dot cap counts enabled Dots and does not impose a global parallel-run cap.
 
 Deactivation is reversible and frees an active slot; this is the confirmed
 product behavior and is implemented by the lifecycle API.

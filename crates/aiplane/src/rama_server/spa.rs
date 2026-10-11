@@ -92,13 +92,14 @@ pub async fn spa_get(req: Request) -> Response {
 ///
 /// Kept in step with `web/src/routes/` by
 /// [`tests::the_client_routes_match_the_spa_source`].
-const SPA_ROUTES: [&str; 13] = [
+const SPA_ROUTES: [&str; 14] = [
     "admin",
     "agents",
     "chat",
     "dots",
     "inbox",
     "login",
+    "organizations",
     "rag",
     "scheduled",
     "settings",
@@ -571,6 +572,30 @@ mod tests {
         let empty = std::path::Path::new("/nonexistent-gateway-static-dir-xyz");
         let resp = serve(empty, &get("/")).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn organization_links_receive_history_fallback_without_claiming_api_routes() {
+        let (_directory, root) = spa_tempdir();
+        for path in [
+            "/organizations",
+            "/organizations/actual-id",
+            "/admin/organizations",
+        ] {
+            let response = serve(&root, &get(path)).await;
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                drain(response).await,
+                std::fs::read(root.join("index.html")).unwrap()
+            );
+        }
+        for path in ["/api/v0/organizations/missing", "/organization"] {
+            assert_eq!(
+                serve(&root, &get(path)).await.status(),
+                StatusCode::NOT_FOUND,
+                "{path}"
+            );
+        }
     }
 
     /// An unknown API path must not be answered with the app shell.

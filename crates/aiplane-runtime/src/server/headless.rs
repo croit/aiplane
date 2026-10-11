@@ -393,6 +393,32 @@ async fn drive_inner(
     };
     let agent = p.actor.agent().cloned();
     let resumed = resume.is_some();
+    if let Some(run) = agent.as_ref() {
+        let admission =
+            aiplane_agents::db::agents::dot_owner(&state.db, &run.system_principal().id).await;
+        let error = match admission {
+            Ok(Some(aiplane_agents::db::agents::DotOwner::Organization(_))) => {
+                let lang = crate::agents::run::conversation_lang(
+                    &state.db,
+                    &run.system_principal().id,
+                    &p.session_id,
+                )
+                .await;
+                Some(session_core::i18n::t(
+                    lang,
+                    "organization-error-execution-unavailable",
+                ))
+            }
+            Ok(_) => None,
+            Err(error) => Some(error.to_string()),
+        };
+        if let Some(error) = error {
+            turn_started(state, run, &p.session_id, &p.assistant_turn_id, resumed).await;
+            let _ = chat::error_interrupted_turn(&state.db, &p.assistant_turn_id, &error).await;
+            turn_finished(state, run, &p.session_id, &p.assistant_turn_id).await;
+            return None;
+        }
+    }
     let worker = agent
         .as_ref()
         .map(|run| AgentWorker::of(state, run.chain(), &p.session_id, &p.assistant_turn_id));
@@ -1023,6 +1049,112 @@ mod tests {
 
     fn finished(result: Value) -> Option<RunOutcome> {
         Some(RunOutcome::Finished { result })
+    }
+
+    #[tokio::test]
+    async fn organization_direct_headless_actor_refuses_without_model_dispatch() {
+        use aiplane_agents::db::{agents, organizations, system_principals};
+        let upstream = MockServer::start().await;
+        let state = state_for(&upstream.uri()).await;
+        let now = jiff::Timestamp::now();
+        aiplane_core::server::db::users::upsert(
+            &state.db,
+            &aiplane_core::server::db::users::User {
+                id: "creator".into(),
+                email: "creator@example.com".into(),
+                name: None,
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        let organizations::OrganizationCreateResult::Created(organization) = organizations::create(
+            &state.db,
+            &organizations::NewOrganization {
+                name: "Actual organization",
+                description: "",
+                member_groups: &[],
+            },
+            "creator",
+        )
+        .await
+        .unwrap() else {
+            panic!("organization expected");
+        };
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        let (_, dot) = agents::create_organization_dot_in(
+            &mut tx,
+            &organization.organization.id,
+            &system_principals::NewPrincipal {
+                name: "Headless organization assistant",
+                display: "Headless organization assistant",
+                description: "",
+            },
+            "{}",
+            "creator",
+            4,
+        )
+        .await
+        .unwrap();
+        let dot = dot.unwrap().principal.id;
+        tx.commit().await.unwrap();
+        system_principals::add_grant(
+            &state.db,
+            &dot,
+            aiplane_core::server::principal::GrantKind::Model,
+            MODEL,
+            "creator",
+        )
+        .await
+        .unwrap();
+        let principal = system_principals::load_active(&state.db, &dot)
+            .await
+            .unwrap()
+            .unwrap();
+        let (session, turn) = open_session(
+            &state.db,
+            OpenParams {
+                owner: Owner::Run {
+                    principal_id: &dot,
+                    parent_turn_id: None,
+                    agent_version: None,
+                },
+                title: "Actual organization run",
+                prompt: "Actual request",
+                model: MODEL,
+                existing_session: None,
+                dot_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let chain = Arc::new(aiplane_core::server::run_chain::RunChain::root(
+            &session,
+            None,
+            aiplane_core::server::run_chain::Frame::for_principal(&principal, None),
+        ));
+        let actor = Actor::Agent(Arc::new(AgentRun::new(principal, chain).unwrap()));
+        drive(&state, params(&session, &turn, actor)).await;
+        assert!(upstream.received_requests().await.unwrap().is_empty());
+        assert_eq!(
+            session_core::db::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            session_core::db::TurnStatus::Errored
+        );
+        let persisted = run_sessions::get_principal_session(&state.db, &dot, &session)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(persisted.principal_id, dot);
     }
 
     #[tokio::test]
@@ -2861,7 +2993,7 @@ mod tests {
         let state = state_for(&upstream.uri()).await;
         let (session, turn) = open(&state, "medium").await;
         let run = personal_background(&state, &session, &turn, true).await;
-        sqlx::query("UPDATE personal_dots SET active=0")
+        sqlx::query("UPDATE dots SET active=0")
             .execute(&state.db)
             .await
             .unwrap();

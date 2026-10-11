@@ -57,8 +57,8 @@ fn edge(row: sqlx::sqlite::SqliteRow) -> Result<DotDelegationEdge, DbError> {
 }
 
 const OWNED_EDGES: &str = "SELECT e.* FROM dot_delegation_edges e
- JOIN personal_dots c ON c.principal_id = e.caller_dot_id
- JOIN personal_dots r ON r.principal_id = e.receiver_dot_id
+ JOIN dots c ON c.principal_id = e.caller_dot_id
+ JOIN dots r ON r.principal_id = e.receiver_dot_id
  WHERE c.owner_user_id = ? AND r.owner_user_id = ?";
 
 pub async fn list_for_dot(
@@ -103,7 +103,7 @@ pub async fn authorized_in(
 
 pub async fn set_consent(pool: &Pool, edit: ConsentEdit<'_>) -> Result<ConsentSaved, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
-    let active: Option<(bool, bool)> = sqlx::query_as("SELECT d.active, p.active FROM personal_dots d JOIN personal_dots p ON p.principal_id = ? WHERE d.principal_id = ? AND d.owner_user_id = ? AND p.owner_user_id = ?")
+    let active: Option<(bool, bool)> = sqlx::query_as("SELECT d.active, p.active FROM dots d JOIN dots p ON p.principal_id = ? WHERE d.principal_id = ? AND d.owner_user_id = ? AND p.owner_user_id = ?")
         .bind(edit.peer_id).bind(edit.dot_id).bind(edit.owner_user_id).bind(edit.owner_user_id)
         .fetch_optional(&mut *tx).await?;
     let Some((dot_active, peer_active)) = active else {
@@ -239,7 +239,7 @@ mod tests {
         assert!(sqlx::query("INSERT INTO dot_delegation_edges (caller_dot_id, receiver_dot_id, generation, updated_at) VALUES (?, ?, ?, ?)")
             .bind(&caller).bind(&receiver).bind(uuid::Uuid::new_v4().to_string())
             .bind(Timestamp::now().to_string()).execute(&pool).await.is_err());
-        sqlx::query("DELETE FROM personal_dots WHERE principal_id = ?")
+        sqlx::query("DELETE FROM dots WHERE principal_id = ?")
             .bind(&receiver)
             .execute(&pool)
             .await
@@ -558,7 +558,7 @@ mod tests {
             list_for_dot(&pool, "alice", &caller).await.unwrap(),
             vec![revoked]
         );
-        sqlx::query("DELETE FROM personal_dots WHERE principal_id = ?")
+        sqlx::query("DELETE FROM dots WHERE principal_id = ?")
             .bind(&receiver)
             .execute(&pool)
             .await

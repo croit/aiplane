@@ -251,10 +251,21 @@ pub async fn list_all(pool: &Pool) -> Result<Vec<Connector>, DbError> {
 
 /// Only enabled connectors (the user-facing store shows these).
 pub async fn list_enabled(pool: &Pool) -> Result<Vec<Connector>, DbError> {
+    list_enabled_with(pool).await
+}
+
+pub async fn list_enabled_in(tx: &mut WriteTx) -> Result<Vec<Connector>, DbError> {
+    list_enabled_with(&mut **tx).await
+}
+
+async fn list_enabled_with<'e, E>(executor: E) -> Result<Vec<Connector>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let sql = format!(
         "SELECT {COLS} FROM mcp_catalog_connectors WHERE enabled = 1 ORDER BY name ASC, key ASC"
     );
-    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+    let rows = sqlx::query(&sql).fetch_all(executor).await?;
     rows.iter().map(map_row).collect()
 }
 
@@ -1372,5 +1383,42 @@ mod tests {
                 .dispatch_generation,
             old
         );
+    }
+    #[tokio::test]
+    async fn transactional_enabled_inventory_observes_name_generation_order_and_rollback() {
+        let pool = pool().await;
+        seed_defaults(&pool).await.unwrap();
+        let first = get(&pool, "atlassian").await.unwrap().unwrap();
+        let second = get(&pool, "github").await.unwrap().unwrap();
+        let mut tx = WriteTx::begin(&pool).await.unwrap();
+        sqlx::query(
+            "UPDATE mcp_catalog_connectors SET enabled=1,name='B current' WHERE key='atlassian'",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE mcp_catalog_connectors SET enabled=1,name='A current' WHERE key='github'",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let rows = list_enabled_in(&mut tx).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].key, "github");
+        assert_eq!(rows[0].name, "A current");
+        assert_eq!(rows[0].dispatch_generation, second.dispatch_generation);
+        assert_eq!(rows[1].key, "atlassian");
+        assert_eq!(rows[1].name, "B current");
+        assert_eq!(rows[1].dispatch_generation, first.dispatch_generation);
+        drop(tx);
+        assert!(list_enabled(&pool).await.unwrap().is_empty());
+        for original in [first, second] {
+            let restored = get(&pool, &original.key).await.unwrap().unwrap();
+            assert_eq!(restored.name, original.name);
+            assert_eq!(restored.enabled, original.enabled);
+            assert_eq!(restored.dispatch_generation, original.dispatch_generation);
+            assert_eq!(restored.allowed_groups, original.allowed_groups);
+        }
     }
 }

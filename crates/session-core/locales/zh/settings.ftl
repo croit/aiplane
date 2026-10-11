@@ -276,3 +276,6 @@ settings-invalid-ip-network-prefix-not-number = 前缀长度不是数字
 settings-invalid-ip-network-address = 地址无法解析
 settings-invalid-ip-network-mapped-prefix = IPv4 映射网段的前缀至少需要 96
 settings-invalid-ip-network-prefix-too-long = 前缀长度超过 { $max }
+
+settings-f-dots-max_active_per_organization = 每个组织可启用的 Dot
+settings-f-dots-max_active_per_organization-help = 组织可拥有的已启用 Dot 数量上限，包括空闲的 Dot。默认值：4。

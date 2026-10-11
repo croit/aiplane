@@ -59,6 +59,8 @@ use aiplane_core::server::db::usage::UsageSource;
 /// Why an agent could not be run.
 #[derive(Debug, thiserror::Error)]
 pub enum AgentRunError {
+    #[error("{message}", message = session_core::i18n::t(session_core::i18n::Lang::En, "organization-error-execution-unavailable"))]
+    OrganizationExecutionUnavailable(String),
     #[error(
         "there is no enabled agent `{0}`: it was deleted, or its principal is disabled. Re-enable \
          it or route to another agent"
@@ -206,6 +208,14 @@ impl RunProfile {
         role: Role,
         options: &RunOptions,
     ) -> Result<Self, AgentRunError> {
+        if matches!(
+            agents_db::dot_owner(&state.db, agent_id).await?,
+            Some(agents_db::DotOwner::Organization(_))
+        ) {
+            return Err(AgentRunError::OrganizationExecutionUnavailable(
+                agent_id.to_owned(),
+            ));
+        }
         let principal = sp::load_active(&state.db, agent_id)
             .await?
             .ok_or_else(|| AgentRunError::Unavailable(agent_id.to_string()))?;

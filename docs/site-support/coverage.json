@@ -13,6 +13,10 @@
       "documentation": "admin/access.md"
     },
     {
+      "source": "web/src/routes/admin/(access)/organizations/+page.svelte",
+      "documentation": "admin/access.md"
+    },
+    {
       "source": "web/src/routes/admin/(access)/tokens/+page.svelte",
       "documentation": "admin/access.md"
     },
@@ -69,10 +73,6 @@
       "documentation": "agent-guide/create.md"
     },
     {
-      "source": "web/src/routes/dots/+page.svelte",
-      "documentation": "dots.md"
-    },
-    {
       "source": "web/src/routes/agents/[id]/+page.svelte",
       "documentation": "agent-guide/create.md"
     },
@@ -89,12 +89,24 @@
       "documentation": "guide/chat.md"
     },
     {
+      "source": "web/src/routes/dots/+page.svelte",
+      "documentation": "dots.md"
+    },
+    {
       "source": "web/src/routes/inbox/+page.svelte",
       "documentation": "agent-guide/run-observe.md"
     },
     {
       "source": "web/src/routes/login/+page.svelte",
       "documentation": "guide/getting-started.md"
+    },
+    {
+      "source": "web/src/routes/organizations/+page.svelte",
+      "documentation": "agent-guide/create.md"
+    },
+    {
+      "source": "web/src/routes/organizations/[id]/+page.svelte",
+      "documentation": "agent-guide/create.md"
     },
     {
       "source": "web/src/routes/rag/+page.svelte",

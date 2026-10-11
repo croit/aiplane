@@ -1,7 +1,7 @@
 <script lang="ts">
 	import StepIndicator from '#lib/components/ui/StepIndicator.svelte';
 	import { goto } from '$app/navigation';
-	import { STEPS, asStep, type StepKey } from '#lib/agent-setup.js';
+	import { visibleSetupSteps, asStep, type StepKey } from '#lib/agent-setup.js';
 	import { useWorkspace } from '#lib/agent-workspace.svelte.js';
 	import { t } from '#lib/i18n.svelte.js';
 	import SetupStep from './SetupStep.svelte';
@@ -17,10 +17,12 @@
 	let { step: param }: { step: string } = $props();
 	const ws = useWorkspace();
 
-	const step = $derived(asStep(param));
-	const index = $derived(step ? STEPS.indexOf(step) : 0);
-	const labels = $derived(STEPS.map((s) => t(`agents-setup-step-${s}-short`)));
-	const completed = $derived(STEPS.map((_, i) => i).filter((i) => i < index));
+	const steps = $derived(visibleSetupSteps(ws.detail));
+	const requestedStep = $derived(asStep(param));
+	const step = $derived(requestedStep && steps.includes(requestedStep) ? requestedStep : null);
+	const index = $derived(step ? steps.indexOf(step) : 0);
+	const labels = $derived(steps.map((s) => t(`agents-setup-step-${s}-short`)));
+	const completed = $derived(steps.map((_, i) => i).filter((i) => i < index));
 	const name = $derived(ws.spec.profile?.display || ws.detail?.display || ws.detail?.name || '');
 
 	const href = (to: StepKey) => `/agents/${ws.id}/setup/${to}`;
@@ -32,12 +34,12 @@
 
 	async function go(to: number) {
 		if (!(await saved())) return;
-		await goto(href(STEPS[to]));
+		await goto(href(steps[to]));
 	}
 
 	async function back() {
 		await saved();
-		await goto(href(STEPS[index - 1]));
+		await goto(href(steps[index - 1]));
 	}
 
 	async function done() {
@@ -82,8 +84,8 @@
 			{#if index > 0}
 				<button class="btn btn-ghost" type="button" disabled={ws.busy} onclick={() => void back()}>{t('agents-setup-back')}</button>
 			{/if}
-			<span class="ml-auto text-sm text-base-content/60">{t('agents-setup-step-of', { current: index + 1, total: STEPS.length })}</span>
-			{#if index < STEPS.length - 1}
+			<span class="ml-auto text-sm text-base-content/60">{t('agents-setup-step-of', { current: index + 1, total: steps.length })}</span>
+			{#if index < steps.length - 1}
 				<button class="btn btn-primary" type="button" disabled={ws.busy} onclick={() => void go(index + 1)}>{t('agents-setup-next')}</button>
 			{:else}
 				<button class="btn btn-primary" type="button" disabled={ws.busy} onclick={() => void done()}>{t('agents-setup-done')}</button>

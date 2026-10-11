@@ -251,15 +251,13 @@ async fn refusal(resp: Response) -> ToolError {
 }
 
 async fn list_agents(ctx: &Ctx) -> Result<Value, Refusal> {
-    let agents: Vec<Value> = visible_agents(&ctx.state, &ctx.user)
-        .await?
-        .iter()
-        .map(|(agent, access)| {
-            let mut v = agent_json(agent, *access);
-            v["setup_url"] = json!(setup_url(&agent.principal.id));
-            v
-        })
-        .collect();
+    let visible = visible_agents(&ctx.state, &ctx.user).await?;
+    let mut agents = Vec::with_capacity(visible.len());
+    for (agent, access) in visible {
+        let mut view = agent_json(&ctx.state, &agent, access).await?;
+        view["setup_url"] = json!(setup_url(&agent.principal.id));
+        agents.push(view);
+    }
     Ok(json!({ "agents": agents }))
 }
 
@@ -286,7 +284,7 @@ async fn read_agent(ctx: &Ctx, args: AgentArgs) -> Result<Value, Refusal> {
     let world = SpecWorld::load(&ctx.state, id).await?;
     let draft = parse_spec(&agent.draft_spec);
     let issues = publish_issues(&ctx.state, id, &draft).await?;
-    let mut v = agent_json(&agent, access);
+    let mut v = agent_json(&ctx.state, &agent, access).await?;
     v["draft_spec"] = draft;
     v["grants"] = world
         .grants
@@ -387,14 +385,22 @@ async fn grant_default_model(
         return Ok(None);
     }
     let (agent, _) = agent_by_id(&ctx.state, &ctx.user, agent_id, Access::Write).await?;
-    add_capped_grant(&ctx.state, &ctx.user, agent_id, GrantKind::Model, &default).await?;
+    add_capped_grant(
+        &ctx.state,
+        &ctx.user,
+        agent_id,
+        GrantKind::Model,
+        &default,
+        Lang::En,
+    )
+    .await?;
     let spec = json!({ "profile": { "display": display } });
     let granted = [(GrantKind::Model, default.clone())];
     let change = DraftChange {
         granted: &granted,
         ..DraftChange::default()
     };
-    save_draft(&ctx.state, &ctx.user, &agent, spec, change).await?;
+    save_draft(&ctx.state, &ctx.user, &agent, spec, change, Lang::En).await?;
     Ok(Some(default))
 }
 
@@ -477,7 +483,7 @@ async fn update(ctx: &Ctx, args: UpdateArgs) -> Result<Value, Refusal> {
     let mut made = Vec::new();
     for (kind, reference) in &applied.grants {
         if !world.grants.has(*kind, reference) {
-            add_capped_grant(&ctx.state, &ctx.user, id, *kind, reference).await?;
+            add_capped_grant(&ctx.state, &ctx.user, id, *kind, reference, Lang::En).await?;
             made.push((*kind, reference.clone()));
         }
     }
@@ -485,7 +491,15 @@ async fn update(ctx: &Ctx, args: UpdateArgs) -> Result<Value, Refusal> {
         granted: &made,
         ..DraftChange::default()
     };
-    let saved = save_draft(&ctx.state, &ctx.user, &agent, applied.draft, change).await?;
+    let saved = save_draft(
+        &ctx.state,
+        &ctx.user,
+        &agent,
+        applied.draft,
+        change,
+        Lang::En,
+    )
+    .await?;
     let granted: Vec<Value> = made
         .iter()
         .map(|(kind, reference)| json!({ "kind": kind.as_str(), "ref": reference }))

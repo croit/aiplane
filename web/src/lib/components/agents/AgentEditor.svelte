@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { issuesUnder, type AgentSummary, type Granted, type Spec, type SpecIssue } from '#lib/agents.js';
+	import { issuesUnder, type agentUiCapabilities, type AgentSummary, type Granted, type Spec, type SpecIssue } from '#lib/agents.js';
 	import { t } from '#lib/i18n.svelte.js';
 	import MainAgentForm from './MainAgentForm.svelte';
 	import RoutesForm from './RoutesForm.svelte';
@@ -11,12 +11,13 @@
 	 * A section's badge counts the validator's issues under it, so a failed
 	 * save points at where to look even with the section folded.
 	 */
-	let { spec = $bindable(), issues, granted, agents, ongrants }: {
+	let { spec = $bindable(), issues, granted, agents, ongrants, capabilities }: {
 		spec: Spec;
 		issues: SpecIssue[];
 		granted: Granted;
 		agents: AgentSummary[];
 		ongrants: () => void;
+		capabilities: ReturnType<typeof agentUiCapabilities>;
 	} = $props();
 
 	const count = (...prefixes: string[]) => prefixes.reduce((n, p) => n + issuesUnder(issues, p).length, 0);
@@ -46,7 +47,7 @@
 					{:else if section.id === 'routes'}
 						<RoutesForm bind:spec {issues} {agents} models={granted.models} />
 					{:else}
-						<SettingsForm bind:spec {issues} />
+						<SettingsForm bind:spec {issues} {capabilities} />
 					{/if}
 				</div>
 			</div>

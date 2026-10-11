@@ -576,7 +576,7 @@ mod tests {
             selected.binding_generation,
             Some(binding.binding_generation)
         );
-        sqlx::query("UPDATE personal_dots SET active=0 WHERE principal_id=?")
+        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
             .bind(&dot)
             .execute(&state.db)
             .await
@@ -593,7 +593,7 @@ mod tests {
                 .unwrap(),
             Some(selected)
         );
-        sqlx::query("UPDATE personal_dots SET active=1 WHERE principal_id=?")
+        sqlx::query("UPDATE dots SET active=1 WHERE principal_id=?")
             .bind(&dot)
             .execute(&state.db)
             .await
@@ -684,7 +684,7 @@ mod tests {
             .await
             .unwrap()
         );
-        sqlx::query("UPDATE personal_dots SET active=0 WHERE principal_id=?")
+        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
             .bind(&dot)
             .execute(&mut *tx)
             .await
@@ -777,7 +777,7 @@ mod tests {
         let (state, user, dot, _, _) = fixture().await;
         let server = mcp_server().await;
         sqlx::query("UPDATE mcp_catalog_connectors SET scope='global',auth='none',url=? WHERE key='fixture'").bind(server.uri()).execute(&state.db).await.unwrap();
-        sqlx::query("UPDATE personal_dots SET active=0 WHERE principal_id=?")
+        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
             .bind(&dot)
             .execute(&state.db)
             .await

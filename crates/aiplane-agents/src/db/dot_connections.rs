@@ -56,7 +56,7 @@ pub async fn owned_dot_in(
     dot: &str,
     require_active: bool,
 ) -> Result<bool, DbError> {
-    Ok(sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM personal_dots d JOIN agents a ON a.principal_id=d.principal_id JOIN system_principals p ON p.id=d.principal_id WHERE d.owner_user_id=? AND d.principal_id=? AND (?=0 OR (d.active=1 AND p.disabled_at IS NULL)))").bind(owner).bind(dot).bind(require_active).fetch_one(&mut **tx).await?)
+    Ok(sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM dots d JOIN agents a ON a.principal_id=d.principal_id JOIN system_principals p ON p.id=d.principal_id WHERE d.owner_user_id=? AND d.principal_id=? AND (?=0 OR (d.active=1 AND p.disabled_at IS NULL)))").bind(owner).bind(dot).bind(require_active).fetch_one(&mut **tx).await?)
 }
 
 async fn load<'e, E: Executor<'e, Database = Sqlite>>(
@@ -65,7 +65,7 @@ async fn load<'e, E: Executor<'e, Database = Sqlite>>(
     dot: &str,
     key: &str,
 ) -> Result<Option<DotConnectorBinding>, DbError> {
-    let row = sqlx::query("SELECT b.* FROM dot_connector_bindings b JOIN personal_dots d ON d.principal_id=b.dot_id JOIN agents a ON a.principal_id=d.principal_id WHERE d.owner_user_id=? AND b.dot_id=? AND b.connector_key=?").bind(owner).bind(dot).bind(key).fetch_optional(executor).await?;
+    let row = sqlx::query("SELECT b.* FROM dot_connector_bindings b JOIN dots d ON d.principal_id=b.dot_id JOIN agents a ON a.principal_id=d.principal_id WHERE d.owner_user_id=? AND b.dot_id=? AND b.connector_key=?").bind(owner).bind(dot).bind(key).fetch_optional(executor).await?;
     row.map(map_binding).transpose()
 }
 fn map_binding(row: sqlx::sqlite::SqliteRow) -> Result<DotConnectorBinding, DbError> {
@@ -94,7 +94,7 @@ pub async fn list_for_dot(
     owner: &str,
     dot: &str,
 ) -> Result<Vec<DotConnectorBinding>, DbError> {
-    let rows = sqlx::query("SELECT b.* FROM dot_connector_bindings b JOIN personal_dots d ON d.principal_id=b.dot_id JOIN agents a ON a.principal_id=d.principal_id WHERE d.owner_user_id=? AND b.dot_id=? ORDER BY b.connector_key").bind(owner).bind(dot).fetch_all(pool).await?;
+    let rows = sqlx::query("SELECT b.* FROM dot_connector_bindings b JOIN dots d ON d.principal_id=b.dot_id JOIN agents a ON a.principal_id=d.principal_id WHERE d.owner_user_id=? AND b.dot_id=? ORDER BY b.connector_key").bind(owner).bind(dot).fetch_all(pool).await?;
     rows.into_iter().map(map_binding).collect()
 }
 pub async fn get(
@@ -361,14 +361,14 @@ mod tests {
         let mut tx = WriteTx::begin(&pool).await.unwrap();
         assert!(owned_dot_in(&mut tx, "owner", &dot, true).await.unwrap());
         assert!(!owned_dot_in(&mut tx, "other", &dot, false).await.unwrap());
-        sqlx::query("UPDATE personal_dots SET active=0 WHERE principal_id=?")
+        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
             .bind(&dot)
             .execute(&mut *tx)
             .await
             .unwrap();
         assert!(owned_dot_in(&mut tx, "owner", &dot, false).await.unwrap());
         assert!(!owned_dot_in(&mut tx, "owner", &dot, true).await.unwrap());
-        sqlx::query("UPDATE personal_dots SET active=1 WHERE principal_id=?")
+        sqlx::query("UPDATE dots SET active=1 WHERE principal_id=?")
             .bind(&dot)
             .execute(&mut *tx)
             .await

@@ -201,14 +201,23 @@ pub async fn get_in(tx: &mut WriteTx, id: &str) -> Result<Option<PrincipalRow>, 
 /// Disable a principal and revoke every token it holds, in one transaction.
 /// `Ok(false)` when there is no such principal or it was already disabled.
 pub async fn disable(pool: &Pool, id: &str, actor_id: &str) -> Result<bool, DbError> {
-    let now = Timestamp::now().to_string();
     let mut tx = WriteTx::begin(pool).await?;
+    let result = disable_in(&mut tx, id, actor_id).await?;
+    tx.commit().await?;
+    if result {
+        super::embed_keys::origins_changed();
+    }
+    Ok(result)
+}
+
+pub async fn disable_in(tx: &mut WriteTx, id: &str, actor_id: &str) -> Result<bool, DbError> {
+    let now = Timestamp::now().to_string();
     let changed = sqlx::query(
         "UPDATE system_principals SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL",
     )
     .bind(&now)
     .bind(id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?
     .rows_affected();
     if changed == 0 {
@@ -219,11 +228,11 @@ pub async fn disable(pool: &Pool, id: &str, actor_id: &str) -> Result<bool, DbEr
     )
     .bind(&now)
     .bind(id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?
     .rows_affected();
     agent_audit::append(
-        &mut tx,
+        tx,
         agent_audit::NewEvent::new(
             AuditKind::PrincipalDisabled,
             id,
@@ -232,8 +241,6 @@ pub async fn disable(pool: &Pool, id: &str, actor_id: &str) -> Result<bool, DbEr
         .by(Some(actor_id)),
     )
     .await?;
-    tx.commit().await?;
-    super::embed_keys::origins_changed();
     Ok(true)
 }
 
@@ -317,13 +324,27 @@ pub async fn add_scoped_grant(
     actor_id: &str,
 ) -> Result<GrantChange, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
+    let result =
+        add_scoped_grant_in(&mut tx, principal_id, kind, reference, pools, actor_id).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+pub async fn add_scoped_grant_in(
+    tx: &mut WriteTx,
+    principal_id: &str,
+    kind: GrantKind,
+    reference: &str,
+    pools: Option<&[String]>,
+    actor_id: &str,
+) -> Result<GrantChange, DbError> {
     let held: Option<Option<String>> = sqlx::query_scalar(
         "SELECT pools FROM principal_grants WHERE principal_id = ? AND kind = ? AND ref = ?",
     )
     .bind(principal_id)
     .bind(kind.as_str())
     .bind(reference)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     let wanted: Option<BTreeSet<String>> = pools.map(|p| p.iter().cloned().collect());
     let change = match &held {
@@ -364,7 +385,7 @@ pub async fn add_scoped_grant(
             .bind(actor_id)
             .bind(Timestamp::now().to_string())
             .bind(&merged_text)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         }
         GrantChange::Widened => {
@@ -376,7 +397,7 @@ pub async fn add_scoped_grant(
             .bind(principal_id)
             .bind(kind.as_str())
             .bind(reference)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         }
     }
@@ -388,11 +409,10 @@ pub async fn add_scoped_grant(
         detail["widened"] = json!(true);
     }
     agent_audit::append(
-        &mut tx,
+        tx,
         agent_audit::NewEvent::new(AuditKind::GrantAdded, principal_id, detail).by(Some(actor_id)),
     )
     .await?;
-    tx.commit().await?;
     Ok(change)
 }
 
@@ -405,19 +425,31 @@ pub async fn remove_grant(
     actor_id: &str,
 ) -> Result<bool, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
+    let result = remove_grant_in(&mut tx, principal_id, kind, reference, actor_id).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+pub async fn remove_grant_in(
+    tx: &mut WriteTx,
+    principal_id: &str,
+    kind: GrantKind,
+    reference: &str,
+    actor_id: &str,
+) -> Result<bool, DbError> {
     let removed =
         sqlx::query("DELETE FROM principal_grants WHERE principal_id = ? AND kind = ? AND ref = ?")
             .bind(principal_id)
             .bind(kind.as_str())
             .bind(reference)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?
             .rows_affected();
     if removed == 0 {
         return Ok(false);
     }
     agent_audit::append(
-        &mut tx,
+        tx,
         agent_audit::NewEvent::new(
             AuditKind::GrantRemoved,
             principal_id,
@@ -426,7 +458,6 @@ pub async fn remove_grant(
         .by(Some(actor_id)),
     )
     .await?;
-    tx.commit().await?;
     Ok(true)
 }
 
@@ -950,5 +981,85 @@ mod tests {
         .execute(&pool)
         .await;
         assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn atomic_principal_writers_keep_grant_merge_disable_and_audit_in_outer_transaction() {
+        let pool = pool().await;
+        let p = principal(&pool, "atomic-principal").await;
+        let id = &p.id;
+        let baseline: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_audit WHERE principal_id=?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let mut tx = WriteTx::begin(&pool).await.unwrap();
+        assert_eq!(
+            add_scoped_grant_in(
+                &mut tx,
+                id,
+                GrantKind::Model,
+                "model",
+                Some(&["a".into()]),
+                "admin"
+            )
+            .await
+            .unwrap(),
+            GrantChange::Added
+        );
+        assert_eq!(
+            add_scoped_grant_in(
+                &mut tx,
+                id,
+                GrantKind::Model,
+                "model",
+                Some(&["b".into()]),
+                "admin"
+            )
+            .await
+            .unwrap(),
+            GrantChange::Widened
+        );
+        assert_eq!(
+            add_scoped_grant_in(
+                &mut tx,
+                id,
+                GrantKind::Model,
+                "model",
+                Some(&["a".into()]),
+                "admin"
+            )
+            .await
+            .unwrap(),
+            GrantChange::Unchanged
+        );
+        assert_eq!(
+            grants_in(&mut tx, id).await.unwrap()[0].pools,
+            Some(vec!["a".into(), "b".into()])
+        );
+        assert!(
+            remove_grant_in(&mut tx, id, GrantKind::Model, "model", "admin")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !remove_grant_in(&mut tx, id, GrantKind::Model, "model", "admin")
+                .await
+                .unwrap()
+        );
+        assert!(disable_in(&mut tx, id, "admin").await.unwrap());
+        assert!(!disable_in(&mut tx, id, "admin").await.unwrap());
+        assert!(load_active_in(&mut tx, id).await.unwrap().is_none());
+        drop(tx);
+        assert!(load_active(&pool, id).await.unwrap().is_some());
+        assert!(grants(&pool, id).await.unwrap().is_empty());
+        let after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_audit WHERE principal_id=?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(after, baseline);
     }
 }

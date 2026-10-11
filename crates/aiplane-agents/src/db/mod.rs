@@ -23,6 +23,7 @@ pub mod dot_delegation;
 pub mod dot_memories;
 pub mod dot_sessions;
 pub mod embed_keys;
+pub mod organizations;
 pub mod run_sessions;
 pub mod system_principals;
 pub mod visitor_sessions;

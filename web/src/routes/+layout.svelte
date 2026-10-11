@@ -151,6 +151,7 @@
 		['nav-webhooks', '/webhooks', 'send'],
 		['nav-agents', '/agents', 'cpu'],
 		['nav-dots', '/dots', 'cube'],
+		['organizations-heading', '/organizations', 'users'],
 		['nav-tools', '/tools', 'sliders']
 	];
 	const accountLinks: NavLink[] = [

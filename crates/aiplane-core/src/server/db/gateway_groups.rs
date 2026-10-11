@@ -17,7 +17,11 @@
 use jiff::Timestamp;
 use sqlx::Row;
 
-use super::{DbError, Pool};
+use super::{DbError, Pool, WriteTx};
+
+const GROUPS_SQL: &str = "SELECT name, description, is_admin, is_default, can_manage_agents, can_manage_dots FROM gateway_groups ORDER BY name";
+const MAPPINGS_SQL: &str = "SELECT oidc_value, gateway_group FROM oidc_group_mappings";
+const TOOL_GRANTS_SQL: &str = "SELECT gateway_group, tool_id FROM group_tool_grants";
 
 /// A gateway group definition (without its grants — those live in the
 /// `group_tool_grants` / `skill_role_grants` / per-resource tables).
@@ -58,12 +62,7 @@ fn map_group(row: &sqlx::sqlite::SqliteRow) -> Result<GroupRow, DbError> {
 /// Every group, name-ordered. Powers the `/admin/groups` roster and the
 /// group-picker `<datalist>` reused on every resource form.
 pub async fn list_groups(pool: &Pool) -> Result<Vec<GroupRow>, DbError> {
-    let rows = sqlx::query(
-        "SELECT name, description, is_admin, is_default, can_manage_agents, can_manage_dots
-           FROM gateway_groups ORDER BY name",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query(GROUPS_SQL).fetch_all(pool).await?;
     rows.iter().map(map_group).collect()
 }
 
@@ -72,8 +71,19 @@ pub async fn list_groups(pool: &Pool) -> Result<Vec<GroupRow>, DbError> {
 /// those used to re-derive the names from [`list_groups`] and throw the rest of
 /// each row away.
 pub async fn list_group_names(pool: &Pool) -> Result<Vec<String>, DbError> {
+    list_group_names_with(pool).await
+}
+
+pub async fn list_group_names_in(tx: &mut super::WriteTx) -> Result<Vec<String>, DbError> {
+    list_group_names_with(&mut **tx).await
+}
+
+async fn list_group_names_with<'e, E>(executor: E) -> Result<Vec<String>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let rows = sqlx::query("SELECT name FROM gateway_groups ORDER BY name")
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await?;
     rows.iter().map(|row| Ok(row.try_get("name")?)).collect()
 }
@@ -226,18 +236,16 @@ pub async fn delete_group(pool: &Pool, name: &str) -> Result<bool, DbError> {
 
 /// Every `(oidc_value, gateway_group)` mapping row.
 pub async fn all_mappings(pool: &Pool) -> Result<Vec<(String, String)>, DbError> {
-    let rows = sqlx::query("SELECT oidc_value, gateway_group FROM oidc_group_mappings")
+    sqlx::query(MAPPINGS_SQL)
         .fetch_all(pool)
-        .await?;
-    rows.iter()
-        .map(|r| {
-            Ok((
-                r.try_get::<String, _>("oidc_value")?,
-                r.try_get::<String, _>("gateway_group")?,
-            ))
-        })
-        .collect::<Result<Vec<_>, sqlx::Error>>()
-        .map_err(DbError::from)
+        .await?
+        .iter()
+        .map(map_mapping)
+        .collect()
+}
+
+fn map_mapping(row: &sqlx::sqlite::SqliteRow) -> Result<(String, String), DbError> {
+    Ok((row.try_get("oidc_value")?, row.try_get("gateway_group")?))
 }
 
 /// The OIDC claim values mapped to `group`, for the group's edit form.
@@ -288,18 +296,16 @@ pub async fn set_mappings_for_group(
 
 /// Every `(gateway_group, tool_id)` grant row.
 pub async fn all_tool_grants(pool: &Pool) -> Result<Vec<(String, String)>, DbError> {
-    let rows = sqlx::query("SELECT gateway_group, tool_id FROM group_tool_grants")
+    sqlx::query(TOOL_GRANTS_SQL)
         .fetch_all(pool)
-        .await?;
-    rows.iter()
-        .map(|r| {
-            Ok((
-                r.try_get::<String, _>("gateway_group")?,
-                r.try_get::<String, _>("tool_id")?,
-            ))
-        })
-        .collect::<Result<Vec<_>, sqlx::Error>>()
-        .map_err(DbError::from)
+        .await?
+        .iter()
+        .map(map_tool_grant)
+        .collect()
+}
+
+fn map_tool_grant(row: &sqlx::sqlite::SqliteRow) -> Result<(String, String), DbError> {
+    Ok((row.try_get("gateway_group")?, row.try_get("tool_id")?))
 }
 
 /// The tool ids granted to `group` (may include `*`).
@@ -351,6 +357,32 @@ pub async fn load_snapshot(pool: &Pool) -> Result<GroupSnapshot, DbError> {
         groups: list_groups(pool).await?,
         mappings: all_mappings(pool).await?,
         tool_grants: all_tool_grants(pool).await?,
+    })
+}
+
+pub async fn load_snapshot_in(tx: &mut WriteTx) -> Result<GroupSnapshot, DbError> {
+    let groups = sqlx::query(GROUPS_SQL)
+        .fetch_all(&mut **tx)
+        .await?
+        .iter()
+        .map(map_group)
+        .collect::<Result<_, _>>()?;
+    let mappings = sqlx::query(MAPPINGS_SQL)
+        .fetch_all(&mut **tx)
+        .await?
+        .iter()
+        .map(map_mapping)
+        .collect::<Result<_, _>>()?;
+    let tool_grants = sqlx::query(TOOL_GRANTS_SQL)
+        .fetch_all(&mut **tx)
+        .await?
+        .iter()
+        .map(map_tool_grant)
+        .collect::<Result<_, _>>()?;
+    Ok(GroupSnapshot {
+        groups,
+        mappings,
+        tool_grants,
     })
 }
 
@@ -459,6 +491,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transactional_snapshot_reads_uncommitted_current_policy_without_pool_fallback() {
+        let pool = fresh().await;
+        upsert_group(&pool, "members", "Members", false, true)
+            .await
+            .unwrap();
+        set_can_manage_agents(&pool, "members", true).await.unwrap();
+        set_mappings_for_group(&pool, "members", &v(&["member-claim"]))
+            .await
+            .unwrap();
+        set_tools_for_group(&pool, "members", &v(&["company_echo"]))
+            .await
+            .unwrap();
+        let original = load_snapshot(&pool).await.unwrap();
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        let initial = load_snapshot_in(&mut tx).await.unwrap();
+        assert_eq!(initial.groups, original.groups);
+        assert_eq!(initial.mappings, original.mappings);
+        assert_eq!(initial.tool_grants, original.tool_grants);
+        sqlx::query(
+            "UPDATE gateway_groups SET can_manage_agents=0,is_default=0 WHERE name='members'",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM oidc_group_mappings WHERE gateway_group='members'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM group_tool_grants WHERE gateway_group='members'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let revoked = load_snapshot_in(&mut tx).await.unwrap();
+        assert!(!revoked.groups[0].can_manage_agents);
+        assert!(!revoked.groups[0].is_default);
+        assert!(revoked.mappings.is_empty());
+        assert!(revoked.tool_grants.is_empty());
+        drop(tx);
+        assert_eq!(load_snapshot(&pool).await.unwrap().groups, original.groups);
+    }
+
+    #[tokio::test]
     async fn groups_round_trip() {
         let pool = fresh().await;
         assert!(is_empty(&pool).await.unwrap());
@@ -524,6 +598,28 @@ mod tests {
         assert!(set_can_manage_dots(&pool, "managers", false).await.unwrap());
         assert!(!load_snapshot(&pool).await.unwrap().groups[0].can_manage_dots);
         assert!(!set_can_manage_dots(&pool, "missing", true).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn transactional_group_names_observe_actual_uncommitted_rows_and_rollback() {
+        let pool = fresh().await;
+        upsert_group(&pool, "original", "", false, false)
+            .await
+            .unwrap();
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        sqlx::query("INSERT INTO gateway_groups(name,created_at,updated_at) VALUES('added','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+            .execute(&mut *tx).await.unwrap();
+        assert_eq!(
+            list_group_names_in(&mut tx).await.unwrap(),
+            v(&["added", "original"])
+        );
+        sqlx::query("DELETE FROM gateway_groups WHERE name='original'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(list_group_names_in(&mut tx).await.unwrap(), v(&["added"]));
+        drop(tx);
+        assert_eq!(list_group_names(&pool).await.unwrap(), v(&["original"]));
     }
 
     #[tokio::test]

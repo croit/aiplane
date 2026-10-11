@@ -638,12 +638,14 @@ pub struct LimitsConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct DotsConfig {
     pub max_active_per_user: u32,
+    pub max_active_per_organization: u32,
 }
 
 impl Default for DotsConfig {
     fn default() -> Self {
         Self {
             max_active_per_user: 4,
+            max_active_per_organization: 4,
         }
     }
 }

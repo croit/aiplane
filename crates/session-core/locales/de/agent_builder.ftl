@@ -433,3 +433,5 @@ dot-access-unavailable = Dieses ausgewählte Werkzeug ist nicht verfügbar. Entf
 dot-connection-reload = Verbindungen neu laden
 
 dot-connection-local-unavailable = Die lokalen Zugangsdaten dieses Dots können nicht verwendet werden.
+agent-configuration-error-conflict = Der Entwurf oder die Ressourcenberechtigungen des Agents haben sich geändert. Lade die aktuelle Konfiguration neu, bevor du erneut speicherst oder veröffentlichst.
+agent-management-error-permission-required = Für die Verwaltung von Agents benötigst du eine Berechtigung. Bitte einen Administrator, die Agent-Verwaltung für eine deiner Gruppen zu aktivieren.

@@ -108,6 +108,15 @@ pub async fn get(pool: &Pool, feature: Feature) -> Option<String> {
     }
 }
 
+pub async fn get_in(
+    tx: &mut crate::server::db::WriteTx,
+    feature: Feature,
+) -> Result<Option<String>, crate::server::db::DbError> {
+    Ok(app_settings::get_with(&mut **tx, feature.key())
+        .await?
+        .filter(|value| !value.trim().is_empty()))
+}
+
 /// Persist (`Some`) or clear (`None`) a feature's default model.
 pub async fn set(
     pool: &Pool,
@@ -160,6 +169,33 @@ mod tests {
             assert_eq!(Feature::from_wire(f.as_str()), Some(f));
         }
         assert_eq!(Feature::from_wire("bogus"), None);
+    }
+
+    #[tokio::test]
+    async fn transactional_default_read_observes_current_value_and_empty_as_unset() {
+        let pool = crate::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        set(&pool, Feature::Chat, Some("original")).await.unwrap();
+        let mut tx = crate::server::db::WriteTx::begin(&pool).await.unwrap();
+        sqlx::query("UPDATE app_settings SET value='current' WHERE key=?")
+            .bind(Feature::Chat.key())
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(
+            get_in(&mut tx, Feature::Chat).await.unwrap().as_deref(),
+            Some("current")
+        );
+        sqlx::query("UPDATE app_settings SET value='   ' WHERE key=?")
+            .bind(Feature::Chat.key())
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(get_in(&mut tx, Feature::Chat).await.unwrap(), None);
+        assert_eq!(get_in(&mut tx, Feature::Image).await.unwrap(), None);
+        drop(tx);
+        assert_eq!(get(&pool, Feature::Chat).await.as_deref(), Some("original"));
     }
 
     #[test]
