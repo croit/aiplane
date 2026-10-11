@@ -32,6 +32,7 @@ use tokio::sync::Mutex;
 
 use serde_json::Value;
 
+use super::identities::StoredMcpIdentity;
 use super::{ConnectedServer, McpTool, connect_http_server};
 use crate::server::tools::ask_first::{AskFirst, DEFAULT_APPROVAL_TIMEOUT};
 use crate::server::tools::{Tool, ToolContext, ToolFuture, ToolRegistry, ToolSource};
@@ -40,7 +41,11 @@ use aiplane_core::server::crypto::Crypto;
 use aiplane_core::server::db::Pool;
 use aiplane_core::server::db::mcp_audit;
 use aiplane_core::server::db::mcp_catalog::{self, Connector};
-use aiplane_core::server::db::user_mcp::{self, Connection, ToolMode};
+use aiplane_core::server::db::mcp_connections::{
+    self, Connection, ConnectionIdentity, ConnectionOwner, RefreshTokens,
+};
+use aiplane_core::server::db::user_mcp::{self, ToolMode};
+use aiplane_core::server::rbac::Resolver;
 
 /// How long a live connection (and its tool listing) is reused before a
 /// refresh. Keeps active conversations warm without holding sockets forever.
@@ -54,6 +59,12 @@ const REFRESH_SKEW_SECS: i64 = 60;
 /// evicted (closing their sockets) before inserting a new one — bounds memory
 /// + open MCP sessions on a long-running daemon.
 const MAX_CACHE_ENTRIES: usize = 256;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum CacheKey {
+    Owned(ConnectionIdentity),
+    Shared(String),
+}
 
 struct Cached {
     tools: Vec<Arc<McpTool>>,
@@ -105,7 +116,7 @@ pub enum AskContext<'a> {
 
 /// What an `ask`-mode tool becomes in one overlay.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AskOffer {
+pub(super) enum AskOffer {
     /// Not offered.
     Hide,
     /// Offered, and each call waits for an approval.
@@ -114,54 +125,44 @@ enum AskOffer {
     Unasked,
 }
 
+type RefreshLocks = Mutex<HashMap<(ConnectionOwner, String), Arc<Mutex<()>>>>;
+
 /// Process-wide manager. Cheap to clone the `Arc` in `AppState`.
 pub struct McpConnectionManager {
     db: Pool,
     crypto: Arc<Crypto>,
-    cache: Mutex<HashMap<String, Cached>>,
+    rbac: Arc<Resolver>,
+    cache: Mutex<HashMap<CacheKey, Cached>>,
     /// Per-`(user,connector)` refresh locks: serialize token refreshes so the
     /// background worker and a live request can't both spend the same refresh
     /// token (which, with rotation, would invalidate one of them).
-    refresh_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    refresh_locks: RefreshLocks,
 }
 
 impl McpConnectionManager {
-    pub fn new(db: Pool, crypto: Arc<Crypto>) -> Arc<Self> {
+    pub fn new(db: Pool, crypto: Arc<Crypto>, rbac: Arc<Resolver>) -> Arc<Self> {
         Arc::new(Self {
             db,
             crypto,
+            rbac,
             cache: Mutex::new(HashMap::new()),
             refresh_locks: Mutex::new(HashMap::new()),
         })
     }
 
     /// Get-or-create the refresh lock for a `(user, connector)` pair.
-    async fn refresh_lock(&self, user_id: &str, connector_key: &str) -> Arc<Mutex<()>> {
-        let key = Self::cache_key(user_id, connector_key);
+    async fn refresh_lock(&self, owner: &ConnectionOwner, connector_key: &str) -> Arc<Mutex<()>> {
         let mut locks = self.refresh_locks.lock().await;
         locks
-            .entry(key)
+            .entry((owner.clone(), connector_key.to_owned()))
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     }
-
-    fn cache_key(user_id: &str, connector_key: &str) -> String {
-        format!("{user_id}\u{1f}{connector_key}")
+    fn global_cache_key(connector_key: &str) -> CacheKey {
+        CacheKey::Shared(connector_key.to_owned())
     }
-
-    /// Cache key for a `global` connector: keyed by the connector alone (no
-    /// user) so the single shared connection is reused across every user. The
-    /// leading unit separator can't collide with a per-user key, which always
-    /// starts with a (non-empty) user id.
-    fn global_cache_key(connector_key: &str) -> String {
-        format!("\u{1f}global\u{1f}{connector_key}")
-    }
-
-    /// Drop any cached connection for a user+connector (e.g. on disconnect or
-    /// after an auth error) so the next use reconnects fresh.
-    pub async fn invalidate(&self, user_id: &str, connector_key: &str) {
-        let mut cache = self.cache.lock().await;
-        cache.remove(&Self::cache_key(user_id, connector_key));
+    pub async fn invalidate(&self, owner: &ConnectionOwner, connector_key: &str) {
+        self.cache.lock().await.retain(|key,_| !matches!(key,CacheKey::Owned(identity) if &identity.owner==owner && identity.connector_key==connector_key));
     }
 
     /// Record what this connector exposes, so the admin group editor can offer
@@ -187,7 +188,7 @@ impl McpConnectionManager {
     }
 
     /// Return the cached tools for `ck` if still within [`CACHE_TTL`].
-    async fn cache_lookup(&self, ck: &str) -> Option<Vec<Arc<McpTool>>> {
+    async fn cache_lookup(&self, ck: &CacheKey) -> Option<Vec<Arc<McpTool>>> {
         let cache = self.cache.lock().await;
         cache
             .get(ck)
@@ -198,7 +199,7 @@ impl McpConnectionManager {
     /// Insert `tools` under `ck`, bounding the cache: when full and this is a
     /// new key, evict stale entries first (dropping them closes their MCP
     /// sockets), then the oldest.
-    async fn cache_store(&self, ck: String, tools: Vec<Arc<McpTool>>) {
+    async fn cache_store(&self, ck: CacheKey, tools: Vec<Arc<McpTool>>) {
         let mut cache = self.cache.lock().await;
         if cache.len() >= MAX_CACHE_ENTRIES && !cache.contains_key(&ck) {
             cache.retain(|_, c| c.fetched_at.elapsed() < CACHE_TTL);
@@ -233,9 +234,10 @@ impl McpConnectionManager {
         is_admin: bool,
         ask: AskContext<'_>,
     ) -> UserMcpLayer {
-        let keys = user_mcp::connected_keys(&self.db, user_id)
-            .await
-            .unwrap_or_default();
+        let keys =
+            mcp_connections::connected_keys(&self.db, &ConnectionOwner::User(user_id.to_owned()))
+                .await
+                .unwrap_or_default();
         // Per-user connectors the user has connected. Resolve concurrently —
         // one slow/unreachable server can't serialise the whole turn behind it.
         let futs = keys.into_iter().map(|key| async move {
@@ -249,7 +251,10 @@ impl McpConnectionManager {
                 return None;
             }
             let (asks, modes) = self.ask_and_modes(user_id, &key, ask).await;
-            match self.ensure(user_id, &connector).await {
+            match self
+                .ensure_connection(&ConnectionOwner::User(user_id.to_owned()), &connector)
+                .await
+            {
                 Ok(tools) => Some((key, tools, modes, asks, connector.audit)),
                 Err(err) => {
                     tracing::warn!(user = %user_id, connector = %key, error = %err,
@@ -365,7 +370,7 @@ impl McpConnectionManager {
 
     /// Resolve, for one connector, what its `ask`-mode tools become in this
     /// context and the user's per-tool mode overrides.
-    async fn ask_and_modes(
+    pub(super) async fn ask_and_modes(
         &self,
         user_id: &str,
         key: &str,
@@ -392,20 +397,21 @@ impl McpConnectionManager {
     /// Ensure a live connection for `(user, connector)`, returning its tools.
     /// Reuses the cache within [`CACHE_TTL`]; otherwise refreshes the token if
     /// needed and re-handshakes.
-    async fn ensure(
+    pub async fn ensure_connection(
         &self,
-        user_id: &str,
+        owner: &ConnectionOwner,
         connector: &Connector,
     ) -> Result<Vec<Arc<McpTool>>, String> {
-        let ck = Self::cache_key(user_id, &connector.key);
+        let conn = mcp_connections::get_connection(&self.db, owner, &connector.key)
+            .await
+            .map_err(|e| format!("loading connection: {e}"))?
+            .filter(|c| c.status == mcp_connections::STATUS_CONNECTED)
+            .ok_or_else(|| "not connected".to_string())?;
+        let identity = conn.identity();
+        let ck = CacheKey::Owned(identity.clone());
         if let Some(tools) = self.cache_lookup(&ck).await {
             return Ok(tools);
         }
-
-        let conn = user_mcp::get_connection(&self.db, user_id, &connector.key)
-            .await
-            .map_err(|e| format!("loading connection: {e}"))?
-            .ok_or_else(|| "not connected".to_string())?;
 
         // Open connectors carry no credentials at all — the user's "connected"
         // row exists purely so they can opt the tools in/out, not for auth.
@@ -413,7 +419,7 @@ impl McpConnectionManager {
             connect_http_server(&connector.key, &connector.url, None).await?
         } else {
             let (access, refreshed) = self
-                .access_token(user_id, connector, &conn)
+                .access_token(owner, connector, &conn)
                 .await
                 .map_err(String::from)?;
             match connect_http_server(&connector.key, &connector.url, Some(&access)).await {
@@ -423,22 +429,14 @@ impl McpConnectionManager {
                 // already refreshed this pass and a refresh token exists, force one
                 // refresh + a single reconnect before giving up.
                 Err(e) if !refreshed && conn.refresh_token_ct.is_some() => {
-                    tracing::info!(user = %user_id, connector = %connector.key,
+                    tracing::info!(owner = ?owner, connector = %connector.key,
                     "MCP connect failed; forcing token refresh + one retry");
-                    let new_access = match self.refresh(user_id, connector, true).await {
+                    let new_access = match self.refresh(owner, connector, true).await {
                         Ok(access) => access,
                         Err(re) => {
                             // Park the connection with the right reason, same as
                             // the expiry-driven refresh path below does.
                             let msg = format!("{e}; forced refresh also failed: {re}");
-                            let _ = user_mcp::mark_error(
-                                &self.db,
-                                user_id,
-                                &connector.key,
-                                &msg,
-                                re.needs_reauth,
-                            )
-                            .await;
                             return Err(msg);
                         }
                     };
@@ -450,7 +448,26 @@ impl McpConnectionManager {
             }
         };
         let ConnectedServer { conn: _live, tools } = connected;
-        let tools: Vec<Arc<McpTool>> = tools.into_iter().map(Arc::new).collect();
+        let current = mcp_connections::get_connection(&self.db, owner, &connector.key)
+            .await
+            .map_err(|e| format!("checking connection: {e}"))?;
+        if !current.is_some_and(|c| {
+            c.status == mcp_connections::STATUS_CONNECTED && c.identity() == identity
+        }) {
+            return Err("connection changed while connecting".into());
+        }
+        let tools: Vec<Arc<McpTool>> = tools
+            .into_iter()
+            .map(|tool| {
+                Arc::new(tool.with_identity(
+                    StoredMcpIdentity {
+                        connection: identity.clone(),
+                        binding_generation: None,
+                    },
+                    self.rbac.clone(),
+                ))
+            })
+            .collect();
         self.record_catalog_tools(&connector.key, &tools).await;
         self.cache_store(ck, tools.clone()).await;
         Ok(tools)
@@ -463,7 +480,10 @@ impl McpConnectionManager {
     /// whose bot token is baked into the sidecar behind a loopback endpoint);
     /// `StaticBearer` sends the shared token stored (encrypted) on the row.
     /// `OAuth2` is inherently per-user and rejected here (and at admin save).
-    async fn ensure_global(&self, connector: &Connector) -> Result<Vec<Arc<McpTool>>, String> {
+    pub(super) async fn ensure_global(
+        &self,
+        connector: &Connector,
+    ) -> Result<Vec<Arc<McpTool>>, String> {
         let ck = Self::global_cache_key(&connector.key);
         if let Some(tools) = self.cache_lookup(&ck).await {
             return Ok(tools);
@@ -496,7 +516,7 @@ impl McpConnectionManager {
     /// marked errored.
     async fn access_token(
         &self,
-        user_id: &str,
+        owner: &ConnectionOwner,
         connector: &Connector,
         conn: &Connection,
     ) -> Result<(String, bool), TokenError> {
@@ -515,7 +535,7 @@ impl McpConnectionManager {
                 // instead of showing a stale "connected".
                 Err(err) => {
                     let _ =
-                        user_mcp::mark_error(&self.db, user_id, &connector.key, &err, true).await;
+                        mcp_connections::mark_error(&self.db, &conn.identity(), &err, true).await;
                     Err(TokenError {
                         message: err,
                         needs_reauth: true,
@@ -524,19 +544,9 @@ impl McpConnectionManager {
             };
         }
         // Needs refresh.
-        match self.refresh(user_id, connector, false).await {
+        match self.refresh(owner, connector, false).await {
             Ok(token) => Ok((token, true)),
-            Err(err) => {
-                let _ = user_mcp::mark_error(
-                    &self.db,
-                    user_id,
-                    &connector.key,
-                    &err.message,
-                    err.needs_reauth,
-                )
-                .await;
-                Err(err)
-            }
+            Err(err) => Err(err),
         }
     }
 
@@ -546,29 +556,19 @@ impl McpConnectionManager {
     /// errored on failure so the store surfaces "needs reconnect".
     pub async fn refresh_connection(
         &self,
-        user_id: &str,
+        owner: &ConnectionOwner,
         connector_key: &str,
     ) -> Result<(), TokenError> {
         let connector = mcp_catalog::get(&self.db, connector_key)
             .await
             .map_err(|e| TokenError::transient(format!("loading connector: {e}")))?
             .ok_or_else(|| TokenError::transient("connector no longer in catalog"))?;
-        match self.refresh(user_id, &connector, true).await {
+        match self.refresh(owner, &connector, true).await {
             Ok(_) => {
-                self.invalidate(user_id, connector_key).await;
+                self.invalidate(owner, connector_key).await;
                 Ok(())
             }
-            Err(err) => {
-                let _ = user_mcp::mark_error(
-                    &self.db,
-                    user_id,
-                    connector_key,
-                    &err.message,
-                    err.needs_reauth,
-                )
-                .await;
-                Err(err)
-            }
+            Err(err) => Err(err),
         }
     }
 
@@ -589,106 +589,125 @@ impl McpConnectionManager {
     /// task already refreshed it while we waited.
     async fn refresh(
         &self,
-        user_id: &str,
+        owner: &ConnectionOwner,
         connector: &Connector,
         force: bool,
     ) -> Result<String, TokenError> {
-        let lock = self.refresh_lock(user_id, &connector.key).await;
+        let lock = self.refresh_lock(owner, &connector.key).await;
         let _held = lock.lock().await;
         // Reload under the lock so we see any refresh a concurrent task just did.
-        let conn = user_mcp::get_connection(&self.db, user_id, &connector.key)
+        let conn = mcp_connections::get_connection(&self.db, owner, &connector.key)
             .await
             .map_err(|e| TokenError::transient(format!("loading connection: {e}")))?
+            .filter(|c| c.status == mcp_connections::STATUS_CONNECTED)
             .ok_or_else(|| TokenError::transient("not connected"))?;
-        if !force
-            && conn
-                .token_expires_at
-                .map(|exp| exp > Timestamp::now() + jiff::Span::new().seconds(REFRESH_SKEW_SECS))
-                .unwrap_or(false)
-        {
-            // A concurrent refresh already produced a fresh token — reuse it.
-            return self.decrypt_access(&conn).map_err(TokenError::transient);
-        }
-        let (rt_ct, rt_nonce) = match (&conn.refresh_token_ct, &conn.refresh_token_nonce) {
-            (Some(ct), Some(nonce)) => (ct, nonce),
-            // Nothing to refresh *with*: only a new authorization can help,
-            // so this is a reauth case rather than a retryable error.
-            _ => {
-                return Err(TokenError {
-                    message: "access token expired and no refresh token stored — reconnect".into(),
-                    needs_reauth: true,
-                });
+        let identity = conn.identity();
+        let result: Result<String, TokenError> = async {
+            if !force
+                && conn
+                    .token_expires_at
+                    .map(|exp| {
+                        exp > Timestamp::now() + jiff::Span::new().seconds(REFRESH_SKEW_SECS)
+                    })
+                    .unwrap_or(false)
+            {
+                // A concurrent refresh already produced a fresh token — reuse it.
+                return self.decrypt_access(&conn).map_err(TokenError::transient);
             }
-        };
-        let refresh_token = self
-            .crypto
-            .open_str(rt_nonce, rt_ct)
-            .map_err(|e| TokenError::transient(format!("decrypting refresh token: {e}")))?;
+            let (rt_ct, rt_nonce) = match (&conn.refresh_token_ct, &conn.refresh_token_nonce) {
+                (Some(ct), Some(nonce)) => (ct, nonce),
+                // Nothing to refresh *with*: only a new authorization can help,
+                // so this is a reauth case rather than a retryable error.
+                _ => {
+                    return Err(TokenError {
+                        message: "access token expired and no refresh token stored — reconnect"
+                            .into(),
+                        needs_reauth: true,
+                    });
+                }
+            };
+            let refresh_token = self
+                .crypto
+                .open_str(rt_nonce, rt_ct)
+                .map_err(|e| TokenError::transient(format!("decrypting refresh token: {e}")))?;
 
-        // Reuse the token endpoint resolved + persisted at connect time; only
-        // re-run discovery for older connections that predate persistence.
-        // Avoids re-fetching (and re-trusting) the MCP server's discovery doc
-        // on the long-lived refresh path.
-        let token_url = match conn.token_url.clone() {
-            Some(u) => u,
-            None => {
-                let ov = mcp_oauth::Overrides {
-                    authorize_url: connector.authorize_url.clone(),
-                    token_url: connector.token_url.clone(),
-                    registration_url: connector.registration_url.clone(),
+            // Reuse the token endpoint resolved + persisted at connect time; only
+            // re-run discovery for older connections that predate persistence.
+            // Avoids re-fetching (and re-trusting) the MCP server's discovery doc
+            // on the long-lived refresh path.
+            let token_url = match conn.token_url.clone() {
+                Some(u) => u,
+                None => {
+                    let ov = mcp_oauth::Overrides {
+                        authorize_url: connector.authorize_url.clone(),
+                        token_url: connector.token_url.clone(),
+                        registration_url: connector.registration_url.clone(),
+                    };
+                    mcp_oauth::discover(&connector.url, &ov)
+                        .await
+                        .map_err(|e| TokenError::transient(format!("discovery for refresh: {e}")))?
+                        .token_url
+                }
+            };
+
+            let (client_id, client_secret) = self
+                .client_credentials(connector, &conn)
+                .map_err(TokenError::transient)?;
+            // `needs_reauth` rides along: an `invalid_grant` / `invalid_client` here
+            // is the authorization server telling us this credential is finished —
+            // a dead refresh token, or (for a DCR client) a server that no longer
+            // knows the client we registered, e.g. after it lost its OAuth store.
+            let tokens = mcp_oauth::refresh(
+                &token_url,
+                &refresh_token,
+                &client_id,
+                client_secret.as_deref(),
+            )
+            .await
+            .map_err(|e| TokenError {
+                message: format!("token refresh: {e}"),
+                needs_reauth: e.needs_reauth(),
+            })?;
+
+            let access_sealed = self
+                .crypto
+                .seal_str(&tokens.access_token)
+                .map_err(|e| TokenError::transient(format!("sealing access token: {e}")))?;
+            let refresh_sealed =
+                match tokens.refresh_token.as_deref() {
+                    Some(rt) => Some(self.crypto.seal_str(rt).map_err(|e| {
+                        TokenError::transient(format!("sealing refresh token: {e}"))
+                    })?),
+                    None => None,
                 };
-                mcp_oauth::discover(&connector.url, &ov)
-                    .await
-                    .map_err(|e| TokenError::transient(format!("discovery for refresh: {e}")))?
-                    .token_url
+            let saved = mcp_connections::update_tokens(
+                &self.db,
+                &identity,
+                RefreshTokens {
+                    access_token_ct: &access_sealed.ciphertext,
+                    access_token_nonce: &access_sealed.nonce,
+                    refresh_token_ct: refresh_sealed.as_ref().map(|s| s.ciphertext.as_slice()),
+                    refresh_token_nonce: refresh_sealed.as_ref().map(|s| s.nonce.as_slice()),
+                    token_expires_at: tokens.expires_at,
+                },
+            )
+            .await
+            .map_err(|e| TokenError::transient(format!("persisting refreshed tokens: {e}")))?;
+            if !saved {
+                return Err(TokenError::transient(
+                    "connection changed during token refresh",
+                ));
             }
-        };
 
-        let (client_id, client_secret) = self
-            .client_credentials(connector, &conn)
-            .map_err(TokenError::transient)?;
-        // `needs_reauth` rides along: an `invalid_grant` / `invalid_client` here
-        // is the authorization server telling us this credential is finished —
-        // a dead refresh token, or (for a DCR client) a server that no longer
-        // knows the client we registered, e.g. after it lost its OAuth store.
-        let tokens = mcp_oauth::refresh(
-            &token_url,
-            &refresh_token,
-            &client_id,
-            client_secret.as_deref(),
-        )
-        .await
-        .map_err(|e| TokenError {
-            message: format!("token refresh: {e}"),
-            needs_reauth: e.needs_reauth(),
-        })?;
-
-        let access_sealed = self
-            .crypto
-            .seal_str(&tokens.access_token)
-            .map_err(|e| TokenError::transient(format!("sealing access token: {e}")))?;
-        let refresh_sealed = match tokens.refresh_token.as_deref() {
-            Some(rt) => Some(
-                self.crypto
-                    .seal_str(rt)
-                    .map_err(|e| TokenError::transient(format!("sealing refresh token: {e}")))?,
-            ),
-            None => None,
-        };
-        user_mcp::update_tokens(
-            &self.db,
-            user_id,
-            &connector.key,
-            &access_sealed.ciphertext,
-            &access_sealed.nonce,
-            refresh_sealed.as_ref().map(|s| s.ciphertext.as_slice()),
-            refresh_sealed.as_ref().map(|s| s.nonce.as_slice()),
-            tokens.expires_at,
-        )
-        .await
-        .map_err(|e| TokenError::transient(format!("persisting refreshed tokens: {e}")))?;
-
-        Ok(tokens.access_token)
+            Ok(tokens.access_token)
+        }
+        .await;
+        if let Err(err) = &result {
+            let _ =
+                mcp_connections::mark_error(&self.db, &identity, &err.message, err.needs_reauth)
+                    .await;
+        }
+        result
     }
 
     /// Resolve `(client_id, client_secret?)` for token requests: the
@@ -745,7 +764,8 @@ impl McpConnectionManager {
         let tools = if connector.has_shared_identity() {
             self.ensure_global(connector).await?
         } else {
-            self.ensure(user_id, connector).await?
+            self.ensure_connection(&ConnectionOwner::User(user_id.to_owned()), connector)
+                .await?
         };
         let modes = user_mcp::tool_modes(&self.db, user_id, &connector.key)
             .await
@@ -825,6 +845,10 @@ impl Tool for AuditedTool {
 
     fn id(&self) -> &str {
         self.inner.id()
+    }
+
+    fn execution_facts(&self) -> Option<Value> {
+        self.inner.execution_facts()
     }
 
     fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
@@ -914,6 +938,10 @@ impl Tool for SensitiveArgs {
         self.0.id()
     }
 
+    fn execution_facts(&self) -> Option<Value> {
+        self.0.execution_facts()
+    }
+
     fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
         self.0.action_catalogue()
     }
@@ -968,7 +996,7 @@ pub struct UserMcpLayer {
 }
 
 impl UserMcpLayer {
-    fn add(
+    pub(super) fn add(
         &mut self,
         connector_key: &str,
         tools: &[Arc<McpTool>],
@@ -1243,6 +1271,14 @@ mod tests {
             sensitive.phase(),
             crate::server::tools::ToolPhase::ActsOnState
         );
+        assert_eq!(
+            audited.execution_facts(),
+            Some(serde_json::json!({"resource":"fixture"}))
+        );
+        assert_eq!(
+            sensitive.execution_facts(),
+            Some(serde_json::json!({"resource":"fixture"}))
+        );
     }
     use super::*;
     use crate::server::tools::echo::Echo;
@@ -1252,9 +1288,28 @@ mod tests {
     use wiremock::matchers::method;
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    fn fixture_rbac() -> Arc<Resolver> {
+        use aiplane_core::server::rbac::config::{RbacConfig, RoleConfig};
+        Arc::new(
+            Resolver::build(
+                RbacConfig {
+                    default_role: Some("member".into()),
+                    mappings: vec![],
+                },
+                vec![RoleConfig {
+                    id: "member".into(),
+                    admin: false,
+                    models: vec!["*".into()],
+                    tools: vec!["*".into()],
+                    skills: vec![],
+                }],
+            )
+            .unwrap(),
+        )
+    }
     async fn manager() -> Arc<McpConnectionManager> {
         let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
-        McpConnectionManager::new(pool, Arc::new(Crypto::ephemeral()))
+        McpConnectionManager::new(pool, Arc::new(Crypto::ephemeral()), fixture_rbac())
     }
 
     fn global_connector(auth: AuthKind) -> Connector {
@@ -1327,10 +1382,12 @@ mod tests {
             .await;
         let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
         let crypto = Arc::new(Crypto::ephemeral());
-        let mgr = McpConnectionManager::new(pool.clone(), crypto.clone());
+        let mgr = McpConnectionManager::new(pool.clone(), crypto.clone(), fixture_rbac());
         let mut connector = global_connector(AuthKind::OAuth2);
         connector.scope = Scope::PerUser;
         connector.url = server.uri();
+        sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,enabled,created_at,updated_at) VALUES(?,?,?,'oauth2','per_user',1,?,?)")
+            .bind(&connector.key).bind(&connector.name).bind(&connector.url).bind(connector.created_at.to_string()).bind(connector.updated_at.to_string()).execute(&pool).await.unwrap();
         for (user, secret) in [("alice", "alice-secret"), ("bob", "bob-secret")] {
             sqlx::query("INSERT INTO users (id, email, roles_json, created_at, updated_at) VALUES (?, ?, '[]', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')")
                 .bind(user)
@@ -1339,10 +1396,10 @@ mod tests {
                 .await
                 .unwrap();
             let sealed = crypto.seal_str(secret).unwrap();
-            user_mcp::upsert_connection(
+            mcp_connections::upsert_connection(
                 &pool,
-                user_mcp::NewConnection {
-                    user_id: user.into(),
+                mcp_connections::NewConnection {
+                    owner: ConnectionOwner::User(user.into()),
                     connector_key: connector.key.clone(),
                     access_token_ct: sealed.ciphertext,
                     access_token_nonce: sealed.nonce,
@@ -1359,12 +1416,20 @@ mod tests {
             .await
             .unwrap();
         }
-        let alice = mgr.ensure("alice", &connector).await.unwrap();
-        let bob = mgr.ensure("bob", &connector).await.unwrap();
+        let alice = mgr
+            .ensure_connection(&ConnectionOwner::User("alice".into()), &connector)
+            .await
+            .unwrap();
+        let bob = mgr
+            .ensure_connection(&ConnectionOwner::User("bob".into()), &connector)
+            .await
+            .unwrap();
         assert_eq!(alice[0].schema().function.description, "alice");
         assert_eq!(bob[0].schema().function.description, "bob");
         assert_eq!(
-            mgr.ensure("alice", &connector).await.unwrap()[0]
+            mgr.ensure_connection(&ConnectionOwner::User("alice".into()), &connector)
+                .await
+                .unwrap()[0]
                 .schema()
                 .function
                 .description,
@@ -1381,6 +1446,23 @@ mod tests {
         let bob_result = bob[0].run(bob_ctx, serde_json::json!({})).await.unwrap();
         assert!(alice_result.to_string().contains("alice"), "{alice_result}");
         assert!(bob_result.to_string().contains("bob"), "{bob_result}");
+        mcp_connections::delete_connection(
+            &mgr.db,
+            &ConnectionOwner::User("alice".into()),
+            &connector.key,
+        )
+        .await
+        .unwrap();
+        assert!(
+            mgr.ensure_connection(&ConnectionOwner::User("alice".into()), &connector)
+                .await
+                .is_err()
+        );
+        assert!(
+            mgr.ensure_connection(&ConnectionOwner::User("bob".into()), &connector)
+                .await
+                .is_ok()
+        );
     }
 
     /// A shared-identity connector whose one tool its server marks
@@ -1457,7 +1539,8 @@ mod tests {
         let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let _server = destructive_connector(&pool, calls.clone()).await;
-        let mgr = McpConnectionManager::new(pool.clone(), Arc::new(Crypto::ephemeral()));
+        let mgr =
+            McpConnectionManager::new(pool.clone(), Arc::new(Crypto::ephemeral()), fixture_rbac());
 
         let layer = mgr.layer_for_user("u1", &[], true, AskContext::Chat).await;
         assert_eq!(layer.tool_ids(), ["mcp__crm__delete_contact"]);
@@ -1505,7 +1588,7 @@ mod tests {
         let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let _server = destructive_connector(&pool, calls).await;
-        let mgr = McpConnectionManager::new(pool, Arc::new(Crypto::ephemeral()));
+        let mgr = McpConnectionManager::new(pool, Arc::new(Crypto::ephemeral()), fixture_rbac());
         let layer = mgr
             .layer_for_user("u1", &[], true, AskContext::Api { token_id: "t1" })
             .await;
@@ -1590,6 +1673,7 @@ mod tests {
             model: None,
             suspend: Default::default(),
             pending_actions: None,
+            pending_execution_facts: None,
             granted_tools: None,
             agent: None,
             personal_dot: None,
@@ -1662,7 +1746,12 @@ mod tests {
         );
         assert_ne!(
             McpConnectionManager::global_cache_key("discord"),
-            McpConnectionManager::cache_key("discord", "discord")
+            CacheKey::Owned(ConnectionIdentity {
+                owner: ConnectionOwner::User("discord".into()),
+                connector_key: "discord".into(),
+                connection_id: "id".into(),
+                generation: "generation".into()
+            })
         );
     }
 
@@ -1766,7 +1855,7 @@ mod tests {
         // turn, and the store UI asks for a new sign-in — the only thing that
         // actually fixes it — instead of showing a stale green "connected".
         let mgr = manager().await;
-        // FK: user_mcp_connections references users(id).
+        // FK: mcp_connections User ownership references users(id).
         sqlx::query(
             "INSERT INTO users (id, email, roles_json, created_at, updated_at) \
              VALUES ('u1','u@e','[]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
@@ -1777,10 +1866,10 @@ mod tests {
         // Seal the token under a different ephemeral key than the manager's, so
         // the manager can't open it — exactly the production key-drift scenario.
         let sealed = Crypto::ephemeral().seal_str("stale-token").unwrap();
-        user_mcp::upsert_connection(
+        mcp_connections::upsert_connection(
             &mgr.db,
-            user_mcp::NewConnection {
-                user_id: "u1".into(),
+            mcp_connections::NewConnection {
+                owner: ConnectionOwner::User("u1".into()),
                 connector_key: "discord".into(),
                 access_token_ct: sealed.ciphertext,
                 access_token_nonce: sealed.nonce,
@@ -1797,14 +1886,18 @@ mod tests {
         .await
         .unwrap();
         let connector = global_connector(AuthKind::OAuth2);
-        let conn = user_mcp::get_connection(&mgr.db, "u1", "discord")
-            .await
-            .unwrap()
-            .expect("connection was just inserted");
+        let conn = mcp_connections::get_connection(
+            &mgr.db,
+            &ConnectionOwner::User("u1".into()),
+            "discord",
+        )
+        .await
+        .unwrap()
+        .expect("connection was just inserted");
         assert_eq!(conn.status, "connected", "starts life connected");
 
         let err = mgr
-            .access_token("u1", &connector, &conn)
+            .access_token(&ConnectionOwner::User("u1".into()), &connector, &conn)
             .await
             .expect_err("decrypt under the wrong key must fail");
         assert!(
@@ -1812,13 +1905,17 @@ mod tests {
             "an unreadable credential is only fixable by authorizing again"
         );
 
-        let after = user_mcp::get_connection(&mgr.db, "u1", "discord")
-            .await
-            .unwrap()
-            .expect("connection still present");
+        let after = mcp_connections::get_connection(
+            &mgr.db,
+            &ConnectionOwner::User("u1".into()),
+            "discord",
+        )
+        .await
+        .unwrap()
+        .expect("connection still present");
         assert_eq!(
             after.status,
-            user_mcp::STATUS_REAUTH,
+            mcp_connections::STATUS_REAUTH,
             "a non-self-healing decrypt failure must ask the user to reconnect"
         );
         assert!(

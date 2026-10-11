@@ -2,16 +2,16 @@
 
 ## Status
 
-Adopted proposal for upcoming vertical slices under the maintainer's delegated product decisions. Own Dot credentials and organization Dots are not implemented. Current personal Dots use their owner's effective permissions and existing user or gateway-shared MCP connections. This proposal extends those mechanisms; it does not provision email accounts or connect any external account.
+Personal Dots can select their user's OAuth connection or a separately authorized connection owned by their Dot principal. Storage, runtime selection, JSON endpoints and the web controls extend the existing MCP authorization mechanism. The real Chrome scenario exercises authorization, explicit selection, actual tool discovery and isolated disconnect. Organization ownership and credentials remain proposed capabilities. Connecting an account does not provision a provider account.
 
 ## Verified source baseline
 
 | Source | Current mechanism and constraint |
 |---|---|
-| `aiplane-core/src/server/db/user_mcp.rs`; migration `0023_user_mcp.sql` | One connection per user and connector. Access/refresh/DCR secrets are ciphertext plus nonce. Pending OAuth records bind state to the initiating user and connector. |
+| `aiplane-core/src/server/db/mcp_connections.rs`; migration `0081_personal_dot_sessions.sql` | One connection per typed user/principal owner and connector. Access/refresh/DCR secrets are ciphertext plus nonce. Pending OAuth binds the initiating user, exact reserved connection, target owner, generation and expiry. `user_mcp.rs` retains existing tool preferences and API-token policy. |
 | `aiplane-core/src/server/auth/mcp_oauth.rs` | OAuth discovery, PKCE, dynamic client registration, authorization, code exchange and refresh. Token results do not provide a general verified provider-account identity. |
-| `aiplane-api/src/pages/integrations.rs` | Existing connect and shared `/integrations/callback` flow. Callback consumes pending state, verifies the signed-in user, exchanges at the recorded token endpoint, seals secrets and saves the user connection. |
-| `aiplane-runtime/src/server/tools/mcp/manager.rs` | User layers resolve connected user accounts and allowed global connectors. Principal layers resolve explicitly granted shared `global`/`agent` connector identities; they do not read user OAuth credentials. Refresh/cache keys currently use user and connector, with a distinct global key. |
+| `aiplane-api/src/pages/integrations.rs` | Reused connect and shared `/integrations/callback` flow. Callback consumes pending state, verifies the initiating session and current authority, exchanges at the recorded endpoint and conditionally updates only the still-current reserved connection. |
+| `aiplane-runtime/src/server/tools/mcp/manager.rs` | Ordinary user layers retain their user/global connections. Personal Dot layers resolve the explicit user/principal selection. Organization-independent principal layers retain existing granted shared `global`/`agent` identities. Refresh locks use typed owner/connector and credential cache keys include generation. |
 | `aiplane-core/src/server/db/mcp_catalog.rs` | One actual connector catalogue, scope `per_user`, `global` or `agent`, auth `oauth2`, `none` or `static_bearer`, enabled state and allowed gateway groups. |
 | `aiplane-agents/src/db/system_principals.rs` | Principals and explicit resource grants, initially empty; existing grant audit and model/pool constraints. |
 | `aiplane-agents/src/db/agents.rs` | Agent definitions and user/group shares with read/write/respond access; last-write-share protection. Personal Dot ownership is explicitly a user. |
@@ -23,7 +23,11 @@ A search of schema and ownership/accessors found no organization entity or typed
 
 Reuse the catalogue, MCP manager and live tool inventory; crypto sealing and existing token fields; OAuth discovery/PKCE/state/callback/refresh; pinned and guarded network requests; `AgentSpec` tools and approval rules; principal grants; agent user/group shares; gateway-group RBAC; activity and MCP audit; existing user session identity and error/translation conventions.
 
-Introduce one neutral typed `ConnectionOwner::User(id) | Principal(id)` in the connection storage/manager contract. Extend existing accessors and connection rows to support both rather than creating a second OAuth subsystem. Add one Dot-aware identity-selection resolver in runtime that chooses a single connection before composing tools. The core connection layer must not import Dot, organization or runtime types.
+The neutral typed `ConnectionOwner::User(id) | Principal(id)` lives in `aiplane-core::server::db::mcp_connections`. The MCP manager uses owner and credential generation to fence its cache and refresh writes. `aiplane-runtime::server::tools::mcp::identities` resolves one selected connection before composing a personal Dot's tools. The core connection layer imports no Dot, organization or runtime types.
+
+The canonical `aiplane-core::server::db::WriteTx` provides the same `BEGIN IMMEDIATE` transaction to credential and agent accessors. `session-core::db::suspensions::PendingCall.execution_facts` stores opaque execution facts in the existing pending-call JSON. Tool wrappers preserve these facts; they are excluded from approval presentation and model messages.
+
+The existing `agent_audit` ToolCall/ToolResult events provide admission and outcome attribution. A state-backed personal tool source records admission after resolving the current tool; the call-policy and runner refusal paths use that same writer. Its optional identity is a whitelist of the actual typed MCP connection and binding generations, never generic metadata. It describes an attempt, and resumed calls retain their original event. See [Agent activity log](agent-activity-log.md).
 
 Organization metadata is a distinct typed owner entity in `aiplane-agents`, with membership derived from the existing gateway-group resolver and links to named gateway groups. Do not create another role/grant engine or reinterpret every gateway group as an organization automatically. `session-core` remains owner-agnostic.
 
@@ -39,11 +43,11 @@ An explicit identity choice applies to future calls. Store the resolved connecti
 
 ## Minimum schema amendment
 
-Amend unreleased migration `0081_personal_dot_sessions.sql` and its schema/checksum fixtures once for this change set; table names below are the chosen proposal, not current schema claims.
+The personal slice amends unreleased migration `0081_personal_dot_sessions.sql`, its schema fixture and checksum. Organization tables described below remain proposals.
 
 - Generalize `user_mcp_connections` to `mcp_connections`, preserving existing user records, token/scopes/status fields and timestamps. Add mutually exclusive nullable `user_id` and `principal_id`, each with a real cascading foreign key, plus partial uniqueness for owner and connector. The typed owner is derived from exactly one nonnull field. No compatibility view or second token store.
 - Extend `pending_mcp_oauth` with the target connection owner, initiating user ID, Dot ID where applicable and immutable authorization generation. Pending state stores the chosen target; callback query parameters cannot change it. Preserve token endpoint, resource, PKCE, DCR fields, expiry and safe return path.
-- Add `dot_connector_bindings(dot_id, connector_key, identity_mode, connection_generation)` with a constrained mode `user` or `principal`, uniqueness per Dot/connector and foreign keys. This table is identity selection only; tool/action policy stays in `AgentSpec`.
+- `dot_connector_bindings(dot_id, connector_key, identity_mode, connection_generation, binding_generation, updated_at)` constrains the mode to `user` or `principal`, with uniqueness per Dot/connector and a cascading personal-Dot foreign key. This table stores identity selection; tool/action policy stays in `AgentSpec`. An implicit user selection has no binding row. An unchanged effective save preserves its generation; an explicit switch back retains a real row and changes its generation.
 - Give each connection a generation changed on reauthorization, revoke or replacement. Include it in live-cache keys and suspended-call identity facts. Serialize refresh by typed owner and connector; refresh preserves generation while disconnect/reconnect changes it.
 - Add organization metadata and organization-to-gateway-group membership bindings, plus an organization-Dot ownership record linking existing principal/agent to exactly one organization. Organization rows have their actual configured name. Avoid polymorphic IDs with no integrity checks.
 - If organization-shared OAuth accounts are included, allocate one managed system principal per organization as their credential owner. Organization Dots select that explicit principal or their own principal; all secrets remain in the same `mcp_connections` table.
@@ -55,9 +59,9 @@ The organization's existence and grants are independent of its creator's account
 1. Authenticate the initiating person and validate ownership/manage rights and catalogue connect rights before discovery. A personal Dot target must belong to that user; an organization target requires current membership plus existing write/management authority.
 2. Record the target and initiator in pending state, using the existing random state, PKCE and expiry. Reuse the callback route and provider redirect URI to avoid duplicating provider setup.
 3. On callback, consume state once and verify the initiating session. Reload target existence, ownership/membership, connector enablement/connect rights and generation before exchange and again before transactionally saving tokens. Revoked rights or a deleted Dot must not produce an orphan credential.
-4. Exchange through the recorded trusted token endpoint and resource, seal secrets with the existing crypto service and upsert only the recorded owner. Invalidate only that owner's connector cache. Redirect only to a validated internal return path.
+4. Exchange through the recorded trusted token endpoint and resource. Seal secrets with the existing crypto service and conditionally update the exact reserved connection. Completion never inserts a missing connection. Credential and authorization generations plus the persisted deadline must still match, so disconnect or a newer authorization cannot be undone by a late response. Invalidate only that owner's connector cache and redirect only to a validated internal return path.
 5. Refresh through the existing endpoint/client-secret handling and error status lifecycle, keyed by typed owner. Concurrent refresh and disconnect need generation-checked writes so a late refresh cannot resurrect a disconnected connection.
-6. Disconnect removes or revokes the selected local credential, invalidates its cache and pending flows and disables affected tools. Provider-side revocation is only claimed when actually supported and implemented by the connector.
+6. Disconnect deletes only the owned Dot's local credential and its pending authorization, conditioned on the visible connection ID and generation. Current Dot ownership and management permission are required. Local erasure remains possible when the catalogue connector is disabled; connecting and executing still require current connector rights. The saved selection remains visible but unavailable. The endpoint does not revoke the account at the provider.
 
 Token responses are not proof of an email or account name. Initially show actual connector name, local ownership label and connection status. A verified account label may be persisted only through a real provider-supported profile response with documented scope and validation; absent data is shown as unavailable. Do not decode arbitrary access tokens to invent an identity or add generic profile requests to unknown providers.
 
@@ -69,7 +73,7 @@ The organization must choose an explicit credential owned by its Dot principal o
 
 Keep user-wide memory unavailable to organization execution. Organization context needs a separately scoped knowledge/memory design; do not silently promote existing personal notes. Run results and secret configuration follow the existing agent share privacy boundary. People with respond access can settle only the requests authorized by existing approval rules; a share does not grant reading credentials. Organization approval ownership must be concrete before organization background execution is enabled: choose the existing responding member/share path, persist that authorization context and recheck current membership on settlement.
 
-## Proposed API and actual-data UI walkthrough
+## Personal API and actual-data UI walkthrough
 
 Extend existing Dot access disclosure and integration cards, not a second capability picker. Return connector rows from the catalogue and live connections with actual `key`, `name`, `auth`, supported identity choices, selected mode, connection status and nullable verified account label. Do not return token ciphertext, plaintext or internal refresh errors that contain secrets.
 
@@ -86,6 +90,8 @@ All visible strings use six Fluent catalogs. Locale groups cover actual connecti
 
 ## Vertical slices and state-based verification
 
+Personal execution requires both an active Dot and an enabled system principal. The current principal state is checked before loading a personal execution context, dispatching a cached tool, and atomically resuming a suspended call. Disabling the principal does not erase credentials or prevent the owner from configuring the Dot. Active-slot accounting uses the Dot's stored active state; disabling its principal does not free a slot.
+
 1. Generalize existing connection ownership/storage/cache/refresh with tests preserving ordinary user/global behavior. Add the real personal Dot OAuth caller and callback target proof in the same complete slice.
 2. Add per-Dot saved identity selection, current tool inventory and suspended-call identity/generation checks; integrate the existing disclosure and test through the real seeded gateway.
 3. Add typed organization/group membership and organization-owned principal/connection management with grants and existing shares. Organization background sessions and approvals require their own confirmed private owner/settlement bridge before execution.
@@ -100,6 +106,49 @@ Organization tests prove mapped membership and shares intersect, user deletion d
 
 - No generic verified provider-account lookup exists; account display may remain unavailable. Separate external actor identities require separately authorized provider accounts, not generated Dot names.
 - No organization entity exists. Typed metadata and group-derived membership are proposed; quotas, organization memory and user-owned-session replacement are not implemented by naming an organization.
-- Principal MCP currently resolves shared catalogue credentials only; own principal OAuth requires the generalized storage/manager, not merely adding grants.
+- Personal Dot-owned OAuth credentials use the generalized store and selected runtime layer. Organization principal execution still uses its existing shared-resource path until organization ownership is implemented.
+- Credential generation fences cover user and principal OAuth connections in `mcp_connections`. Gateway-shared catalogue credentials have no corresponding connection generation; fencing pending calls across operator replacement of those shared credentials remains a required implementation item.
+- Catalogue URL/authentication changes are not part of owned OAuth credential generations. The owned cache and final connection check therefore do not yet bind a credential to a particular catalogue resource version. Resource-version fencing must cover both shared credentials and owned connections before claiming that catalogue replacement invalidates every pending or cached call.
 - OAuth flow supports the existing catalogue/provider features. Static credentials, provider account chooser hints and external account provisioning must be included only when a real supported path is verified.
 - Organization background approval and conversation ownership cannot borrow personal Dot sessions. That bridge is a separate prerequisite, while personal Dot credential selection can ship independently.
+
+## Adopted catalogue dispatch fence: pending implementation
+
+Add a persisted opaque dispatch generation to each catalogue connector. Change
+it atomically when the actual URL, authentication kind, scope, effective shared
+secret or applicable OAuth client, DCR, endpoint or requested-scope configuration
+changes. Name, description, icon, category, audit, enablement and allowed-group
+edits preserve that generation; current authorization still checks enablement
+and groups. New rows get fresh generations, including delete/recreate and
+restoration of a previously deleted default. Returning to an older URL cannot
+restore an older generation. Crypto resealing preserves resource and credential
+generations.
+
+Bind an owned credential and its pending OAuth reservation to the actual
+catalogue generation used to authorize it. Verify that provenance before token
+exchange or refresh and again in the final conditional write transaction. A
+resource change requires explicit reauthorization; neither a fresh cache nor
+an old connection may forward the earlier token to the changed resource.
+The one unreleased migration initializes existing connections from their
+actual catalogue key. Orphaned connections remain unavailable and locally
+erasable.
+
+Extend the existing typed MCP execution facts with owned/shared dispatch
+variants and the actual catalogue generation. Include that generation in both
+cache keys, validate it after handshake before publishing tools or caching, and
+check it with current user/principal/Dot authority immediately before dispatch.
+Facts contain no endpoint, token, ciphertext or secret-derived fingerprint.
+Existing pending-call comparisons and approvals retain their original
+arguments and authority facts. No second dispatcher, cache or approval store
+is introduced.
+
+The admission transaction is the boundary: a resource change committed before
+admission prevents dispatch. It cannot undo an external request already
+admitted and in flight. Do not hold the SQLite write transaction across remote
+HTTP calls.
+
+Browser acceptance must also cover local erasure after connector revocation:
+an owner can inspect their Dot's actual local credential version and disconnect
+it after reloading, while forbidden catalogue metadata and connection/select
+actions remain unavailable. This extends the existing credential actions and
+confirmation, without exposing secrets or the user's separate connection.

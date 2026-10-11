@@ -932,7 +932,7 @@ pub async fn admin_connectors_delete(
         Ok(None) => return not_found(format!("no connector `{key}`")),
         Err(err) => return internal(err),
     }
-    let _ = db::user_mcp::delete_all_for_connector(&state.db, &key).await;
+    let _ = db::mcp_connections::delete_all_for_connector(&state.db, &key).await;
     let deleted = db::mcp_catalog::delete(&state.db, &key).await;
     state.grant_caps.invalidate();
     match deleted {
@@ -977,17 +977,21 @@ pub async fn integrations_list(State(state): State<Arc<RamaState>>, req: Request
         .filter(|c| c.allows(&role_ids, is_admin))
         .collect();
     // One query for the caller's connections, not one per connector.
-    let connections: HashMap<String, db::user_mcp::Connection> =
-        db::user_mcp::list_connections(&state.db, &user.id)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|connection| (connection.connector_key.clone(), connection))
-            .collect();
+    let connections: HashMap<String, db::mcp_connections::Connection> =
+        db::mcp_connections::list_connections(
+            &state.db,
+            &db::mcp_connections::ConnectionOwner::User(user.id.clone()),
+        )
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|connection| (connection.connector_key.clone(), connection))
+        .collect();
     let mut out = Vec::with_capacity(connectors.len());
     for c in &connectors {
         let connection = connections.get(&c.key);
-        let connected = connection.is_some();
+        let connected =
+            connection.is_some_and(|row| row.status != db::mcp_connections::STATUS_PENDING);
         let (tools, tool_error) = if c.is_global() || connected {
             match state.mcp.connector_tool_infos(&user.id, c).await {
                 Ok(tools) => (
@@ -1141,8 +1145,8 @@ pub async fn integrations_connect_token(
         Ok(s) => s,
         Err(err) => return internal(err),
     };
-    let new = db::user_mcp::NewConnection {
-        user_id: user.id.clone(),
+    let new = db::mcp_connections::NewConnection {
+        owner: db::mcp_connections::ConnectionOwner::User(user.id.clone()),
         connector_key: key.clone(),
         access_token_ct: sealed.ciphertext,
         access_token_nonce: sealed.nonce,
@@ -1155,10 +1159,16 @@ pub async fn integrations_connect_token(
         dcr_client_secret_nonce: None,
         token_url: None,
     };
-    if let Err(err) = db::user_mcp::upsert_connection(&state.db, new).await {
+    if let Err(err) = db::mcp_connections::upsert_connection(&state.db, new).await {
         return internal(err);
     }
-    state.mcp.invalidate(&user.id, &key).await;
+    state
+        .mcp
+        .invalidate(
+            &db::mcp_connections::ConnectionOwner::User(user.id.clone()),
+            &key,
+        )
+        .await;
     json_ok(
         StatusCode::OK,
         IntegrationConnected {
@@ -1179,9 +1189,21 @@ pub async fn integrations_disconnect(
     let Some(key) = raw_path_segment(&req, 1) else {
         return bad_request("the URL is missing its connector key");
     };
-    match db::user_mcp::delete_connection(&state.db, &user.id, &key).await {
+    match db::mcp_connections::delete_connection(
+        &state.db,
+        &db::mcp_connections::ConnectionOwner::User(user.id.clone()),
+        &key,
+    )
+    .await
+    {
         Ok(true) => {
-            state.mcp.invalidate(&user.id, &key).await;
+            state
+                .mcp
+                .invalidate(
+                    &db::mcp_connections::ConnectionOwner::User(user.id.clone()),
+                    &key,
+                )
+                .await;
             no_content()
         }
         Ok(false) => not_found(format!("you have no connection to `{key}`")),
@@ -1246,7 +1268,13 @@ pub async fn integrations_retry_json(
     if let Err(response) = integration_for_user(&state, &key, &user.roles).await {
         return response;
     }
-    state.mcp.invalidate(&user.id, &key).await;
+    state
+        .mcp
+        .invalidate(
+            &db::mcp_connections::ConnectionOwner::User(user.id.clone()),
+            &key,
+        )
+        .await;
     no_content()
 }
 
@@ -1272,7 +1300,13 @@ pub async fn integrations_tool_mode(State(state): State<Arc<RamaState>>, req: Re
     }
     match db::user_mcp::set_tool_mode(&state.db, &user.id, &key, &parsed.tool, mode).await {
         Ok(()) => {
-            state.mcp.invalidate(&user.id, &key).await;
+            state
+                .mcp
+                .invalidate(
+                    &db::mcp_connections::ConnectionOwner::User(user.id.clone()),
+                    &key,
+                )
+                .await;
             no_content()
         }
         Err(err) => internal(err),
@@ -1316,6 +1350,12 @@ pub async fn integrations_tools_all(State(state): State<Arc<RamaState>>, req: Re
             return internal(err);
         }
     }
-    state.mcp.invalidate(&user.id, &key).await;
+    state
+        .mcp
+        .invalidate(
+            &db::mcp_connections::ConnectionOwner::User(user.id.clone()),
+            &key,
+        )
+        .await;
     no_content()
 }

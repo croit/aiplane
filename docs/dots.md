@@ -68,8 +68,10 @@ with a friendly name, starts a private chat, and lets the owner deactivate or
 reactivate it. A deactivated Dot stays in the list and can be reactivated when
 a slot is available. The Access and approvals disclosure offers selected tools
 with `Allow` or `Ask before each call`; unselected tools are denied. Connector
-account labels identify the existing user or shared connection. Dot-owned
-connector identities and organisation-owned Dots remain unimplemented. Active
+identity labels identify the selected user, Dot or shared connection. Supported
+personal OAuth connectors may use a separately authorized Dot connection;
+connecting and selecting it are separate operations. Organisation-owned Dots
+remain unimplemented. Active
 Dot cards link to the existing schedule and webhook creation forms with that
 Dot selected.
 
@@ -169,7 +171,7 @@ provides deactivation, not a Dot-delete action.
 
 Persistent Dot computers are specified separately in
 [dots-workspace.md](dots-workspace.md) and are not implemented. Automatic
-memory curation, Dot-owned OAuth credentials and organization Dots remain
+memory curation and organization Dots remain
 planned. The user workflow is in
 [Schedules, webhooks and inbox](guide/automation-and-inbox.md).
 
@@ -294,7 +296,7 @@ The current code establishes these reuse points and the remaining runtime seam:
 | Store a Dot's tool allowlist and approval settings | The Dot already has an `agents.draft_spec`; `AgentSpec.main.tools` and `main.tool_resources` represent tool selection and per-tool permission | Add an owner-scoped update/read path that validates against the user's current grants. The ordinary agent spec validator assumes grants belong to the agent principal, so it cannot be called with the Dot's empty principal grants unchanged. Do not add a parallel action-policy table. |
 | Enforce tool rules before execution | `RunToolSource`, `GrantedToolSource`, `Permissions` and `AskFirst` | `ChatPersona::with_tool_access` narrows the dynamic user/MCP source. `LivePersonalDotTool` reloads active ownership, current user roles, selected rules, enabled settings and the actual connected tool before each invocation, then applies the existing approval wrapper. Current access also intersects the turn's initial grant ceiling. |
 | Pause and resume a decision | `chat_turn_suspensions`, `AskFirst`, the user Inbox, and `resume_turn` | The chat resume path reloads the session's `personal_dot_sessions` link before constructing the driver. Keep that resolution and re-check the live owner grant and Dot rule when resuming. |
-| Attribute tool activity | `agent_audit` and the personal-Dot attribution on `ToolContext` | Already records the acting user, Dot, tool, decision and outcome for personal Dot calls. Extend it with connector identity when per-Dot connector credentials are available. |
+| Attribute tool activity | `agent_audit` and the personal-Dot attribution on `ToolContext` | Records the acting user, Dot, tool, decision and outcome. Personal MCP admission records the currently selected typed connection and generations as the identity of the attempted call; outcomes remain correlated by the existing call ID. |
 
 `Tool::changes_state()` is the existing default for agent approval and an MCP
 tool reports a state change from its server's destructive and read-only

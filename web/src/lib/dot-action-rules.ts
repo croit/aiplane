@@ -27,7 +27,7 @@ function validRule(rule: string): rule is DotActionRule {
 
 export function accessSelections(tools: DotAccessTool[]): DotAccessSelection[] | null {
 	const selected = tools.filter((tool) => tool.selected);
-	if (selected.some((tool) => tool.action_rules.some((rule) => !validRule(rule.rule)
+	if (selected.some((tool) => !tool.available || tool.action_rules.some((rule) => !validRule(rule.rule)
 		|| !tool.actions?.some((action) => action.id === rule.id)))) return null;
 	return selected.map((tool) => ({
 		id: tool.id, permission: tool.permission,

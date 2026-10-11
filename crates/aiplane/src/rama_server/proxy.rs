@@ -437,6 +437,7 @@ fn proxy_tool_ctx(
         personal_dot: None,
         personal_execution: None,
         pending_actions: None,
+        pending_execution_facts: None,
         call_id: None,
         token_id: Some(token_id),
         pool_access,

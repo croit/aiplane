@@ -33,6 +33,29 @@ use crate::server::side_call::SideExchange;
 use crate::server::tools::ToolContext;
 use crate::suspend::Suspend;
 
+pub(crate) async fn record_personal_tool_call(
+    ctx: &ToolContext,
+    call_id: Option<&str>,
+    tool: &str,
+    allowed: bool,
+    policy: &str,
+    identity: Option<&crate::server::tools::mcp::StoredMcpIdentity>,
+) -> bool {
+    let mut detail = json!({"tool": tool, "call_id": call_id, "decision": if allowed { "allowed" } else { "denied" }, "policy": policy});
+    if let Some(identity) = identity {
+        detail["identity"] = json!({
+            "owner": identity.connection.owner,
+            "connector_key": identity.connection.connector_key,
+            "connection_id": identity.connection.connection_id,
+            "generation": identity.connection.generation,
+            "binding_generation": identity.binding_generation,
+        });
+    }
+    ctx.audit_event(AuditKind::ToolCall, None, detail)
+        .await
+        .is_some()
+}
+
 /// The longest a run waits for one event to be written.
 pub const WRITE_BOUND: Duration = Duration::from_secs(5);
 

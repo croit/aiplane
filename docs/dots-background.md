@@ -357,6 +357,6 @@ completed, cancelled or errored. A genuinely suspended turn retains its
 approval. History for a deleted conversation retains its deleted-chat marker;
 continuation requires its actual session and turn.
 
-Organization-owned triggers, Dot-owned OAuth identities, automatic memory
+Organization-owned triggers, automatic memory
 consolidation and persistent Dot computer/workspace lifecycle are separate
 remaining packages.

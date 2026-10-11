@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import Modal from '#lib/components/ui/Modal.svelte';
@@ -122,7 +123,7 @@
 						{#if dot.description}<p class="line-clamp-3 text-sm text-base-content/70">{dot.description}</p>{/if}
 						<DotMemoryPanel {dot} />
 						<DotActivityPanel {dot} />
-						<DotAccessPanel {dot} />
+						<DotAccessPanel {dot} initiallyOpen={page.url.searchParams.get('dot_id') === dot.id} />
 						<DotCommunicationPanel {dot} />
 						<div class="card-actions flex-wrap justify-end">
 							{#if dot.active}<a class="btn btn-sm" href={`/scheduled/new?dot_id=${encodeURIComponent(dot.id)}`}>{t('dot-background-add-schedule')}</a><a class="btn btn-sm" href={`/webhooks/new?dot_id=${encodeURIComponent(dot.id)}`}>{t('dot-background-add-webhook')}</a>{/if}

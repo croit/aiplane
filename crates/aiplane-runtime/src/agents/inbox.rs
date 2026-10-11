@@ -580,6 +580,7 @@ mod tests {
                 kind: session_core::db::SuspensionKind::Approval,
                 message: None,
                 tool_call: session_core::db::PendingCall {
+                    execution_facts: None,
                     id: format!("call-{turn}"),
                     name: "forward_request".into(),
                     arguments: format!("{{\"private_owner\":\"{owner}\"}}"),

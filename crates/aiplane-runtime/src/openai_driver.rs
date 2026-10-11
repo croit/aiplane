@@ -626,6 +626,7 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
             .map(crate::server::tools::PushNotifier::new),
         model,
         pending_actions: None,
+        pending_execution_facts: None,
         suspend: if suspendable {
             crate::suspend::Suspend::Available
         } else {
@@ -1058,7 +1059,14 @@ async fn classify_and_dispatch_tool_calls(
             granted && disabled_keys.contains(key),
             allowed_tools.contains(&acc.name),
         );
-        if !call_policy::audit(&d.tool_ctx, &acc.id, &acc.name, policy).await {
+        let terminal_refused = matches!(policy, CallPolicy::Granted)
+            && !alone
+            && tool_source.phase(&acc.name) == ToolPhase::Terminal;
+        let defer_audit = d.tool_ctx.personal_dot.is_some()
+            && policy.allows()
+            && !terminal_refused
+            && tool_source.personal_call_audit_is_deferred();
+        if !defer_audit && !call_policy::audit(&d.tool_ctx, &acc.id, &acc.name, policy).await {
             return Err(TurnError::Upstream {
                 message: crate::agents::audit::LOG_UNAVAILABLE.into(),
             });
@@ -1176,8 +1184,9 @@ async fn run_one_turn(
     // model, or the user via the composer, enables the connector).
     let user_mcp = d
         .state
-        .mcp_layer_for(
+        .mcp_layer_for_dot(
             &d.tool_ctx.principal,
+            d.tool_ctx.personal_dot.as_ref(),
             crate::server::tools::mcp::manager::AskContext::Chat,
         )
         .await;
@@ -2393,6 +2402,27 @@ async fn run_one_turn(
                 }));
             }
         };
+        if results
+            .iter()
+            .any(|record| record.failure_cause == Some(runner::ToolFailureCause::AuditUnavailable))
+        {
+            for record in &results {
+                resume::settle_call(
+                    d,
+                    &ctx,
+                    &record.call_id,
+                    &record.body.to_string(),
+                    record.status(),
+                )
+                .await?;
+            }
+            for (id, reason) in &refused {
+                resume::settle_call(d, &ctx, id, reason, ToolCallStatus::Errored).await?;
+            }
+            return Err(TurnError::Upstream {
+                message: crate::agents::audit::LOG_UNAVAILABLE.into(),
+            });
+        }
         tools_run.extend(
             call_refs
                 .iter()

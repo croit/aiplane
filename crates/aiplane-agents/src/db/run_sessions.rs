@@ -413,6 +413,7 @@ mod tests {
             kind: SuspensionKind::Approval,
             message: None,
             tool_call: PendingCall {
+                execution_facts: None,
                 id: "call-1".into(),
                 name: "company_echo".into(),
                 arguments: r#"{"message":"hi"}"#.into(),

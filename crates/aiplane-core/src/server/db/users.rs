@@ -105,6 +105,14 @@ pub async fn find_by_id(pool: &Pool, id: &str) -> Result<Option<User>, DbError> 
     row.as_ref().map(map_row).transpose()
 }
 
+pub async fn find_by_id_in(tx: &mut super::WriteTx, id: &str) -> Result<Option<User>, DbError> {
+    let row = sqlx::query("SELECT * FROM users WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    row.as_ref().map(map_row).transpose()
+}
+
 /// Every registered user, newest first. Powers the admin `/admin/users`
 /// roster. Users are created lazily on first OIDC login (see
 /// `oidc_handlers::callback`), so this is "everyone who has ever signed
@@ -415,5 +423,18 @@ mod tests {
         let after = find_by_id(&pool, &u.id).await.unwrap().unwrap();
         assert_eq!(after.timezone.as_deref(), Some("Europe/Berlin"));
         assert!(after.updated_at >= before.updated_at);
+    }
+
+    #[tokio::test]
+    async fn connection_scoped_user_read_observes_actual_roles() {
+        let pool = pool().await;
+        let mut user = fixture("current");
+        user.roles = vec!["engineering".into()];
+        upsert(&pool, &user).await.unwrap();
+        let mut tx = crate::server::db::WriteTx::begin(&pool).await.unwrap();
+        let actual = find_by_id_in(&mut tx, "current").await.unwrap().unwrap();
+        assert_eq!(actual.roles, user.roles);
+        assert!(find_by_id_in(&mut tx, "missing").await.unwrap().is_none());
+        tx.commit().await.unwrap();
     }
 }

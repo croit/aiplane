@@ -2615,6 +2615,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn personal_admission_audit_failure_errors_the_turn_before_the_next_model_request() {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted { deltas:vec![json!({"tool_calls":[{"index":0,"id":"echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"task\"}"}}]}),text("continued")],served:AtomicUsize::new(0),tokens_per_round:None }).mount(&upstream).await;
+        let state = state_for(&upstream.uri()).await;
+        let (session, turn) = open(&state, "medium").await;
+        personal_background(&state, &session, &turn, true).await;
+        sqlx::query("CREATE TRIGGER deny_tool_call_audit BEFORE INSERT ON agent_audit WHEN NEW.kind='tool_call' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END").execute(&state.db).await.unwrap();
+        let mut params = params(&session, &turn, person());
+        params.source = UsageSource::Scheduled;
+        drive(&state, params).await;
+        assert_eq!(
+            chat::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            chat::TurnStatus::Errored
+        );
+        assert!(
+            chat::get_suspension(&state.db, &turn)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(upstream.received_requests().await.unwrap().len(), 1);
+        let stored = chat::list_turns(&state.db, &session).await.unwrap();
+        assert!(
+            stored
+                .iter()
+                .flat_map(|turn| &turn.tool_calls)
+                .all(|call| call.status != chat::ToolCallStatus::Running)
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM agent_audit WHERE kind='tool_result'"
+            )
+            .fetch_one(&state.db)
+            .await
+            .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn personal_resume_result_audit_failure_stops_before_model_and_settles_the_call() {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted { deltas:vec![json!({"tool_calls":[{"index":0,"id":"echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"task\"}"}}]}),text("continued")],served:AtomicUsize::new(0),tokens_per_round:None }).mount(&upstream).await;
+        let state = state_for(&upstream.uri()).await;
+        let (session, turn) = open(&state, "medium").await;
+        personal_background(&state, &session, &turn, true).await;
+        let mut initial = params(&session, &turn, person());
+        initial.source = UsageSource::Scheduled;
+        drive(&state, initial).await;
+        assert!(
+            chat::get_suspension(&state.db, &turn)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        sqlx::query("CREATE TRIGGER deny_result_audit BEFORE INSERT ON agent_audit WHEN NEW.kind='tool_result' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END").execute(&state.db).await.unwrap();
+        let worker = match state.chats.register_background("u1", &turn, &session) {
+            session_core::workers::RegisterOutcome::Registered { worker } => worker,
+            _ => panic!("idle session expected"),
+        };
+        let guard = BackgroundWorker::new(state.clone(), "u1".into(), worker);
+        let resume = crate::suspend::claim_for_resume(
+            &state.db,
+            &turn,
+            None,
+            chat::Decision::Deny {
+                reason: chat::DenyReason::User,
+            },
+        )
+        .await
+        .unwrap();
+        let mut resumed = params(&session, &turn, person());
+        resumed.source = UsageSource::Scheduled;
+        drive_resumed(&state, resumed, resume, Some(guard)).await;
+        assert_eq!(
+            chat::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            chat::TurnStatus::Errored
+        );
+        assert_eq!(upstream.received_requests().await.unwrap().len(), 1);
+        let stored = chat::list_turns(&state.db, &session).await.unwrap();
+        assert!(
+            stored
+                .iter()
+                .flat_map(|turn| &turn.tool_calls)
+                .all(|call| call.status != chat::ToolCallStatus::Running)
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_audit WHERE kind='tool_call'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn personal_background_pauses_and_resumes_same_context_and_history() {
         let upstream = MockServer::start().await;
         Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted{deltas:vec![json!({"tool_calls":[{"index":0,"id":"echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"original\"}"}}]}),text("done")],served:AtomicUsize::new(0),tokens_per_round:None}).mount(&upstream).await;

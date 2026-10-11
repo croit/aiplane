@@ -18,6 +18,7 @@ pub mod agent_verifiers;
 pub mod agents;
 pub mod architect_sessions;
 pub mod child_sessions;
+pub mod dot_connections;
 pub mod dot_delegation;
 pub mod dot_memories;
 pub mod dot_sessions;
@@ -25,7 +26,7 @@ pub mod embed_keys;
 pub mod run_sessions;
 pub mod system_principals;
 pub mod visitor_sessions;
-pub mod write_tx;
 
-pub use aiplane_core::server::db::{DbError, Pool, parse_optional_ts, parse_ts, window_key};
-pub use write_tx::WriteTx;
+pub use aiplane_core::server::db::{
+    DbError, Pool, WriteTx, parse_optional_ts, parse_ts, window_key,
+};

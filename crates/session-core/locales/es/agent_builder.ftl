@@ -408,3 +408,26 @@ dot-activity-communication-changed = Permisos de comunicación de Dots modificad
 
 dot-communication-error-busy = Ya hay una conversación delegada en curso. Espere a que termine y vuelva a responder.
 dot-communication-error-unavailable = Esta delegación entre Dots no está disponible. Compruebe los Dots activos, los permisos de comunicación y el acceso a las herramientas antes de volver a intentarlo.
+
+dot-connection-heading = Identidad del conector
+dot-connection-user = Mi conexión
+dot-connection-principal = Conexión para { $name }
+dot-connection-provider-account = El proveedor determina qué cuenta autoriza. Conectarla no crea una cuenta ni cambia la selección guardada de este Dot.
+dot-connection-unavailable = La conexión guardada no está disponible. Conecte esa identidad o seleccione explícitamente otra conexión disponible.
+dot-connection-authorizing = Autorización en curso
+dot-connection-pending-warning = Las llamadas pendientes de aprobación siguen vinculadas a su conexión original. Cambiar la identidad o sustituir su autorización requiere una nueva llamada y aprobación.
+dot-connection-disconnect-confirm = ¿Desconectar a { $name } de { $connector }? Se eliminarán sus credenciales locales y autorización pendiente; su propia conexión se mantendrá.
+dot-connection-saved = Identidad del conector guardada.
+dot-connection-disconnected = Conexión del Dot desconectada.
+dot-connection-error-load = No se pudieron cargar las identidades de los conectores. Recargue e inténtelo de nuevo.
+dot-connection-error-save = No se pudo guardar la identidad del conector. Recargue sus detalles e inténtelo de nuevo.
+dot-connection-error-connect = No se pudo iniciar la autorización de la cuenta. Recargue los detalles de conexión e inténtelo de nuevo.
+dot-connection-error-disconnect = No se pudo desconectar el Dot. Recargue sus detalles e inténtelo de nuevo.
+dot-connection-error-invalid = La solicitud de conexión no es válida. Recargue los detalles de conexión e inténtelo de nuevo.
+dot-connection-error-conflict = La conexión cambió mientras la editaba. Recárguela e inténtelo de nuevo.
+dot-connection-error-unavailable = La conexión seleccionada no está disponible. Conecte esta cuenta o elija una conexión disponible.
+dot-connection-error-authorization = Esta autorización no está disponible o ha caducado. Inicie de nuevo la conexión de la cuenta.
+dot-connection-access-reload = La conexión cambió. Recargue el acceso a las herramientas antes de guardar las reglas; las reglas sin guardar permanecen visibles hasta que recargue.
+dot-access-identity-principal = Usa la conexión seleccionada de { $name }.
+dot-access-unavailable = Esta herramienta seleccionada no está disponible. Quítela antes de guardar el acceso.
+dot-connection-reload = Recargar conexiones

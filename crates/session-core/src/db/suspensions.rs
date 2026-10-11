@@ -191,6 +191,8 @@ pub struct PendingCall {
     pub arguments: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_facts: Option<serde_json::Value>,
 }
 
 #[derive(
@@ -631,8 +633,39 @@ mod tests {
     use crate::db::tests::pool;
 
     #[test]
+    fn pending_call_execution_facts_round_trip_without_entering_presentation_views() {
+        let facts = serde_json::json!({"connection": {"owner": {"Principal": "opaque-principal"}, "connector_key": "workspace", "connection_id": "opaque-connection", "generation": "opaque-generation"}, "binding_generation": "opaque-binding"});
+        let pending: PendingCall = serde_json::from_value(serde_json::json!({
+            "id": "call", "name": "workspace_write", "arguments": "{}", "execution_facts": facts
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&pending).unwrap()["execution_facts"],
+            facts
+        );
+        let mut waiting = suspension("turn", Timestamp::now());
+        waiting.tool_call = pending;
+        let view = waiting.view();
+        let encoded = serde_json::to_string(&view).unwrap();
+        assert!(!encoded.contains("opaque-principal"));
+        assert!(!encoded.contains("opaque-connection"));
+        assert!(!encoded.contains("execution_facts"));
+        let absent: PendingCall = serde_json::from_value(serde_json::json!({
+            "id": "ordinary", "name": "company_echo", "arguments": "{}"
+        }))
+        .unwrap();
+        assert!(
+            serde_json::to_value(absent)
+                .unwrap()
+                .get("execution_facts")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn pending_call_action_facts_round_trip_and_absence_is_explicit() {
         let pending = PendingCall {
+            execution_facts: None,
             id: "call".into(),
             name: "browser".into(),
             arguments: "{}".into(),
@@ -658,6 +691,7 @@ mod tests {
             kind: SuspensionKind::Approval,
             message: None,
             tool_call: PendingCall {
+                execution_facts: None,
                 actions: None,
                 id: "call-1".into(),
                 name: "company_echo".into(),

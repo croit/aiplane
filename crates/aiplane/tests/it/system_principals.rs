@@ -23,7 +23,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use crate::common::{self, TEST_SECRET};
 
 use aiplane::rama_server::{RamaState, SessionStore};
-use aiplane_core::server::db::{self, gateway_groups, mcp_catalog, skill_grants, user_mcp, users};
+use aiplane_core::server::db::{self, gateway_groups, mcp_catalog, skill_grants, users};
 use aiplane_core::server::principal::{GrantKind, Principal};
 use aiplane_core::server::rbac::Resolver;
 use aiplane_core::server::upstreams::{
@@ -482,10 +482,12 @@ async fn fixture_with_usage(metered: bool) -> Fixture {
     for (user, secret) in [("alice", "alice-secret"), ("bob", "bob-secret")] {
         person(&state, user, &[]).await;
         let sealed = state.crypto.seal_str(secret).unwrap();
-        user_mcp::upsert_connection(
+        aiplane_core::server::db::mcp_connections::upsert_connection(
             &pool,
-            user_mcp::NewConnection {
-                user_id: user.into(),
+            aiplane_core::server::db::mcp_connections::NewConnection {
+                owner: aiplane_core::server::db::mcp_connections::ConnectionOwner::User(
+                    user.into(),
+                ),
                 connector_key: PER_USER.into(),
                 access_token_ct: sealed.ciphertext,
                 access_token_nonce: sealed.nonce,

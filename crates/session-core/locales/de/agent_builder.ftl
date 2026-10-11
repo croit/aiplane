@@ -408,3 +408,26 @@ dot-activity-communication-changed = Dot-Kommunikationsberechtigungen geändert.
 
 dot-communication-error-busy = Eine delegierte Unterhaltung läuft bereits. Warten Sie, bis sie abgeschlossen ist, und antworten Sie erneut.
 dot-communication-error-unavailable = Diese Dot-Delegation ist nicht verfügbar. Prüfen Sie vor einem erneuten Versuch die aktiven Dots, die Kommunikationsfreigaben und den Werkzeugzugriff.
+
+dot-connection-heading = Connector-Identität
+dot-connection-user = Meine Verbindung
+dot-connection-principal = Verbindung für { $name }
+dot-connection-provider-account = Der Anbieter bestimmt, welches Konto Sie autorisieren. Das Verbinden erstellt kein Konto und ändert die gespeicherte Auswahl dieses Dots nicht.
+dot-connection-unavailable = Die gespeicherte Verbindung ist nicht verfügbar. Verbinden Sie diese Identität oder wählen Sie ausdrücklich eine andere verfügbare Verbindung.
+dot-connection-authorizing = Autorisierung läuft
+dot-connection-pending-warning = Auf Freigabe wartende Aufrufe bleiben an ihre ursprüngliche Verbindung gebunden. Eine Änderung der Identität oder eine neue Autorisierung erfordert einen neuen Aufruf und eine neue Freigabe.
+dot-connection-disconnect-confirm = Verbindung von { $name } zu { $connector } trennen? Dadurch werden die lokalen Zugangsdaten und die ausstehende Autorisierung entfernt; Ihre eigene Verbindung bleibt bestehen.
+dot-connection-saved = Connector-Identität gespeichert.
+dot-connection-disconnected = Dot-Verbindung getrennt.
+dot-connection-error-load = Die Connector-Identitäten konnten nicht geladen werden. Laden Sie sie neu und versuchen Sie es erneut.
+dot-connection-error-save = Die Connector-Identität konnte nicht gespeichert werden. Laden Sie die Details neu und versuchen Sie es erneut.
+dot-connection-error-connect = Die Kontoautorisierung konnte nicht gestartet werden. Laden Sie die Verbindungsdetails neu und versuchen Sie es erneut.
+dot-connection-error-disconnect = Die Dot-Verbindung konnte nicht getrennt werden. Laden Sie die Details neu und versuchen Sie es erneut.
+dot-connection-error-invalid = Die Verbindungsanfrage ist ungültig. Laden Sie die Verbindungsdetails neu und versuchen Sie es erneut.
+dot-connection-error-conflict = Die Verbindung wurde während Ihrer Bearbeitung geändert. Laden Sie sie neu und versuchen Sie es erneut.
+dot-connection-error-unavailable = Die ausgewählte Verbindung ist nicht verfügbar. Verbinden Sie dieses Konto oder wählen Sie eine verfügbare Verbindung.
+dot-connection-error-authorization = Diese Autorisierung ist nicht verfügbar oder abgelaufen. Starten Sie die Verbindung des Kontos erneut.
+dot-connection-access-reload = Die Verbindung wurde geändert. Laden Sie den Werkzeugzugriff neu, bevor Sie Regeln speichern; ungespeicherte Regeln bleiben bis zum Neuladen sichtbar.
+dot-access-identity-principal = Verwendet die ausgewählte Verbindung von { $name }.
+dot-access-unavailable = Dieses ausgewählte Werkzeug ist nicht verfügbar. Entfernen Sie es, bevor Sie den Zugriff speichern.
+dot-connection-reload = Verbindungen neu laden

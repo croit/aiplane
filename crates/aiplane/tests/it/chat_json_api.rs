@@ -4695,6 +4695,7 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
                             kind: chat::SuspensionKind::Approval,
                             message: None,
                             tool_call: chat::PendingCall {
+                                execution_facts: None,
                                 id: "forward".into(),
                                 name: "forward_request".into(),
                                 arguments: "{}".into(),

@@ -83,6 +83,10 @@ impl TurnToolSource<'_> {
 }
 
 impl ToolSource for TurnToolSource<'_> {
+    fn personal_call_audit_is_deferred(&self) -> bool {
+        self.source().personal_call_audit_is_deferred()
+    }
+
     fn get(&self, id: &str) -> Option<std::sync::Arc<dyn crate::server::tools::Tool>> {
         self.source().get(id)
     }

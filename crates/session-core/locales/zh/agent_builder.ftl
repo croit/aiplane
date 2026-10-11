@@ -408,3 +408,26 @@ dot-activity-communication-changed = Dot 通信权限已更改。
 
 dot-communication-error-busy = 委派的对话已在运行。请等待其完成后再次回答。
 dot-communication-error-unavailable = 此 Dot 委派不可用。请在重试前检查处于活动状态的 Dot、通信权限和工具访问权限。
+
+dot-connection-heading = 连接器身份
+dot-connection-user = 我的连接
+dot-connection-principal = { $name } 的连接
+dot-connection-provider-account = 由提供方决定您授权的账户。连接不会创建账户，也不会更改此 Dot 已保存的选择。
+dot-connection-unavailable = 已保存的连接不可用。请连接此身份，或明确选择其他可用连接。
+dot-connection-authorizing = 正在授权
+dot-connection-pending-warning = 等待批准的调用仍绑定到原始连接。更改身份或替换授权需要新的调用和批准。
+dot-connection-disconnect-confirm = 断开 { $name } 与 { $connector } 的连接？这将移除其本地凭据和待处理授权；您自己的连接将保留。
+dot-connection-saved = 连接器身份已保存。
+dot-connection-disconnected = Dot 连接已断开。
+dot-connection-error-load = 无法加载连接器身份。请重新加载后重试。
+dot-connection-error-save = 无法保存连接器身份。请重新加载详情后重试。
+dot-connection-error-connect = 无法开始账户授权。请重新加载连接详情后重试。
+dot-connection-error-disconnect = 无法断开 Dot 连接。请重新加载详情后重试。
+dot-connection-error-invalid = 连接请求无效。请重新加载连接详情后重试。
+dot-connection-error-conflict = 编辑期间连接已更改。请重新加载后重试。
+dot-connection-error-unavailable = 所选连接不可用。请连接此账户或选择可用连接。
+dot-connection-error-authorization = 此授权不可用或已过期。请重新开始连接账户。
+dot-connection-access-reload = 连接已更改。保存规则前请重新加载工具访问；未保存的规则会保持可见，直到重新加载。
+dot-access-identity-principal = 使用 { $name } 选择的连接。
+dot-access-unavailable = 此所选工具不可用。保存访问设置前请移除它。
+dot-connection-reload = 重新加载连接

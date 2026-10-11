@@ -38,6 +38,8 @@ use shared::api::ToolDef;
 
 use super::{Tool, ToolContext, ToolError, ToolFuture, ToolResult, tool_content_parts};
 
+pub mod identities;
+pub use identities::StoredMcpIdentity;
 pub mod manager;
 pub(crate) mod spill;
 pub mod worker;
@@ -66,7 +68,9 @@ pub(crate) struct McpConnection {
 }
 
 /// One MCP-server tool, adapted to the gateway's [`Tool`] trait.
+#[derive(Clone)]
 pub struct McpTool {
+    identity: Option<(StoredMcpIdentity, Arc<aiplane_core::server::rbac::Resolver>)>,
     /// Namespaced id = registry key = OpenAI function name the model calls.
     registry_id: String,
     /// The server's own tool name — what we pass to `tools/call`.
@@ -84,6 +88,14 @@ pub struct McpTool {
 }
 
 impl McpTool {
+    pub(crate) fn with_identity(
+        mut self,
+        identity: StoredMcpIdentity,
+        rbac: Arc<aiplane_core::server::rbac::Resolver>,
+    ) -> Self {
+        self.identity = Some((identity, rbac));
+        self
+    }
     /// The server's own (un-namespaced) tool name.
     pub fn remote_name(&self) -> &str {
         &self.remote_name
@@ -106,6 +118,9 @@ impl McpTool {
 }
 
 impl Tool for McpTool {
+    fn execution_facts(&self) -> Option<Value> {
+        self.identity.as_ref().map(|(identity, _)| json!(identity))
+    }
     fn id(&self) -> &str {
         &self.registry_id
     }
@@ -125,6 +140,8 @@ impl Tool for McpTool {
     fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         // Own everything the call needs so the future doesn't borrow `self`
         // across the await (and the `Arc` keeps the session alive regardless).
+        let identity = self.identity.clone();
+        let id = self.registry_id.clone();
         let conn = self.conn.clone();
         let remote = self.remote_name.clone();
         let schema = self.schema.function.parameters.clone();
@@ -139,6 +156,11 @@ impl Tool for McpTool {
             spill::default_blob_switches(&schema, &mut args);
             params.arguments = args.as_object().cloned();
 
+            if let Some((identity, rbac)) = &identity {
+                identities::validate_identity(&ctx, identity, &id, rbac).await?;
+            } else {
+                super::ask_first::validate_execution_facts(&ctx, &id, &None)?;
+            }
             let res = tokio::time::timeout(CALL_TIMEOUT, conn.service.call_tool(params))
                 .await
                 .map_err(|_| {
@@ -216,6 +238,7 @@ fn build_tools(
         };
         let schema = ToolDef::function(registry_id.clone(), description, parameters);
         out.push(McpTool {
+            identity: None,
             registry_id,
             remote_name: t.name.to_string(),
             schema,

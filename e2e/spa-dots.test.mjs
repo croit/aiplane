@@ -31,9 +31,10 @@ test("personal Dot lifecycle, access rules, private chat, memory, activity, and 
         await access.locator("summary").click();
         const remember = access.locator("li").filter({ has: page.getByText("remember", { exact: true }) });
         await remember.getByRole("checkbox").waitFor();
+        assert.equal(await access.evaluate((element) => element.open), true, "manual opening must survive lazy loading");
         assert.equal(await remember.getByRole("checkbox").isChecked(), true);
         await remember.getByRole("combobox", { name: "Approval rule", exact: true }).selectOption("always_ask");
-        await access.getByRole("button", { name: "Save", exact: true }).click();
+        await access.locator(":scope > .collapse-content > .flex").getByRole("button", { name: "Save", exact: true }).click();
         await access.getByRole("status").getByText("Access and approval rules saved.", { exact: true }).waitFor();
         await access.getByRole("button", { name: "Reload access", exact: true }).click();
         await page.waitForFunction(() => {
@@ -41,7 +42,7 @@ test("personal Dot lifecycle, access rules, private chat, memory, activity, and 
             return row?.querySelector("select")?.value === "always_ask";
         });
         await remember.getByRole("checkbox").uncheck();
-        await access.getByRole("button", { name: "Save", exact: true }).click();
+        await access.locator(":scope > .collapse-content > .flex").getByRole("button", { name: "Save", exact: true }).click();
         await access.getByRole("status").getByText("Access and approval rules saved.", { exact: true }).waitFor();
         await access.getByRole("button", { name: "Reload access", exact: true }).click();
         await page.waitForFunction(() => {
@@ -50,7 +51,7 @@ test("personal Dot lifecycle, access rules, private chat, memory, activity, and 
         });
         await remember.getByRole("checkbox").check();
         await remember.getByRole("combobox", { name: "Approval rule", exact: true }).selectOption("always_allow");
-        await access.getByRole("button", { name: "Save", exact: true }).click();
+        await access.locator(":scope > .collapse-content > .flex").getByRole("button", { name: "Save", exact: true }).click();
         await access.getByRole("status").getByText("Access and approval rules saved.", { exact: true }).waitFor();
 
         await card().getByRole("button", { name: "Chat", exact: true }).click();

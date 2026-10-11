@@ -782,6 +782,8 @@ async fn main() -> anyhow::Result<()> {
     seed_demo_data(&state).await?;
     let erp_mock = erp_mock().await;
     seed_embed_agent(&state, &erp_mock.uri()).await?;
+    let dot_workspace = dot_workspace_mock().await;
+    seed_dot_workspace(&state, &dot_workspace.uri()).await?;
 
     let session = state.sessions.create("dev").await?;
     let cookie = state.sessions.sign(&session.id);
@@ -1048,6 +1050,111 @@ async fn erp_mock() -> MockServer {
         .mount(&server)
         .await;
     server
+}
+
+async fn dot_workspace_mock() -> MockServer {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/authorize"))
+        .respond_with(|request: &wiremock::Request| {
+            let params: HashMap<_, _> = request.url.query_pairs().into_owned().collect();
+            let (Some(redirect), Some(state)) = (params.get("redirect_uri"), params.get("state"))
+            else {
+                return ResponseTemplate::new(400);
+            };
+            let Ok(mut redirect) = reqwest::Url::parse(redirect) else {
+                return ResponseTemplate::new(400);
+            };
+            redirect
+                .query_pairs_mut()
+                .append_pair("code", "dot-fixture-code")
+                .append_pair("state", state);
+            ResponseTemplate::new(302).insert_header("location", redirect.as_str())
+        })
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token":"dot-principal-fixture", "token_type":"Bearer", "expires_in":3600
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST")).and(path("/mcp"))
+        .respond_with(|request: &wiremock::Request| {
+            let Ok(body) = serde_json::from_slice::<serde_json::Value>(&request.body) else {
+                return ResponseTemplate::new(400);
+            };
+            let result = match body["method"].as_str() {
+                Some("initialize") => serde_json::json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"dot-workspace","version":"1"}}),
+                Some("tools/list") => serde_json::json!({"tools":[
+                    {"name":"read_workspace","description":"Read the fixture workspace.","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":true}},
+                    {"name":"write_workspace","description":"Write to the fixture workspace.","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":false}}
+                ]}),
+                Some("tools/call") => serde_json::json!({"content":[{"type":"text","text":"Fixture workspace operation completed."}]}),
+                _ => return ResponseTemplate::new(202),
+            };
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
+        }).mount(&server).await;
+    server
+}
+
+async fn seed_dot_workspace(state: &RamaState, origin: &str) -> anyhow::Result<()> {
+    use aiplane_core::server::db::{mcp_catalog, mcp_connections};
+    #[cfg(debug_assertions)]
+    aiplane::rama_server::dev_seed::ensure_user(&state.db).await?;
+    mcp_catalog::create(
+        &state.db,
+        mcp_catalog::ConnectorInput {
+            key: "dot-workspace".into(),
+            name: "Workspace".into(),
+            description: Some("Local OAuth workspace for Dot identity browser scenarios.".into()),
+            icon: None,
+            category: None,
+            url: format!("{origin}/mcp"),
+            auth: mcp_catalog::AuthKind::OAuth2,
+            scope: mcp_catalog::Scope::PerUser,
+            audit: true,
+            use_dcr: false,
+            client_id: Some("dot-ui-fixture".into()),
+            client_secret_ct: None,
+            client_secret_nonce: None,
+            authorize_url: Some(format!("{origin}/authorize")),
+            token_url: Some(format!("{origin}/token")),
+            registration_url: None,
+            scopes: vec![],
+            allowed_groups: vec![],
+        },
+    )
+    .await?;
+    mcp_catalog::set_enabled(&state.db, "dot-workspace", true).await?;
+    let users = ["dev", "eng"];
+    #[cfg(debug_assertions)]
+    let users = users
+        .into_iter()
+        .chain(std::iter::once(aiplane::rama_server::dev_seed::USER_ID));
+    for user in users {
+        let sealed = state.crypto.seal_str("dot-user-fixture")?;
+        mcp_connections::upsert_connection(
+            &state.db,
+            mcp_connections::NewConnection {
+                owner: mcp_connections::ConnectionOwner::User(user.into()),
+                connector_key: "dot-workspace".into(),
+                access_token_ct: sealed.ciphertext,
+                access_token_nonce: sealed.nonce,
+                refresh_token_ct: None,
+                refresh_token_nonce: None,
+                token_expires_at: None,
+                scopes: vec![],
+                dcr_client_id: None,
+                dcr_client_secret_ct: None,
+                dcr_client_secret_nonce: None,
+                token_url: Some(format!("{origin}/token")),
+            },
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// A scripted model for agent runs, so the builder's flows run end to end

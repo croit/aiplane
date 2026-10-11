@@ -37,6 +37,7 @@
 //! is a follow-up that has not been done.
 
 use rama::bytes::Bytes;
+use rama::futures::{StreamExt, stream::FuturesUnordered};
 use serde_json::{Value, json};
 
 use crate::repeated_calls::{CallVerdict, REFUSAL_MESSAGE, RepeatedCallGuard, stop_message};
@@ -890,32 +891,53 @@ pub async fn execute_tool_calls(
 ) -> Vec<ToolResultRecord> {
     let sem = tokio::sync::Semaphore::new(PER_REQUEST_TOOL_CONCURRENCY);
     let mut results: Vec<Option<ToolResultRecord>> = calls.iter().map(|_| None).collect();
+    let mut fatal = false;
     for phase in ToolPhase::ORDER {
+        if fatal {
+            break;
+        }
         let due = calls
             .iter()
             .enumerate()
             .filter(|(_, call)| tools.phase(&call.name) == phase);
         if phase.is_sequential() {
             for (i, call) in due {
-                results[i] = Some(execute_tool_call(tools, ctx, call, scan).await);
+                let record = execute_tool_call(tools, ctx, call, scan).await;
+                fatal = record.failure_cause == Some(ToolFailureCause::AuditUnavailable);
+                results[i] = Some(record);
+                if fatal {
+                    break;
+                }
                 if phase == ToolPhase::WritesState {
                     tools.state_written();
                 }
             }
         } else {
             let sem = &sem;
-            let futs = due.map(|(i, call)| async move {
-                let _permit = sem.acquire().await.expect("semaphore not closed");
-                (i, execute_tool_call(tools, ctx, call, scan).await)
-            });
-            for (i, record) in rama::futures::future::join_all(futs).await {
+            let mut futs: FuturesUnordered<_> = due
+                .map(|(i, call)| async move {
+                    let _permit = sem.acquire().await.expect("semaphore not closed");
+                    (i, execute_tool_call(tools, ctx, call, scan).await)
+                })
+                .collect();
+            while let Some((i, record)) = futs.next().await {
+                fatal = record.failure_cause == Some(ToolFailureCause::AuditUnavailable);
                 results[i] = Some(record);
+                if fatal {
+                    break;
+                }
             }
         }
     }
     results
         .into_iter()
-        .map(|r| r.expect("every call belongs to a phase"))
+        .enumerate()
+        .map(|(i, r)| {
+            r.unwrap_or_else(|| {
+                assert!(fatal, "every call belongs to a phase");
+                ToolResultRecord::audit_unavailable(calls[i].id.clone())
+            })
+        })
         .collect()
 }
 
@@ -942,7 +964,19 @@ async fn run_one(
 ) -> ToolResultRecord {
     let journal = ctx.clone();
     let Some(tool) = tools.get(&call.name) else {
-        let record = ToolResultRecord::failure(
+        let audit_failed = ctx.personal_dot.is_some()
+            && ctx.pending_execution_facts.is_none()
+            && tools.personal_call_audit_is_deferred()
+            && !crate::agents::audit::record_personal_tool_call(
+                &ctx,
+                Some(&call.id),
+                &call.name,
+                false,
+                "unknown_tool",
+                None,
+            )
+            .await;
+        let mut record = ToolResultRecord::failure(
             call.id.clone(),
             &format!("tool `{name}` is no longer registered", name = call.name),
         );
@@ -952,7 +986,13 @@ async fn run_one(
             signals: &[],
             elapsed: Duration::ZERO,
         };
-        record_call(&journal, &call, false, scan, result).await;
+        if record_call(&journal, &call, false, scan, result)
+            .await
+            .is_err()
+            || audit_failed
+        {
+            record.failure_cause = Some(ToolFailureCause::AuditUnavailable);
+        }
         return record;
     };
     let args: Value = tool_arguments_object(&call.arguments_raw);
@@ -983,6 +1023,7 @@ async fn run_one(
     // family) declare a longer ceiling via `max_duration`.
     let tool_timeout = tool.max_duration().unwrap_or(TOOL_TIMEOUT);
     let outcome = tokio::time::timeout(tool_timeout, async {
+        super::ask_first::validate_execution_facts(&ctx, tool.id(), &tool.execution_facts())?;
         if ctx.pending_actions.is_some() {
             let actions = tool.classify_actions(ctx.clone(), args.clone()).await?;
             super::ask_first::validate_actions(&ctx, tool.id(), tool.action_catalogue(), &actions)?;
@@ -993,6 +1034,7 @@ async fn run_one(
     let elapsed = started.elapsed();
     let elapsed_ms = elapsed.as_millis();
     let failed = !matches!(outcome, Ok(Ok(_)));
+    let mut failure_cause = None;
     let (status, body) = match outcome {
         Ok(Ok(value)) => {
             tracing::info!(
@@ -1001,6 +1043,13 @@ async fn run_one(
                 "tool call completed"
             );
             ("completed", value)
+        }
+        Ok(Err(ToolError::AuditUnavailable)) => {
+            failure_cause = Some(ToolFailureCause::AuditUnavailable);
+            (
+                "failed",
+                error_to_tool_message(crate::agents::audit::LOG_UNAVAILABLE),
+            )
         }
         Ok(Err(ToolError::InvalidArgs(m))) => {
             tracing::warn!(
@@ -1047,12 +1096,18 @@ async fn run_one(
             signals: &screened.signals,
             elapsed,
         };
-        record_call(&journal, &call, sensitive, scan, result).await;
+        if record_call(&journal, &call, sensitive, scan, result)
+            .await
+            .is_err()
+        {
+            failure_cause = Some(ToolFailureCause::AuditUnavailable);
+        }
     }
     ToolResultRecord {
         call_id: call.id,
         body: screened.body,
-        failed,
+        failed: failed || failure_cause.is_some(),
+        failure_cause,
     }
 }
 
@@ -1078,7 +1133,7 @@ async fn record_call(
     sensitive: bool,
     scan: &InjectionScan,
     result: CallResult<'_>,
-) {
+) -> Result<(), ToolError> {
     let Some(run) = ctx.agent.as_deref() else {
         if ctx.personal_dot.is_some() {
             let status = if crate::suspend::extract_suspend(result.body).is_some() {
@@ -1101,14 +1156,19 @@ async fn record_call(
             if let Some(approval) = approval {
                 detail["approval"] = json!(approval);
             }
-            ctx.audit_event(
-                AuditKind::ToolResult,
-                Some(u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX)),
-                detail,
-            )
-            .await;
+            if ctx
+                .audit_event(
+                    AuditKind::ToolResult,
+                    Some(u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX)),
+                    detail,
+                )
+                .await
+                .is_none()
+            {
+                return Err(ToolError::AuditUnavailable);
+            }
         }
-        return;
+        return Ok(());
     };
     if sensitive {
         run.note_sensitive(&call.name);
@@ -1116,21 +1176,23 @@ async fn record_call(
     let arguments = serde_json::from_str::<Value>(&call.arguments_raw)
         .unwrap_or_else(|_| Value::String(call.arguments_raw.clone()));
     let signals: Vec<&str> = result.signals.iter().map(|s| s.as_str()).collect();
-    ctx.audit_event(
-        AuditKind::ToolResult,
-        Some(u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX)),
-        json!({
-            "tool": call.name,
-            "arguments": arguments,
-            "status": result.status,
-            "result": result.body,
-            "injection": {
-                "policy": format!("{:?}", scan.policy).to_lowercase(),
-                "signals": signals,
-            },
-        }),
-    )
-    .await;
+    let recorded = ctx
+        .audit_event(
+            AuditKind::ToolResult,
+            Some(u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX)),
+            json!({
+                "tool": call.name,
+                "arguments": arguments,
+                "status": result.status,
+                "result": result.body,
+                "injection": {
+                    "policy": format!("{:?}", scan.policy).to_lowercase(),
+                    "signals": signals,
+                },
+            }),
+        )
+        .await;
+    recorded.map(|_| ()).ok_or(ToolError::AuditUnavailable)
 }
 
 /// The one place a gateway-owned result is screened before it can become a
@@ -1215,11 +1277,23 @@ pub async fn execute_tool_calls_guarded(
         let record = match verdict {
             CallVerdict::Run => executed.next().expect("one result per runnable call"),
             _ => {
-                let refused = ToolResultRecord::failure(call.id.clone(), REFUSAL_MESSAGE);
+                let mut refused = ToolResultRecord::failure(call.id.clone(), REFUSAL_MESSAGE);
                 let ctx = ToolContext {
                     call_id: Some(call.id.clone()),
                     ..ctx.clone()
                 };
+                let audit_failed = ctx.personal_dot.is_some()
+                    && ctx.pending_execution_facts.is_none()
+                    && tools.personal_call_audit_is_deferred()
+                    && !crate::agents::audit::record_personal_tool_call(
+                        &ctx,
+                        Some(&call.id),
+                        &call.name,
+                        false,
+                        "not_granted",
+                        None,
+                    )
+                    .await;
                 let result = CallResult {
                     status: "refused_repeated",
                     body: &refused.body,
@@ -1227,7 +1301,13 @@ pub async fn execute_tool_calls_guarded(
                     elapsed: Duration::ZERO,
                 };
                 let sensitive = tools.get(&call.name).is_some_and(|t| t.sensitive_args());
-                record_call(&ctx, call, sensitive, scan, result).await;
+                if record_call(&ctx, call, sensitive, scan, result)
+                    .await
+                    .is_err()
+                    || audit_failed
+                {
+                    refused.failure_cause = Some(ToolFailureCause::AuditUnavailable);
+                }
                 refused
             }
         };
@@ -1275,7 +1355,13 @@ fn error_to_tool_message(message: &str) -> Value {
     json!({ "error": message })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolFailureCause {
+    AuditUnavailable,
+}
+
 pub struct ToolResultRecord {
+    pub failure_cause: Option<ToolFailureCause>,
     pub call_id: String,
     pub body: Value,
     /// The tool did not produce a result: it failed, rejected its arguments,
@@ -1284,6 +1370,13 @@ pub struct ToolResultRecord {
 }
 
 impl ToolResultRecord {
+    fn audit_unavailable(call_id: String) -> Self {
+        Self {
+            failure_cause: Some(ToolFailureCause::AuditUnavailable),
+            ..Self::failure(call_id, crate::agents::audit::LOG_UNAVAILABLE)
+        }
+    }
+
     /// The status the call's row records.
     pub fn status(&self) -> session_core::db::ToolCallStatus {
         if self.failed {
@@ -1298,6 +1391,7 @@ impl ToolResultRecord {
             call_id,
             body: error_to_tool_message(message),
             failed: true,
+            failure_cause: None,
         }
     }
 }

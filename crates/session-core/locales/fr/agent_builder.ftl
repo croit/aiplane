@@ -408,3 +408,26 @@ dot-activity-communication-changed = Autorisations de communication des Dots mod
 
 dot-communication-error-busy = Une conversation déléguée est déjà en cours. Attendez qu’elle se termine, puis répondez à nouveau.
 dot-communication-error-unavailable = Cette délégation entre Dots est indisponible. Vérifiez les Dots actifs, les autorisations de communication et l’accès aux outils avant de réessayer.
+
+dot-connection-heading = Identité du connecteur
+dot-connection-user = Ma connexion
+dot-connection-principal = Connexion pour { $name }
+dot-connection-provider-account = Le fournisseur détermine le compte que vous autorisez. La connexion ne crée pas de compte et ne modifie pas la sélection enregistrée de ce Dot.
+dot-connection-unavailable = La connexion enregistrée est indisponible. Connectez cette identité ou sélectionnez explicitement une autre connexion disponible.
+dot-connection-authorizing = Autorisation en cours
+dot-connection-pending-warning = Les appels en attente d’approbation restent liés à leur connexion initiale. Changer d’identité ou remplacer son autorisation exige un nouvel appel et une nouvelle approbation.
+dot-connection-disconnect-confirm = Déconnecter { $name } de { $connector } ? Ses identifiants locaux et son autorisation en attente seront supprimés ; votre propre connexion sera conservée.
+dot-connection-saved = Identité du connecteur enregistrée.
+dot-connection-disconnected = Connexion du Dot déconnectée.
+dot-connection-error-load = Impossible de charger les identités des connecteurs. Rechargez et réessayez.
+dot-connection-error-save = Impossible d’enregistrer l’identité du connecteur. Rechargez ses détails et réessayez.
+dot-connection-error-connect = Impossible de démarrer l’autorisation du compte. Rechargez les détails de connexion et réessayez.
+dot-connection-error-disconnect = Impossible de déconnecter le Dot. Rechargez les détails et réessayez.
+dot-connection-error-invalid = La demande de connexion est invalide. Rechargez les détails de connexion et réessayez.
+dot-connection-error-conflict = La connexion a changé pendant votre modification. Rechargez-la et réessayez.
+dot-connection-error-unavailable = La connexion sélectionnée est indisponible. Connectez ce compte ou choisissez une connexion disponible.
+dot-connection-error-authorization = Cette autorisation est indisponible ou expirée. Recommencez la connexion du compte.
+dot-connection-access-reload = La connexion a changé. Rechargez l’accès aux outils avant d’enregistrer les règles ; les règles non enregistrées restent visibles jusqu’au rechargement.
+dot-access-identity-principal = Utilise la connexion sélectionnée de { $name }.
+dot-access-unavailable = Cet outil sélectionné est indisponible. Retirez-le avant d’enregistrer l’accès.
+dot-connection-reload = Recharger les connexions

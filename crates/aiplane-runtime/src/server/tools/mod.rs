@@ -168,6 +168,7 @@ pub struct ToolContext {
     /// interactive and headless turns can pause. See [`crate::suspend`].
     pub suspend: crate::suspend::Suspend,
     pub pending_actions: Option<PendingActionFacts>,
+    pub pending_execution_facts: Option<PendingExecutionFacts>,
     /// The tool ids the acting principal is granted, resolved once per chat
     /// turn by the driver. `enable_tools` refuses a key that none of them
     /// belongs to, so a conversation never records an ungranted tool as on.
@@ -223,6 +224,7 @@ impl ToolContext {
             model: None,
             suspend: crate::suspend::Suspend::Unavailable,
             pending_actions: None,
+            pending_execution_facts: None,
             granted_tools: None,
             agent: None,
             personal_dot: None,
@@ -408,6 +410,8 @@ impl std::fmt::Debug for ToolContext {
 
 #[derive(Debug, Error)]
 pub enum ToolError {
+    #[error("{message}", message = crate::agents::audit::LOG_UNAVAILABLE)]
+    AuditUnavailable,
     #[error("tool arguments did not match the declared schema: {0}")]
     InvalidArgs(String),
     #[error("tool execution failed: {0}")]
@@ -507,10 +511,19 @@ pub struct PendingActionFacts {
     pub actions: Option<Vec<String>>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingExecutionFacts {
+    pub execution_facts: Option<Value>,
+}
+
 pub type ToolActionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<Vec<String>>, ToolError>> + Send + 'a>>;
 
 pub trait Tool: Send + Sync + 'static {
+    fn execution_facts(&self) -> Option<Value> {
+        None
+    }
+
     fn phase(&self) -> ToolPhase {
         ToolPhase::Concurrent
     }
@@ -584,6 +597,9 @@ pub(crate) mod tests {
     pub(crate) struct PhasedEcho;
 
     impl Tool for PhasedEcho {
+        fn execution_facts(&self) -> Option<Value> {
+            Some(json!({"resource":"fixture"}))
+        }
         fn id(&self) -> &str {
             "company_echo"
         }

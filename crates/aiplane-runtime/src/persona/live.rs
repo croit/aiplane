@@ -23,6 +23,10 @@ pub(super) struct LivePersonalDotTool {
 }
 
 impl Tool for LivePersonalDotTool {
+    fn execution_facts(&self) -> Option<Value> {
+        self.initial.execution_facts()
+    }
+
     fn phase(&self) -> crate::server::tools::ToolPhase {
         self.initial.phase()
     }
@@ -64,6 +68,10 @@ impl Tool for LivePersonalDotTool {
 
     fn run<'a>(&'a self, mut ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         Box::pin(async move {
+            let journal = ctx.clone();
+            let fresh = ctx.pending_execution_facts.is_none();
+            let mut admission_recorded = false;
+            let result = async {
             if let Some(execution) = ctx.personal_execution.as_ref() {
                 let root_turn = crate::agents::router::local::validate_execution(execution).await?;
                 if execution.meter().remaining().is_none()
@@ -110,7 +118,7 @@ impl Tool for LivePersonalDotTool {
             let dot = agents::get_personal_dot(&self.state.db, &owner.id, &identity.dot_id)
                 .await
                 .map_err(Self::load_error)?
-                .filter(|dot| dot.active)
+                .filter(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
                 .ok_or_else(|| self.unavailable())?;
             let value = serde_json::from_str(&dot.agent.draft_spec)
                 .map_err(|error| ToolError::Failed(format!("Could not read the personal Dot's tool rules: {error}. Correct its access settings before retrying.")))?;
@@ -123,7 +131,7 @@ impl Tool for LivePersonalDotTool {
                 id: owner.id.clone(),
                 roles: owner.roles,
             };
-            let layer = self.state.mcp_layer_for(&principal, AskContext::Chat).await;
+            let layer = self.state.mcp_layer_for_dot(&principal, Some(identity), AskContext::Chat).await;
             let mut granted = self.state.granted_tool_ids(&principal, &layer).await;
             let disabled = user_tool_prefs::disabled_for_user(&self.state.db, &owner.id)
                 .await
@@ -152,10 +160,33 @@ impl Tool for LivePersonalDotTool {
             ctx.principal = principal;
             ctx.pool_access = access;
             ctx.granted_tools = Some(Arc::new(granted.into_iter().collect()));
+            if fresh {
+                admission_recorded = true;
+                let identity = tool.execution_facts().and_then(|facts| serde_json::from_value::<crate::server::tools::mcp::StoredMcpIdentity>(facts).ok());
+                if !crate::agents::audit::record_personal_tool_call(&ctx, ctx.call_id.as_deref(), self.id(), true, "granted", identity.as_ref()).await {
+                    return Err(ToolError::AuditUnavailable);
+                }
+            }
             Permissions::from_spec(&spec)
                 .gate_personal_dot(tool)
                 .run(ctx, args)
                 .await
+            }.await;
+            if fresh
+                && !admission_recorded
+                && !crate::agents::audit::record_personal_tool_call(
+                    &journal,
+                    journal.call_id.as_deref(),
+                    self.id(),
+                    false,
+                    "not_granted",
+                    None,
+                )
+                .await
+            {
+                return Err(ToolError::AuditUnavailable);
+            }
+            result
         })
     }
 }
@@ -178,10 +209,338 @@ impl LivePersonalDotTool {
 #[cfg(test)]
 mod tests {
     #[tokio::test]
+    async fn live_admission_is_audited_once_without_opaque_metadata_or_resume_duplicates() {
+        let (tool, mut ctx) = fixture().await;
+        ctx.call_id = Some("call-audit".into());
+        assert!(
+            tool.run(ctx.clone(), json!({"secret":"not-in-audit"}))
+                .await
+                .is_ok()
+        );
+        let events = aiplane_agents::db::agent_audit::for_principal(
+            &ctx.db,
+            &ctx.personal_dot.as_ref().unwrap().owner_user_id,
+        )
+        .await
+        .unwrap();
+        let calls: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "tool_call")
+            .collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].detail["decision"], "allowed");
+        assert_eq!(calls[0].detail["call_id"], "call-audit");
+        assert!(calls[0].detail.get("identity").is_none());
+        assert!(!calls[0].detail.to_string().contains("not-in-audit"));
+        ctx.pending_execution_facts = Some(crate::server::tools::PendingExecutionFacts {
+            execution_facts: None,
+        });
+        assert!(tool.run(ctx.clone(), json!({})).await.is_ok());
+        let events = aiplane_agents::db::agent_audit::for_principal(
+            &ctx.db,
+            &ctx.personal_dot.as_ref().unwrap().owner_user_id,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == "tool_call")
+                .count(),
+            1
+        );
+        ctx.pending_execution_facts = None;
+        ctx.call_id = Some("call-revoked".into());
+        sqlx::query("UPDATE users SET roles_json='[]' WHERE id='owner'")
+            .execute(&ctx.db)
+            .await
+            .unwrap();
+        assert!(tool.run(ctx.clone(), json!({})).await.is_err());
+        let events = aiplane_agents::db::agent_audit::for_principal(
+            &ctx.db,
+            &ctx.personal_dot.as_ref().unwrap().owner_user_id,
+        )
+        .await
+        .unwrap();
+        let calls: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "tool_call")
+            .collect();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].detail["decision"], "denied");
+        assert!(calls[0].detail.get("identity").is_none());
+    }
+
+    #[tokio::test]
+    async fn failed_admission_audit_stops_before_the_approval_gate() {
+        let (tool, mut ctx) = fixture().await;
+        ctx.call_id = Some("blocked-audit".into());
+        save(&tool, &ctx, spec("always_ask")).await;
+        sqlx::query("CREATE TRIGGER deny_call_audit BEFORE INSERT ON agent_audit WHEN NEW.kind='tool_call' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END").execute(&ctx.db).await.unwrap();
+        let error = tool.run(ctx.clone(), json!({})).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(crate::agents::audit::LOG_UNAVAILABLE)
+        );
+        let events = aiplane_agents::db::agent_audit::for_principal(&ctx.db, "owner")
+            .await
+            .unwrap();
+        assert!(!events.iter().any(|event| event.kind == "tool_call"));
+    }
+
+    struct AuditedStep(crate::server::tools::ToolPhase);
+    impl Tool for AuditedStep {
+        fn id(&self) -> &str {
+            "company_echo"
+        }
+        fn schema(&self) -> ToolDef {
+            Echo.schema()
+        }
+        fn phase(&self) -> crate::server::tools::ToolPhase {
+            self.0
+        }
+        fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
+            Box::pin(async move {
+                if !crate::agents::audit::record_personal_tool_call(
+                    &ctx,
+                    ctx.call_id.as_deref(),
+                    "company_echo",
+                    true,
+                    "granted",
+                    None,
+                )
+                .await
+                {
+                    return Err(ToolError::AuditUnavailable);
+                }
+                Echo.run(ctx, args).await
+            })
+        }
+    }
+    struct PendingSideEffect {
+        phase: crate::server::tools::ToolPhase,
+        release: Option<Arc<tokio::sync::Notify>>,
+    }
+    impl Tool for PendingSideEffect {
+        fn id(&self) -> &str {
+            "get_current_timestamp"
+        }
+        fn schema(&self) -> ToolDef {
+            crate::server::tools::time::CurrentTimestamp.schema()
+        }
+        fn phase(&self) -> crate::server::tools::ToolPhase {
+            self.phase
+        }
+        fn run<'a>(&'a self, ctx: ToolContext, _args: Value) -> ToolFuture<'a> {
+            Box::pin(async move {
+                if let Some(release) = &self.release {
+                    release.notified().await;
+                }
+                sqlx::query("INSERT INTO app_settings(key,value_json,updated_at) VALUES('audit-sibling-effect','true',?)").bind(jiff::Timestamp::now().to_string()).execute(&ctx.db).await.map_err(|error|ToolError::Failed(error.to_string()))?;
+                Ok(json!({"stored":true}))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn fatal_audit_stops_pending_concurrent_siblings_and_later_phases_in_call_order() {
+        use crate::server::tools::{
+            ToolPhase,
+            runner::{self, ToolFailureCause},
+        };
+        for concurrent in [false, true] {
+            let (_, ctx) = fixture().await;
+            sqlx::query("CREATE TRIGGER deny_step_audit BEFORE INSERT ON agent_audit WHEN NEW.kind='tool_call' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END").execute(&ctx.db).await.unwrap();
+            let release = Arc::new(tokio::sync::Notify::new());
+            let tools = ToolRegistry::new()
+                .with(AuditedStep(if concurrent {
+                    ToolPhase::Concurrent
+                } else {
+                    ToolPhase::WritesState
+                }))
+                .with(PendingSideEffect {
+                    phase: if concurrent {
+                        ToolPhase::Concurrent
+                    } else {
+                        ToolPhase::ActsOnState
+                    },
+                    release: concurrent.then(|| release.clone()),
+                });
+            let calls = [
+                runner::ToolCallRef {
+                    id: "fatal".into(),
+                    name: "company_echo".into(),
+                    arguments_raw: "{}".into(),
+                },
+                runner::ToolCallRef {
+                    id: "pending".into(),
+                    name: "get_current_timestamp".into(),
+                    arguments_raw: "{}".into(),
+                },
+            ];
+            let results = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                runner::execute_tool_calls(
+                    &tools,
+                    &ctx,
+                    &calls,
+                    &crate::server::tools::injection::InjectionScan::default(),
+                ),
+            )
+            .await
+            .unwrap();
+            release.notify_waiters();
+            assert_eq!(
+                results
+                    .iter()
+                    .map(|record| record.call_id.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["fatal", "pending"]
+            );
+            assert!(results.iter().all(|record| record.failure_cause
+                == Some(ToolFailureCause::AuditUnavailable)
+                && record.failed));
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM app_settings WHERE key='audit-sibling-effect'"
+                )
+                .fetch_one(&ctx.db)
+                .await
+                .unwrap(),
+                0
+            );
+        }
+    }
+
+    struct WithdrawingSource<'a> {
+        inner: &'a dyn ToolSource,
+        available: bool,
+    }
+    impl ToolSource for WithdrawingSource<'_> {
+        fn personal_call_audit_is_deferred(&self) -> bool {
+            self.inner.personal_call_audit_is_deferred()
+        }
+        fn get(&self, id: &str) -> Option<Arc<dyn Tool>> {
+            self.available.then(|| self.inner.get(id)).flatten()
+        }
+        fn defs_for(&self, ids: &[String]) -> Vec<ToolDef> {
+            self.inner.defs_for(ids)
+        }
+        fn ids(&self) -> Vec<String> {
+            self.inner.ids()
+        }
+    }
+
+    #[tokio::test]
+    async fn disappeared_live_source_records_one_denied_call_and_preserves_resume_and_stateless_audit()
+     {
+        let (tool, ctx) = fixture().await;
+        let value = spec("always_allow");
+        let spec = AgentSpec::from_value(&value).unwrap();
+        let persona = crate::persona::ChatPersona::new("Harald", Arc::new(ToolRegistry::new()))
+            .with_tool_access(&spec);
+        let registry = tool.state.tools();
+        let live = persona.source(registry.as_ref(), Some(&tool.state));
+        let stateless = persona.source(registry.as_ref(), None);
+        assert!(live.personal_call_audit_is_deferred());
+        assert!(!stateless.personal_call_audit_is_deferred());
+        let source = WithdrawingSource {
+            inner: &live,
+            available: false,
+        };
+        let call = crate::server::tools::runner::ToolCallRef {
+            id: "disappeared".into(),
+            name: "company_echo".into(),
+            arguments_raw: "{}".into(),
+        };
+        let results = crate::server::tools::runner::execute_tool_calls(
+            &source,
+            &ctx,
+            std::slice::from_ref(&call),
+            &crate::server::tools::injection::InjectionScan::default(),
+        )
+        .await;
+        assert!(results[0].failed);
+        let events = aiplane_agents::db::agent_audit::for_principal(&ctx.db, "owner")
+            .await
+            .unwrap();
+        let calls: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "tool_call")
+            .collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].detail["decision"], "denied");
+        assert!(calls[0].detail.get("identity").is_none());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM agent_audit WHERE principal_id='owner' AND kind='tool_result'"
+            )
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap(),
+            1
+        );
+        let resumed = ToolContext {
+            pending_execution_facts: Some(crate::server::tools::PendingExecutionFacts {
+                execution_facts: None,
+            }),
+            ..ctx.clone()
+        };
+        crate::server::tools::runner::execute_tool_calls(
+            &source,
+            &resumed,
+            std::slice::from_ref(&call),
+            &crate::server::tools::injection::InjectionScan::default(),
+        )
+        .await;
+        let missing_stateless = WithdrawingSource {
+            inner: &stateless,
+            available: false,
+        };
+        assert!(
+            crate::agents::audit::record_personal_tool_call(
+                &ctx,
+                Some("stateless"),
+                "company_echo",
+                true,
+                "granted",
+                None
+            )
+            .await
+        );
+        let stateless_call = crate::server::tools::runner::ToolCallRef {
+            id: "stateless".into(),
+            ..call
+        };
+        crate::server::tools::runner::execute_tool_calls(
+            &missing_stateless,
+            &ctx,
+            &[stateless_call],
+            &crate::server::tools::injection::InjectionScan::default(),
+        )
+        .await;
+        let events = aiplane_agents::db::agent_audit::for_principal(&ctx.db, "owner")
+            .await
+            .unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == "tool_call")
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
     async fn live_personal_dot_wrapper_preserves_the_tools_phase() {
         let (mut tool, _) = fixture().await;
         tool.initial = Arc::new(crate::server::tools::tests::PhasedEcho);
         assert_eq!(tool.phase(), crate::server::tools::ToolPhase::ActsOnState);
+        assert_eq!(
+            tool.execution_facts(),
+            Some(serde_json::json!({"resource":"fixture"}))
+        );
     }
     use super::*;
     use crate::agent_run::PersonalDotIdentity;
@@ -322,6 +681,19 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn disabled_personal_dot_cannot_execute_a_cached_builtin_tool() {
+        let (tool, ctx) = fixture().await;
+        assert!(tool.run(ctx.clone(), json!({})).await.is_ok());
+        sqlx::query("UPDATE system_principals SET disabled_at=? WHERE id=?")
+            .bind(jiff::Timestamp::now().to_string())
+            .bind(&ctx.personal_dot.as_ref().unwrap().dot_id)
+            .execute(&tool.state.db)
+            .await
+            .unwrap();
+        assert!(tool.run(ctx, json!({})).await.is_err());
     }
 
     #[tokio::test]

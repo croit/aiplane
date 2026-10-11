@@ -6,7 +6,7 @@ import type { DotAccessTool } from './dots.ts';
 function tool(patch: Partial<DotAccessTool> = {}): DotAccessTool {
 	return {
 		id: 'browse_page', label: 'Browser', description: 'Actual browser tool', selected: true,
-		permission: 'always_ask', read_only: false, identity: 'builtin', connector_key: null,
+		permission: 'always_ask', available: true, read_only: false, identity: 'builtin', connector_key: null,
 		connector_mode: null, actions: [{ id: 'read', description: 'Read current page' }, { id: 'fill', description: 'Fill a field' }],
 		action_rules: [], ...patch
 	};
@@ -50,4 +50,10 @@ test('unsupported tools do not have invented actions and deselection sends no st
 	const invalid = tool({ selected: false, actions: null, action_rules: [{ id: 'old', rule: 'deny' }] });
 	assert.deepEqual(accessSelections([invalid]), []);
 	assert.deepEqual(actionRows(invalid), [{ id: 'old', description: null, available: false, rule: 'deny' }]);
+});
+
+test('a selected unavailable tool must be explicitly removed before saving', () => {
+	const tool = { id: 'mcp.workspace.removed', label: null, description: null, available: false, selected: true, permission: 'always_ask' as const, read_only: false, identity: 'unavailable' as const, connector_key: null, connector_mode: null, actions: null, action_rules: [] };
+	assert.equal(accessSelections([tool]), null);
+	assert.deepEqual(accessSelections([{ ...tool, selected: false }]), []);
 });

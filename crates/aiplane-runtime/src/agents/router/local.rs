@@ -125,7 +125,7 @@ pub(crate) async fn permitted_receivers(
     let edges = dot_delegation::list_for_dot(&state.db, owner, caller).await?;
     Ok(dots
         .into_iter()
-        .filter(|dot| dot.active)
+        .filter(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
         .filter_map(|dot| {
             let edge = edges.iter().find(|edge| {
                 edge.caller_dot_id == caller
@@ -410,7 +410,7 @@ pub(crate) async fn validate_execution(
         let dot = agents::get_personal_dot(&state.db, owner, &binding.dot_id)
             .await
             .map_err(db_error)?
-            .filter(|dot| dot.active)
+            .filter(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
             .ok_or_else(unavailable)?;
         if index + 1 < frames.len() {
             let spec: AgentSpec =

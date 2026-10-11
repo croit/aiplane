@@ -27,8 +27,12 @@ use serde::Deserialize;
 use super::{flow_error_page, require_session_or_redirect};
 use aiplane_core::server::auth::mcp_oauth::{self, Overrides};
 use aiplane_core::server::db::mcp_catalog::{self, AuthKind};
-use aiplane_core::server::db::user_mcp::{self, NewConnection, PendingOauth};
+use aiplane_core::server::db::mcp_connections::{
+    self, ConnectionOwner, NewAuthorization, NewConnection,
+};
+use aiplane_core::server::db::{WriteTx, users::User};
 use aiplane_runtime::rama_server::state::RamaState;
+use aiplane_runtime::server::tools::mcp::identities::authorization_admitted_in;
 use session_core::i18n::{self, Lang, t, t_args};
 
 // ---------------------------------------------------------------------------
@@ -41,7 +45,41 @@ pub async fn integrations_connect(
 ) -> Response {
     let lang = Lang::from_headers(req.headers());
     let (_session, user) = require_session!(state, req);
-    let connector = match mcp_catalog::get(&state.db, &key).await {
+    connect_for_owner(
+        &state,
+        &user,
+        &key,
+        ConnectTarget {
+            owner: ConnectionOwner::User(user.id.clone()),
+            subject_principal_id: None,
+            return_to: None,
+            expected_connection: None,
+        },
+        lang,
+    )
+    .await
+}
+
+pub struct ConnectTarget {
+    pub owner: ConnectionOwner,
+    pub subject_principal_id: Option<String>,
+    pub return_to: Option<String>,
+    pub expected_connection: Option<(Option<String>, Option<String>)>,
+}
+pub async fn connect_for_owner(
+    state: &Arc<RamaState>,
+    user: &User,
+    key: &str,
+    target: ConnectTarget,
+    lang: Lang,
+) -> Response {
+    let ConnectTarget {
+        owner,
+        subject_principal_id,
+        return_to,
+        expected_connection,
+    } = target;
+    let connector = match mcp_catalog::get(&state.db, key).await {
         Ok(Some(c)) if c.enabled => c,
         _ => {
             return flow_error_page(
@@ -51,6 +89,15 @@ pub async fn integrations_connect(
             );
         }
     };
+    if matches!(&owner, ConnectionOwner::Principal(_))
+        && (!connector.is_per_user() || connector.auth != AuthKind::OAuth2)
+    {
+        return flow_error_page(
+            lang,
+            StatusCode::FORBIDDEN,
+            &t(lang, "integrations-error-not-oauth"),
+        );
+    }
     let role_ids = state.rbac.role_ids_for(&user.roles);
     if !connector.allows(&role_ids, state.rbac.is_admin(&role_ids)) {
         return flow_error_page(
@@ -78,8 +125,8 @@ pub async fn integrations_connect(
             }
         };
         let new = NewConnection {
-            user_id: user.id.clone(),
-            connector_key: key.clone(),
+            owner: owner.clone(),
+            connector_key: key.to_owned(),
             access_token_ct: empty.ciphertext,
             access_token_nonce: empty.nonce,
             refresh_token_ct: None,
@@ -91,14 +138,17 @@ pub async fn integrations_connect(
             dcr_client_secret_nonce: None,
             token_url: None,
         };
-        if let Err(err) = user_mcp::upsert_connection(&state.db, new).await {
+        if let Err(err) = mcp_connections::upsert_connection(&state.db, new).await {
             return flow_error_page(
                 lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("saving connection: {err}"),
             );
         }
-        state.mcp.invalidate(&user.id, &key).await;
+        state
+            .mcp
+            .invalidate(&ConnectionOwner::User(user.id.clone()), key)
+            .await;
         return redirect("/tools/integrations");
     }
     if connector.auth != AuthKind::OAuth2 {
@@ -212,10 +262,12 @@ pub async fn integrations_connect(
         }
     };
 
-    let pending = PendingOauth {
+    let new = NewAuthorization {
         state: oauth_state,
-        user_id: user.id.clone(),
-        connector_key: key.clone(),
+        initiator_user_id: user.id.clone(),
+        owner: owner.clone(),
+        subject_principal_id: subject_principal_id.clone(),
+        connector_key: key.to_owned(),
         pkce_verifier: pkce.verifier,
         redirect_uri,
         token_url: endpoints.token_url,
@@ -223,9 +275,47 @@ pub async fn integrations_connect(
         dcr_client_id,
         dcr_client_secret_ct: dcr_secret.as_ref().map(|s| s.ciphertext.clone()),
         dcr_client_secret_nonce: dcr_secret.as_ref().map(|s| s.nonce.clone()),
-        return_to: None,
+        return_to,
     };
-    if let Err(err) = user_mcp::create_pending(&state.db, &pending).await {
+    let result = async {
+        let mut tx = WriteTx::begin(&state.db).await?;
+        if !authorization_admitted_in(
+            state,
+            &mut tx,
+            &user.id,
+            &owner,
+            key,
+            subject_principal_id.as_deref(),
+        )
+        .await?
+        {
+            return Ok(StatusCode::FORBIDDEN);
+        }
+        if let Some((expected_id, expected_generation)) = &expected_connection {
+            let current = mcp_connections::get_connection_in(&mut tx, &owner, key).await?;
+            let actual = current
+                .as_ref()
+                .map(|c| (c.id.as_str(), c.generation.as_str()));
+            let expected = match (expected_id.as_deref(), expected_generation.as_deref()) {
+                (None, None) => None,
+                (Some(id), Some(generation)) => Some((id, generation)),
+                _ => return Ok(StatusCode::CONFLICT),
+            };
+            if actual != expected {
+                return Ok(StatusCode::CONFLICT);
+            }
+        }
+        mcp_connections::begin_authorization_in(&mut tx, new).await?;
+        tx.commit().await?;
+        Ok::<StatusCode, aiplane_core::server::db::DbError>(StatusCode::OK)
+    }
+    .await;
+    if let Ok(status) = &result
+        && *status != StatusCode::OK
+    {
+        return flow_error_page(lang, *status, &t(lang, "integrations-error-auth-expired"));
+    }
+    if let Err(err) = result {
         return flow_error_page(
             lang,
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -257,26 +347,14 @@ pub async fn integrations_callback(
 ) -> Response {
     let lang = Lang::from_headers(req.headers());
     let (_session, user) = require_session!(state, req);
-    if let Some(err) = params.error {
-        let desc = params.error_description.unwrap_or_default();
-        return flow_error_page(
-            lang,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &t_args(
-                lang,
-                "integrations-error-provider-error",
-                &i18n::args([("error", err.into()), ("desc", desc.into())]),
-            ),
-        );
-    }
-    let (Some(code), Some(st)) = (params.code, params.state) else {
+    let Some(st) = params.state else {
         return flow_error_page(
             lang,
             StatusCode::INTERNAL_SERVER_ERROR,
             &t(lang, "integrations-error-callback-missing"),
         );
     };
-    let pending = match user_mcp::take_pending(&state.db, &st).await {
+    let pending = match mcp_connections::take_pending(&state.db, &st).await {
         Ok(Some(p)) => p,
         Ok(None) => {
             return flow_error_page(
@@ -297,16 +375,63 @@ pub async fn integrations_callback(
             );
         }
     };
-    if pending.user_id != user.id {
+    if pending.initiator_user_id != user.id {
+        retire_authorization(&state, &pending).await;
         return flow_error_page(
             lang,
             StatusCode::FORBIDDEN,
             &t(lang, "integrations-error-state-mismatch"),
         );
     }
+    if let Some(err) = params.error {
+        retire_authorization(&state, &pending).await;
+        let desc = params.error_description.unwrap_or_default();
+        return flow_error_page(
+            lang,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t_args(
+                lang,
+                "integrations-error-provider-error",
+                &i18n::args([("error", err.into()), ("desc", desc.into())]),
+            ),
+        );
+    }
+    let Some(code) = params.code else {
+        retire_authorization(&state, &pending).await;
+        return flow_error_page(
+            lang,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &t(lang, "integrations-error-callback-missing"),
+        );
+    };
+    let admitted = async {
+        let mut tx = WriteTx::begin(&state.db).await?;
+        let allowed = authorization_admitted_in(
+            &state,
+            &mut tx,
+            &user.id,
+            &pending.owner,
+            &pending.connector_key,
+            pending.subject_principal_id.as_deref(),
+        )
+        .await?
+            && mcp_connections::authorization_is_current_in(&mut tx, &pending).await?;
+        tx.commit().await?;
+        Ok::<bool, aiplane_core::server::db::DbError>(allowed)
+    }
+    .await;
+    if !matches!(admitted, Ok(true)) {
+        retire_authorization(&state, &pending).await;
+        return flow_error_page(
+            lang,
+            StatusCode::FORBIDDEN,
+            &t(lang, "integrations-error-forbidden-role"),
+        );
+    }
     let connector = match mcp_catalog::get(&state.db, &pending.connector_key).await {
         Ok(Some(c)) => c,
         _ => {
+            retire_authorization(&state, &pending).await;
             return flow_error_page(
                 lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -325,6 +450,7 @@ pub async fn integrations_callback(
             (Some(ct), Some(nonce)) => match state.mcp.crypto().open_str(nonce, ct) {
                 Ok(s) => Some(s),
                 Err(err) => {
+                    retire_authorization(&state, &pending).await;
                     return flow_error_page(
                         lang,
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -341,6 +467,7 @@ pub async fn integrations_callback(
         (dcr, secret)
     } else {
         let Some(cid) = connector.client_id.clone() else {
+            retire_authorization(&state, &pending).await;
             return flow_error_page(
                 lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -350,6 +477,7 @@ pub async fn integrations_callback(
         let secret = match state.mcp.decrypt_connector_secret(&connector) {
             Ok(s) => s,
             Err(err) => {
+                retire_authorization(&state, &pending).await;
                 return flow_error_page(
                     lang,
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -381,6 +509,7 @@ pub async fn integrations_callback(
     {
         Ok(t) => t,
         Err(err) => {
+            retire_authorization(&state, &pending).await;
             return flow_error_page(lang, StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
         }
     };
@@ -389,6 +518,7 @@ pub async fn integrations_callback(
     let access = match state.mcp.crypto().seal_str(&tokens.access_token) {
         Ok(s) => s,
         Err(err) => {
+            retire_authorization(&state, &pending).await;
             return flow_error_page(
                 lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -404,6 +534,7 @@ pub async fn integrations_callback(
         Some(rt) => match state.mcp.crypto().seal_str(rt) {
             Ok(s) => Some(s),
             Err(err) => {
+                retire_authorization(&state, &pending).await;
                 return flow_error_page(
                     lang,
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -424,7 +555,7 @@ pub async fn integrations_callback(
     };
 
     let new = NewConnection {
-        user_id: user.id.clone(),
+        owner: pending.owner.clone(),
         connector_key: pending.connector_key.clone(),
         access_token_ct: access.ciphertext,
         access_token_nonce: access.nonce,
@@ -437,7 +568,35 @@ pub async fn integrations_callback(
         dcr_client_secret_nonce: pending.dcr_client_secret_nonce.clone(),
         token_url: Some(pending.token_url.clone()),
     };
-    if let Err(err) = user_mcp::upsert_connection(&state.db, new).await {
+    let saved = async {
+        let mut tx = WriteTx::begin(&state.db).await?;
+        if !authorization_admitted_in(
+            &state,
+            &mut tx,
+            &user.id,
+            &pending.owner,
+            &pending.connector_key,
+            pending.subject_principal_id.as_deref(),
+        )
+        .await?
+        {
+            return Ok(None);
+        }
+        let identity = mcp_connections::complete_authorization_in(&mut tx, &pending, new).await?;
+        tx.commit().await?;
+        Ok::<_, aiplane_core::server::db::DbError>(identity)
+    }
+    .await;
+    if matches!(saved, Ok(None)) {
+        retire_authorization(&state, &pending).await;
+        return flow_error_page(
+            lang,
+            StatusCode::FORBIDDEN,
+            &t(lang, "integrations-error-auth-expired"),
+        );
+    }
+    if let Err(err) = saved {
+        retire_authorization(&state, &pending).await;
         return flow_error_page(
             lang,
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -448,8 +607,17 @@ pub async fn integrations_callback(
             ),
         );
     }
-    state.mcp.invalidate(&user.id, &pending.connector_key).await;
-    redirect("/tools/integrations")
+    state
+        .mcp
+        .invalidate(&pending.owner, &pending.connector_key)
+        .await;
+    redirect(
+        pending
+            .return_to
+            .as_deref()
+            .filter(|path| aiplane_core::rama_server::session::is_safe_return_to(path))
+            .unwrap_or("/tools/integrations"),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -466,7 +634,10 @@ pub async fn integrations_retry(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session!(state, req);
-    state.mcp.invalidate(&user.id, &key).await;
+    state
+        .mcp
+        .invalidate(&ConnectionOwner::User(user.id.clone()), &key)
+        .await;
     redirect("/tools/integrations")
 }
 
@@ -488,4 +659,10 @@ fn redirect(location: &str) -> Response {
         .header(header::LOCATION, location)
         .body("".into())
         .unwrap()
+}
+
+async fn retire_authorization(state: &RamaState, pending: &mcp_connections::PendingOauth) {
+    if let Err(error) = mcp_connections::cancel_authorization(&state.db, pending).await {
+        tracing::warn!(%error,"retiring MCP authorization failed");
+    }
 }

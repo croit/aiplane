@@ -156,6 +156,10 @@ impl ToolRegistry {
 /// ([`super::runner`]) takes `&dyn ToolSource` so the buffered `/v1`,
 /// streaming `/v1`, and chat-UI loops all gain per-user tools at one seam.
 pub trait ToolSource: Send + Sync {
+    fn personal_call_audit_is_deferred(&self) -> bool {
+        false
+    }
+
     /// Resolve a tool by id, returning an owned handle. The registry holds
     /// `Arc`s; an overlay may mint them per request.
     fn get(&self, id: &str) -> Option<Arc<dyn Tool>>;
@@ -288,6 +292,10 @@ impl<'a> GrantedToolSource<'a> {
 }
 
 impl ToolSource for GrantedToolSource<'_> {
+    fn personal_call_audit_is_deferred(&self) -> bool {
+        self.source.personal_call_audit_is_deferred()
+    }
+
     fn phase(&self, id: &str) -> ToolPhase {
         if self.get(id).is_some() {
             self.source.phase(id)

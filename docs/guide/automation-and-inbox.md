@@ -75,8 +75,25 @@ Open `/dots` and expand **Access and approvals** on your Dot's card. Search
 by tool name, description or ID, select each tool the Dot may use, and
 choose **Allow** or **Ask before each call**. Save your changes. Unselected
 tools are denied. Tool IDs distinguish actions that share a capability title.
-The account label identifies the current user or shared connector account;
+The identity label identifies the user, Dot or shared connector connection;
 a connector configured to ask still asks when the Dot rule is Allow.
+
+For a supported personal OAuth connector, use **Connector identity** to choose
+**My connection** or the connection for your named Dot. **Connect** authorizes
+an account at the provider; it does not create an account or select it for
+execution. After returning, choose the connected identity and save it. The
+provider determines the external account; AIplane does not infer an email
+address from the token.
+
+Identity changes leave your tool rules intact. Reload access to inspect the
+selected connection's actual tools before saving rules. A disconnected or
+replaced selected credential stays unavailable until you explicitly save an
+available selection. **Disconnect** removes only that Dot's local credentials;
+your personal connection remains. Pending calls retain their original
+connection and generation: after a selection change or reauthorization,
+request a new call and approval. Ordinary token refresh preserves the generation.
+
+![The actual Workspace connector uses Harald's separately authorized connection.](../img/guide/dot-connector-identity.png)
 
 For `browse_page` or `browser_control`, open **Actions** under the selected tool. Choose **Use tool
 rule**, **Allow**, **Ask**, or **Deny** for each action. For example, keep the tool
@@ -102,7 +119,7 @@ once permits only that call's recorded arguments. Current permissions and Dot
 availability are checked again before execution; removing a selected tool or
 disabling it in your account prevents a pending approval from running it.
 Deactivating a Dot retains its data and conversations and cancels its active
-personal runs and linked delegation work. Separate Dot connector identities, organization Dots, automatic memory
+personal runs and linked delegation work. Organization Dots, automatic memory
 curation and persistent Dot computers are not available.
 
 ## Configure communication consent
@@ -117,9 +134,12 @@ communication needs separate choices.
 Inactive peers stay visible. Enabling requires both Dots active, and revocation
 is available while inactive. A stale save keeps your draft and reports a
 conflict; use **Reload communication** to fetch current choices. Changing
-consent requires current Personal Dot manager permission. The delegation
-runtime is still being implemented; saved consent alone does not execute a
-request. See [Dot communication](../dots-communication.md).
+consent requires current Personal Dot manager permission. To delegate, select
+the existing forwarding tool in the sending Dot's access rules. The receiving
+Dot uses its own selected tools, current permissions and memory. Both consents
+are checked before dispatch; reverse requests require their own consent.
+Approvals return to your existing Inbox and originating chat. See
+[Dot communication](../dots-communication.md).
 
 ![Directional consent between actual personal Dots](../img/guide/dot-communication.png)
 

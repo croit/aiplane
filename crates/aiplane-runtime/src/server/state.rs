@@ -282,6 +282,7 @@ impl AppState {
         let mcp = crate::server::tools::mcp::manager::McpConnectionManager::new(
             db.clone(),
             crypto.clone(),
+            rbac.clone(),
         );
         // Seeded from the config file so tests and the dev harness get the
         // historical behaviour; production replaces it with the shared handle
@@ -960,6 +961,7 @@ impl AppState {
         self.mcp = crate::server::tools::mcp::manager::McpConnectionManager::new(
             self.db.clone(),
             crypto.clone(),
+            self.rbac.clone(),
         );
         self.crypto = crypto;
         self
@@ -1044,6 +1046,34 @@ impl AppState {
             }
             Principal::System(sp) => self.mcp.layer_for_principal(sp).await,
         }
+    }
+
+    pub async fn mcp_layer_for_dot(
+        &self,
+        principal: &Principal,
+        dot: Option<&crate::agent_run::PersonalDotIdentity>,
+        ask: crate::server::tools::mcp::manager::AskContext<'_>,
+    ) -> crate::server::tools::mcp::manager::UserMcpLayer {
+        let Some(dot) = dot else {
+            return self.mcp_layer_for(principal, ask).await;
+        };
+        let Principal::User { id, .. } = principal else {
+            return Default::default();
+        };
+        if id != &dot.owner_user_id {
+            return Default::default();
+        }
+        let Ok(Some(user)) = aiplane_core::server::db::users::find_by_id(&self.db, id).await else {
+            return Default::default();
+        };
+        crate::server::tools::mcp::identities::layer_for_personal_dot(
+            self,
+            &user,
+            &dot.dot_id,
+            ask,
+            true,
+        )
+        .await
     }
 
     /// [`Self::mcp_grant_for`] for any acting principal. A system

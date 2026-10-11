@@ -35,7 +35,7 @@ Reuse these mechanisms before adding their organization callers:
 - Existing user/group shares, `effective_access`, current gateway-group resolution and admin recovery; one combined organization access decision for API, Inbox and runtime admission.
 - Existing principal run sessions, `AgentRun`, `RunProfile`, `SessionDriver`, headless workers and exact-turn cancellation.
 - Existing `chat_turn_suspensions`, staff settlement, request IDs and worker claims; no organization approval queue or separate approval engine.
-- Existing MCP catalogue, actual tool metadata, connection storage, OAuth flow and crypto sealing. Reuse the identity proposal's planned owner generalization, generation checks and owner-keyed cache/refresh locking once that prerequisite is implemented.
+- Existing MCP catalogue, actual tool metadata, generalized user/principal connection storage, OAuth flow, crypto sealing, generation checks and owner-keyed cache/refresh locking. Organization admission and selection extend this same store.
 - Existing pinned/guarded outbound clients and capped readers for OAuth/MCP bodies; existing JSON caps for organization endpoints.
 - Existing cron/webhook storage, run correlation, completion reconciliation and usage records; extend owner resolution rather than add another scheduler.
 - Existing memory record shape and `MemoryKind`, bounded readers and CRUD; owner-scoped storage must become explicit before any organization memory caller lands.
@@ -145,7 +145,7 @@ Test first with actual in-memory SQLite: XOR owner constraint, unknown group/org
 
 ### 2. Credential ownership and selection
 
-Implement the identity proposal's neutral connection owner first with real personal and organization callers. Test OAuth state binds initiator and target, revoked membership fails before exchange/save, refresh generations cannot resurrect disconnects, account choices cannot cross organizations and missing credentials never use employee/global fallback. Test encrypted storage and actual mocked provider/MCP responses. No generic provider account label is invented.
+Extend the existing neutral connection owner and personal OAuth mechanism with real organization callers. Test OAuth state binds initiator and target, revoked membership fails before exchange/save, refresh generations cannot resurrect disconnects, account choices cannot cross organizations and missing credentials never use employee/global fallback. Test encrypted storage and actual mocked provider/MCP responses. No generic provider account label is invented.
 
 ### 3. Organization run and live authority
 

@@ -263,6 +263,16 @@ pub async fn get(pool: &Pool, key: &str) -> Result<Option<Connector>, DbError> {
     row.as_ref().map(map_row).transpose()
 }
 
+pub async fn get_in(tx: &mut super::WriteTx, key: &str) -> Result<Option<Connector>, DbError> {
+    let row = sqlx::query(&format!(
+        "SELECT {COLS} FROM mcp_catalog_connectors WHERE key = ?"
+    ))
+    .bind(key)
+    .fetch_optional(&mut **tx)
+    .await?;
+    row.as_ref().map(map_row).transpose()
+}
+
 /// Insert a new admin-created connector (enabled = 0, seeded = 0).
 pub async fn create(pool: &Pool, input: ConnectorInput) -> Result<(), DbError> {
     let now = Timestamp::now().to_string();
@@ -1066,5 +1076,20 @@ mod tests {
             .unwrap();
         delete(&pool, "slack").await.unwrap();
         assert!(all_tools(&pool).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn connection_scoped_catalog_read_preserves_real_metadata() {
+        let pool = pool().await;
+        seed_defaults(&pool).await.unwrap();
+        set_enabled(&pool, "atlassian", true).await.unwrap();
+        let expected = get(&pool, "atlassian").await.unwrap().unwrap();
+        let mut tx = db::WriteTx::begin(&pool).await.unwrap();
+        let actual = get_in(&mut tx, "atlassian").await.unwrap().unwrap();
+        assert_eq!(actual.name, expected.name);
+        assert_eq!(actual.enabled, expected.enabled);
+        assert_eq!(actual.allowed_groups, expected.allowed_groups);
+        assert!(get_in(&mut tx, "missing").await.unwrap().is_none());
+        tx.commit().await.unwrap();
     }
 }

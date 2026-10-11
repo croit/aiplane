@@ -3,6 +3,7 @@
 	import type { IntegrationConnector, IntegrationMode } from '#lib/integrations.js';
 	import ConnectorLogo from './ConnectorLogo.svelte';
 	import IntegrationTools from './IntegrationTools.svelte';
+	import IntegrationCredentialActions from './IntegrationCredentialActions.svelte';
 
 	let { connector, ontoken, ondisconnect, onretry, onmode, onall } = $props<{
 		connector: IntegrationConnector;
@@ -40,17 +41,8 @@
 			<div class="ml-9 w-full shrink-0 sm:ml-0 sm:w-auto">
 				{#if connector.is_global}
 					<span class="text-xs text-base-content/50">{t('integrations-no-sign-in')}</span>
-				{:else if connector.connected}
-					<div class="flex items-center gap-2">
-						{#if connector.auth_type === 'static_bearer'}
-							<button type="button" class="btn btn-ghost btn-sm" title={t('integrations-reconnect-title')} onclick={onretry}>{t('integrations-reconnect-button')}</button>
-						{:else}
-							<form method="post" action={`/integrations/${encodeURIComponent(connector.key)}/connect`} class="m-0"><button type="submit" class="btn btn-ghost btn-sm" title={t('integrations-reconnect-title')}>{t('integrations-reconnect-button')}</button></form>
-						{/if}
-						<button type="button" class="btn btn-ghost btn-sm text-error" onclick={ondisconnect}>{t('integrations-disconnect-button')}</button>
-					</div>
-				{:else if connector.auth_type !== 'static_bearer'}
-					<form method="post" action={`/integrations/${encodeURIComponent(connector.key)}/connect`} class="m-0"><button type="submit" class="btn btn-primary btn-sm" disabled={connector.needs_setup}>{t('integrations-connect-button')}</button></form>
+				{:else}
+					<IntegrationCredentialActions connectorKey={connector.key} authType={connector.auth_type} connected={connector.connected} needsSetup={connector.needs_setup} {ondisconnect} {onretry} />
 				{/if}
 			</div>
 		</div>

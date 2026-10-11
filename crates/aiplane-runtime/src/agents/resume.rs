@@ -636,9 +636,10 @@ async fn validate_personal_level_in(
     let valid: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM chat_turns t JOIN chat_sessions s ON s.id = t.session_id
          JOIN personal_dot_sessions p ON p.session_id = s.id JOIN personal_dots d ON d.principal_id = p.dot_id
+         JOIN system_principals principal ON principal.id = d.principal_id
          WHERE t.id = ? AND t.role = 'assistant' AND t.model = ? AND s.id = ? AND s.user_id = ?
            AND s.principal_id IS NULL AND s.shared = 0 AND p.owner_user_id = ? AND p.dot_id = ?
-           AND d.owner_user_id = ? AND d.active = 1 AND s.parent_turn_id IS ? AND p.parent_turn_id IS ?)",
+           AND d.owner_user_id = ? AND d.active = 1 AND principal.disabled_at IS NULL AND s.parent_turn_id IS ? AND p.parent_turn_id IS ?)",
     ).bind(&level.suspension.turn_id).bind(&level.model).bind(&level.binding.session_id).bind(owner)
         .bind(owner).bind(&level.binding.dot_id).bind(owner)
         .bind(level.link.as_ref().map(|link| link.parent_turn_id.as_str()))
@@ -766,7 +767,7 @@ pub async fn claim_personal(
         }
         let dot = agents_db::get_personal_dot(&state.db, owner, &level.binding.dot_id)
             .await?
-            .filter(|dot| dot.active)
+            .filter(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
             .ok_or(AgentResumeError::Unavailable)?;
         let spec: super::spec::AgentSpec = serde_json::from_str(&dot.agent.draft_spec)
             .map_err(|_| AgentResumeError::Unavailable)?;
@@ -888,7 +889,7 @@ async fn run_personal_children_inner(
         let link = level.link.as_ref().ok_or(AgentResumeError::Unavailable)?;
         let dot = agents_db::get_personal_dot(&state.db, &claimed.owner, &level.binding.dot_id)
             .await?
-            .filter(|dot| dot.active)
+            .filter(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
             .ok_or(AgentResumeError::Unavailable)?;
         let spec: super::spec::AgentSpec = serde_json::from_str(&dot.agent.draft_spec)
             .map_err(|_| AgentResumeError::Unavailable)?;
@@ -1146,6 +1147,7 @@ mod tests {
                     kind: session_core::db::SuspensionKind::Approval,
                     message: None,
                     tool_call: PendingCall {
+                        execution_facts: None,
                         id: format!("call-{turn}"),
                         name: "company_echo".into(),
                         arguments: "{}".into(),

@@ -59,6 +59,8 @@ pub struct SuspendRequest {
     pub context: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_facts: Option<Value>,
 }
 
 /// The paused sub-agent run a call is waiting on.
@@ -80,6 +82,7 @@ impl SuspendRequest {
             timeout_secs: timeout.as_secs(),
             on_timeout: TimeoutFallback::Deny,
             actions: None,
+            execution_facts: None,
             child: None,
             context: None,
         }
@@ -95,6 +98,7 @@ impl SuspendRequest {
             timeout_secs: timeout.as_secs(),
             on_timeout: TimeoutFallback::Deny,
             actions: None,
+            execution_facts: None,
             child: None,
             context: Some(context),
         }
@@ -110,6 +114,7 @@ impl SuspendRequest {
             timeout_secs: timeout.as_secs(),
             on_timeout: TimeoutFallback::Deny,
             actions: None,
+            execution_facts: None,
             child: None,
             context: None,
         }
@@ -321,6 +326,7 @@ mod tests {
                 kind: SuspensionKind::Approval,
                 message: None,
                 tool_call: PendingCall {
+                    execution_facts: None,
                     actions: None,
                     id: "call-1".into(),
                     name: "company_echo".into(),

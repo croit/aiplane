@@ -409,3 +409,26 @@ dot-activity-communication-changed = Changed Dot communication permissions.
 
 dot-communication-error-busy = A delegated conversation is already running. Wait for it to finish and answer again.
 dot-communication-error-unavailable = This Dot delegation is unavailable. Check the active Dots, communication permissions and tool access before retrying.
+
+dot-connection-heading = Connector identity
+dot-connection-user = My connection
+dot-connection-principal = Connection for { $name }
+dot-connection-provider-account = The provider decides which account you authorize. Connecting does not create an account or change this Dot’s saved selection.
+dot-connection-unavailable = The saved connection is unavailable. Connect that identity or explicitly select another available connection.
+dot-connection-authorizing = Authorization in progress
+dot-connection-pending-warning = Calls waiting for approval remain bound to their original connection. Changing the identity or replacing its authorization requires a new call and approval.
+dot-connection-disconnect-confirm = Disconnect { $name }’s connection to { $connector }? This removes its local credentials and pending authorization; your own connection remains.
+dot-connection-saved = Connector identity saved.
+dot-connection-disconnected = Dot connection disconnected.
+dot-connection-error-load = The connector identities could not be loaded. Reload and try again.
+dot-connection-error-save = The connector identity could not be saved. Reload its details and try again.
+dot-connection-error-connect = Account authorization could not start. Reload the connection details and try again.
+dot-connection-error-disconnect = The Dot connection could not be disconnected. Reload its details and try again.
+dot-connection-error-invalid = The connection request is invalid. Reload the connection details and try again.
+dot-connection-error-conflict = The connection changed while you were editing. Reload it and try again.
+dot-connection-error-unavailable = The selected connection is unavailable. Connect this account or choose an available connection.
+dot-connection-error-authorization = This authorization is unavailable or expired. Start connecting the account again.
+dot-connection-access-reload = The connection changed. Reload tool access before saving rules; unsaved rules remain visible until you reload.
+dot-access-identity-principal = Uses { $name }’s selected connection.
+dot-access-unavailable = This selected tool is unavailable. Remove it before saving access.
+dot-connection-reload = Reload connections

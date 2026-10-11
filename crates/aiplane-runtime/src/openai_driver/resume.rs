@@ -109,6 +109,7 @@ pub(super) async fn pause(
         kind: request.kind,
         message: request.message,
         tool_call: PendingCall {
+            execution_facts: request.execution_facts.clone(),
             actions: request.actions,
             id: call.id.clone(),
             name: call.name.clone(),
@@ -317,30 +318,47 @@ pub(super) async fn resume_into(
         (None, Decision::Deny { reason }) => {
             let refusal = denial(*reason, &call.name);
             settle_call(d, ctx, &call.id, &refusal, ToolCallStatus::Errored).await?;
-            settled_without_running(&call_ctx, &call, "denied", json!({ "error": refusal })).await;
+            settled_without_running(&call_ctx, &call, "denied", json!({ "error": refusal }))
+                .await?;
             Value::String(refusal)
         }
         (child_result, decided) => {
             let (body, status) = match child_result {
                 Some(body) => {
-                    settled_without_running(
+                    if let Err(error) = settled_without_running(
                         &call_ctx,
                         &call,
                         "answered_by_sub_agent",
                         body.clone(),
                     )
-                    .await;
+                    .await
+                    {
+                        settle_call(
+                            d,
+                            ctx,
+                            &call.id,
+                            crate::agents::audit::LOG_UNAVAILABLE,
+                            ToolCallStatus::Errored,
+                        )
+                        .await?;
+                        return Err(error);
+                    }
                     (body.clone(), ToolCallStatus::Completed)
                 }
                 None => {
                     let tool_ctx = ToolContext {
                         suspend: Suspend::Decided(suspension.kind, decided.clone()),
+                        pending_execution_facts: Some(
+                            crate::server::tools::PendingExecutionFacts {
+                                execution_facts: suspension.tool_call.execution_facts.clone(),
+                            },
+                        ),
                         pending_actions: Some(crate::server::tools::PendingActionFacts {
                             actions: suspension.tool_call.actions.clone(),
                         }),
                         ..tool_ctx.clone()
                     };
-                    let (status, body) = runner::execute_tool_calls(
+                    let record = runner::execute_tool_calls(
                         tools,
                         &tool_ctx,
                         std::slice::from_ref(&call),
@@ -350,14 +368,24 @@ pub(super) async fn resume_into(
                             .unwrap_or_default(),
                     )
                     .await
-                    .pop()
-                    .map(|record| (record.status(), record.body))
-                    .unwrap_or_else(|| {
-                        (
-                            ToolCallStatus::Errored,
-                            json!({ "error": "the tool produced no result" }),
-                        )
-                    });
+                    .pop();
+                    if let Some(record) = &record
+                        && record.failure_cause == Some(runner::ToolFailureCause::AuditUnavailable)
+                    {
+                        settle_call(d, ctx, &call.id, &record.body.to_string(), record.status())
+                            .await?;
+                        return Err(TurnError::Upstream {
+                            message: crate::agents::audit::LOG_UNAVAILABLE.into(),
+                        });
+                    }
+                    let (status, body) = record
+                        .map(|record| (record.status(), record.body))
+                        .unwrap_or_else(|| {
+                            (
+                                ToolCallStatus::Errored,
+                                json!({ "error": "the tool produced no result" }),
+                            )
+                        });
                     let body = tool_ctx.redaction().withhold(body);
                     (body, status)
                 }
@@ -403,9 +431,9 @@ async fn settled_without_running(
     call: &ToolCallRef,
     status: &str,
     result: Value,
-) {
+) -> Result<(), TurnError> {
     if !ctx.agent_active() && ctx.personal_dot.is_none() {
-        return;
+        return Ok(());
     }
     let detail = if ctx.personal_dot.is_some() {
         json!({
@@ -424,7 +452,16 @@ async fn settled_without_running(
             "resumed": true,
         })
     };
-    ctx.audit_event(AuditKind::ToolResult, None, detail).await;
+    if ctx
+        .audit_event(AuditKind::ToolResult, None, detail)
+        .await
+        .is_none()
+    {
+        return Err(TurnError::Upstream {
+            message: crate::agents::audit::LOG_UNAVAILABLE.into(),
+        });
+    }
+    Ok(())
 }
 
 /// Every tool-call id the replayed `messages` already used, so a resumed
@@ -452,7 +489,7 @@ fn denial(reason: DenyReason, tool: &str) -> String {
     }
 }
 
-async fn settle_call(
+pub(super) async fn settle_call(
     d: &OpenAiDriver,
     ctx: &SessionContext,
     call_id: &str,
@@ -543,6 +580,21 @@ mod tests {
     /// The state a process boots with: the database at `db_path` (migrated
     /// and swept, as at startup) and a fresh registry of `tools`.
     async fn boot(db_path: &Path, upstream: &str, tools: ToolRegistry) -> Arc<RamaState> {
+        boot_with_rbac(
+            db_path,
+            upstream,
+            tools,
+            crate::server::tools::echo::granted_to_everyone(),
+        )
+        .await
+    }
+
+    async fn boot_with_rbac(
+        db_path: &Path,
+        upstream: &str,
+        tools: ToolRegistry,
+        rbac: aiplane_core::server::rbac::Resolver,
+    ) -> Arc<RamaState> {
         let db = aiplane_core::server::db::open(db_path).await.unwrap();
         let mut pools = HashMap::new();
         pools.insert(
@@ -586,7 +638,7 @@ mod tests {
             db.clone(),
             registry,
             Arc::new(tools),
-            Arc::new(crate::server::tools::echo::granted_to_everyone()),
+            Arc::new(rbac),
         );
         let sessions = aiplane_core::rama_server::SessionStore::new(db, [7u8; 32]);
         Arc::new(RamaState::new(
@@ -755,6 +807,10 @@ mod tests {
     struct ActionEcho;
 
     impl crate::server::tools::Tool for ActionEcho {
+        fn execution_facts(&self) -> Option<Value> {
+            Some(json!({"fixture_resource":"action_echo"}))
+        }
+
         fn id(&self) -> &str {
             "company_echo"
         }
@@ -806,6 +862,95 @@ mod tests {
 
     fn action_gated() -> ToolRegistry {
         ToolRegistry::new().with(AskFirst::new(ActionEcho, Duration::from_secs(3600)))
+    }
+
+    #[tokio::test]
+    async fn persisted_execution_facts_apply_only_to_the_pending_invocation_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("gateway.db");
+        let fresh_call = json!({"tool_calls":[{"index":0,"id":"call-2","type":"function","function":{"name":"get_current_timestamp","arguments":"{\"timezone\":\"UTC\"}"}}]});
+        let server = upstream(vec![
+            echo_call(),
+            fresh_call,
+            json!({"content":"Both approved."}),
+        ])
+        .await;
+        let tools = || {
+            action_gated().with(AskFirst::new(
+                crate::server::tools::time::CurrentTimestamp,
+                Duration::from_secs(3600),
+            ))
+        };
+        let rbac = || {
+            aiplane_core::server::rbac::Resolver::build(
+                aiplane_core::server::rbac::config::RbacConfig {
+                    default_role: Some("member".into()),
+                    mappings: vec![],
+                },
+                vec![aiplane_core::server::rbac::config::RoleConfig {
+                    id: "member".into(),
+                    admin: false,
+                    models: vec!["*".into()],
+                    tools: vec!["company_echo".into(), "get_current_timestamp".into()],
+                    skills: vec![],
+                }],
+            )
+            .unwrap()
+        };
+        let before = boot_with_rbac(&db_path, &server.uri(), tools(), rbac()).await;
+        let (session_id, turn_id) = open_turn(&before).await;
+        drive(&before, &session_id, None).await;
+        let first = chat::get_suspension(&before.db, &turn_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            first.tool_call.execution_facts,
+            Some(json!({"fixture_resource":"action_echo"}))
+        );
+        before.db.close().await;
+        drop(before);
+        let after = boot_with_rbac(&db_path, &server.uri(), tools(), rbac()).await;
+        let restored = chat::get_suspension(&after.db, &turn_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.tool_call, first.tool_call);
+        let resume = claim_for_resume(
+            &after.db,
+            &turn_id,
+            Some(&restored.request_id),
+            Decision::AllowOnce,
+        )
+        .await
+        .unwrap();
+        drive(&after, &session_id, Some(resume)).await;
+        let waiting = the_turn(&after, &session_id).await;
+        assert_eq!(waiting.turn.status, TurnStatus::Suspended);
+        assert_eq!(waiting.tool_calls[0].status, ToolCallStatus::Completed);
+        let next = chat::get_suspension(&after.db, &turn_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.tool_call.name, "get_current_timestamp");
+        assert_eq!(next.tool_call.execution_facts, None);
+        let resume = claim_for_resume(
+            &after.db,
+            &turn_id,
+            Some(&next.request_id),
+            Decision::AllowOnce,
+        )
+        .await
+        .unwrap();
+        drive(&after, &session_id, Some(resume)).await;
+        let done = the_turn(&after, &session_id).await;
+        assert_eq!(done.turn.status, TurnStatus::Completed);
+        assert!(done.suspension.is_none());
+        assert!(
+            done.tool_calls
+                .iter()
+                .all(|call| call.status == ToolCallStatus::Completed)
+        );
     }
 
     #[tokio::test]
@@ -979,6 +1124,7 @@ mod tests {
                 kind: chat::SuspensionKind::Approval,
                 message: None,
                 tool_call: chat::PendingCall {
+                    execution_facts: None,
                     actions: None,
                     id: "c".into(),
                     name: "n".into(),

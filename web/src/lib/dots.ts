@@ -46,6 +46,46 @@ export const dotCommunicationApi = {
 		})
 };
 
+export type DotConnectionMode = 'user' | 'principal';
+export interface DotCredential {
+	id: string | null;
+	generation: string | null;
+	connected: boolean;
+	errored: boolean;
+	needs_reauth: boolean;
+	authorizing: boolean;
+	account_label: string | null;
+}
+export interface DotConnection {
+	key: string;
+	connector: { title: string; description: string | null; icon: string | null; auth_type: 'oauth2' | 'none' | 'static_bearer'; scope: 'per_user' | 'global' | 'agent'; needs_setup: boolean } | null;
+	supported_modes: readonly DotConnectionMode[];
+	selected: { mode: DotConnectionMode; binding_generation: string | null; connection_id: string | null; connection_generation: string | null };
+	user_connection: DotCredential;
+	principal_connection: DotCredential | null;
+	can_connect: boolean;
+}
+export interface DotConnections { dot: Dot; connections: DotConnection[] }
+export interface DotConnectionChange {
+	mode: DotConnectionMode;
+	expected_binding_generation: string | null;
+	connection_id: string;
+	connection_generation: string;
+}
+export interface DotCredentialVersion { connection_id: string | null; connection_generation: string | null }
+export const dotConnectionsApi = {
+	load: (dotId: string) => request<DotConnections>(`/api/v0/dots/${encodeURIComponent(dotId)}/connections`),
+	save: (dotId: string, key: string, body: DotConnectionChange) => request<DotConnections>(`/api/v0/dots/${encodeURIComponent(dotId)}/connections/${encodeURIComponent(key)}`, {
+		method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+	}),
+	connect: (dotId: string, key: string, body: DotCredentialVersion) => request<{ authorization_url: string }>(`/api/v0/dots/${encodeURIComponent(dotId)}/connections/${encodeURIComponent(key)}/connect`, {
+		method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+	}),
+	disconnect: (dotId: string, key: string, body: DotCredentialVersion) => request<DotConnections>(`/api/v0/dots/${encodeURIComponent(dotId)}/connections/${encodeURIComponent(key)}`, {
+		method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+	})
+};
+
 export type DotToolPermission = 'always_allow' | 'always_ask';
 export type DotActionRule = 'allow' | 'ask' | 'deny';
 
@@ -57,12 +97,13 @@ export interface DotAccessSelection {
 
 export interface DotAccessTool {
 	id: string;
-	label: string;
-	description: string;
+	label: string | null;
+	description: string | null;
+	available: boolean;
 	selected: boolean;
 	permission: DotToolPermission;
 	read_only: boolean;
-	identity: 'builtin' | 'user' | 'shared';
+	identity: 'builtin' | 'user' | 'shared' | 'principal' | 'unavailable';
 	connector_key: string | null;
 	connector_mode: 'always' | 'ask' | 'off' | null;
 	actions: { id: string; description: string }[] | null;

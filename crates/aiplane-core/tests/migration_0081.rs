@@ -8,13 +8,133 @@ use std::path::Path;
 const SCHEMA: &str = include_str!("fixtures/schema_after_dot_sessions.txt");
 
 #[tokio::test]
+async fn connector_upgrade_preserves_sealed_credentials_and_newest_authorization() {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .in_memory(true)
+        .foreign_keys(false);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    let migrations = sqlx::migrate!("./migrations");
+    for migration in migrations.iter().filter(|migration| migration.version < 81) {
+        pool.execute(sqlx::raw_sql(&migration.sql)).await.unwrap();
+    }
+    pool.execute(sqlx::raw_sql(
+        "INSERT INTO users(id,email,created_at,updated_at) VALUES('owner','owner@example.test','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+         INSERT INTO user_mcp_connections(id,user_id,connector_key,status,access_token_ct,access_token_nonce,refresh_token_ct,refresh_token_nonce,dcr_client_secret_ct,dcr_client_secret_nonce,created_at,updated_at)
+         VALUES('original','owner','workspace','connected',x'0001ff',x'0203',x'0405',x'0607',x'0809',x'0a0b','2026-01-01T00:00:00Z','2026-02-01T00:00:00Z');"
+    )).await.unwrap();
+    for (state, created_at) in [
+        ("whole-second", "2026-03-01T00:00:00Z"),
+        ("fraction-a", "2026-03-01T00:00:00.1Z"),
+        ("fraction-z", "2026-03-01T00:00:00.1Z"),
+    ] {
+        sqlx::query("INSERT INTO pending_mcp_oauth(state,user_id,connector_key,pkce_verifier,redirect_uri,token_url,created_at,expires_at) VALUES(?,'owner','workspace','verifier','https://plane.example/integrations/callback','https://provider.example/token',?,'2026-03-01T00:10:00Z')")
+            .bind(state).bind(created_at).execute(&pool).await.unwrap();
+    }
+    pool.execute(sqlx::raw_sql(
+        &migrations
+            .iter()
+            .find(|migration| migration.version == 81)
+            .unwrap()
+            .sql,
+    ))
+    .await
+    .unwrap();
+    let row = sqlx::query("SELECT * FROM mcp_connections WHERE id='original'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    for (column, bytes) in [
+        ("access_token_ct", vec![0, 1, 255]),
+        ("access_token_nonce", vec![2, 3]),
+        ("refresh_token_ct", vec![4, 5]),
+        ("refresh_token_nonce", vec![6, 7]),
+        ("dcr_client_secret_ct", vec![8, 9]),
+        ("dcr_client_secret_nonce", vec![10, 11]),
+    ] {
+        assert_eq!(row.get::<Vec<u8>, _>(column), bytes);
+    }
+    assert_eq!(row.get::<String, _>("status"), "connected");
+    assert_eq!(row.get::<String, _>("created_at"), "2026-01-01T00:00:00Z");
+    assert_eq!(row.get::<String, _>("updated_at"), "2026-02-01T00:00:00Z");
+    assert!(!row.get::<String, _>("generation").is_empty());
+    let pending = sqlx::query("SELECT state,connection_id,expected_connection_generation,authorization_generation FROM pending_mcp_oauth")
+        .fetch_all(&pool).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].get::<String, _>("state"), "fraction-z");
+    assert_eq!(pending[0].get::<String, _>("connection_id"), "original");
+    assert_eq!(
+        pending[0].get::<String, _>("expected_connection_generation"),
+        row.get::<String, _>("generation")
+    );
+    assert_eq!(
+        pending[0].get::<String, _>("authorization_generation"),
+        row.get::<String, _>("authorization_generation")
+    );
+    pool.execute("PRAGMA foreign_keys = ON").await.unwrap();
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn connector_owner_constraints_and_independent_principal_lifetime_are_enforced() {
+    let pool = open(Path::new(":memory:")).await.unwrap();
+    pool.execute(sqlx::raw_sql(
+        "INSERT INTO users(id,email,created_at,updated_at) VALUES('owner','owner@example.test','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+         INSERT INTO system_principals(id,name,display,description,created_by,created_at) VALUES('service','Service','Service','','owner','2026-01-01T00:00:00Z');"
+    )).await.unwrap();
+    for (id, user, principal) in [
+        ("neither", None, None),
+        ("both", Some("owner"), Some("service")),
+    ] {
+        assert!(sqlx::query("INSERT INTO mcp_connections(id,user_id,principal_id,connector_key,generation,status,created_at,updated_at) VALUES(?,?,?,'workspace','generation','connected','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+            .bind(id).bind(user).bind(principal).execute(&pool).await.is_err());
+    }
+    pool.execute(sqlx::raw_sql(
+        "INSERT INTO mcp_connections(id,user_id,principal_id,connector_key,generation,status,created_at,updated_at)
+         VALUES('user','owner',NULL,'workspace','user-generation','connected','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'),
+         ('principal',NULL,'service','workspace','principal-generation','connected','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');"
+    )).await.unwrap();
+    assert!(pool.execute("INSERT INTO mcp_connections(id,user_id,connector_key,generation,status,created_at,updated_at) VALUES('duplicate','owner','workspace','other','connected','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')").await.is_err());
+    pool.execute("DELETE FROM users WHERE id='owner'")
+        .await
+        .unwrap();
+    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM mcp_connections ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ids, ["principal"]);
+    pool.execute("DELETE FROM system_principals WHERE id='service'")
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM mcp_connections")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn dot_background_schema_matches_its_fixture() {
     let pool = open(Path::new(":memory:")).await.unwrap();
     let rows = sqlx::query(
         "SELECT type, name, sql FROM sqlite_schema
          WHERE name IN ('personal_dot_sessions', 'idx_personal_dot_sessions_owner_dot',
                         'scheduled_actions', 'webhooks', 'scheduled_runs', 'webhook_runs',
-                        'scheduled_runs_assistant_turn', 'webhook_runs_assistant_turn')
+                        'scheduled_runs_assistant_turn', 'webhook_runs_assistant_turn',
+                        'mcp_connections', 'mcp_connections_user_connector',
+                        'mcp_connections_principal_connector', 'pending_mcp_oauth',
+                        'idx_pending_mcp_oauth_expires', 'dot_connector_bindings')
          ORDER BY type, name",
     )
     .fetch_all(&pool)

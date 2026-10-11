@@ -42,6 +42,12 @@ scripted model responses:
 - `spa-dots-delegation.test.mjs`: actual two-Dot execution, root Inbox
   approval, receiver-only memory writes, private read-only child history,
   root navigation and mobile layout.
+- `spa-dots-identities.test.mjs`: local OAuth provider redirect and shared
+  callback, explicit identity selection, actual selected MCP inventory and
+  disconnect of only the Dot account. The `dev-ui` fixture supplies the
+  `dot-workspace` connector and sealed user credentials; it uses no live
+  provider account. Missing saved credentials remain unavailable without
+  falling back to the user's connection.
 
 Run these suites sequentially when checking the four-active-Dot limit:
 
@@ -49,7 +55,7 @@ Run these suites sequentially when checking the four-active-Dot limit:
 CHROMIUM_CHANNEL=chrome mise exec -- node --test --test-concurrency=1 \
   e2e/spa-dots.test.mjs e2e/spa-dots-background.test.mjs e2e/spa-dots-actions.test.mjs \
   e2e/spa-dots-permissions.test.mjs e2e/spa-dots-communication.test.mjs \
-  e2e/spa-dots-delegation.test.mjs
+  e2e/spa-dots-delegation.test.mjs e2e/spa-dots-identities.test.mjs
 ```
 
 To refresh the delegated-history documentation screenshot, use a fresh isolated

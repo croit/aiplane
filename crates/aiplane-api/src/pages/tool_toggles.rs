@@ -163,9 +163,12 @@ pub async fn capabilities_for_user(
     let role_ids = state.role_ids_for(roles);
     let admin = state.rbac.is_admin(&role_ids);
     let mcp_grant = state.mcp_grant_for(roles);
-    let mut connector_keys = aiplane_core::server::db::user_mcp::connected_keys(&state.db, user_id)
-        .await
-        .unwrap_or_default();
+    let mut connector_keys = aiplane_core::server::db::mcp_connections::connected_keys(
+        &state.db,
+        &aiplane_core::server::db::mcp_connections::ConnectionOwner::User(user_id.to_owned()),
+    )
+    .await
+    .unwrap_or_default();
     for connector in aiplane_core::server::db::mcp_catalog::list_enabled(&state.db)
         .await
         .unwrap_or_default()

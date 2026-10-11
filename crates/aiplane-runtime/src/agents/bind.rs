@@ -214,6 +214,10 @@ impl WithheldTool {
 }
 
 impl Tool for WithheldTool {
+    fn execution_facts(&self) -> Option<Value> {
+        self.inner.execution_facts()
+    }
+
     fn phase(&self) -> crate::server::tools::ToolPhase {
         self.inner.phase()
     }
@@ -323,6 +327,10 @@ pub fn without_bound(mut def: ToolDef, bound: &BTreeMap<String, BindSource>) -> 
 }
 
 impl Tool for BoundTool {
+    fn execution_facts(&self) -> Option<Value> {
+        self.inner.execution_facts()
+    }
+
     fn phase(&self) -> crate::server::tools::ToolPhase {
         self.inner.phase()
     }
@@ -388,6 +396,11 @@ mod tests {
         let bound = BoundTool::new(inner.clone(), BTreeMap::new(), None, Arc::default());
         let withheld = WithheldTool::new(inner, vec!["message".into()]);
         assert_eq!(bound.phase(), crate::server::tools::ToolPhase::ActsOnState);
+        assert_eq!(
+            bound.execution_facts(),
+            Some(serde_json::json!({"resource":"fixture"}))
+        );
+        assert_eq!(withheld.execution_facts(), bound.execution_facts());
         assert_eq!(
             withheld.phase(),
             crate::server::tools::ToolPhase::ActsOnState

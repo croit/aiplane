@@ -36,3 +36,84 @@ ALTER TABLE webhook_runs ADD COLUMN history_limit INTEGER
     CHECK (history_limit IS NULL OR history_limit >= 0);
 CREATE UNIQUE INDEX webhook_runs_assistant_turn ON webhook_runs (assistant_turn_id)
     WHERE assistant_turn_id IS NOT NULL;
+
+CREATE TABLE mcp_connections (
+ id TEXT PRIMARY KEY NOT NULL,
+ user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+ principal_id TEXT REFERENCES system_principals(id) ON DELETE CASCADE,
+ connector_key TEXT NOT NULL,
+ generation TEXT NOT NULL,
+ authorization_generation TEXT,
+ authorization_expires_at TEXT,
+ status TEXT NOT NULL,
+ access_token_ct BLOB, access_token_nonce BLOB,
+ refresh_token_ct BLOB, refresh_token_nonce BLOB,
+ token_expires_at TEXT, token_url TEXT,
+ scopes_json TEXT NOT NULL DEFAULT '[]',
+ dcr_client_id TEXT, dcr_client_secret_ct BLOB, dcr_client_secret_nonce BLOB,
+ last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ CHECK ((user_id IS NOT NULL AND principal_id IS NULL) OR (user_id IS NULL AND principal_id IS NOT NULL)),
+ CHECK ((authorization_generation IS NULL AND authorization_expires_at IS NULL) OR
+        (authorization_generation IS NOT NULL AND authorization_expires_at IS NOT NULL))
+) STRICT;
+CREATE UNIQUE INDEX mcp_connections_user_connector ON mcp_connections(user_id,connector_key) WHERE user_id IS NOT NULL;
+CREATE UNIQUE INDEX mcp_connections_principal_connector ON mcp_connections(principal_id,connector_key) WHERE principal_id IS NOT NULL;
+INSERT INTO mcp_connections
+ (id,user_id,connector_key,generation,status,access_token_ct,access_token_nonce,refresh_token_ct,refresh_token_nonce,
+ token_expires_at,token_url,scopes_json,dcr_client_id,dcr_client_secret_ct,dcr_client_secret_nonce,last_error,created_at,updated_at)
+SELECT id,user_id,connector_key,lower(hex(randomblob(4)))||'-'||lower(hex(randomblob(2)))||'-4'||substr(lower(hex(randomblob(2))),2)||'-'||substr('89ab',1+abs(random()%4),1)||substr(lower(hex(randomblob(2))),2)||'-'||lower(hex(randomblob(6))),status,access_token_ct,access_token_nonce,refresh_token_ct,refresh_token_nonce,
+ token_expires_at,token_url,scopes_json,dcr_client_id,dcr_client_secret_ct,dcr_client_secret_nonce,last_error,created_at,updated_at
+FROM user_mcp_connections;
+
+CREATE TEMP TABLE dot_mcp_pending_preserved AS
+SELECT p.*,lower(hex(randomblob(4)))||'-'||lower(hex(randomblob(2)))||'-4'||substr(lower(hex(randomblob(2))),2)||'-'||substr('89ab',1+abs(random()%4),1)||substr(lower(hex(randomblob(2))),2)||'-'||lower(hex(randomblob(6))) AS authorization_generation
+FROM pending_mcp_oauth p JOIN users u ON u.id=p.user_id
+WHERE NOT EXISTS (
+ SELECT 1 FROM pending_mcp_oauth newer
+ WHERE newer.user_id=p.user_id AND newer.connector_key=p.connector_key
+ AND (rtrim(newer.created_at,'Z')>rtrim(p.created_at,'Z') OR (rtrim(newer.created_at,'Z')=rtrim(p.created_at,'Z') AND newer.state>p.state))
+);
+INSERT INTO mcp_connections(id,user_id,connector_key,generation,status,created_at,updated_at)
+SELECT lower(hex(randomblob(4)))||'-'||lower(hex(randomblob(2)))||'-4'||substr(lower(hex(randomblob(2))),2)||'-'||substr('89ab',1+abs(random()%4),1)||substr(lower(hex(randomblob(2))),2)||'-'||lower(hex(randomblob(6))),p.user_id,p.connector_key,lower(hex(randomblob(4)))||'-'||lower(hex(randomblob(2)))||'-4'||substr(lower(hex(randomblob(2))),2)||'-'||substr('89ab',1+abs(random()%4),1)||substr(lower(hex(randomblob(2))),2)||'-'||lower(hex(randomblob(6))),'pending',p.created_at,p.created_at
+FROM dot_mcp_pending_preserved p
+WHERE NOT EXISTS(SELECT 1 FROM mcp_connections c WHERE c.user_id=p.user_id AND c.connector_key=p.connector_key);
+UPDATE mcp_connections SET
+ authorization_generation=(SELECT p.authorization_generation FROM dot_mcp_pending_preserved p WHERE p.user_id=mcp_connections.user_id AND p.connector_key=mcp_connections.connector_key),
+ authorization_expires_at=(SELECT p.expires_at FROM dot_mcp_pending_preserved p WHERE p.user_id=mcp_connections.user_id AND p.connector_key=mcp_connections.connector_key)
+WHERE EXISTS(SELECT 1 FROM dot_mcp_pending_preserved p WHERE p.user_id=mcp_connections.user_id AND p.connector_key=mcp_connections.connector_key);
+
+CREATE TABLE pending_mcp_oauth_new (
+ state TEXT PRIMARY KEY NOT NULL,
+ initiator_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+ principal_id TEXT REFERENCES system_principals(id) ON DELETE CASCADE,
+ subject_principal_id TEXT REFERENCES system_principals(id) ON DELETE CASCADE,
+ connector_key TEXT NOT NULL,
+ connection_id TEXT NOT NULL REFERENCES mcp_connections(id) ON DELETE CASCADE,
+ authorization_generation TEXT NOT NULL, expected_connection_generation TEXT NOT NULL,
+ pkce_verifier TEXT NOT NULL, redirect_uri TEXT NOT NULL, token_url TEXT NOT NULL,
+ resource TEXT,dcr_client_id TEXT,dcr_client_secret_ct BLOB,dcr_client_secret_nonce BLOB,
+ return_to TEXT,created_at TEXT NOT NULL,expires_at TEXT NOT NULL,
+ CHECK ((user_id IS NOT NULL AND principal_id IS NULL) OR (user_id IS NULL AND principal_id IS NOT NULL))
+) STRICT;
+INSERT INTO pending_mcp_oauth_new
+ (state,initiator_user_id,user_id,connector_key,connection_id,authorization_generation,expected_connection_generation,
+ pkce_verifier,redirect_uri,token_url,resource,dcr_client_id,dcr_client_secret_ct,dcr_client_secret_nonce,return_to,created_at,expires_at)
+SELECT p.state,p.user_id,p.user_id,p.connector_key,c.id,p.authorization_generation,c.generation,
+ p.pkce_verifier,p.redirect_uri,p.token_url,p.resource,p.dcr_client_id,p.dcr_client_secret_ct,p.dcr_client_secret_nonce,p.return_to,p.created_at,p.expires_at
+FROM dot_mcp_pending_preserved p JOIN mcp_connections c ON c.user_id=p.user_id AND c.connector_key=p.connector_key;
+DROP TABLE pending_mcp_oauth;
+ALTER TABLE pending_mcp_oauth_new RENAME TO pending_mcp_oauth;
+CREATE INDEX idx_pending_mcp_oauth_expires ON pending_mcp_oauth(expires_at);
+DROP TABLE dot_mcp_pending_preserved;
+DROP TABLE user_mcp_connections;
+
+CREATE TABLE dot_connector_bindings (
+    dot_id TEXT NOT NULL REFERENCES personal_dots(principal_id) ON DELETE CASCADE,
+    connector_key TEXT NOT NULL,
+    identity_mode TEXT NOT NULL CHECK (identity_mode IN ('user', 'principal')),
+    connection_generation TEXT NOT NULL,
+    binding_generation TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (dot_id, connector_key)
+) STRICT;

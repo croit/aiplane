@@ -292,6 +292,22 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         .with_get("/api/v0/dots/{id}/access", pages::json_dots::access_get)
         .with_put("/api/v0/dots/{id}/access", pages::json_dots::access_put)
         .with_get(
+            "/api/v0/dots/{id}/connections",
+            pages::json_dots::connections_get,
+        )
+        .with_put(
+            "/api/v0/dots/{id}/connections/{key}",
+            pages::json_dots::connections_put,
+        )
+        .with_delete(
+            "/api/v0/dots/{id}/connections/{key}",
+            pages::json_dots::connections_delete,
+        )
+        .with_post(
+            "/api/v0/dots/{id}/connections/{key}/connect",
+            pages::json_dots::connections_connect,
+        )
+        .with_get(
             "/api/v0/dots/{id}/communication",
             pages::json_dots::communication_get,
         )

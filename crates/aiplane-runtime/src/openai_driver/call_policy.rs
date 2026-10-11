@@ -105,9 +105,15 @@ pub(super) async fn audit(
         "policy": policy.as_str(),
     });
     if ctx.personal_dot.is_some() {
-        ctx.audit_event(AuditKind::ToolCall, None, detail)
-            .await
-            .is_some()
+        crate::agents::audit::record_personal_tool_call(
+            ctx,
+            Some(call_id),
+            tool,
+            policy.allows(),
+            policy.as_str(),
+            None,
+        )
+        .await
     } else {
         ctx.audit(AuditKind::ToolCall, detail).await;
         true

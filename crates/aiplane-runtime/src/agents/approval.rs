@@ -117,6 +117,10 @@ struct ActionPolicy {
 }
 
 impl Tool for ActionPolicy {
+    fn execution_facts(&self) -> Option<Value> {
+        self.inner.execution_facts()
+    }
+
     fn phase(&self) -> crate::server::tools::ToolPhase {
         self.inner.phase()
     }
@@ -193,6 +197,10 @@ mod tests {
     fn action_policy_preserves_the_tools_phase() {
         let tool = Permissions::default().gate(Arc::new(crate::server::tools::tests::PhasedEcho));
         assert_eq!(tool.phase(), crate::server::tools::ToolPhase::ActsOnState);
+        assert_eq!(
+            tool.execution_facts(),
+            Some(serde_json::json!({"resource":"fixture"}))
+        );
     }
     use super::*;
     use crate::server::tools::echo::Echo;

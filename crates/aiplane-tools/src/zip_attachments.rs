@@ -487,6 +487,7 @@ mod tests {
             personal_dot: None,
             personal_execution: None,
             pending_actions: None,
+            pending_execution_facts: None,
             call_id: None,
         }
     }

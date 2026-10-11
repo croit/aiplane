@@ -888,11 +888,24 @@ fn agent_resume_claims_use_one_request_aware_transaction() {
         .find(|source| source.rel == "aiplane-runtime/src/agents/resume.rs")
         .expect("the shared agent resume implementation must exist");
     assert!(source.code.contains("WriteTx::begin("));
-    assert!(source.code.contains("claim_for_resume_in("));
-    assert!(source.code.contains("claim_suspension_in("));
+    assert!(source.code.contains("suspend::claim_chain_in("));
     assert!(source.code.contains(".commit()"));
     assert!(!source.code.contains("claim_for_resume("));
     assert!(!source.code.contains("chat::claim_suspension("));
+    let shared = production_sources()
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/suspend.rs")
+        .expect("the shared suspension claims must exist");
+    let chain = shared
+        .code
+        .split("async fn claim_chain_in(")
+        .nth(1)
+        .expect("the shared chain claim must exist");
+    let chain = chain.split("\npub ").next().unwrap();
+    assert!(chain.contains("claim_for_resume_in("));
+    assert!(chain.contains("claim_suspension_in("));
+    assert!(!chain.contains("WriteTx::begin("));
+    assert!(!chain.contains(".commit()"));
 }
 
 #[test]
@@ -1046,6 +1059,10 @@ const ACTIVITY_LOG_WRITERS: &[Allowed] = &[
     Allowed {
         path: "aiplane-agents/src/db/dot_sessions.rs",
         why: "private Dot session binding and its event share one write transaction",
+    },
+    Allowed {
+        path: "aiplane-agents/src/db/dot_delegation.rs",
+        why: "directed consent and its management audit event share one write transaction",
     },
     Allowed {
         path: "aiplane-runtime/src/agents/audit.rs",

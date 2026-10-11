@@ -86,6 +86,30 @@ pub(super) fn operations() -> Vec<Op> {
         get("/api/v0/dots/{id}/access", Access::Session)
             .ok(json::<aiplane_api::pages::json_dots::DotAccessView>())
             .errors(&[400, 404]),
+        get("/api/v0/dots/{id}/connections", Access::Session)
+            .ok(json::<aiplane_api::pages::json_dots::DotConnectionsView>())
+            .errors(&[400, 404]),
+        put("/api/v0/dots/{id}/connections/{key}", Access::Session)
+            .body(json::<
+                aiplane_api::pages::json_dots::DotConnectionSelectionBody,
+            >())
+            .ok(json::<aiplane_api::pages::json_dots::DotConnectionsView>())
+            .errors(&[400, 403, 404, 409, 413]),
+        delete("/api/v0/dots/{id}/connections/{key}", Access::Session)
+            .body(json::<
+                aiplane_api::pages::json_dots::DotConnectionVersionBody,
+            >())
+            .ok(json::<aiplane_api::pages::json_dots::DotConnectionsView>())
+            .errors(&[400, 403, 404, 409, 413]),
+        post(
+            "/api/v0/dots/{id}/connections/{key}/connect",
+            Access::Session,
+        )
+        .body(json::<
+            aiplane_api::pages::json_dots::DotConnectionVersionBody,
+        >())
+        .ok(json::<aiplane_api::pages::json_dots::DotAuthorizationView>())
+        .errors(&[400, 403, 404, 409, 413, 502]),
         get("/api/v0/dots/{id}/communication", Access::Session)
             .ok(json::<aiplane_api::pages::json_dots::DotCommunicationView>())
             .errors(&[400, 404]),

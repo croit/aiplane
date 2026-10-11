@@ -105,7 +105,7 @@ pub async fn initialize_for_turn(
             }
             let dot = agents::get_personal_dot(&state.db, &user.id, &identity.dot_id)
                 .await?
-                .filter(|dot| dot.active)
+                .filter(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
                 .ok_or_else(|| {
                     fail("The personal Dot is unavailable. Activate it before continuing.")
                 })?;
@@ -165,7 +165,7 @@ pub async fn context_for(
     let Some(dot) = agents::get_personal_dot(&state.db, &user.id, &link.dot_id).await? else {
         return Ok(Some(PersonalDotContext::Unavailable));
     };
-    if !link.active || !dot.active {
+    if !link.active || !dot.active || dot.agent.principal.disabled_at.is_some() {
         return Ok(Some(PersonalDotContext::Unavailable));
     }
     let Ok(mut spec) =
@@ -598,6 +598,28 @@ mod tests {
             panic!("active Dot expected")
         };
         assert!(persona.offered(&["company_echo".into()]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn disabled_personal_dot_context_is_unavailable_without_releasing_its_active_slot() {
+        let (state, user, session, dot) = fixture().await;
+        sqlx::query("UPDATE system_principals SET disabled_at=? WHERE id=?")
+            .bind(jiff::Timestamp::now().to_string())
+            .bind(&dot)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        assert!(matches!(
+            context_for(&state, &user, &session, true).await.unwrap(),
+            Some(PersonalDotContext::Unavailable)
+        ));
+        assert!(
+            agents::get_personal_dot(&state.db, &user.id, &dot)
+                .await
+                .unwrap()
+                .unwrap()
+                .active
+        );
     }
 
     #[tokio::test]

@@ -133,9 +133,9 @@ The agent builder's persistence and the pieces only agents need, on
   one `WriteTx`, so parallel requests cannot all pass. The visitor gate
   (per-conversation and per-IP admissions over every inbound channel) and
   the verifiers' send and lookup limits both use it.
-- `db/write_tx.rs` — `WriteTx`, a transaction that holds the write lock from
-  `BEGIN IMMEDIATE`; the activity log's `append` and the rate primitive take
-  one, so nothing reads what it then writes in a deferred transaction.
+- `aiplane-core::server::db::WriteTx` — the shared transaction holds the write
+  lock from `BEGIN IMMEDIATE`. Agent admissions, activity writes and credential
+  authorization use it to check current state and update it atomically.
 - `notify_channels.rs` — the Slack/Discord webhook payloads of the inbox.
 
 Like `aiplane-features`, it names neither `AppState` nor the tool registry, and

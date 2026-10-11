@@ -108,6 +108,10 @@ pub(crate) struct PersonaToolSource<'a> {
 }
 
 impl ToolSource for PersonaToolSource<'_> {
+    fn personal_call_audit_is_deferred(&self) -> bool {
+        self.state.is_some() && self.permissions.is_some()
+    }
+
     fn get(&self, id: &str) -> Option<Arc<dyn Tool>> {
         self.source.get(id).map(|tool| match self.permissions {
             Some(permissions) => match &self.state {
