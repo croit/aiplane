@@ -29,6 +29,7 @@ pub mod echo;
 pub mod feedback;
 pub mod injection;
 pub mod mcp;
+pub mod memory;
 pub mod registry;
 pub mod runner;
 pub mod sandbox;

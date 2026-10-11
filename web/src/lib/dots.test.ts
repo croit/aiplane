@@ -21,6 +21,60 @@ test('canCreateDot is disabled at the active limit', () => {
 	assert.equal(canCreateDot(5, 4), false);
 });
 
+test('Dot memory API retains actual scope authority and sends explicit scopes', async (context) => {
+	const { dotMemoriesApi } = await import('./dots.ts');
+	const original = globalThis.fetch;
+	const calls: { path: string; method: string; body: unknown }[] = [];
+	const result = {
+		scopes: [
+			{ scope: 'dot', name: 'Harald', writable: true },
+			{ scope: 'organization', name: 'Acme Support', writable: false }
+		],
+		memories: [{ id: 'note', kind: 'fact', content: 'A reviewed lesson.', created_at: '2026-10-11', scope: 'dot' }]
+	};
+	globalThis.fetch = async (input, init) => {
+		calls.push({ path: String(input), method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : null });
+		return new Response(JSON.stringify(result), { status: 200 });
+	};
+	context.after(() => globalThis.fetch = original);
+	assert.deepEqual(await dotMemoriesApi.list('dot/id'), result);
+	const body = { scope: 'organization' as const, kind: 'fact' as const, content: 'Reviewed shared knowledge.' };
+	await dotMemoriesApi.create('dot/id', body);
+	await dotMemoriesApi.update('dot/id', 'note/id', body);
+	await dotMemoriesApi.delete('dot/id', 'note/id', 'organization');
+	assert.deepEqual(calls, [
+		{ path: '/api/v0/dots/dot%2Fid/memories', method: 'GET', body: null },
+		{ path: '/api/v0/dots/dot%2Fid/memories', method: 'POST', body },
+		{ path: '/api/v0/dots/dot%2Fid/memories/note%2Fid', method: 'PUT', body },
+		{ path: '/api/v0/dots/dot%2Fid/memories/note%2Fid?scope=organization', method: 'DELETE', body: null }
+	]);
+});
+
+test('Dot memory sections preserve actual names and isolate same-kind notes by declared scope', async () => {
+	const { dotMemorySections } = await import('./dots.ts');
+	const lesson = { id: 'lesson', kind: 'fact' as const, content: 'A reviewed lesson.', created_at: '2026-10-11' };
+	const shared = { ...lesson, id: 'shared', content: 'Reviewed shared knowledge.' };
+	const result = {
+		scopes: [
+			{ scope: 'dot' as const, name: 'Harald', writable: true },
+			{ scope: 'organization' as const, name: 'Acme Support', writable: false }
+		],
+		memories: [{ ...lesson, scope: 'dot' as const }, { ...shared, scope: 'organization' as const }]
+	};
+	const sections = dotMemorySections(result);
+	assert.deepEqual(sections.map(({ scope, name, writable }) => ({ scope, name, writable })), result.scopes);
+	assert.deepEqual(sections[0].grouped.fact, [result.memories[0]]);
+	assert.deepEqual(sections[1].grouped.fact, [result.memories[1]]);
+	assert.deepEqual(sections[0].grouped.preference, []);
+	assert.deepEqual(sections[1].grouped.project, []);
+	const revoked = dotMemorySections({ ...result, scopes: result.scopes.map((scope) => ({ ...scope, writable: false })) });
+	assert.equal(revoked.every((scope) => !scope.writable), true);
+	assert.deepEqual(revoked.map((section) => section.grouped), sections.map((section) => section.grouped));
+	assert.deepEqual(dotMemorySections({ ...result, scopes: [] }), []);
+	assert.deepEqual(dotMemorySections(null), []);
+	assert.deepEqual(dotMemorySections(undefined), []);
+});
+
 test('Dot connection API sends exact scoped versions without credential authority fields', async (context) => {
 	const { dotConnectionsApi } = await import('./dots.ts');
 	const original = globalThis.fetch;

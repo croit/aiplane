@@ -3,7 +3,7 @@
 Status: implementation in progress; personal Dot ownership, active lifecycle,
 the first web management page, manually managed Dot memory, recent activity,
 owner-scoped memory/activity APIs, private Dot chat sessions, and personal
-tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; current member writers can authorize and explicitly select each organization Dot’s own OAuth credential. Active organization Dots support private saved-draft conversations for current member writers, including durable approvals and selected own credentials. Published organization execution and automation remain planned.
+tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; current member writers can authorize and explicitly select each organization Dot’s own OAuth credential. Active organization Dots support private saved-draft conversations for current member writers, including durable approvals, selected own credentials, isolated Dot notes and shared organization knowledge. Published organization execution and automation remain planned.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -36,10 +36,10 @@ remain isolated to the Dot. Schedules and webhooks can run with the same persona
 | `PUT /api/v0/dots/{id}/access` | Replaces the owned Dot's selected tools and their approval rules, retaining other agent spec fields. |
 | `GET /api/v0/dots/{id}/communication` | Returns actual same-owner peers and separate directed outgoing/incoming consent. |
 | `PUT /api/v0/dots/{id}/communication` | Saves one directed consent under current management permission and generation checks. |
-| `GET /api/v0/dots/{id}/memories` | Lists the owned Dot's memories. |
-| `POST /api/v0/dots/{id}/memories` | Creates or reclassifies a Dot memory (`preference`, `project`, `fact`). |
-| `PUT /api/v0/dots/{id}/memories/{memory_id}` | Updates an owned Dot memory. |
-| `DELETE /api/v0/dots/{id}/memories/{memory_id}` | Deletes an owned Dot memory. |
+| `GET /api/v0/dots/{id}/memories` | Lists at most 500 notes with actual scopes/names/current writable flags; organization access requires current membership and relevant Read/Write share. |
+| `POST /api/v0/dots/{id}/memories` | Creates or reclassifies a memory (`preference`, `project`, `fact`); requires explicit `scope` and at most 2,000 UTF-8 bytes. |
+| `PUT /api/v0/dots/{id}/memories/{memory_id}` | Updates a note under explicit `scope` and the same byte bound and current write rights. |
+| `DELETE /api/v0/dots/{id}/memories/{memory_id}` | Deletes an authorized note under explicit `?scope=dot` or `?scope=organization`. |
 | `GET /api/v0/dots/{id}/activity` | Lists the owned Dot's audited activity, newest first; accepts `cursor` and `limit`. |
 | `POST /api/v0/dots/{id}/sessions` | Creates a private chat session owned by the user and associated with the active Dot. |
 
@@ -72,7 +72,11 @@ identity labels identify the selected user, Dot or shared connection. Supported
 personal OAuth connectors may use a separately authorized Dot connection;
 connecting and selecting it are separate operations. Organization Dots have
 explicit organization ownership, own-account management and private saved-draft
-test chat for current member writers. Published and automated execution remain
+test chat for current member writers. Their Setup memory panel exposes isolated
+Dot notes and shared organization knowledge. Member writers change own notes;
+shared-note changes also require current gateway administration. Runtime memory
+reads both scopes under its Recall grant; writes remain Dot-specific and no
+employee profile is read. Published and automated execution remain
 unavailable. An owned local credential remains visible for explicit
 disconnect after catalogue access is lost, including credentials never selected
 for execution. Restricted catalogue and user-account details stay hidden.
@@ -176,7 +180,7 @@ provides deactivation, not a Dot-delete action.
 
 Persistent Dot computers are specified separately in
 [dots-workspace.md](dots-workspace.md) and are not implemented. Automatic
-memory curation, organization shared knowledge, published organization runs
+memory curation, published organization runs
 and organization background work remain planned. The user workflow is in
 [Schedules, webhooks and inbox](guide/automation-and-inbox.md).
 
@@ -285,7 +289,7 @@ requirements; they do not determine AIplane's implementation.
 | Schedules | `scheduled_actions` and scheduled worker | Personal Dot binding is implemented; organization-owned execution remains planned |
 | Event triggers | Webhooks and headless execution | Personal Dot binding and durable assistant-turn correlation are implemented; organization ownership remains planned |
 | MCP catalogue and execution | connector catalog, `McpConnectionManager`, `UserMcpLayer` | Personal delegated and Dot-owned credentials; organisation/Dot OAuth identity |
-| Per-user memory | `user_memories`, memory tools, `personal_dot_memories` | Runtime reads/writes and background curation for isolated Dot memory |
+| Per-user memory | `user_memories`, memory tools, `dot_memories` | Runtime reads/writes and background curation for isolated Dot memory |
 | Agent conversation state | `agent_state` | Session-scoped today; Dot workspace must persist independently across sessions |
 | Browser and code execution | sandbox-runner, sandbox browser tools, browser-control | Persistent isolated computer/profile/storage per Dot, suitable for background runs |
 | Operator settings | declarative settings API and SPA | Dot creation permission and active-Dot limit (default 4); define organization scope |
@@ -356,9 +360,9 @@ as chat. `tools_enabled` is an additional ceiling, not approval for external
 writes. Webhook payloads retain their untrusted-input framing. Organization
 background ownership is not implemented.
 
-Memory has the same split in the current code. `user_memories` is keyed only
+Personal memory has this split in the current code. `user_memories` is keyed only
 by `user_id`; the four existing memory tools use the acting user's identity
-and personal Dot context to route writes into `personal_dot_memories`. Dot
+and personal Dot context to route writes into `dot_memories`. Dot
 chats expose them only when the user's existing memory capability is granted
 and enabled. `recall` combines both scopes and marks each result; correction
 and deletion operate only on Dot-scoped memories from a Dot chat. The driver
@@ -369,6 +373,10 @@ serve as persistent Dot memory. A personal Dot turn must get user-profile
 memory under the user's existing memory grant and switch, plus a distinct
 Dot-owned memory scope for lessons and project context. The default write
 target must not silently turn every Dot lesson into a user-wide preference.
+Organization Dot memory uses the same typed `dot_memories` accessors and
+existing editor with exclusive Dot/organization scopes. Its initialized principal
+run reads own and shared knowledge; writes affect only its own notes. Current
+run authority is checked in the same transaction as each note operation.
 
 ## Proposed architecture
 

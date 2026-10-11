@@ -217,11 +217,18 @@ async fn dot_memory_approval(case: DotResumeCase) {
     let paused = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Suspended).await;
     assert!(paused.suspension.is_some());
     assert!(
-        dot_memories::list(&state.db, "alice", &dot_id, 10)
-            .await
-            .unwrap()
-            .unwrap()
-            .is_empty()
+        dot_memories::list(
+            &state.db,
+            aiplane_agents::db::dot_memories::MemoryScope::Dot {
+                owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
+                dot_id: &dot_id
+            },
+            10
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .is_empty()
     );
     let app = router(state.clone());
     let inbox = json_body(
@@ -302,10 +309,17 @@ async fn dot_memory_approval(case: DotResumeCase) {
     };
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     let done = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Completed).await;
-    let memories = dot_memories::list(&state.db, "alice", &dot_id, 10)
-        .await
-        .unwrap()
-        .unwrap();
+    let memories = dot_memories::list(
+        &state.db,
+        aiplane_agents::db::dot_memories::MemoryScope::Dot {
+            owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
+            dot_id: &dot_id,
+        },
+        10,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     if matches!(case, DotResumeCase::ApproveAfterRestart) {
         assert_eq!(memories.len(), 1);
         assert_eq!(memories[0].content, "Private approved lesson");
@@ -467,11 +481,18 @@ async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only
     };
     let child_session = child.session.session_id;
     assert!(
-        dot_memories::list(&state.db, "alice", &ids[1], 10)
-            .await
-            .unwrap()
-            .unwrap()
-            .is_empty()
+        dot_memories::list(
+            &state.db,
+            aiplane_agents::db::dot_memories::MemoryScope::Dot {
+                owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
+                dot_id: &ids[1]
+            },
+            10
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .is_empty()
     );
     state = boot_with(
         &db_path,
@@ -502,18 +523,32 @@ async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only
             .status,
         TurnStatus::Completed
     );
-    let notes = dot_memories::list(&state.db, "alice", &ids[1], 10)
-        .await
-        .unwrap()
-        .unwrap();
+    let notes = dot_memories::list(
+        &state.db,
+        aiplane_agents::db::dot_memories::MemoryScope::Dot {
+            owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
+            dot_id: &ids[1],
+        },
+        10,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].content, "Receiver approved lesson");
     assert!(
-        dot_memories::list(&state.db, "alice", &ids[0], 10)
-            .await
-            .unwrap()
-            .unwrap()
-            .is_empty()
+        dot_memories::list(
+            &state.db,
+            aiplane_agents::db::dot_memories::MemoryScope::Dot {
+                owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
+                dot_id: &ids[0]
+            },
+            10
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .is_empty()
     );
     assert!(
         db::user_memories::list_for_user(&state.db, "alice", 10)

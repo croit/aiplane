@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Organization ownership, group-derived membership, independent active limits and configuration are implemented. Current organization Dots can be created, shared, configured and published through the existing agent mechanisms. Current member writers can authorize and explicitly select each Dot’s own OAuth connection. Active organization Dots with enabled principals can run saved drafts in private test conversations for current member writers. Published conversations, automated test suites, delegation, automation, external channels and durable organization memory remain unavailable.
+Organization ownership, group-derived membership, independent active limits and configuration are implemented. Current organization Dots can be created, shared, configured and published through the existing agent mechanisms. Current member writers can authorize and explicitly select each Dot’s own OAuth connection. Active organization Dots with enabled principals can run saved drafts in private test conversations for current member writers. Durable Dot notes and shared organization knowledge are available through the existing memory panel and tools. Published conversations, automated test suites, delegation, automation and external channels remain unavailable.
 
 The remaining sections distinguish the implemented ownership and configuration foundation from the adopted execution and knowledge design. Creating a gateway group or naming an ordinary agent after a company does not create organization ownership.
 
@@ -22,8 +22,8 @@ The confirmed product requirements are explicit organization ownership, an indep
 | `aiplane-agents/src/db/run_sessions.rs` | Principal sessions with `user_id=NULL`; agent version, parent and language association. | Organization histories belong to the Dot principal, not to the initiating member's personal chat. |
 | `aiplane-runtime/src/agents/inbox.rs`; `json_inbox.rs` | Share-based standing, minimal responder context and existing durable suspension/resume. | Reuse the Inbox. Add membership validation to every organization standing and settlement path. |
 | `aiplane-runtime/src/agents/model_call.rs`; `server/side_call.rs::Payer::agent` | Agent usage and root-agent budget enforcement. | Retain agent attribution and metering. An organization-wide aggregate budget is a separate change, not an implied existing capability. |
-| `aiplane-tools/src/memory.rs`; `server/tools/mod.rs::ToolContext::person` | Personal memory tools require a user actor. | Organization execution cannot reuse personal memory by passing an employee ID. |
-| `aiplane-agents/src/db/dot_memories.rs` | Personal Dot notes checked through the actual personal owner. | Preserve current ownership isolation when adding typed organization scopes. |
+| `aiplane-tools/src/memory.rs`; `server/tools/mod.rs::ToolContext::person` | Personal memory tools require a user actor. | Organization tools use a typed principal context; passing an employee ID never establishes organization authority. |
+| `aiplane-agents/src/db/dot_memories.rs` | Typed Dot and shared organization notes checked through the actual immutable owner. | Preserve current ownership isolation when adding typed organization scopes. |
 | `aiplane-agents/src/db/agent_state.rs` | Typed slots scoped to a run session. | Session state does not supply durable organization-wide memory. |
 | `aiplane-runtime/src/server/scheduled/mod.rs`; `server/webhooks.rs` | Trigger records currently have a user owner and optional personal Dot binding. | Organization background execution needs a principal-owner bridge in these mechanisms. Existing user trigger ownership is insufficient. |
 
@@ -40,7 +40,7 @@ Reuse these mechanisms before adding their organization callers:
 - Existing MCP catalogue, actual tool metadata, generalized user/principal connection storage, OAuth flow, crypto sealing, generation checks and owner-keyed cache/refresh locking. Organization admission and selection extend this same store.
 - Existing pinned/guarded outbound clients and capped readers for OAuth/MCP bodies; existing JSON caps for organization endpoints.
 - Existing cron/webhook storage, run correlation, completion reconciliation and usage records; extend owner resolution rather than add another scheduler.
-- Existing memory record shape and `MemoryKind`, bounded readers and CRUD; owner-scoped storage must become explicit before any organization memory caller lands.
+- Existing memory record shape and `MemoryKind`, bounded readers and CRUD, typed Dot/organization scopes and same-transaction ownership checks.
 - Existing agent budget controls, operator limits, usage records, selectors, settings forms, share editor and six-language Fluent catalogues.
 
 New shared contracts are a typed organization owner, actual group-derived membership, an access resolver intersecting membership with existing shares, and a live organization execution check. They belong in the agent/runtime layers. Neutral connection ownership belongs in core. `session-core` must receive no organization types or agent-table queries.
@@ -92,18 +92,17 @@ Membership revocation removes the member's management/history/response access. I
 
 ## Memory and context
 
-Generalize the existing Dot-note table/accessors to owned Dot notes associated with the shared typed Dot record. Preserve `Memory`, `MemoryKind`, timestamps, bounded list/search and ownership checks. Organization Dot notes use the Dot's actual organization owner, never a surrogate user.
+The Dot-note table and accessors associate owned notes with the shared typed Dot record. They reuse `Memory`, `MemoryKind`, timestamps, bounded lists and ownership checks. Organization Dot notes use the Dot's actual organization owner, never a surrogate user.
 
-For knowledge intentionally shared by all Dots of an organization, add explicitly organization-owned memory rows and expose them through the same bounded memory context/CRUD mechanisms. Reading them requires current membership and effective read access on the relevant organization Dot. Dot-specific note changes require current membership and effective write access on that Dot; respond-only access never permits memory browsing. Shared organization-note mutation also needs organization-wide management authority: writing one narrowly shared Dot does not authorize changing knowledge supplied to differently shared Dots. The initial implementation reuses the existing gateway administrator check from organization metadata/group provisioning together with current membership. Administrator recovery may explicitly change membership configuration; it does not automatically permit note browsing. Do not derive this authority from `created_by` or an arbitrary Dot share. A later delegated organization manager would require an explicit approved share-bearing management resource. This is a distinct lifetime/scope, not a personal profile alias. Both scopes require actual typed owner authorization. Organization execution reads its own Dot notes and permitted organization notes; it reads no member preferences, location, private skills or personal memories.
+Knowledge intentionally shared by all Dots of an organization uses explicitly organization-owned rows exposed through the same bounded memory context and CRUD mechanisms. Reading them requires current membership and effective read access on the relevant organization Dot. Dot-specific note changes require current membership and effective write access on that Dot; respond-only access never permits memory browsing. Shared organization-note mutation also needs organization-wide management authority: writing one narrowly shared Dot does not authorize changing knowledge supplied to differently shared Dots. The initial implementation reuses the existing gateway administrator check from organization metadata/group provisioning together with current membership. Administrator recovery may explicitly change membership configuration; it does not automatically permit note browsing. Do not derive this authority from `created_by` or an arbitrary Dot share. A later delegated organization manager would require an explicit approved share-bearing management resource. This is a distinct lifetime/scope, not a personal profile alias. Both scopes require actual typed owner authorization. Organization execution reads its own Dot notes and permitted organization notes; it reads no member preferences, location, private skills or personal memories.
 
-Reuse `remember`, `recall`, `update_memory` and `forget` with an explicit typed memory context when implementing real organization callers. Change the current person-only resolver in that complete slice; never fabricate a user principal to make it pass. Per-action approvals still use the existing AgentSpec rules. User-to-organization knowledge promotion requires an explicit reviewed product flow and is excluded here.
+`remember`, `recall`, `update_memory` and `forget` resolve an explicit typed organization memory context for initialized organization runs. No fabricated user principal establishes this scope. Per-action approvals still use the existing AgentSpec rules. User-to-organization knowledge promotion requires an explicit reviewed product flow and is excluded here.
 
 Run slots remain `agent_state` scoped to their actual session. Automatic curation uses the shared metered side-call/job mechanisms when its own contract is implemented; organization ownership does not imply an existing curation service.
 
-### Adopted memory implementation contract
+### Durable memory implementation
 
-This section specifies the next memory slice; organization memory is not yet
-available. Generalize the existing Dot-note store to one `dot_memories` table
+The existing Dot-note store uses one `dot_memories` table
 with mutually exclusive `dot_id` and `organization_id` foreign keys. Dot rows
 derive their immutable typed owner from `dots`; shared rows belong directly to
 the organization. Exact-content uniqueness, IDs, kinds and timestamps remain
@@ -111,7 +110,7 @@ scoped to that owner. Deleting a Dot removes only its own notes. Deleting its
 creator does not remove organization notes. User profile memory remains in its
 existing store.
 
-Reuse `/api/v0/dots/{id}/memories` and the existing `DotMemoryPanel`. The list
+`/api/v0/dots/{id}/memories` and the existing `DotMemoryPanel` expose both scopes. The list
 supplies actual `dot` and `organization` scope names and current writable flags.
 Mutations name their scope; the organization ID comes from the target Dot,
 never from caller input. Recheck membership, effective share and shared-note
@@ -154,8 +153,8 @@ Reuse existing `/api/v0/agents/{id}` configuration, grants, shares, conversation
 
 Credential management reuses the identity mechanism and existing integration cards. Current organization connection choices contain only that Dot’s own principal and live connection. Organization-wide credential provisioning and selection remain unavailable. Its response contains selected identity, catalogue key/name/auth, status and nullable verified account label; no secrets or invented provider identity.
 
-Steps one through six describe configuration, own OAuth management and private
-saved-draft testing. Background runs and shared knowledge remain adopted
+The implemented web flow covers configuration, own OAuth management, scoped
+memory and private saved-draft testing. Background runs remain adopted
 implementation requirements:
 
 1. An administrator creates an organization with its actual configured name and selects real gateway groups from the existing group selector. The screen explains that selected groups supply membership and shares still determine access.
@@ -163,8 +162,9 @@ implementation requirements:
 3. An operator grants the Dot specific resources through existing principal grant controls. Membership grants no execution tools by itself.
 4. A current member writer opens **Setup** in the existing agent editor and connects an account for the Dot through supported OAuth, then explicitly saves that connection. The provider controls the account; missing verified labels are shown as unavailable.
 5. The member configures existing tool/action rules and shares. Responders appear as eligible actual members or bound groups. The screen shows which effective rights each share permits.
-6. A current member writer opens **Try it → Test chat** and starts a private saved-draft conversation. Pending decisions are answered in that test chat; version-0 conversations are excluded from the Inbox. Background triggers require their separate owner/resume bridge.
-7. Removing membership removes access; disabling the Dot stops/refuses its work. Missing credentials remain visible and require an explicit reconnect/selection.
+6. A current member reader opens **Setup → Dot memory** to inspect own and shared notes. A member writer can edit the Dot's own notes; shared edits also require gateway administration rights. New saves are bounded to 2,000 UTF-8 bytes.
+7. A current member writer opens **Try it → Test chat** and starts a private saved-draft conversation. Pending decisions are answered in that test chat; version-0 conversations are excluded from the Inbox. Background triggers require their separate owner/resume bridge.
+8. Removing membership removes access; disabling the Dot stops/refuses its work. Missing credentials remain visible and require an explicit reconnect/selection.
 
 The coordinator confirms this walkthrough against seeded real data before UI implementation. All new strings use the six canonical Fluent catalogues. Reuse existing model, resource, permission, connector-status and share labels.
 
@@ -173,9 +173,9 @@ The coordinator confirms this walkthrough against seeded real data before UI imp
 The first organization package includes metadata, immutable Dot ownership,
 current membership and the existing private agent configuration surfaces.
 Current member writers can manage the Dot’s own OAuth credentials and run its
-saved draft in a private principal conversation. Published execution, durable
-organization memory and organization triggers require their respective owner
-admission paths.
+saved draft in a private principal conversation. Typed durable memory includes
+its own notes and shared organization knowledge. Published execution and
+organization triggers require their respective owner admission paths.
 
 The authenticated navigation entry `/organizations` shows the actual membership
 inventory or an empty state. Its visibility does not assert membership and is
@@ -379,10 +379,13 @@ Reconstruction uses the saved Draft and initial grant ceiling, then applies the
 same current-authority intersection as every live invocation. A newly edited
 Draft or added grant cannot enlarge a previously paused run.
 
-Personal memory tools require a person actor; do not supply an employee actor
-to make them work. Organization knowledge needs its explicit later owner
-scope. The first executable web slice must prove that model requests contain
-no employee profile and no member token or gateway credential fallback.
+Organization memory tools resolve the initialized principal run, exact private
+session and assistant turn, selected tool, and initial/current grant intersection
+in the same write transaction as the note operation. Recall merges up to 200
+own and shared notes; standing context includes up to 40 notes within the shared
+16,000-byte untrusted-data renderer. Remember, update and forget can change only
+that Dot's notes. Model requests contain no employee profile and use no member
+token or gateway credential fallback.
 
 State-based SQLite and mocked-upstream tests cover own-principal OAuth,
 mid-turn grant removal and deactivation, identity and catalogue changes,
@@ -390,3 +393,46 @@ approval persistence across restart, current responder membership, private
 principal conversations and Dot-attributed usage. Preserve ordinary principal
 and personal Dot execution tests. Background scheduling follows this verified
 web slice through the existing workers.
+
+## Adopted next private published conversation slice
+
+Private published conversations remain unavailable. The next web slice extends
+**Try it → Test chat** through its existing renderer and authenticated private
+opener. It retains current member Write admission; it does not enable public,
+visitor, embedded, delegated, automated or test-suite entry points.
+
+The source control offers Saved draft and, when an actual live version exists,
+Published version with that returned number. Saved draft is the initial choice.
+A published conversation starts on the server's actual live version and keeps
+that version on subsequent messages. Publishing or rollback cannot change an
+open conversation. Changing the source starts a new conversation through the
+existing reset flow; pending draft saving applies only to draft execution.
+
+Extend the existing message body with an explicit source for every actual
+client. The server accepts no arbitrary version or organization ID. Stored
+session version, typed run source and original authored snapshot must agree.
+Draft is version zero; Published requires an actual positive version and its
+existing version row. A cached compiled spec is not proof that that row still
+exists or matches the captured snapshot. Resume uses the original source and
+initial grant/model/pool/account ceilings, then intersects current authority.
+Missing or malformed source fails closed; no compatibility defaults or aliases
+are part of this unreleased contract.
+
+Generic organization Live/Pinned profile loading remains unavailable to other
+callers. The existing loader implementation is reused behind explicit private
+admission; permitting one authenticated web surface does not authorize another
+entry point to create private-looking principal rows.
+
+Published private staff pauses use the existing Inbox only after current member
+Write access and exact private source/session proof. Read, Respond and nonmember
+administrator recovery expose no such private items. Draft pauses remain in the
+test chat. Secure input retains the private writer staff contract; ordinary
+participant handling and negative-only timeout behavior remain unchanged.
+
+Shared prerequisites land first: version-aware private session reads, strict
+captured source/version proof and same-transaction current admission. Actual
+SQLite, mocked model requests and router tests cover original-version pinning,
+pause/restart, membership/grant/account loss and denied alternate entry points.
+The coordinator then checks the source selector, private history, Inbox,
+keyboard and mobile flows in Chrome with real fixture data. No additional
+conversation store, approval queue, model selector or dependency is required.

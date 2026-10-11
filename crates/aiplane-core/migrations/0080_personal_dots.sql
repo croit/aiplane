@@ -76,17 +76,21 @@ CREATE TABLE dot_delegation_edges (
 
 CREATE INDEX idx_dot_delegation_edges_receiver ON dot_delegation_edges (receiver_dot_id);
 
-CREATE TABLE personal_dot_memories (
+CREATE TABLE dot_memories (
     id TEXT PRIMARY KEY NOT NULL,
-    dot_id TEXT NOT NULL REFERENCES dots(principal_id) ON DELETE CASCADE,
+    dot_id TEXT REFERENCES dots(principal_id) ON DELETE CASCADE,
+    organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('preference', 'project', 'fact')),
     content TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    CHECK ((dot_id IS NOT NULL) <> (organization_id IS NOT NULL))
 ) STRICT;
 
-CREATE UNIQUE INDEX idx_personal_dot_memories_dot_content ON personal_dot_memories (dot_id, content);
-CREATE INDEX idx_personal_dot_memories_dot_created ON personal_dot_memories (dot_id, created_at DESC);
+CREATE UNIQUE INDEX idx_dot_memories_dot_content ON dot_memories (dot_id, content) WHERE dot_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_dot_memories_organization_content ON dot_memories (organization_id, content) WHERE organization_id IS NOT NULL;
+CREATE INDEX idx_dot_memories_dot_created ON dot_memories (dot_id, created_at DESC) WHERE dot_id IS NOT NULL;
+CREATE INDEX idx_dot_memories_organization_created ON dot_memories (organization_id, created_at DESC) WHERE organization_id IS NOT NULL;
 
 CREATE TRIGGER personal_dots_delete_principals_before_owner_delete
 BEFORE DELETE ON users

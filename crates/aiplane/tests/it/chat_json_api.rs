@@ -764,11 +764,17 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
         system.contains("prefers concise replies"),
         "the Dot receives the user's shared preference: {system}"
     );
-    let memories =
-        aiplane_agents::db::dot_memories::list(&state.db, "alice", &dot.principal.id, 10)
-            .await
-            .unwrap()
-            .expect("the Dot remains owned by alice");
+    let memories = aiplane_agents::db::dot_memories::list(
+        &state.db,
+        aiplane_agents::db::dot_memories::MemoryScope::Dot {
+            owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
+            dot_id: &dot.principal.id,
+        },
+        10,
+    )
+    .await
+    .unwrap()
+    .expect("the Dot remains owned by alice");
     assert_eq!(memories.len(), 1);
     assert_eq!(memories[0].content, "avoid the verified deployment pitfall");
     assert_eq!(

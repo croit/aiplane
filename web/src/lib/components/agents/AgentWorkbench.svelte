@@ -18,6 +18,7 @@
 	import VersionsPanel from './VersionsPanel.svelte';
 	import SetupOverview from './setup/SetupOverview.svelte';
 	import DotConnectionsPanel from '../dots/DotConnectionsPanel.svelte';
+	import DotMemoryPanel from '../dots/DotMemoryPanel.svelte';
 	import type { Dot } from '#lib/dots.js';
 
 	/**
@@ -100,6 +101,12 @@
 {#if tab === 'setup' && ws.writable && organizationDot}
 	{#key organizationDot.id}
 		<DotConnectionsPanel dot={organizationDot} onchange={() => void ws.refresh(true).catch((error) => ws.fail(error))} />
+	{/key}
+{/if}
+
+{#if tab === 'setup' && organizationDot && (ws.detail?.access === 'read' || ws.detail?.access === 'write')}
+	{#key organizationDot.id}
+		<DotMemoryPanel dot={organizationDot} />
 	{/key}
 {/if}
 

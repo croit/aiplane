@@ -2023,8 +2023,10 @@ pub(crate) mod tests {
         );
         aiplane_agents::db::dot_memories::insert(
             &state.db,
-            "u1",
-            &dot,
+            aiplane_agents::db::dot_memories::MemoryScope::Dot {
+                owner: &aiplane_agents::db::agents::DotOwner::User("u1".into()),
+                dot_id: &dot,
+            },
             aiplane_core::server::db::user_memories::MemoryKind::Fact,
             "Keep project notes",
         )
@@ -2495,8 +2497,10 @@ pub(crate) mod tests {
         let (_upstream, state, session, _turn, ids) = personal_forward_setup().await;
         aiplane_agents::db::dot_memories::insert(
             &state.db,
-            "u1",
-            &ids[1],
+            aiplane_agents::db::dot_memories::MemoryScope::Dot {
+                owner: &aiplane_agents::db::agents::DotOwner::User("u1".into()),
+                dot_id: &ids[1],
+            },
             aiplane_core::server::db::user_memories::MemoryKind::Fact,
             "Receiver private project note",
         )

@@ -1499,3 +1499,260 @@ async fn organization_private_draft_chat_admits_member_writer_without_personal_d
     let (status, _) = fx.send(Some(&fx.root), Method::GET, &history, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+async fn organization_memory_fixture() -> (Fx, Value, String) {
+    let fx = fixture().await;
+    aiplane_core::server::db::gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
+        .await
+        .unwrap();
+    fx.state.reload_rbac().await;
+    let org = organization(&fx, "Acme Knowledge", &["managers", "admins"]).await;
+    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let dot = id(&created["agent"]).to_owned();
+    (fx, org, dot)
+}
+
+fn memory_scope<'a>(view: &'a Value, scope: &str) -> &'a Value {
+    view["scopes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["scope"] == scope)
+        .unwrap()
+}
+
+#[tokio::test]
+async fn organization_memory_uses_existing_dot_routes_with_actual_scope_metadata_and_separate_write_rights()
+ {
+    let (fx, org, dot) = organization_memory_fixture().await;
+    let base = format!("/api/v0/dots/{dot}/memories");
+    let (_, me) = fx.get(&fx.alice, "/api/v0/me").await;
+    assert_eq!(me["can_manage_dots"], false);
+    let (status, own) = fx
+        .post(
+            &fx.alice,
+            &base,
+            json!({"scope":"dot","kind":"project","content":"Actual isolated Dot lesson"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{own}");
+    assert_eq!(own["scope"], "dot");
+    let (status, refused) = fx
+        .post(
+            &fx.alice,
+            &base,
+            json!({"scope":"organization","kind":"fact","content":"Unapproved shared change"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    let (status, shared) = fx.post(&fx.root,&base,
+        json!({"scope":"organization","kind":"preference","content":"Actual shared organization preference"})).await;
+    assert_eq!(status, StatusCode::CREATED, "{shared}");
+    assert_eq!(shared["scope"], "organization");
+    let (status, view) = fx.get(&fx.alice, &base).await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(memory_scope(&view, "dot")["name"], "Harald");
+    assert_eq!(memory_scope(&view, "dot")["writable"], true);
+    assert_eq!(memory_scope(&view, "organization")["name"], org["name"]);
+    assert_eq!(memory_scope(&view, "organization")["writable"], false);
+    assert_eq!(view["memories"].as_array().unwrap().len(), 2);
+    assert!(view["memories"].as_array().unwrap().contains(&own));
+    assert!(view["memories"].as_array().unwrap().contains(&shared));
+    let (status, _) = fx.share(&fx.alice, &dot, "user", "bob", "read").await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, reader) = fx.get(&fx.bob, &base).await;
+    assert_eq!(status, StatusCode::OK, "{reader}");
+    assert_eq!(reader["memories"], view["memories"]);
+    assert_eq!(memory_scope(&reader, "dot")["writable"], false);
+    assert_eq!(memory_scope(&reader, "organization")["writable"], false);
+    let (status, denied) = fx
+        .post(
+            &fx.bob,
+            &base,
+            json!({"scope":"dot","kind":"fact","content":"Read-only cannot write"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{denied}");
+    let (status, _) = fx.share(&fx.alice, &dot, "user", "bob", "respond").await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, responder) = fx.get(&fx.bob, &base).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{responder}");
+    let (status, clara) = create_dot(&fx, &fx.alice, &org, "Clara").await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (_, sibling_notes) = fx
+        .get(
+            &fx.alice,
+            &format!("/api/v0/dots/{}/memories", id(&clara["agent"])),
+        )
+        .await;
+    assert_eq!(sibling_notes["memories"], json!([shared.clone()]));
+    let (status, updated) = fx
+        .send(
+            Some(&fx.root),
+            Method::PUT,
+            &format!("{base}/{}", shared["id"].as_str().unwrap()),
+            Some(json!({"scope":"organization","kind":"fact","content":"Corrected shared fact"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    let (status, _) = fx
+        .send(
+            Some(&fx.root),
+            Method::DELETE,
+            &format!(
+                "{base}/{}?scope=organization",
+                shared["id"].as_str().unwrap()
+            ),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn organization_memory_foreign_ids_and_other_scopes_do_not_disclose_or_mutate_notes() {
+    let (fx, org, dot) = organization_memory_fixture().await;
+    let other_org = organization(&fx, "Other actual organization", &["managers", "admins"]).await;
+    let (status, created) = create_dot(&fx, &fx.alice, &other_org, "Clara").await;
+    assert_eq!(status, StatusCode::CREATED);
+    let other = id(&created["agent"]);
+    let target = format!("/api/v0/dots/{dot}/memories");
+    let foreign_base = format!("/api/v0/dots/{other}/memories");
+    let (status, foreign) = fx.post(&fx.root,&foreign_base,
+        json!({"scope":"organization","kind":"fact","content":"Other organization confidential marker"})).await;
+    assert_eq!(status, StatusCode::CREATED, "{foreign}");
+    for item in [foreign["id"].as_str().unwrap(), "unknown-memory"] {
+        let (status, error) = fx.send(Some(&fx.root),Method::PUT,&format!("{target}/{item}"),
+            Some(json!({"scope":"organization","kind":"fact","content":"Unauthorized overwrite"}))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{error}");
+        assert!(
+            !error
+                .to_string()
+                .contains("Other organization confidential marker")
+        );
+        let (status, error) = fx
+            .send(
+                Some(&fx.root),
+                Method::DELETE,
+                &format!("{target}/{item}?scope=organization"),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{error}");
+    }
+    let (status, view) = fx.get(&fx.root, &foreign_base).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(view["memories"], json!([foreign]));
+    let (status, invalid) = fx
+        .post(
+            &fx.alice,
+            &target,
+            json!({"scope":"user","kind":"fact","content":"No employee scope"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid}");
+    let (status, revised) = edit(&fx, &org, "Acme Knowledge", &["managers"]).await;
+    assert_eq!(status, StatusCode::OK, "{revised}");
+    let (status, nonmember_admin) = fx.get(&fx.root, &target).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{nonmember_admin}");
+    assert!(nonmember_admin.get("memories").is_none());
+}
+
+#[tokio::test]
+async fn organization_memory_rechecks_current_membership_and_admin_after_management_views() {
+    let (fx, org, dot) = organization_memory_fixture().await;
+    let target = format!("/api/v0/dots/{dot}/memories");
+    let (status, own) = fx
+        .post(
+            &fx.alice,
+            &target,
+            json!({"scope":"dot","kind":"fact","content":"Preserved current authority lesson"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{own}");
+    let (_, offered) = fx.get(&fx.alice, &target).await;
+    assert_eq!(memory_scope(&offered, "dot")["writable"], true);
+    let (status, changed) = edit(&fx, &org, "Acme Knowledge", &["admins"]).await;
+    assert_eq!(status, StatusCode::OK, "{changed}");
+    let (status, denied) = fx
+        .send(
+            Some(&fx.alice),
+            Method::PUT,
+            &format!("{target}/{}", own["id"].as_str().unwrap()),
+            Some(json!({"scope":"dot","kind":"fact","content":"Stale membership write"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{denied}");
+    let (_, still_saved) = fx.get(&fx.root, &target).await;
+    assert_eq!(still_saved["memories"], json!([own]));
+    assert_eq!(memory_scope(&still_saved, "organization")["writable"], true);
+    aiplane_core::server::db::gateway_groups::upsert_group(
+        &fx.state.db,
+        "admins",
+        "",
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    let (status, denied) = fx
+        .post(
+            &fx.root,
+            &target,
+            json!({"scope":"organization","kind":"fact","content":"Stale administrator write"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{denied}");
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM dot_memories WHERE content='Stale administrator write'",
+    )
+    .fetch_one(&fx.state.db)
+    .await
+    .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn organization_memory_requires_explicit_scope_and_limits_human_saves_by_utf8_bytes() {
+    let (fx, _, dot) = organization_memory_fixture().await;
+    let base = format!("/api/v0/dots/{dot}/memories");
+    let (status, accepted) = fx
+        .post(
+            &fx.alice,
+            &base,
+            json!({"scope":"dot","kind":"fact","content":"é".repeat(1000)}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{accepted}");
+    let item = format!("{base}/{}", accepted["id"].as_str().unwrap());
+    for (method, path, body) in [
+        (
+            Method::POST,
+            base.clone(),
+            json!({"kind":"fact","content":"Missing scope"}),
+        ),
+        (
+            Method::POST,
+            base.clone(),
+            json!({"scope":"dot","kind":"fact","content":"é".repeat(1001)}),
+        ),
+        (
+            Method::PUT,
+            item.clone(),
+            json!({"kind":"fact","content":"Missing scope"}),
+        ),
+        (
+            Method::PUT,
+            item.clone(),
+            json!({"scope":"dot","kind":"fact","content":"x".repeat(2001)}),
+        ),
+    ] {
+        let (status, denied) = fx.send(Some(&fx.alice), method, &path, Some(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{denied}");
+    }
+    let (status, denied) = fx.send(Some(&fx.alice), Method::DELETE, &item, None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{denied}");
+    let (_, persisted) = fx.get(&fx.alice, &base).await;
+    assert_eq!(persisted["memories"], json!([accepted]));
+}

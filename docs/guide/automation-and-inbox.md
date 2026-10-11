@@ -134,8 +134,11 @@ once permits only that call's recorded arguments. Current permissions and Dot
 availability are checked again before execution; removing a selected tool or
 disabling it in your account prevents a pending approval from running it.
 Deactivating a Dot retains its data and conversations and cancels its active
-personal runs and linked delegation work. Organization Dots, automatic memory
-curation and persistent Dot computers are not available.
+personal runs and linked delegation work. Organization Dots support member
+configuration, their own connected identities, private draft conversations and
+scoped memory. See [Organization Dots](../dots-organizations.md) for their
+current access requirements. Organization automation, automatic memory curation
+and persistent Dot computers are not available.
 
 ## Configure communication consent
 

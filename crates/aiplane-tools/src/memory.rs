@@ -3,29 +3,54 @@
 
 //! Durable memory: `remember`, `recall`, `update_memory`, `forget`.
 //!
-//! `remember` stores a short free-text fact about the caller; `recall` pulls
-//! those facts back in a later conversation, each with its `id`;
-//! `update_memory` and `forget` correct or drop one by that id. All four are
-//! scoped to `ctx.user_id`, so the model can only ever read/write the current
-//! user's own memories — there is no cross-user path, and the scoping lives in
-//! the SQL as well as here. State lives in `db::user_memories`.
-//!
-//! The correction pair is not a nicety. Without it the store is
-//! append-only: told "I'm not in the platform team any more", the model can
-//! only add a second, contradicting fact, and every later `recall` returns
-//! both — so it has to guess which one still holds, and the guessing gets
-//! worse the longer an account lives.
-//!
-//! These are intentionally low-risk: no code execution, no network, no
-//! filesystem — just the gateway's own SQLite, keyed by the
-//! authenticated user.
+//! Ordinary users own profile memories. Personal Dots write their own lessons
+//! and may recall their user's profile. Organization Dots write only their own
+//! lessons and recall shared organization knowledge as read-only context.
+//! Organization operations use the admitted principal turn and the same write
+//! transaction for current authority and scoped storage.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 use shared::api::ToolDef;
 
+use aiplane_agents::db::{agents::DotOwner, dot_memories::MemoryScope};
 use aiplane_core::server::db::user_memories::{self, Memory, MemoryKind};
 use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture};
+
+fn organization_unavailable(ctx: &ToolContext) -> ToolError {
+    ToolError::Failed(
+        aiplane_runtime::agents::profile::AgentRunError::OrganizationExecutionUnavailable(
+            ctx.principal.subject_id().to_owned(),
+        )
+        .to_string(),
+    )
+}
+
+async fn organization_transaction(
+    ctx: &ToolContext,
+    tool: &str,
+) -> Result<
+    Option<(
+        aiplane_agents::db::WriteTx,
+        aiplane_runtime::server::tools::memory::OrganizationMemory,
+    )>,
+    ToolError,
+> {
+    if !ctx
+        .agent
+        .as_ref()
+        .is_some_and(|run| run.organization().is_some())
+    {
+        return Ok(None);
+    }
+    let mut tx = aiplane_agents::db::WriteTx::begin(&ctx.db)
+        .await
+        .map_err(|error| ToolError::Failed(error.to_string()))?;
+    let scope = aiplane_runtime::server::tools::memory::organization_scope_in(&mut tx, ctx, tool)
+        .await?
+        .ok_or_else(|| organization_unavailable(ctx))?;
+    Ok(Some((tx, scope)))
+}
 
 fn personal_dot_scope<'a>(
     ctx: &'a ToolContext,
@@ -95,7 +120,7 @@ const MAX_RECALL_LIMIT: i64 = 200;
 
 /// Upper bound on a single stored fact. Memory is for short facts, not
 /// pasted documents — that's what attachments are for.
-const MAX_CONTENT_LEN: usize = 2_000;
+const MAX_CONTENT_BYTES: usize = aiplane_agents::db::dot_memories::MAX_CONTENT_BYTES;
 
 // ---------------------------------------------------------------------------
 // remember
@@ -105,6 +130,8 @@ pub struct Remember;
 #[derive(Deserialize)]
 struct RememberArgs {
     content: String,
+    #[serde(default)]
+    scope: Option<String>,
     #[serde(default)]
     kind: Option<String>,
 }
@@ -117,9 +144,9 @@ impl Tool for Remember {
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
-            "Store a short, durable fact about the user so you can recall it in future \
-             conversations — e.g. their preferences, ongoing projects, or names they ask you to \
-             keep. Use it when the user shares something worth remembering long-term. Do not \
+            "Store a short, durable fact for the acting owner so you can recall it in future \
+             conversations. In a Dot run, store lessons and project knowledge owned by that Dot; \
+             shared owner knowledge is read-only. Use it for information worth remembering long-term. Do not \
              store secrets, passwords, or sensitive personal data unless the user explicitly \
              asks you to. If something you already remembered has CHANGED or turned out to be \
              wrong, do not store a second, contradicting fact — call `update_memory` with the \
@@ -139,8 +166,7 @@ impl Tool for Remember {
                         "type": "string",
                         "enum": ["preference", "project", "fact"],
                         "description": "How to classify this memory: 'preference' for how the \
-                                        user likes things, 'project' for context about what \
-                                        they're working on, 'fact' for any other stable detail. \
+                                        owner's preferences, 'project' for ongoing project context, 'fact' for any other stable detail. \
                                         Defaults to 'fact'."
                     }
                 }
@@ -158,22 +184,52 @@ impl Tool for Remember {
             if content.is_empty() {
                 return Err(ToolError::InvalidArgs("content must not be empty".into()));
             }
-            if content.len() > MAX_CONTENT_LEN {
+            if content.len() > MAX_CONTENT_BYTES {
                 return Err(ToolError::InvalidArgs(format!(
-                    "content too long ({} chars); keep memories under {MAX_CONTENT_LEN}",
+                    "content too long ({} UTF-8 bytes); keep memories under {MAX_CONTENT_BYTES}",
                     content.len()
                 )));
             }
+            if let Some((mut tx, scope)) = organization_transaction(&ctx, self.id()).await? {
+                if args
+                    .scope
+                    .as_deref()
+                    .is_some_and(|requested| requested != "dot")
+                {
+                    return Err(organization_unavailable(&ctx));
+                }
+                let row = aiplane_agents::db::dot_memories::insert_in(
+                    &mut tx,
+                    scope.dot_scope(),
+                    kind,
+                    content,
+                )
+                .await
+                .map_err(|error| ToolError::Failed(error.to_string()))?
+                .ok_or_else(|| organization_unavailable(&ctx))?;
+                tx.commit()
+                    .await
+                    .map_err(|error| ToolError::Failed(error.to_string()))?;
+                return Ok(
+                    json!({"status":"remembered","id":row.id,"scope":"dot","kind":row.kind.as_str(),"content":row.content}),
+                );
+            }
             let dot_scope = personal_dot_scope(&ctx, self.id())?;
             let row = match dot_scope {
-                Some((owner, dot)) => {
-                    aiplane_agents::db::dot_memories::insert(&ctx.db, owner, dot, kind, content)
-                        .await
-                        .map_err(|e| ToolError::Failed(format!("storing Dot memory: {e}")))?
-                        .ok_or_else(|| {
-                            ToolError::Failed("the personal Dot is no longer available".into())
-                        })?
-                }
+                Some((owner, dot)) => aiplane_agents::db::dot_memories::insert(
+                    &ctx.db,
+                    MemoryScope::Dot {
+                        owner: &DotOwner::User(owner.into()),
+                        dot_id: dot,
+                    },
+                    kind,
+                    content,
+                )
+                .await
+                .map_err(|e| ToolError::Failed(format!("storing Dot memory: {e}")))?
+                .ok_or_else(|| {
+                    ToolError::Failed("the personal Dot is no longer available".into())
+                })?,
                 None => user_memories::insert(&ctx.db, ctx.person(self.id())?, kind, content)
                     .await
                     .map_err(|e| ToolError::Failed(format!("storing memory: {e}")))?,
@@ -206,10 +262,10 @@ impl Tool for Recall {
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
-            "Retrieve everything you've remembered about this user (their preferences, project \
-             context, and facts). Takes no arguments and returns all stored memories, newest \
-             first — you don't need to craft a query. Call it whenever the user refers to \
-             themselves, their preferences, or earlier context, then use whatever is relevant. \
+            "Retrieve stored memories available to the acting owner. Dot runs return their own \
+             lessons together with read-only user or organization knowledge, each labeled by scope. \
+             Takes no arguments and returns memories newest first — you don't need to craft a query. \
+             Use the relevant notes as context. \
              An empty result means nothing has been remembered yet. Each memory comes back with \
              an `id`; pass that id to `update_memory` or `forget` when something you stored \
              turns out to be wrong or out of date.",
@@ -226,6 +282,33 @@ impl Tool for Recall {
             // full memory set (newest first, bounded by a safety cap).
             // No filtering — the model reasons over everything rather
             // than guessing a query that has to lexically match.
+            if let Some((mut tx, scope)) = organization_transaction(&ctx, self.id()).await? {
+                let mut rows = Vec::new();
+                for (selected, name) in [
+                    (scope.dot_scope(), "dot"),
+                    (scope.organization_scope(), "organization"),
+                ] {
+                    let notes = aiplane_agents::db::dot_memories::list_in(
+                        &mut tx,
+                        selected,
+                        MAX_RECALL_LIMIT,
+                    )
+                    .await
+                    .map_err(|error| ToolError::Failed(error.to_string()))?
+                    .ok_or_else(|| organization_unavailable(&ctx))?;
+                    rows.extend(notes.into_iter().map(|note| (note, name)));
+                }
+                tx.commit()
+                    .await
+                    .map_err(|error| ToolError::Failed(error.to_string()))?;
+                rows.sort_by_key(|(note, _)| std::cmp::Reverse(note.created_at));
+                rows.truncate(MAX_RECALL_LIMIT as usize);
+                let memories: Vec<Value> = rows
+                    .into_iter()
+                    .map(|(note, scope)| memory_value(note, scope))
+                    .collect();
+                return Ok(json!({"count":memories.len(),"memories":memories}));
+            }
             let dot_scope = personal_dot_scope(&ctx, self.id())?;
             let mut rows: Vec<(Memory, &'static str)> = user_memories::recall_recent(
                 &ctx.db,
@@ -239,13 +322,19 @@ impl Tool for Recall {
             .map(|memory| (memory, "user"))
             .collect();
             if let Some((owner, dot)) = dot_scope {
-                let dot_rows =
-                    aiplane_agents::db::dot_memories::list(&ctx.db, owner, dot, MAX_RECALL_LIMIT)
-                        .await
-                        .map_err(|e| ToolError::Failed(format!("recalling Dot memories: {e}")))?
-                        .ok_or_else(|| {
-                            ToolError::Failed("the personal Dot is no longer available".into())
-                        })?;
+                let dot_rows = aiplane_agents::db::dot_memories::list(
+                    &ctx.db,
+                    MemoryScope::Dot {
+                        owner: &DotOwner::User(owner.into()),
+                        dot_id: dot,
+                    },
+                    MAX_RECALL_LIMIT,
+                )
+                .await
+                .map_err(|e| ToolError::Failed(format!("recalling Dot memories: {e}")))?
+                .ok_or_else(|| {
+                    ToolError::Failed("the personal Dot is no longer available".into())
+                })?;
                 rows.extend(dot_rows.into_iter().map(|memory| (memory, "dot")));
             }
             rows.sort_by_key(|(memory, _)| std::cmp::Reverse(memory.created_at));
@@ -314,7 +403,7 @@ impl Tool for UpdateMemory {
                     "scope": {
                         "type": "string",
                         "enum": ["dot", "user"],
-                        "description": "Scope reported by `recall`; a personal Dot may change only `dot`."
+                        "description": "Scope reported by `recall`; a Dot may change only `dot`."
                     }
                 }
             }),
@@ -332,13 +421,51 @@ impl Tool for UpdateMemory {
                     "content must not be empty — use `forget` to drop a memory".into(),
                 ));
             }
-            if content.len() > MAX_CONTENT_LEN {
+            if content.len() > MAX_CONTENT_BYTES {
                 return Err(ToolError::InvalidArgs(format!(
-                    "content too long ({} chars); keep memories under {MAX_CONTENT_LEN}",
+                    "content too long ({} UTF-8 bytes); keep memories under {MAX_CONTENT_BYTES}",
                     content.len()
                 )));
             }
 
+            if let Some((mut tx, scope)) = organization_transaction(&ctx, self.id()).await? {
+                if args
+                    .scope
+                    .as_deref()
+                    .is_some_and(|requested| requested != "dot")
+                {
+                    return Err(organization_unavailable(&ctx));
+                }
+                let Some(existing) =
+                    aiplane_agents::db::dot_memories::get_in(&mut tx, scope.dot_scope(), &args.id)
+                        .await
+                        .map_err(|error| ToolError::Failed(error.to_string()))?
+                else {
+                    return Ok(not_found(&args.id));
+                };
+                let kind = match args.kind.as_deref() {
+                    Some(raw) => parse_kind(Some(raw))?,
+                    None => existing.kind,
+                };
+                let row = aiplane_agents::db::dot_memories::update_in(
+                    &mut tx,
+                    scope.dot_scope(),
+                    &args.id,
+                    kind,
+                    content,
+                )
+                .await
+                .map_err(|error| ToolError::Failed(error.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|error| ToolError::Failed(error.to_string()))?;
+                return Ok(match row {
+                    Some(row) => {
+                        json!({"status":"updated","id":row.id,"scope":"dot","kind":row.kind.as_str(),"content":row.content,"previous_content":existing.content})
+                    }
+                    None => not_found(&args.id),
+                });
+            }
             let dot_scope = personal_dot_scope(&ctx, self.id())?;
             let scope = resolve_scope(args.scope.as_deref(), dot_scope)?;
             if scope == "user" && dot_scope.is_some() {
@@ -356,11 +483,16 @@ impl Tool for UpdateMemory {
             // into the same not-found answer as "no such id" (no existence
             // leak across users).
             let existing = match (scope, dot_scope) {
-                ("dot", Some((owner, dot))) => {
-                    aiplane_agents::db::dot_memories::get(&ctx.db, owner, dot, &args.id)
-                        .await
-                        .map_err(|e| ToolError::Failed(format!("looking up Dot memory: {e}")))?
-                }
+                ("dot", Some((owner, dot))) => aiplane_agents::db::dot_memories::get(
+                    &ctx.db,
+                    MemoryScope::Dot {
+                        owner: &DotOwner::User(owner.into()),
+                        dot_id: dot,
+                    },
+                    &args.id,
+                )
+                .await
+                .map_err(|e| ToolError::Failed(format!("looking up Dot memory: {e}")))?,
                 _ => user_memories::get(&ctx.db, ctx.person(self.id())?, &args.id)
                     .await
                     .map_err(|e| ToolError::Failed(format!("looking up memory: {e}")))?,
@@ -375,7 +507,14 @@ impl Tool for UpdateMemory {
 
             let updated = match (scope, dot_scope) {
                 ("dot", Some((owner, dot))) => aiplane_agents::db::dot_memories::update(
-                    &ctx.db, owner, dot, &args.id, kind, content,
+                    &ctx.db,
+                    MemoryScope::Dot {
+                        owner: &DotOwner::User(owner.into()),
+                        dot_id: dot,
+                    },
+                    &args.id,
+                    kind,
+                    content,
                 )
                 .await
                 .map_err(|e| ToolError::Failed(format!("updating Dot memory: {e}")))?,
@@ -439,7 +578,7 @@ impl Tool for Forget {
                     "scope": {
                         "type": "string",
                         "enum": ["dot", "user"],
-                        "description": "Scope reported by `recall`; a personal Dot may change only `dot`."
+                        "description": "Scope reported by `recall`; a Dot may change only `dot`."
                     }
                 }
             }),
@@ -451,6 +590,37 @@ impl Tool for Forget {
             let args: ForgetArgs = serde_json::from_value(args)
                 .map_err(|e| ToolError::InvalidArgs(format!("expected {{id: string}}: {e}")))?;
 
+            if let Some((mut tx, scope)) = organization_transaction(&ctx, self.id()).await? {
+                if args
+                    .scope
+                    .as_deref()
+                    .is_some_and(|requested| requested != "dot")
+                {
+                    return Err(organization_unavailable(&ctx));
+                }
+                let Some(existing) =
+                    aiplane_agents::db::dot_memories::get_in(&mut tx, scope.dot_scope(), &args.id)
+                        .await
+                        .map_err(|error| ToolError::Failed(error.to_string()))?
+                else {
+                    return Ok(not_found(&args.id));
+                };
+                let deleted = aiplane_agents::db::dot_memories::delete_in(
+                    &mut tx,
+                    scope.dot_scope(),
+                    &args.id,
+                )
+                .await
+                .map_err(|error| ToolError::Failed(error.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|error| ToolError::Failed(error.to_string()))?;
+                return Ok(if deleted {
+                    json!({"status":"forgotten","id":existing.id,"scope":"dot","content":existing.content})
+                } else {
+                    not_found(&args.id)
+                });
+            }
             let dot_scope = personal_dot_scope(&ctx, self.id())?;
             let scope = resolve_scope(args.scope.as_deref(), dot_scope)?;
             if scope == "user" && dot_scope.is_some() {
@@ -467,11 +637,16 @@ impl Tool for Forget {
             // forgotten — the model needs that to confirm to the user, and
             // after the delete it's gone.
             let existing = match (scope, dot_scope) {
-                ("dot", Some((owner, dot))) => {
-                    aiplane_agents::db::dot_memories::get(&ctx.db, owner, dot, &args.id)
-                        .await
-                        .map_err(|e| ToolError::Failed(format!("looking up Dot memory: {e}")))?
-                }
+                ("dot", Some((owner, dot))) => aiplane_agents::db::dot_memories::get(
+                    &ctx.db,
+                    MemoryScope::Dot {
+                        owner: &DotOwner::User(owner.into()),
+                        dot_id: dot,
+                    },
+                    &args.id,
+                )
+                .await
+                .map_err(|e| ToolError::Failed(format!("looking up Dot memory: {e}")))?,
                 _ => user_memories::get(&ctx.db, ctx.person(self.id())?, &args.id)
                     .await
                     .map_err(|e| ToolError::Failed(format!("looking up memory: {e}")))?,
@@ -480,11 +655,16 @@ impl Tool for Forget {
                 return Ok(not_found(&args.id));
             };
             let deleted = match (scope, dot_scope) {
-                ("dot", Some((owner, dot))) => {
-                    aiplane_agents::db::dot_memories::delete(&ctx.db, owner, dot, &args.id)
-                        .await
-                        .map_err(|e| ToolError::Failed(format!("deleting Dot memory: {e}")))?
-                }
+                ("dot", Some((owner, dot))) => aiplane_agents::db::dot_memories::delete(
+                    &ctx.db,
+                    MemoryScope::Dot {
+                        owner: &DotOwner::User(owner.into()),
+                        dot_id: dot,
+                    },
+                    &args.id,
+                )
+                .await
+                .map_err(|e| ToolError::Failed(format!("deleting Dot memory: {e}")))?,
                 _ => user_memories::delete(&ctx.db, ctx.person(self.id())?, &args.id)
                     .await
                     .map_err(|e| ToolError::Failed(format!("deleting memory: {e}")))?,
@@ -1007,5 +1187,582 @@ mod tests {
     fn schema_names_match_ids() {
         assert_eq!(Remember.id(), Remember.schema().function.name);
         assert_eq!(Recall.id(), Recall.schema().function.name);
+    }
+
+    async fn organization_memory_context() -> (
+        std::sync::Arc<aiplane_runtime::rama_server::state::RamaState>,
+        ToolContext,
+        String,
+        String,
+    ) {
+        organization_memory_context_with_upstream("http://127.0.0.1:1").await
+    }
+
+    async fn organization_memory_context_with_upstream(
+        upstream: &str,
+    ) -> (
+        std::sync::Arc<aiplane_runtime::rama_server::state::RamaState>,
+        ToolContext,
+        String,
+        String,
+    ) {
+        use aiplane_agents::db::{WriteTx, organizations, system_principals};
+        use aiplane_core::server::{
+            config::Config, principal::GrantKind, rbac::Resolver, upstreams::UpstreamRegistry,
+        };
+        use aiplane_runtime::{
+            agent_run::Actor,
+            agents::profile::{Role, RunProfile, SpecSource},
+            rama_server::state::RamaState,
+            server::{
+                headless::{OpenParams, Owner, open_session},
+                state::AppState,
+                tools::ToolRegistry,
+            },
+        };
+        let pool = fresh().await;
+        let _personal = personal_dot_ctx(&pool, "employee").await;
+        user_memories::insert(
+            &pool,
+            "employee",
+            MemoryKind::Preference,
+            "PRIVATE EMPLOYEE MARKER",
+        )
+        .await
+        .unwrap();
+        let organizations::OrganizationCreateResult::Created(organization) = organizations::create(
+            &pool,
+            &organizations::NewOrganization {
+                name: "Support",
+                description: "Ticket knowledge",
+                member_groups: &[],
+            },
+            "employee",
+        )
+        .await
+        .unwrap() else {
+            panic!("organization expected")
+        };
+        let organization = organization.organization.id;
+        let mut tx = WriteTx::begin(&pool).await.unwrap();
+        let (_, dot) = agents::create_organization_dot_in(
+            &mut tx,
+            &organization,
+            &NewPrincipal {
+                name: "support",
+                display: "Support",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "employee",
+            4,
+        )
+        .await
+        .unwrap();
+        let dot = dot.unwrap().principal.id;
+        tx.commit().await.unwrap();
+        for (kind, reference) in [
+            (GrantKind::Model, "model"),
+            (GrantKind::Tool, "remember"),
+            (GrantKind::Tool, "recall"),
+            (GrantKind::Tool, "update_memory"),
+            (GrantKind::Tool, "forget"),
+        ] {
+            system_principals::add_grant(&pool, &dot, kind, reference, "employee")
+                .await
+                .unwrap();
+        }
+        let registry = std::sync::Arc::new(
+            ToolRegistry::new()
+                .with(Remember)
+                .with(Recall)
+                .with(UpdateMemory)
+                .with(Forget),
+        );
+        let pools = serde_json::from_value(json!({"pool":{"kind":"chat","models":["model"],"backend":[{"name":"fixture","base_url":upstream}]}})).unwrap();
+        let app = AppState::new(
+            Config::default(),
+            pool.clone(),
+            UpstreamRegistry::new(&pools).unwrap(),
+            registry,
+            std::sync::Arc::new(Resolver::build(Default::default(), vec![]).unwrap()),
+        );
+        let state = std::sync::Arc::new(RamaState::new(
+            app,
+            aiplane_core::rama_server::SessionStore::new(pool.clone(), [17; 32]),
+            aiplane_core::server::usage::UsageHandle::disabled(),
+        ));
+        let profile = RunProfile::load_from(&state, &dot, SpecSource::Draft(json!({"main":{"model":"model","tools":["remember","recall","update_memory","forget"]}})), Role::Main, &Default::default()).await.unwrap();
+        let (session, turn) = open_session(
+            &pool,
+            OpenParams {
+                owner: Owner::Run {
+                    principal_id: &dot,
+                    parent_turn_id: None,
+                    agent_version: Some(agents::DRAFT_VERSION),
+                },
+                title: "Memory task",
+                prompt: "Keep notes",
+                model: "model",
+                existing_session: None,
+                dot_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let chain = std::sync::Arc::new(aiplane_core::server::run_chain::RunChain::root(
+            &session,
+            None,
+            aiplane_core::server::run_chain::Frame::for_principal(&profile.principal, None),
+        ));
+        let params = profile.drive_params(&session, &turn, chain).unwrap();
+        let Actor::Agent(run) = params.actor else {
+            panic!("agent expected")
+        };
+        let ctx = ToolContext {
+            principal: run.principal(),
+            agent: Some(run),
+            session_id: Some(session),
+            assistant_turn_id: Some(turn),
+            granted_tools: Some(std::sync::Arc::new(
+                ["remember", "recall", "update_memory", "forget"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+            )),
+            suspend: aiplane_runtime::suspend::Suspend::Available,
+            ..ToolContext::for_test(pool)
+        };
+        (state, ctx, organization, dot)
+    }
+
+    #[tokio::test]
+    async fn organization_memory_tools_merge_own_and_shared_notes_without_employee_profiles() {
+        use aiplane_agents::db::dot_memories;
+        let (state, ctx, organization, dot) = organization_memory_context().await;
+        let owner = DotOwner::Organization(organization.clone());
+        let own = MemoryScope::Dot {
+            owner: &owner,
+            dot_id: &dot,
+        };
+        let shared = MemoryScope::Organization {
+            organization_id: &organization,
+        };
+        let global = dot_memories::insert(
+            &state.db,
+            shared,
+            MemoryKind::Fact,
+            "Organization procedure",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let remembered = Remember
+            .run(ctx.clone(), json!({"content":"Own lesson"}))
+            .await
+            .unwrap();
+        assert_eq!(remembered["scope"], "dot");
+        let recalled = Recall.run(ctx.clone(), json!({})).await.unwrap();
+        assert_eq!(recalled["count"], 2);
+        assert!(!recalled.to_string().contains("PRIVATE EMPLOYEE MARKER"));
+        assert!(
+            recalled["memories"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["id"] == global.id && row["scope"] == "organization")
+        );
+        let id = remembered["id"].as_str().unwrap();
+        assert_eq!(
+            UpdateMemory
+                .run(ctx.clone(), json!({"id":id,"content":"Corrected lesson"}))
+                .await
+                .unwrap()["status"],
+            "updated"
+        );
+        assert_eq!(
+            dot_memories::get(&state.db, own, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .content,
+            "Corrected lesson"
+        );
+        assert_eq!(
+            Forget.run(ctx.clone(), json!({"id":id})).await.unwrap()["status"],
+            "forgotten"
+        );
+        assert!(
+            dot_memories::list(&state.db, own, 10)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+        for scope in ["user", "organization"] {
+            assert!(
+                Remember
+                    .run(ctx.clone(), json!({"content":"forbidden", "scope":scope}))
+                    .await
+                    .is_err()
+            );
+            assert!(
+                UpdateMemory
+                    .run(
+                        ctx.clone(),
+                        json!({"id":global.id,"content":"forbidden","scope":scope})
+                    )
+                    .await
+                    .is_err()
+            );
+            assert!(
+                Forget
+                    .run(ctx.clone(), json!({"id":global.id,"scope":scope}))
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            dot_memories::get(&state.db, shared, &global.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .content,
+            "Organization procedure"
+        );
+        let mut tx = aiplane_agents::db::WriteTx::begin(&state.db).await.unwrap();
+        let (_, other) = agents::create_organization_dot_in(
+            &mut tx,
+            &organization,
+            &NewPrincipal {
+                name: "other",
+                display: "Other",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "employee",
+            4,
+        )
+        .await
+        .unwrap();
+        let other = other.unwrap().principal.id;
+        let foreign = dot_memories::insert_in(
+            &mut tx,
+            MemoryScope::Dot {
+                owner: &owner,
+                dot_id: &other,
+            },
+            MemoryKind::Fact,
+            "Other Dot lesson",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            UpdateMemory
+                .run(ctx.clone(), json!({"id":foreign.id,"content":"forbidden"}))
+                .await
+                .unwrap()["status"],
+            "not_found"
+        );
+        assert_eq!(
+            Forget.run(ctx, json!({"id":foreign.id})).await.unwrap()["status"],
+            "not_found"
+        );
+        assert_eq!(
+            dot_memories::get(
+                &state.db,
+                MemoryScope::Dot {
+                    owner: &owner,
+                    dot_id: &other
+                },
+                &foreign.id
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
+            "Other Dot lesson"
+        );
+    }
+
+    #[tokio::test]
+    async fn organization_memory_current_grant_and_activity_revocation_refuse_cached_context() {
+        use aiplane_agents::db::{WriteTx, dot_memories, system_principals};
+        use aiplane_core::server::principal::GrantKind;
+        for revoke_grant in [true, false] {
+            let (state, ctx, organization, dot) = organization_memory_context().await;
+            let owner = DotOwner::Organization(organization);
+            let scope = MemoryScope::Dot {
+                owner: &owner,
+                dot_id: &dot,
+            };
+            dot_memories::insert(&state.db, scope, MemoryKind::Fact, "unchanged")
+                .await
+                .unwrap();
+            let mut tx = WriteTx::begin(&state.db).await.unwrap();
+            if revoke_grant {
+                system_principals::remove_grant_in(
+                    &mut tx,
+                    &dot,
+                    GrantKind::Tool,
+                    "remember",
+                    "employee",
+                )
+                .await
+                .unwrap();
+            } else {
+                assert!(
+                    agents::set_dot_active_in(&mut tx, &dot, &owner, false, 4, "employee")
+                        .await
+                        .unwrap()
+                );
+            }
+            tx.commit().await.unwrap();
+            assert!(
+                Remember
+                    .run(ctx, json!({"content":"must not write"}))
+                    .await
+                    .is_err()
+            );
+            let rows = dot_memories::list(&state.db, scope, 10)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].content, "unchanged");
+        }
+    }
+
+    #[tokio::test]
+    async fn organization_memory_dispatch_requires_mutation_approval_and_keeps_recall_read_only() {
+        use aiplane_runtime::{agents::profile::RunToolSource, server::tools::ToolSource};
+        let (state, ctx, organization, dot) = organization_memory_context().await;
+        let run = ctx.agent.as_ref().unwrap();
+        let registry = state.tools();
+        let source = RunToolSource::new(registry.as_ref(), Some(run));
+        let tool = source.get("remember").unwrap();
+        let result = tool
+            .run(ctx.clone(), json!({"content":"pending approval"}))
+            .await
+            .unwrap();
+        let pause = aiplane_runtime::suspend::extract_suspend(&result).unwrap();
+        assert_eq!(pause.kind, session_core::db::SuspensionKind::Approval);
+        let owner = DotOwner::Organization(organization);
+        assert!(
+            aiplane_agents::db::dot_memories::list(
+                &state.db,
+                MemoryScope::Dot {
+                    owner: &owner,
+                    dot_id: &dot
+                },
+                10
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .is_empty()
+        );
+        let recalled = source
+            .get("recall")
+            .unwrap()
+            .run(ctx, json!({}))
+            .await
+            .unwrap();
+        assert!(aiplane_runtime::suspend::extract_suspend(&recalled).is_none());
+        assert_eq!(recalled["count"], 0);
+    }
+    #[tokio::test]
+    async fn organization_standing_memory_uses_own_shared_knowledge_and_current_recall_ceiling() {
+        use aiplane_agents::db::{dot_memories, system_principals};
+        use aiplane_core::server::principal::GrantKind;
+        let (state, ctx, organization, dot) = organization_memory_context().await;
+        let owner = DotOwner::Organization(organization.clone());
+        dot_memories::insert(
+            &state.db,
+            MemoryScope::Dot {
+                owner: &owner,
+                dot_id: &dot,
+            },
+            MemoryKind::Fact,
+            "Own standing lesson",
+        )
+        .await
+        .unwrap();
+        dot_memories::insert(
+            &state.db,
+            MemoryScope::Organization {
+                organization_id: &organization,
+            },
+            MemoryKind::Fact,
+            "Shared standing knowledge",
+        )
+        .await
+        .unwrap();
+        let run = ctx.agent.as_ref().unwrap();
+        let section = aiplane_runtime::server::tools::memory::organization_standing_context(run)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(section.contains("Own standing lesson"));
+        assert!(section.contains("Shared standing knowledge"));
+        assert!(section.contains("untrusted"));
+        assert!(!section.contains("PRIVATE EMPLOYEE MARKER"));
+        system_principals::remove_grant(&state.db, &dot, GrantKind::Tool, "recall", "employee")
+            .await
+            .unwrap();
+        assert!(
+            aiplane_runtime::server::tools::memory::organization_standing_context(run)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn organization_model_request_contains_scoped_notes_and_drops_them_after_recall_revocation()
+     {
+        use aiplane_agents::db::{dot_memories, system_principals};
+        use aiplane_core::server::{db::usage::UsageSource, principal::GrantKind};
+        use aiplane_runtime::{
+            agent_run::Actor,
+            agents::profile::{Role, RunProfile, SpecSource},
+            server::headless::{DriveParams, OpenParams, Owner, drive, open_session},
+        };
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        let server = MockServer::start().await;
+        let chunk = json!({"id":"response","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Done"},"finish_reason":"stop"}]});
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(format!("data: {chunk}\n\ndata: [DONE]\n\n")),
+            )
+            .mount(&server)
+            .await;
+        let (state, ctx, organization, dot) =
+            organization_memory_context_with_upstream(&server.uri()).await;
+        let owner = DotOwner::Organization(organization.clone());
+        dot_memories::insert(
+            &state.db,
+            MemoryScope::Dot {
+                owner: &owner,
+                dot_id: &dot,
+            },
+            MemoryKind::Fact,
+            "OWN MODEL NOTE",
+        )
+        .await
+        .unwrap();
+        dot_memories::insert(
+            &state.db,
+            MemoryScope::Organization {
+                organization_id: &organization,
+            },
+            MemoryKind::Fact,
+            "SHARED MODEL NOTE",
+        )
+        .await
+        .unwrap();
+        let first = ctx.assistant_turn_id.clone().unwrap();
+        drive(
+            &state,
+            DriveParams {
+                actor: Actor::Agent(ctx.agent.unwrap()),
+                session_id: ctx.session_id.clone().unwrap(),
+                assistant_turn_id: first.clone(),
+                model: "model".into(),
+                source: UsageSource::Agent,
+                history_limit: None,
+            },
+        )
+        .await;
+        let turn =
+            session_core::db::get_turn(&state.db, ctx.session_id.as_deref().unwrap(), &first)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            turn.status,
+            session_core::db::TurnStatus::Completed,
+            "{:?}",
+            turn.error_message
+        );
+        system_principals::remove_grant(&state.db, &dot, GrantKind::Tool, "recall", "employee")
+            .await
+            .unwrap();
+        let profile=RunProfile::load_from(&state,&dot,SpecSource::Draft(json!({"main":{"model":"model","tools":["remember","recall","update_memory","forget"]}})),Role::Main,&Default::default()).await.unwrap();
+        let (session, assistant) = open_session(
+            &state.db,
+            OpenParams {
+                owner: Owner::Run {
+                    principal_id: &dot,
+                    parent_turn_id: None,
+                    agent_version: Some(agents::DRAFT_VERSION),
+                },
+                title: "Next memory task",
+                prompt: "Continue",
+                model: "model",
+                existing_session: ctx.session_id,
+                dot_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let chain = std::sync::Arc::new(aiplane_core::server::run_chain::RunChain::root(
+            &session,
+            None,
+            aiplane_core::server::run_chain::Frame::for_principal(&profile.principal, None),
+        ));
+        drive(
+            &state,
+            profile.drive_params(&session, &assistant, chain).unwrap(),
+        )
+        .await;
+        let turn = session_core::db::get_turn(&state.db, &session, &assistant)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            turn.status,
+            session_core::db::TurnStatus::Completed,
+            "{:?}",
+            turn.error_message
+        );
+        let bodies: Vec<Value> = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|request| serde_json::from_slice(&request.body).unwrap())
+            .collect();
+        assert_eq!(bodies.len(), 2);
+        let initial = bodies[0]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "system")
+            .map(|message| message["content"].as_str().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(initial.contains("OWN MODEL NOTE"));
+        assert!(initial.contains("SHARED MODEL NOTE"));
+        assert!(!initial.contains("PRIVATE EMPLOYEE MARKER"));
+        let next = bodies[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "system")
+            .map(|message| message["content"].as_str().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!next.contains("OWN MODEL NOTE"));
+        assert!(!next.contains("SHARED MODEL NOTE"));
+        assert!(!next.contains("PRIVATE EMPLOYEE MARKER"));
     }
 }

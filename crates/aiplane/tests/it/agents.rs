@@ -1258,17 +1258,23 @@ async fn personal_dot_memories_are_persistent_and_owner_scoped() {
         .post(
             &fx.alice,
             &memory_path,
-            json!({ "kind": "fact", "content": "Avoid this recurring pitfall" }),
+            json!({ "scope":"dot", "kind": "fact", "content": "Avoid this recurring pitfall" }),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["kind"], "fact");
+    assert_eq!(body["scope"], "dot");
     let memory_id = body["id"].as_str().unwrap();
 
     let (status, body) = fx.get(&fx.bob, &memory_path).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     let (status, body) = fx.get(&fx.alice, &memory_path).await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["scopes"],
+        json!([{ "scope": "dot", "name": "memory-dot", "writable": true }])
+    );
+    assert_eq!(body["memories"][0]["scope"], "dot");
     assert_eq!(
         body["memories"][0]["content"],
         "Avoid this recurring pitfall"
@@ -1280,7 +1286,7 @@ async fn personal_dot_memories_are_persistent_and_owner_scoped() {
             Some(&fx.bob),
             Method::PUT,
             &memory_item_path,
-            Some(json!({ "kind": "fact", "content": "unauthorized" })),
+            Some(json!({ "scope":"dot", "kind": "fact", "content": "unauthorized" })),
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
@@ -1289,13 +1295,18 @@ async fn personal_dot_memories_are_persistent_and_owner_scoped() {
             Some(&fx.alice),
             Method::PUT,
             &memory_item_path,
-            Some(json!({ "kind": "project", "content": "Keep this lesson" })),
+            Some(json!({ "scope":"dot", "kind": "project", "content": "Keep this lesson" })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["content"], "Keep this lesson");
     let (status, body) = fx
-        .send(Some(&fx.alice), Method::DELETE, &memory_item_path, None)
+        .send(
+            Some(&fx.alice),
+            Method::DELETE,
+            &format!("{memory_item_path}?scope=dot"),
+            None,
+        )
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
 }

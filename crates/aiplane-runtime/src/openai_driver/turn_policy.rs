@@ -228,7 +228,18 @@ impl<'a> TurnPolicy<'a> {
             },
             Self::Agent(run) => Leading {
                 own: match run.surface() {
-                    Some(surface) => surface.system_sections(&d.state.db, session_id).await,
+                    Some(surface) => {
+                        let mut sections = surface.system_sections(&d.state.db, session_id).await;
+                        match crate::server::tools::memory::organization_standing_context(run).await
+                        {
+                            Ok(Some(memory)) => sections.push(memory),
+                            Ok(None) => {}
+                            Err(error) => {
+                                tracing::warn!(%error, "Organization standing memory unavailable")
+                            }
+                        }
+                        sections
+                    }
                     None => Vec::new(),
                 },
                 context: build_request_context(d, user_mcp, Audience::Agent).await,

@@ -1,8 +1,13 @@
+index idx_dot_memories_dot_content: CREATE UNIQUE INDEX idx_dot_memories_dot_content ON dot_memories (dot_id, content) WHERE dot_id IS NOT NULL
+index idx_dot_memories_dot_created: CREATE INDEX idx_dot_memories_dot_created ON dot_memories (dot_id, created_at DESC) WHERE dot_id IS NOT NULL
+index idx_dot_memories_organization_content: CREATE UNIQUE INDEX idx_dot_memories_organization_content ON dot_memories (organization_id, content) WHERE organization_id IS NOT NULL
+index idx_dot_memories_organization_created: CREATE INDEX idx_dot_memories_organization_created ON dot_memories (organization_id, created_at DESC) WHERE organization_id IS NOT NULL
 index idx_dots_organization_active: CREATE INDEX idx_dots_organization_active ON dots (organization_id, active) WHERE organization_id IS NOT NULL
 index idx_dots_organization_name: CREATE UNIQUE INDEX idx_dots_organization_name ON dots (organization_id, name) WHERE organization_id IS NOT NULL
 index idx_dots_user_active: CREATE INDEX idx_dots_user_active ON dots (owner_user_id, active) WHERE owner_user_id IS NOT NULL
 index idx_dots_user_name: CREATE UNIQUE INDEX idx_dots_user_name ON dots (owner_user_id, name) WHERE owner_user_id IS NOT NULL
 index idx_organization_groups_group: CREATE INDEX idx_organization_groups_group ON organization_groups (gateway_group)
+table dot_memories: CREATE TABLE dot_memories ( id TEXT PRIMARY KEY NOT NULL, dot_id TEXT REFERENCES dots(principal_id) ON DELETE CASCADE, organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK (kind IN ('preference', 'project', 'fact')), content TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, CHECK ((dot_id IS NOT NULL) <> (organization_id IS NOT NULL)) ) STRICT
 table dots: CREATE TABLE dots ( principal_id TEXT PRIMARY KEY NOT NULL REFERENCES agents(principal_id) ON DELETE CASCADE, owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE, organization_id TEXT REFERENCES organizations(id) ON DELETE RESTRICT, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, CHECK ((owner_user_id IS NOT NULL) <> (organization_id IS NOT NULL)) ) STRICT
 table organization_groups: CREATE TABLE organization_groups ( organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, gateway_group TEXT NOT NULL REFERENCES gateway_groups(name) ON DELETE CASCADE, PRIMARY KEY (organization_id, gateway_group) ) STRICT
 table organizations: CREATE TABLE organizations ( id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, revision TEXT NOT NULL CHECK (length(revision) > 0), created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL ) STRICT

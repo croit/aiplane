@@ -1,7 +1,7 @@
 import { request } from './api.ts';
 import type { Dot } from './dot-state.ts';
 import type { ActivityPage } from './agent-activity.js';
-import type { Memory, MemoryKind } from './memory.js';
+import { groupMemories, type Memory, type MemoryKind } from './memory.ts';
 export { activeDotCount, canCreateDot } from './dot-state.ts';
 export type { Dot } from './dot-state.ts';
 
@@ -148,17 +148,30 @@ export const dotsApi = {
 		})
 };
 
+export type DotMemoryScope = 'dot' | 'organization';
+export interface DotMemory extends Memory { scope: DotMemoryScope }
+export interface DotMemoryScopeView { scope: DotMemoryScope; name: string; writable: boolean }
+export interface DotMemoryList { memories: DotMemory[]; scopes: DotMemoryScopeView[] }
+export interface DotMemoryBody { kind: MemoryKind; content: string; scope: DotMemoryScope }
+
+export function dotMemorySections(list: DotMemoryList | null | undefined) {
+	return (list?.scopes ?? []).map((scope) => ({
+		...scope,
+		grouped: groupMemories((list?.memories ?? []).filter((memory) => memory.scope === scope.scope)) as Record<MemoryKind, DotMemory[]>
+	}));
+}
+
 export const dotMemoriesApi = {
 	list: async (dotId: string) =>
-		(await request<{ memories: Memory[] }>(`/api/v0/dots/${encodeURIComponent(dotId)}/memories`)).memories,
-	create: (dotId: string, body: { kind: MemoryKind; content: string }) =>
-		request<Memory>(`/api/v0/dots/${encodeURIComponent(dotId)}/memories`, {
+		request<DotMemoryList>(`/api/v0/dots/${encodeURIComponent(dotId)}/memories`),
+	create: (dotId: string, body: DotMemoryBody) =>
+		request<DotMemory>(`/api/v0/dots/${encodeURIComponent(dotId)}/memories`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(body)
 		}),
-	update: (dotId: string, memoryId: string, body: { kind: MemoryKind; content: string }) =>
-		request<Memory>(
+	update: (dotId: string, memoryId: string, body: DotMemoryBody) =>
+		request<DotMemory>(
 			`/api/v0/dots/${encodeURIComponent(dotId)}/memories/${encodeURIComponent(memoryId)}`,
 			{
 				method: 'PUT',
@@ -166,9 +179,9 @@ export const dotMemoriesApi = {
 				body: JSON.stringify(body)
 			}
 		),
-	delete: (dotId: string, memoryId: string) =>
+	delete: (dotId: string, memoryId: string, scope: DotMemoryScope) =>
 		request<void>(
-			`/api/v0/dots/${encodeURIComponent(dotId)}/memories/${encodeURIComponent(memoryId)}`,
+			`/api/v0/dots/${encodeURIComponent(dotId)}/memories/${encodeURIComponent(memoryId)}?${new URLSearchParams({ scope })}`,
 			{ method: 'DELETE' }
 		)
 };

@@ -80,6 +80,35 @@ Published and automated organization callers remain unavailable. Configuration
 never gives the Dot an employee's account. See [organization
 Dots](../dots-organizations.md) for the implementation boundary.
 
+## Organization Dot memory
+
+Open the Dot's **Setup → Dot memory** panel. Current members with Read access
+can inspect the Dot's own notes and knowledge shared with all Dots of that
+organization. Respond-only access and administrator recovery without membership
+do not expose notes. Write access enables adding, editing and deleting the
+Dot's notes. Editing shared organization knowledge additionally requires
+current gateway administration rights and membership.
+
+Each section uses the actual Dot or organization name. The shared section
+explains that other Dots in that organization can read it. Select Add under
+Preferences, Project context or Facts; edit existing text and select Save, or
+confirm Delete. New or edited notes must fit within 2,000 UTF-8 bytes. Some
+characters use multiple bytes; shorten a refused note and save again.
+
+![Harald's editable private lesson and read-only organization knowledge in the existing memory panel.](../img/guide/organization-dot-memory.png)
+
+*The current member writer can edit Harald's own lesson. Shared organization
+knowledge remains read-only for this writer. This example uses synthetic demo
+data.*
+
+Use Reload memory to obtain current notes and rights. If access has been
+removed, reloading clears previously displayed notes. Runtime `recall` and
+standing context include the Dot's own notes and shared organization knowledge
+only when its actual Recall grant and tool selection permit them. Memory
+mutations retain the Dot's tool rules and approvals and affect only its own
+notes. Employee preferences and personal memory are excluded. Notes persist
+across private draft conversations; automatic memory curation remains planned.
+
 ## Troubleshooting
 
 | Symptom | Check |

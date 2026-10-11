@@ -42,6 +42,13 @@ scripted model responses:
   with retained local erasure, and mobile layout. Uses the seeded Engineering
   session through `AIPLANE_DOT_MEMBER_SESSION_COOKIE`; restores temporary group
   permissions and catalogue availability and deletes its created Dot.
+- `spa-dots-organization-memory.test.mjs`: the existing editor shows actual
+  Dot/shared-organization scopes, administrator shared edits, member own-note
+  edits, UTF-8 byte validation with retained editable text, read-only revocation,
+  membership withdrawal clearing displayed content and mobile layout. Uses the
+  actual Engineering session and restores group permissions. Optional
+  `DOCS_ORG_DOT_MEMORY_CAPTURE` saves the real memory panel and records capture
+  metadata separately for the documentation manifest.
 - `spa-dots-actions.test.mjs`: action inheritance and overrides, reload,
   correction of unavailable rules, and revocation between pause and approval.
   Its browser probe validates permission refusal; the fixture does not execute

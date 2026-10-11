@@ -989,6 +989,62 @@ fn organization_dot_calls_revalidate_private_authority_before_execution() {
     );
 }
 
+#[test]
+fn organization_memory_uses_shared_private_authority_for_tools_and_model_context() {
+    let sources = production_sources();
+    let memory = sources
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/server/tools/memory.rs")
+        .expect("the organization memory admission mechanism must exist");
+    let compact = memory.code.split_whitespace().collect::<String>();
+    for mechanism in [
+        "validate_organization_turn_in",
+        "ctx.principal",
+        "ctx.session_id",
+        "ctx.assistant_turn_id",
+        "ctx.granted_tools",
+        "GrantKind::Tool",
+        "surface.offered",
+    ] {
+        assert!(
+            compact.contains(mechanism),
+            "organization memory must retain {mechanism}"
+        );
+    }
+    let scope_callers = scan(&["organization_scope_in("], |source| source.code.as_str());
+    assert_within(
+        "Organization memory tools must use the shared private-turn admission mechanism.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/server/tools/memory.rs",
+                why: "the canonical same-transaction memory admission mechanism",
+            },
+            Allowed {
+                path: "aiplane-tools/src/memory.rs",
+                why: "the four actual memory tools admit their scoped transaction before CRUD",
+            },
+        ],
+        &scope_callers,
+    );
+    let context_callers = scan(&["organization_standing_context("], |source| {
+        source.code.as_str()
+    });
+    assert_within(
+        "Organization standing memory must enter the existing agent system-message path.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/server/tools/memory.rs",
+                why: "the bounded reader uses the same current private-turn admission",
+            },
+            Allowed {
+                path: "aiplane-runtime/src/openai_driver/turn_policy.rs",
+                why: "the existing agent leading system message consumes bounded organization notes",
+            },
+        ],
+        &context_callers,
+    );
+}
+
 /// `.run(<context>, …)`: a `Tool::run` call, told from other `run` methods
 /// by its first argument being a tool context.
 fn tool_run_calls(src: &Source) -> Vec<usize> {

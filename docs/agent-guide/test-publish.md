@@ -8,7 +8,9 @@ Organization Dots use the existing draft editor and publication mechanisms.
 An active Dot with an enabled principal can run its saved draft in **Try it →
 Test chat** when the initiating member has current Write access. Its model and
 tools run under the Dot's explicit principal grants, without the member's
-credentials or personal context. Pauses are answered in that same private
+credentials or personal context. With Recall selected and granted, its
+bounded memory context includes its own notes and shared organization knowledge;
+its memory tools can change only its own notes. Pauses are answered in that same private
 chat; current membership and Write access are checked again when responding.
 
 Organization automated test suites, published conversations, delegation,

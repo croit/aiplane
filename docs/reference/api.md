@@ -159,7 +159,7 @@ Examples of its task families:
 | `/api/v0/memories*`, `/api/v0/tools*`, `/api/v0/integrations*`, `/api/v0/skills*` | Personal capabilities, connections and memories; [tools](../guide/tools-and-integrations.md). |
 | `/api/v0/scheduled*`, `/api/v0/webhooks*`, `/api/v0/inbox*` | Automation and durable decisions; [automation guide](../guide/automation-and-inbox.md). |
 | `/api/v0/agents*` | Agent drafts, grants, evaluation, publication and observation; agent guides. |
-| `/api/v0/dots*` | List/create/active-state require resolved `can_manage_dots`; owner-scoped access remains enforced. The four connection routes additionally admit organization member writers for explicit own-principal OAuth management; they return independent action capabilities and no user credential. Other routes remain personal. Personal Dot lifecycle, tool selection, tool/action approval rules, private chats, memory and activity; scheduled actions and webhooks can run as an owned Dot; [AIplane Dots](../dots.md). |
+| `/api/v0/dots*` | List/create/active-state require resolved `can_manage_dots`; owner-scoped access remains enforced. The four connection routes additionally admit organization member writers for explicit own-principal OAuth management; they return independent action capabilities and no user credential. The memory routes also admit organization member readers and writers through current membership and existing shares; shared-note writes additionally require gateway administration. Remaining routes retain personal ownership. Personal Dot lifecycle, tool selection, tool/action approval rules, private chats, memory and activity; scheduled actions and webhooks can run as an owned Dot; [AIplane Dots](../dots.md). |
 | `/api/v0/organizations*` | Current group-derived membership, organization details and named organization Dot creation/activation. Creation requires membership and agent-management permission; configuration uses existing agent shares and principal grants. Organization member writers can run private saved-draft conversations through the existing agent test routes; published and automated execution remain unavailable; [organization Dots](../dots-organizations.md). |
 | `/api/v0/rag*` | Knowledge collections, snapshots, indexing and profiles; [knowledge](../admin/knowledge.md). |
 | `/api/v0/admin/*` | Administrative models, grants, settings and catalogs; administration guides. |
@@ -223,6 +223,28 @@ current membership before including users. A search examines at most one
 thousand matching candidates. When more candidates remain at that boundary,
 `truncated` is `true`; narrow the query before relying on the result. Group
 suggestions contain the organization's actual bound groups.
+
+### Dot memory scopes
+
+`GET /api/v0/dots/{id}/memories` returns at most 500 merged notes and a
+`scopes` array with each actual scope's `scope`, configured `name` and current
+`writable` flag. Each note includes its `scope`. Personal Dots expose `dot`;
+organization Dots expose `dot` and `organization`. The server derives the
+organization from the target Dot, never from an input organization ID.
+
+POST and PUT require `{kind,content,scope}`; DELETE requires `?scope=dot` or
+`?scope=organization`. Missing or invalid scope returns 400. New and updated
+content is limited to 2,000 UTF-8 bytes; existing longer notes remain readable.
+Kinds are `preference`, `project` and `fact`.
+
+Organization reads require current membership, agent-management permission
+and effective Read or Write access to that Dot. Own-note changes require
+Write; shared organization-note changes also require current gateway
+administration rights. A narrowly shared writer receives 403 on shared
+mutation. Respond-only and nonmember recovery access expose no notes. The
+server rechecks authority and applies each operation in the same transaction;
+returned writable flags do not authorize a later request. Foreign note IDs
+return 404 without revealing content.
 
 ### Conversation events
 

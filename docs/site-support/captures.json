@@ -295,5 +295,18 @@
     "width": 2128,
     "height": 1262,
     "data": "Synthetic dev-ui fixture; actual organization member Writer without personal Dot management. Harald Draft's saved draft, real private TestChat answer and settled debug. Captured by spa-dots-organization-draft.test.mjs with DOCS_ORG_DOT_DRAFT_CAPTURE."
+  },
+  {
+    "file": "docs/img/guide/organization-dot-memory.png",
+    "route": "/agents/a42da407-e237-463b-9bf0-e626b271a290?tab=setup",
+    "selector": "details:has(> summary:text-is(\"Dot memory\"))",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2128,
+    "height": 1440,
+    "data": "Synthetic dev-ui fixture; actual Engineering organization Writer without personal Dot management. Existing memory editor shows Harald's editable Dot lesson and actual organization knowledge as read-only, after real scoped writes. Captured by spa-dots-organization-memory.test.mjs with DOCS_ORG_DOT_MEMORY_CAPTURE or DOTS_SCREENSHOT_DIR."
   }
 ]

@@ -14,6 +14,7 @@ use session_core::i18n::{Lang, t};
 use super::{bad_request, internal, json_error, json_ok, not_found, raw_path_segment};
 use aiplane_agents::db::agents::{self as agents_db, DotCreate};
 use aiplane_agents::db::dot_delegation::{self, ConsentDirection, ConsentEdit, ConsentSaved};
+use aiplane_agents::db::dot_memories::MemoryScope;
 use aiplane_agents::db::system_principals::NewPrincipal;
 use aiplane_runtime::agents::spec::AgentSpec;
 use aiplane_runtime::agents::spec::model::{ActionRule, Permission};
@@ -1322,9 +1323,34 @@ pub async fn create_session(State(state): State<Arc<RamaState>>, req: Request) -
     }
 }
 
+#[derive(Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DotMemoryScope {
+    Dot,
+    Organization,
+}
+
+impl DotMemoryScope {
+    fn parse(value: &str, lang: Lang) -> Result<Self, Response> {
+        match value {
+            "dot" => Ok(Self::Dot),
+            "organization" => Ok(Self::Organization),
+            _ => Err(bad_request(t(lang, "dot-memory-error-scope"))),
+        }
+    }
+}
+
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct DotMemoryList {
     pub memories: Vec<DotMemoryView>,
+    pub scopes: Vec<DotMemoryScopeView>,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct DotMemoryScopeView {
+    pub scope: DotMemoryScope,
+    pub name: String,
+    pub writable: bool,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -1333,14 +1359,19 @@ pub struct DotMemoryView {
     pub kind: &'static str,
     pub content: String,
     pub created_at: String,
+    pub scope: DotMemoryScope,
 }
 
-fn memory_view(memory: &aiplane_core::server::db::user_memories::Memory) -> DotMemoryView {
+fn memory_view(
+    memory: &aiplane_core::server::db::user_memories::Memory,
+    scope: DotMemoryScope,
+) -> DotMemoryView {
     DotMemoryView {
         id: memory.id.clone(),
         kind: memory.kind.as_str(),
         content: memory.content.clone(),
         created_at: memory.created_at.to_string(),
+        scope,
     }
 }
 
@@ -1348,41 +1379,225 @@ fn memory_view(memory: &aiplane_core::server::db::user_memories::Memory) -> DotM
 pub struct DotMemoryBody {
     pub kind: String,
     pub content: String,
+    pub scope: String,
 }
 
 fn parse_memory_body(
     body: DotMemoryBody,
-) -> Result<(aiplane_core::server::db::user_memories::MemoryKind, String), DotMemoryInputError> {
+    lang: Lang,
+) -> Result<
+    (
+        aiplane_core::server::db::user_memories::MemoryKind,
+        String,
+        DotMemoryScope,
+    ),
+    Response,
+> {
+    let scope = DotMemoryScope::parse(&body.scope, lang)?;
     let kind = aiplane_core::server::db::user_memories::MemoryKind::parse(&body.kind)
-        .ok_or(DotMemoryInputError::Kind)?;
+        .ok_or_else(|| bad_request(t(lang, "dot-memory-error-kind")))?;
     let content = body.content.trim().to_string();
     if content.is_empty() {
-        return Err(DotMemoryInputError::Empty);
+        return Err(bad_request(t(lang, "dot-memory-error-empty")));
     }
-    Ok((kind, content))
+    if content.len() > aiplane_agents::db::dot_memories::MAX_CONTENT_BYTES {
+        return Err(bad_request(t(lang, "dot-memory-error-byte-limit")));
+    }
+    Ok((kind, content, scope))
 }
 
-#[derive(Debug, Clone, Copy)]
-enum DotMemoryInputError {
-    Kind,
-    Empty,
+struct MemoryAuthority {
+    metadata: agents_db::DotMetadata,
+    writable: bool,
+    shared_writable: bool,
+    organization_name: Option<String>,
+}
+
+impl MemoryAuthority {
+    fn scope<'a>(
+        &'a self,
+        dot_id: &'a str,
+        scope: DotMemoryScope,
+        lang: Lang,
+    ) -> Result<MemoryScope<'a>, Response> {
+        match (scope, &self.metadata.owner) {
+            (DotMemoryScope::Dot, owner) => Ok(MemoryScope::Dot { owner, dot_id }),
+            (DotMemoryScope::Organization, agents_db::DotOwner::Organization(organization_id)) => {
+                Ok(MemoryScope::Organization { organization_id })
+            }
+            _ => Err(not_found(t(lang, "dot-error-not-found"))),
+        }
+    }
+
+    fn require_write(&self, scope: DotMemoryScope, lang: Lang) -> Result<(), Response> {
+        if !self.writable {
+            return Err(not_found(t(lang, "dot-error-not-found")));
+        }
+        if matches!(scope, DotMemoryScope::Organization) && !self.shared_writable {
+            if matches!(self.metadata.owner, agents_db::DotOwner::User(_)) {
+                return Err(not_found(t(lang, "dot-error-not-found")));
+            }
+            return Err(json_error(
+                StatusCode::FORBIDDEN,
+                "organization_memory_write_forbidden",
+                &t(lang, "dot-memory-error-shared-write"),
+            ));
+        }
+        Ok(())
+    }
+}
+
+async fn memory_authority_in(
+    state: &RamaState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    user_id: &str,
+    dot_id: &str,
+    lang: Lang,
+) -> Result<MemoryAuthority, Response> {
+    let metadata = agents_db::get_dot_metadata_in(tx, dot_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found(t(lang, "dot-error-not-found")))?;
+    let (user, policy) =
+        aiplane_runtime::agents::access::current_user_policy_in(state, tx, user_id)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| not_found(t(lang, "dot-error-not-found")))?;
+    match &metadata.owner {
+        agents_db::DotOwner::User(owner) if owner == &user.id => Ok(MemoryAuthority {
+            metadata,
+            writable: true,
+            shared_writable: false,
+            organization_name: None,
+        }),
+        agents_db::DotOwner::Organization(organization_id) => {
+            let access = aiplane_runtime::agents::access::organization_access_in(
+                state, tx, dot_id, &user.id,
+            )
+            .await
+            .map_err(internal)?;
+            if !matches!(
+                access,
+                Some(agents_db::Access::Read | agents_db::Access::Write)
+            ) {
+                return Err(not_found(t(lang, "dot-error-not-found")));
+            }
+            let organization = aiplane_agents::db::organizations::get_admin_in(tx, organization_id)
+                .await
+                .map_err(internal)?
+                .ok_or_else(|| not_found(t(lang, "dot-error-not-found")))?;
+            let writable = access == Some(agents_db::Access::Write);
+            let shared_writable = writable && policy.is_admin(&policy.role_ids_for(&user.roles));
+            Ok(MemoryAuthority {
+                metadata,
+                writable,
+                shared_writable,
+                organization_name: Some(organization.organization.name),
+            })
+        }
+        _ => Err(not_found(t(lang, "dot-error-not-found"))),
+    }
 }
 
 pub async fn memories_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     let Some(dot_id) = raw_path_segment(&req, 1) else {
-        return bad_request(t(Lang::from_request(req.headers()), "dot-error-id-missing"));
+        return bad_request(t(lang, "dot-error-id-missing"));
     };
-    match aiplane_agents::db::dot_memories::list(&state.db, &user.id, &dot_id, 500).await {
-        Ok(Some(memories)) => json_ok(
-            StatusCode::OK,
-            DotMemoryList {
-                memories: memories.iter().map(memory_view).collect(),
-            },
-        ),
-        Ok(None) => not_found(t(Lang::from_request(req.headers()), "dot-error-not-found")),
-        Err(error) => internal(error),
+    async {
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .map_err(internal)?;
+        let authority = memory_authority_in(&state, &mut tx, &user.id, &dot_id, lang).await?;
+        let rows = aiplane_agents::db::dot_memories::list_in(
+            &mut tx,
+            authority.scope(&dot_id, DotMemoryScope::Dot, lang)?,
+            500,
+        )
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found(t(lang, "dot-error-not-found")))?;
+        let mut memories: Vec<_> = rows
+            .into_iter()
+            .map(|row| (row, DotMemoryScope::Dot))
+            .collect();
+        let mut scopes = vec![DotMemoryScopeView {
+            scope: DotMemoryScope::Dot,
+            name: authority.metadata.name.clone(),
+            writable: authority.writable,
+        }];
+        if let Some(name) = &authority.organization_name {
+            let rows = aiplane_agents::db::dot_memories::list_in(
+                &mut tx,
+                authority.scope(&dot_id, DotMemoryScope::Organization, lang)?,
+                500,
+            )
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| not_found(t(lang, "dot-error-not-found")))?;
+            memories.extend(
+                rows.into_iter()
+                    .map(|row| (row, DotMemoryScope::Organization)),
+            );
+            scopes.push(DotMemoryScopeView {
+                scope: DotMemoryScope::Organization,
+                name: name.clone(),
+                writable: authority.shared_writable,
+            });
+        }
+        memories.sort_by(|a, b| {
+            b.0.created_at
+                .cmp(&a.0.created_at)
+                .then_with(|| a.0.id.cmp(&b.0.id))
+        });
+        memories.truncate(500);
+        let view = DotMemoryList {
+            memories: memories
+                .iter()
+                .map(|(row, scope)| memory_view(row, *scope))
+                .collect(),
+            scopes,
+        };
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(StatusCode::OK, view))
     }
+    .await
+    .unwrap_or_else(|response| response)
+}
+
+async fn save_memory(
+    state: &RamaState,
+    user_id: &str,
+    dot_id: &str,
+    memory_id: Option<&str>,
+    body: DotMemoryBody,
+    lang: Lang,
+) -> Result<Response, Response> {
+    let (kind, content, requested_scope) = parse_memory_body(body, lang)?;
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+        .await
+        .map_err(internal)?;
+    let authority = memory_authority_in(state, &mut tx, user_id, dot_id, lang).await?;
+    authority.require_write(requested_scope, lang)?;
+    let scope = authority.scope(dot_id, requested_scope, lang)?;
+    let memory = match memory_id {
+        Some(id) => {
+            aiplane_agents::db::dot_memories::update_in(&mut tx, scope, id, kind, &content).await
+        }
+        None => aiplane_agents::db::dot_memories::insert_in(&mut tx, scope, kind, &content).await,
+    }
+    .map_err(internal)?
+    .ok_or_else(|| not_found(t(lang, "dot-error-not-found")))?;
+    tx.commit().await.map_err(internal)?;
+    Ok(json_ok(
+        if memory_id.is_some() {
+            StatusCode::OK
+        } else {
+            StatusCode::CREATED
+        },
+        memory_view(&memory, requested_scope),
+    ))
 }
 
 pub async fn memories_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -1396,25 +1611,9 @@ pub async fn memories_create(State(state): State<Arc<RamaState>>, req: Request) 
         Ok(body) => body,
         Err(response) => return response,
     };
-    let (kind, content) = match parse_memory_body(body) {
-        Ok(value) => value,
-        Err(error) => {
-            return bad_request(t(
-                lang,
-                match error {
-                    DotMemoryInputError::Kind => "dot-memory-error-kind",
-                    DotMemoryInputError::Empty => "dot-memory-error-empty",
-                },
-            ));
-        }
-    };
-    match aiplane_agents::db::dot_memories::insert(&state.db, &user.id, &dot_id, kind, &content)
+    save_memory(&state, &user.id, &dot_id, None, body, lang)
         .await
-    {
-        Ok(Some(memory)) => json_ok(StatusCode::CREATED, memory_view(&memory)),
-        Ok(None) => not_found(t(lang, "dot-error-not-found")),
-        Err(error) => internal(error),
-    }
+        .unwrap_or_else(|response| response)
 }
 
 pub async fn memories_update(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -1429,27 +1628,9 @@ pub async fn memories_update(State(state): State<Arc<RamaState>>, req: Request) 
         Ok(body) => body,
         Err(response) => return response,
     };
-    let (kind, content) = match parse_memory_body(body) {
-        Ok(value) => value,
-        Err(error) => {
-            return bad_request(t(
-                lang,
-                match error {
-                    DotMemoryInputError::Kind => "dot-memory-error-kind",
-                    DotMemoryInputError::Empty => "dot-memory-error-empty",
-                },
-            ));
-        }
-    };
-    match aiplane_agents::db::dot_memories::update(
-        &state.db, &user.id, &dot_id, &memory_id, kind, &content,
-    )
-    .await
-    {
-        Ok(Some(memory)) => json_ok(StatusCode::OK, memory_view(&memory)),
-        Ok(None) => not_found(t(lang, "dot-error-not-found")),
-        Err(error) => internal(error),
-    }
+    save_memory(&state, &user.id, &dot_id, Some(&memory_id), body, lang)
+        .await
+        .unwrap_or_else(|response| response)
 }
 
 pub async fn memories_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -1459,14 +1640,40 @@ pub async fn memories_delete(State(state): State<Arc<RamaState>>, req: Request) 
     else {
         return bad_request(t(lang, "dot-memory-error-id-missing"));
     };
-    match aiplane_agents::db::dot_memories::delete(&state.db, &user.id, &dot_id, &memory_id).await {
-        Ok(true) => Response::builder()
-            .status(StatusCode::NO_CONTENT)
-            .body(rama::http::Body::empty())
-            .expect("static empty response"),
-        Ok(false) => not_found(t(lang, "dot-error-not-found")),
-        Err(error) => internal(error),
+    let scope = match super::query_map(&req)
+        .get("scope")
+        .map(|value| DotMemoryScope::parse(value, lang))
+    {
+        Some(Ok(scope)) => scope,
+        Some(Err(response)) => return response,
+        None => return bad_request(t(lang, "dot-memory-error-scope")),
+    };
+    async {
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .map_err(internal)?;
+        let authority = memory_authority_in(&state, &mut tx, &user.id, &dot_id, lang).await?;
+        authority.require_write(scope, lang)?;
+        if !aiplane_agents::db::dot_memories::delete_in(
+            &mut tx,
+            authority.scope(&dot_id, scope, lang)?,
+            &memory_id,
+        )
+        .await
+        .map_err(internal)?
+        {
+            return Err(not_found(t(lang, "dot-error-not-found")));
+        }
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(
+            Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .body(rama::http::Body::empty())
+                .expect("static empty response"),
+        )
     }
+    .await
+    .unwrap_or_else(|response| response)
 }
 
 pub async fn activity(State(state): State<Arc<RamaState>>, req: Request) -> Response {

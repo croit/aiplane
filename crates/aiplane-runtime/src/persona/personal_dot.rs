@@ -173,18 +173,24 @@ pub async fn context_for(
     else {
         return Ok(Some(PersonalDotContext::Unavailable));
     };
-    let memories = if crate::openai_driver::preferences_in_context(state, &user.roles, &user.id)
-        .await
-    {
-        let Some(memories) =
-            aiplane_agents::db::dot_memories::list(&state.db, &user.id, &link.dot_id, 40).await?
-        else {
-            return Ok(Some(PersonalDotContext::Unavailable));
+    let memories =
+        if crate::openai_driver::preferences_in_context(state, &user.roles, &user.id).await {
+            let Some(memories) = aiplane_agents::db::dot_memories::list(
+                &state.db,
+                aiplane_agents::db::dot_memories::MemoryScope::Dot {
+                    owner: &agents::DotOwner::User(user.id.clone()),
+                    dot_id: &link.dot_id,
+                },
+                40,
+            )
+            .await?
+            else {
+                return Ok(Some(PersonalDotContext::Unavailable));
+            };
+            memories
+        } else {
+            Vec::new()
         };
-        memories
-    } else {
-        Vec::new()
-    };
     if !tools_enabled {
         spec.main.tools.clear();
     }
@@ -241,29 +247,13 @@ fn bounded_resources(
     memories: Vec<aiplane_core::server::db::user_memories::Memory>,
     receivers: Vec<serde_json::Value>,
 ) -> serde_json::Value {
-    let mut resource =
-        serde_json::json!({"receivers": [], "omitted_receivers": receivers.len(), "memories": []});
-    for receiver in receivers {
-        resource["receivers"].as_array_mut().unwrap().push(receiver);
-        let omitted = resource["omitted_receivers"].as_u64().unwrap() - 1;
-        resource["omitted_receivers"] = serde_json::json!(omitted);
-        if resource.to_string().len() > 16_000 {
-            resource["receivers"].as_array_mut().unwrap().pop();
-            resource["omitted_receivers"] = serde_json::json!(omitted + 1);
-            break;
-        }
-    }
-    for memory in memories {
-        resource["memories"]
-            .as_array_mut()
-            .unwrap()
-            .push(serde_json::json!({"kind": memory.kind.as_str(), "content": memory.content}));
-        if resource.to_string().len() > 16_000 {
-            resource["memories"].as_array_mut().unwrap().pop();
-            break;
-        }
-    }
-    resource
+    crate::server::tools::memory::bounded_resources(
+        memories
+            .into_iter()
+            .map(|memory| serde_json::json!({"kind":memory.kind.as_str(),"content":memory.content}))
+            .collect(),
+        receivers,
+    )
 }
 
 #[cfg(test)]
@@ -403,9 +393,17 @@ mod tests {
                 .await
                 .unwrap()
         );
-        dot_memories::insert(&db, &user.id, &dot, MemoryKind::Fact, "Learned lesson")
-            .await
-            .unwrap();
+        dot_memories::insert(
+            &db,
+            dot_memories::MemoryScope::Dot {
+                owner: &agents::DotOwner::User(user.id.clone()),
+                dot_id: &dot,
+            },
+            MemoryKind::Fact,
+            "Learned lesson",
+        )
+        .await
+        .unwrap();
         let state = AppState::new(
             Default::default(),
             db.clone(),

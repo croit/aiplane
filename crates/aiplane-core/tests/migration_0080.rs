@@ -72,6 +72,51 @@ async fn organization_dot_ownership_is_exclusive_immutable_and_independent_of_cr
 }
 
 #[tokio::test]
+async fn dot_memory_scopes_are_exclusive_and_reject_missing_owners() {
+    let pool = open(Path::new(":memory:")).await.unwrap();
+    pool.execute("INSERT INTO organizations(id,name,description,revision,created_by,created_at,updated_at) VALUES('acme','Acme','','initial','creator','2026-01-01','2026-01-01')").await.unwrap();
+    pool.execute("INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES('dot','dot','Dot','creator','2026-01-01')").await.unwrap();
+    pool.execute("INSERT INTO agents(principal_id,draft_spec,created_at,updated_at) VALUES('dot','{}','2026-01-01','2026-01-01')").await.unwrap();
+    pool.execute("INSERT INTO dots(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('dot',NULL,'acme','Dot','2026-01-01','2026-01-01')").await.unwrap();
+
+    for (dot, organization) in [
+        (None, None),
+        (Some("dot"), Some("acme")),
+        (Some("missing"), None),
+        (None, Some("missing")),
+    ] {
+        assert!(sqlx::query("INSERT INTO dot_memories(id,dot_id,organization_id,kind,content,created_at,updated_at) VALUES('invalid',?,?,'fact','Note','2026-01-01','2026-01-01')")
+            .bind(dot).bind(organization).execute(&pool).await.is_err());
+    }
+    for (id, dot, organization) in [("own", Some("dot"), None), ("shared", None, Some("acme"))] {
+        sqlx::query("INSERT INTO dot_memories(id,dot_id,organization_id,kind,content,created_at,updated_at) VALUES(?,?,?,'fact','Same content','2026-01-01','2026-01-01')")
+            .bind(id).bind(dot).bind(organization).execute(&pool).await.unwrap();
+    }
+    assert!(
+        pool.execute("UPDATE dot_memories SET organization_id='acme' WHERE id='own'")
+            .await
+            .is_err()
+    );
+    assert!(
+        pool.execute("UPDATE dot_memories SET organization_id=NULL WHERE id='shared'")
+            .await
+            .is_err()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dot_memories")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn organization_dot_schema_matches_its_fixture() {
     let pool = open(Path::new(":memory:")).await.unwrap();
     let rows = sqlx::query(
@@ -83,13 +128,16 @@ async fn organization_dot_schema_matches_its_fixture() {
              'organization_groups_rotate_revision_after_insert',
              'organization_groups_rotate_revision_after_delete',
              'organization_groups_reject_update',
-             'personal_dots_delete_principals_before_owner_delete')
+             'personal_dots_delete_principals_before_owner_delete',
+             'dot_memories', 'idx_dot_memories_dot_content',
+             'idx_dot_memories_organization_content', 'idx_dot_memories_dot_created',
+             'idx_dot_memories_organization_created')
          ORDER BY type, name",
     )
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(rows.len(), 13);
+    assert_eq!(rows.len(), 18);
     let actual = rows
         .iter()
         .map(|row| {
