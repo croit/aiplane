@@ -59,6 +59,29 @@ Open `/inbox` to review pending requests visible to your account. The navigation
 
 The card only offers decisions the server permits. Expiry information appears when the request has an expiry. If another person already settled it or it expired, the page reports that state and refreshes; your later click does not replace the earlier decision. Sensitive-value requests can use a password field rather than a visible text area.
 
+## Configure a personal Dot's tool access
+
+Open `/dots` and expand **Access and approvals** on your Dot's card. Search
+the tools available to your account, select each action the Dot may use, and
+choose **Allow** or **Ask before each call**. Save your changes. Unselected
+tools are denied. Tool IDs distinguish actions that share a capability title.
+The account label identifies the current user or shared connector account;
+a connector configured to ask still asks when the Dot rule is Allow.
+
+New Dots select the existing memory tools when available to your account.
+Memory writes belong to that Dot; user-wide memory remains read-only context.
+Read-only tools default to Allow when you select them. Writes and tools with
+unknown effects default to Ask before each call; you can adjust their rule
+within your existing rights.
+
+An approval request pauses the Dot chat and appears in chat and Inbox. Approve
+once permits only that call's recorded arguments. Current permissions and Dot
+availability are checked again before execution; removing a selected tool or
+disabling it in your account prevents a pending approval from running it.
+An inactive Dot retains its data and conversations while its pending turns
+remain paused. Personal Dot schedules, webhook setup and separate connector
+identities are not available in this slice.
+
 ## Troubleshooting
 
 - **No upcoming schedule run:** inspect the cron expression, selected weekdays and timezone preview.

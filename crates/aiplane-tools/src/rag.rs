@@ -52,6 +52,10 @@ impl RagListCollections {
 }
 
 impl Tool for RagListCollections {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "rag_list_collections"
     }
@@ -219,6 +223,10 @@ const AGGREGATE_TOP_K_DEFAULT: u32 = 12;
 const TOP_K_MAX: u32 = 25;
 
 impl Tool for RagSearch {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "rag_search"
     }
@@ -432,6 +440,10 @@ const GREP_MAX_CHUNKS: usize = 50_000;
 const GREP_TIME_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl Tool for RagGrep {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "rag_grep"
     }

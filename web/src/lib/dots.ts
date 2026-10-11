@@ -1,14 +1,42 @@
-import { request } from './api.js';
-import type { Dot } from './dot-state.js';
+import { request } from './api.ts';
+import type { Dot } from './dot-state.ts';
 import type { ActivityPage } from './agent-activity.js';
 import type { Memory, MemoryKind } from './memory.js';
-export { activeDotCount, canCreateDot } from './dot-state.js';
-export type { Dot } from './dot-state.js';
+export { activeDotCount, canCreateDot } from './dot-state.ts';
+export type { Dot } from './dot-state.ts';
 
 export interface DotList {
 	dots: Dot[];
 	active_limit: number;
 }
+
+export type DotToolPermission = 'always_allow' | 'always_ask';
+
+export interface DotAccessTool {
+	id: string;
+	label: string;
+	description: string;
+	selected: boolean;
+	permission: DotToolPermission;
+	read_only: boolean;
+	identity: 'builtin' | 'user' | 'shared';
+	connector_key: string | null;
+	connector_mode: 'always' | 'ask' | 'off' | null;
+}
+
+export interface DotAccess {
+	tools: DotAccessTool[];
+}
+
+export const dotAccessApi = {
+	load: (dotId: string) => request<DotAccess>(`/api/v0/dots/${encodeURIComponent(dotId)}/access`),
+	save: (dotId: string, tools: { id: string; permission: DotToolPermission }[]) =>
+		request<DotAccess>(`/api/v0/dots/${encodeURIComponent(dotId)}/access`, {
+			method: 'PUT',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ tools })
+		})
+};
 
 export const dotsApi = {
 	list: () => request<DotList>('/api/v0/dots'),

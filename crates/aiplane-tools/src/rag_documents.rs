@@ -182,6 +182,10 @@ struct QueryArgs {
 }
 
 impl Tool for RagQueryDocuments {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "rag_query_documents"
     }
@@ -421,6 +425,10 @@ struct ListArgs {
 }
 
 impl Tool for RagListDocuments {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "rag_list_documents"
     }
@@ -522,6 +530,10 @@ struct FetchArgs {
 const DEFAULT_MAX_CHARS: usize = 20_000;
 
 impl Tool for RagFetchDocument {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "rag_fetch_document"
     }

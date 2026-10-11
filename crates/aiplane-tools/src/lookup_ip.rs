@@ -33,6 +33,10 @@ struct Args {
 }
 
 impl Tool for LookupIp {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "lookup_ip"
     }

@@ -170,6 +170,181 @@ pub(crate) async fn boot_with(
 
 const AN_HOUR: Duration = Duration::from_secs(3600);
 
+#[derive(Clone, Copy)]
+enum DotResumeCase {
+    ApproveAfterRestart,
+    Deny,
+    SelectionRevoked,
+    UserToolDisabled,
+}
+
+async fn dot_memory_approval(case: DotResumeCase) {
+    use aiplane_agents::db::{agents, dot_memories, dot_sessions, system_principals};
+    use aiplane_tools::memory::Remember;
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("dots.db");
+    let server = upstream_calling(
+        tool_call(
+            "remember",
+            json!({"content": "Private approved lesson", "kind": "fact"}),
+        ),
+        "Done.",
+        Duration::ZERO,
+    )
+    .await;
+    let mut state = boot_with(
+        &db_path,
+        &server.uri(),
+        ToolRegistry::new().with(Remember),
+        &["remember"],
+    )
+    .await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let (_, dot) = agents::create_personal_dot(
+        &state.db,
+        &system_principals::NewPrincipal { name: "approval-dot", display: "Approval Dot", description: "" },
+        r#"{"main":{"tools":["remember"],"tool_resources":{"remember":{"permission":"always_ask"}}}}"#,
+        "alice", 4,
+    ).await.unwrap();
+    let dot_id = dot.unwrap().principal.id;
+    let session_id = conversation(&state).await;
+    assert!(
+        dot_sessions::link(&state.db, "alice", &dot_id, &session_id)
+            .await
+            .unwrap()
+    );
+    let turn_id = submit(&state, &cookie, &session_id).await;
+    let paused = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Suspended).await;
+    assert!(paused.suspension.is_some());
+    assert!(
+        dot_memories::list(&state.db, "alice", &dot_id, 10)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+    let app = router(state.clone());
+    let inbox = json_body(
+        app.serve(get("/api/v0/agents/inbox".into(), &cookie))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let item = inbox["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["turn_id"] == turn_id)
+        .unwrap();
+    assert_eq!(item["call"]["name"], "remember");
+    let request_id = item["id"].as_str().unwrap().to_string();
+    let bob = common::seed_session(&state, "bob", "bob@example.com").await;
+    let other_inbox = json_body(
+        app.serve(get("/api/v0/agents/inbox".into(), &bob))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(other_inbox["items"].as_array().unwrap().is_empty());
+    match case {
+        DotResumeCase::ApproveAfterRestart => {
+            state = boot_with(
+                &db_path,
+                &server.uri(),
+                ToolRegistry::new().with(Remember),
+                &["remember"],
+            )
+            .await;
+        }
+        DotResumeCase::SelectionRevoked => {
+            agents::update_draft(
+                &state.db,
+                &dot_id,
+                r#"{"main":{"tools":[]}}"#,
+                "alice",
+                agents::DraftChange::default(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        }
+        DotResumeCase::UserToolDisabled => {
+            db::user_tool_prefs::set(&state.db, "alice", "memory", false)
+                .await
+                .unwrap();
+        }
+        DotResumeCase::Deny => {}
+    }
+    let decision = if matches!(case, DotResumeCase::Deny) {
+        "deny"
+    } else {
+        "allow_once"
+    };
+    let (status, body) = if matches!(case, DotResumeCase::ApproveAfterRestart) {
+        let response = router(state.clone())
+            .serve(post(
+                format!("/api/v0/agents/inbox/{request_id}/answer"),
+                &cookie,
+                json!({"decision": decision}),
+            ))
+            .await
+            .unwrap();
+        (response.status(), json_body(response).await)
+    } else {
+        resume(
+            &state,
+            &cookie,
+            &session_id,
+            &turn_id,
+            json!({"decision": decision}),
+        )
+        .await
+    };
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let done = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Completed).await;
+    let memories = dot_memories::list(&state.db, "alice", &dot_id, 10)
+        .await
+        .unwrap()
+        .unwrap();
+    if matches!(case, DotResumeCase::ApproveAfterRestart) {
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].content, "Private approved lesson");
+        assert_eq!(done.tool_calls[0].status, ToolCallStatus::Completed);
+    } else {
+        assert!(
+            memories.is_empty(),
+            "a denied or revoked call must not write"
+        );
+        assert_eq!(done.tool_calls[0].status, ToolCallStatus::Errored);
+    }
+    assert!(
+        db::user_memories::list_for_user(&state.db, "alice", 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn personal_dot_approval_survives_restart_and_writes_only_its_memory() {
+    dot_memory_approval(DotResumeCase::ApproveAfterRestart).await;
+}
+
+#[tokio::test]
+async fn personal_dot_denial_never_writes_memory() {
+    dot_memory_approval(DotResumeCase::Deny).await;
+}
+
+#[tokio::test]
+async fn personal_dot_resume_rechecks_its_selected_tools() {
+    dot_memory_approval(DotResumeCase::SelectionRevoked).await;
+}
+
+#[tokio::test]
+async fn personal_dot_resume_rechecks_the_users_enabled_tools() {
+    dot_memory_approval(DotResumeCase::UserToolDisabled).await;
+}
+
 pub(crate) fn post(uri: String, cookie: &str, body: Value) -> Request {
     common::post_json(&uri, cookie, &body.to_string())
 }

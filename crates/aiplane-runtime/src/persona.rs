@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! A built-in chat persona: a person's conversation run on a fixed system
-//! prompt and a small set of its own tools, in place of the person's chat
-//! tools (`docs/agent-builder.md` → "Agent architect"; the agent architect is the
-//! one persona today).
+//! A person's conversation with a persona's system prompt and tool surface.
+//! Built-in personas provide their own tools; personal Dots select from the
+//! owner's granted tools and revalidate access before each invocation.
 //!
 //! The turn is still the person's: their pools, budget, usage and history.
 //! Only what the model is told and offered changes, which is why it is a
@@ -15,12 +14,18 @@
 
 use std::sync::Arc;
 
-use crate::server::tools::ToolSource;
+mod live;
+
+use crate::agents::approval::Permissions;
+use crate::agents::spec::AgentSpec;
+use crate::server::tools::{GrantedToolSource, Tool, ToolSource};
+use shared::api::ToolDef;
 
 pub struct ChatPersona {
     instructions: String,
     tools: Arc<dyn ToolSource>,
     user_context: bool,
+    access: Option<(Vec<String>, Permissions)>,
 }
 
 impl ChatPersona {
@@ -29,12 +34,48 @@ impl ChatPersona {
             instructions: instructions.into(),
             tools,
             user_context: false,
+            access: None,
         }
     }
 
     pub fn with_user_context(mut self) -> Self {
         self.user_context = true;
         self
+    }
+
+    pub fn with_tool_access(mut self, spec: &AgentSpec) -> Self {
+        self.access = Some((spec.main.tools.clone(), Permissions::from_spec(spec)));
+        self
+    }
+
+    pub(crate) fn source<'a>(
+        &'a self,
+        granted: &'a dyn ToolSource,
+        state: Option<&Arc<crate::server::AppState>>,
+    ) -> PersonaToolSource<'a> {
+        match &self.access {
+            Some((selected, permissions)) => PersonaToolSource {
+                source: GrantedToolSource::new(granted, selected.iter().cloned()),
+                permissions: Some(permissions),
+                state: state.cloned(),
+            },
+            None => PersonaToolSource {
+                source: GrantedToolSource::new(self.tools(), self.offer()),
+                permissions: None,
+                state: None,
+            },
+        }
+    }
+
+    pub(crate) fn offered(&self, granted: &[String]) -> Vec<String> {
+        match &self.access {
+            Some((selected, _)) => selected
+                .iter()
+                .filter(|id| granted.contains(id))
+                .cloned()
+                .collect(),
+            None => self.offer(),
+        }
     }
 
     /// What the system message says after the turn-discipline rule.
@@ -54,6 +95,37 @@ impl ChatPersona {
     /// Every tool of the persona, offered on every round, in a stable order.
     pub fn offer(&self) -> Vec<String> {
         let mut ids = self.tools.ids();
+        ids.sort();
+        ids
+    }
+}
+
+pub(crate) struct PersonaToolSource<'a> {
+    source: GrantedToolSource<'a>,
+    permissions: Option<&'a Permissions>,
+    state: Option<Arc<crate::server::AppState>>,
+}
+
+impl ToolSource for PersonaToolSource<'_> {
+    fn get(&self, id: &str) -> Option<Arc<dyn Tool>> {
+        self.source.get(id).map(|tool| match self.permissions {
+            Some(permissions) => match &self.state {
+                Some(state) => Arc::new(live::LivePersonalDotTool {
+                    state: state.clone(),
+                    initial: tool,
+                }),
+                None => permissions.gate_personal_dot(tool),
+            },
+            None => tool,
+        })
+    }
+
+    fn defs_for(&self, allowed: &[String]) -> Vec<ToolDef> {
+        self.source.defs_for(allowed)
+    }
+
+    fn ids(&self) -> Vec<String> {
+        let mut ids = self.source.ids();
         ids.sort();
         ids
     }
@@ -84,5 +156,73 @@ mod tests {
         let persona = ChatPersona::new("You are a personal Dot.", Arc::new(ToolRegistry::new()))
             .with_user_context();
         assert!(persona.includes_user_context());
+    }
+
+    #[test]
+    fn personal_dot_selection_intersects_the_current_granted_source() {
+        use crate::agents::spec::AgentSpec;
+        use crate::server::tools::GrantedToolSource;
+        let spec = AgentSpec::from_value(&serde_json::json!({"main": {
+            "tools": ["company_echo", "get_current_timestamp"]
+        }}))
+        .unwrap();
+        let persona =
+            ChatPersona::new("Dot", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
+        let registry = ToolRegistry::new().with(Echo).with(CurrentTimestamp);
+        let granted = GrantedToolSource::new(&registry, ["company_echo".to_string()]);
+        let source = persona.source(&granted, None);
+        assert_eq!(source.ids(), ["company_echo"]);
+        assert!(source.get("company_echo").is_some());
+        assert!(source.get("get_current_timestamp").is_none());
+        assert_eq!(source.defs_for(&spec.main.tools).len(), 1);
+        let revoked = GrantedToolSource::new(&registry, []);
+        assert!(persona.source(&revoked, None).ids().is_empty());
+    }
+
+    #[test]
+    fn personal_dot_with_empty_selection_has_no_tools() {
+        let persona = ChatPersona::new("Dot", Arc::new(ToolRegistry::new().with(Echo)))
+            .with_tool_access(crate::agents::spec::AgentSpec::empty());
+        let registry = ToolRegistry::new().with(Echo);
+        let source = persona.source(&registry, None);
+        assert!(source.ids().is_empty());
+        assert!(source.get("company_echo").is_none());
+        assert!(source.defs_for(&["company_echo".into()]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn personal_dot_unknown_tool_asks_and_explicit_allow_runs() {
+        use crate::agents::spec::AgentSpec;
+        use crate::server::tools::ToolContext;
+        use crate::suspend::{Suspend, extract_suspend};
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let ctx = ToolContext {
+            suspend: Suspend::Available,
+            ..ToolContext::for_test(db)
+        };
+        let registry = ToolRegistry::new().with(Echo);
+        for (permission, asks) in [
+            (serde_json::Value::Null, true),
+            (serde_json::json!("always_allow"), false),
+            (serde_json::json!("always_ask"), true),
+        ] {
+            let spec = AgentSpec::from_value(&serde_json::json!({"main": {
+                "tools": ["company_echo"],
+                "tool_resources": {"company_echo": {"permission": permission}}
+            }}))
+            .unwrap();
+            let persona =
+                ChatPersona::new("Dot", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
+            let body = persona
+                .source(&registry, None)
+                .get("company_echo")
+                .unwrap()
+                .run(ctx.clone(), serde_json::json!({"message": "hello"}))
+                .await
+                .unwrap();
+            assert_eq!(extract_suspend(&body).is_some(), asks);
+        }
     }
 }

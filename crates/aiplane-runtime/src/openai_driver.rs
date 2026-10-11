@@ -1156,17 +1156,34 @@ async fn run_one_turn(
     let every_tool =
         crate::server::tools::mcp::manager::CompositeToolSource::new(tools.as_ref(), &user_mcp)
             .with_comfyui(comfyui.as_ref());
-    let granted = d
+    let mut granted = d
         .state
         .granted_tool_ids(&d.tool_ctx.principal, &user_mcp)
         .await;
+    if d.tool_ctx.personal_dot.is_some() {
+        let disabled = aiplane_core::server::db::user_tool_prefs::disabled_for_user(
+            &d.state.db,
+            d.tool_ctx.principal.subject_id(),
+        )
+        .await
+        .map_err(|error| TurnError::Upstream {
+            message: format!("Could not load the personal Dot owner's tool settings: {error}. Retry the turn after the database is available."),
+        })?;
+        crate::server::tools::catalog::retain_enabled(&mut granted, &disabled);
+    }
     let granted_source =
         crate::server::tools::GrantedToolSource::new(&every_tool, granted.iter().cloned());
     // An agent run's synthetic tools are no grant: they sit over the
     // grant-narrowed source, never inside it.
-    let tool_source = policy.tool_source(&granted_source);
+    let live_state = Arc::new((**d.state).clone());
+    let tool_source = policy.tool_source(&granted_source, &live_state);
+    let context_grants = if d.tool_ctx.personal_dot.is_some() {
+        tool_source.ids()
+    } else {
+        granted.clone()
+    };
     let tool_ctx = ToolContext {
-        granted_tools: Some(Arc::new(granted.iter().cloned().collect())),
+        granted_tools: Some(Arc::new(context_grants.into_iter().collect())),
         ..d.tool_ctx.clone()
     };
 

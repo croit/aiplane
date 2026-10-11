@@ -839,6 +839,10 @@ impl Tool for AuditedTool {
         self.inner.changes_state()
     }
 
+    fn read_only(&self) -> bool {
+        self.inner.read_only()
+    }
+
     fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         let db = self.db.clone();
         let connector = self.connector_key.clone();
@@ -905,6 +909,10 @@ impl Tool for SensitiveArgs {
 
     fn changes_state(&self) -> bool {
         self.0.changes_state()
+    }
+
+    fn read_only(&self) -> bool {
+        self.0.read_only()
     }
 
     fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {

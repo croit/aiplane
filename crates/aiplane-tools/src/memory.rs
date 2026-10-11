@@ -195,6 +195,10 @@ impl Tool for Remember {
 pub struct Recall;
 
 impl Tool for Recall {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "recall"
     }
@@ -244,7 +248,7 @@ impl Tool for Recall {
                         })?;
                 rows.extend(dot_rows.into_iter().map(|memory| (memory, "dot")));
             }
-            rows.sort_by(|(a, _), (b, _)| b.created_at.cmp(&a.created_at));
+            rows.sort_by_key(|(memory, _)| std::cmp::Reverse(memory.created_at));
             rows.truncate(MAX_RECALL_LIMIT as usize);
             let memories: Vec<Value> = rows
                 .into_iter()

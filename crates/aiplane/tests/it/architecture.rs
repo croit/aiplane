@@ -813,6 +813,10 @@ const DISPATCHERS: &[(Allowed, Option<&str>)] = &[
 /// Who may call `Tool::run` directly rather than through the runner.
 const DIRECT_TOOL_RUNS: &[Allowed] = &[
     Allowed {
+        path: "aiplane-runtime/src/persona/live.rs",
+        why: "a personal Dot wrapper reloads owner grants, active selection and approval rules before dispatch through GrantedToolSource",
+    },
+    Allowed {
         path: "aiplane-runtime/src/server/tools/runner.rs",
         why: "the runner, after resolving the call through the round's source",
     },
@@ -837,6 +841,42 @@ const DIRECT_TOOL_RUNS: &[Allowed] = &[
         why: "a connector verifier resolves through the principal's grant-bounded MCP layer",
     },
 ];
+
+#[test]
+fn personal_dot_calls_revalidate_access_before_execution() {
+    let source = production_sources()
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/persona/live.rs")
+        .expect("the personal Dot dispatch wrapper must exist");
+    for mechanism in [
+        "users::find_by_id",
+        "agents::get_personal_dot",
+        "dot.active",
+        "spec.main.tools",
+        "GrantedToolSource::new",
+        "gate_personal_dot",
+    ] {
+        assert!(
+            source.code.contains(mechanism),
+            "personal Dot dispatch must keep {mechanism} before executing a tool"
+        );
+    }
+    let wrapping = scan(&["LivePersonalDotTool {"], |source| source.code.as_str());
+    assert_within(
+        "Only the grant-filtered personal Dot source may wrap a tool for live dispatch.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/persona.rs",
+                why: "the persona's selected source wraps an initially granted tool",
+            },
+            Allowed {
+                path: "aiplane-runtime/src/persona/live.rs",
+                why: "the wrapper type and its Tool implementation",
+            },
+        ],
+        &wrapping,
+    );
+}
 
 /// `.run(<context>, …)`: a `Tool::run` call, told from other `run` methods
 /// by its first argument being a tool context.
@@ -949,6 +989,10 @@ const ACTIVITY_LOG_WRITERS: &[Allowed] = &[
     Allowed {
         path: "aiplane-agents/src/db/agent_channels.rs",
         why: "notification channels created and deleted",
+    },
+    Allowed {
+        path: "aiplane-agents/src/db/dot_sessions.rs",
+        why: "private Dot session binding and its event share one write transaction",
     },
     Allowed {
         path: "aiplane-runtime/src/agents/audit.rs",

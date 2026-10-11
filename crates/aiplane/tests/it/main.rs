@@ -33,6 +33,7 @@ mod cors;
 #[cfg(debug_assertions)]
 mod dev_seed;
 mod docs_current;
+mod dot_access;
 mod embed;
 mod feedback_extract;
 mod healthz;

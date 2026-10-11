@@ -108,6 +108,10 @@ impl Tool for AskFirst {
     fn changes_state(&self) -> bool {
         self.inner.changes_state()
     }
+
+    fn read_only(&self) -> bool {
+        self.inner.read_only()
+    }
 }
 
 #[cfg(test)]

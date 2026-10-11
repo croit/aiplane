@@ -162,8 +162,8 @@ pub struct ToolContext {
     /// tool needing it must ask for it explicitly or refuse.
     pub model: Option<String>,
     /// Whether this call may pause its turn for a decision from outside the
-    /// model, or what was decided if it is running again after one. Only the
-    /// interactive chat path can pause. See [`crate::suspend`].
+    /// model, or what was decided if it is running again after one. Persisted
+    /// interactive and headless turns can pause. See [`crate::suspend`].
     pub suspend: crate::suspend::Suspend,
     /// The tool ids the acting principal is granted, resolved once per chat
     /// turn by the driver. `enable_tools` refuses a key that none of them
@@ -528,6 +528,12 @@ pub trait Tool: Send + Sync + 'static {
     /// is known about it. An agent asks for approval before such a call
     /// unless its spec sets the tool's `permission` (`docs/agent-hil.md` → "Per-tool approval").
     fn changes_state(&self) -> bool {
+        false
+    }
+
+    /// Positive read-only metadata for autonomous personal Dot calls. Unknown
+    /// tools require approval unless the owner's spec permits them explicitly.
+    fn read_only(&self) -> bool {
         false
     }
 }

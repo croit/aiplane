@@ -62,6 +62,7 @@ mod a2a;
 pub mod model;
 mod route_kinds;
 pub mod secrets;
+pub mod tool_access;
 mod verifiers;
 use super::state::StateSchema;
 use crate::finish::FinishContract;

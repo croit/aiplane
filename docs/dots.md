@@ -2,7 +2,8 @@
 
 Status: implementation in progress; personal Dot ownership, active lifecycle,
 the first web management page, manually managed Dot memory, recent activity,
-owner-scoped memory/activity APIs, and private Dot chat sessions are implemented.
+owner-scoped memory/activity APIs, private Dot chat sessions, and personal
+tool selection with durable approvals are implemented.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -21,15 +22,18 @@ decision and status, but not arguments or tool results.
 Dot memory has a separate store and owner-scoped API, but automatic memory
 curation is not implemented. A personal Dot can start a private chat that
 reads bounded Dot memory and the user's existing profile context. Its chat
-exposes only the existing memory tools when the user's memory capability is
-granted and enabled; external and MCP tools remain unavailable until action
-policy is implemented. There is no background execution yet.
+uses the tools selected in its Access and approvals panel, intersected with
+the user's current grants, enabled settings and connected MCP tools. Existing
+memory tools are selected at creation when granted and enabled; their writes
+remain isolated to the Dot. There is no Dot background execution yet.
 
 | Endpoint | Behavior |
 |---|---|
 | `GET /api/v0/dots` | Lists only the signed-in user's personal Dots, including inactive ones, and returns the active limit. |
 | `POST /api/v0/dots` | Creates a named personal Dot if the user has an active slot. |
 | `PUT /api/v0/dots/{id}/active` | Activates or deactivates an owned Dot; activation rechecks capacity transactionally. |
+| `GET /api/v0/dots/{id}/access` | Returns the owned Dot's tool selection and approval rules together with the user's current available catalog. |
+| `PUT /api/v0/dots/{id}/access` | Replaces the owned Dot's selected tools and their approval rules, retaining other agent spec fields. |
 | `GET /api/v0/dots/{id}/memories` | Lists the owned Dot's memories. |
 | `POST /api/v0/dots/{id}/memories` | Creates or reclassifies a Dot memory (`preference`, `project`, `fact`). |
 | `PUT /api/v0/dots/{id}/memories/{memory_id}` | Updates an owned Dot memory. |
@@ -39,24 +43,44 @@ policy is implemented. There is no background execution yet.
 
 Lifecycle routes require `can_manage_agents` today. Creation and active-state
 changes are recorded through the existing agent activity chain. The Dot
-principal starts without grants; personal user grants are not yet available to
-its run path. Lowering the configured active cap does not deactivate existing
+principal starts without independent grants; personal execution uses the
+owner's effective authority. Lowering the configured active cap does not deactivate existing
 Dots; creation and reactivation remain blocked until the owner is below the
 new cap. Dot memories are separate from `user_memories`, reuse its kinds and
 duplicate handling, and can be managed under `/api/v0/dots/{id}/memories`.
-a Dot chat session reads bounded Dot memory and the user's existing profile
-context. It exposes only `remember`, `recall`, `update_memory` and `forget`,
-subject to the user's existing memory grant and setting. Writes go to that
+A Dot chat session reads bounded Dot memory and the user's existing profile
+context. The memory tools `remember`, `recall`, `update_memory` and `forget`
+follow the selected Dot rules and the user's memory grant and setting. Writes go to that
 Dot's own store; recall returns both Dot and user memories with explicit
-scopes, and user-wide memory is read-only from a Dot chat. Other tools remain
-unavailable until action policy is implemented. Deactivating
+scopes, and user-wide memory is read-only from a Dot chat. Selected core and
+MCP tools act under the owner account and existing connector mode. Deactivating
 a Dot preserves its existing sessions but blocks new sessions and new turns;
 existing pending Dot turns remain paused while the Dot is inactive. The `/dots`
 page displays active usage against the operator limit, creates a personal Dot
 with a friendly name, starts a private chat, and lets the owner deactivate or
 reactivate it. A deactivated Dot stays in the list and can be reactivated when
-a slot is available. The page does not yet offer permission rules, connector
-selection, background run setup or organisation-owned Dots.
+a slot is available. The Access and approvals disclosure offers selected tools
+with `Allow` or `Ask before each call`; unselected tools are denied. Connector
+account labels identify the existing user or shared connection. Dot-owned
+connector identities, background run setup and organisation-owned Dots remain
+unimplemented.
+
+Access changes reuse the agent's draft spec, revisions and audited save path.
+The API accepts `{"tools":[{"id":"search_web","permission":"always_allow"}]}`;
+an empty list denies every tool. Duplicate IDs, unavailable tools and unknown
+permissions are rejected. Only the owner can read or update these settings,
+including while the Dot is inactive. Tool labels and descriptions use the
+existing catalog and live tool schemas; actual IDs distinguish actions within
+a grouped capability. A read-only declaration defaults to Allow; writes and
+unknown effects default to Ask before each call. Explicit rules may narrow or
+permit an action within the owner's existing authority. A connector's own
+Ask mode continues to require approval even when the Dot rule is Allow.
+
+AskFirst persists a suspended call in the existing chat approval system. The
+owner can approve once or deny in chat or Inbox. Approval refers to the original
+arguments; resumption reloads Dot selection, current user grants, enabled
+settings and connected tools. Revoked selections and disabled tools cannot
+execute on an old approval. Dot deactivation leaves pending calls paused.
 
 ## Product goal
 
@@ -169,7 +193,7 @@ The current code establishes these reuse points and the remaining runtime seam:
 |---|---|---|
 | Resolve the signed-in user's current tool ceiling | `AppState::allowed_tools_for_session`, `UserMcpLayer`, and `CompositeToolSource` | Resolve the ceiling on each Dot turn and compose only the connectors selected for that Dot. Do not treat a tool name from the model as a grant. |
 | Store a Dot's tool allowlist and approval settings | The Dot already has an `agents.draft_spec`; `AgentSpec.main.tools` and `main.tool_resources` represent tool selection and per-tool permission | Add an owner-scoped update/read path that validates against the user's current grants. The ordinary agent spec validator assumes grants belong to the agent principal, so it cannot be called with the Dot's empty principal grants unchanged. Do not add a parallel action-policy table. |
-| Enforce tool rules before execution | `Agents::profile::RunToolSource` and `Permissions::gate` reuse `AskFirst` for agent runs | Add a tested Dot source/policy seam that filters against both owner grants and Dot selection, then applies the existing approval wrapper. The current `TurnPolicy::Persona` returns only persona tools and drops the dynamic user/MCP source. |
+| Enforce tool rules before execution | `RunToolSource`, `GrantedToolSource`, `Permissions` and `AskFirst` | `ChatPersona::with_tool_access` narrows the dynamic user/MCP source. `LivePersonalDotTool` reloads active ownership, current user roles, selected rules, enabled settings and the actual connected tool before each invocation, then applies the existing approval wrapper. Current access also intersects the turn's initial grant ceiling. |
 | Pause and resume a decision | `chat_turn_suspensions`, `AskFirst`, the user Inbox, and `resume_turn` | The chat resume path reloads the session's `personal_dot_sessions` link before constructing the driver. Keep that resolution and re-check the live owner grant and Dot rule when resuming. |
 | Attribute tool activity | `agent_audit` and the personal-Dot attribution on `ToolContext` | Already records the acting user, Dot, tool, decision and outcome for personal Dot calls. Extend it with connector identity when per-Dot connector credentials are available. |
 
@@ -423,9 +447,9 @@ Selecting Chat creates a private session owned by the signed-in user, associates
 it with Harald, and opens the existing `/chat/{session_id}` experience. Inactive
 Dots have no Chat action. Sessions remain private to their user and Dot, and
 deactivation prevents new messages from starting. This first execution slice
-loads Dot and user memory but exposes no tools until action policy is in place.
+loads Dot and user memory and applies the selected tool and approval rules.
 
-### Tool access and approvals walkthrough for review
+### Approved tool access and approvals walkthrough
 
 The next personal-Dot settings surface extends each existing Dot card with an
 `Access and approvals` disclosure. It uses the signed-in user's currently
@@ -447,8 +471,8 @@ AIplane read-only tool from the user's catalog            Allow                A
 Read-only tool from connected Gira MCP                    Allow                My account
 Write tool from connected Workspace MCP                  Ask before each call My account
 
-Changes to these rules apply to new calls. A request already waiting in the
-Inbox keeps the rule and arguments it was created with.
+Changes to these rules apply to new calls. Approval applies only to the pending
+arguments. Current permissions and Dot availability are checked again on resume.
 ```
 
 The list contains only tool IDs returned by the user's allowed-tool resolution
@@ -469,7 +493,8 @@ An approval pauses the interactive Dot turn through the existing
 call; a saved `Allow` rule changes future calls. Background runs remain
 fail-closed for approval-required actions until their workers can resume a
 durably suspended run. The walkthrough does not add a parallel policy table or
-approval mechanism.
+approval mechanism. On resume, current ownership, active state and tool access
+are checked again even when the call was approved once.
 
 ## Delivery plan
 

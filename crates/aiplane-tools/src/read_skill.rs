@@ -102,6 +102,10 @@ struct ReadArgs {
 }
 
 impl Tool for ReadSkill {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         READ_SKILL_ID
     }

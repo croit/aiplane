@@ -56,10 +56,18 @@ impl Permissions {
     /// `tool`, behind an approval when its permission (or, without one, its
     /// own say-so) asks for one.
     pub fn gate(&self, tool: Arc<dyn Tool>) -> Arc<dyn Tool> {
+        let ask = tool.changes_state();
+        self.gate_with_default(tool, ask)
+    }
+
+    pub fn gate_personal_dot(&self, tool: Arc<dyn Tool>) -> Arc<dyn Tool> {
+        let ask = !tool.read_only();
+        self.gate_with_default(tool, ask)
+    }
+
+    fn gate_with_default(&self, tool: Arc<dyn Tool>, default_ask: bool) -> Arc<dyn Tool> {
         let set = self.tools.get(tool.id()).copied();
-        let ask = set
-            .and_then(|p| p.ask)
-            .unwrap_or_else(|| tool.changes_state());
+        let ask = set.and_then(|p| p.ask).unwrap_or(default_ask);
         if !ask {
             return tool;
         }
@@ -136,5 +144,31 @@ mod tests {
             asks(&p, Arc::new(Destructive)).await,
             Some(DEFAULT_APPROVAL_TIMEOUT.as_secs())
         );
+    }
+
+    #[tokio::test]
+    async fn personal_dot_defaults_require_positive_read_only_metadata() {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let ctx = ToolContext {
+            suspend: Suspend::Available,
+            ..ToolContext::for_test(db)
+        };
+        let permissions = Permissions::from_spec(AgentSpec::empty());
+        for (tool, should_ask) in [
+            (Arc::new(Echo) as Arc<dyn Tool>, true),
+            (
+                Arc::new(crate::server::tools::time::CurrentTimestamp) as Arc<dyn Tool>,
+                false,
+            ),
+        ] {
+            let body = permissions
+                .gate_personal_dot(tool)
+                .run(ctx.clone(), json!({}))
+                .await
+                .unwrap();
+            assert_eq!(extract_suspend(&body).is_some(), should_ask);
+        }
     }
 }

@@ -114,6 +114,10 @@ impl Tool for McpTool {
         self.destructive && !self.read_only
     }
 
+    fn read_only(&self) -> bool {
+        self.read_only
+    }
+
     fn schema(&self) -> ToolDef {
         self.schema.clone()
     }
@@ -417,6 +421,73 @@ mod tests {
         let id = sanitize_tool_id("server", &"x".repeat(200));
         assert!(id.len() <= 64, "len was {}", id.len());
         assert!(id.starts_with("mcp__server__x"));
+    }
+
+    #[tokio::test]
+    async fn personal_dot_mcp_defaults_pause_unknown_and_write_tools_before_dispatch() {
+        use crate::agents::spec::AgentSpec;
+        use crate::persona::ChatPersona;
+        use crate::server::tools::ToolSource;
+        use crate::suspend::{Suspend, extract_suspend};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(|request: &wiremock::Request| {
+                let request: Value = serde_json::from_slice(&request.body).unwrap();
+                let result = match request["method"].as_str() {
+                    Some("initialize") => json!({
+                        "protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "fixture", "version": "1"}
+                    }),
+                    Some("tools/list") => json!({"tools": [
+                        {"name": "read", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}},
+                        {"name": "write", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": false}},
+                        {"name": "unknown", "inputSchema": {"type": "object"}}
+                    ]}),
+                    Some("tools/call") => json!({"content": [{"type": "text", "text": "read result"}], "isError": false}),
+                    Some("notifications/initialized") => return ResponseTemplate::new(202),
+                    other => panic!("unexpected MCP method: {other:?}"),
+                };
+                ResponseTemplate::new(200).insert_header("content-type", "application/json")
+                    .set_body_json(json!({"jsonrpc": "2.0", "id": request["id"], "result": result}))
+            })
+            .mount(&server).await;
+        let connected = connect_http_server("fixture", &server.uri(), None)
+            .await
+            .unwrap();
+        let mut registry = ToolRegistry::new();
+        for tool in connected.tools {
+            registry = registry.with(tool);
+        }
+        let spec =
+            AgentSpec::from_value(&json!({"main": {"tools": ToolSource::ids(&registry)}})).unwrap();
+        let persona =
+            ChatPersona::new("Dot", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let ctx = ToolContext {
+            suspend: Suspend::Available,
+            ..ToolContext::for_test(db)
+        };
+        let source = persona.source(&registry, None);
+        for id in source.ids() {
+            let tool = source.get(&id).unwrap();
+            let should_ask = !id.ends_with("__read");
+            assert_eq!(tool.read_only(), !should_ask);
+            let body = tool.run(ctx.clone(), json!({})).await.unwrap();
+            assert_eq!(extract_suspend(&body).is_some(), should_ask);
+        }
+        let calls = server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|request| {
+                serde_json::from_slice::<Value>(&request.body).unwrap()["method"] == "tools/call"
+            })
+            .count();
+        assert_eq!(calls, 1);
     }
 
     #[tokio::test]

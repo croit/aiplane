@@ -28,7 +28,7 @@ use crate::agents::profile::{AgentSurface, RunToolSource};
 use crate::agents::topic_guard::Decision;
 use crate::budget::Budget;
 use crate::finish::{FINISH_NUDGE, FinishTool};
-use crate::persona::ChatPersona;
+use crate::persona::{ChatPersona, PersonaToolSource};
 use crate::server::tools::catalog::READ_SKILL_ID;
 use crate::server::tools::injection::InjectionScan;
 use crate::server::tools::mcp::manager::UserMcpLayer;
@@ -68,6 +68,46 @@ pub(super) enum FinalRound {
     Incomplete,
 }
 
+pub(super) enum TurnToolSource<'a> {
+    Run(RunToolSource<'a>),
+    Persona(PersonaToolSource<'a>),
+}
+
+impl TurnToolSource<'_> {
+    fn source(&self) -> &dyn ToolSource {
+        match self {
+            Self::Run(source) => source,
+            Self::Persona(source) => source,
+        }
+    }
+}
+
+impl ToolSource for TurnToolSource<'_> {
+    fn get(&self, id: &str) -> Option<std::sync::Arc<dyn crate::server::tools::Tool>> {
+        self.source().get(id)
+    }
+
+    fn defs_for(&self, allowed: &[String]) -> Vec<shared::api::ToolDef> {
+        self.source().defs_for(allowed)
+    }
+
+    fn ids(&self) -> Vec<String> {
+        self.source().ids()
+    }
+
+    fn contains(&self, id: &str) -> bool {
+        self.source().contains(id)
+    }
+
+    fn phase(&self, id: &str) -> ToolPhase {
+        self.source().phase(id)
+    }
+
+    fn state_written(&self) {
+        self.source().state_written();
+    }
+}
+
 impl<'a> TurnPolicy<'a> {
     pub(super) fn of(d: &'a OpenAiDriver) -> Self {
         match (d.agent(), d.persona.as_deref()) {
@@ -95,13 +135,17 @@ impl<'a> TurnPolicy<'a> {
     /// `granted` with the run's synthetic and terminal tools layered over it.
     /// A person's turn gets `granted` unchanged; a persona's turn gets the
     /// persona's tools instead.
-    pub(super) fn tool_source<'s>(self, granted: &'s dyn ToolSource) -> RunToolSource<'s>
+    pub(super) fn tool_source<'s>(
+        self,
+        granted: &'s dyn ToolSource,
+        state: &std::sync::Arc<crate::server::AppState>,
+    ) -> TurnToolSource<'s>
     where
         'a: 's,
     {
         match self {
-            Self::Persona(persona) => RunToolSource::new(persona.tools(), None),
-            _ => RunToolSource::new(granted, self.agent()),
+            Self::Persona(persona) => TurnToolSource::Persona(persona.source(granted, Some(state))),
+            _ => TurnToolSource::Run(RunToolSource::new(granted, self.agent())),
         }
     }
 
@@ -271,7 +315,7 @@ impl<'a> TurnPolicy<'a> {
                         .is_empty()
             }
             Self::Agent(run) => !agent_offer(d, run, granted).is_empty(),
-            Self::Persona(persona) => !persona.offer().is_empty(),
+            Self::Persona(persona) => !persona.offered(granted).is_empty(),
         }
     }
 
@@ -292,7 +336,7 @@ impl<'a> TurnPolicy<'a> {
         match self {
             Self::Chat => chat_offer(d, session_id, user_mcp).await,
             Self::Agent(run) => agent_offer(d, run, granted),
-            Self::Persona(persona) => persona.offer(),
+            Self::Persona(persona) => persona.offered(granted),
         }
     }
 

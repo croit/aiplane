@@ -675,7 +675,7 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
             display: "Memory Dot",
             description: "",
         },
-        r#"{"main":{}}"#,
+        r#"{"main":{"tools":["remember","recall","update_memory","forget"],"tool_resources":{"remember":{"permission":"always_allow"},"update_memory":{"permission":"always_allow"},"forget":{"permission":"always_allow"}}}}"#,
         "alice",
         4,
     )

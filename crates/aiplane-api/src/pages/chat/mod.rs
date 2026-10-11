@@ -1031,14 +1031,23 @@ async fn personal_dot_persona(
         instructions
             .push_str(&serde_json::to_string(&memory_values).unwrap_or_else(|_| "[]".into()));
     }
-    let allowed = state.allowed_tools_for_user(&user.roles, &user.id).await;
-    let memory_tools: Vec<&str> = aiplane_runtime::server::tools::catalog::MEMORY_TOOL_IDS
-        .iter()
-        .copied()
-        .filter(|id| allowed.iter().any(|allowed| allowed == id))
-        .collect();
-    let source = Arc::new(state.tools().with_only(&memory_tools));
-    Arc::new(aiplane_runtime::persona::ChatPersona::new(instructions, source).with_user_context())
+    let spec = match serde_json::from_str::<aiplane_runtime::agents::spec::AgentSpec>(
+        &dot.agent.draft_spec,
+    ) {
+        Ok(spec) => spec,
+        Err(error) => {
+            tracing::error!(dot_id = %link.dot_id, %error, "could not load personal Dot tool policy");
+            return Arc::new(aiplane_runtime::persona::ChatPersona::new(
+                "The Dot's tool policy could not be loaded. Do not continue without it.",
+                empty_source,
+            ));
+        }
+    };
+    Arc::new(
+        aiplane_runtime::persona::ChatPersona::new(instructions, empty_source)
+            .with_user_context()
+            .with_tool_access(&spec),
+    )
 }
 
 /// Why a resume did not start.

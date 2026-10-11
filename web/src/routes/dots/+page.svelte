@@ -5,6 +5,7 @@
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
 	import DotActivityPanel from '#lib/components/dots/DotActivityPanel.svelte';
 	import DotMemoryPanel from '#lib/components/dots/DotMemoryPanel.svelte';
+	import DotAccessPanel from '#lib/components/dots/DotAccessPanel.svelte';
 	import { activeDotCount, canCreateDot, dotsApi, type Dot } from '#lib/dots.js';
 	import { t } from '#lib/i18n.svelte.js';
 
@@ -120,6 +121,7 @@
 						{#if dot.description}<p class="line-clamp-3 text-sm text-base-content/70">{dot.description}</p>{/if}
 						<DotMemoryPanel {dot} />
 						<DotActivityPanel {dot} />
+						<DotAccessPanel {dot} />
 						<div class="card-actions justify-end">
 							{#if dot.active}<button class="btn btn-sm" type="button" disabled={openingId === dot.id} onclick={() => void openChat(dot)}>{openingId === dot.id ? t('dot-action-chat-opening') : t('dot-action-chat')}</button>{/if}
 							<button class="btn btn-sm" type="button" disabled={busyId === dot.id || (!dot.active && !createAllowed)} onclick={() => void setActive(dot)}>

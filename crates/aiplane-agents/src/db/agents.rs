@@ -569,6 +569,61 @@ pub async fn update_draft(
     let Some(before) = before else {
         return Ok(None);
     };
+    let saved = save_draft(&mut tx, id, &before, draft_spec, actor_id, change).await?;
+    tx.commit().await?;
+    Ok(Some(saved))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PersonalDotDraftSaved {
+    Saved,
+    Missing,
+    Conflict,
+}
+
+pub async fn update_personal_dot_draft(
+    pool: &Pool,
+    id: &str,
+    owner_user_id: &str,
+    expected_spec: &str,
+    draft_spec: &str,
+) -> Result<PersonalDotDraftSaved, DbError> {
+    let mut tx = WriteTx::begin(pool).await?;
+    let before: Option<String> = sqlx::query_scalar(
+        "SELECT a.draft_spec FROM agents a JOIN personal_dots d ON d.principal_id = a.principal_id
+         WHERE a.principal_id = ? AND d.owner_user_id = ?",
+    )
+    .bind(id)
+    .bind(owner_user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(before) = before else {
+        return Ok(PersonalDotDraftSaved::Missing);
+    };
+    if before != expected_spec {
+        return Ok(PersonalDotDraftSaved::Conflict);
+    }
+    save_draft(
+        &mut tx,
+        id,
+        &before,
+        draft_spec,
+        owner_user_id,
+        DraftChange::default(),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(PersonalDotDraftSaved::Saved)
+}
+
+async fn save_draft(
+    tx: &mut WriteTx,
+    id: &str,
+    before: &str,
+    draft_spec: &str,
+    actor_id: &str,
+    change: DraftChange<'_>,
+) -> Result<DraftSaved, DbError> {
     let now = Timestamp::now().to_string();
     let revision = if before == draft_spec {
         None
@@ -578,11 +633,11 @@ pub async fn update_draft(
              VALUES (?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(id)
-        .bind(&before)
+        .bind(before)
         .bind(grants_json(change.granted).to_string())
         .bind(actor_id)
         .bind(&now)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await?;
         sqlx::query(
             "DELETE FROM agent_draft_revisions WHERE principal_id = ? AND id NOT IN (
@@ -592,7 +647,7 @@ pub async fn update_draft(
         .bind(id)
         .bind(id)
         .bind(MAX_DRAFT_REVISIONS)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         Some(revision)
     };
@@ -600,10 +655,10 @@ pub async fn update_draft(
         .bind(draft_spec)
         .bind(&now)
         .bind(id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     agent_audit::append(
-        &mut tx,
+        tx,
         agent_audit::NewEvent::new(
             AuditKind::AgentDraftUpdated,
             id,
@@ -618,8 +673,7 @@ pub async fn update_draft(
         .by(Some(actor_id)),
     )
     .await?;
-    tx.commit().await?;
-    Ok(Some(DraftSaved { revision }))
+    Ok(DraftSaved { revision })
 }
 
 /// Revision `revision` of agent `id`'s draft, if it is still kept.
@@ -994,6 +1048,90 @@ mod tests {
         .await
         .unwrap()
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn personal_dot_draft_save_checks_owner_and_expected_revision() {
+        let pool = pool().await;
+        let now = Timestamp::now();
+        users::upsert(
+            &pool,
+            &User {
+                id: "alice".into(),
+                email: "alice@example.com".into(),
+                name: None,
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        let before = r#"{"main":{"tools":[]}}"#;
+        let (_, dot) = create_personal_dot(
+            &pool,
+            &NewPrincipal {
+                name: "Access",
+                display: "Access",
+                description: "",
+            },
+            before,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        let id = &dot.unwrap().principal.id;
+        let after = r#"{"main":{"tools":["recall"]}}"#;
+        assert_eq!(
+            update_personal_dot_draft(&pool, id, "bob", before, after)
+                .await
+                .unwrap(),
+            PersonalDotDraftSaved::Missing
+        );
+        assert_eq!(
+            update_personal_dot_draft(&pool, id, "alice", "stale", after)
+                .await
+                .unwrap(),
+            PersonalDotDraftSaved::Conflict
+        );
+        assert_eq!(
+            update_personal_dot_draft(&pool, id, "alice", before, after)
+                .await
+                .unwrap(),
+            PersonalDotDraftSaved::Saved
+        );
+        assert_eq!(
+            get_personal_dot(&pool, "alice", id)
+                .await
+                .unwrap()
+                .unwrap()
+                .agent
+                .draft_spec,
+            after
+        );
+        let revision: i64 =
+            sqlx::query_scalar("SELECT id FROM agent_draft_revisions WHERE principal_id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            draft_revision(&pool, id, revision)
+                .await
+                .unwrap()
+                .unwrap()
+                .spec,
+            before
+        );
+        assert_eq!(
+            update_personal_dot_draft(&pool, id, "alice", before, "{}")
+                .await
+                .unwrap(),
+            PersonalDotDraftSaved::Conflict
+        );
     }
 
     #[tokio::test]

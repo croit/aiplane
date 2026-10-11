@@ -15,7 +15,11 @@ use super::json_principals::require_agent_manager;
 use super::{bad_request, internal, json_error, json_ok, not_found, raw_path_segment};
 use aiplane_agents::db::agents::{self as agents_db, PersonalDotCreate};
 use aiplane_agents::db::system_principals::NewPrincipal;
+use aiplane_runtime::agents::spec::AgentSpec;
+use aiplane_runtime::agents::spec::model::Permission;
 use aiplane_runtime::rama_server::state::RamaState;
+use aiplane_runtime::server::tools::mcp::manager::{AskContext, CompositeToolSource};
+use aiplane_runtime::server::tools::{ToolSource, catalog};
 
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct CreateDotBody {
@@ -94,6 +98,17 @@ pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or(name);
+    let allowed = state.allowed_tools_for_user(&user.roles, &user.id).await;
+    let memory_tools: Vec<_> = catalog::MEMORY_TOOL_IDS
+        .iter()
+        .copied()
+        .filter(|id| allowed.iter().any(|allowed| allowed == id))
+        .collect();
+    let resources: serde_json::Map<String, serde_json::Value> = memory_tools
+        .iter()
+        .map(|id| ((*id).to_string(), json!({"permission":"always_allow"})))
+        .collect();
+    let spec = json!({"main":{"tools":memory_tools,"tool_resources":resources}}).to_string();
     match agents_db::create_personal_dot(
         &state.db,
         &NewPrincipal {
@@ -101,7 +116,7 @@ pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Respon
             display,
             description: body.description.trim(),
         },
-        r#"{"main":{}}"#,
+        &spec,
         &user.id,
         state.config().dots.max_active_per_user,
     )
@@ -124,6 +139,203 @@ pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Respon
             &t(lang, "dot-error-active-limit"),
         ),
         Ok((PersonalDotCreate::Created, None)) => internal("created Dot could not be loaded"),
+        Err(error) => internal(error),
+    }
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct DotAccessView {
+    pub tools: Vec<DotAccessTool>,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct DotAccessTool {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub selected: bool,
+    pub permission: &'static str,
+    pub read_only: bool,
+    pub identity: &'static str,
+    pub connector_key: Option<String>,
+    pub connector_mode: Option<&'static str>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DotAccessBody {
+    pub tools: Vec<DotAccessSelection>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DotAccessSelection {
+    pub id: String,
+    pub permission: String,
+}
+
+async fn access_view(
+    state: &RamaState,
+    user: &aiplane_core::server::db::users::User,
+    draft: &str,
+) -> Result<DotAccessView, Box<dyn std::error::Error + Send + Sync>> {
+    let spec: AgentSpec = serde_json::from_str(draft)?;
+    let role_ids = state.rbac.role_ids_for(&user.roles);
+    let layer = state
+        .mcp
+        .layer_for_user(
+            &user.id,
+            &role_ids,
+            state.rbac.is_admin(&role_ids),
+            AskContext::Chat,
+        )
+        .await;
+    let principal = aiplane_core::server::principal::Principal::User {
+        id: user.id.clone(),
+        roles: user.roles.clone(),
+    };
+    let mut allowed = state.granted_tool_ids(&principal, &layer).await;
+    let disabled =
+        aiplane_core::server::db::user_tool_prefs::disabled_for_user(&state.db, &user.id).await?;
+    catalog::retain_enabled(&mut allowed, &disabled);
+    allowed.retain(|id| !catalog::is_hidden(id));
+    allowed.sort();
+    let entries = super::tool_toggles::entries_for_tools(state, &allowed);
+    let registry = state.tools();
+    let comfyui = state.comfyui().as_ref().map(|handle| {
+        aiplane_runtime::server::comfyui_tool::ComfyuiToolSource::new((**handle).clone())
+    });
+    let source = CompositeToolSource::new(&registry, &layer).with_comfyui(comfyui.as_ref());
+    let mut tools = Vec::new();
+    for id in allowed {
+        let Some(tool) = source.get(&id) else {
+            continue;
+        };
+        let def = tool.schema();
+        let connector_key = layer.connector_of(&id).map(str::to_owned);
+        let identity = match connector_key.as_deref() {
+            Some(key) => match aiplane_core::server::db::mcp_catalog::get(&state.db, key).await? {
+                Some(connector) if connector.is_global() => "shared",
+                _ => "user",
+            },
+            None => "builtin",
+        };
+        let entry = entries
+            .iter()
+            .find(|entry| entry.key == catalog::entry_key_for(&id));
+        let read_only = tool.read_only();
+        let permission = match spec
+            .main
+            .tool_resources
+            .get(&id)
+            .and_then(|resource| resource.permission)
+        {
+            Some(Permission::AlwaysAllow) => "always_allow",
+            Some(Permission::AlwaysAsk) => "always_ask",
+            None if read_only => "always_allow",
+            None => "always_ask",
+        };
+        tools.push(DotAccessTool {
+            selected: spec.main.tools.contains(&id),
+            label: entry
+                .map(|entry| entry.title.clone())
+                .unwrap_or_else(|| def.function.name.clone()),
+            description: def.function.description.clone(),
+            permission,
+            read_only,
+            identity,
+            connector_mode: layer.mode_of(&id).map(|mode| mode.as_str()),
+            connector_key,
+            id,
+        });
+    }
+    Ok(DotAccessView { tools })
+}
+
+pub async fn access_get(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
+    let Some(id) = raw_path_segment(&req, 1) else {
+        return bad_request(t(lang, "dot-error-id-missing"));
+    };
+    let dot = match agents_db::get_personal_dot(&state.db, &user.id, &id).await {
+        Ok(Some(dot)) => dot,
+        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
+        Err(error) => return internal(error),
+    };
+    match access_view(&state, &user, &dot.agent.draft_spec).await {
+        Ok(view) => json_ok(StatusCode::OK, view),
+        Err(error) => internal(error),
+    }
+}
+
+pub async fn access_put(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
+    let Some(id) = raw_path_segment(&req, 1) else {
+        return bad_request(t(lang, "dot-error-id-missing"));
+    };
+    let dot = match agents_db::get_personal_dot(&state.db, &user.id, &id).await {
+        Ok(Some(dot)) => dot,
+        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
+        Err(error) => return internal(error),
+    };
+    let body: DotAccessBody = match super::read_json(req.into_body(), "the Dot access rules").await
+    {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
+    let inventory = match access_view(&state, &user, &dot.agent.draft_spec).await {
+        Ok(view) => view,
+        Err(error) => return internal(error),
+    };
+    let mut selected = std::collections::HashSet::new();
+    let mut selections = Vec::with_capacity(body.tools.len());
+    for selection in &body.tools {
+        if !selected.insert(&selection.id)
+            || !matches!(selection.permission.as_str(), "always_allow" | "always_ask")
+        {
+            return bad_request(t(lang, "dot-access-error-invalid"));
+        }
+        if !inventory.tools.iter().any(|tool| tool.id == selection.id) {
+            return bad_request(t(lang, "dot-access-error-unavailable"));
+        }
+        selections.push((
+            selection.id.clone(),
+            match selection.permission.as_str() {
+                "always_allow" => Permission::AlwaysAllow,
+                _ => Permission::AlwaysAsk,
+            },
+        ));
+    }
+    let draft = match aiplane_runtime::agents::spec::tool_access::replace_tool_access(
+        &dot.agent.draft_spec,
+        &selections,
+    ) {
+        Ok(draft) => draft,
+        Err(error) => return internal(error),
+    };
+    match agents_db::update_personal_dot_draft(
+        &state.db,
+        &id,
+        &user.id,
+        &dot.agent.draft_spec,
+        &draft,
+    )
+    .await
+    {
+        Ok(agents_db::PersonalDotDraftSaved::Saved) => {
+            match access_view(&state, &user, &draft).await {
+                Ok(view) => json_ok(StatusCode::OK, view),
+                Err(error) => internal(error),
+            }
+        }
+        Ok(agents_db::PersonalDotDraftSaved::Missing) => not_found(t(lang, "dot-error-not-found")),
+        Ok(agents_db::PersonalDotDraftSaved::Conflict) => json_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            &t(lang, "dot-access-error-conflict"),
+        ),
         Err(error) => internal(error),
     }
 }

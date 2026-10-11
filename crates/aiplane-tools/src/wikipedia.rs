@@ -31,6 +31,10 @@ struct Args {
 }
 
 impl Tool for Wikipedia {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "wikipedia"
     }
