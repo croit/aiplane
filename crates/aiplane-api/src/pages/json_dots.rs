@@ -61,6 +61,7 @@ pub struct DotConnectionView {
     pub user_connection: DotCredentialView,
     pub principal_connection: Option<DotCredentialView>,
     pub can_connect: bool,
+    pub can_disconnect: bool,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -154,37 +155,40 @@ async fn connections_view(
         })
         .collect();
     let bindings = dot_connections::list_for_dot(&state.db, &user.id, id).await?;
+    let owned_connections =
+        mcp_connections::list_connections(&state.db, &ConnectionOwner::Principal(id.clone()))
+            .await?;
     let mut keys: std::collections::BTreeSet<_> =
         permitted.iter().map(|row| row.key.clone()).collect();
     keys.extend(bindings.iter().map(|row| row.connector_key.clone()));
+    keys.extend(
+        owned_connections
+            .iter()
+            .map(|row| row.connector_key.clone()),
+    );
     let mut connections = Vec::with_capacity(keys.len());
     for key in keys {
         let connector = permitted.iter().find(|row| row.key == key);
         let binding = bindings.iter().find(|row| row.connector_key == key);
-        let (user_connection, principal_connection) = if connector.is_some() {
-            (
-                mcp_connections::get_connection(
-                    &state.db,
-                    &ConnectionOwner::User(user.id.clone()),
-                    &key,
-                )
-                .await?,
-                mcp_connections::get_connection(
-                    &state.db,
-                    &ConnectionOwner::Principal(id.clone()),
-                    &key,
-                )
-                .await?,
+        let principal_connection = owned_connections
+            .iter()
+            .find(|row| row.connector_key == key);
+        let user_connection = if connector.is_some() {
+            mcp_connections::get_connection(
+                &state.db,
+                &ConnectionOwner::User(user.id.clone()),
+                &key,
             )
+            .await?
         } else {
-            (None, None)
+            None
         };
         let mode = binding
             .map(|row| row.identity_mode)
             .unwrap_or(IdentityMode::User);
         let selected = match mode {
             IdentityMode::User => user_connection.as_ref(),
-            IdentityMode::Principal => principal_connection.as_ref(),
+            IdentityMode::Principal => principal_connection.filter(|_| connector.is_some()),
         };
         let generation = binding
             .map(|row| row.connection_generation.clone())
@@ -217,11 +221,10 @@ async fn connections_view(
                 connection_generation: generation,
             },
             user_connection: credential_view(user_connection.as_ref()),
-            principal_connection: principal_connection
-                .as_ref()
-                .map(|row| credential_view(Some(row))),
+            principal_connection: principal_connection.map(|row| credential_view(Some(row))),
             can_connect: state.rbac.can_manage_dots(&roles)
                 && connector.is_some_and(|row| !row.needs_setup()),
+            can_disconnect: state.rbac.can_manage_dots(&roles) && principal_connection.is_some(),
         });
     }
     Ok(DotConnectionsView {

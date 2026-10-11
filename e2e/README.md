@@ -47,7 +47,9 @@ scripted model responses:
   disconnect of only the Dot account. The `dev-ui` fixture supplies the
   `dot-workspace` connector and sealed user credentials; it uses no live
   provider account. Missing saved credentials remain unavailable without
-  falling back to the user's connection.
+  falling back to the user's connection. A second case disables the actual
+  connector, reloads and erases only the Dot's local credentials for both a
+  selected and a never-selected connection; the user's account is retained.
 
 Run these suites sequentially when checking the four-active-Dot limit:
 

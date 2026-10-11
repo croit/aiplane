@@ -42,3 +42,19 @@ test('Dot connection API sends exact scoped versions without credential authorit
 		{ path: '/api/v0/dots/dot%2Fid/connections/workspace%2Fkey', method: 'DELETE', body: { connection_id: 'current', connection_generation: 'version' } }
 	]);
 });
+
+test('Dot inventory preserves an unavailable own erasure version without user credential data', async (context) => {
+	const { dotConnectionsApi } = await import('./dots.ts');
+	const empty = { id: null, generation: null, connected: false, errored: false, needs_reauth: false, authorizing: false, account_label: null };
+	const row = {
+		key: 'actual-key', connector: null, supported_modes: [],
+		selected: { mode: 'user', binding_generation: null, connection_id: null, connection_generation: null },
+		user_connection: empty,
+		principal_connection: { ...empty, id: 'actual-own-id', generation: 'actual-own-generation', connected: true },
+		can_connect: false, can_disconnect: true
+	};
+	const original = globalThis.fetch;
+	globalThis.fetch = async () => new Response(JSON.stringify({ dot: dot(true), connections: [row] }), { status: 200 });
+	context.after(() => globalThis.fetch = original);
+	assert.deepEqual((await dotConnectionsApi.load('dot')).connections, [row]);
+});

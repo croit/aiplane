@@ -61,7 +61,7 @@ The organization's existence and grants are independent of its creator's account
 3. On callback, consume state once and verify the initiating session. Reload target existence, ownership/membership, connector enablement/connect rights and generation before exchange and again before transactionally saving tokens. Revoked rights or a deleted Dot must not produce an orphan credential.
 4. Exchange through the recorded trusted token endpoint and resource. Seal secrets with the existing crypto service and conditionally update the exact reserved connection. Completion never inserts a missing connection. Credential and authorization generations plus the persisted deadline must still match, so disconnect or a newer authorization cannot be undone by a late response. Invalidate only that owner's connector cache and redirect only to a validated internal return path.
 5. Refresh through the existing endpoint/client-secret handling and error status lifecycle, keyed by typed owner. Concurrent refresh and disconnect need generation-checked writes so a late refresh cannot resurrect a disconnected connection.
-6. Disconnect deletes only the owned Dot's local credential and its pending authorization, conditioned on the visible connection ID and generation. Current Dot ownership and management permission are required. Local erasure remains possible when the catalogue connector is disabled; connecting and executing still require current connector rights. The saved selection remains visible but unavailable. The endpoint does not revoke the account at the provider.
+6. Disconnect deletes only the owned Dot's local credential and its pending authorization, conditioned on the visible connection ID and generation. Current Dot ownership and management permission are required. Local erasure remains possible when the catalogue connector is disabled, forbidden, missing or unsupported. Inventory includes actual Dot-owned credentials even without a saved selection; it exposes their nonsecret version for local erasure independently of catalogue access. Restricted catalogue metadata and user-account details remain hidden. `can_disconnect` derives from current management permission and the owned row; `can_connect` remains subject to current catalogue eligibility. A saved selection remains visible but unavailable. The endpoint does not revoke the account at the provider.
 
 Token responses are not proof of an email or account name. Initially show actual connector name, local ownership label and connection status. A verified account label may be persisted only through a real provider-supported profile response with documented scope and validation; absent data is shown as unavailable. Do not decode arbitrary access tokens to invent an identity or add generic profile requests to unknown providers.
 
@@ -146,9 +146,3 @@ The admission transaction is the boundary: a resource change committed before
 admission prevents dispatch. It cannot undo an external request already
 admitted and in flight. Do not hold the SQLite write transaction across remote
 HTTP calls.
-
-Browser acceptance must also cover local erasure after connector revocation:
-an owner can inspect their Dot's actual local credential version and disconnect
-it after reloading, while forbidden catalogue metadata and connection/select
-actions remain unavailable. This extends the existing credential actions and
-confirmation, without exposing secrets or the user's separate connection.

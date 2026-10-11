@@ -1437,6 +1437,7 @@ export const zh: Catalog = {
  "dot-connection-error-save": "无法保存连接器身份。请重新加载详情后重试。",
  "dot-connection-error-unavailable": "所选连接不可用。请连接此账户或选择可用连接。",
  "dot-connection-heading": "连接器身份",
+ "dot-connection-local-unavailable": "此 Dot 的本地凭据不可使用。",
  "dot-connection-pending-warning": "等待批准的调用仍绑定到原始连接。更改身份或替换授权需要新的调用和批准。",
  "dot-connection-principal": "{name} 的连接",
  "dot-connection-provider-account": "由提供方决定您授权的账户。连接不会创建账户，也不会更改此 Dot 已保存的选择。",

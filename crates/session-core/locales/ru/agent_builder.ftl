@@ -431,3 +431,5 @@ dot-connection-access-reload = Подключение изменилось. Об
 dot-access-identity-principal = Использует выбранное подключение { $name }.
 dot-access-unavailable = Выбранный инструмент недоступен. Удалите его перед сохранением доступа.
 dot-connection-reload = Обновить подключения
+
+dot-connection-local-unavailable = Локальные учётные данные этого Dot недоступны для использования.

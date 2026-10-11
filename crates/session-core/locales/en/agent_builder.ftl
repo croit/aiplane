@@ -432,3 +432,5 @@ dot-connection-access-reload = The connection changed. Reload tool access before
 dot-access-identity-principal = Uses { $name }’s selected connection.
 dot-access-unavailable = This selected tool is unavailable. Remove it before saving access.
 dot-connection-reload = Reload connections
+
+dot-connection-local-unavailable = This Dot’s local credentials are unavailable for use.

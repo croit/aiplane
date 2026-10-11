@@ -71,7 +71,10 @@ with `Allow` or `Ask before each call`; unselected tools are denied. Connector
 identity labels identify the selected user, Dot or shared connection. Supported
 personal OAuth connectors may use a separately authorized Dot connection;
 connecting and selecting it are separate operations. Organisation-owned Dots
-remain unimplemented. Active
+remain unimplemented. An owned local credential remains visible for explicit
+disconnect after catalogue access is lost, including credentials never selected
+for execution. Restricted catalogue and user-account details stay hidden.
+Active
 Dot cards link to the existing schedule and webhook creation forms with that
 Dot selected.
 

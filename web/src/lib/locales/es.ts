@@ -1452,6 +1452,7 @@ export const es: Catalog = {
  "dot-connection-error-save": "No se pudo guardar la identidad del conector. Recargue sus detalles e inténtelo de nuevo.",
  "dot-connection-error-unavailable": "La conexión seleccionada no está disponible. Conecte esta cuenta o elija una conexión disponible.",
  "dot-connection-heading": "Identidad del conector",
+ "dot-connection-local-unavailable": "Las credenciales locales de este Dot no se pueden utilizar.",
  "dot-connection-pending-warning": "Las llamadas pendientes de aprobación siguen vinculadas a su conexión original. Cambiar la identidad o sustituir su autorización requiere una nueva llamada y aprobación.",
  "dot-connection-principal": "Conexión para {name}",
  "dot-connection-provider-account": "El proveedor determina qué cuenta autoriza. Conectarla no crea una cuenta ni cambia la selección guardada de este Dot.",

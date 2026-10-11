@@ -431,3 +431,5 @@ dot-connection-access-reload = 连接已更改。保存规则前请重新加载�
 dot-access-identity-principal = 使用 { $name } 选择的连接。
 dot-access-unavailable = 此所选工具不可用。保存访问设置前请移除它。
 dot-connection-reload = 重新加载连接
+
+dot-connection-local-unavailable = 此 Dot 的本地凭据不可使用。

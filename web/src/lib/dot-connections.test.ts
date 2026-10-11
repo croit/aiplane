@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { connectionChange, connectionModes } from './dot-connections.ts';
 
 const credential = { id: 'credential', generation: 'credential-version', connected: true, errored: false, needs_reauth: false, authorizing: false, account_label: null };
-const row = () => ({ key: 'workspace', connector: { title: 'Workspace', description: null, icon: null, auth_type: 'oauth2' as const, scope: 'per_user' as const, needs_setup: false }, supported_modes: ['user', 'principal'] as const, selected: { mode: 'user' as const, binding_generation: 'original', connection_id: 'user-id', connection_generation: 'user-version' }, user_connection: { ...credential, id: 'user-id', generation: 'user-version' }, principal_connection: credential, can_connect: true });
+const row = () => ({ key: 'workspace', connector: { title: 'Workspace', description: null, icon: null, auth_type: 'oauth2' as const, scope: 'per_user' as const, needs_setup: false }, supported_modes: ['user', 'principal'] as const, selected: { mode: 'user' as const, binding_generation: 'original', connection_id: 'user-id', connection_generation: 'user-version' }, user_connection: { ...credential, id: 'user-id', generation: 'user-version' }, principal_connection: credential, can_connect: true, can_disconnect: true });
 
 test('connecting never changes saved identity and unchanged selection has no mutation', () => {
 	assert.equal(connectionChange(row(), 'user'), null);

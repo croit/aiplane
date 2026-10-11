@@ -431,3 +431,5 @@ dot-connection-access-reload = Die Verbindung wurde geändert. Laden Sie den Wer
 dot-access-identity-principal = Verwendet die ausgewählte Verbindung von { $name }.
 dot-access-unavailable = Dieses ausgewählte Werkzeug ist nicht verfügbar. Entfernen Sie es, bevor Sie den Zugriff speichern.
 dot-connection-reload = Verbindungen neu laden
+
+dot-connection-local-unavailable = Die lokalen Zugangsdaten dieses Dots können nicht verwendet werden.

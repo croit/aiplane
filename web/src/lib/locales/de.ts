@@ -1452,6 +1452,7 @@ export const de: Catalog = {
  "dot-connection-error-save": "Die Connector-Identität konnte nicht gespeichert werden. Laden Sie die Details neu und versuchen Sie es erneut.",
  "dot-connection-error-unavailable": "Die ausgewählte Verbindung ist nicht verfügbar. Verbinden Sie dieses Konto oder wählen Sie eine verfügbare Verbindung.",
  "dot-connection-heading": "Connector-Identität",
+ "dot-connection-local-unavailable": "Die lokalen Zugangsdaten dieses Dots können nicht verwendet werden.",
  "dot-connection-pending-warning": "Auf Freigabe wartende Aufrufe bleiben an ihre ursprüngliche Verbindung gebunden. Eine Änderung der Identität oder eine neue Autorisierung erfordert einen neuen Aufruf und eine neue Freigabe.",
  "dot-connection-principal": "Verbindung für {name}",
  "dot-connection-provider-account": "Der Anbieter bestimmt, welches Konto Sie autorisieren. Das Verbinden erstellt kein Konto und ändert die gespeicherte Auswahl dieses Dots nicht.",

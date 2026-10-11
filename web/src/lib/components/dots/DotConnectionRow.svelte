@@ -35,7 +35,7 @@
 		finally { busy = false; }
 	}
 	async function disconnect() {
-		if (!canManage || !window.confirm(t('dot-connection-disconnect-confirm', { name: dot.display || dot.name, connector: row.connector?.title ?? row.key }))) return;
+		if (!canManage || !row.can_disconnect || !window.confirm(t('dot-connection-disconnect-confirm', { name: dot.display || dot.name, connector: row.connector?.title ?? row.key }))) return;
 		busy = true; error = null; notice = null;
 		try { oninventory(await dotConnectionsApi.disconnect(dot.id, row.key, version())); notice = t('dot-connection-disconnected'); onchange(); }
 		catch (caught) { error = message(caught, t('dot-connection-error-disconnect')); }
@@ -50,20 +50,21 @@
 		</div>
 		{#if row.connector?.description}<p class="break-words text-xs text-base-content/60">{row.connector.description}</p>{/if}
 		<label class="flex flex-col gap-1"><span class="text-xs">{t('dot-connection-heading')}</span>
-			<select class="select select-sm w-full" value={mode} disabled={!canManage || busy} onchange={(event) => { draft = { source: draft?.source ?? row, mode: event.currentTarget.value as DotConnectionMode }; notice = null; }}>
+			<select class="select select-sm w-full" value={mode} disabled={!canManage || busy || row.supported_modes.length === 0} onchange={(event) => { draft = { source: draft?.source ?? row, mode: event.currentTarget.value as DotConnectionMode }; notice = null; }}>
 				{#each connectionModes(row) as option}<option value={option}>{option === 'user' ? t('dot-connection-user') : t('dot-connection-principal', { name: dot.display || dot.name })}</option>{/each}
 			</select>
 		</label>
-		{#if mode === row.selected.mode && !selectedConnectionAvailable(row)}<p class="text-xs text-warning">{t('dot-connection-unavailable')}</p>{/if}
-		{#if credential?.authorizing}<span class="badge badge-outline badge-sm">{t('dot-connection-authorizing')}</span>
-		{:else if credential?.connected && !credential.errored && !credential.needs_reauth && (mode !== row.selected.mode || selectedConnectionAvailable(row))}<span class="badge badge-success badge-sm">{t('integrations-badge-connected')}</span>
-		{:else if mode !== row.selected.mode}<p class="text-xs text-warning">{t('dot-connection-unavailable')}</p>{/if}
-		{#if credential?.account_label}<p class="break-words text-xs">{credential.account_label}</p>{/if}
+		{#if !row.connector && row.principal_connection}<p class="text-xs text-warning">{t('dot-connection-local-unavailable')}</p>
+		{:else if mode === row.selected.mode && !selectedConnectionAvailable(row)}<p class="text-xs text-warning">{t('dot-connection-unavailable')}</p>{/if}
+		{#if row.connector && credential?.authorizing}<span class="badge badge-outline badge-sm">{t('dot-connection-authorizing')}</span>
+		{:else if row.connector && credential?.connected && !credential.errored && !credential.needs_reauth && (mode !== row.selected.mode || selectedConnectionAvailable(row))}<span class="badge badge-success badge-sm">{t('integrations-badge-connected')}</span>
+		{:else if row.connector && mode !== row.selected.mode}<p class="text-xs text-warning">{t('dot-connection-unavailable')}</p>{/if}
+		{#if row.connector && credential?.account_label}<p class="break-words text-xs">{credential.account_label}</p>{/if}
 		<p class="text-xs text-base-content/60">{t('dot-connection-pending-warning')}</p>
-		{#if row.connector?.scope === 'per_user' && row.connector.auth_type === 'oauth2' && row.supported_modes.includes('principal')}
+		{#if row.principal_connection || (row.connector?.scope === 'per_user' && row.connector.auth_type === 'oauth2' && row.supported_modes.includes('principal'))}
 			<p class="text-xs font-medium">{t('dot-connection-principal', { name: dot.display || dot.name })}</p>
-			<p class="text-xs text-base-content/60">{t('dot-connection-provider-account')}</p>
-			<IntegrationCredentialActions connectorKey={row.key} authType={row.connector.auth_type} connected={row.principal_connection?.connected ?? false} needsSetup={row.connector.needs_setup} disabled={!canManage || busy || !row.can_connect} canDisconnect={row.principal_connection?.id != null} onconnect={connect} ondisconnect={disconnect} />
+			{#if row.connector}<p class="text-xs text-base-content/60">{t('dot-connection-provider-account')}</p>{/if}
+			<IntegrationCredentialActions connectorKey={row.key} authType={row.connector?.auth_type ?? null} connected={row.principal_connection?.connected ?? false} needsSetup={row.connector?.needs_setup ?? false} disabled={!canManage || busy} canConnect={row.can_connect && row.connector?.scope === 'per_user' && row.connector.auth_type === 'oauth2' && row.supported_modes.includes('principal')} canDisconnect={row.can_disconnect} onconnect={connect} ondisconnect={disconnect} />
 		{/if}
 		{#if error}<div class="alert alert-error py-2" role="alert"><span class="break-words">{error}</span></div>{/if}
 		{#if notice}<div class="alert alert-success py-2" role="status"><span>{notice}</span></div>{/if}

@@ -93,6 +93,14 @@ your personal connection remains. Pending calls retain their original
 connection and generation: after a selection change or reauthorization,
 request a new call and approval. Ordinary token refresh preserves the generation.
 
+If the connector is disabled, removed or outside your connector permissions,
+**Reload connections** retains the Dot's actual local credentials under their
+stored connector key. You can disconnect them with Personal Dot manager
+permission, including while the Dot is inactive and when that connection was
+never selected. The unavailable row offers no connection or selection action
+and does not disclose the restricted connector's details or your separate
+personal account. Disconnect does not revoke the account at the provider.
+
 ![The actual Workspace connector uses Harald's separately authorized connection.](../img/guide/dot-connector-identity.png)
 
 For `browse_page` or `browser_control`, open **Actions** under the selected tool. Choose **Use tool

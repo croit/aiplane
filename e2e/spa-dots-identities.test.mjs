@@ -189,3 +189,135 @@ test("Personal Dot OAuth connects without selecting, saves explicitly and discon
         }
     }
 });
+
+test("An owner reloads and erases selected or never-selected local Dot credentials after connector disable", async () => {
+    assert.ok(await gatewayIsUp(), `gateway is not reachable at ${BASE}`);
+    const browser = await launchBrowser();
+    let context;
+    let dotId;
+    let restoreEnabled = false;
+    const key = "dot-workspace";
+    try {
+        context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "de-DE" });
+        await context.addCookies([
+            { name: "id", value: await devSessionCookie(), url: BASE },
+            { name: "lang", value: "en", url: BASE },
+        ]);
+        const page = await context.newPage();
+        const toggleUrl = `${BASE}/api/v0/admin/connectors/${key}/toggle`;
+        for (const selected of [true, false]) {
+            const created = await context.request.post(`${BASE}/api/v0/dots`, {
+                data: { name: `cleanup-harald-${selected}-${Date.now()}`, display: "Harald" },
+            });
+            assert.equal(created.status(), 201);
+            dotId = (await created.json()).dot.id;
+            const inventoryUrl = `${BASE}/api/v0/dots/${dotId}/connections`;
+            const connectionUrl = `${inventoryUrl}/${key}`;
+            const inventory = async () => {
+                const response = await context.request.get(inventoryUrl);
+                assert.equal(response.status(), 200);
+                return (await response.json()).connections;
+            };
+            const initial = (await inventory()).find((item) => item.key === key);
+            assert.equal(initial.connector.title, "Workspace");
+            assert.equal(initial.user_connection.connected, true);
+            const userBefore = initial.user_connection;
+            await page.goto(`${BASE}/dots?dot_id=${dotId}`, { waitUntil: "networkidle" });
+            const access = page.locator(`[id="dot-${dotId}"]`).locator("details").filter({ has: page.getByText("Access and approvals", { exact: true }) });
+            const permittedRow = access.getByRole("region", { name: "Workspace", exact: true });
+            const provider = page.waitForRequest((request) => request.isNavigationRequest()
+                && request.method() === "GET" && new URL(request.url()).pathname === "/authorize");
+            const callback = page.waitForResponse((response) => new URL(response.url()).pathname === "/integrations/callback");
+            await permittedRow.getByRole("button", { name: "Connect", exact: true }).click();
+            assert.ok(new URL((await provider).url()).searchParams.get("state"));
+            assert.equal((await callback).status(), 303);
+            await page.waitForURL((url) => url.pathname === "/dots" && url.searchParams.get("dot_id") === dotId);
+            await permittedRow.getByRole("combobox").waitFor();
+            const connected = (await inventory()).find((item) => item.key === key);
+            assert.equal(connected.principal_connection.connected, true);
+            assert.equal(connected.can_disconnect, true);
+            if (selected) {
+                await permittedRow.getByRole("combobox").selectOption("principal");
+                const saved = page.waitForResponse((response) => response.request().method() === "PUT" && response.url() === connectionUrl);
+                await permittedRow.getByRole("button", { name: "Save", exact: true }).click();
+                assert.equal((await saved).status(), 200);
+                await permittedRow.getByRole("status").getByText("Connector identity saved.", { exact: true }).waitFor();
+            }
+            const beforeDisable = (await inventory()).find((item) => item.key === key);
+            restoreEnabled = true;
+            assert.equal((await context.request.post(toggleUrl, { data: { enabled: false } })).status(), 200);
+            await access.getByRole("button", { name: "Reload connections", exact: true }).click();
+            const unavailableRow = access.getByRole("region", { name: key, exact: true });
+            await unavailableRow.getByText("This Dot’s local credentials are unavailable for use.", { exact: true }).waitFor();
+            const unavailable = (await inventory()).find((item) => item.key === key);
+            assert.ok(unavailable, "never-selected own credentials must remain in the inventory after reload");
+            assert.equal(unavailable.connector, null);
+            assert.deepEqual(unavailable.supported_modes, []);
+            assert.deepEqual(unavailable.principal_connection, beforeDisable.principal_connection);
+            assert.deepEqual(unavailable.user_connection, {
+                id: null, generation: null, connected: false, errored: false,
+                needs_reauth: false, authorizing: false, account_label: null,
+            });
+            assert.equal(unavailable.can_connect, false);
+            assert.equal(unavailable.can_disconnect, true);
+            assert.equal(unavailable.selected.connection_id, null);
+            assert.equal(unavailable.selected.binding_generation, beforeDisable.selected.binding_generation);
+            assert.equal(await unavailableRow.getByRole("combobox").isDisabled(), true);
+            assert.equal(await unavailableRow.getByRole("button", { name: "Save", exact: true }).isDisabled(), true);
+            assert.equal(await unavailableRow.getByRole("button", { name: /^(Connect|Reconnect)$/ }).count(), 0);
+            assert.equal(await unavailableRow.locator("form").count(), 0);
+            assert.equal(await unavailableRow.getByText("Workspace", { exact: true }).count(), 0);
+            await page.setViewportSize({ width: 390, height: 844 });
+            assert.ok(await page.locator("main").evaluate((element) => element.scrollWidth <= element.clientWidth));
+            let actualDialog;
+            page.once("dialog", async (dialog) => { actualDialog = dialog.message(); await dialog.accept(); });
+            const erased = page.waitForResponse((response) => response.request().method() === "DELETE" && response.url() === connectionUrl);
+            await unavailableRow.getByRole("button", { name: "Disconnect", exact: true }).click();
+            const response = await erased;
+            assert.equal(response.status(), 200);
+            assert.deepEqual(response.request().postDataJSON(), {
+                connection_id: connected.principal_connection.id,
+                connection_generation: connected.principal_connection.generation,
+            });
+            assert.equal(actualDialog, `Disconnect Harald’s connection to ${key}? This removes its local credentials and pending authorization; your own connection remains.`);
+            const remaining = (await inventory()).find((item) => item.key === key);
+            if (selected) {
+                assert.equal(remaining.principal_connection, null);
+                assert.equal(remaining.can_disconnect, false);
+                assert.equal(remaining.selected.mode, "principal");
+                assert.equal(remaining.selected.binding_generation, beforeDisable.selected.binding_generation);
+                assert.equal(remaining.selected.connection_generation, beforeDisable.selected.connection_generation);
+            } else assert.equal(remaining, undefined);
+            assert.equal((await context.request.post(toggleUrl, { data: { enabled: true } })).status(), 200);
+            restoreEnabled = false;
+            assert.deepEqual((await inventory()).find((item) => item.key === key).user_connection, userBefore);
+            assert.equal((await context.request.put(`${BASE}/api/v0/dots/${dotId}/active`, { data: { active: false } })).status(), 200);
+            dotId = undefined;
+            await page.setViewportSize({ width: 1280, height: 900 });
+        }
+    } finally {
+        try {
+            if (context) {
+                try {
+                    if (restoreEnabled) await context.request.post(`${BASE}/api/v0/admin/connectors/${key}/toggle`, { data: { enabled: true }, timeout: 5000 });
+                } finally {
+                    if (dotId) {
+                        try {
+                            const response = await context.request.get(`${BASE}/api/v0/dots/${dotId}/connections`, { timeout: 5000 });
+                            if (response.ok()) {
+                                const row = (await response.json()).connections.find((item) => item.key === key);
+                                if (row?.principal_connection?.id) await context.request.delete(`${BASE}/api/v0/dots/${dotId}/connections/${key}`, {
+                                    data: { connection_id: row.principal_connection.id, connection_generation: row.principal_connection.generation }, timeout: 5000,
+                                });
+                            }
+                        } finally {
+                            await context.request.put(`${BASE}/api/v0/dots/${dotId}/active`, { data: { active: false }, timeout: 5000 });
+                        }
+                    }
+                }
+            }
+        } finally {
+            try { await context?.close(); } finally { await browser.close(); }
+        }
+    }
+});

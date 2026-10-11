@@ -1452,6 +1452,7 @@ export const en: Catalog = {
  "dot-connection-error-save": "The connector identity could not be saved. Reload its details and try again.",
  "dot-connection-error-unavailable": "The selected connection is unavailable. Connect this account or choose an available connection.",
  "dot-connection-heading": "Connector identity",
+ "dot-connection-local-unavailable": "This Dot’s local credentials are unavailable for use.",
  "dot-connection-pending-warning": "Calls waiting for approval remain bound to their original connection. Changing the identity or replacing its authorization requires a new call and approval.",
  "dot-connection-principal": "Connection for {name}",
  "dot-connection-provider-account": "The provider decides which account you authorize. Connecting does not create an account or change this Dot’s saved selection.",

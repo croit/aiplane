@@ -64,6 +64,7 @@ export interface DotConnection {
 	user_connection: DotCredential;
 	principal_connection: DotCredential | null;
 	can_connect: boolean;
+	can_disconnect: boolean;
 }
 export interface DotConnections { dot: Dot; connections: DotConnection[] }
 export interface DotConnectionChange {

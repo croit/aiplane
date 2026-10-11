@@ -195,7 +195,16 @@ async fn disabled_connector_hides_resource_metadata_but_allows_owned_local_disco
     assert_eq!(row(&inventory)["connector"], Value::Null);
     assert_eq!(row(&inventory)["supported_modes"], json!([]));
     assert_eq!(row(&inventory)["can_connect"], false);
-    assert_eq!(row(&inventory)["principal_connection"], Value::Null);
+    assert_eq!(
+        row(&inventory)["principal_connection"]["id"],
+        own.connection_id
+    );
+    assert_eq!(
+        row(&inventory)["principal_connection"]["generation"],
+        own.generation
+    );
+    assert_eq!(row(&inventory)["can_disconnect"], true);
+    assert_eq!(row(&inventory)["selected"]["connection_id"], Value::Null);
     let (status, _) = fx
         .send(
             Some(&fx.alice),
@@ -217,6 +226,104 @@ async fn disabled_connector_hides_resource_metadata_but_allows_owned_local_disco
         .unwrap()
         .is_none()
     );
+}
+
+#[tokio::test]
+async fn unselected_owned_credentials_remain_erasable_without_catalogue_access() {
+    for restriction in ["disabled", "forbidden", "missing"] {
+        let fx = fixture().await;
+        let dot = setup(&fx).await;
+        let user = mcp_connections::upsert_connection(
+            &fx.state.db,
+            connection(ConnectionOwner::User("alice".into())),
+        )
+        .await
+        .unwrap();
+        let own = mcp_connections::upsert_connection(
+            &fx.state.db,
+            connection(ConnectionOwner::Principal(dot.clone())),
+        )
+        .await
+        .unwrap();
+        match restriction {
+            "disabled" => {
+                aiplane_core::server::db::mcp_catalog::set_enabled(
+                    &fx.state.db,
+                    "workspace",
+                    false,
+                )
+                .await
+                .unwrap();
+            }
+            "forbidden" => {
+                sqlx::query("UPDATE mcp_catalog_connectors SET allowed_groups='[\"other-group\"]' WHERE key='workspace'").execute(&fx.state.db).await.unwrap();
+            }
+            "missing" => {
+                aiplane_core::server::db::mcp_catalog::delete(&fx.state.db, "workspace")
+                    .await
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        aiplane_agents::db::agents::set_personal_dot_active(&fx.state.db, &dot, "alice", false, 4)
+            .await
+            .unwrap();
+        let inventory_path = format!("/api/v0/dots/{dot}/connections");
+        let (status, inventory) = fx.get(&fx.alice, &inventory_path).await;
+        assert_eq!(status, StatusCode::OK, "{restriction}: {inventory}");
+        let account = row(&inventory);
+        assert_eq!(account["connector"], Value::Null);
+        assert_eq!(account["supported_modes"], json!([]));
+        assert_eq!(account["can_connect"], false);
+        assert_eq!(account["can_disconnect"], true);
+        assert_eq!(account["principal_connection"]["id"], own.connection_id);
+        assert_eq!(
+            account["principal_connection"]["generation"],
+            own.generation
+        );
+        assert_eq!(account["user_connection"]["id"], Value::Null);
+        assert_eq!(account["user_connection"]["generation"], Value::Null);
+        assert_eq!(account["user_connection"]["connected"], false);
+        assert_eq!(account["selected"]["binding_generation"], Value::Null);
+        assert_eq!(account["selected"]["connection_id"], Value::Null);
+        assert!(!inventory.to_string().contains("Actual Workspace"));
+        let path = format!("{inventory_path}/workspace");
+        let (status, erased) = fx
+            .send(
+                Some(&fx.alice),
+                Method::DELETE,
+                &path,
+                Some(json!({
+                    "connection_id":account["principal_connection"]["id"],
+                    "connection_generation":account["principal_connection"]["generation"]
+                })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{restriction}: {erased}");
+        assert!(erased["connections"].as_array().unwrap().is_empty());
+        assert_eq!(
+            mcp_connections::get_connection(
+                &fx.state.db,
+                &ConnectionOwner::User("alice".into()),
+                "workspace"
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .identity(),
+            user
+        );
+        assert!(
+            mcp_connections::get_connection(
+                &fx.state.db,
+                &ConnectionOwner::Principal(dot),
+                "workspace"
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+    }
 }
 
 #[tokio::test]
