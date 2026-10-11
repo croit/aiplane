@@ -436,20 +436,15 @@ pub async fn create_pending(pool: &Pool, p: &PendingOauth) -> Result<(), DbError
 /// if the state is unknown or already expired.
 pub async fn take_pending(pool: &Pool, state: &str) -> Result<Option<PendingOauth>, DbError> {
     let row = sqlx::query(
-        r#"SELECT user_id, connector_key, pkce_verifier, redirect_uri, token_url, resource,
-                  dcr_client_id, dcr_client_secret_ct, dcr_client_secret_nonce, return_to,
-                  expires_at
-           FROM pending_mcp_oauth WHERE state = ?"#,
+        r#"DELETE FROM pending_mcp_oauth WHERE state = ?
+           RETURNING user_id, connector_key, pkce_verifier, redirect_uri, token_url, resource,
+                     dcr_client_id, dcr_client_secret_ct, dcr_client_secret_nonce, return_to,
+                     expires_at"#,
     )
     .bind(state)
     .fetch_optional(pool)
     .await?;
     let Some(row) = row else { return Ok(None) };
-    // One-shot: always delete the row we found.
-    sqlx::query("DELETE FROM pending_mcp_oauth WHERE state = ?")
-        .bind(state)
-        .execute(pool)
-        .await?;
     let expires = super::parse_ts(row.try_get("expires_at")?, "expires_at")?;
     if Timestamp::now() > expires {
         return Ok(None);
@@ -825,6 +820,93 @@ mod tests {
         assert_eq!(p.pkce_verifier, "verifier");
         // Consumed: a second take returns None.
         assert!(take_pending(&pool, "st1").await.unwrap().is_none());
+    }
+
+    async fn pending_pool() -> Pool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        db::migrate(&pool).await.unwrap();
+        pool
+    }
+
+    async fn concurrent_takes(pool: &Pool, state: &str) -> Vec<PendingOauth> {
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(17));
+        let connection = pool.acquire().await.unwrap();
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..16 {
+            let pool = pool.clone();
+            let barrier = barrier.clone();
+            let state = state.to_owned();
+            tasks.spawn(async move {
+                barrier.wait().await;
+                take_pending(&pool, &state).await.unwrap()
+            });
+        }
+        barrier.wait().await;
+        // Queue all consumers behind one SQLite connection before its first read.
+        tokio::task::yield_now().await;
+        drop(connection);
+        let mut consumed = Vec::new();
+        while let Some(result) = tasks.join_next().await {
+            if let Some(pending) = result.unwrap() {
+                consumed.push(pending);
+            }
+        }
+        consumed
+    }
+
+    #[tokio::test]
+    async fn pending_take_concurrent_consumers_preserve_one_complete_authorization() {
+        let pool = pending_pool().await;
+        let mut expected = pending("concurrent");
+        expected.dcr_client_secret_ct = Some(vec![1, 2, 3]);
+        expected.dcr_client_secret_nonce = Some(vec![4, 5, 6]);
+        expected.return_to = Some("/tools/integrations".into());
+        create_pending(&pool, &expected).await.unwrap();
+
+        let consumed = concurrent_takes(&pool, &expected.state).await;
+        assert_eq!(consumed.len(), 1);
+        let actual = &consumed[0];
+        assert_eq!(actual.state, expected.state);
+        assert_eq!(actual.user_id, expected.user_id);
+        assert_eq!(actual.connector_key, expected.connector_key);
+        assert_eq!(actual.pkce_verifier, expected.pkce_verifier);
+        assert_eq!(actual.redirect_uri, expected.redirect_uri);
+        assert_eq!(actual.token_url, expected.token_url);
+        assert_eq!(actual.resource, expected.resource);
+        assert_eq!(actual.dcr_client_id, expected.dcr_client_id);
+        assert_eq!(actual.dcr_client_secret_ct, expected.dcr_client_secret_ct);
+        assert_eq!(
+            actual.dcr_client_secret_nonce,
+            expected.dcr_client_secret_nonce
+        );
+        assert_eq!(actual.return_to, expected.return_to);
+        assert!(
+            take_pending(&pool, &expected.state)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_take_concurrent_expired_authorization_is_removed_without_returning_it() {
+        let pool = pending_pool().await;
+        create_pending(&pool, &pending("expired")).await.unwrap();
+        sqlx::query("UPDATE pending_mcp_oauth SET expires_at = '2000-01-01T00:00:00Z' WHERE state = 'expired'")
+            .execute(&pool).await.unwrap();
+
+        assert!(concurrent_takes(&pool, "expired").await.is_empty());
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pending_mcp_oauth")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, 0);
+        assert!(take_pending(&pool, "expired").await.unwrap().is_none());
+        assert!(take_pending(&pool, "unknown").await.unwrap().is_none());
     }
 
     #[tokio::test]

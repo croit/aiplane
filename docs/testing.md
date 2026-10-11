@@ -298,3 +298,12 @@ child continuation to the verified root chain. Budget snapshot JSON tests cover
 optional aggregate and local limits and unknown usage without changing the
 suspension table. These generic substrate operations contain no agent ownership
 types.
+
+## MCP OAuth state consumption
+
+The existing `user_mcp::take_pending` accessor is tested against migrated
+SQLite with sixteen concurrent consumers. Exactly one receives the complete
+recorded authorization, including PKCE, endpoint and sealed DCR metadata.
+Repeated and unknown states return no record. An expired authorization is
+removed while all consumers receive no record. The callback uses this same
+atomic accessor; these tests do not claim separate Dot credentials.

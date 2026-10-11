@@ -51,6 +51,12 @@ https://<your-gateway-host>/integrations/callback
 (in local dev: `http://localhost:8080/integrations/callback`). It must be
 registered verbatim in the provider's OAuth app.
 
+Each pending OAuth authorization is consumed atomically at the callback. Only
+one callback can retrieve its recorded user, connector, PKCE verifier and
+endpoints; concurrent or repeated callbacks cannot reuse the state. Expired
+states are removed without returning an authorization. Start **Connect** again
+when the callback reports an expired or unknown authorization.
+
 ---
 
 ## Scope: per-user vs global
