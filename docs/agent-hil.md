@@ -21,7 +21,7 @@ CREATE TABLE chat_turn_suspensions (
     message      TEXT,                   -- what the tool wants shown
     tool_call    TEXT NOT NULL,          -- JSON {id, name, args}
     tail         TEXT NOT NULL,          -- JSON: this turn's round messages so far
-    budget_used  TEXT NOT NULL,          -- JSON {rounds, seconds, tokens}
+    budget_used  TEXT NOT NULL,          -- JSON {rounds, seconds, tokens, tree?}
     child_turn   TEXT,                   -- set when the pause is inside a sub-agent run
     on_timeout   TEXT NOT NULL,          -- the fallback the kind allows
     expires_at   TEXT NOT NULL,          -- compared after parsing, not as a string
@@ -157,6 +157,12 @@ re-attaching every 10 s until the answer arrives
 A test-chat pause never reaches the inbox (`inbox::staff_item` skips version
 0); the manager answers it in the test chat through the staff route
 ([`ui.md`](ui.md#agent-builder)).
+
+A budget snapshot may include `tree`: the original aggregate and local limits,
+observed rounds, seconds and tokens, and whether upstream usage was reported.
+It uses the same suspension JSON column. Ordinary snapshots omit that optional
+field. The connection-level claim and creation helpers remain generic chat
+operations; child ownership is resolved in the agent layer.
 
 ## Per-tool approval
 

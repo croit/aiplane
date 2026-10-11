@@ -193,6 +193,25 @@ pub struct PendingCall {
     pub actions: Option<Vec<String>>,
 }
 
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub struct BudgetLimits {
+    pub rounds: u32,
+    pub seconds: Option<u64>,
+    pub tokens: Option<u64>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TreeBudgetCheckpoint {
+    pub limits: BudgetLimits,
+    pub local_limits: BudgetLimits,
+    pub rounds: u32,
+    pub seconds: u64,
+    pub tokens: u64,
+    pub usage_known: bool,
+}
+
 /// What the turn had spent when it paused, so a resumed run continues against
 /// the same budget instead of starting a fresh one.
 #[derive(
@@ -202,6 +221,8 @@ pub struct BudgetUsed {
     pub rounds: u32,
     pub seconds: u64,
     pub tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<TreeBudgetCheckpoint>,
 }
 
 /// One paused turn: everything a resume needs to continue it.
@@ -540,7 +561,7 @@ pub async fn expired_suspensions(
            FROM chat_turn_suspensions s
            JOIN chat_turns t ON t.id = s.turn_id
            JOIN chat_sessions cs ON cs.id = t.session_id
-           WHERE cs.user_id IS NOT NULL AND s.expires_at < ?"#,
+           WHERE cs.user_id IS NOT NULL AND cs.parent_turn_id IS NULL AND s.expires_at < ?"#,
     )
     .bind(deadline_bound(now))
     .fetch_all(pool)
@@ -647,6 +668,7 @@ mod tests {
                 rounds: 1,
                 seconds: 3,
                 tokens: 120,
+                tree: None,
             },
             child_turn: None,
             on_timeout: TimeoutFallback::Deny,
@@ -955,6 +977,62 @@ mod tests {
             .unwrap();
         assert_eq!(turn.turn.status, TurnStatus::Suspended);
         assert_eq!(turn.tool_calls[0].status, ToolCallStatus::Running);
+    }
+
+    #[test]
+    fn tree_checkpoint_json_preserves_original_limits_and_unknown_usage() {
+        let checkpoint = TreeBudgetCheckpoint {
+            limits: BudgetLimits {
+                rounds: 8,
+                seconds: Some(60),
+                tokens: Some(100),
+            },
+            local_limits: BudgetLimits {
+                rounds: 3,
+                seconds: Some(20),
+                tokens: Some(50),
+            },
+            rounds: 2,
+            seconds: 4,
+            tokens: 25,
+            usage_known: false,
+        };
+        let used = BudgetUsed {
+            rounds: 1,
+            seconds: 2,
+            tokens: 10,
+            tree: Some(checkpoint),
+        };
+        let restored: BudgetUsed =
+            serde_json::from_str(&serde_json::to_string(&used).unwrap()).unwrap();
+        assert_eq!(restored, used);
+        let ordinary = BudgetUsed {
+            rounds: 1,
+            seconds: 2,
+            tokens: 10,
+            tree: None,
+        };
+        assert!(
+            serde_json::to_value(ordinary)
+                .unwrap()
+                .get("tree")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn delegated_child_does_not_expire_independently() {
+        let pool = pool().await;
+        running_turn(&pool, "child").await;
+        sqlx::query("UPDATE chat_sessions SET parent_turn_id = 'parent' WHERE id = (SELECT session_id FROM chat_turns WHERE id = 'child')").execute(&pool).await.unwrap();
+        let now = Timestamp::now();
+        suspend_turn(
+            &pool,
+            &suspension("child", now - jiff::SignedDuration::from_secs(5)),
+        )
+        .await
+        .unwrap();
+        assert!(expired_suspensions(&pool, now).await.unwrap().is_empty());
     }
 
     #[tokio::test]

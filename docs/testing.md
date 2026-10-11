@@ -286,3 +286,15 @@ Preserve these known-answer vectors unchanged. Other round-trip fixtures use
 ephemeral keys; production entropy failure must never substitute a fixed key.
 Any dismissal should cite the individual rationale above, not suppress the
 rule or the source file.
+
+## Shared chat transaction and child guards
+
+Session-core state tests create a session and idle turn pair in one caller-held
+`BEGIN IMMEDIATE`, then prove both rollback and commit against SQLite. Child
+history and attachments stay owner-readable; even a stored shared flag cannot
+expose them to a second user. Owner sharing and independent deletion refuse a
+non-null opaque parent link. The person-owned expiry sweep covers root pauses only, leaving
+child continuation to the verified root chain. Budget snapshot JSON tests cover
+optional aggregate and local limits and unknown usage without changing the
+suspension table. These generic substrate operations contain no agent ownership
+types.

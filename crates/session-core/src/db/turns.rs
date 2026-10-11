@@ -150,7 +150,31 @@ pub async fn create_turn_pair_if_idle(
     model: &str,
     reject_pending: bool,
 ) -> Result<Option<(Turn, Turn)>, DbError> {
-    let Some((mut tx, seq)) = idle_turn_transaction(pool, session_id, reject_pending).await? else {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let pair = create_turn_pair_if_idle_in(
+        &mut tx,
+        session_id,
+        user_turn_id,
+        assistant_turn_id,
+        prompt,
+        model,
+        reject_pending,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(pair)
+}
+
+pub async fn create_turn_pair_if_idle_in(
+    connection: &mut sqlx::SqliteConnection,
+    session_id: &str,
+    user_turn_id: &str,
+    assistant_turn_id: &str,
+    prompt: &str,
+    model: &str,
+    reject_pending: bool,
+) -> Result<Option<(Turn, Turn)>, DbError> {
+    let Some(seq) = idle_turn_sequence(connection, session_id, reject_pending).await? else {
         return Ok(None);
     };
     let now = Timestamp::now().to_string();
@@ -172,18 +196,17 @@ pub async fn create_turn_pair_if_idle(
     .bind(seq + 1)
     .bind(model)
     .bind(&now)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *connection)
     .await?;
     sqlx::query("UPDATE chat_sessions SET updated_at = ? WHERE id = ?")
         .bind(&now)
         .bind(session_id)
-        .execute(&mut *tx)
+        .execute(connection)
         .await?;
     let mut turns = rows.iter().map(map_turn).collect::<Result<Vec<_>, _>>()?;
     turns.sort_by_key(|turn| turn.seq);
     let assistant = turns.pop().ok_or(sqlx::Error::RowNotFound)?;
     let user = turns.pop().ok_or(sqlx::Error::RowNotFound)?;
-    tx.commit().await?;
     Ok(Some((user, assistant)))
 }
 
@@ -287,6 +310,17 @@ async fn idle_turn_transaction(
 ) -> Result<Option<(sqlx::Transaction<'static, sqlx::Sqlite>, i64)>, DbError> {
     // Reserve the write lock before checking admission or assigning sequence numbers.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let Some(seq) = idle_turn_sequence(&mut tx, session_id, reject_pending).await? else {
+        return Ok(None);
+    };
+    Ok(Some((tx, seq)))
+}
+
+async fn idle_turn_sequence(
+    connection: &mut sqlx::SqliteConnection,
+    session_id: &str,
+    reject_pending: bool,
+) -> Result<Option<i64>, DbError> {
     let busy: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM chat_turns WHERE session_id = ?
          AND role = 'assistant' AND status IN ('in_progress', 'suspended'))
@@ -295,7 +329,7 @@ async fn idle_turn_transaction(
     .bind(session_id)
     .bind(reject_pending)
     .bind(session_id)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *connection)
     .await?;
     if busy {
         return Ok(None);
@@ -304,9 +338,9 @@ async fn idle_turn_transaction(
         "SELECT COALESCE(MAX(seq), -1) + 1 FROM chat_turns WHERE session_id = ?",
     )
     .bind(session_id)
-    .fetch_one(&mut *tx)
+    .fetch_one(connection)
     .await?;
-    Ok(Some((tx, seq)))
+    Ok(Some(seq))
 }
 
 /// Append to an in-progress assistant turn's `content`. Worker batches

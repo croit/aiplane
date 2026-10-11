@@ -432,7 +432,8 @@ pub(crate) mod tests {
                 created_at     TEXT NOT NULL,
                 updated_at     TEXT NOT NULL,
                 shared         INTEGER NOT NULL DEFAULT 0,
-                pinned         INTEGER NOT NULL DEFAULT 0
+                pinned         INTEGER NOT NULL DEFAULT 0,
+                parent_turn_id TEXT
             )"#,
             r#"CREATE TABLE chat_turns (
                 id                    TEXT PRIMARY KEY NOT NULL,
