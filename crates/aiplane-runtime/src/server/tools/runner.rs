@@ -1724,6 +1724,7 @@ mod tests {
                     network: false,
                     container_id: None,
                     keep_alive: false,
+                    workspace: None,
                 },
                 false,
             )

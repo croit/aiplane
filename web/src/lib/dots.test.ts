@@ -112,3 +112,42 @@ test('Dot inventory preserves an unavailable own erasure version without user cr
 	context.after(() => globalThis.fetch = original);
 	assert.deepEqual((await dotConnectionsApi.load('dot')).connections, [row]);
 });
+
+test('Dot workspace client retains availability and actual metadata and encodes paths and cursors', async (context) => {
+	const { dotWorkspaceApi } = await import('./dots.ts');
+	const original = globalThis.fetch;
+	const calls: string[] = [];
+	const result = {
+		dot_id: 'dot/id', dot_name: 'Harald', available: true, busy: true,
+		path: 'project notes', entries: [{ name: 'a&b.txt', kind: 'file', size_bytes: null, modified_at: null }],
+		next_cursor: 'opaque/&cursor'
+	};
+	globalThis.fetch = async (input) => {
+		calls.push(String(input));
+		return new Response(JSON.stringify(result), { status: 200 });
+	};
+	context.after(() => globalThis.fetch = original);
+	assert.deepEqual(await dotWorkspaceApi.list('dot/id', 'project notes', 'opaque/&cursor'), result);
+	assert.deepEqual(calls, ['/api/v0/dots/dot%2Fid/workspace?path=project+notes&cursor=opaque%2F%26cursor']);
+	assert.equal(dotWorkspaceApi.downloadUrl('dot/id', 'project notes/a&b.txt'), '/api/v0/dots/dot%2Fid/workspace/file?path=project+notes%2Fa%26b.txt');
+});
+
+test('Dot workspace writes raw file bytes and explicit folder and entry paths through the shared transport', async (context) => {
+	const { dotWorkspaceApi } = await import('./dots.ts');
+	const original = globalThis.fetch;
+	const calls: { path: string; method: string; body: BodyInit | null | undefined; type: string | null }[] = [];
+	globalThis.fetch = async (input, init) => {
+		calls.push({ path: String(input), method: init?.method ?? 'GET', body: init?.body, type: new Headers(init?.headers).get('content-type') });
+		return new Response(null, { status: 204 });
+	};
+	context.after(() => globalThis.fetch = original);
+	const file = new File(['A UTF-8 boundary: ß'], 'notes.txt');
+	await dotWorkspaceApi.upload('dot/id', 'project/notes.txt', file);
+	await dotWorkspaceApi.createFolder('dot/id', 'project/new folder');
+	await dotWorkspaceApi.remove('dot/id', 'project/notes.txt');
+	assert.deepEqual(calls, [
+		{ path: '/api/v0/dots/dot%2Fid/workspace/file?path=project%2Fnotes.txt', method: 'PUT', body: file, type: 'application/octet-stream' },
+		{ path: '/api/v0/dots/dot%2Fid/workspace/folder', method: 'POST', body: JSON.stringify({ path: 'project/new folder' }), type: 'application/json' },
+		{ path: '/api/v0/dots/dot%2Fid/workspace/entry?path=project%2Fnotes.txt', method: 'DELETE', body: undefined, type: null }
+	]);
+});

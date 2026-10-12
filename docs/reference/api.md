@@ -159,7 +159,7 @@ Examples of its task families:
 | `/api/v0/memories*`, `/api/v0/tools*`, `/api/v0/integrations*`, `/api/v0/skills*` | Personal capabilities, connections and memories; [tools](../guide/tools-and-integrations.md). |
 | `/api/v0/scheduled*`, `/api/v0/webhooks*`, `/api/v0/inbox*` | Automation and durable decisions; [automation guide](../guide/automation-and-inbox.md). |
 | `/api/v0/agents*` | Agent drafts, grants, evaluation, publication and observation; agent guides. |
-| `/api/v0/dots*` | List/create/active-state require resolved `can_manage_dots`; owner-scoped access remains enforced. The four connection routes additionally admit organization member writers for explicit own-principal OAuth management; they return independent action capabilities and no user credential. The memory routes also admit organization member readers and writers through current membership and existing shares; shared-note writes additionally require gateway administration. Remaining routes retain personal ownership. Personal Dot lifecycle, tool selection, tool/action approval rules, private chats, memory and activity; scheduled actions and webhooks can run as an owned Dot; [AIplane Dots](../dots.md). |
+| `/api/v0/dots*` | List/create/active-state require resolved `can_manage_dots`; owner-scoped access remains enforced. The four connection routes additionally admit organization member writers for explicit own-principal OAuth management; they return independent action capabilities and no user credential. The memory routes also admit organization member readers and writers through current membership and existing shares; shared-note writes additionally require gateway administration. The workspace routes retain personal ownership, including inactive Dots. Listing returns actual storage availability, busy state and nullable metadata; raw downloads use attachment disposition, `nosniff` and `no-store`. Uploads and reads are capped at 50 MiB; writes, folder creation and removal require idle storage. Remaining routes retain personal ownership. Personal Dot lifecycle, tool selection, tool/action approval rules, private chats, memory and activity; scheduled actions and webhooks can run as an owned Dot; [AIplane Dots](../dots.md). |
 | `/api/v0/organizations*` | Current group-derived membership, organization details and named organization Dot creation/activation. Creation requires membership and agent-management permission; configuration uses existing agent shares and principal grants. Organization member writers can run private saved-draft and pinned published conversations through the existing agent test routes; [organization Dots](../dots-organizations.md). |
 | `/api/v0/rag*` | Knowledge collections, snapshots, indexing and profiles; [knowledge](../admin/knowledge.md). |
 | `/api/v0/admin/*` | Administrative models, grants, settings and catalogs; administration guides. |
@@ -533,6 +533,11 @@ Debug fixture routes exist only in development builds.
 | `PUT /api/v0/dots/{id}/memories/{memory_id}` |
 | `DELETE /api/v0/dots/{id}/memories/{memory_id}` |
 | `GET /api/v0/dots/{id}/activity` |
+| `GET /api/v0/dots/{id}/workspace` |
+| `GET /api/v0/dots/{id}/workspace/file` |
+| `PUT /api/v0/dots/{id}/workspace/file` |
+| `POST /api/v0/dots/{id}/workspace/folder` |
+| `DELETE /api/v0/dots/{id}/workspace/entry` |
 | `POST /api/v0/dots/{id}/sessions` |
 | `GET /api/v0/agents/inbox` |
 | `GET /api/v0/agents/inbox/events` |

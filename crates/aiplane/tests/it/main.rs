@@ -38,6 +38,7 @@ mod dot_background_chat;
 mod dot_communication;
 mod dot_connections;
 mod dot_oauth;
+mod dot_workspace;
 mod dots_background;
 mod embed;
 mod feedback_extract;

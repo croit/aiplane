@@ -241,8 +241,13 @@ Write. External organization agent channels remain unavailable; see
 Optional sandbox execution uses the private [sandbox runner](docs/sandbox.md).
 It confirms container absence before acknowledging release and removing
 scratch data, retries failed teardown, and refuses startup if stale labelled
-containers cannot be cleared. Persistent Dot files and saved browser profiles
-remain planned in the [workspace specification](docs/dots-workspace.md).
+containers cannot be cleared. Personal Dots retain files in `/workspace` when
+the host runner verifies local rootful Linux `runsc` isolation and the existing
+`SANDBOX_WORK_ROOT` storage with two actual containers. Unsupported or failed
+verification reports persistent storage unavailable; ordinary scratch execution
+keeps its existing behavior. Back up the runner volume, including retirement
+tombstones, together with the gateway database. Browser login profiles remain
+separate planned work. See [persistent workspace deployment and recovery](docs/sandbox.md#personal-dot-workspaces).
 
 To build from source, install [mise](https://mise.jdx.dev/) and run:
 

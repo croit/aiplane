@@ -114,6 +114,36 @@ settings and connected tools. Revoked selections and disabled tools cannot
 execute on an old approval. Dot deactivation leaves ordinary pending calls
 paused and cancels affected delegation trees.
 
+## Personal Dot files
+
+Choose **Workspace** on a personal Dot card to open its files. The page uses
+that Dot’s actual name and storage state. Open folders, download files, upload
+files of at most 50 MiB, create folders, or delete files and empty folders after
+confirmation. Missing file metadata is shown as unavailable. Directory results
+are paginated; reload after changes from a running Dot. Files are downloaded,
+not executed or previewed in the web page.
+
+The owner can inspect an inactive Dot. Upload, folder creation and deletion are
+blocked while any of the Dot’s computer containers are active or waiting for
+confirmed teardown. Owner rights are checked again after storage requests.
+Files remain across turns and container expiry. In verified personal Dot
+`run_in_sandbox` and `browse_page` calls, `/workspace` is the shared persistent
+file directory; `/work` remains scratch and attachment output. Copy a selected
+output into `/work` to deliver it in the conversation.
+
+Persistent storage is available only with a configured persistent runner volume
+and a successful local rootful Linux/gVisor mount proof at runner startup. An
+unverified runner shows unavailability; it does not substitute scratch storage.
+Only personal ownership is supported in this increment. Saved browser logins
+and browser-profile reset are not implemented. See the complete
+[workspace design](dots-workspace.md) and [runner requirements](sandbox.md).
+
+Deactivation preserves files. Dot and account deletion create durable cleanup
+work. The runner seals the deleted Dot, confirms container removal, then removes
+its files in bounded passes. Failed cleanup retries after restart. A private
+minimal owner/Dot tombstone remains to reject delayed requests; it contains no
+workspace contents and is not exposed to users or models.
+
 ## Personal Dot communication consent
 
 The **Communication** disclosure configures separate **Can ask** and **Accepts

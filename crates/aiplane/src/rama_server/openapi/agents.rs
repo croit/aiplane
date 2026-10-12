@@ -113,6 +113,27 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<aiplane_api::pages::json_dots::ActiveBody>())
             .ok(json::<serde_json::Value>())
             .errors(&[400, 403, 404, 409]),
+        get("/api/v0/dots/{id}/workspace", Access::Session)
+            .ok(json::<
+                aiplane_api::pages::json_dot_workspace::DotWorkspaceView,
+            >())
+            .errors(&[400, 404, 409, 413, 503]),
+        get("/api/v0/dots/{id}/workspace/file", Access::Session)
+            .ok(Content::Bytes("application/octet-stream"))
+            .errors(&[400, 404, 409, 413, 503]),
+        put("/api/v0/dots/{id}/workspace/file", Access::Session)
+            .body(Content::Bytes("application/octet-stream"))
+            .no_content()
+            .errors(&[400, 404, 409, 413, 503]),
+        post("/api/v0/dots/{id}/workspace/folder", Access::Session)
+            .body(json::<
+                aiplane_api::pages::json_dot_workspace::WorkspaceFolderBody,
+            >())
+            .no_content()
+            .errors(&[400, 404, 409, 413, 503]),
+        delete("/api/v0/dots/{id}/workspace/entry", Access::Session)
+            .no_content()
+            .errors(&[400, 404, 409, 413, 503]),
         get("/api/v0/dots/{id}/access", Access::Session)
             .ok(json::<aiplane_api::pages::json_dots::DotAccessView>())
             .errors(&[400, 404]),

@@ -27,12 +27,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
-use shared::sandbox::{RunRequest, RunResponse};
+use shared::sandbox::{DotWorkspace, DotWorkspaceScope, RunRequest, RunResponse};
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
-use crate::backend::{ContainerBackend, Network};
+use crate::backend::{ContainerBackend, Network, WorkspaceMount};
 use crate::config::Config;
+use crate::workspace::Workspace;
 
 #[derive(Debug, Error)]
 pub enum RunnerError {
@@ -42,6 +43,14 @@ pub enum RunnerError {
     Busy,
     #[error("network egress requested but not configured on this runner")]
     NetworkUnavailable,
+    #[error(
+        "persistent Dot workspace storage is unavailable; configure and verify the runner's persistent storage"
+    )]
+    WorkspaceUnavailable,
+    #[error("sandbox lease does not match this Dot, turn or purpose")]
+    WorkspaceMismatch,
+    #[error("workspace filesystem operation failed: {0}")]
+    Workspace(#[from] crate::workspace::WorkspaceError),
 }
 
 /// A pre-booted, idle container plus the workload-image id it was created
@@ -67,6 +76,9 @@ struct Leased {
     /// run up to `max_timeout_secs`).
     busy: bool,
     retiring: bool,
+    scope: Option<DotWorkspaceScope>,
+    network: Network,
+    workspace: Option<Arc<Workspace>>,
 }
 
 pub struct Pool {
@@ -80,7 +92,7 @@ pub struct Pool {
     /// the first [`Self::refresh_image`]; updated when the image changes.
     image: Mutex<String>,
     /// Caps concurrent in-flight jobs.
-    sem: Semaphore,
+    sem: Arc<Semaphore>,
     /// Serializes refill so we never overshoot `pool_size`.
     refill_lock: tokio::sync::Mutex<()>,
 }
@@ -113,7 +125,7 @@ impl Pool {
             ready: Mutex::new(VecDeque::new()),
             leased: Mutex::new(HashMap::new()),
             image: Mutex::new(String::new()),
-            sem: Semaphore::new(permits),
+            sem: Arc::new(Semaphore::new(permits)),
             refill_lock: tokio::sync::Mutex::new(()),
         })
     }
@@ -182,6 +194,9 @@ impl Pool {
                 last_used: Instant::now(),
                 busy: false,
                 retiring: true,
+                scope: None,
+                network: Network::None,
+                workspace: None,
             });
             if lease.busy {
                 return Err(RunnerError::Busy);
@@ -248,7 +263,7 @@ impl Pool {
             if have >= self.cfg.pool_size {
                 break;
             }
-            match self.backend.create(Network::None).await {
+            match self.backend.create(Network::None, None).await {
                 Ok(id) => self.ready.lock().unwrap().push_back(Warm {
                     id,
                     image: target.clone(),
@@ -310,7 +325,7 @@ impl Pool {
         want_egress: bool,
     ) -> Result<(String, bool), RunnerError> {
         if want_egress {
-            return Ok((self.backend.create(Network::Egress).await?, false));
+            return Ok((self.backend.create(Network::Egress, None).await?, false));
         }
         let warm = { self.ready.lock().unwrap().pop_front() };
         let target = { self.image.lock().unwrap().clone() };
@@ -321,10 +336,10 @@ impl Pool {
             // we boot a fresh one (which uses the new image).
             Some(w) if !target.is_empty() && w.image != target => {
                 self.spawn_destroy(w.id.clone());
-                Ok((self.backend.create(Network::None).await?, false))
+                Ok((self.backend.create(Network::None, None).await?, false))
             }
             Some(w) => Ok((w.id, true)),
-            None => Ok((self.backend.create(Network::None).await?, false)),
+            None => Ok((self.backend.create(Network::None, None).await?, false)),
         }
     }
 
@@ -343,6 +358,9 @@ impl Pool {
     /// A background refill tops the pool back up whenever a warm container
     /// was consumed (whether it became a lease or was torn down).
     pub async fn run(self: &Arc<Self>, req: &RunRequest) -> Result<RunResponse, RunnerError> {
+        if req.workspace.is_some() {
+            return self.run_scoped(req.clone()).await;
+        }
         let _permit = self.sem.try_acquire().map_err(|_| RunnerError::Busy)?;
 
         let want_egress = req.network;
@@ -404,9 +422,266 @@ impl Pool {
         Ok(resp)
     }
 
+    pub fn workspace_available(&self) -> bool {
+        self.cfg.work_root.is_some() && self.backend.workspace_available()
+    }
+
+    pub fn workspace_operation<T>(
+        &self,
+        identity: &DotWorkspace,
+        mutating: bool,
+        operation: impl FnOnce(&Workspace, bool) -> Result<T, crate::workspace::WorkspaceError>,
+    ) -> Result<T, RunnerError> {
+        if !self.workspace_available() {
+            return Err(RunnerError::WorkspaceUnavailable);
+        }
+        let leased = self.leased.lock().unwrap();
+        let busy = leased.values().any(|lease| {
+            lease
+                .scope
+                .as_ref()
+                .is_some_and(|scope| &scope.workspace == identity)
+        });
+        if mutating && busy {
+            return Err(RunnerError::Busy);
+        }
+        let files = Workspace::open(self.cfg.work_root.as_ref().unwrap(), identity)?;
+        let result = operation(&files, busy)?;
+        drop(leased);
+        Ok(result)
+    }
+
+    pub async fn retire_workspace(
+        self: &Arc<Self>,
+        identity: &DotWorkspace,
+    ) -> Result<bool, RunnerError> {
+        if !self.workspace_available() {
+            return Err(RunnerError::WorkspaceUnavailable);
+        }
+        let root = self
+            .cfg
+            .work_root
+            .as_ref()
+            .ok_or(RunnerError::WorkspaceUnavailable)?;
+        let containers = {
+            let mut leased = self.leased.lock().unwrap();
+            Workspace::seal_retirement(root, identity)?;
+            let mut containers = Vec::new();
+            for (id, lease) in leased.iter_mut() {
+                if lease
+                    .scope
+                    .as_ref()
+                    .is_some_and(|scope| &scope.workspace == identity)
+                {
+                    lease.retiring = true;
+                    containers.push(id.clone());
+                }
+            }
+            containers
+        };
+        let mut failure = None;
+        for id in containers {
+            if let Err(error) = self.release_container(&id).await {
+                failure = Some(error);
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        let leased = self.leased.lock().unwrap();
+        if leased.values().any(|lease| {
+            lease
+                .scope
+                .as_ref()
+                .is_some_and(|scope| &scope.workspace == identity)
+        }) {
+            return Err(RunnerError::Busy);
+        }
+        let completed = Workspace::cleanup_retired(root, identity)?;
+        drop(leased);
+        Ok(completed)
+    }
+
+    async fn run_scoped(self: &Arc<Self>, req: RunRequest) -> Result<RunResponse, RunnerError> {
+        if !self.workspace_available() {
+            return Err(RunnerError::WorkspaceUnavailable);
+        }
+        let permit = self
+            .sem
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| RunnerError::Busy)?;
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let pool = self.clone();
+        tokio::spawn(async move {
+            let _permit = permit;
+            let result = pool.run_scoped_owned(&req).await;
+            if sender.is_closed()
+                && let Ok(response) = &result
+                && let Some(id) = &response.container_id
+                && let Err(error) = pool.release_container(id).await
+            {
+                tracing::warn!(container = %id, error = %error, "cancelled workspace request retained for teardown retry");
+            }
+            if let Err(result) = sender.send(result)
+                && let Ok(response) = result
+                && let Some(id) = response.container_id
+                && let Err(error) = pool.release_container(&id).await
+            {
+                tracing::warn!(container = %id, error = %error, "undelivered workspace response retained for teardown retry");
+            }
+        });
+        receiver
+            .await
+            .map_err(|_| RunnerError::WorkspaceUnavailable)?
+    }
+
+    async fn run_scoped_owned(
+        self: &Arc<Self>,
+        req: &RunRequest,
+    ) -> Result<RunResponse, RunnerError> {
+        let scope = req
+            .workspace
+            .as_ref()
+            .ok_or(RunnerError::WorkspaceMismatch)?;
+        if scope.turn_id.is_empty() {
+            return Err(RunnerError::WorkspaceMismatch);
+        }
+        let network = if req.network {
+            Network::Egress
+        } else {
+            Network::None
+        };
+        if req.network && !self.cfg.egress_available() {
+            return Err(RunnerError::NetworkUnavailable);
+        }
+        let (id, creating, files, path) = {
+            let mut leased = self.leased.lock().unwrap();
+            let files = Arc::new(Workspace::open(
+                self.cfg
+                    .work_root
+                    .as_ref()
+                    .ok_or(RunnerError::WorkspaceUnavailable)?,
+                &scope.workspace,
+            )?);
+            let path = files.mount_path()?;
+            if let Some(id) = &req.container_id {
+                let lease = leased.get_mut(id).ok_or(RunnerError::WorkspaceMismatch)?;
+                if lease.scope.as_ref() != Some(scope) || lease.network != network {
+                    return Err(RunnerError::WorkspaceMismatch);
+                }
+                if lease.busy || lease.retiring {
+                    return Err(RunnerError::Busy);
+                }
+                lease
+                    .workspace
+                    .as_ref()
+                    .ok_or(RunnerError::WorkspaceMismatch)?
+                    .validate_mount_path(&path)?;
+                lease.busy = true;
+                (id.clone(), false, files, path)
+            } else {
+                if leased.values().any(|lease| {
+                    lease.scope.as_ref().is_some_and(|held| {
+                        held.workspace.dot_id == scope.workspace.dot_id
+                            && (held.workspace != scope.workspace
+                                || held.turn_id != scope.turn_id
+                                || lease.retiring)
+                    })
+                }) {
+                    return Err(RunnerError::Busy);
+                }
+                if leased.len() >= self.cfg.max_leases {
+                    return Err(RunnerError::Busy);
+                }
+                let id = crate::backend::new_container_name();
+                leased.insert(
+                    id.clone(),
+                    Leased {
+                        last_used: Instant::now(),
+                        busy: true,
+                        retiring: false,
+                        scope: Some(scope.clone()),
+                        network,
+                        workspace: Some(files.clone()),
+                    },
+                );
+                (id, true, files, path)
+            }
+        };
+        if creating {
+            let mount = WorkspaceMount {
+                name: id.clone(),
+                files,
+                path,
+            };
+            match self.backend.create(network, Some(&mount)).await {
+                Ok(created) if created == id => {}
+                Ok(created) => {
+                    self.spawn_destroy(created);
+                    if let Some(lease) = self.leased.lock().unwrap().get_mut(&id) {
+                        lease.busy = false;
+                    }
+                    self.spawn_destroy(id);
+                    return Err(RunnerError::WorkspaceMismatch);
+                }
+                Err(error) => {
+                    if let Some(lease) = self.leased.lock().unwrap().get_mut(&id) {
+                        lease.busy = false;
+                    }
+                    self.spawn_destroy(id);
+                    return Err(error.into());
+                }
+            }
+        }
+        let retired = {
+            let mut leased = self.leased.lock().unwrap();
+            match leased.get_mut(&id) {
+                Some(lease) if !lease.retiring => false,
+                Some(lease) => {
+                    lease.busy = false;
+                    true
+                }
+                None => true,
+            }
+        };
+        if retired {
+            self.spawn_destroy(id);
+            return Err(RunnerError::WorkspaceMismatch);
+        }
+        let started = Instant::now();
+        let result = self
+            .backend
+            .exec(&id, req, self.cfg.effective_timeout(req.timeout_secs))
+            .await;
+        let healthy = matches!(&result, Ok(response) if !response.timed_out);
+        let retiring = {
+            let mut leased = self.leased.lock().unwrap();
+            if let Some(lease) = leased.get_mut(&id) {
+                lease.busy = false;
+                lease.last_used = Instant::now();
+                lease.retiring |= !healthy || !req.keep_alive;
+                lease.retiring
+            } else {
+                true
+            }
+        };
+        if retiring {
+            self.spawn_destroy(id.clone());
+        }
+        let mut response = result?;
+        if !response.timed_out {
+            response.duration_ms = started.elapsed().as_millis() as u64;
+        }
+        response.container_id = (!retiring).then_some(id);
+        clamp_output(&mut response, self.cfg.max_output_bytes);
+        Ok(response)
+    }
+
     fn mark_lease_busy(&self, id: &str) -> Result<bool, RunnerError> {
         let mut leased = self.leased.lock().unwrap();
         match leased.get_mut(id) {
+            Some(lease) if lease.scope.is_some() => Err(RunnerError::WorkspaceMismatch),
             Some(lease) if lease.busy || lease.retiring => Err(RunnerError::Busy),
             Some(lease) => {
                 lease.busy = true;
@@ -460,6 +735,9 @@ impl Pool {
                             last_used: Instant::now(),
                             busy: false,
                             retiring: false,
+                            scope: None,
+                            network: Network::None,
+                            workspace: None,
                         },
                     );
                     true
@@ -487,6 +765,9 @@ impl Pool {
                 last_used: Instant::now(),
                 busy: false,
                 retiring: true,
+                scope: None,
+                network: Network::None,
+                workspace: None,
             });
             lease.retiring = true;
         }
@@ -558,7 +839,469 @@ fn clip_head_tail(s: &mut String, budget: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn workspace_request_never_falls_back_to_unscoped_container() {
+        let backend = Arc::new(crate::backend::fake::FakeBackend::new());
+        let pool = Pool::new(backend.clone(), Arc::new(Config::for_test()));
+        let mut request = crate::backend::fake::req();
+        request.workspace = Some(shared::sandbox::DotWorkspaceScope {
+            workspace: shared::sandbox::DotWorkspace {
+                owner_user_id: "person".into(),
+                dot_id: "00000000-0000-4000-8000-000000000001".into(),
+            },
+            turn_id: "persisted-turn".into(),
+            purpose: shared::sandbox::WorkspacePurpose::Workspace,
+        });
+        assert!(pool.run(&request).await.is_err());
+    }
     use crate::backend::fake::{FakeBackend, req};
+
+    struct WorkspaceFixture(std::path::PathBuf);
+
+    impl WorkspaceFixture {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "aiplane-pool-workspace-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&root).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+            Self(std::fs::canonicalize(root).unwrap())
+        }
+
+        fn config(&self) -> Arc<Config> {
+            let mut config = (*cfg(1, 4, false)).clone();
+            config.work_root = Some(self.0.clone());
+            Arc::new(config)
+        }
+    }
+
+    impl Drop for WorkspaceFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn scoped_request(turn: &str, purpose: shared::sandbox::WorkspacePurpose) -> RunRequest {
+        let mut request = req();
+        request.keep_alive = true;
+        request.workspace = Some(shared::sandbox::DotWorkspaceScope {
+            workspace: shared::sandbox::DotWorkspace {
+                owner_user_id: "person".into(),
+                dot_id: "00000000-0000-4000-8000-000000000001".into(),
+            },
+            turn_id: turn.into(),
+            purpose,
+        });
+        request
+    }
+
+    #[tokio::test]
+    async fn workspace_retirement_waits_for_confirmed_teardown_and_blocks_delayed_runs() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let request = scoped_request("turn-a", shared::sandbox::WorkspacePurpose::Workspace);
+        let identity = request.workspace.as_ref().unwrap().workspace.clone();
+        pool.workspace_operation(&identity, true, |files, _| files.write("keep.txt", b"keep"))
+            .unwrap();
+        pool.run(&request).await.unwrap();
+        backend
+            .fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(pool.retire_workspace(&identity).await.is_err());
+        assert!(
+            root.0
+                .join("dots")
+                .join(&identity.dot_id)
+                .join("files/keep.txt")
+                .exists()
+        );
+        assert!(pool.run(&request).await.is_err());
+        backend
+            .fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(pool.retire_workspace(&identity).await.unwrap());
+        assert!(!root.0.join("dots").join(&identity.dot_id).exists());
+        assert!(pool.retire_workspace(&identity).await.unwrap());
+        assert!(pool.run(&request).await.is_err());
+        assert!(!backend.destroyed.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn workspace_scoped_run_bypasses_warm_container_and_rejects_foreign_lease() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        pool.refill().await;
+        let warm = backend.created.lock().unwrap()[0].0.clone();
+        let request = scoped_request("turn-a", shared::sandbox::WorkspacePurpose::Workspace);
+        let id = pool.run(&request).await.unwrap().container_id.unwrap();
+        assert_ne!(id, warm);
+        let before = backend.execs.load(std::sync::atomic::Ordering::SeqCst);
+        let mut foreign = request.clone();
+        foreign.container_id = Some(id.clone());
+        foreign.workspace.as_mut().unwrap().workspace.owner_user_id = "foreign".into();
+        assert!(pool.run(&foreign).await.is_err());
+        let mut ordinary = req();
+        ordinary.container_id = Some(id.clone());
+        assert!(pool.run(&ordinary).await.is_err());
+        let mut unknown = request;
+        unknown.container_id = Some("fake-999".into());
+        assert!(pool.run(&unknown).await.is_err());
+        assert_eq!(
+            backend.execs.load(std::sync::atomic::Ordering::SeqCst),
+            before
+        );
+        pool.release_container(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_same_turn_code_and_browser_share_occupancy_until_both_released() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend, root.config());
+        let code = pool
+            .run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        let browser = pool
+            .run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Browser,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        assert_ne!(code, browser);
+        let other = scoped_request("turn-b", shared::sandbox::WorkspacePurpose::Workspace);
+        assert!(matches!(pool.run(&other).await, Err(RunnerError::Busy)));
+        pool.release_container(&code).await.unwrap();
+        assert!(matches!(pool.run(&other).await, Err(RunnerError::Busy)));
+        pool.release_container(&browser).await.unwrap();
+        let next = pool.run(&other).await.unwrap().container_id.unwrap();
+        pool.release_container(&next).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_failed_teardown_retains_dot_turn_occupancy_until_confirmed() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let id = pool
+            .run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        backend
+            .fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(pool.release_container(&id).await.is_err());
+        let identity = scoped_request("turn-a", shared::sandbox::WorkspacePurpose::Workspace)
+            .workspace
+            .unwrap()
+            .workspace;
+        assert!(matches!(
+            pool.workspace_operation(&identity, true, |files, _| files
+                .write("blocked.txt", b"blocked")),
+            Err(RunnerError::Busy)
+        ));
+        let listing = pool
+            .workspace_operation(&identity, false, |files, busy| {
+                assert!(busy);
+                files.list("", None)
+            })
+            .unwrap();
+        assert!(listing.entries.is_empty());
+        assert!(matches!(
+            pool.run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Workspace
+            ))
+            .await,
+            Err(RunnerError::Busy)
+        ));
+        backend
+            .fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        pool.release_container(&id).await.unwrap();
+        let next = pool
+            .run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        pool.release_container(&next).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_same_turn_refused_while_prior_teardown_unconfirmed() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let id = pool
+            .run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        backend
+            .fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(pool.release_container(&id).await.is_err());
+        // A fresh same-turn request must not mount the files directory while
+        // the prior container's absence is unconfirmed.
+        assert!(matches!(
+            pool.run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Workspace
+            ))
+            .await,
+            Err(RunnerError::Busy)
+        ));
+        backend
+            .fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        pool.release_container(&id).await.unwrap();
+        let next = pool
+            .run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        pool.release_container(&next).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_cancelled_creation_keeps_reservation_and_confirms_cleanup() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        backend
+            .hold_create
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let pool = Pool::new(backend.clone(), root.config());
+        let task_pool = pool.clone();
+        let task = tokio::spawn(async move {
+            task_pool
+                .run(&scoped_request(
+                    "turn-a",
+                    shared::sandbox::WorkspacePurpose::Workspace,
+                ))
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), backend.create_entered.notified())
+            .await
+            .unwrap();
+        task.abort();
+        let _ = task.await;
+        let blocked = tokio::time::timeout(
+            Duration::from_secs(2),
+            pool.run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            )),
+        )
+        .await;
+        backend
+            .hold_create
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        backend.create_release.notify_one();
+        assert!(matches!(blocked, Ok(Err(RunnerError::Busy))));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if !backend.destroyed.lock().unwrap().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(backend.live_count(), 0);
+        let next = pool
+            .run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        pool.release_container(&next).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_retirement_during_creation_blocks_exec_and_preserves_files_until_absence() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let request = scoped_request("turn-a", shared::sandbox::WorkspacePurpose::Workspace);
+        let identity = request.workspace.as_ref().unwrap().workspace.clone();
+        pool.workspace_operation(&identity, true, |files, _| files.write("keep.txt", b"keep"))
+            .unwrap();
+        let payload = root
+            .0
+            .join("dots")
+            .join(&identity.dot_id)
+            .join("files/keep.txt");
+        backend
+            .hold_create
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let task_pool = pool.clone();
+        let task = tokio::spawn(async move { task_pool.run(&request).await });
+        let entered =
+            tokio::time::timeout(Duration::from_secs(2), backend.create_entered.notified()).await;
+        let retired =
+            tokio::time::timeout(Duration::from_secs(2), pool.retire_workspace(&identity)).await;
+        let retained = std::fs::read(&payload);
+        let delayed = tokio::time::timeout(
+            Duration::from_secs(2),
+            pool.run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Browser,
+            )),
+        )
+        .await;
+        let tombstone = root
+            .0
+            .join(".dot-retired")
+            .join(&identity.dot_id)
+            .join("owner.json")
+            .is_file();
+        backend
+            .hold_create
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        backend.create_release.notify_one();
+        let result = tokio::time::timeout(Duration::from_secs(2), task).await;
+        assert!(entered.is_ok());
+        assert!(matches!(retired, Ok(Err(RunnerError::Busy))));
+        assert_eq!(retained.unwrap(), b"keep");
+        assert!(tombstone);
+        assert!(matches!(delayed, Ok(Err(_))));
+        assert!(result.unwrap().unwrap().is_err());
+        assert_eq!(backend.execs.load(std::sync::atomic::Ordering::SeqCst), 0);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match pool.retire_workspace(&identity).await {
+                    Ok(true) => break,
+                    Ok(false) | Err(RunnerError::Busy) => tokio::task::yield_now().await,
+                    Err(error) => panic!("retirement failed: {error}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(backend.live_count(), 0);
+        assert!(!payload.exists());
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                pool.run(&scoped_request(
+                    "turn-c",
+                    shared::sandbox::WorkspacePurpose::Workspace
+                ))
+            )
+            .await
+            .unwrap()
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_retirement_during_execution_keeps_seal_and_confirms_teardown_before_cleanup()
+    {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let mut request = scoped_request("turn-a", shared::sandbox::WorkspacePurpose::Workspace);
+        let identity = request.workspace.as_ref().unwrap().workspace.clone();
+        pool.workspace_operation(&identity, true, |files, _| files.write("keep.txt", b"keep"))
+            .unwrap();
+        let payload = root
+            .0
+            .join("dots")
+            .join(&identity.dot_id)
+            .join("files/keep.txt");
+        request.code = "hold-exec".into();
+        let task_pool = pool.clone();
+        let task = tokio::spawn(async move { task_pool.run(&request).await });
+        let entered =
+            tokio::time::timeout(Duration::from_secs(2), backend.exec_entered.notified()).await;
+        let retired =
+            tokio::time::timeout(Duration::from_secs(2), pool.retire_workspace(&identity)).await;
+        let retained = std::fs::read(&payload);
+        let delayed = tokio::time::timeout(
+            Duration::from_secs(2),
+            pool.run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Browser,
+            )),
+        )
+        .await;
+        let tombstone = root
+            .0
+            .join(".dot-retired")
+            .join(&identity.dot_id)
+            .join("owner.json")
+            .is_file();
+        backend.exec_release.notify_one();
+        let result = tokio::time::timeout(Duration::from_secs(2), task).await;
+        assert!(entered.is_ok());
+        assert!(matches!(retired, Ok(Err(RunnerError::Busy))));
+        assert_eq!(retained.unwrap(), b"keep");
+        assert!(tombstone);
+        assert!(matches!(delayed, Ok(Err(_))));
+        assert!(result.unwrap().unwrap().unwrap().container_id.is_none());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match pool.retire_workspace(&identity).await {
+                    Ok(true) => break,
+                    Ok(false) | Err(RunnerError::Busy) => tokio::task::yield_now().await,
+                    Err(error) => panic!("retirement failed: {error}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(backend.execs.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(backend.live_count(), 0);
+        assert!(!payload.exists());
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                pool.run(&scoped_request(
+                    "turn-c",
+                    shared::sandbox::WorkspacePurpose::Workspace
+                ))
+            )
+            .await
+            .unwrap()
+            .is_err()
+        );
+    }
 
     fn cfg(pool_size: usize, max_concurrent: usize, egress: bool) -> Arc<Config> {
         Arc::new(Config {
@@ -812,6 +1555,9 @@ mod tests {
                 last_used: Instant::now(),
                 busy: true,
                 retiring: false,
+                scope: None,
+                network: Network::None,
+                workspace: None,
             },
         );
         assert_eq!(pool.dispose("fake-0", true, true, false), None);
@@ -965,6 +1711,9 @@ mod tests {
                 last_used: Instant::now(),
                 busy: true,
                 retiring: false,
+                scope: None,
+                network: Network::None,
+                workspace: None,
             },
         );
 
@@ -1005,7 +1754,11 @@ mod tests {
                 ))
             }
         }
-        async fn create(&self, _network: Network) -> Result<String, crate::backend::BackendError> {
+        async fn create(
+            &self,
+            _network: Network,
+            _workspace: Option<&WorkspaceMount>,
+        ) -> Result<String, crate::backend::BackendError> {
             let mut n = self.created.lock().unwrap();
             *n += 1;
             Ok(format!("fail-{n}"))
@@ -1069,6 +1822,9 @@ mod tests {
                 last_used: Instant::now(),
                 busy: false,
                 retiring: false,
+                scope: None,
+                network: Network::None,
+                workspace: None,
             },
         );
         let mut r = req();
@@ -1100,7 +1856,11 @@ mod tests {
                 ))
             }
         }
-        async fn create(&self, _network: Network) -> Result<String, crate::backend::BackendError> {
+        async fn create(
+            &self,
+            _network: Network,
+            _workspace: Option<&WorkspaceMount>,
+        ) -> Result<String, crate::backend::BackendError> {
             let mut n = self.created.lock().unwrap();
             *n += 1;
             Ok(format!("to-{n}"))

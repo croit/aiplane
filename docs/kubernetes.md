@@ -483,6 +483,19 @@ cluster buys little.
 Make sure that URL is only reachable from AIplane — the runner executes
 untrusted code and has no authentication of its own.
 
+Personal Dot files require the verified external local rootful Linux `runsc`
+runner and its private `SANDBOX_WORK_ROOT`. The chart's application PVC does
+not provide that external volume. The runner reports `workspace: true` only
+after its two-container UID/GID 1001 persistence and isolation probe completes
+with confirmed teardown. The gateway refreshes this proof for every scoped
+request; an unavailable workspace does not fall back to scratch storage.
+
+Back up the external runner root, including `dots/` and `.dot-retired/`, together
+with the gateway database. Quiesce both sides for a consistent restore point,
+and preserve retirement tombstones when restoring. Use one runner per root
+and monitor volume capacity. See [persistent workspace deployment and recovery](sandbox.md#personal-dot-workspaces).
+
+
 ### Option B — pod-per-job inside the cluster
 
 The cluster-native shape: the runner creates one Pod per job with

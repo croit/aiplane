@@ -178,6 +178,11 @@ impl Tool for RunInSandbox {
                 network: args.network,
                 container_id: None,
                 keep_alive: false,
+                workspace: personal_workspace_scope(
+                    &ctx,
+                    shared::sandbox::WorkspacePurpose::Workspace,
+                )
+                .await?,
             };
             // When the turn carries a lease (chat + proxy paths with the
             // sandbox configured), route through it so `/work` and scratch

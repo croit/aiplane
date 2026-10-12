@@ -56,6 +56,30 @@ CREATE UNIQUE INDEX idx_dots_organization_name ON dots (organization_id, name) W
 CREATE INDEX idx_dots_user_active ON dots (owner_user_id, active) WHERE owner_user_id IS NOT NULL;
 CREATE INDEX idx_dots_organization_active ON dots (organization_id, active) WHERE organization_id IS NOT NULL;
 
+CREATE TABLE dot_workspace_cleanup (
+    dot_id TEXT PRIMARY KEY NOT NULL,
+    owner_user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    next_attempt_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    claim_token TEXT,
+    claim_until TEXT,
+    last_error_code TEXT CHECK (last_error_code IN ('unavailable', 'conflict', 'failed')),
+    CHECK ((claim_token IS NULL) = (claim_until IS NULL))
+) STRICT;
+
+CREATE INDEX idx_dot_workspace_cleanup_due ON dot_workspace_cleanup (next_attempt_at);
+
+CREATE TRIGGER personal_dot_workspace_cleanup_after_delete
+AFTER DELETE ON dots
+WHEN OLD.owner_user_id IS NOT NULL
+BEGIN
+    INSERT INTO dot_workspace_cleanup (dot_id, owner_user_id, created_at, next_attempt_at)
+    VALUES (OLD.principal_id, OLD.owner_user_id,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
 CREATE TRIGGER dots_reject_owner_update
 BEFORE UPDATE OF principal_id, owner_user_id, organization_id ON dots
 WHEN NEW.principal_id IS NOT OLD.principal_id OR NEW.owner_user_id IS NOT OLD.owner_user_id OR NEW.organization_id IS NOT OLD.organization_id

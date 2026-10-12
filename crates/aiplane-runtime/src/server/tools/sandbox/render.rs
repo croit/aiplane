@@ -209,6 +209,7 @@ impl Tool for RenderExcalidraw {
                 network: false,
                 container_id: None,
                 keep_alive: false,
+                workspace: None,
             };
             let mut out_val = self.0.execute(&ctx, req).await?;
             if let Some(obj) = out_val.as_object_mut() {
@@ -461,6 +462,7 @@ impl Tool for RenderTypst {
                 network: false,
                 container_id: None,
                 keep_alive: false,
+                workspace: None,
             };
             let mut out_val = self.0.execute(&ctx, req).await?;
             augment_with_staging(&mut out_val, staged, available, notes);

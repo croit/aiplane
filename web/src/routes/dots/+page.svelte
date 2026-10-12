@@ -126,6 +126,7 @@
 						<DotAccessPanel {dot} initiallyOpen={page.url.searchParams.get('dot_id') === dot.id} />
 						<DotCommunicationPanel {dot} />
 						<div class="card-actions flex-wrap justify-end">
+							<a class="btn btn-sm" href={`/dots/${encodeURIComponent(dot.id)}/workspace`}>{t('dot-workspace-heading')}</a>
 							{#if dot.active}<a class="btn btn-sm" href={`/scheduled/new?dot_id=${encodeURIComponent(dot.id)}`}>{t('dot-background-add-schedule')}</a><a class="btn btn-sm" href={`/webhooks/new?dot_id=${encodeURIComponent(dot.id)}`}>{t('dot-background-add-webhook')}</a>{/if}
 							{#if dot.active}<button class="btn btn-sm" type="button" disabled={openingId === dot.id} onclick={() => void openChat(dot)}>{openingId === dot.id ? t('dot-action-chat-opening') : t('dot-action-chat')}</button>{/if}
 							<button class="btn btn-sm" type="button" disabled={busyId === dot.id || (!dot.active && !createAllowed)} onclick={() => void setActive(dot)}>

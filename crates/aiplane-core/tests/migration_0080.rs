@@ -131,13 +131,14 @@ async fn organization_dot_schema_matches_its_fixture() {
              'personal_dots_delete_principals_before_owner_delete',
              'dot_memories', 'idx_dot_memories_dot_content',
              'idx_dot_memories_organization_content', 'idx_dot_memories_dot_created',
-             'idx_dot_memories_organization_created')
+             'idx_dot_memories_organization_created', 'dot_workspace_cleanup',
+             'idx_dot_workspace_cleanup_due', 'personal_dot_workspace_cleanup_after_delete')
          ORDER BY type, name",
     )
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(rows.len(), 18);
+    assert_eq!(rows.len(), 21);
     let actual = rows
         .iter()
         .map(|row| {

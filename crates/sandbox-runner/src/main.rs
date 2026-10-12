@@ -18,7 +18,9 @@ mod backend;
 mod config;
 mod isolation;
 mod pool;
+mod process;
 mod server;
+mod workspace;
 
 use std::sync::Arc;
 
@@ -66,6 +68,11 @@ async fn main() -> anyhow::Result<()> {
             .await
             .context("confirming stale sandbox containers are absent before startup")?;
         podman.prune_orphan_scratch().await;
+        if cfg.work_root.is_some()
+            && let Err(error) = podman.verify_workspace_readiness().await
+        {
+            tracing::warn!(error = %error, "persistent Dot storage readiness was not verified; workspace operations remain unavailable");
+        }
         Arc::new(podman)
     };
     let pool = Pool::new(backend, cfg.clone());

@@ -693,7 +693,7 @@ pub fn from_data_uri(uri: &str) -> Result<(String, Vec<u8>), String> {
     let (mime, payload) = rest
         .split_once(";base64,")
         .ok_or_else(|| "data: URI is not base64-encoded".to_string())?;
-    Ok((mime.to_string(), decode_base64(payload)?))
+    Ok((mime.to_string(), shared::b64::decode(payload)?))
 }
 
 /// RFC 4648 base64 encoder (standard alphabet, padded). Hand-rolled
@@ -721,45 +721,10 @@ fn append_base64(out: &mut String, bytes: &[u8]) {
     }
 }
 
-/// Strict RFC 4648 base64 decoder (standard alphabet, no URL-safe chars).
-/// ASCII whitespace is stripped first — an LLM JSON string or an upstream
-/// image API may newline-wrap a long payload. Padding (`=`) is optional; the
-/// length is inferred from the un-padded count. The symmetric partner of
-/// [`append_base64`]; shared by `tools::upload_attachment` (decoding a
-/// model-supplied `content_base64`) and `image_gen` (decoding a `b64_json`
-/// image from the upstream), so neither hand-rolls its own.
-pub fn decode_base64(s: &str) -> Result<Vec<u8>, String> {
-    let clean: String = s.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-    let bytes = clean.as_bytes();
-    let trimmed = bytes.iter().rposition(|b| *b != b'=').map_or(0, |i| i + 1);
-    let body = &bytes[..trimmed];
-
-    let mut out = Vec::with_capacity(body.len() * 3 / 4);
-    let mut acc: u32 = 0;
-    let mut acc_bits: u8 = 0;
-    for (idx, &c) in body.iter().enumerate() {
-        let v = match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            _ => return Err(format!("invalid base64 character at position {idx}")),
-        };
-        acc = (acc << 6) | (v as u32);
-        acc_bits += 6;
-        if acc_bits >= 8 {
-            acc_bits -= 8;
-            out.push((acc >> acc_bits) as u8);
-            acc &= (1 << acc_bits) - 1;
-        }
-    }
-    Ok(out)
-}
-
 #[cfg(test)]
 mod base64_tests {
-    use super::{decode_base64, from_data_uri, to_data_uri};
+    use super::{from_data_uri, to_data_uri};
+    use shared::b64::decode;
 
     #[test]
     fn a_data_uri_decodes_back_to_its_mime_and_bytes() {
@@ -778,25 +743,22 @@ mod base64_tests {
 
     #[test]
     fn decode_base64_round_trip_simple() {
-        assert_eq!(decode_base64("aGVsbG8gd29ybGQ=").unwrap(), b"hello world");
+        assert_eq!(decode("aGVsbG8gd29ybGQ=").unwrap(), b"hello world");
     }
 
     #[test]
     fn decode_base64_accepts_unpadded() {
-        assert_eq!(decode_base64("aGVsbG8gd29ybGQ").unwrap(), b"hello world");
+        assert_eq!(decode("aGVsbG8gd29ybGQ").unwrap(), b"hello world");
     }
 
     #[test]
     fn decode_base64_tolerates_embedded_whitespace() {
-        assert_eq!(
-            decode_base64("aGVs\nbG8g\nd29ybGQ=").unwrap(),
-            b"hello world"
-        );
+        assert_eq!(decode("aGVs\nbG8g\nd29ybGQ=").unwrap(), b"hello world");
     }
 
     #[test]
     fn decode_base64_rejects_invalid_char() {
-        assert!(decode_base64("aGVs!bG8=").is_err());
+        assert!(decode("aGVs!bG8=").is_err());
     }
 }
 

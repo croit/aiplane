@@ -586,7 +586,7 @@ async fn main() -> anyhow::Result<()> {
     let config = Config {
         sandbox: Some(SandboxConfig {
             enabled: true,
-            runner_url: chat_mock.uri(),
+            runner_url: std::env::var("DEV_UI_SANDBOX_URL").unwrap_or_else(|_| chat_mock.uri()),
             timeout_secs: 5,
             max_artifact_bytes: 25 * 1024 * 1024,
         }),

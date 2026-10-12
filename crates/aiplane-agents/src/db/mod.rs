@@ -27,6 +27,7 @@ pub mod organizations;
 pub mod run_sessions;
 pub mod system_principals;
 pub mod visitor_sessions;
+pub mod workspace_cleanup;
 
 pub use aiplane_core::server::db::{
     DbError, Pool, WriteTx, parse_optional_ts, parse_ts, window_key,

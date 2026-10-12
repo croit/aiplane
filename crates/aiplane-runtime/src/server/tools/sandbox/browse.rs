@@ -530,6 +530,11 @@ impl Tool for BrowsePage {
                 network: true,
                 container_id: None,
                 keep_alive: true,
+                workspace: personal_workspace_scope(
+                    &ctx,
+                    shared::sandbox::WorkspacePurpose::Browser,
+                )
+                .await?,
             };
             // `explicit_fresh: false` — the point is to reuse the container (and
             // therefore the running browser) across calls.

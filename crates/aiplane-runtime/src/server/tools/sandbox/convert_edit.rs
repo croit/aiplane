@@ -124,6 +124,7 @@ impl Tool for ConvertDocument {
                 network: false,
                 container_id: None,
                 keep_alive: false,
+                workspace: None,
             };
             let mut out = self.0.execute(&ctx, req).await?;
             if let Some(obj) = out.as_object_mut() {
@@ -220,6 +221,7 @@ impl Tool for EditPresentation {
                 network: false,
                 container_id: None,
                 keep_alive: false,
+                workspace: None,
             };
             let mut out = self.0.execute(&ctx, req).await?;
             if let Some(obj) = out.as_object_mut() {

@@ -177,7 +177,7 @@ fn decode_payload(args: &UploadArgs) -> Result<Vec<u8>, ToolError> {
             "missing file contents (need `content` or `content_base64`)".into(),
         )),
         (Some(s), None) => Ok(s.as_bytes().to_vec()),
-        (None, Some(b64)) => chat_attachments::decode_base64(b64).map_err(ToolError::InvalidArgs),
+        (None, Some(b64)) => shared::b64::decode(b64).map_err(ToolError::InvalidArgs),
     }
 }
 

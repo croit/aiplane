@@ -314,6 +314,26 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         )
         .with_get("/api/v0/dots", pages::json_dots::list)
         .with_post("/api/v0/dots", pages::json_dots::create)
+        .with_get(
+            "/api/v0/dots/{id}/workspace",
+            pages::json_dot_workspace::list,
+        )
+        .with_get(
+            "/api/v0/dots/{id}/workspace/file",
+            pages::json_dot_workspace::file_get,
+        )
+        .with_put(
+            "/api/v0/dots/{id}/workspace/file",
+            pages::json_dot_workspace::file_put,
+        )
+        .with_post(
+            "/api/v0/dots/{id}/workspace/folder",
+            pages::json_dot_workspace::folder_create,
+        )
+        .with_delete(
+            "/api/v0/dots/{id}/workspace/entry",
+            pages::json_dot_workspace::entry_delete,
+        )
         .with_get("/api/v0/dots/{id}/access", pages::json_dots::access_get)
         .with_put("/api/v0/dots/{id}/access", pages::json_dots::access_put)
         .with_get(

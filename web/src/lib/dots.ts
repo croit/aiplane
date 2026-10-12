@@ -10,6 +10,43 @@ export interface DotList {
 	active_limit: number;
 }
 
+export interface DotWorkspaceEntry {
+	name: string;
+	kind: 'file' | 'directory';
+	size_bytes: number | null;
+	modified_at: string | null;
+}
+
+export interface DotWorkspaceList {
+	dot_id: string;
+	dot_name: string;
+	available: boolean;
+	busy: boolean | null;
+	path: string;
+	entries: DotWorkspaceEntry[] | null;
+	next_cursor: string | null;
+}
+
+function workspaceUrl(dotId: string, endpoint = '', path?: string, cursor?: string | null): string {
+	const query = new URLSearchParams();
+	if (path !== undefined) query.set('path', path);
+	if (cursor !== undefined && cursor !== null) query.set('cursor', cursor);
+	return `/api/v0/dots/${encodeURIComponent(dotId)}/workspace${endpoint}${query.size ? `?${query}` : ''}`;
+}
+
+export const dotWorkspaceApi = {
+	list: (dotId: string, path = '', cursor: string | null = null) =>
+		request<DotWorkspaceList>(workspaceUrl(dotId, '', path, cursor)),
+	downloadUrl: (dotId: string, path: string) => workspaceUrl(dotId, '/file', path),
+	upload: (dotId: string, path: string, file: File) => request<void>(workspaceUrl(dotId, '/file', path), {
+		method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: file
+	}),
+	createFolder: (dotId: string, path: string) => request<void>(workspaceUrl(dotId, '/folder'), {
+		method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path })
+	}),
+	remove: (dotId: string, path: string) => request<void>(workspaceUrl(dotId, '/entry', path), { method: 'DELETE' })
+};
+
 export type DotCommunicationDirection = 'outbound' | 'inbound';
 
 export interface DotCommunicationEdge {

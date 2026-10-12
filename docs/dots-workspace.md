@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Adopted implementation proposal under the maintainer's delegated Dot product decisions. This document specifies the next vertical slice; it does not describe an implemented feature. The background automation slice remains separate in [dots-background.md](dots-background.md).
+Adopted design under the maintainer's delegated Dot product decisions. Implementation is in progress. The internal runner supports personal Dot file scopes and bounded file operations; the owner API, web interface and durable deletion integration are being built. Persistent browser login is a subsequent increment. This document distinguishes the complete design from the currently verified foundation. The background automation slice remains separate in [dots-background.md](dots-background.md).
 
 A personal Dot needs files that survive turns, schedules, webhook runs and container expiry, plus its own server-side browser state. This slice extends the existing sandbox runner and `browse_page` implementation. The Dot uses the existing model, tool permissions, pending approvals, metering and owner identity. It does not require a connected browser extension. Organization ownership and human remote desktop control are outside this slice.
 
@@ -10,7 +10,7 @@ A personal Dot needs files that survive turns, schedules, webhook runs and conta
 
 | Mechanism | Source and existing behavior |
 |---|---|
-| Internal runner protocol | `crates/shared/src/sandbox.rs`: code, staged `/work` files, time/network limits, container reuse and keep-alive; no Dot scope currently. |
+| Internal runner protocol | `crates/shared/src/sandbox.rs`: code, staged `/work` files, time/network limits, container reuse and keep-alive; optional verified personal Dot scope. |
 | Host storage | `crates/sandbox-runner/src/config.rs` and `backend.rs`: optional `SANDBOX_WORK_ROOT`, private runner root and per-container scratch bind mounts. Without it, scratch is tmpfs. |
 | Container lifecycle | `crates/sandbox-runner/src/pool.rs`: warm containers, global concurrency gate, leases, idle expiry, release and startup cleanup. |
 | Isolation | `backend.rs`: existing gVisor/runtime choice, read-only root filesystem, capabilities dropped, no-new-privileges, memory/CPU/PID limits and network policy. |
@@ -44,7 +44,9 @@ Use this runner-owned layout when `SANDBOX_WORK_ROOT` is configured:
 
 The root and control metadata are never mounted into a container. Generic Dot code mounts only `files`; only the Dot browser container mounts its profile. Workspace APIs expose only descendants of `files`, never cookies or profile files. Host paths and owner metadata are not returned to the model or browser.
 
-Add an optional typed scope to the existing `RunRequest`: `owner_user_id`, `dot_id`, `turn_id`, and a mount purpose enum `workspace` or `browser`. Ordinary requests omit it. The gateway derives every field from its verified execution context, including the persisted assistant turn ID; no field is accepted from model arguments. Browser purpose is chosen by the browser wrapper, not by generated code. Management requests contain owner and Dot identity but no fabricated execution turn.
+The optional `RunRequest.workspace` contains `DotWorkspaceScope { workspace: DotWorkspace { owner_user_id, dot_id }, turn_id, purpose }`. Purpose is `workspace` or `browser`. Ordinary requests omit it. This first slice uses personal ownership; organization execution must retain its own principal and requires a separate admission integration. No organization claim is converted to an employee identity.
+
+The gateway derives every scope field from `PersonalDotExecution.binding()` and compares it with the actual tool principal, Dot identity, session and assistant turn. It reuses the local dispatch execution validator for current ownership, active Dot, model access and ancestor consent, and additionally requires the exact executing assistant turn to be in progress. No field is accepted from model arguments. Browser purpose is chosen by the browser wrapper. In the files increment, both purposes mount only `/workspace`; browser profile persistence is not yet enabled. Management requests use `DotWorkspace` without a fabricated execution turn.
 
 The runner validates canonical Dot UUID syntax before deriving a directory. The owner ID is opaque metadata, never a path component. On first use, create the private root and owner manifest atomically; on subsequent use, compare the manifest with the trusted owner claim. A mismatch is a hard error, never an opportunity to overwrite ownership. Missing or malformed metadata on an existing nonempty root also fails closed.
 
@@ -52,7 +54,7 @@ Persistent support requires a writable persistent work root. Extend existing run
 
 ## Execution, leases and concurrency
 
-Dot containers are created with their mounts before starting. They cannot consume a generic warm container or reuse another Dot's lease. Store the scope with each lease and check it before executing a supplied container ID. A mismatched lease is rejected. A genuinely expired matching lease may create a fresh container for the same scope, preserving the mounted data and the existing network restrictions.
+Dot containers are created with their mounts before starting. They cannot consume a generic warm container or reuse another Dot's lease. Store the scope with each lease and check it before executing a supplied container ID. A mismatched lease is rejected. An unknown scoped lease ID is rejected rather than replaced. After releasing an expired lease, a request without a container ID creates a fresh container for the same verified scope and preserves mounted files.
 
 Adopt one active computer execution turn per Dot as a storage consistency default. A runner-owned lock admits the verified turn and permits its cooperating code and browser containers; another turn receives a retryable busy result before executing code. This is independent of active Dot count and the existing global concurrency limit. Hold the lock until every participating container is confirmed stopped. File uploads, deletes and folder creation require the same exclusive ownership with no live execution containers; browsing metadata and downloading a bounded file may proceed, with the UI stating that live files can change. A download is a bounded read, not a coherent backup of a running SQLite database.
 
@@ -87,11 +89,13 @@ Profile contents are sensitive credentials. They are excluded from workspace lis
 - Initially allow deletion of regular files and empty folders only. A recursive user deletion API is unnecessary for this slice.
 - Cleanup of a whole Dot uses the same protected traversal and private root identity checks; a malicious workspace symlink must not redirect deletion outside the root.
 
+The file read and upload bound is 50 MiB, reusing the existing shared sandbox staging budget. This is an adopted workspace operation limit, not a claim that the chat attachment limit is 50 MiB. Paths are at most 4096 UTF-8 bytes and 32 components. A directory page contains at most 100 entries and examines at most 10,000 names; larger directories return an explicit limit error. The implementation retains only the next 101 names in lexical order during that bounded scan. Listing special files or names that cannot be represented in the UTF-8 API fails explicitly. Missing timestamps or sizes remain null. Pagination does not provide a snapshot against concurrent writes.
+
 Do not execute user file contents in the web origin. Download with attachment disposition and `nosniff`; any later previews must reuse the existing safe asset renderer's actual supported media handling.
 
 ## API and web walkthrough
 
-Extend `/api/v0/dots/{id}` with owner-scoped workspace operations, using existing Dot authentication/access checks. Proposed concrete routes:
+Extend `/api/v0/dots/{id}` with owner-scoped workspace operations, using existing Dot authentication/access checks. Adopted owner API routes (implementation in progress):
 
 | Route | Result |
 |---|---|
@@ -122,7 +126,7 @@ Deactivation preserves files and browser profile. It prevents new execution thro
 
 Dot deletion and account deletion enqueue a durable cleanup record containing the owner and Dot ID in the same database transaction as identity deletion. The record must survive both deletions, so it has no cascading foreign key to either. Amend the existing unreleased Dot migration and schema fixture; do not add one migration per package. Accessors belong in `aiplane-agents`; the runtime worker consumes the queue and calls the existing runner client.
 
-Before removing storage, the runner seals the scope against new mounts, confirms all its containers are absent and validates its manifest. It atomically quarantines the private root and removes the protected tree. Retrying an already absent root succeeds. A failed stop or filesystem operation retains the durable cleanup record, reports a diagnostic without secrets and retries with bounded backoff. A crash after runner removal but before queue acknowledgement is handled by idempotence. A failed cleanup never reassigns storage to another Dot.
+Before removing storage, the runner persists a private retirement manifest at `.dot-retired/<dot-uuid>/owner.json`, seals the scope against new mounts, confirms all its containers are absent and validates its manifest. The minimal opaque owner ID and Dot ID remain in this private tombstone after payload deletion so delayed requests cannot recreate a deleted Dot. Tombstones are never exposed in workspace APIs. It atomically quarantines the private root into that retirement directory and removes the protected tree without following links. Cleanup processes at most 1,000 nodes per call and permits at most 128 directory levels; bounded progress remains queued and excessive depth requires operator intervention. Retrying an already absent root succeeds. A failed stop or filesystem operation retains the durable cleanup record, stores a controlled error code and retries with 30-second exponential backoff capped at one hour. The runtime claims at most 16 records with a 120-second claim lease and bounds each runner cleanup request to 30 seconds. Queue acknowledgements and retries require the exact current claim token. A crash after runner removal but before queue acknowledgement is handled by idempotence. A failed cleanup never reassigns storage to another Dot.
 
 Existing startup scratch pruning targets `sbx-*`; it must continue to preserve `dots/`. The runner must not guess which stored Dots were deleted from directory age. The gateway cleanup queue is authoritative.
 

@@ -93,6 +93,10 @@
       "documentation": "dots.md"
     },
     {
+      "source": "web/src/routes/dots/[id]/workspace/+page.svelte",
+      "documentation": "dots.md"
+    },
+    {
       "source": "web/src/routes/inbox/+page.svelte",
       "documentation": "agent-guide/run-observe.md"
     },

@@ -22,6 +22,76 @@ use serde::{Deserialize, Serialize};
 /// inflated it (about 67 MiB), plus the code and inline files.
 pub const MAX_RUN_REQUEST_BYTES: usize = 96 * 1024 * 1024;
 
+pub const STAGE_TOTAL_MAX_BYTES: usize = 50 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DotWorkspace {
+    pub owner_user_id: String,
+    pub dot_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspacePurpose {
+    Workspace,
+    Browser,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DotWorkspaceScope {
+    pub workspace: DotWorkspace,
+    pub turn_id: String,
+    pub purpose: WorkspacePurpose,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceEntryKind {
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceEntry {
+    pub name: String,
+    pub kind: WorkspaceEntryKind,
+    pub size_bytes: Option<u64>,
+    pub modified_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceListing {
+    pub entries: Vec<WorkspaceEntry>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceListResponse {
+    #[serde(flatten)]
+    pub listing: WorkspaceListing,
+    pub busy: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRequest {
+    pub workspace: DotWorkspace,
+    pub operation: WorkspaceOperation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WorkspaceOperation {
+    List { path: String, after: Option<String> },
+    Read { path: String },
+    Write { path: String, content_b64: String },
+    CreateFolder { path: String },
+    Remove { path: String },
+    Retire,
+}
+
 /// Interpreter the sandbox runs the submitted `code` with. A single
 /// generic tool plus a handful of specialized wrappers all funnel down
 /// to "run this Python or this shell script", which covers document
@@ -74,6 +144,8 @@ pub struct RunnerHealth {
     /// version behind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<bool>,
 }
 
 /// A code-execution request. `timeout_secs` and `network` are requests,
@@ -113,6 +185,8 @@ pub struct RunRequest {
     /// (graceful fallback — the caller simply doesn't get persistence).
     #[serde(default)]
     pub keep_alive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<DotWorkspaceScope>,
 }
 
 /// A single file the run produced under `/work` (anything that wasn't an
@@ -180,6 +254,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dot_workspace_scope_survives_request_round_trip() {
+        let value = serde_json::json!({
+            "language": "python", "code": "print(1)", "files": [],
+            "timeout_secs": null, "network": false, "container_id": null,
+            "keep_alive": true,
+            "workspace": {
+                "workspace": {"owner_user_id": "person/opaque", "dot_id": "00000000-0000-4000-8000-000000000001"},
+                "turn_id": "persisted-assistant-turn", "purpose": "workspace"
+            }
+        });
+        let request: RunRequest = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(request).unwrap(), value);
+    }
+
+    #[test]
+    fn dot_workspace_scope_rejects_extra_authority_and_unknown_purpose() {
+        let value = serde_json::json!({
+            "workspace": {"owner_user_id": "person", "dot_id": "dot"},
+            "turn_id": "turn", "purpose": "workspace"
+        });
+        let scope: DotWorkspaceScope = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(scope.workspace.owner_user_id, "person");
+        assert_eq!(scope.purpose, WorkspacePurpose::Workspace);
+        let mut unknown_owner = value.clone();
+        unknown_owner["workspace"]["organization_id"] = serde_json::json!("organization");
+        assert!(serde_json::from_value::<DotWorkspaceScope>(unknown_owner).is_err());
+        let mut unknown_scope = value.clone();
+        unknown_scope["host_path"] = serde_json::json!("/etc");
+        assert!(serde_json::from_value::<DotWorkspaceScope>(unknown_scope).is_err());
+        let mut unknown_purpose = value;
+        unknown_purpose["purpose"] = serde_json::json!("host");
+        assert!(serde_json::from_value::<DotWorkspaceScope>(unknown_purpose).is_err());
+    }
+
+    #[test]
     fn language_serializes_lowercase() {
         assert_eq!(
             serde_json::to_string(&Language::Python).unwrap(),
@@ -214,6 +323,7 @@ mod tests {
             network: false,
             container_id: Some("abc123".into()),
             keep_alive: true,
+            workspace: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: RunRequest = serde_json::from_str(&json).unwrap();

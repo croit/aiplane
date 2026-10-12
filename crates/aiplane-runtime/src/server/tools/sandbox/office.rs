@@ -138,6 +138,7 @@ pub async fn run_office_extractor(
         network: false,
         container_id: None,
         keep_alive: false,
+        workspace: None,
     };
     let resp = sandbox.run_job(req).await?;
     if resp.exit_code != 0 || resp.timed_out {
