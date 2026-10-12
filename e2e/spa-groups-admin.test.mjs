@@ -24,6 +24,9 @@ test("group administration creates and edits groups in modals", async () => {
         const createDialog = page.locator("dialog[open]");
         await createDialog.getByRole("textbox", { name: "Name", exact: true }).fill(name);
         await createDialog.getByRole("textbox", { name: "Description", exact: true }).fill("Initial description");
+        const oidcValue = `oidc-group-${Date.now()}`;
+        await createDialog.getByRole("textbox", { name: "OIDC claim value", exact: true }).fill(oidcValue);
+        await createDialog.getByRole("button", { name: "Add value", exact: true }).click();
         const created = page.waitForResponse((response) => response.request().method() === "PUT"
             && response.url() === `${BASE}/api/v0/admin/groups`);
         await createDialog.getByRole("button", { name: "Save", exact: true }).click();
@@ -36,12 +39,20 @@ test("group administration creates and edits groups in modals", async () => {
         await card.getByRole("button", { name: "Edit", exact: true }).click();
         const editDialog = page.locator("dialog[open]");
         await editDialog.getByRole("textbox", { name: "Description", exact: true }).fill("Updated description");
+        const oidcPicker = editDialog.getByRole("combobox", { name: "OIDC group values", exact: true });
+        await oidcPicker.click();
+        const oidcOption = page.getByRole("option").filter({ hasText: oidcValue });
+        await oidcOption.waitFor();
+        assert.equal(await oidcOption.getAttribute("aria-selected"), "true");
+        await page.keyboard.press("Escape");
         const updated = page.waitForResponse((response) => response.request().method() === "PUT"
             && response.url() === `${BASE}/api/v0/admin/groups`);
         await editDialog.getByRole("button", { name: "Save", exact: true }).click();
         assert.equal((await updated).status(), 200);
         await page.waitForFunction(() => document.querySelectorAll("dialog[open]").length === 0);
         await card.getByText("Updated description", { exact: true }).waitFor();
+        const groups = await (await context.request.get(`${BASE}/api/v0/admin/groups`)).json();
+        assert.ok(groups.groups.find((group) => group.name === name).oidc_values.includes(oidcValue));
     } finally {
         try {
             if (context && name) {

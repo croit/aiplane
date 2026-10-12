@@ -12,7 +12,7 @@ groups-field-default = Default (applies to every signed-in user)
 groups-field-manage-agents = Agent manager
 groups-field-manage-agents-help = Members can create agents and read or edit the agents shared with them. Admins hold this already.
 groups-field-oidc = OIDC group values
-groups-field-oidc-help = Raw claim values from your IdP (e.g. Entra object-id GUIDs, LDAP DNs, or plain group names), separated by commas. Any of these maps a user into this group. Values seen on a login are suggested as you type.
+groups-field-oidc-help = Select values already seen from your IdP, or add a claim value below. Any selected value maps a user into this group.
 groups-field-tools = Tools
 groups-field-skills = Skills
 groups-save = Save
@@ -20,7 +20,13 @@ groups-delete = Delete
 # SPA group editor: the edit heading, the observed-claim hint, the per-row
 # grant summary, and the delete confirmation.
 groups-delete-confirm = Delete group { $name }? Its mappings and grants go with it.
-groups-oidc-values-placeholder = grp-dev, CN=devs,OU=…
+groups-oidc-values-placeholder = Enter an OIDC claim value
+groups-oidc-add-label = OIDC claim value
+groups-oidc-add = Add value
+groups-oidc-none = No values selected
+groups-oidc-count = { $count } selected
+groups-oidc-selected = Selected OIDC group values
+groups-oidc-remove = Remove { $value }
 groups-tab-groups = Groups
 groups-tab-identity = Identity mapping
 groups-tab-tools = Tools

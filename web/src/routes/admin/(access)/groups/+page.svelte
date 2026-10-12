@@ -113,8 +113,6 @@
 
 	{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}
 	{#if data}
-		<datalist id="group-oidc-values">{#each data.observed_oidc_values as value}<option value={value}></option>{/each}</datalist>
-
 		{#if selected === 'identity'}
 			<AdminIdentityMapping observed={data.observed_oidc_values} groups={data.groups} oncreate={createFrom} />
 		{:else if selected === 'tools'}
@@ -160,7 +158,7 @@
 <Modal bind:open={creating} title={t('groups-new-heading')} size="xl">
 	{#if data}
 		{#key seedOidcValue}
-			<AdminGroupForm seedOidcValue={seedOidcValue} toolIds={data.tools.map((tool) => tool.id)} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={createGroup} />
+			<AdminGroupForm seedOidcValue={seedOidcValue} observedOidcValues={data.observed_oidc_values} toolIds={data.tools.map((tool) => tool.id)} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={createGroup} />
 		{/key}
 	{/if}
 </Modal>
@@ -168,7 +166,7 @@
 <Modal bind:open={editOpen} title={editing?.name ?? t('groups-existing-heading')} size="xl">
 	{#if data && editing}
 		{#key editing.name}
-			<AdminGroupForm group={editing} toolIds={data.tools.map((tool) => tool.id)} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={editGroup} ondelete={remove} />
+			<AdminGroupForm group={editing} observedOidcValues={data.observed_oidc_values} toolIds={data.tools.map((tool) => tool.id)} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={editGroup} ondelete={remove} />
 		{/key}
 	{/if}
 </Modal>

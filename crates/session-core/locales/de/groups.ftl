@@ -12,7 +12,7 @@ groups-field-default = Standard (gilt für jeden angemeldeten Nutzer)
 groups-field-manage-agents = Agent-Verwaltung
 groups-field-manage-agents-help = Mitglieder können Agenten anlegen und die mit ihnen geteilten Agenten ansehen oder bearbeiten. Admins haben das bereits.
 groups-field-oidc = OIDC-Gruppenwerte
-groups-field-oidc-help = Rohe Claim-Werte aus deinem IdP, durch Kommas getrennt (z. B. Entra-Objekt-GUIDs, LDAP-DNs oder einfache Gruppennamen). Jeder davon ordnet einen Nutzer dieser Gruppe zu. Bei einer Anmeldung gesehene Werte werden während der Eingabe vorgeschlagen.
+groups-field-oidc-help = Wähle bereits von deinem IdP übermittelte Werte aus oder füge unten einen Claim-Wert hinzu. Jeder ausgewählte Wert ordnet Nutzer dieser Gruppe zu.
 groups-field-tools = Tools
 groups-field-skills = Skills
 groups-save = Speichern
@@ -20,7 +20,13 @@ groups-delete = Löschen
 # Gruppeneditor der SPA: Bearbeiten-Überschrift, Hinweis auf beobachtete Claims,
 # Kurzübersicht pro Zeile und die Löschbestätigung.
 groups-delete-confirm = Gruppe { $name } löschen? Ihre Zuordnungen und Freigaben verschwinden mit ihr.
-groups-oidc-values-placeholder = grp-dev, CN=devs,OU=…
+groups-oidc-values-placeholder = OIDC-Claim-Wert eingeben
+groups-oidc-add-label = OIDC-Claim-Wert
+groups-oidc-add = Wert hinzufügen
+groups-oidc-none = Keine Werte ausgewählt
+groups-oidc-count = { $count } ausgewählt
+groups-oidc-selected = Ausgewählte OIDC-Gruppenwerte
+groups-oidc-remove = { $value } entfernen
 groups-tab-groups = Gruppen
 groups-tab-identity = Identitätszuordnung
 groups-tab-tools = Werkzeuge

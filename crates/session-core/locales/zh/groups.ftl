@@ -12,14 +12,20 @@ groups-field-default = 默认（适用于每个已登录用户）
 groups-field-manage-agents = 智能体管理
 groups-field-manage-agents-help = 成员可以创建智能体，并查看或编辑与其共享的智能体。管理员已具备此权限。
 groups-field-oidc = OIDC 组值
-groups-field-oidc-help = 来自你的 IdP 的原始声明值，用逗号分隔（例如 Entra 对象 GUID、LDAP DN 或普通组名）。其中任意一个都会将用户归入此组。登录时出现过的值会在输入时给出建议。
+groups-field-oidc-help = 选择 IdP 之前发送过的值，或在下方添加声明值。每个选中的值都会将用户映射到此组。
 groups-field-tools = 工具
 groups-field-skills = 技能
 groups-save = 保存
 groups-delete = 删除
 # SPA 组编辑器：编辑标题、已观察到的声明值提示、每行摘要与删除确认。
 groups-delete-confirm = 要删除组 { $name } 吗？其映射和授权也会一并删除。
-groups-oidc-values-placeholder = grp-dev, CN=devs,OU=…
+groups-oidc-values-placeholder = 输入 OIDC 声明值
+groups-oidc-add-label = OIDC 声明值
+groups-oidc-add = 添加值
+groups-oidc-none = 未选择值
+groups-oidc-count = 已选择 { $count } 项
+groups-oidc-selected = 已选 OIDC 组值
+groups-oidc-remove = 移除 { $value }
 groups-tab-groups = 组
 groups-tab-identity = 身份映射
 groups-tab-tools = 工具

@@ -188,9 +188,10 @@ conflict keeps the draft open until the administrator reloads or corrects it.
 
 `/admin/groups` lists gateway groups as compact cards with their description,
 enabled management permissions and counts of granted tools and skills. Group
-creation and editing open the group form in a shared Modal; the identity,
-tools and skills tabs remain available for their existing mapping and matrix
-workflows.
+creation and editing open the group form in a shared Modal. OIDC claims already
+observed at login can be selected from a searchable multi-select, while new
+claim values can be entered individually. The identity, tools and skills tabs
+remain available for their existing mapping and matrix workflows.
 
 The Notifications tab shows device controls when Web Push initialized. If the
 feature is configured but its sender failed to initialize, the tab shows an

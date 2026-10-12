@@ -3,7 +3,6 @@
 	import { t } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
 	import { isWildcardSelected, multiSelectOptions, normalizeSelection } from '#lib/multi-select.js';
-	import { splitList } from '#lib/upstreams.js';
 
 	export interface AdminGroup {
 		name: string;
@@ -31,12 +30,13 @@
 		order: number;
 	}
 
-	let { group = null, toolIds = [], toolFamilies = [], mcpTools = [], skillNames = [], seedOidcValue = '', onsave, ondelete }: {
+	let { group = null, toolIds = [], toolFamilies = [], mcpTools = [], skillNames = [], observedOidcValues = [], seedOidcValue = '', onsave, ondelete }: {
 		group?: AdminGroup | null;
 		toolIds?: string[];
 		toolFamilies?: ToolFamily[];
 		mcpTools?: McpTool[];
 		skillNames?: string[];
+		observedOidcValues?: string[];
 		/** Prefills the create form's claim values, from the identity tab. */
 		seedOidcValue?: string;
 		onsave: (group: AdminGroup) => Promise<void>;
@@ -49,9 +49,13 @@
 	let isDefault = $state(untrack(() => group?.is_default ?? false));
 	let canManageAgents = $state(untrack(() => group?.can_manage_agents ?? false));
 	let canManageDots = $state(untrack(() => group?.can_manage_dots ?? false));
-	let oidcValues = $state(untrack(() => group?.oidc_values.join(', ') ?? seedOidcValue));
+	let oidcValues = $state<string[]>(untrack(() => group?.oidc_values ?? (seedOidcValue ? [seedOidcValue] : [])));
+	let newOidcValue = $state('');
 	let tools = $state(untrack(() => normalizeSelection(group?.tools ?? [])));
 	let skills = $state(untrack(() => normalizeSelection(group?.skills ?? [])));
+	let oidcOptions = $derived(
+		[...new Set([...observedOidcValues, ...oidcValues])].map((value) => ({ value, label: value }))
+	);
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 
@@ -104,6 +108,17 @@
 		counted: (count: number) => t('multi-select-count', { count }),
 		wildcard
 	});
+	let oidcSummary = $derived({
+		empty: t('groups-oidc-none'),
+		counted: (count: number) => t('groups-oidc-count', { count })
+	});
+
+	function addOidcValue() {
+		const value = newOidcValue.trim();
+		if (!value || oidcValues.includes(value)) return;
+		oidcValues = [...oidcValues, value];
+		newOidcValue = '';
+	}
 	// `*` on an admin group is what the setup wizard seeds and is meant there.
 	// On any other group it silently widens with every release that adds a tool.
 	let wildcardUnreviewed = $derived(!isAdmin && (isWildcardSelected(tools) || isWildcardSelected(skills)));
@@ -119,7 +134,7 @@
 				is_default: isDefault,
 				can_manage_agents: canManageAgents,
 				can_manage_dots: canManageDots,
-				oidc_values: splitList(oidcValues),
+				oidc_values: oidcValues,
 				tools,
 				skills
 			});
@@ -130,7 +145,8 @@
 				isDefault = false;
 				canManageAgents = false;
 				canManageDots = false;
-				oidcValues = '';
+				oidcValues = [];
+				newOidcValue = '';
 				tools = [];
 				skills = [];
 			}
@@ -178,11 +194,25 @@
 			</div>
 			<span class="-mt-2 text-xs text-base-content/60">{t('groups-field-manage-agents-help')}</span>
 			<span class="-mt-2 text-xs text-base-content/60">{t('groups-field-manage-dots-help')}</span>
-			<label class="flex flex-col gap-1">
+			<div class="flex flex-col gap-2">
 				<span class="label-text text-xs">{t('groups-field-oidc')}</span>
-				<input class="input w-full" bind:value={oidcValues} list="group-oidc-values" placeholder={t('groups-oidc-values-placeholder')} />
+				<SearchableSelect multiple bind:values={oidcValues} options={oidcOptions} ariaLabel={t('groups-field-oidc')} summary={oidcSummary} placeholder={t('groups-oidc-none')} />
+				{#if oidcValues.length}
+					<ul class="flex flex-wrap gap-2" aria-label={t('groups-oidc-selected')}>
+						{#each oidcValues as value (value)}
+							<li class="badge badge-outline h-auto max-w-full gap-1 whitespace-normal py-1 text-left">
+								<span class="break-all">{value}</span>
+								<button class="btn btn-ghost btn-xs btn-circle" type="button" aria-label={t('groups-oidc-remove', { value })} onclick={() => (oidcValues = oidcValues.filter((item) => item !== value))}>×</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<div class="flex flex-col gap-2 sm:flex-row">
+					<input class="input input-sm min-w-0 flex-1" bind:value={newOidcValue} aria-label={t('groups-oidc-add-label')} placeholder={t('groups-oidc-values-placeholder')} onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addOidcValue(); } }} />
+					<button class="btn btn-sm" type="button" disabled={!newOidcValue.trim() || oidcValues.includes(newOidcValue.trim())} onclick={addOidcValue}>{t('groups-oidc-add')}</button>
+				</div>
 				<span class="text-xs text-base-content/60">{t('groups-field-oidc-help')}</span>
-			</label>
+			</div>
 			<div class="flex flex-col gap-1">
 				<span class="label-text text-xs">{t('groups-field-tools')}</span>
 				<SearchableSelect multiple bind:values={tools} options={toolOptions} ariaLabel={t('groups-field-tools')} summary={summaryFor(t('multi-select-wildcard-tools'))} />

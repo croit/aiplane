@@ -12,7 +12,7 @@ groups-field-default = Predeterminado (se aplica a todos los usuarios autenticad
 groups-field-manage-agents = Gestión de agentes
 groups-field-manage-agents-help = Los miembros pueden crear agentes y ver o editar los agentes compartidos con ellos. Los administradores ya lo tienen.
 groups-field-oidc = Valores de grupo de OIDC
-groups-field-oidc-help = Valores de claims sin procesar de tu IdP, separados por comas (p. ej. GUID de objeto de Entra, DN de LDAP o simples nombres de grupo). Cualquiera de ellos incluye a un usuario en este grupo. Los valores vistos en un inicio de sesión se sugieren al escribir.
+groups-field-oidc-help = Selecciona valores que tu IdP ya haya enviado o añade abajo un valor de claim. Cada valor seleccionado incorpora usuarios a este grupo.
 groups-field-tools = Herramientas
 groups-field-skills = Habilidades
 groups-save = Guardar
@@ -20,7 +20,13 @@ groups-delete = Eliminar
 # Editor de grupos de la SPA: título de edición, pista de valores observados,
 # resumen por fila y confirmación de borrado.
 groups-delete-confirm = ¿Eliminar el grupo { $name }? Sus asignaciones y concesiones se van con él.
-groups-oidc-values-placeholder = grp-dev, CN=devs,OU=…
+groups-oidc-values-placeholder = Introduce un valor de claim OIDC
+groups-oidc-add-label = Valor de claim OIDC
+groups-oidc-add = Añadir valor
+groups-oidc-none = No hay valores seleccionados
+groups-oidc-count = { $count } seleccionados
+groups-oidc-selected = Valores de grupo OIDC seleccionados
+groups-oidc-remove = Quitar { $value }
 groups-tab-groups = Grupos
 groups-tab-identity = Correspondencia de identidad
 groups-tab-tools = Herramientas

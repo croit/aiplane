@@ -12,7 +12,7 @@ groups-field-default = По умолчанию (применяется к каж
 groups-field-manage-agents = Управление агентами
 groups-field-manage-agents-help = Участники могут создавать агентов и просматривать или изменять агентов, которыми с ними поделились. У администраторов это право уже есть.
 groups-field-oidc = Значения групп OIDC
-groups-field-oidc-help = Исходные значения claim'ов из вашего IdP, через запятую (например, GUID объекта Entra, DN из LDAP или простые имена групп). Любое из них включает пользователя в эту группу. Значения, встреченные при входе, подсказываются при вводе.
+groups-field-oidc-help = Выберите значения, уже полученные от вашего IdP, или добавьте значение claim ниже. Каждое выбранное значение включает пользователя в эту группу.
 groups-field-tools = Инструменты
 groups-field-skills = Навыки
 groups-save = Сохранить
@@ -20,7 +20,13 @@ groups-delete = Удалить
 # Редактор групп в SPA: заголовок правки, подсказка с наблюдаемыми значениями,
 # сводка по строке и подтверждение удаления.
 groups-delete-confirm = Удалить группу { $name }? Её сопоставления и права исчезнут вместе с ней.
-groups-oidc-values-placeholder = grp-dev, CN=devs,OU=…
+groups-oidc-values-placeholder = Введите значение claim OIDC
+groups-oidc-add-label = Значение claim OIDC
+groups-oidc-add = Добавить значение
+groups-oidc-none = Значения не выбраны
+groups-oidc-count = Выбрано: { $count }
+groups-oidc-selected = Выбранные значения групп OIDC
+groups-oidc-remove = Удалить { $value }
 groups-tab-groups = Группы
 groups-tab-identity = Сопоставление учётных данных
 groups-tab-tools = Инструменты
