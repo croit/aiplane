@@ -294,3 +294,19 @@ CREATE TABLE dot_connector_bindings (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (dot_id, connector_key)
 ) STRICT;
+
+CREATE TABLE cross_boundary_delegations (
+    child_session_id TEXT PRIMARY KEY NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    caller_dot_id TEXT NOT NULL REFERENCES dots(principal_id) ON DELETE CASCADE,
+    receiver_dot_id TEXT NOT NULL REFERENCES dots(principal_id) ON DELETE CASCADE,
+    caller_owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    receiver_org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    parent_turn_id TEXT NOT NULL,
+    parent_tool_call_id TEXT NOT NULL,
+    edge_generation TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (parent_turn_id, parent_tool_call_id),
+    CHECK (caller_dot_id <> receiver_dot_id)
+) STRICT;
+
+CREATE INDEX idx_cross_boundary_delegations_caller ON cross_boundary_delegations (caller_dot_id);

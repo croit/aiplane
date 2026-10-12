@@ -101,6 +101,150 @@ pub async fn authorized_in(
         .fetch_optional(connection).await?.map(edge).transpose()
 }
 
+/// Live check for a personal caller delegating to an organization receiver:
+/// both flags set, generation match, both Dots active, the caller is a
+/// user-owned Dot, the receiver is an organization-owned Dot, and the caller
+/// user is a current member of the receiver's organization.
+pub async fn authorized_cross_boundary_in(
+    connection: &mut sqlx::SqliteConnection,
+    caller_owner_user_id: &str,
+    caller_dot_id: &str,
+    receiver_org_id: &str,
+    receiver_dot_id: &str,
+    expected_generation: &str,
+) -> Result<Option<DotDelegationEdge>, DbError> {
+    sqlx::query(
+        "SELECT e.* FROM dot_delegation_edges e
+         JOIN dots c ON c.principal_id = e.caller_dot_id
+         JOIN dots r ON r.principal_id = e.receiver_dot_id
+         WHERE e.caller_dot_id = ? AND e.receiver_dot_id = ?
+           AND c.owner_user_id = ? AND c.organization_id IS NULL AND c.active = 1
+           AND r.organization_id = ? AND r.owner_user_id IS NULL AND r.active = 1
+           AND e.outbound_enabled = 1 AND e.inbound_enabled = 1 AND e.generation = ?
+           AND EXISTS (
+               SELECT 1 FROM organization_groups b
+               JOIN gateway_groups g ON g.name = b.gateway_group
+               WHERE b.organization_id = r.organization_id
+                 AND g.name IN (
+                     SELECT value FROM json_each(
+                         (SELECT roles_json FROM users WHERE id = c.owner_user_id)))
+           )",
+    )
+    .bind(caller_dot_id)
+    .bind(receiver_dot_id)
+    .bind(caller_owner_user_id)
+    .bind(receiver_org_id)
+    .bind(expected_generation)
+    .fetch_optional(connection)
+    .await?
+    .map(edge)
+    .transpose()
+}
+
+/// A cross-boundary consent edit. The caller is a user-owned personal Dot and
+/// the receiver is an organization-owned Dot. The actor is the person making
+/// the change (the personal owner for `Outbound`, an organization member
+/// writer for `Inbound`); the per-side authority is enforced by the caller.
+pub struct CrossBoundaryConsentEdit<'a> {
+    pub actor_user_id: &'a str,
+    pub caller_dot_id: &'a str,
+    pub receiver_dot_id: &'a str,
+    pub direction: ConsentDirection,
+    pub enabled: bool,
+    pub expected_generation: Option<&'a str>,
+}
+
+pub async fn set_cross_boundary_consent(
+    pool: &Pool,
+    edit: CrossBoundaryConsentEdit<'_>,
+) -> Result<ConsentSaved, DbError> {
+    let mut tx = WriteTx::begin(pool).await?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM dots WHERE principal_id = ?)
+           AND EXISTS(SELECT 1 FROM dots WHERE principal_id = ?)",
+    )
+    .bind(edit.caller_dot_id)
+    .bind(edit.receiver_dot_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !exists {
+        return Ok(ConsentSaved::Missing);
+    }
+    let valid_pair: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1 FROM dots c JOIN dots r ON r.principal_id = ?
+            WHERE c.principal_id = ?
+              AND c.owner_user_id IS NOT NULL AND c.organization_id IS NULL
+              AND r.organization_id IS NOT NULL AND r.owner_user_id IS NULL
+        )",
+    )
+    .bind(edit.receiver_dot_id)
+    .bind(edit.caller_dot_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !valid_pair {
+        return Ok(ConsentSaved::Invalid);
+    }
+    let current = sqlx::query(
+        "SELECT * FROM dot_delegation_edges WHERE caller_dot_id = ? AND receiver_dot_id = ?",
+    )
+    .bind(edit.caller_dot_id)
+    .bind(edit.receiver_dot_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .map(edge)
+    .transpose()?;
+    if current.as_ref().map(|value| value.generation.as_str()) != edit.expected_generation {
+        return Ok(ConsentSaved::Conflict);
+    }
+    let (caller_active, receiver_active): (bool, bool) =
+        sqlx::query_as("SELECT c.active = 1, r.active = 1 FROM dots c JOIN dots r ON r.principal_id = ? WHERE c.principal_id = ?")
+            .bind(edit.receiver_dot_id)
+            .bind(edit.caller_dot_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let current_flag = current
+        .as_ref()
+        .map(|value| match edit.direction {
+            ConsentDirection::Outbound => value.outbound_enabled,
+            ConsentDirection::Inbound => value.inbound_enabled,
+        })
+        .unwrap_or(false);
+    if let Some(current) = &current
+        && current_flag == edit.enabled
+    {
+        return Ok(ConsentSaved::Saved(current.clone()));
+    }
+    if edit.enabled && (!caller_active || !receiver_active) {
+        return Ok(ConsentSaved::Unavailable);
+    }
+    let mut updated = current.unwrap_or_else(|| DotDelegationEdge {
+        caller_dot_id: edit.caller_dot_id.into(),
+        receiver_dot_id: edit.receiver_dot_id.into(),
+        outbound_enabled: false,
+        inbound_enabled: false,
+        generation: String::new(),
+        updated_at: Timestamp::now(),
+    });
+    match edit.direction {
+        ConsentDirection::Outbound => updated.outbound_enabled = edit.enabled,
+        ConsentDirection::Inbound => updated.inbound_enabled = edit.enabled,
+    }
+    updated.generation = uuid::Uuid::new_v4().to_string();
+    updated.updated_at = Timestamp::now();
+    sqlx::query("INSERT INTO dot_delegation_edges (caller_dot_id, receiver_dot_id, outbound_enabled, inbound_enabled, generation, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(caller_dot_id, receiver_dot_id) DO UPDATE SET outbound_enabled = excluded.outbound_enabled, inbound_enabled = excluded.inbound_enabled, generation = excluded.generation, updated_at = excluded.updated_at")
+        .bind(edit.caller_dot_id).bind(edit.receiver_dot_id).bind(updated.outbound_enabled).bind(updated.inbound_enabled)
+        .bind(&updated.generation).bind(updated.updated_at.to_string()).execute(&mut *tx).await?;
+    agent_audit::append(&mut tx, agent_audit::NewEvent::new(AuditKind::PersonalDotDelegationChanged, edit.caller_dot_id, json!({
+        "caller_dot_id": edit.caller_dot_id, "receiver_dot_id": edit.receiver_dot_id,
+        "direction": match edit.direction { ConsentDirection::Outbound => "outbound", ConsentDirection::Inbound => "inbound" },
+        "outbound_enabled": updated.outbound_enabled, "inbound_enabled": updated.inbound_enabled,
+        "generation": updated.generation, "cross_boundary": true,
+    })).by(Some(edit.actor_user_id))).await?;
+    tx.commit().await?;
+    Ok(ConsentSaved::Saved(updated))
+}
+
 pub async fn set_consent(pool: &Pool, edit: ConsentEdit<'_>) -> Result<ConsentSaved, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
     let active: Option<(bool, bool)> = sqlx::query_as("SELECT d.active, p.active FROM dots d JOIN dots p ON p.principal_id = ? WHERE d.principal_id = ? AND d.owner_user_id = ? AND p.owner_user_id = ?")
@@ -576,5 +720,348 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(audit_count, 3);
+    }
+
+    async fn cross_boundary_fixture() -> (Pool, String, String, String) {
+        use crate::db::{WriteTx, organizations, organizations::NewOrganization};
+        let pool = aiplane_core::server::db::open(Path::new(":memory:"))
+            .await
+            .unwrap();
+        let now = Timestamp::now();
+        for (id, roles) in [
+            ("alice", vec!["engineering".to_owned()]),
+            ("bob", vec!["engineering".to_owned()]),
+        ] {
+            users::upsert(
+                &pool,
+                &User {
+                    id: id.into(),
+                    email: format!("{id}@example.com"),
+                    name: None,
+                    roles,
+                    created_at: now,
+                    updated_at: now,
+                    timezone: None,
+                    speech_voice: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO gateway_groups(name,created_at,updated_at) VALUES('engineering', ?, ?)",
+        )
+        .bind(now.to_string())
+        .bind(now.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let org = match organizations::create(
+            &pool,
+            &NewOrganization {
+                name: "Acme",
+                description: "Support",
+                member_groups: &["engineering".to_owned()],
+            },
+            "bob",
+        )
+        .await
+        .unwrap()
+        {
+            organizations::OrganizationCreateResult::Created(row) => row,
+            _ => panic!("organization created"),
+        };
+        let org_id = org.organization.id;
+        let (_, caller) = agents::create_personal_dot(
+            &pool,
+            &NewPrincipal {
+                name: "caller",
+                display: "Caller",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        let caller = caller.unwrap().principal.id;
+        let mut tx = WriteTx::begin(&pool).await.unwrap();
+        let (_, receiver) = agents::create_organization_dot_in(
+            &mut tx,
+            &org_id,
+            &NewPrincipal {
+                name: "ticket",
+                display: "Ticket",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "bob",
+            4,
+        )
+        .await
+        .unwrap();
+        let receiver = receiver.unwrap().principal.id;
+        tx.commit().await.unwrap();
+        (pool, caller, receiver, org_id)
+    }
+
+    fn cb_edit<'a>(
+        caller: &'a str,
+        receiver: &'a str,
+        actor: &'a str,
+        direction: ConsentDirection,
+        enabled: bool,
+        generation: Option<&'a str>,
+    ) -> CrossBoundaryConsentEdit<'a> {
+        CrossBoundaryConsentEdit {
+            actor_user_id: actor,
+            caller_dot_id: caller,
+            receiver_dot_id: receiver,
+            direction,
+            enabled,
+            expected_generation: generation,
+        }
+    }
+
+    #[tokio::test]
+    async fn cross_boundary_consent_requires_both_decisions_and_membership() {
+        let (pool, caller, receiver, org_id) = cross_boundary_fixture().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert!(
+            authorized_cross_boundary_in(&mut conn, "alice", &caller, &org_id, &receiver, "absent")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let first = saved(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &caller,
+                    &receiver,
+                    "alice",
+                    ConsentDirection::Outbound,
+                    true,
+                    None,
+                ),
+            )
+            .await
+            .unwrap(),
+        );
+        assert!(first.outbound_enabled && !first.inbound_enabled);
+        assert!(
+            authorized_cross_boundary_in(
+                &mut conn,
+                "alice",
+                &caller,
+                &org_id,
+                &receiver,
+                &first.generation
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+        drop(conn);
+        let both = saved(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &caller,
+                    &receiver,
+                    "bob",
+                    ConsentDirection::Inbound,
+                    true,
+                    Some(&first.generation),
+                ),
+            )
+            .await
+            .unwrap(),
+        );
+        assert!(both.outbound_enabled && both.inbound_enabled);
+        assert_ne!(first.generation, both.generation);
+        let mut conn = pool.acquire().await.unwrap();
+        assert!(
+            authorized_cross_boundary_in(
+                &mut conn,
+                "alice",
+                &caller,
+                &org_id,
+                &receiver,
+                &both.generation
+            )
+            .await
+            .unwrap()
+            .is_some()
+        );
+        assert!(
+            authorized_cross_boundary_in(
+                &mut conn,
+                "alice",
+                &caller,
+                &org_id,
+                &receiver,
+                &first.generation
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            authorized_cross_boundary_in(
+                &mut conn,
+                "alice",
+                &caller,
+                "missing-org",
+                &receiver,
+                &both.generation
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+        drop(conn);
+        let now = Timestamp::now();
+        users::upsert(
+            &pool,
+            &User {
+                id: "carol".into(),
+                email: "carol@example.com".into(),
+                name: None,
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        let (_, carol_dot) = agents::create_personal_dot(
+            &pool,
+            &NewPrincipal {
+                name: "carol",
+                display: "Carol",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "carol",
+            4,
+        )
+        .await
+        .unwrap();
+        let carol_dot = carol_dot.unwrap().principal.id;
+        let carol_out = saved(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &carol_dot,
+                    &receiver,
+                    "carol",
+                    ConsentDirection::Outbound,
+                    true,
+                    None,
+                ),
+            )
+            .await
+            .unwrap(),
+        );
+        saved(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &carol_dot,
+                    &receiver,
+                    "bob",
+                    ConsentDirection::Inbound,
+                    true,
+                    Some(&carol_out.generation),
+                ),
+            )
+            .await
+            .unwrap(),
+        );
+        let mut conn = pool.acquire().await.unwrap();
+        assert!(
+            authorized_cross_boundary_in(
+                &mut conn,
+                "carol",
+                &carol_dot,
+                &org_id,
+                &receiver,
+                &carol_out.generation
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn cross_boundary_consent_enforces_owner_types_and_active_state() {
+        let (pool, caller, receiver, _org_id) = cross_boundary_fixture().await;
+        let (_, personal_receiver) = agents::create_personal_dot(
+            &pool,
+            &NewPrincipal {
+                name: "personal",
+                display: "Personal",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        let personal_receiver = personal_receiver.unwrap().principal.id;
+        assert!(matches!(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &caller,
+                    &personal_receiver,
+                    "alice",
+                    ConsentDirection::Outbound,
+                    true,
+                    None
+                )
+            )
+            .await,
+            Ok(ConsentSaved::Invalid)
+        ));
+        assert!(matches!(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &receiver,
+                    &caller,
+                    "bob",
+                    ConsentDirection::Outbound,
+                    true,
+                    None
+                )
+            )
+            .await,
+            Ok(ConsentSaved::Invalid)
+        ));
+        agents::set_personal_dot_active(&pool, &caller, "alice", false, 4)
+            .await
+            .unwrap();
+        assert!(matches!(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &caller,
+                    &receiver,
+                    "alice",
+                    ConsentDirection::Outbound,
+                    true,
+                    None
+                )
+            )
+            .await,
+            Ok(ConsentSaved::Unavailable)
+        ));
     }
 }

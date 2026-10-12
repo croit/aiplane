@@ -255,6 +255,7 @@ async fn dot_background_schema_matches_its_fixture() {
                         'mcp_connections', 'mcp_connections_user_connector',
                         'mcp_connections_principal_connector', 'pending_mcp_oauth',
                         'idx_pending_mcp_oauth_expires', 'mcp_oauth_cancel_before_initiator_delete', 'dot_connector_bindings',
+                        'cross_boundary_delegations', 'idx_cross_boundary_delegations_caller',
                         'mcp_catalog_connectors', 'mcp_connector_tools')
          ORDER BY type, name",
     )

@@ -18,6 +18,7 @@ pub mod agent_verifiers;
 pub mod agents;
 pub mod architect_sessions;
 pub mod child_sessions;
+pub mod cross_boundary;
 pub mod dot_connections;
 pub mod dot_delegation;
 pub mod dot_memories;
