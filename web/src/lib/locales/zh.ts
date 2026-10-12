@@ -1975,6 +1975,10 @@ export const zh: Catalog = {
  "organization-error-name-conflict": "此组织已有同名 Dot。请选择其他名称。",
  "organization-error-not-found": "此组织不可用。请检查地址，或请管理员检查你的访问权限。",
  "organization-error-permission-required": "你需要是组织成员并拥有代理管理权限。请管理员检查你的所属组。",
+ "organization-member-group-count": {
+  "one": "{group} · {count} 位用户",
+  "other": "{group} · {count} 位用户"
+ },
  "organization-member-groups": "成员组",
  "organization-membership-explanation": "组成员身份提供组织访问权限。Dot 共享权限和工具授权需要单独配置。",
  "organization-no-members": "此组织尚未配置成员组。",

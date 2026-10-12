@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use aiplane_agents::db::{agents, organizations, system_principals::NewPrincipal};
 use aiplane_core::server::db::{WriteTx, gateway_groups, users};
@@ -54,6 +57,7 @@ impl From<&organizations::AdminOrganizationRow> for AdminOrganizationView {
 pub struct AdminOrganizationList {
     pub organizations: Vec<AdminOrganizationView>,
     pub groups: Vec<String>,
+    pub member_group_user_counts: BTreeMap<String, u64>,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -233,6 +237,16 @@ pub async fn admin_list(State(state): State<Arc<RamaState>>, req: Request) -> Re
             .iter()
             .map(AdminOrganizationView::from)
             .collect::<Vec<_>>();
+        let member_groups = organizations
+            .iter()
+            .flat_map(|organization| organization.member_groups.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let member_group_user_counts =
+            gateway_groups::group_member_counts_in(&mut tx, &member_groups)
+                .await
+                .map_err(internal)?;
         let groups = gateway_groups::list_group_names_in(&mut tx)
             .await
             .map_err(internal)?;
@@ -242,6 +256,7 @@ pub async fn admin_list(State(state): State<Arc<RamaState>>, req: Request) -> Re
             AdminOrganizationList {
                 organizations,
                 groups,
+                member_group_user_counts,
             },
         ))
     }

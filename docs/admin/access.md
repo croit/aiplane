@@ -43,9 +43,13 @@ Organization metadata is administered through
 `/api/v0/admin/organizations`, or use **Access & limits → Organizations**
 (`/admin/organizations`). Select actual gateway groups as membership
 sources. Existing OIDC mappings continue to resolve those groups; the
-organization does not introduce a second identity roster. Empty bindings
-provide no membership. Deleting a bound gateway group removes that binding;
-recreating a group with the same name does not restore it.
+organization does not introduce a second identity roster. Each member-group
+badge shows the number of locally known users currently resolved into that
+group. Counts use users' latest stored OIDC claims; a default group includes
+every locally known user. These counts reflect people who have signed in to
+AIplane and are not a live query to the IdP directory. Empty bindings provide
+no membership. Deleting a bound gateway group removes that binding; recreating
+a group with the same name does not restore it.
 
 Choose **Create organization** to open its metadata dialog. Existing cards
 edit the organization's actual name, description and selected member groups.

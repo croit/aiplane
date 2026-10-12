@@ -20,7 +20,7 @@ export function organizationChange(row: AdminOrganization, draft: OrganizationBo
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) });
 const path = (id: string) => `/api/v0/organizations/${encodeURIComponent(id)}`;
 export const adminOrganizationsApi = {
-    list: () => request<{ organizations: AdminOrganization[]; groups: string[] }>('/api/v0/admin/organizations'),
+    list: () => request<{ organizations: AdminOrganization[]; groups: string[]; member_group_user_counts: Record<string, number> }>('/api/v0/admin/organizations'),
     create: (body: OrganizationBody) => request<{ organization: AdminOrganization }>('/api/v0/admin/organizations', json('POST', body)),
     save: (id: string, body: OrganizationEdit) => request<{ organization: AdminOrganization }>(`/api/v0/admin/organizations/${encodeURIComponent(id)}`, json('PUT', body))
 };

@@ -11,6 +11,10 @@ organizations-empty = 你没有可访问的组织。
 organization-create = 创建组织
 organization-edit = 编辑组织
 organization-member-groups = 成员组
+organization-member-group-count = { $count ->
+    [one] { $group } · { $count } 位用户
+   *[other] { $group } · { $count } 位用户
+}
 organization-membership-explanation = 组成员身份提供组织访问权限。Dot 共享权限和工具授权需要单独配置。
 organization-no-members = 此组织尚未配置成员组。
 organization-reload = 重新加载组织

@@ -5,7 +5,7 @@
     import { adminOrganizationsApi, type AdminOrganization, type OrganizationBody, type OrganizationEdit } from '#lib/organizations.js';
     import { ApiError } from '#lib/api.js';
     import { t } from '#lib/i18n.svelte.js';
-    let data = $state<{ organizations: AdminOrganization[]; groups: string[] } | null>(null);
+    let data = $state<{ organizations: AdminOrganization[]; groups: string[]; member_group_user_counts: Record<string, number> } | null>(null);
     let error = $state<string | null>(null);
     let saved = $state(false);
     let creating = $state(false);
@@ -40,7 +40,7 @@
                             <div class="space-y-2">
                                 <h4 class="text-sm font-medium">{t('organization-member-groups')}</h4>
                                 {#if row.member_groups.length}
-                                    <div class="flex flex-wrap gap-2">{#each row.member_groups as group (group)}<span class="badge badge-outline">{group}</span>{/each}</div>
+                                    <div class="flex flex-wrap gap-2">{#each row.member_groups as group (group)}<span class="badge badge-outline">{t('organization-member-group-count', { group, count: data.member_group_user_counts[group] ?? 0 })}</span>{/each}</div>
                                 {:else}<p class="text-sm text-base-content/60">{t('organization-no-members')}</p>{/if}
                             </div>
                             <div class="card-actions justify-end">

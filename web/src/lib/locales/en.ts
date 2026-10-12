@@ -1990,6 +1990,10 @@ export const en: Catalog = {
  "organization-error-name-conflict": "This organization already has a Dot with that name. Choose a different name.",
  "organization-error-not-found": "This organization is unavailable. Check its address or ask an administrator about your access.",
  "organization-error-permission-required": "You need organization membership and agent management permission. Ask an administrator to review your groups.",
+ "organization-member-group-count": {
+  "one": "{group} · {count} user",
+  "other": "{group} · {count} users"
+ },
  "organization-member-groups": "Member groups",
  "organization-membership-explanation": "Group membership provides organization access. Dot shares and tool grants are configured separately.",
  "organization-no-members": "No member groups are configured for this organization.",

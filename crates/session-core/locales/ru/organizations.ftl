@@ -11,6 +11,12 @@ organizations-empty = Вам не доступна ни одна организ�
 organization-create = Создать организацию
 organization-edit = Изменить организацию
 organization-member-groups = Группы участников
+organization-member-group-count = { $count ->
+    [one] { $group } · { $count } пользователь
+    [few] { $group } · { $count } пользователя
+    [many] { $group } · { $count } пользователей
+   *[other] { $group } · { $count } пользователей
+}
 organization-membership-explanation = Членство в группе даёт доступ к организации. Доступ к Dot и разрешения на инструменты настраиваются отдельно.
 organization-no-members = Для этой организации не настроены группы участников.
 organization-reload = Обновить организацию

@@ -11,6 +11,10 @@ organizations-empty = Für Sie sind keine Organisationen verfügbar.
 organization-create = Organisation erstellen
 organization-edit = Organisation bearbeiten
 organization-member-groups = Mitgliedergruppen
+organization-member-group-count = { $count ->
+    [one] { $group } · { $count } Nutzer
+   *[other] { $group } · { $count } Nutzer
+}
 organization-membership-explanation = Gruppenmitgliedschaft ermöglicht den Zugriff auf die Organisation. Dot-Freigaben und Werkzeugberechtigungen werden separat eingerichtet.
 organization-no-members = Für diese Organisation sind keine Mitgliedergruppen eingerichtet.
 organization-reload = Organisation neu laden

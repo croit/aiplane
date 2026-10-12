@@ -14,6 +14,8 @@
 //! `/admin/groups` UI owns it. The resolver holds a snapshot ([`load_snapshot`])
 //! that is rebuilt from these tables at startup and after every admin edit.
 
+use std::collections::BTreeMap;
+
 use jiff::Timestamp;
 use sqlx::Row;
 
@@ -408,6 +410,46 @@ pub async fn observed_oidc_values(pool: &Pool) -> Result<Vec<String>, DbError> {
     Ok(out)
 }
 
+/// Count locally known users that resolve to each requested group. Membership
+/// follows the same stored claim mappings and default-group rule as RBAC.
+pub async fn group_member_counts_in(
+    tx: &mut WriteTx,
+    groups: &[String],
+) -> Result<BTreeMap<String, u64>, DbError> {
+    if groups.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let groups = serde_json::to_string(groups).expect("string vector serializes");
+    let rows = sqlx::query(
+        r#"SELECT requested.value AS group_name, COUNT(DISTINCT u.id) AS user_count
+           FROM json_each(?) AS requested
+           LEFT JOIN gateway_groups AS g ON g.name = requested.value
+           LEFT JOIN users AS u ON g.is_default = 1 OR EXISTS (
+               SELECT 1
+               FROM oidc_group_mappings AS mapping
+               JOIN json_each(u.roles_json) AS role_value
+                 ON role_value.value = mapping.oidc_value
+               WHERE mapping.gateway_group = g.name
+           )
+           GROUP BY requested.value"#,
+    )
+    .bind(groups)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    rows.iter()
+        .map(|row| {
+            let group: String = row.try_get("group_name")?;
+            let count: i64 = row.try_get("user_count")?;
+            let count = u64::try_from(count).map_err(|source| DbError::Decode {
+                column: "user_count",
+                source: source.into(),
+            })?;
+            Ok((group, count))
+        })
+        .collect()
+}
+
 /// True when no group has been created yet — the trigger for a one-time
 /// [`seed_roles`].
 pub async fn is_empty(pool: &Pool) -> Result<bool, DbError> {
@@ -549,6 +591,56 @@ mod tests {
         assert!(groups[0].is_admin);
         assert_eq!(groups[1].name, "developers");
         assert_eq!(groups[1].description, "Dev team");
+    }
+
+    #[tokio::test]
+    async fn member_counts_include_mapped_users_once_and_every_user_in_default_groups() {
+        let pool = fresh().await;
+        upsert_group(&pool, "admins", "", true, false)
+            .await
+            .unwrap();
+        upsert_group(&pool, "everyone", "", false, true)
+            .await
+            .unwrap();
+        upsert_group(&pool, "support", "", false, false)
+            .await
+            .unwrap();
+        set_mappings_for_group(&pool, "admins", &v(&["admin-a", "admin-b"]))
+            .await
+            .unwrap();
+        set_mappings_for_group(&pool, "support", &v(&["support-team"]))
+            .await
+            .unwrap();
+        for (id, roles) in [
+            ("one", r#"["admin-a","admin-b","support-team"]"#),
+            ("two", r#"["admin-a"]"#),
+            ("three", r#"["unmapped"]"#),
+        ] {
+            sqlx::query("INSERT INTO users(id,email,roles_json,created_at,updated_at) VALUES(?,?,?,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+                .bind(id)
+                .bind(format!("{id}@example.test"))
+                .bind(roles)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        let counts =
+            group_member_counts_in(&mut tx, &v(&["admins", "everyone", "support", "missing"]))
+                .await
+                .unwrap();
+
+        assert_eq!(
+            counts["admins"], 2,
+            "one user matching two claims counts once"
+        );
+        assert_eq!(
+            counts["everyone"], 3,
+            "default groups include all known users"
+        );
+        assert_eq!(counts["support"], 1);
+        assert_eq!(counts["missing"], 0);
     }
 
     #[tokio::test]

@@ -11,6 +11,10 @@ organizations-empty = No organizations are available to you.
 organization-create = Create organization
 organization-edit = Edit organization
 organization-member-groups = Member groups
+organization-member-group-count = { $count ->
+    [one] { $group } · { $count } user
+   *[other] { $group } · { $count } users
+}
 organization-membership-explanation = Group membership provides organization access. Dot shares and tool grants are configured separately.
 organization-no-members = No member groups are configured for this organization.
 organization-reload = Reload organization

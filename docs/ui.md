@@ -182,7 +182,10 @@ gateway groups. Metadata saves send the returned revision. A conflict preserves
 the local draft until an explicit reload. Empty group bindings grant no member
 access, and removing a bound group changes the organization revision. The
 list uses compact cards with the current description and configured member
-groups. Creation and editing both use the shared Modal and group selector.
+groups, each with the number of locally known users assigned to that group.
+The count uses each user's most recently stored OIDC claim values; default
+groups count every locally known user. Creation and editing both use the shared
+Modal and group selector.
 Saving closes the edit dialog after the returned revision is accepted; a
 conflict keeps the draft open until the administrator reloads or corrects it.
 

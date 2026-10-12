@@ -2006,6 +2006,12 @@ export const ru: Catalog = {
  "organization-error-name-conflict": "В этой организации уже есть Dot с таким именем. Выберите другое имя.",
  "organization-error-not-found": "Эта организация недоступна. Проверьте адрес или попросите администратора проверить ваш доступ.",
  "organization-error-permission-required": "Нужны членство в организации и право управления агентами. Попросите администратора проверить ваши группы.",
+ "organization-member-group-count": {
+  "few": "{group} · {count} пользователя",
+  "many": "{group} · {count} пользователей",
+  "one": "{group} · {count} пользователь",
+  "other": "{group} · {count} пользователей"
+ },
  "organization-member-groups": "Группы участников",
  "organization-membership-explanation": "Членство в группе даёт доступ к организации. Доступ к Dot и разрешения на инструменты настраиваются отдельно.",
  "organization-no-members": "Для этой организации не настроены группы участников.",

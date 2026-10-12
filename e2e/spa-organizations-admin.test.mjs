@@ -13,17 +13,26 @@ test("organization administration lists compact cards and edits in a modal", asy
             { name: "lang", value: "en", url: BASE },
         ]);
         const name = `Organization ${Date.now()}`;
+        const adminDataResponse = await context.request.get(`${BASE}/api/v0/admin/organizations`);
+        assert.equal(adminDataResponse.status(), 200);
+        const adminData = await adminDataResponse.json();
+        const memberGroup = adminData.groups.includes("admin") ? "admin" : adminData.groups[0];
+        assert.ok(memberGroup, "the seeded admin fixture has at least one gateway group");
         const created = await context.request.post(`${BASE}/api/v0/admin/organizations`, {
-            data: { name, description: "First organization description", member_groups: [] },
+            data: { name, description: "First organization description", member_groups: [memberGroup] },
         });
         assert.equal(created.status(), 201);
         const organization = (await created.json()).organization;
 
         const page = await context.newPage();
+        const listLoaded = page.waitForResponse((response) => response.request().method() === "GET"
+            && response.url() === `${BASE}/api/v0/admin/organizations`);
         await page.goto(`${BASE}/admin/organizations`, { waitUntil: "networkidle" });
+        const listData = await (await listLoaded).json();
+        assert.equal(typeof listData.member_group_user_counts[memberGroup], "number");
         const card = page.locator("article.card").filter({ has: page.getByRole("heading", { name, exact: true }) });
         await card.getByText("First organization description", { exact: true }).waitFor();
-        await card.getByText("No member groups are configured for this organization.", { exact: true }).waitFor();
+        await card.getByText(`${memberGroup} · ${listData.member_group_user_counts[memberGroup]} users`, { exact: true }).waitFor();
         assert.equal(await card.getByRole("textbox").count(), 0, "organization forms stay closed in the list");
 
         await card.getByRole("button", { name: "Edit organization", exact: true }).click();

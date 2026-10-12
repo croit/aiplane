@@ -177,7 +177,10 @@ field-level issues. Check each operation's OpenAPI response schema for details.
 
 Administrators create and edit organization metadata through
 `/api/v0/admin/organizations`. `member_groups` contains actual gateway-group
-names. An empty list grants no membership. Updates require the opaque
+names. The list response's `member_group_user_counts` maps each bound group
+name to its count of locally known users, resolved from each user's latest
+stored OIDC claim values; default groups count every locally known user. It is
+not a live IdP directory count. An empty list grants no membership. Updates require the opaque
 `expected_revision` returned by the server; a stale revision returns `409`
 without replacing metadata or group bindings.
 
