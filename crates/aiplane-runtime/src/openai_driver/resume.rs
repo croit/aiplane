@@ -304,28 +304,63 @@ pub(super) async fn resume_into(
         {
             return Err(refused());
         }
-        let Some(aiplane_agents::db::child_sessions::LocalChild::Personal(child)) =
-            aiplane_agents::db::child_sessions::child_of_turn(&d.state.db, child_turn)
-                .await
-                .map_err(persist_err("cached_reply_child", &ctx.assistant_turn_id))?
-        else {
-            return Err(refused());
-        };
+        let child = aiplane_agents::db::child_sessions::child_of_turn(&d.state.db, child_turn)
+            .await
+            .map_err(persist_err("cached_reply_child", &ctx.assistant_turn_id))?;
         let mut connection = d.state.db.acquire().await.map_err(persist_err(
             "cached_reply_connection",
             &ctx.assistant_turn_id,
         ))?;
-        if !aiplane_agents::db::child_sessions::validate_child_in(
-            &mut connection,
-            owner,
-            child_turn,
-            &ctx.assistant_turn_id,
-            &suspension.tool_call.id,
-            &child.link.edge_generation,
-        )
-        .await
-        .map_err(persist_err("cached_reply_binding", &ctx.assistant_turn_id))?
-        {
+        let valid = match child {
+            Some(aiplane_agents::db::child_sessions::LocalChild::Personal(child)) => {
+                aiplane_agents::db::child_sessions::validate_child_in(
+                    &mut connection,
+                    owner,
+                    child_turn,
+                    &ctx.assistant_turn_id,
+                    &suspension.tool_call.id,
+                    &child.link.edge_generation,
+                )
+                .await
+                .map_err(persist_err("cached_reply_binding", &ctx.assistant_turn_id))?
+            }
+            Some(aiplane_agents::db::child_sessions::LocalChild::Principal(session))
+                if session.parent_turn_id.as_deref() == Some(ctx.assistant_turn_id.as_str()) =>
+            {
+                let Some(link) = aiplane_agents::db::cross_boundary::link_of_session_in(
+                    &mut connection,
+                    &session.id,
+                )
+                .await
+                .map_err(persist_err("cached_reply_link", &ctx.assistant_turn_id))?
+                else {
+                    return Err(refused());
+                };
+                if link.caller_dot_id != execution.identity().dot_id
+                    || link.caller_owner_user_id != *owner
+                {
+                    return Err(refused());
+                }
+                aiplane_agents::db::cross_boundary::validate_child_in(
+                    &mut connection,
+                    &aiplane_agents::db::cross_boundary::NewCrossBoundaryChild {
+                        child_session_id: &session.id,
+                        caller_dot_id: &link.caller_dot_id,
+                        receiver_dot_id: &link.receiver_dot_id,
+                        caller_owner_user_id: owner,
+                        receiver_org_id: &link.receiver_org_id,
+                        parent_turn_id: &link.parent_turn_id,
+                        parent_tool_call_id: &link.parent_tool_call_id,
+                        edge_generation: &link.edge_generation,
+                    },
+                    &link.edge_generation,
+                )
+                .await
+                .map_err(persist_err("cached_reply_binding", &ctx.assistant_turn_id))?
+            }
+            _ => return Err(refused()),
+        };
+        if !valid {
             return Err(refused());
         }
     }

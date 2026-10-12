@@ -545,6 +545,90 @@ async fn cross_boundary_result(
     }))
 }
 
+/// Settle a cross-boundary child that has reached a terminal status: the
+/// receiver's bounded answer, recomputed from the child's settled turn, for
+/// the caller's waiting `forward_request` call.
+pub(crate) async fn cross_boundary_settlement(
+    state: &Arc<RamaState>,
+    ctx: &ToolContext,
+    owner: &str,
+    caller_dot_id: &str,
+    link: &cross_boundary::CrossBoundaryChildLink,
+    child_turn: &str,
+) -> Result<Value, ToolError> {
+    let receiver = CrossBoundaryReceiver {
+        profile: RunProfile::load_delegated(
+            state,
+            &link.receiver_dot_id,
+            Role::SubAgent {
+                route_binds: std::collections::BTreeMap::new(),
+            },
+            &RunOptions::default(),
+        )
+        .await
+        .map_err(|error| ToolError::Failed(error.to_string()))?,
+        org_id: link.receiver_org_id.clone(),
+        generation: link.edge_generation.clone(),
+    };
+    let profile = &receiver.profile;
+    let about = json!({
+        "receiver_dot_id": profile.principal.id,
+        "receiver": profile.principal.name,
+        "version": profile.version,
+        "session_id": link.child_session_id,
+        "turn_id": child_turn,
+    });
+    let outcome = outcome_of_terminal_turn(&ctx.db, &link.child_session_id, child_turn).await?;
+    cross_boundary_result(ctx, owner, caller_dot_id, &receiver, &about, Some(outcome)).await
+}
+
+/// The outcome a terminal cross-boundary child turn stands for, read back
+/// from the turn: a finished run's `finish` result, or why it stopped.
+async fn outcome_of_terminal_turn(
+    db: &aiplane_core::server::db::Pool,
+    session_id: &str,
+    turn_id: &str,
+) -> Result<RunOutcome, ToolError> {
+    let turn = session_core::db::get_turn(db, session_id, turn_id)
+        .await
+        .map_err(|error| ToolError::Failed(error.to_string()))?
+        .ok_or_else(unavailable)?;
+    Ok(match turn.status {
+        session_core::db::TurnStatus::Completed => {
+            let result = session_core::db::get_turn_with_tools(db, session_id, turn_id)
+                .await
+                .map_err(|error| ToolError::Failed(error.to_string()))?
+                .map(|settled| settled.tool_calls)
+                .unwrap_or_default()
+                .into_iter()
+                .find(|call| call.name == crate::finish::FINISH_TOOL_NAME)
+                .and_then(|call| {
+                    serde_json::from_str::<Value>(&call.arguments_json)
+                        .ok()
+                        .map(|arguments| arguments["result"].clone())
+                })
+                .unwrap_or(Value::Null);
+            RunOutcome::Finished { result }
+        }
+        session_core::db::TurnStatus::Cancelled => RunOutcome::Incomplete {
+            reason: IncompleteReason::Cancelled,
+            summary: turn.content.unwrap_or_default(),
+        },
+        session_core::db::TurnStatus::Errored => RunOutcome::Incomplete {
+            reason: IncompleteReason::Failed {
+                message: turn.error_message.unwrap_or_default(),
+            },
+            summary: turn.content.unwrap_or_default(),
+        },
+        _ => RunOutcome::Incomplete {
+            reason: IncompleteReason::Failed {
+                message: "The receiver run was interrupted before it ended.".into(),
+            },
+            summary: String::new(),
+        },
+    })
+}
+
 pub(crate) async fn personal_result(
     ctx: &ToolContext,
     child_turn: &str,

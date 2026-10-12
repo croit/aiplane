@@ -116,6 +116,14 @@ pub async fn record(
 }
 
 /// The cross-boundary link recorded for a principal child session, if any.
+pub async fn link_of_session(
+    pool: &Pool,
+    child_session_id: &str,
+) -> Result<Option<CrossBoundaryChildLink>, DbError> {
+    let mut connection = pool.acquire().await?;
+    link_of_session_in(&mut connection, child_session_id).await
+}
+
 pub async fn link_of_session_in(
     connection: &mut sqlx::SqliteConnection,
     child_session_id: &str,
@@ -141,6 +149,65 @@ pub async fn link_of_session_in(
         })
     })
     .transpose()
+}
+
+/// The cross-boundary children of a personal parent turn, for cancelling the
+/// linked organization work when the caller's own run is cancelled.
+pub async fn links_for_parent_turn(
+    connection: &mut sqlx::SqliteConnection,
+    parent_turn_id: &str,
+) -> Result<Vec<CrossBoundaryChildLink>, DbError> {
+    sqlx::query(
+        "SELECT child_session_id, caller_dot_id, receiver_dot_id, caller_owner_user_id, \
+         receiver_org_id, parent_turn_id, parent_tool_call_id, edge_generation \
+         FROM cross_boundary_delegations WHERE parent_turn_id = ? ORDER BY child_session_id",
+    )
+    .bind(parent_turn_id)
+    .fetch_all(connection)
+    .await?
+    .into_iter()
+    .map(|row| {
+        Ok(CrossBoundaryChildLink {
+            child_session_id: row.try_get("child_session_id")?,
+            caller_dot_id: row.try_get("caller_dot_id")?,
+            receiver_dot_id: row.try_get("receiver_dot_id")?,
+            caller_owner_user_id: row.try_get("caller_owner_user_id")?,
+            receiver_org_id: row.try_get("receiver_org_id")?,
+            parent_turn_id: row.try_get("parent_turn_id")?,
+            parent_tool_call_id: row.try_get("parent_tool_call_id")?,
+            edge_generation: row.try_get("edge_generation")?,
+        })
+    })
+    .collect()
+}
+
+/// The caller's active personal root turns whose cross-boundary child runs on
+/// this consent edge at this generation: the roots to cancel when the edge
+/// is revoked.
+pub async fn active_roots_for_edge(
+    pool: &Pool,
+    caller_owner_user_id: &str,
+    caller_dot_id: &str,
+    receiver_dot_id: &str,
+    edge_generation: &str,
+) -> Result<Vec<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT DISTINCT cb.parent_turn_id
+             FROM cross_boundary_delegations cb
+             JOIN chat_turns t ON t.id = cb.parent_turn_id
+             JOIN chat_sessions s ON s.id = t.session_id
+             WHERE t.role = 'assistant' AND t.status IN ('in_progress', 'suspended')
+               AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
+               AND cb.caller_owner_user_id = ? AND cb.caller_dot_id = ?
+               AND cb.receiver_dot_id = ? AND cb.edge_generation = ?",
+    )
+    .bind(caller_owner_user_id)
+    .bind(caller_owner_user_id)
+    .bind(caller_dot_id)
+    .bind(receiver_dot_id)
+    .bind(edge_generation)
+    .fetch_all(pool)
+    .await?)
 }
 
 /// Validate a cross-boundary child: the recorded link matches, the personal
@@ -462,6 +529,56 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn parent_turn_links_and_active_roots_follow_the_recorded_edge() {
+        let fx = fixture().await;
+        let (_parent_session, parent_turn) = parent_turn(&fx).await;
+        let child = principal_child(&fx, &parent_turn).await;
+        record(&fx.pool, &input(&fx, &child))
+            .await
+            .unwrap()
+            .unwrap();
+
+        let mut conn = fx.pool.acquire().await.unwrap();
+        let links = links_for_parent_turn(&mut conn, &parent_turn)
+            .await
+            .unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].child_session_id, child);
+        assert!(
+            links_for_parent_turn(&mut conn, "no-such-turn")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        drop(conn);
+
+        // The caller's active root turn is the parent; a finished one is not.
+        assert_eq!(
+            active_roots_for_edge(&fx.pool, "alice", &fx.caller, &fx.receiver, &fx.generation)
+                .await
+                .unwrap(),
+            vec![parent_turn.clone()]
+        );
+        sqlx::query("UPDATE chat_turns SET status = 'completed' WHERE id = ?")
+            .bind(&parent_turn)
+            .execute(&fx.pool)
+            .await
+            .unwrap();
+        assert!(
+            active_roots_for_edge(&fx.pool, "alice", &fx.caller, &fx.receiver, &fx.generation)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            active_roots_for_edge(&fx.pool, "alice", &fx.caller, &fx.receiver, "stale")
+                .await
+                .unwrap()
+                .is_empty()
         );
     }
 

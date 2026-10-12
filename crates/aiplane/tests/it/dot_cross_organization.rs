@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! Cross-organization delegation, dispatch and result
-//! (`docs/dots-cross-organization.md` → "Dispatch and result"): a personal
-//! Dot's `forward_request` addressing an organization Dot — the receiver
-//! runs as its own principal on its published spec, the caller reads only
-//! the bounded answer, and a child pause suspends the caller on the same
-//! request.
+//! Cross-organization delegation, dispatch, result and durable waiting
+//! (`docs/dots-cross-organization.md`): a personal Dot's `forward_request`
+//! addressing an organization Dot — the receiver runs as its own principal on
+//! its published spec, the caller reads only the bounded answer, a child pause
+//! suspends the caller on the same request, and the child's pause settles in
+//! the receiver organization's inbox while the caller's mirror only settles
+//! with the child's bounded answer.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -516,4 +517,467 @@ async fn cross_boundary_dispatch_pause_propagates_to_the_caller() {
 
 async fn upstream_requests(server: &MockServer) -> usize {
     server.received_requests().await.unwrap().len()
+}
+
+// ---------------------------------------------------------------------------
+// Durable waiting (`docs/dots-cross-organization.md` → "Child linkage,
+// resume, cancellation"): the child's pause settles in the receiver
+// organization's inbox, the caller's mirror only settles with the child's
+// bounded answer, and both sides' cancellations and the expiry sweeps keep
+// the pair consistent.
+
+/// The shared setup: alice's caller Dot delegating to an organization Dot
+/// whose `remember` asks, both consent decisions saved, and the pair waiting
+/// on the child's approval. `tail` scripts the upstream requests after the
+/// pause; the dispatch and the pause are scripted here.
+struct PausedDelegation {
+    fx: Fx,
+    state: Arc<RamaState>,
+    org: Value,
+    caller: String,
+    receiver: String,
+    edge: dot_delegation::DotDelegationEdge,
+    session_id: String,
+    turn_id: String,
+    child_session: String,
+    child_turn: String,
+}
+
+async fn paused_delegation(tail: Vec<Value>) -> PausedDelegation {
+    let upstream = MockServer::start().await;
+    let mut fx = fixture_with_forward(&upstream).await;
+    fx.state = fx.state.clone().with_agent_runner(std::sync::Arc::new(
+        aiplane_runtime::agents::embed::LiveAgentRunner,
+    ));
+    let state = Arc::new(fx.state.clone());
+    let caller = caller_dot(
+        &fx.state,
+        "Caller",
+        r#"{"main":{"tools":["forward_request"],"tool_resources":{"forward_request":{"permission":"always_allow"}}}}"#,
+    )
+    .await;
+    let org = organization(&fx, "Ticket Support", &["managers"]).await;
+    let receiver = org_dot(&fx, &org, "Tickets").await;
+    publish_org_dot(
+        &fx,
+        &receiver,
+        serde_json::json!({
+            "main": {
+                "model": "m",
+                "instructions": {"orchestration": "Save the lesson."},
+                "tools": ["remember"],
+                "tool_resources": {"remember": {"permission": "always_ask"}}
+            },
+            "finish": {"schema": {"type": "object", "required": ["answer"], "properties": {"answer": {"type": "string"}}}}
+        }),
+        &["remember"],
+    )
+    .await;
+    let edge = consent(&fx, &caller, &receiver).await;
+    let deltas = vec![
+        tool_call(
+            "forward_request",
+            serde_json::json!({"receiver_dot_id": receiver, "message": "Save this explicit lesson"}),
+        ),
+        tool_call(
+            "remember",
+            serde_json::json!({"content": "Org approved lesson", "kind": "fact"}),
+        ),
+    ]
+    .into_iter()
+    .chain(tail)
+    .collect();
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(Scripted {
+            deltas,
+            served: AtomicUsize::new(0),
+            delay: Duration::ZERO,
+        })
+        .mount(&upstream)
+        .await;
+    let session_id = conversation(&state).await;
+    assert!(
+        dot_sessions::link(&fx.state.db, "alice", &caller, &session_id)
+            .await
+            .unwrap()
+    );
+    let turn_id = submit(&state, &fx.alice, &session_id).await;
+    let paused = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Suspended).await;
+    assert!(paused.suspension.is_some());
+    let pause = chat::get_suspension(&fx.state.db, &turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let child_turn = pause.child_turn.as_deref().unwrap().to_owned();
+    let child_session: String = sqlx::query_scalar(
+        "SELECT child_session_id FROM cross_boundary_delegations WHERE parent_turn_id = ?",
+    )
+    .bind(&turn_id)
+    .fetch_one(&fx.state.db)
+    .await
+    .unwrap();
+    PausedDelegation {
+        fx,
+        state,
+        org,
+        caller,
+        receiver,
+        edge,
+        session_id,
+        turn_id,
+        child_session,
+        child_turn,
+    }
+}
+
+/// The child's pause, as bob (a member holding a write share) sees it.
+async fn child_inbox_item(p: &PausedDelegation) -> (Value, String) {
+    assert_eq!(
+        p.fx.share(&p.fx.alice, &p.receiver, "user", "bob", "write")
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+    let (status, inbox) = p.fx.get(&p.fx.bob, "/api/v0/agents/inbox").await;
+    assert_eq!(status, StatusCode::OK, "{inbox}");
+    let item = inbox["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["turn_id"] == p.child_turn)
+        .unwrap_or_else(|| panic!("the child's pause is in bob's inbox: {inbox}"));
+    assert_eq!(item["call"]["name"], "remember");
+    let request_id = item["id"].as_str().unwrap().to_string();
+    (inbox, request_id)
+}
+
+async fn answer_inbox(
+    p: &PausedDelegation,
+    request_id: &str,
+    decision: &str,
+) -> (StatusCode, Value) {
+    p.fx.post(
+        &p.fx.bob,
+        &format!("/api/v0/agents/inbox/{request_id}/answer"),
+        serde_json::json!({"decision": decision}),
+    )
+    .await
+}
+
+async fn settled_forward_call(p: &PausedDelegation) -> Value {
+    let completed =
+        wait_for_status(&p.state, &p.session_id, &p.turn_id, TurnStatus::Completed).await;
+    let call = completed
+        .tool_calls
+        .iter()
+        .find(|call| call.name == "forward_request")
+        .unwrap();
+    assert_eq!(call.status, ToolCallStatus::Completed);
+    let result: Value = serde_json::from_str(call.output_json.as_deref().unwrap()).unwrap();
+    assert_eq!(result["forwarded"], serde_json::json!(true));
+    assert_eq!(result["receiver_dot_id"], serde_json::json!(p.receiver));
+    result
+}
+
+/// Move a suspension's deadline into the past, so the sweeps pick it up.
+async fn expire_suspension(p: &PausedDelegation, turn_id: &str) {
+    sqlx::query("UPDATE chat_turn_suspensions SET expires_at = ? WHERE turn_id = ?")
+        .bind((jiff::Timestamp::now() - jiff::SignedDuration::from_secs(1)).to_string())
+        .bind(turn_id)
+        .execute(&p.state.db)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn cross_boundary_member_approval_settles_the_caller_with_the_bounded_answer() {
+    let p = paused_delegation(vec![
+        tool_call(
+            "finish",
+            serde_json::json!({"result": {"answer": "The lesson is saved."}}),
+        ),
+        serde_json::json!({"content": "The org agent saved the lesson."}),
+    ])
+    .await;
+    let p = &p;
+    let (_, request_id) = child_inbox_item(p).await;
+    // The caller's mirror is not in her inbox: the decision belongs to the
+    // organization, and she only ever sees her own tool call.
+    let (status, personal) = p.fx.get(&p.fx.alice, "/api/v0/agents/inbox").await;
+    assert_eq!(status, StatusCode::OK, "{personal}");
+    assert!(
+        personal["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["turn_id"] != p.turn_id),
+        "the mirror stays out of the caller's inbox: {personal}"
+    );
+    let (status, body) = answer_inbox(p, &request_id, "allow_once").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(
+        wait_for_status(
+            &p.state,
+            &p.child_session,
+            &p.child_turn,
+            TurnStatus::Completed
+        )
+        .await
+        .turn
+        .status,
+        TurnStatus::Completed
+    );
+    let result = settled_forward_call(p).await;
+    let outcome = &result["outcome"];
+    assert_eq!(outcome["status"], serde_json::json!("finished"), "{result}");
+    assert_eq!(
+        outcome["result"]["answer"],
+        serde_json::json!("The lesson is saved.")
+    );
+    let (status, inbox) = p.fx.get(&p.fx.bob, "/api/v0/agents/inbox").await;
+    assert_eq!(status, StatusCode::OK, "{inbox}");
+    assert!(
+        inbox["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["turn_id"] != p.child_turn),
+        "the answered pause drops from bob's inbox: {inbox}"
+    );
+}
+
+#[tokio::test]
+async fn cross_boundary_member_denial_settles_the_caller_and_writes_nothing() {
+    let p = paused_delegation(vec![
+        tool_call(
+            "finish",
+            serde_json::json!({"result": {"answer": "The save was declined; nothing was stored."}}),
+        ),
+        serde_json::json!({"content": "The org agent declined the save."}),
+    ])
+    .await;
+    let p = &p;
+    let (_, request_id) = child_inbox_item(p).await;
+    let (status, body) = answer_inbox(p, &request_id, "deny").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let result = settled_forward_call(p).await;
+    assert_eq!(
+        result["outcome"]["status"],
+        serde_json::json!("finished"),
+        "{result}"
+    );
+    let notes = aiplane_agents::db::dot_memories::list(
+        &p.state.db,
+        aiplane_agents::db::dot_memories::MemoryScope::Dot {
+            owner: &aiplane_agents::db::agents::DotOwner::Organization(
+                created_id(&p.org["organization"]).into(),
+            ),
+            dot_id: &p.receiver,
+        },
+        10,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[tokio::test]
+async fn cross_boundary_child_pause_expires_and_settles_the_caller() {
+    let p = paused_delegation(vec![
+        tool_call(
+            "finish",
+            serde_json::json!({"result": {"answer": "The save expired."}}),
+        ),
+        serde_json::json!({"content": "The org agent expired the save."}),
+    ])
+    .await;
+    let p = &p;
+    expire_suspension(p, &p.child_turn).await;
+    aiplane_runtime::agents::resume::resume_expired(&p.state).await;
+    let result = settled_forward_call(p).await;
+    assert_eq!(
+        result["outcome"]["status"],
+        serde_json::json!("finished"),
+        "{result}"
+    );
+    assert_eq!(
+        result["outcome"]["result"]["answer"],
+        serde_json::json!("The save expired.")
+    );
+}
+
+#[tokio::test]
+async fn cross_boundary_member_cancelling_the_child_settles_the_caller_with_cancellation() {
+    let p = paused_delegation(vec![
+        serde_json::json!({"content": "The org run was cancelled."}),
+    ])
+    .await;
+    let p = &p;
+    child_inbox_item(p).await;
+    let (status, body) =
+        p.fx.post(
+            &p.fx.bob,
+            &format!(
+                "/api/v0/agents/{}/test/{}/cancel",
+                p.receiver, p.child_session
+            ),
+            serde_json::json!({"turn_id": p.child_turn}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.child_session, &p.child_turn)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Cancelled
+    );
+    let result = settled_forward_call(p).await;
+    assert_eq!(
+        result["outcome"]["status"],
+        serde_json::json!("incomplete"),
+        "{result}"
+    );
+    assert_eq!(
+        result["outcome"]["reason"]["kind"],
+        serde_json::json!("cancelled")
+    );
+}
+
+#[tokio::test]
+async fn cross_boundary_caller_cancelling_the_root_cancels_the_organization_child() {
+    let p = paused_delegation(vec![]).await;
+    let p = &p;
+    let (status, body) =
+        p.fx.post(
+            &p.fx.alice,
+            &format!("/api/v0/chat/sessions/{}/cancel", p.session_id),
+            serde_json::json!({}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["cancelled"], serde_json::json!(true));
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.session_id, &p.turn_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Cancelled
+    );
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.child_session, &p.child_turn)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn cross_boundary_revoked_consent_delivers_nothing_while_waiting() {
+    let p = paused_delegation(vec![
+        tool_call(
+            "finish",
+            serde_json::json!({"result": {"answer": "The lesson is saved."}}),
+        ),
+        serde_json::json!({"content": "The org agent saved the lesson."}),
+    ])
+    .await;
+    let p = &p;
+    let (_, request_id) = child_inbox_item(p).await;
+    let edge = dot_delegation::set_cross_boundary_consent(
+        &p.state.db,
+        dot_delegation::CrossBoundaryConsentEdit {
+            actor_user_id: "alice",
+            caller_dot_id: &p.caller,
+            receiver_dot_id: &p.receiver,
+            direction: dot_delegation::ConsentDirection::Inbound,
+            enabled: false,
+            expected_generation: Some(&p.edge.generation),
+        },
+    )
+    .await
+    .unwrap();
+    let dot_delegation::ConsentSaved::Saved(_) = edge else {
+        panic!("the inbound consent was revoked");
+    };
+    // The member's answer no longer matches the consent under which the data
+    // crossed the boundary, so the child cannot resume.
+    let (status, body) = answer_inbox(p, &request_id, "allow_once").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "not_suspended");
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.child_session, &p.child_turn)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Suspended
+    );
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.session_id, &p.turn_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Suspended
+    );
+    // The revocation cancels the pair; nothing is delivered to the caller.
+    aiplane_runtime::agents::resume::cancel_personal_tree(&p.state, "alice", &p.turn_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.session_id, &p.turn_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Cancelled
+    );
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.child_session, &p.child_turn)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn cross_boundary_waiting_mirror_refuses_the_personal_path_until_the_child_settles() {
+    let p = paused_delegation(vec![
+        tool_call(
+            "finish",
+            serde_json::json!({"result": {"answer": "The save expired."}}),
+        ),
+        serde_json::json!({"content": "The org agent expired the save."}),
+    ])
+    .await;
+    let p = &p;
+    expire_suspension(p, &p.turn_id).await;
+    // The personal sweep refuses while the child still waits: the decision
+    // belongs to the organization, so the mirror stays suspended.
+    aiplane_api::pages::chat::resume_expired_suspensions(&p.state).await;
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.session_id, &p.turn_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Suspended
+    );
+    expire_suspension(p, &p.child_turn).await;
+    aiplane_runtime::agents::resume::resume_expired(&p.state).await;
+    let result = settled_forward_call(p).await;
+    assert_eq!(
+        result["outcome"]["status"],
+        serde_json::json!("finished"),
+        "{result}"
+    );
 }

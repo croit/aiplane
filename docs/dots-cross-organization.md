@@ -2,7 +2,13 @@
 
 ## Status and scope
 
-**Design, not yet implemented.** This document specifies the cross-boundary
+The core bridge is implemented: directed consent with live recheck, dispatch,
+the bounded result, durable waiting, settlement and cancellation. The
+configuration and discovery surface (the Communication selectors over
+organization Dots, the organization-side **Accepts requests from**) and its
+i18n remain.
+
+This document specifies the cross-boundary
 delegation that [organization-owned Dots](dots-organizations.md) excludes until
 designed: a personal, user-owned Dot delegating a bounded task to an
 organization-owned Dot. The motivating case is an organization "service" Dot —
@@ -167,7 +173,17 @@ must track a personal parent whose child is a principal session: the user's
 personal Dot remains the root of the tree from the user's side; the organization
 principal session is a verified child branch. Cancelling the user's root cancels
 the verified linked organization work through the existing exact-turn lifecycle.
-Restart continuation validates the recorded link and current cross-boundary
+A member writer cancels the child itself through the organization's
+private-turn cancel surface, which settles the caller's mirror with the
+cancellation as the bounded outcome. Settlement fires from the organization
+flow when the child reaches a terminal turn — an answered claim, the expiry
+sweep, or a cancellation — and the personal expiry sweep is the mirror's
+backstop; while the child waits, the personal path refuses, because the
+decision belongs to the organization. A consent re-save changes the edge
+generation, which the live recheck compares against the recorded link, so an
+in-flight delegation cannot be continued after any consent change; the
+revocation cancels the pair through the personal tree. Restart continuation
+validates the recorded link and current cross-boundary
 consent before atomically claiming the chain, and never reruns a completed child
 effect.
 

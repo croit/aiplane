@@ -257,7 +257,10 @@ pub async fn expired_run_suspensions(
            FROM chat_turn_suspensions s
            JOIN chat_turns t ON t.id = s.turn_id
            JOIN chat_sessions cs ON cs.id = t.session_id
-           WHERE cs.principal_id IS NOT NULL AND cs.parent_turn_id IS NULL
+           WHERE cs.principal_id IS NOT NULL
+             AND (cs.parent_turn_id IS NULL
+                  OR EXISTS (SELECT 1 FROM cross_boundary_delegations cb
+                             WHERE cb.child_session_id = cs.id))
              AND s.expires_at < ?"#,
     )
     .bind(deadline_bound(now))
@@ -287,7 +290,10 @@ pub async fn expired_run_suspensions(
 /// A conversation's own pause, with what the inbox needs to know about the
 /// conversation: who owns it and, for an agent's, which version runs. A
 /// pause inside a sub-agent run is never one of these: its conversation's
-/// turn mirrors it.
+/// turn mirrors it. The single exception is a cross-boundary child, whose
+/// pause settles in the receiver organization's Inbox and is enumerated on
+/// its own session; the personal mirror of that same pause is excluded,
+/// because the user cannot give the organization's decision.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingSuspension {
     pub suspension: TurnSuspension,
@@ -305,7 +311,13 @@ const PENDING_SELECT: &str = "SELECT s.turn_id, s.request_id, s.kind, s.message,
      FROM chat_turn_suspensions s \
      JOIN chat_turns t ON t.id = s.turn_id \
      JOIN chat_sessions cs ON cs.id = t.session_id \
-     WHERE cs.parent_turn_id IS NULL";
+     WHERE (cs.parent_turn_id IS NULL
+            OR EXISTS (SELECT 1 FROM cross_boundary_delegations cb
+                       WHERE cb.child_session_id = cs.id))
+       AND NOT (cs.user_id IS NOT NULL AND s.child_turn IS NOT NULL
+            AND EXISTS (SELECT 1 FROM chat_turns ct
+                        JOIN cross_boundary_delegations cb2 ON cb2.child_session_id = ct.session_id
+                        WHERE ct.id = s.child_turn))";
 
 fn map_pending(row: &SqliteRow) -> Result<PendingSuspension, DbError> {
     Ok(PendingSuspension {
@@ -504,6 +516,134 @@ mod tests {
                 .is_none(),
             "another principal cannot open the run"
         );
+    }
+
+    #[tokio::test]
+    async fn cross_boundary_children_wait_in_their_own_inbox_and_expire_their_own_pause() {
+        use crate::db::{
+            WriteTx, agents,
+            organizations::{self, NewOrganization},
+            system_principals::NewPrincipal,
+        };
+        let fx = fixture().await;
+        let now = Timestamp::now();
+        let expired = now - jiff::SignedDuration::from_secs(60);
+        // A member group, an organization, and the organization's receiver dot.
+        sqlx::query("INSERT INTO gateway_groups(name,created_at,updated_at) VALUES ('ops', ?, ?)")
+            .bind(now.to_string())
+            .bind(now.to_string())
+            .execute(&fx.pool)
+            .await
+            .unwrap();
+        let org = organizations::create(
+            &fx.pool,
+            &NewOrganization {
+                name: "Support",
+                description: "Support org",
+                member_groups: &["ops".to_owned()],
+            },
+            "u1",
+        )
+        .await
+        .unwrap();
+        let organizations::OrganizationCreateResult::Created(org) = org else {
+            panic!("organization created");
+        };
+        let mut tx = WriteTx::begin(&fx.pool).await.unwrap();
+        let (_, receiver) = agents::create_organization_dot_in(
+            &mut tx,
+            &org.organization.id,
+            &NewPrincipal {
+                name: "receiver",
+                display: "Receiver",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "u1",
+            4,
+        )
+        .await
+        .unwrap();
+        let receiver = receiver.unwrap().principal.id;
+        tx.commit().await.unwrap();
+        let (_, caller) = agents::create_personal_dot(
+            &fx.pool,
+            &NewPrincipal {
+                name: "caller",
+                display: "Caller",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "u1",
+            4,
+        )
+        .await
+        .unwrap();
+        let caller = caller.unwrap().principal.id;
+        // The organization child: a parented principal session with a pause.
+        let child = create_principal_session(
+            &fx.pool,
+            &NewRunSession {
+                principal_id: &receiver,
+                title: None,
+                parent_turn_id: Some("parent-turn"),
+                agent_version: Some(3),
+            },
+        )
+        .await
+        .unwrap();
+        create_assistant_turn_in_progress(&fx.pool, &child.id, "child-turn", "m")
+            .await
+            .unwrap();
+        suspend_turn(&fx.pool, &suspension("child-turn", expired))
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO cross_boundary_delegations (child_session_id, caller_dot_id, \
+             receiver_dot_id, caller_owner_user_id, receiver_org_id, parent_turn_id, \
+             parent_tool_call_id, edge_generation, created_at) \
+             VALUES (?, ?, ?, 'u1', ?, 'parent-turn', 'forward-call', 'gen-1', ?)",
+        )
+        .bind(&child.id)
+        .bind(&caller)
+        .bind(&receiver)
+        .bind(&org.organization.id)
+        .bind(now.to_string())
+        .execute(&fx.pool)
+        .await
+        .unwrap();
+        // The personal mirror: a user root session whose pause points at the child.
+        let personal = create_session(&fx.pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&fx.pool, &personal.id, "parent-turn", "m")
+            .await
+            .unwrap();
+        let mut mirror = suspension("parent-turn", expired);
+        mirror.child_turn = Some("child-turn".into());
+        suspend_turn(&fx.pool, &mirror).await.unwrap();
+        // Control: an ordinary personal root pause still enumerates.
+        let ordinary = create_session(&fx.pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&fx.pool, &ordinary.id, "ordinary-turn", "m")
+            .await
+            .unwrap();
+        suspend_turn(&fx.pool, &suspension("ordinary-turn", in_an_hour()))
+            .await
+            .unwrap();
+
+        let pending = pending_suspensions(&fx.pool).await.unwrap();
+        assert!(
+            pending.iter().any(|p| p.session_id == child.id),
+            "the child's pause waits in the organization's inbox"
+        );
+        assert!(
+            !pending.iter().any(|p| p.session_id == personal.id),
+            "the personal mirror is not answerable by the user"
+        );
+        assert!(pending.iter().any(|p| p.session_id == ordinary.id));
+
+        // The parented child is swept by the run expiry, like an ordinary root.
+        let expired = expired_run_suspensions(&fx.pool, now).await.unwrap();
+        assert!(expired.iter().any(|e| e.session_id == child.id));
+        assert!(!expired.iter().any(|e| e.session_id == personal.id));
     }
 
     #[tokio::test]
