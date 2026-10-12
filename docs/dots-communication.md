@@ -34,7 +34,7 @@ the current→peer row; inbound edits affect the peer→current row. Foreign or
 missing resources return 404, self-edges or invalid bodies return 400, and
 stale generation or inactive enabling returns 409.
 
-Initial scope: personal Dots belonging to the same user. Organization Dots may communicate within the same organization only after typed organization ownership and approval/session boundaries exist. Cross-user and cross-organization communication requires a separately explicit sharing/data-exposure design; ordinary group membership does not grant it implicitly.
+This document's initial scope: personal Dots belonging to the same user. A personal Dot may also delegate to an organization Dot that the caller's member organization consented to receive from — [cross-organization delegation](dots-cross-organization.md) defines that bridge: directed consent on both sides, membership live-rechecked, the receiver running under its own principal's authority, and the caller's visibility limited to the bounded answer. Organization-to-organization communication remains a follow-on on the same machinery. Ordinary group membership alone never grants communication; the consent is explicit on both sides.
 
 ## Verified mechanisms and gaps
 

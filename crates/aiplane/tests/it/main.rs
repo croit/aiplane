@@ -37,6 +37,7 @@ mod dot_access;
 mod dot_background_chat;
 mod dot_communication;
 mod dot_connections;
+mod dot_cross_organization;
 mod dot_oauth;
 mod dot_workspace;
 mod dots_background;

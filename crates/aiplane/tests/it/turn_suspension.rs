@@ -54,9 +54,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// Answers each upstream round with the next scripted delta. Lives on the
 /// mock server, so it keeps counting across the simulated restart.
 pub(crate) struct Scripted {
-    deltas: Vec<Value>,
-    served: AtomicUsize,
-    delay: Duration,
+    pub(crate) deltas: Vec<Value>,
+    pub(crate) served: AtomicUsize,
+    pub(crate) delay: Duration,
 }
 
 impl wiremock::Respond for Scripted {
@@ -73,7 +73,7 @@ impl wiremock::Respond for Scripted {
     }
 }
 
-fn tool_call(name: &str, arguments: Value) -> Value {
+pub(crate) fn tool_call(name: &str, arguments: Value) -> Value {
     json!({"tool_calls": [{"index": 0, "id": "call-1", "type": "function",
         "function": {"name": name, "arguments": arguments.to_string()}}]})
 }

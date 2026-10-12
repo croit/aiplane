@@ -181,6 +181,9 @@ pub enum SpecSource {
 enum ProfilePurpose {
     Generic,
     Private,
+    /// A personal caller delegating to an organization Dot: the receiver runs
+    /// its published spec under its own principal's authority.
+    Delegated,
 }
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
@@ -313,6 +316,27 @@ impl RunProfile {
         options: &RunOptions,
     ) -> Result<Self, AgentRunError> {
         Self::load_source(state, agent_id, source, role, options, None).await
+    }
+
+    /// [`Self::load`] for a personal caller delegating to an organization Dot:
+    /// the organization execution contract on the published spec, the
+    /// receiver's own principal's grants, no person's authority.
+    pub async fn load_delegated(
+        state: &Arc<RamaState>,
+        agent_id: &str,
+        role: Role,
+        options: &RunOptions,
+    ) -> Result<Self, AgentRunError> {
+        Self::load_source_for(
+            state,
+            agent_id,
+            SpecSource::Live,
+            role,
+            options,
+            None,
+            ProfilePurpose::Delegated,
+        )
+        .await
     }
 
     pub(crate) async fn load_organization_resume(
@@ -518,7 +542,7 @@ impl RunProfile {
         let organization = match agents_db::dot_owner(&state.db, agent_id).await? {
             Some(agents_db::DotOwner::Organization(id))
                 if matches!(&source, SpecSource::Draft(_))
-                    || matches!(purpose, ProfilePurpose::Private) =>
+                    || matches!(purpose, ProfilePurpose::Private | ProfilePurpose::Delegated) =>
             {
                 Some((id, state.clone()))
             }
@@ -1285,7 +1309,9 @@ async fn validate_organization_authority_in(
     let valid: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM chat_sessions s JOIN chat_turns t ON t.session_id=s.id \
          WHERE s.id=? AND s.principal_id=? AND s.user_id IS NULL AND s.shared=0 \
-         AND s.agent_version=? AND s.parent_turn_id IS NULL AND s.visitor_id IS NULL \
+         AND s.agent_version=? AND s.visitor_id IS NULL \
+         AND (s.parent_turn_id IS NULL OR EXISTS (
+             SELECT 1 FROM cross_boundary_delegations cb WHERE cb.child_session_id = s.id)) \
          AND t.id=? AND t.role='assistant' AND (t.status=? OR t.status=?)",
     )
     .bind(session_id)

@@ -101,6 +101,24 @@ pub async fn authorized_in(
         .fetch_optional(connection).await?.map(edge).transpose()
 }
 
+/// The consent edge of an ordered Dot pair, without the owner-type filter:
+/// the caller and the receiver may live with different owners.
+pub async fn edge_between_in(
+    connection: &mut sqlx::SqliteConnection,
+    caller_dot_id: &str,
+    receiver_dot_id: &str,
+) -> Result<Option<DotDelegationEdge>, DbError> {
+    sqlx::query(
+        "SELECT e.* FROM dot_delegation_edges e WHERE e.caller_dot_id = ? AND e.receiver_dot_id = ?",
+    )
+    .bind(caller_dot_id)
+    .bind(receiver_dot_id)
+    .fetch_optional(connection)
+    .await?
+    .map(edge)
+    .transpose()
+}
+
 /// Live check for a personal caller delegating to an organization receiver:
 /// both flags set, generation match, both Dots active, the caller is a
 /// user-owned Dot, the receiver is an organization-owned Dot, and the caller
@@ -804,6 +822,45 @@ mod tests {
         let receiver = receiver.unwrap().principal.id;
         tx.commit().await.unwrap();
         (pool, caller, receiver, org_id)
+    }
+
+    #[tokio::test]
+    async fn edge_between_reads_the_ordered_pair_across_owner_boundaries() {
+        let (pool, caller, receiver, _) = cross_boundary_fixture().await;
+        let mut conn = pool.acquire().await.unwrap();
+        assert!(
+            edge_between_in(&mut conn, &caller, &receiver)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let first = saved(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &caller,
+                    &receiver,
+                    "alice",
+                    ConsentDirection::Outbound,
+                    true,
+                    None,
+                ),
+            )
+            .await
+            .unwrap(),
+        );
+        let mut conn = pool.acquire().await.unwrap();
+        let edge = edge_between_in(&mut conn, &caller, &receiver)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(edge, first);
+        assert!(
+            edge_between_in(&mut conn, &receiver, &caller)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     fn cb_edit<'a>(

@@ -39,7 +39,7 @@ organization's member-writer Inbox, not the caller's personal Inbox.
 | `aiplane-agents/src/db/child_sessions.rs::LocalChild` | `Principal(RunSession)` and `Personal(PersonalChildSession)` both exist | The child-linkage model already names a principal child; the cross-boundary link is a principal child of a personal parent |
 | `aiplane-core/src/server/run_chain.rs::Frame` | Keyed by `principal_id`, no owner type | The chain already holds a mixed-owner tree; `MAX_DEPTH` and cycle rejection apply across the boundary |
 | `aiplane-agents/src/db/dot_delegation.rs` | `dot_delegation_edges(caller, receiver, outbound_enabled, inbound_enabled, generation, …)`, same-owner SQL | Generalize the owner join, do not add a table |
-| `agents/profile.rs::RunProfile::load` | Principal run profile: active principal, spec, model grant, principal tools | The organization Dot's execution authority is already loaded this way |
+| `agents/profile.rs::RunProfile::load` | Principal run profile: active principal, spec, model grant, principal tools | The organization Dot's execution authority is already loaded this way; a `Delegated` purpose extends the organization contract to the published spec without a person's authority |
 | `agents/inbox.rs`; member-writer Inbox | Share-based standing, durable suspension/resume | Organization approvals settle here; membership is already checked on every standing/settlement path |
 | `server/side_call.rs::Payer`; agent budgets | Principal metering and root-agent budget | The organization child run's payer is its own principal — the existing agent billing contract |
 
@@ -101,10 +101,13 @@ amended once with this change set.
 - The personal caller dispatches `forward_request` with `receiver_dot_id` (the
   organization Dot) and a bounded `message` (≤ 16,000 UTF-8 bytes). Unknown
   fields, an empty message, or over-limit is rejected, as today.
-- The receiver is loaded through the **principal** path: `RunProfile::load` for
-  the organization Dot's principal, its active principal, its published/draft
-  spec per the organization execution contract, its own principal grants and
-  selected credential. It runs as `Actor::Agent`.
+- The receiver is loaded through the **principal** path:
+  `RunProfile::load_delegated` for the organization Dot — its published spec
+  (a live version is required), its own principal's grants and selected
+  credential, under the organization execution contract. It runs as
+  `Actor::Agent`. The organization live-turn validation accepts the child
+  session, which carries a parent turn, only while its recorded
+  cross-boundary link exists.
 - Only the explicit bounded message crosses the boundary. **No** personal
   memory, personal workspace, user profile, attachments, or secrets. The first
   slice is text-only, exactly as the personal case.

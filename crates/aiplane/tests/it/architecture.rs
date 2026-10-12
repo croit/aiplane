@@ -465,6 +465,14 @@ const REQUEST_BODY_READS: &[(BodyRead, Allowed)] = &[
         },
     ),
     (
+        BodyRead::OwnCap,
+        Allowed {
+            path: "sandbox-runner/src/server/workspace_tests.rs",
+            why: "test helper draining an in-process response while asserting the \
+                  MAX_RUN_REQUEST_BYTES cap itself — test code, not a production reader",
+        },
+    ),
+    (
         BodyRead::BehindLimit,
         Allowed {
             path: "aiplane/src/rama_server/",

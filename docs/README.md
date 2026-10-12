@@ -64,6 +64,7 @@ integrations and features vary with each installation's configuration.*
 - [Personal Dot management permission](dots-permissions.md): independent group rights through existing RBAC.
 - [Dot action rules](dots-action-rules.md): implemented permissions within `browse_page` and `browser_control`, with durable approval checks.
 - [Dot communication](dots-communication.md): directed consent and implemented personal request/reply delegation.
+- [Cross-organization delegation](dots-cross-organization.md): a personal Dot delegating to an organization Dot — consent, dispatch, the data boundary and durable waiting.
 - [Grok Bot comparison](dots-grok-comparison.md): researched capabilities, coverage and additional product gaps.
 - [Dot browser handover proposal](dots-browser-handover.md): planned human login and exclusive browser control.
 - [Dot workflow teaching proposal](dots-workflow-teaching.md): planned reviewed guidance through existing personal Skills.
