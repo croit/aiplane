@@ -2,23 +2,20 @@
 
 ## Status and scope
 
-The core bridge is implemented: directed consent with live recheck, dispatch,
-the bounded result, durable waiting, settlement and cancellation. The
-configuration and discovery surface (the Communication selectors over
-organization Dots, the organization-side **Accepts requests from**) and its
-i18n remain.
+The bridge is implemented end to end: directed consent with live recheck,
+dispatch, the bounded result, durable waiting, settlement and cancellation,
+and the configuration and discovery surface — the personal Communication
+selectors over organization Dots, the organization-side **Accepts requests
+from**, membership-scoped discovery, and the six-language catalogues.
 
-This document specifies the cross-boundary
-delegation that [organization-owned Dots](dots-organizations.md) excludes until
-designed: a personal, user-owned Dot delegating a bounded task to an
-organization-owned Dot. The motivating case is an organization "service" Dot —
+This document specifies the cross-boundary delegation carved out of the
+[organization-owned Dots](dots-organizations.md) scope: a personal, user-owned
+Dot delegating a bounded task to an organization-owned Dot. The motivating case is an organization "service" Dot —
 for example a ticket agent — that a user's personal Dots can address to open a
 ticket.
 
-The scope decision — whether this package is personal→organization only, or
-also internal organization→organization — is open and listed at the end. The
-design is written so that personal→organization is the core and
-organization→organization is a smaller increment on the same machinery.
+The scope is personal→organization for this package; organization→organization
+is a follow-on on the same machinery (see the scope note at the end).
 
 Personal same-owner delegation ([dots-communication.md](dots-communication.md))
 and organization ownership/execution ([dots-organizations.md](dots-organizations.md))
@@ -64,6 +61,10 @@ Reuse, in the order the request touches them:
   principal grants, the selected principal credential, member-writer Inbox.
 - `agents/access.rs::effective_access` (the organization-aware extension) for
   both the consent configuration and live admission.
+- The RBAC role resolution (`role_ids_for` over the user's OIDC values) for
+  every live membership recheck: the cross-boundary checks compare the caller
+  owner's resolved role IDs against the organization's member groups, the same
+  values every other organization membership check uses.
 - The six-language Fluent catalogues.
 
 New shared contracts, landed with tests before the feature uses them:
@@ -99,8 +100,11 @@ carries a mutually exclusive `owner_user_id` / `organization_id`.
 - Deleting either Dot removes the edge (existing `ON DELETE CASCADE`); the
   nonsecret audit facts are retained.
 
-No new table, no per-package migration. The schema fixture and checksum are
-amended once with this change set.
+The same unreleased migration also adds the `cross_boundary_delegations`
+child-link table: one immutable row per cross-boundary child session, carrying
+the caller/receiver Dots, the parent turn and tool call, and the edge
+generation the live rechecks compare against. The schema fixture and checksum
+are amended once with this change set.
 
 ## Execution and data boundary
 
@@ -239,9 +243,10 @@ existing bounded context budget with the Dot's own memory.
   the discovery rule above. The **Can ask** selector offers them; **Accepts
   requests from** shows the organization side's persisted choice read-only.
 - The organization Dot's configuration surface (the existing agent editor) gains
-  an **Accepts requests from** section listing the personal Dots that are
-  granted `inbound`, with the current member writer's own Write access required
-  to change it.
+  an **Accepts requests from** section listing the personal Dots on its
+  cross-boundary edges with their current `inbound` state — a revoked grant
+  stays listed, disabled, so the writer can re-enable it — with the current
+  member writer's own Write access required to change it.
 - In chat, the caller's `forward_request` request shows the actual receiver name
   and task; the bounded answer returns to the caller's conversation. The
   organization child is not surfaced as a readable thread to the caller.

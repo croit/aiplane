@@ -586,12 +586,25 @@ pub async fn connections_delete(State(state): State<Arc<RamaState>>, req: Reques
 
 pub(crate) fn view(row: &agents_db::PersonalDotRow) -> DotView {
     let p = &row.agent.principal;
+    dot_view(p, &row.name, row.active)
+}
+
+pub(crate) fn organization_view(row: &agents_db::OrganizationDotRow) -> DotView {
+    let p = &row.agent.principal;
+    dot_view(p, &row.name, row.active)
+}
+
+fn dot_view(
+    p: &aiplane_agents::db::system_principals::PrincipalRow,
+    name: &str,
+    active: bool,
+) -> DotView {
     DotView {
         id: p.id.clone(),
-        name: row.name.clone(),
+        name: name.to_owned(),
         display: p.display.clone(),
         description: p.description.clone(),
-        active: row.active,
+        active,
     }
 }
 
@@ -606,6 +619,9 @@ pub struct DotCommunicationPeer {
     pub dot: DotView,
     pub outgoing: DotConsentView,
     pub incoming: DotConsentView,
+    /// The peer is an organization Dot: `outgoing` is the caller's own choice,
+    /// `incoming` is the organization's persisted choice, read-only here.
+    pub cross_organization: bool,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -616,7 +632,7 @@ pub struct DotConsentView {
 }
 
 impl DotConsentView {
-    fn from_edge(edge: Option<&dot_delegation::DotDelegationEdge>) -> Self {
+    pub(crate) fn from_edge(edge: Option<&dot_delegation::DotDelegationEdge>) -> Self {
         Self {
             outbound_enabled: edge.is_some_and(|edge| edge.outbound_enabled),
             inbound_enabled: edge.is_some_and(|edge| edge.inbound_enabled),
@@ -651,7 +667,7 @@ async fn communication_view(
     };
     let inventory = agents_db::list_personal_dots(&state.db, owner).await?;
     let edges = dot_delegation::list_for_dot(&state.db, owner, id).await?;
-    let peers = inventory
+    let peers: Vec<DotCommunicationPeer> = inventory
         .iter()
         .filter(|peer| peer.agent.principal.id != id)
         .map(|peer| {
@@ -668,9 +684,30 @@ async fn communication_view(
                         .iter()
                         .find(|edge| &edge.caller_dot_id == peer_id && edge.receiver_dot_id == id),
                 ),
+                cross_organization: false,
             }
         })
         .collect();
+    let cross_edges = dot_delegation::list_cross_boundary_for_caller(&state.db, owner, id).await?;
+    let role_ids = aiplane_runtime::agents::access::role_ids_for_user(state, owner)
+        .await
+        .unwrap_or_default();
+    let organization_peers = agents_db::list_organization_dots_for_member(&state.db, &role_ids)
+        .await?
+        .into_iter()
+        .map(|peer| {
+            let peer_id = &peer.agent.principal.id;
+            let edge = cross_edges
+                .iter()
+                .find(|edge| edge.receiver_dot_id == *peer_id);
+            DotCommunicationPeer {
+                dot: organization_view(&peer),
+                outgoing: DotConsentView::from_edge(edge),
+                incoming: DotConsentView::from_edge(edge),
+                cross_organization: true,
+            }
+        });
+    let peers: Vec<DotCommunicationPeer> = peers.into_iter().chain(organization_peers).collect();
     Ok(Some(DotCommunicationView {
         dot: view(&dot),
         peers,
@@ -717,6 +754,12 @@ pub async fn communication_put(State(state): State<Arc<RamaState>>, req: Request
         Ok(body) => body,
         Err(response) => return response,
     };
+    if matches!(
+        agents_db::dot_owner(&state.db, &body.peer_id).await,
+        Ok(Some(agents_db::DotOwner::Organization(_)))
+    ) {
+        return communication_put_cross_boundary(&state, &user, &id, &body, lang).await;
+    }
     let direction = match body.direction {
         DotConsentDirection::Outbound => ConsentDirection::Outbound,
         DotConsentDirection::Inbound => ConsentDirection::Inbound,
@@ -735,24 +778,15 @@ pub async fn communication_put(State(state): State<Arc<RamaState>>, req: Request
     .await
     {
         Ok(ConsentSaved::Saved(edge)) => {
-            if let Some(previous) = body.expected_generation.as_deref()
-                && previous != edge.generation
-                && let Err(error) = aiplane_runtime::agents::resume::cancel_personal_runs_for_edge(
-                    &state,
-                    &user.id,
-                    &edge.caller_dot_id,
-                    &edge.receiver_dot_id,
-                    previous,
-                )
-                .await
-            {
-                return internal(error);
-            }
-            match communication_view(&state, &user.id, &id).await {
-                Ok(Some(view)) => json_ok(StatusCode::OK, view),
-                Ok(None) => not_found(t(lang, "dot-error-not-found")),
-                Err(error) => internal(error),
-            }
+            consent_saved_response(
+                &state,
+                &user,
+                &id,
+                &edge,
+                body.expected_generation.as_deref(),
+                lang,
+            )
+            .await
         }
         Ok(ConsentSaved::Missing) => not_found(t(lang, "dot-error-not-found")),
         Ok(ConsentSaved::Invalid) => json_error(
@@ -770,6 +804,97 @@ pub async fn communication_put(State(state): State<Arc<RamaState>>, req: Request
             "inactive_dot",
             &t(lang, "dot-communication-error-inactive"),
         ),
+        Err(error) => internal(error),
+    }
+}
+
+/// The personal owner's side of a cross-boundary consent: only the caller's
+/// `outbound` flag is theirs to set; the organization sets `inbound`.
+async fn communication_put_cross_boundary(
+    state: &Arc<RamaState>,
+    user: &aiplane_core::server::db::users::User,
+    id: &str,
+    body: &DotCommunicationBody,
+    lang: Lang,
+) -> Response {
+    if !matches!(body.direction, DotConsentDirection::Outbound) {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_consent",
+            &t(lang, "dot-communication-error-invalid"),
+        );
+    }
+    match dot_delegation::set_cross_boundary_consent(
+        &state.db,
+        dot_delegation::CrossBoundaryConsentEdit {
+            actor_user_id: &user.id,
+            caller_dot_id: id,
+            receiver_dot_id: &body.peer_id,
+            direction: ConsentDirection::Outbound,
+            enabled: body.enabled,
+            expected_generation: body.expected_generation.as_deref(),
+        },
+    )
+    .await
+    {
+        Ok(ConsentSaved::Saved(edge)) => {
+            consent_saved_response(
+                state,
+                user,
+                id,
+                &edge,
+                body.expected_generation.as_deref(),
+                lang,
+            )
+            .await
+        }
+        Ok(ConsentSaved::Missing) => not_found(t(lang, "dot-error-not-found")),
+        Ok(ConsentSaved::Invalid) => json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_consent",
+            &t(lang, "dot-communication-error-invalid"),
+        ),
+        Ok(ConsentSaved::Conflict) => json_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            &t(lang, "dot-communication-error-conflict"),
+        ),
+        Ok(ConsentSaved::Unavailable) => json_error(
+            StatusCode::CONFLICT,
+            "inactive_dot",
+            &t(lang, "dot-communication-error-inactive"),
+        ),
+        Err(error) => internal(error),
+    }
+}
+
+/// The consent saved: on a real generation change the in-flight delegations on
+/// that edge are cancelled (the consent is the gate of their live recheck),
+/// then the updated view is returned.
+async fn consent_saved_response(
+    state: &Arc<RamaState>,
+    user: &aiplane_core::server::db::users::User,
+    id: &str,
+    edge: &dot_delegation::DotDelegationEdge,
+    expected_generation: Option<&str>,
+    lang: Lang,
+) -> Response {
+    if let Some(previous) = expected_generation
+        && previous != edge.generation
+        && let Err(error) = aiplane_runtime::agents::resume::cancel_personal_runs_for_edge(
+            state,
+            &user.id,
+            &edge.caller_dot_id,
+            &edge.receiver_dot_id,
+            previous,
+        )
+        .await
+    {
+        return internal(error);
+    }
+    match communication_view(state, &user.id, id).await {
+        Ok(Some(view)) => json_ok(StatusCode::OK, view),
+        Ok(None) => not_found(t(lang, "dot-error-not-found")),
         Err(error) => internal(error),
     }
 }

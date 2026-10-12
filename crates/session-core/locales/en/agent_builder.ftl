@@ -399,6 +399,7 @@ dot-communication-inbound-counterpart-disabled = This Dot is not allowed to ask 
 dot-communication-inactive = Both Dots must be active to enable consent. Existing consent can still be revoked.
 dot-communication-empty = No other personal Dots are available.
 dot-communication-reload = Reload communication
+dot-communication-save-changes = Save changes
 dot-communication-saved = Communication permission saved.
 dot-communication-error-load = Communication permissions could not be loaded. Reload them and try again.
 dot-communication-error-save = The communication permission could not be saved. Your change is still here; reload permissions and try again.
@@ -409,6 +410,14 @@ dot-activity-communication-changed = Changed Dot communication permissions.
 
 dot-communication-error-busy = A delegated conversation is already running. Wait for it to finish and answer again.
 dot-communication-error-unavailable = This Dot delegation is unavailable. Check the active Dots, communication permissions and tool access before retrying.
+dot-communication-cross-organization = Cross-organization
+dot-communication-inbound-organization = The organization decides who may ask this Dot.
+agent-communication-heading = Accepts requests from
+agent-communication-scope = Choose which personal Dots may delegate to this organization Dot. Delegation shares only the explicit task; the Dot uses its own tools and approval rules.
+agent-communication-empty = No personal Dots are granted access.
+agent-communication-saved = The communication permission was saved.
+agent-communication-error-load = Communication permissions could not be loaded. Reload them and try again.
+agent-communication-error-save = The communication permission could not be saved. Your change is still here; reload permissions and try again.
 
 dot-connection-heading = Connector identity
 dot-connection-user = My connection

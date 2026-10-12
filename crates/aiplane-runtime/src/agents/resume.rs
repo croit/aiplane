@@ -269,6 +269,12 @@ pub async fn claim(
                         caller_dot_id: &link.caller_dot_id,
                         receiver_dot_id: &link.receiver_dot_id,
                         caller_owner_user_id: &link.caller_owner_user_id,
+                        caller_role_ids: &super::access::role_ids_for_user(
+                            state,
+                            &link.caller_owner_user_id,
+                        )
+                        .await
+                        .unwrap_or_default(),
                         receiver_org_id: &link.receiver_org_id,
                         parent_turn_id: &link.parent_turn_id,
                         parent_tool_call_id: &link.parent_tool_call_id,
@@ -877,6 +883,7 @@ impl ClaimedPersonalResume {
 async fn validate_personal_level_in(
     connection: &mut sqlx::SqliteConnection,
     owner: &str,
+    caller_role_ids: &[String],
     level: &PersonalLevel,
 ) -> Result<(), AgentResumeError> {
     let valid: bool = sqlx::query_scalar(
@@ -915,6 +922,7 @@ async fn validate_personal_level_in(
                 caller_dot_id: &cross.link.caller_dot_id,
                 receiver_dot_id: &cross.link.receiver_dot_id,
                 caller_owner_user_id: owner,
+                caller_role_ids,
                 receiver_org_id: &cross.link.receiver_org_id,
                 parent_turn_id: &cross.link.parent_turn_id,
                 parent_tool_call_id: &cross.link.parent_tool_call_id,
@@ -1099,8 +1107,11 @@ pub async fn claim_personal(
         }
     }
     let mut tx = aiplane_agents::db::WriteTx::begin(&state.db).await?;
+    let caller_role_ids = super::access::role_ids_for_user(state, owner)
+        .await
+        .unwrap_or_default();
     for level in &levels {
-        validate_personal_level_in(&mut tx, owner, level).await?;
+        validate_personal_level_in(&mut tx, owner, &caller_role_ids, level).await?;
     }
     let snapshots: Vec<_> = levels
         .iter()
@@ -1108,7 +1119,7 @@ pub async fn claim_personal(
         .collect();
     let claimed = crate::suspend::claim_chain_in(&mut tx, &snapshots, decision.clone()).await?;
     for level in &levels {
-        validate_personal_level_in(&mut tx, owner, level).await?;
+        validate_personal_level_in(&mut tx, owner, &caller_role_ids, level).await?;
     }
     for (level, suspension) in levels.iter_mut().zip(claimed) {
         level.suspension = suspension;
@@ -1423,6 +1434,9 @@ async fn settle_cross_boundary_child_inner(
         _ => return Err(AgentResumeError::Busy),
     };
     let mut tx = aiplane_agents::db::WriteTx::begin(&state.db).await?;
+    let caller_role_ids = super::access::role_ids_for_user(state, &link.caller_owner_user_id)
+        .await
+        .unwrap_or_default();
     let authorized = aiplane_agents::db::cross_boundary::validate_child_in(
         &mut tx,
         &aiplane_agents::db::cross_boundary::NewCrossBoundaryChild {
@@ -1430,6 +1444,7 @@ async fn settle_cross_boundary_child_inner(
             caller_dot_id: &link.caller_dot_id,
             receiver_dot_id: &link.receiver_dot_id,
             caller_owner_user_id: &link.caller_owner_user_id,
+            caller_role_ids: &caller_role_ids,
             receiver_org_id: &link.receiver_org_id,
             parent_turn_id: &link.parent_turn_id,
             parent_tool_call_id: &link.parent_tool_call_id,
@@ -1828,15 +1843,25 @@ pub async fn cancel_personal_runs_for_edge(
     receiver: &str,
     old_generation: &str,
 ) -> Result<(), DbError> {
-    for turn in aiplane_agents::db::child_sessions::active_roots_for_edge(
+    let mut roots = aiplane_agents::db::child_sessions::active_roots_for_edge(
         &state.db,
         owner,
         caller,
         receiver,
         old_generation,
     )
-    .await?
-    {
+    .await?;
+    roots.extend(
+        aiplane_agents::db::cross_boundary::active_roots_for_edge(
+            &state.db,
+            owner,
+            caller,
+            receiver,
+            old_generation,
+        )
+        .await?,
+    );
+    for turn in roots {
         cancel_personal_tree(state, owner, &turn).await?;
     }
     Ok(())

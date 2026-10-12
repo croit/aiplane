@@ -59,6 +59,8 @@ export interface DotCommunicationPeer {
 	dot: Dot;
 	outgoing: DotCommunicationEdge;
 	incoming: DotCommunicationEdge;
+	/** The peer is an organization Dot; its `incoming` is the organization's choice. */
+	cross_organization: boolean;
 }
 
 export interface DotCommunication {
@@ -72,6 +74,27 @@ export interface DotCommunicationChange {
 	enabled: boolean;
 	expected_generation: string | null;
 }
+
+export interface AgentCommunicationCaller {
+	dot: Dot;
+	owner: { id: string; name: string | null };
+	incoming: DotCommunicationEdge;
+}
+
+export interface AgentCommunication {
+	dot: Dot;
+	callers: AgentCommunicationCaller[];
+}
+
+export const agentCommunicationApi = {
+	load: (agentId: string) => request<AgentCommunication>(`/api/v0/agents/${encodeURIComponent(agentId)}/communication`),
+	save: (agentId: string, change: { peer_id: string; enabled: boolean; expected_generation: string | null }) =>
+		request<AgentCommunication>(`/api/v0/agents/${encodeURIComponent(agentId)}/communication`, {
+			method: 'PUT',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(change)
+		})
+};
 
 export const dotCommunicationApi = {
 	load: (dotId: string) => request<DotCommunication>(`/api/v0/dots/${encodeURIComponent(dotId)}/communication`),

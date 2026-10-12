@@ -48,6 +48,9 @@ pub(super) struct CrossBoundaryReceiver {
     profile: RunProfile,
     org_id: String,
     generation: String,
+    /// The caller owner's role IDs resolved for the live membership
+    /// rechecks this dispatch performs (recording, settlement validation).
+    role_ids: Vec<String>,
 }
 
 pub(super) struct PersonalReceiver {
@@ -172,6 +175,9 @@ async fn resolve_cross_boundary(
     else {
         return Err(unavailable());
     };
+    let Some(role_ids) = crate::agents::access::role_ids_for_user(state, owner).await else {
+        return Err(unavailable());
+    };
     if dot_delegation::authorized_cross_boundary_in(
         &mut connection,
         owner,
@@ -179,6 +185,7 @@ async fn resolve_cross_boundary(
         &org_id,
         receiver,
         &edge.generation,
+        &role_ids,
     )
     .await
     .map_err(db_error)?
@@ -201,6 +208,7 @@ async fn resolve_cross_boundary(
             profile,
             org_id,
             generation: edge.generation,
+            role_ids,
         }))
     })
     .map_err(|error| ToolError::Failed(error.to_string()))
@@ -209,6 +217,10 @@ async fn resolve_cross_boundary(
 pub(crate) struct ConsentedReceiver {
     pub dot: agents::PersonalDotRow,
     pub generation: String,
+}
+
+pub(crate) struct ConsentedOrganizationReceiver {
+    pub dot: agents::OrganizationDotRow,
 }
 
 pub(crate) async fn permitted_receivers(
@@ -232,6 +244,34 @@ pub(crate) async fn permitted_receivers(
                 dot,
                 generation: edge.generation.clone(),
             })
+        })
+        .collect())
+}
+
+/// The organization receivers a personal caller may be offered: the active
+/// organization Dots of the organizations the user is a current member of,
+/// with the caller's cross-boundary consent fully enabled.
+pub(crate) async fn permitted_organization_receivers(
+    state: &RamaState,
+    owner: &str,
+    caller: &str,
+) -> Result<Vec<ConsentedOrganizationReceiver>, aiplane_core::server::db::DbError> {
+    let Some(role_ids) = crate::agents::access::role_ids_for_user(state, owner).await else {
+        return Ok(Vec::new());
+    };
+    let dots = agents::list_organization_dots_for_member(&state.db, &role_ids).await?;
+    let edges = dot_delegation::list_cross_boundary_for_caller(&state.db, owner, caller).await?;
+    Ok(dots
+        .into_iter()
+        .filter(|dot| dot.agent.principal.disabled_at.is_none())
+        .filter_map(|dot| {
+            let consented = edges.iter().any(|edge| {
+                edge.caller_dot_id == caller
+                    && edge.receiver_dot_id == dot.agent.principal.id
+                    && edge.outbound_enabled
+                    && edge.inbound_enabled
+            });
+            consented.then_some(ConsentedOrganizationReceiver { dot })
         })
         .collect())
 }
@@ -435,6 +475,7 @@ async fn dispatch_cross_boundary(
                 caller_dot_id: &execution.identity().dot_id,
                 receiver_dot_id: &request.receiver_dot_id,
                 caller_owner_user_id: owner,
+                caller_role_ids: &receiver.role_ids,
                 receiver_org_id: &receiver.org_id,
                 parent_turn_id: parent_turn,
                 parent_tool_call_id: call,
@@ -504,6 +545,7 @@ async fn cross_boundary_result(
             caller_dot_id,
             receiver_dot_id: &profile.principal.id,
             caller_owner_user_id: owner,
+            caller_role_ids: &receiver.role_ids,
             receiver_org_id: &receiver.org_id,
             parent_turn_id: parent_turn,
             parent_tool_call_id: call,
@@ -569,6 +611,9 @@ pub(crate) async fn cross_boundary_settlement(
         .map_err(|error| ToolError::Failed(error.to_string()))?,
         org_id: link.receiver_org_id.clone(),
         generation: link.edge_generation.clone(),
+        role_ids: crate::agents::access::role_ids_for_user(state, owner)
+            .await
+            .unwrap_or_default(),
     };
     let profile = &receiver.profile;
     let about = json!({
@@ -818,4 +863,187 @@ pub(crate) async fn validate_execution(
         current_turn = via.turn_id.clone();
     }
     Err(unavailable())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::rama_server::state::RamaState;
+    use crate::server::AppState;
+    use aiplane_agents::db::{
+        agents, dot_delegation, organizations, organizations::NewOrganization,
+        system_principals::NewPrincipal,
+    };
+    use aiplane_core::rama_server::SessionStore;
+    use aiplane_core::server::db::{WriteTx, gateway_groups, users};
+    use aiplane_core::server::upstreams::UpstreamRegistry;
+    use aiplane_core::server::usage::UsageHandle;
+    use std::sync::Arc;
+
+    /// Alice (an `engineering` member) with a personal caller Dot and an
+    /// organization receiver Dot; the cross-boundary edge is saved with
+    /// outbound always and inbound only when asked.
+    async fn state_with_cross_boundary(inbound: bool) -> (RamaState, String, String) {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let now = jiff::Timestamp::now();
+        users::upsert(
+            &db,
+            &users::User {
+                id: "alice".into(),
+                email: "alice@example.com".into(),
+                name: None,
+                roles: vec!["engineering".into()],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        gateway_groups::upsert_group(&db, "engineering", "", false, false)
+            .await
+            .unwrap();
+        let org = match organizations::create(
+            &db,
+            &NewOrganization {
+                name: "Acme",
+                description: "",
+                member_groups: &["engineering".into()],
+            },
+            "alice",
+        )
+        .await
+        .unwrap()
+        {
+            organizations::OrganizationCreateResult::Created(row) => row,
+            _ => panic!("organization created"),
+        };
+        let mut tx = WriteTx::begin(&db).await.unwrap();
+        let (_, receiver) = agents::create_organization_dot_in(
+            &mut tx,
+            &org.organization.id,
+            &NewPrincipal {
+                name: "ticket",
+                display: "Ticket",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        let receiver = receiver.unwrap().principal.id;
+        tx.commit().await.unwrap();
+        let (_, caller) = agents::create_personal_dot(
+            &db,
+            &NewPrincipal {
+                name: "caller",
+                display: "Caller",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        let caller = caller.unwrap().principal.id;
+        let saved = dot_delegation::set_cross_boundary_consent(
+            &db,
+            dot_delegation::CrossBoundaryConsentEdit {
+                actor_user_id: "alice",
+                caller_dot_id: &caller,
+                receiver_dot_id: &receiver,
+                direction: dot_delegation::ConsentDirection::Outbound,
+                enabled: true,
+                expected_generation: None,
+            },
+        )
+        .await
+        .unwrap();
+        let dot_delegation::ConsentSaved::Saved(outbound) = saved else {
+            panic!("outbound consent saved")
+        };
+        if inbound {
+            let saved = dot_delegation::set_cross_boundary_consent(
+                &db,
+                dot_delegation::CrossBoundaryConsentEdit {
+                    actor_user_id: "alice",
+                    caller_dot_id: &caller,
+                    receiver_dot_id: &receiver,
+                    direction: dot_delegation::ConsentDirection::Inbound,
+                    enabled: true,
+                    expected_generation: Some(&outbound.generation),
+                },
+            )
+            .await
+            .unwrap();
+            assert!(matches!(saved, dot_delegation::ConsentSaved::Saved(_)));
+        }
+        let rbac = aiplane_core::server::rbac::Resolver::build(
+            aiplane_core::server::rbac::config::RbacConfig {
+                default_role: Some("member".into()),
+                mappings: vec![aiplane_core::server::rbac::config::RoleMapping {
+                    oidc_claim: "groups".into(),
+                    oidc_value: "engineering".into(),
+                    role: "engineering".into(),
+                }],
+            },
+            vec![
+                aiplane_core::server::rbac::config::RoleConfig {
+                    id: "member".into(),
+                    admin: false,
+                    models: vec!["*".into()],
+                    tools: vec![],
+                    skills: vec![],
+                },
+                aiplane_core::server::rbac::config::RoleConfig {
+                    id: "engineering".into(),
+                    admin: false,
+                    models: vec!["*".into()],
+                    tools: vec![],
+                    skills: vec![],
+                },
+            ],
+        )
+        .expect("the test resolver builds");
+        let app = AppState::new(
+            Default::default(),
+            db.clone(),
+            UpstreamRegistry::new(&Default::default()).unwrap(),
+            Arc::new(crate::server::tools::ToolRegistry::new()),
+            Arc::new(rbac),
+        );
+        let state = RamaState::new(app, SessionStore::new(db, [7; 32]), UsageHandle::disabled());
+        (state, caller, receiver)
+    }
+
+    #[tokio::test]
+    async fn organization_receivers_are_offered_only_with_full_consent_and_membership() {
+        let (state, caller, receiver) = state_with_cross_boundary(true).await;
+        let offered = super::permitted_organization_receivers(&state, "alice", &caller)
+            .await
+            .unwrap();
+        assert_eq!(offered.len(), 1);
+        assert_eq!(offered[0].dot.agent.principal.id, receiver);
+        assert_eq!(offered[0].dot.name, "ticket");
+
+        let (outbound_only, caller, _) = state_with_cross_boundary(false).await;
+        assert!(
+            super::permitted_organization_receivers(&outbound_only, "alice", &caller)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            super::permitted_organization_receivers(&state, "alice", &receiver)
+                .await
+                .unwrap()
+                .is_empty(),
+            "an organization Dot is not a personal caller"
+        );
+    }
 }

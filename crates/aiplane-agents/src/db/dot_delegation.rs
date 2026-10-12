@@ -71,6 +71,76 @@ pub async fn list_for_dot(
         .fetch_all(pool).await?.into_iter().map(edge).collect()
 }
 
+/// The caller's cross-boundary consent edges: the caller is the user's
+/// personal Dot, the receiver an organization Dot.
+pub async fn list_cross_boundary_for_caller(
+    pool: &Pool,
+    owner_user_id: &str,
+    caller_dot_id: &str,
+) -> Result<Vec<DotDelegationEdge>, DbError> {
+    sqlx::query(
+        "SELECT e.* FROM dot_delegation_edges e
+         JOIN dots c ON c.principal_id = e.caller_dot_id
+         JOIN dots r ON r.principal_id = e.receiver_dot_id
+         WHERE c.owner_user_id = ? AND c.organization_id IS NULL
+           AND r.owner_user_id IS NULL AND r.organization_id IS NOT NULL
+           AND e.caller_dot_id = ? ORDER BY r.name, e.receiver_dot_id",
+    )
+    .bind(owner_user_id)
+    .bind(caller_dot_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(edge)
+    .collect()
+}
+
+/// A personal caller Dot on one of the receiver's cross-boundary edges, with
+/// the caller's owner, for the organization side's **Accepts requests from**
+/// list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InboundCaller {
+    pub caller_dot_id: String,
+    pub dot_name: String,
+    pub owner_user_id: String,
+    pub owner_name: Option<String>,
+    pub active: bool,
+}
+
+/// The personal caller Dots on the receiver's cross-boundary edges — granted
+/// and revoked alike, with their consent state — for the organization Dot's
+/// configuration surface.
+pub async fn inbound_callers_for(
+    pool: &Pool,
+    receiver_dot_id: &str,
+) -> Result<Vec<(InboundCaller, DotDelegationEdge)>, DbError> {
+    let rows = sqlx::query(
+        "SELECT c.principal_id AS caller_dot_id, c.name AS dot_name, c.owner_user_id,
+                u.name AS owner_name, c.active, e.*
+         FROM dot_delegation_edges e
+         JOIN dots c ON c.principal_id = e.caller_dot_id
+         LEFT JOIN users u ON u.id = c.owner_user_id
+         WHERE e.receiver_dot_id = ?
+           AND c.owner_user_id IS NOT NULL AND c.organization_id IS NULL
+         ORDER BY c.name, c.principal_id",
+    )
+    .bind(receiver_dot_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|row| {
+            let caller = InboundCaller {
+                caller_dot_id: row.try_get("caller_dot_id")?,
+                dot_name: row.try_get("dot_name")?,
+                owner_user_id: row.try_get("owner_user_id")?,
+                owner_name: row.try_get("owner_name")?,
+                active: row.try_get("active")?,
+            };
+            Ok((caller, edge(row)?))
+        })
+        .collect()
+}
+
 pub async fn authorized(
     pool: &Pool,
     owner_user_id: &str,
@@ -130,6 +200,7 @@ pub async fn authorized_cross_boundary_in(
     receiver_org_id: &str,
     receiver_dot_id: &str,
     expected_generation: &str,
+    caller_role_ids: &[String],
 ) -> Result<Option<DotDelegationEdge>, DbError> {
     sqlx::query(
         "SELECT e.* FROM dot_delegation_edges e
@@ -143,9 +214,7 @@ pub async fn authorized_cross_boundary_in(
                SELECT 1 FROM organization_groups b
                JOIN gateway_groups g ON g.name = b.gateway_group
                WHERE b.organization_id = r.organization_id
-                 AND g.name IN (
-                     SELECT value FROM json_each(
-                         (SELECT roles_json FROM users WHERE id = c.owner_user_id)))
+                 AND g.name IN (SELECT value FROM json_each(?))
            )",
     )
     .bind(caller_dot_id)
@@ -153,6 +222,7 @@ pub async fn authorized_cross_boundary_in(
     .bind(caller_owner_user_id)
     .bind(receiver_org_id)
     .bind(expected_generation)
+    .bind(serde_json::to_string(caller_role_ids).expect("string vector serializes"))
     .fetch_optional(connection)
     .await?
     .map(edge)
@@ -886,10 +956,18 @@ mod tests {
         let (pool, caller, receiver, org_id) = cross_boundary_fixture().await;
         let mut conn = pool.acquire().await.unwrap();
         assert!(
-            authorized_cross_boundary_in(&mut conn, "alice", &caller, &org_id, &receiver, "absent")
-                .await
-                .unwrap()
-                .is_none()
+            authorized_cross_boundary_in(
+                &mut conn,
+                "alice",
+                &caller,
+                &org_id,
+                &receiver,
+                "absent",
+                &["engineering".to_owned()],
+            )
+            .await
+            .unwrap()
+            .is_none()
         );
         let first = saved(
             set_cross_boundary_consent(
@@ -914,7 +992,8 @@ mod tests {
                 &caller,
                 &org_id,
                 &receiver,
-                &first.generation
+                &first.generation,
+                &["engineering".to_owned()],
             )
             .await
             .unwrap()
@@ -946,7 +1025,8 @@ mod tests {
                 &caller,
                 &org_id,
                 &receiver,
-                &both.generation
+                &both.generation,
+                &["engineering".to_owned()],
             )
             .await
             .unwrap()
@@ -959,7 +1039,8 @@ mod tests {
                 &caller,
                 &org_id,
                 &receiver,
-                &first.generation
+                &first.generation,
+                &["engineering".to_owned()],
             )
             .await
             .unwrap()
@@ -972,7 +1053,8 @@ mod tests {
                 &caller,
                 "missing-org",
                 &receiver,
-                &both.generation
+                &both.generation,
+                &["engineering".to_owned()],
             )
             .await
             .unwrap()
@@ -1047,7 +1129,8 @@ mod tests {
                 &carol_dot,
                 &org_id,
                 &receiver,
-                &carol_out.generation
+                &carol_out.generation,
+                &[],
             )
             .await
             .unwrap()
@@ -1120,5 +1203,174 @@ mod tests {
             .await,
             Ok(ConsentSaved::Unavailable)
         ));
+    }
+
+    #[tokio::test]
+    async fn cross_boundary_listing_is_owner_and_caller_scoped() {
+        let (pool, caller, receiver, _) = cross_boundary_fixture().await;
+        assert!(
+            list_cross_boundary_for_caller(&pool, "alice", &caller)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let first = saved(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &caller,
+                    &receiver,
+                    "alice",
+                    ConsentDirection::Outbound,
+                    true,
+                    None,
+                ),
+            )
+            .await
+            .unwrap(),
+        );
+        saved(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &caller,
+                    &receiver,
+                    "bob",
+                    ConsentDirection::Inbound,
+                    true,
+                    Some(&first.generation),
+                ),
+            )
+            .await
+            .unwrap(),
+        );
+
+        let edges = list_cross_boundary_for_caller(&pool, "alice", &caller)
+            .await
+            .unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(
+            (
+                edges[0].caller_dot_id.as_str(),
+                edges[0].receiver_dot_id.as_str()
+            ),
+            (caller.as_str(), receiver.as_str())
+        );
+        assert!(edges[0].outbound_enabled && edges[0].inbound_enabled);
+
+        assert!(
+            list_cross_boundary_for_caller(&pool, "bob", &caller)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let (_, other) = agents::create_personal_dot(
+            &pool,
+            &NewPrincipal {
+                name: "second",
+                display: "Second",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        let other = other.unwrap().principal.id;
+        set_consent(
+            &pool,
+            ConsentEdit {
+                owner_user_id: "alice",
+                dot_id: &caller,
+                peer_id: &other,
+                direction: ConsentDirection::Outbound,
+                enabled: true,
+                expected_generation: None,
+            },
+        )
+        .await
+        .unwrap();
+        let edges = list_cross_boundary_for_caller(&pool, "alice", &caller)
+            .await
+            .unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].receiver_dot_id, receiver);
+    }
+
+    #[tokio::test]
+    async fn inbound_callers_list_the_personal_callers_with_their_inbound_state() {
+        let (pool, caller, receiver, _) = cross_boundary_fixture().await;
+        assert!(
+            inbound_callers_for(&pool, &receiver)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let first = saved(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &caller,
+                    &receiver,
+                    "alice",
+                    ConsentDirection::Outbound,
+                    true,
+                    None,
+                ),
+            )
+            .await
+            .unwrap(),
+        );
+        // The edge exists, so the caller is listed with inbound disabled.
+        let entries = inbound_callers_for(&pool, &receiver).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(!entries[0].1.inbound_enabled);
+        let both = saved(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &caller,
+                    &receiver,
+                    "bob",
+                    ConsentDirection::Inbound,
+                    true,
+                    Some(&first.generation),
+                ),
+            )
+            .await
+            .unwrap(),
+        );
+
+        let entries = inbound_callers_for(&pool, &receiver).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        let (info, edge) = &entries[0];
+        assert_eq!(info.caller_dot_id, caller);
+        assert_eq!(info.dot_name, "caller");
+        assert_eq!(info.owner_user_id, "alice");
+        assert!(info.active);
+        assert!(edge.inbound_enabled);
+
+        saved(
+            set_cross_boundary_consent(
+                &pool,
+                cb_edit(
+                    &caller,
+                    &receiver,
+                    "bob",
+                    ConsentDirection::Inbound,
+                    false,
+                    Some(&both.generation),
+                ),
+            )
+            .await
+            .unwrap(),
+        );
+        // A revoked grant stays listed, disabled, so the organization side can
+        // re-enable it.
+        let entries = inbound_callers_for(&pool, &receiver).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(!entries[0].1.inbound_enabled);
     }
 }

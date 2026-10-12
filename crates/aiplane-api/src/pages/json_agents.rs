@@ -36,7 +36,10 @@ use super::{
 use aiplane_agents::db::agents::{
     self as agents_db, Access, DraftChange, ShareChange, SubjectKind,
 };
-use aiplane_agents::db::{agent_analytics, agent_audit, system_principals as sp_db};
+use aiplane_agents::db::dot_delegation::ConsentSaved;
+use aiplane_agents::db::{
+    agent_analytics, agent_audit, dot_delegation, system_principals as sp_db,
+};
 use aiplane_core::server::db::users;
 use aiplane_core::server::principal::{GrantKind, GrantSet};
 use aiplane_core::server::upstreams::PoolKind;
@@ -1458,6 +1461,233 @@ fn last_writer() -> Response {
         "this is the agent's last `write` share — give someone else `write` first, or the agent \
          could never be edited or shared again",
     )
+}
+
+/// The organization Dot behind the path, if the caller is a current member
+/// holding at least `need` on it: personal Dots and non-members answer 404.
+async fn organization_dot_at(
+    state: &RamaState,
+    req: &Request,
+    user: &users::User,
+    need: Access,
+) -> Result<Option<(agents_db::AgentRow, agents_db::DotMetadata)>, Response> {
+    let Some(id) = raw_path_segment(req, 1) else {
+        return Err(bad_request(t(
+            Lang::from_request(req.headers()),
+            "dot-error-id-missing",
+        )));
+    };
+    let Some(metadata) = agents_db::get_dot_metadata(&state.db, &id)
+        .await
+        .map_err(internal)?
+    else {
+        return Ok(None);
+    };
+    if !matches!(metadata.owner, agents_db::DotOwner::Organization(_)) {
+        return Ok(None);
+    }
+    let Some(agent) = agents_db::get(&state.db, &id).await.map_err(internal)? else {
+        return Ok(None);
+    };
+    let held = aiplane_runtime::agents::access::organization_access(state, &id, &user.id)
+        .await
+        .map_err(internal)?;
+    match held {
+        Some(a) if a >= need => Ok(Some((agent, metadata))),
+        _ => Ok(None),
+    }
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct AgentCommunicationOwner {
+    pub id: String,
+    pub name: Option<String>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct AgentCommunicationCaller {
+    pub dot: super::json_dots::DotView,
+    pub owner: AgentCommunicationOwner,
+    pub incoming: super::json_dots::DotConsentView,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct AgentCommunicationView {
+    pub dot: super::json_dots::DotView,
+    pub callers: Vec<AgentCommunicationCaller>,
+}
+
+fn organization_communication_view(
+    agent: &agents_db::AgentRow,
+    metadata: &agents_db::DotMetadata,
+    callers: Vec<(
+        dot_delegation::InboundCaller,
+        dot_delegation::DotDelegationEdge,
+    )>,
+) -> AgentCommunicationView {
+    let p = &agent.principal;
+    AgentCommunicationView {
+        dot: super::json_dots::DotView {
+            id: p.id.clone(),
+            name: metadata.name.clone(),
+            display: p.display.clone(),
+            description: p.description.clone(),
+            active: metadata.active,
+        },
+        callers: callers
+            .into_iter()
+            .map(|(caller, edge)| AgentCommunicationCaller {
+                dot: super::json_dots::DotView {
+                    id: caller.caller_dot_id.clone(),
+                    name: caller.dot_name,
+                    display: String::new(),
+                    description: String::new(),
+                    active: caller.active,
+                },
+                owner: AgentCommunicationOwner {
+                    id: caller.owner_user_id,
+                    name: caller.owner_name,
+                },
+                incoming: super::json_dots::DotConsentView::from_edge(Some(&edge)),
+            })
+            .collect(),
+    }
+}
+
+async fn organization_communication(
+    state: &RamaState,
+    req: &Request,
+    user: &users::User,
+    need: Access,
+) -> Result<AgentCommunicationView, Response> {
+    let Some((agent, metadata)) = organization_dot_at(state, req, user, need).await? else {
+        return Err(not_found(t(
+            Lang::from_request(req.headers()),
+            "organization-error-not-found",
+        )));
+    };
+    let callers = dot_delegation::inbound_callers_for(&state.db, &agent.principal.id)
+        .await
+        .map_err(internal)?;
+    Ok(organization_communication_view(&agent, &metadata, callers))
+}
+
+/// GET /api/v0/agents/{id}/communication — the personal caller Dots on the
+/// organization Dot's cross-boundary edges with their current inbound state,
+/// for the member writers' "Accepts requests from" section.
+pub async fn organization_communication_get(
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let user = match require_agent_manager(&state, &req).await {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match organization_communication(&state, &req, &user, Access::Read).await {
+        Ok(view) => json_ok(StatusCode::OK, view),
+        Err(response) => response,
+    }
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCommunicationBody {
+    pub peer_id: String,
+    pub enabled: bool,
+    pub expected_generation: Option<String>,
+}
+
+/// PUT /api/v0/agents/{id}/communication — a member writer granting or
+/// revoking `inbound` on a personal caller Dot's cross-boundary edge. A
+/// revocation that changes the generation cancels the in-flight delegations on
+/// it, since the consent is their live recheck.
+pub async fn organization_communication_put(
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let lang = Lang::from_request(req.headers());
+    let user = match require_agent_manager(&state, &req).await {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    let (agent, metadata) = match organization_dot_at(&state, &req, &user, Access::Write).await {
+        Ok(Some(value)) => value,
+        Ok(None) => return not_found(t(lang, "organization-error-not-found")),
+        Err(response) => return response,
+    };
+    let body: AgentCommunicationBody = match super::read_json_capped(
+        req.into_body(),
+        "the communication setting",
+        16 * 1024,
+    )
+    .await
+    {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
+    let caller_owner = match agents_db::personal_dot_owner(&state.db, &body.peer_id)
+        .await
+        .map_err(internal)
+    {
+        Ok(Some(owner)) => owner,
+        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
+        Err(response) => return response,
+    };
+    match dot_delegation::set_cross_boundary_consent(
+        &state.db,
+        dot_delegation::CrossBoundaryConsentEdit {
+            actor_user_id: &user.id,
+            caller_dot_id: &body.peer_id,
+            receiver_dot_id: &agent.principal.id,
+            direction: dot_delegation::ConsentDirection::Inbound,
+            enabled: body.enabled,
+            expected_generation: body.expected_generation.as_deref(),
+        },
+    )
+    .await
+    {
+        Ok(ConsentSaved::Saved(edge)) => {
+            if let Some(previous) = body.expected_generation.as_deref()
+                && previous != edge.generation
+                && let Err(error) = aiplane_runtime::agents::resume::cancel_personal_runs_for_edge(
+                    &state,
+                    &caller_owner,
+                    &edge.caller_dot_id,
+                    &edge.receiver_dot_id,
+                    previous,
+                )
+                .await
+            {
+                return internal(error);
+            }
+            let callers =
+                match dot_delegation::inbound_callers_for(&state.db, &agent.principal.id).await {
+                    Ok(callers) => callers,
+                    Err(error) => return internal(error),
+                };
+            json_ok(
+                StatusCode::OK,
+                organization_communication_view(&agent, &metadata, callers),
+            )
+        }
+        Ok(ConsentSaved::Missing) => not_found(t(lang, "dot-error-not-found")),
+        Ok(ConsentSaved::Invalid) => json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_consent",
+            &t(lang, "dot-communication-error-invalid"),
+        ),
+        Ok(ConsentSaved::Conflict) => json_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            &t(lang, "dot-communication-error-conflict"),
+        ),
+        Ok(ConsentSaved::Unavailable) => json_error(
+            StatusCode::CONFLICT,
+            "inactive_dot",
+            &t(lang, "dot-communication-error-inactive"),
+        ),
+        Err(error) => internal(error),
+    }
 }
 
 /// POST /api/v0/agents/{id}/shares — add a share or change its access.

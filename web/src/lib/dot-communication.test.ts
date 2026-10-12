@@ -7,7 +7,8 @@ const dot: Dot = { id: 'harald', name: 'Harald', display: '', description: '', a
 const peer: DotCommunicationPeer = {
 	dot: { ...dot, id: 'clara', name: 'Clara' },
 	outgoing: { outbound_enabled: false, inbound_enabled: true, generation: 'outgoing-generation' },
-	incoming: { outbound_enabled: true, inbound_enabled: false, generation: null }
+	incoming: { outbound_enabled: true, inbound_enabled: false, generation: null },
+	cross_organization: false
 };
 
 test('outbound edits the caller consent while inbound edits the receiver consent', () => {
@@ -28,4 +29,10 @@ test('inactive peers or callers cannot gain new consent but existing consent can
 	assert.equal(communicationChange({ ...dot, active: false }, peer, 'inbound', true), null);
 	const enabled = { ...peer, dot: { ...peer.dot, active: false }, outgoing: { ...peer.outgoing, outbound_enabled: true } };
 	assert.deepEqual(communicationChange({ ...dot, active: false }, enabled, 'outbound', false), { peer_id: 'clara', direction: 'outbound', enabled: false, expected_generation: 'outgoing-generation' });
+});
+
+test('the cross-organization peer marker carries its own outbound consent', () => {
+	const orgPeer = { ...peer, cross_organization: true };
+	assert.equal(orgPeer.cross_organization, true);
+	assert.deepEqual(communicationChange(dot, orgPeer, 'outbound', true), { peer_id: 'clara', direction: 'outbound', enabled: true, expected_generation: 'outgoing-generation' });
 });

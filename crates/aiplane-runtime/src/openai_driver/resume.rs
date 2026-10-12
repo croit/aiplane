@@ -341,6 +341,9 @@ pub(super) async fn resume_into(
                 {
                     return Err(refused());
                 }
+                let caller_role_ids = crate::agents::access::role_ids_for_user(&d.state, owner)
+                    .await
+                    .unwrap_or_default();
                 aiplane_agents::db::cross_boundary::validate_child_in(
                     &mut connection,
                     &aiplane_agents::db::cross_boundary::NewCrossBoundaryChild {
@@ -348,6 +351,7 @@ pub(super) async fn resume_into(
                         caller_dot_id: &link.caller_dot_id,
                         receiver_dot_id: &link.receiver_dot_id,
                         caller_owner_user_id: owner,
+                        caller_role_ids: &caller_role_ids,
                         receiver_org_id: &link.receiver_org_id,
                         parent_turn_id: &link.parent_turn_id,
                         parent_tool_call_id: &link.parent_tool_call_id,

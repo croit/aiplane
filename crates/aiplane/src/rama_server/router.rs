@@ -463,6 +463,14 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         )
         .with_post("/api/v0/agents/{id}/live", pages::json_agents::set_live)
         .with_get("/api/v0/agents/{id}/shares", pages::json_agents::shares)
+        .with_get(
+            "/api/v0/agents/{id}/communication",
+            pages::json_agents::organization_communication_get,
+        )
+        .with_put(
+            "/api/v0/agents/{id}/communication",
+            pages::json_agents::organization_communication_put,
+        )
         .with_post("/api/v0/agents/{id}/shares", pages::json_agents::share)
         .with_post(
             "/api/v0/agents/{id}/shares/revoke",

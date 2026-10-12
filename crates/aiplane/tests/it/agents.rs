@@ -226,6 +226,10 @@ impl Fx {
         self.send(Some(cookie), Method::POST, uri, Some(body)).await
     }
 
+    pub(crate) async fn put(&self, cookie: &str, uri: &str, body: Value) -> (StatusCode, Value) {
+        self.send(Some(cookie), Method::PUT, uri, Some(body)).await
+    }
+
     pub(crate) async fn put_draft(
         &self,
         cookie: &str,

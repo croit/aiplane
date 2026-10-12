@@ -398,6 +398,7 @@ dot-communication-inbound-counterpart-disabled = 此 Dot 不可以向你发起�
 dot-communication-inactive = 启用同意权限时两个 Dot 都必须处于启用状态。现有的同意权限仍可撤销。
 dot-communication-empty = 没有其他可用的个人 Dot。
 dot-communication-reload = 重新加载通信
+dot-communication-save-changes = 保存更改
 dot-communication-saved = 通信权限已保存。
 dot-communication-error-load = 无法加载通信权限。请重新加载后重试。
 dot-communication-error-save = 无法保存通信权限。你的修改仍保留在表单中；请重新加载权限后重试。
@@ -408,6 +409,14 @@ dot-activity-communication-changed = Dot 通信权限已更改。
 
 dot-communication-error-busy = 委派的对话已在运行。请等待其完成后再次回答。
 dot-communication-error-unavailable = 此 Dot 委派不可用。请在重试前检查处于活动状态的 Dot、通信权限和工具访问权限。
+dot-communication-cross-organization = 跨组织
+dot-communication-inbound-organization = 由组织决定哪些 Dot 可以向该 Dot 提出请求。
+agent-communication-heading = 接受来自以下 Dot 的请求
+agent-communication-scope = 选择哪些个人 Dot 可以向该组织 Dot 委托。委托时只能分享明确的任务；该 Dot 使用自己的工具和审批规则。
+agent-communication-empty = 没有授予访问权限的个人 Dot。
+agent-communication-saved = 通信权限已保存。
+agent-communication-error-load = 无法加载通信权限。请重新加载后重试。
+agent-communication-error-save = 无法保存通信权限。你的修改仍保留在表单中；请重新加载权限后重试。
 
 dot-connection-heading = 连接器身份
 dot-connection-user = 我的连接

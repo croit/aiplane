@@ -111,7 +111,7 @@
 	{:else}
 		<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
 			{#each dots as dot (dot.id)}
-				<article id={`dot-${dot.id}`} class="card card-border">
+				<article id={`dot-${dot.id}`} class="card card-border has-[details[data-panel=communication][open]]:md:col-span-2 has-[details[data-panel=communication][open]]:xl:col-span-3">
 					<div class="card-body gap-3 p-4">
 						<div class="flex items-start justify-between gap-2">
 							<div class="min-w-0">

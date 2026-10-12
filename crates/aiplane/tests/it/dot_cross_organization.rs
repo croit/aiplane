@@ -770,9 +770,9 @@ async fn cross_boundary_member_denial_settles_the_caller_and_writes_nothing() {
     let notes = aiplane_agents::db::dot_memories::list(
         &p.state.db,
         aiplane_agents::db::dot_memories::MemoryScope::Dot {
-            owner: &aiplane_agents::db::agents::DotOwner::Organization(
-                created_id(&p.org["organization"]).into(),
-            ),
+            owner: &aiplane_agents::db::agents::DotOwner::Organization(created_id(
+                &p.org["organization"],
+            )),
             dot_id: &p.receiver,
         },
         10,
@@ -979,5 +979,284 @@ async fn cross_boundary_waiting_mirror_refuses_the_personal_path_until_the_child
         result["outcome"]["status"],
         serde_json::json!("finished"),
         "{result}"
+    );
+}
+
+fn peer_in<'a>(view: &'a Value, dot_id: &str) -> &'a Value {
+    view["peers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|peer| peer["dot"]["id"] == dot_id)
+        .unwrap_or_else(|| panic!("peer {dot_id} in the communication view: {view}"))
+}
+
+#[tokio::test]
+async fn personal_communication_view_lists_member_organization_dots_and_both_sides_save_their_side()
+{
+    let upstream = MockServer::start().await;
+    let fx = fixture_with_forward(&upstream).await;
+    let caller = caller_dot(
+        &fx.state,
+        "Caller",
+        r#"{"main":{"tools":["forward_request"],"tool_resources":{"forward_request":{"permission":"always_allow"}}}}"#,
+    )
+    .await;
+    let org = organization(&fx, "Ticket Support", &["managers"]).await;
+    let receiver = org_dot(&fx, &org, "Tickets").await;
+
+    // The member's organization Dot is listed, marked cross-organization,
+    // with no consent yet.
+    let (status, view) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{caller}/communication"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    let peer = peer_in(&view, &receiver);
+    assert_eq!(peer["cross_organization"], serde_json::json!(true));
+    assert_eq!(
+        peer["outgoing"]["outbound_enabled"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        peer["incoming"]["inbound_enabled"],
+        serde_json::json!(false)
+    );
+
+    // The personal owner enables only their side: outbound.
+    let (status, view) = fx
+        .put(
+            &fx.alice,
+            &format!("/api/v0/dots/{caller}/communication"),
+            serde_json::json!({
+                "peer_id": receiver,
+                "direction": "outbound",
+                "enabled": true,
+                "expected_generation": null
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    let peer = peer_in(&view, &receiver);
+    assert_eq!(
+        peer["outgoing"]["outbound_enabled"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        peer["incoming"]["inbound_enabled"],
+        serde_json::json!(false)
+    );
+    let generation = peer["outgoing"]["generation"].as_str().unwrap().to_string();
+
+    // The personal side may not set the organization's side.
+    let (status, body) = fx
+        .put(
+            &fx.alice,
+            &format!("/api/v0/dots/{caller}/communication"),
+            serde_json::json!({
+                "peer_id": receiver,
+                "direction": "inbound",
+                "enabled": true,
+                "expected_generation": &generation
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "invalid_consent");
+
+    // The organization member writer enables inbound.
+    let (status, view) = fx
+        .put(
+            &fx.alice,
+            &format!("/api/v0/agents/{receiver}/communication"),
+            serde_json::json!({
+                "peer_id": caller,
+                "enabled": true,
+                "expected_generation": &generation
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["callers"].as_array().unwrap().len(), 1);
+    let grant = &view["callers"][0];
+    assert_eq!(grant["dot"]["id"], serde_json::json!(caller));
+    assert_eq!(grant["dot"]["name"], serde_json::json!("Caller"));
+    assert_eq!(grant["owner"]["id"], serde_json::json!("alice"));
+    assert_eq!(
+        grant["incoming"]["inbound_enabled"],
+        serde_json::json!(true)
+    );
+
+    // The personal view now shows both sides enabled.
+    let (status, view) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{caller}/communication"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    let peer = peer_in(&view, &receiver);
+    assert_eq!(
+        peer["outgoing"]["outbound_enabled"],
+        serde_json::json!(true)
+    );
+    assert_eq!(peer["incoming"]["inbound_enabled"], serde_json::json!(true));
+}
+
+#[tokio::test]
+async fn organization_communication_requires_member_write_and_rejects_out_of_scope_dots() {
+    let upstream = MockServer::start().await;
+    let fx = fixture_with_forward(&upstream).await;
+    let caller = caller_dot(&fx.state, "Caller", r#"{"main":{}}"#).await;
+    let org = organization(&fx, "Ticket Support", &["managers"]).await;
+    let receiver = org_dot(&fx, &org, "Tickets").await;
+
+    // A member without a share sees nothing on the organization surface.
+    let (status, body) = fx
+        .get(&fx.bob, &format!("/api/v0/agents/{receiver}/communication"))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = fx
+        .put(
+            &fx.bob,
+            &format!("/api/v0/agents/{receiver}/communication"),
+            serde_json::json!({"peer_id": caller, "enabled": true, "expected_generation": null}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    // A read share may list the grants, not change them.
+    assert_eq!(
+        fx.share(&fx.alice, &receiver, "user", "bob", "read")
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+    let (status, view) = fx
+        .get(&fx.bob, &format!("/api/v0/agents/{receiver}/communication"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert!(view["callers"].as_array().unwrap().is_empty());
+    let (status, body) = fx
+        .put(
+            &fx.bob,
+            &format!("/api/v0/agents/{receiver}/communication"),
+            serde_json::json!({"peer_id": caller, "enabled": true, "expected_generation": null}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    // A personal Dot has no organization communication surface.
+    let (status, body) = fx
+        .get(&fx.alice, &format!("/api/v0/agents/{caller}/communication"))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    // The organization side only grants on personal caller Dots.
+    let (status, body) = fx
+        .put(
+            &fx.alice,
+            &format!("/api/v0/agents/{receiver}/communication"),
+            serde_json::json!({"peer_id": receiver, "enabled": true, "expected_generation": null}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = fx
+        .put(
+            &fx.alice,
+            &format!("/api/v0/agents/{receiver}/communication"),
+            serde_json::json!({"peer_id": "missing", "enabled": true, "expected_generation": null}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn personal_revocation_cancels_the_in_flight_pair() {
+    let p = paused_delegation(vec![
+        tool_call(
+            "finish",
+            serde_json::json!({"result": {"answer": "The lesson is saved."}}),
+        ),
+        serde_json::json!({"content": "The org agent saved the lesson."}),
+    ])
+    .await;
+    let p = &p;
+    let (status, view) =
+        p.fx.put(
+            &p.fx.alice,
+            &format!("/api/v0/dots/{}/communication", p.caller),
+            serde_json::json!({
+                "peer_id": p.receiver,
+                "direction": "outbound",
+                "enabled": false,
+                "expected_generation": p.edge.generation
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    let peer = peer_in(&view, &p.receiver);
+    assert_eq!(
+        peer["outgoing"]["outbound_enabled"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.session_id, &p.turn_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Cancelled
+    );
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.child_session, &p.child_turn)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn organization_revocation_cancels_the_in_flight_pair() {
+    let p = paused_delegation(vec![
+        tool_call(
+            "finish",
+            serde_json::json!({"result": {"answer": "The lesson is saved."}}),
+        ),
+        serde_json::json!({"content": "The org agent saved the lesson."}),
+    ])
+    .await;
+    let p = &p;
+    let (status, view) =
+        p.fx.put(
+            &p.fx.alice,
+            &format!("/api/v0/agents/{}/communication", p.receiver),
+            serde_json::json!({
+                "peer_id": p.caller,
+                "enabled": false,
+                "expected_generation": p.edge.generation
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    let callers = view["callers"].as_array().unwrap();
+    assert_eq!(callers.len(), 1);
+    assert_eq!(
+        callers[0]["incoming"]["inbound_enabled"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.session_id, &p.turn_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Cancelled
+    );
+    assert_eq!(
+        chat::get_turn(&p.state.db, &p.child_session, &p.child_turn)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Cancelled
     );
 }

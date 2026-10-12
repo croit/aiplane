@@ -398,6 +398,7 @@ dot-communication-inbound-counterpart-disabled = Ce Dot n’est pas autorisé à
 dot-communication-inactive = Les deux Dots doivent être actifs pour activer un consentement. Un consentement existant peut toujours être révoqué.
 dot-communication-empty = Aucun autre Dot personnel disponible.
 dot-communication-reload = Recharger la communication
+dot-communication-save-changes = Enregistrer les modifications
 dot-communication-saved = Autorisation de communication enregistrée.
 dot-communication-error-load = Impossible de charger les autorisations de communication. Rechargez-les et réessayez.
 dot-communication-error-save = Impossible d’enregistrer l’autorisation de communication. Votre modification est conservée ; rechargez les autorisations et réessayez.
@@ -408,6 +409,14 @@ dot-activity-communication-changed = Autorisations de communication des Dots mod
 
 dot-communication-error-busy = Une conversation déléguée est déjà en cours. Attendez qu’elle se termine, puis répondez à nouveau.
 dot-communication-error-unavailable = Cette délégation entre Dots est indisponible. Vérifiez les Dots actifs, les autorisations de communication et l’accès aux outils avant de réessayer.
+dot-communication-cross-organization = Inter-organisation
+dot-communication-inbound-organization = L’organisation décide qui peut demander à ce Dot.
+agent-communication-heading = Accepte les demandes de
+agent-communication-scope = Choisissez quels Dots personnels peuvent déléguer à ce Dot d’organisation. La délégation ne partage que la tâche explicite ; le Dot utilise ses propres outils et règles d’approbation.
+agent-communication-empty = Aucun Dot personnel n’est autorisé.
+agent-communication-saved = L’autorisation de communication a été enregistrée.
+agent-communication-error-load = Impossible de charger les autorisations de communication. Rechargez-les et réessayez.
+agent-communication-error-save = Impossible d’enregistrer l’autorisation de communication. Votre modification est conservée ; rechargez les autorisations et réessayez.
 
 dot-connection-heading = Identité du connecteur
 dot-connection-user = Ma connexion

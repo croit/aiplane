@@ -66,6 +66,32 @@ pub async fn organization_access_in(
     access_in(state, tx, agent_id, user_id, true).await
 }
 
+/// The access a person holds on an organization agent today: `write` for an
+/// admin, otherwise their strongest share that takes effect for them.
+/// `None` for personal agents and for non-members.
+pub async fn organization_access(
+    state: &AppState,
+    agent_id: &str,
+    user_id: &str,
+) -> Result<Option<Access>, DbError> {
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
+    let access = organization_access_in(state, &mut tx, agent_id, user_id).await?;
+    tx.commit().await?;
+    Ok(access)
+}
+
+/// The role IDs a person resolves to under the current RBAC snapshot —
+/// organization membership and the cross-boundary live recheck compare
+/// against these, like every other organization membership check. `None`
+/// when the user no longer exists.
+pub async fn role_ids_for_user(state: &AppState, user_id: &str) -> Option<Vec<String>> {
+    let user = aiplane_core::server::db::users::find_by_id(&state.db, user_id)
+        .await
+        .ok()
+        .flatten()?;
+    Some(state.role_ids_for(&user.roles))
+}
+
 async fn access_in(
     state: &AppState,
     tx: &mut aiplane_core::server::db::WriteTx,

@@ -398,6 +398,7 @@ dot-communication-inbound-counterpart-disabled = Этот Dot не может о
 dot-communication-inactive = Для включения согласия оба Dot должны быть активны. Существующее согласие можно отозвать.
 dot-communication-empty = Других личных Dot нет.
 dot-communication-reload = Перезагрузить общение
+dot-communication-save-changes = Сохранить изменения
 dot-communication-saved = Разрешение на общение сохранено.
 dot-communication-error-load = Не удалось загрузить разрешения на общение. Перезагрузите их и повторите попытку.
 dot-communication-error-save = Не удалось сохранить разрешение на общение. Ваше изменение сохранено в форме; перезагрузите разрешения и повторите попытку.
@@ -408,6 +409,14 @@ dot-activity-communication-changed = Разрешения на общение Do
 
 dot-communication-error-busy = Делегированный разговор уже выполняется. Дождитесь его завершения и ответьте снова.
 dot-communication-error-unavailable = Это делегирование между Dot недоступно. Перед повторной попыткой проверьте активные Dot, разрешения на связь и доступ к инструментам.
+dot-communication-cross-organization = Между организациями
+dot-communication-inbound-organization = Организация решает, какие Dot могут обращаться к этому Dot.
+agent-communication-heading = Принимает запросы от
+agent-communication-scope = Выберите, какие личные Dot могут делегировать этому организационному Dot. При делегировании передаётся только явно указанная задача; Dot использует собственные инструменты и правила подтверждения.
+agent-communication-empty = Личные Dot не разрешены.
+agent-communication-saved = Разрешение на общение сохранено.
+agent-communication-error-load = Не удалось загрузить разрешения на общение. Перезагрузите их и повторите попытку.
+agent-communication-error-save = Не удалось сохранить разрешение на общение. Ваше изменение сохранено в форме; перезагрузите разрешения и повторите попытку.
 
 dot-connection-heading = Идентификация подключения
 dot-connection-user = Моё подключение

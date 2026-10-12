@@ -553,6 +553,8 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/agents/{id}/channels` |
 | `POST /api/v0/agents/{id}/channels` |
 | `DELETE /api/v0/agents/{id}/channels/{channel_id}` |
+| `GET /api/v0/agents/{id}/communication` |
+| `PUT /api/v0/agents/{id}/communication` |
 | `POST /api/v0/agents/{id}/conversations/{session}/turns/{turn}/resume` |
 | `PUT /api/v0/agents/{id}/draft` |
 | `POST /api/v0/agents/{id}/draft/restore` |

@@ -33,6 +33,9 @@ pub struct NewCrossBoundaryChild<'a> {
     pub caller_dot_id: &'a str,
     pub receiver_dot_id: &'a str,
     pub caller_owner_user_id: &'a str,
+    /// The caller owner's role IDs resolved against the current RBAC
+    /// snapshot, for the live membership recheck.
+    pub caller_role_ids: &'a [String],
     pub receiver_org_id: &'a str,
     pub parent_turn_id: &'a str,
     pub parent_tool_call_id: &'a str,
@@ -71,6 +74,7 @@ pub async fn record_in(
         new.receiver_org_id,
         new.receiver_dot_id,
         new.edge_generation,
+        new.caller_role_ids,
     )
     .await?
     .is_none()
@@ -261,6 +265,7 @@ pub async fn validate_child_in(
         new.receiver_org_id,
         new.receiver_dot_id,
         expected_generation,
+        new.caller_role_ids,
     )
     .await?
     .is_some())
@@ -285,6 +290,7 @@ mod tests {
         receiver: String,
         org_id: String,
         generation: String,
+        role_ids: Vec<String>,
     }
 
     async fn fixture() -> Fixture {
@@ -406,6 +412,7 @@ mod tests {
             receiver,
             org_id,
             generation: both.generation,
+            role_ids: vec!["engineering".to_owned()],
         }
     }
 
@@ -466,6 +473,7 @@ mod tests {
             caller_dot_id: &fx.caller,
             receiver_dot_id: &fx.receiver,
             caller_owner_user_id: "alice",
+            caller_role_ids: &fx.role_ids,
             receiver_org_id: &fx.org_id,
             parent_turn_id: "parent",
             parent_tool_call_id: "forward",

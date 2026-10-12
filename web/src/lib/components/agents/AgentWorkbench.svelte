@@ -19,6 +19,7 @@
 	import SetupOverview from './setup/SetupOverview.svelte';
 	import DotConnectionsPanel from '../dots/DotConnectionsPanel.svelte';
 	import DotMemoryPanel from '../dots/DotMemoryPanel.svelte';
+	import OrganizationCommunicationPanel from '../dots/OrganizationCommunicationPanel.svelte';
 	import type { Dot } from '#lib/dots.js';
 
 	/**
@@ -110,6 +111,12 @@
 {#if tab === 'setup' && organizationDot && (ws.detail?.access === 'read' || ws.detail?.access === 'write')}
 	{#key organizationDot.id}
 		<DotMemoryPanel dot={organizationDot} />
+	{/key}
+{/if}
+
+{#if tab === 'setup' && organizationDot && (ws.detail?.access === 'read' || ws.detail?.access === 'write')}
+	{#key organizationDot.id}
+		<OrganizationCommunicationPanel dot={organizationDot} writable={ws.writable} />
 	{/key}
 {/if}
 

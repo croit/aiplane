@@ -6,7 +6,7 @@
 	import Modal from '#lib/components/ui/Modal.svelte';
 	import { dt, n, t } from '#lib/i18n.svelte.js';
 
-	const dotId = page.params.id;
+	const dotId = page.params.id ?? '';
 	const requestedPath = page.url.searchParams.get('path') ?? '';
 	let data = $state<DotWorkspaceList | null>(null);
 	let loading = $state(true);

@@ -659,6 +659,13 @@ fn display_meta(tool_id: &str) -> Option<(&'static str, &'static str)> {
              JSON document you can edit by hand and re-render, so a revision keeps the same \
              look.",
         ),
+        "forward_request" => (
+            "Delegate to another Dot",
+            "Lets one of your Dots hand an explicit task to another Dot it may address — \
+             one of your own Dots, or an organization Dot your organization has consented \
+             to receive requests from — and work from the answer. The receiving Dot uses \
+             its own tools, memory and approval rules; only the task itself crosses over.",
+        ),
         _ => return None,
     };
     Some(meta)

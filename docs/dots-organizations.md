@@ -307,7 +307,7 @@ Coordinator verifies real organization/group/credential metadata, mobile and key
 
 - Shared memory write authority uses the existing gateway administrator check from organization metadata/group provisioning together with current membership. There is no existing organization-manager role to claim. Per-Dot write access cannot change all organization notes on its own. Organization runtime reads use explicit organization principal scope; human reads still require membership and relevant Dot read access.
 - Existing root-agent budgets and metering remain the initial billing contract; no organization aggregate budget is promised.
-- Direct personal-to-organization or other cross-owner communication remains excluded until explicit approval. Internal organization Dot communication can reuse directed consent after the typed organization ownership foundation is implemented and its principal execution callers are covered.
+- Direct personal-to-organization communication is implemented as the cross-organization delegation bridge ([dots-cross-organization.md](dots-cross-organization.md)): directed consent on both sides, membership live-rechecked, the receiver running under its own principal's authority. Other cross-owner communication (internal organization-to-organization) reuses the same directed-consent machinery as a follow-on.
 - Personal-to-organization knowledge transfer requires an explicit reviewed privacy flow and is excluded.
 - Provider-specific account provisioning, organization discovery from OIDC, automatic employee credential import and additional approval/queue subsystems are excluded.
 

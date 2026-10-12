@@ -195,18 +195,38 @@ pub async fn context_for(
         spec.main.tools.clear();
     }
     let actor = Actor::personal_dot(user.id.clone(), user.roles.clone(), link.dot_id.clone());
-    let receivers = if crate::agents::router::local::forward_available(state, user, &spec)
+    let (personal_receivers, organization_receivers): (
+        Vec<serde_json::Value>,
+        Vec<serde_json::Value>,
+    ) = if crate::agents::router::local::forward_available(state, user, &spec)
         .await
         .map_err(|error| DbError::Decode {
             column: "personal_dot_resources",
             source: std::io::Error::other(error.to_string()).into(),
         })? {
-        crate::agents::router::local::permitted_receivers(state, &user.id, &link.dot_id).await?.into_iter().map(|peer| serde_json::json!({
-            "receiver_dot_id": peer.dot.agent.principal.id, "name": peer.dot.name, "description": peer.dot.agent.principal.description,
-        })).collect()
+        (
+                crate::agents::router::local::permitted_receivers(state, &user.id, &link.dot_id)
+                    .await?
+                    .into_iter()
+                    .map(|peer| serde_json::json!({
+                        "receiver_dot_id": peer.dot.agent.principal.id, "name": peer.dot.name, "description": peer.dot.agent.principal.description,
+                    }))
+                    .collect(),
+                crate::agents::router::local::permitted_organization_receivers(state, &user.id, &link.dot_id)
+                    .await?
+                    .into_iter()
+                    .map(|peer| serde_json::json!({
+                        "receiver_dot_id": peer.dot.agent.principal.id, "name": peer.dot.name, "description": peer.dot.agent.principal.description,
+                    }))
+                    .collect(),
+            )
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
+    let receivers = personal_receivers
+        .into_iter()
+        .chain(organization_receivers)
+        .collect();
     let persona = persona_for(&dot, &spec, memories, receivers);
     Ok(Some(PersonalDotContext::Active { actor, persona }))
 }

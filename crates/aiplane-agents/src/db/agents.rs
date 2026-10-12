@@ -97,6 +97,14 @@ pub struct PersonalDotRow {
     pub active: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrganizationDotRow {
+    pub agent: AgentRow,
+    pub organization_id: String,
+    pub name: String,
+    pub active: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DotCreate {
     Created,
@@ -509,6 +517,44 @@ fn map_personal_dot(row: &SqliteRow) -> Result<PersonalDotRow, DbError> {
     Ok(PersonalDotRow {
         agent: map_agent(row)?,
         owner_user_id: row.try_get("owner_user_id")?,
+        name: row.try_get("dot_name")?,
+        active: row.try_get("active")?,
+    })
+}
+
+/// The active organization Dots the user may discover as cross-boundary
+/// receivers: one per organization the user is a current member of, so a
+/// personal Dot can offer an organization Dot only while membership is live.
+/// `role_ids` are the caller owner's role IDs resolved against the current
+/// RBAC snapshot, the same values the organization membership checks use.
+pub async fn list_organization_dots_for_member(
+    pool: &Pool,
+    role_ids: &[String],
+) -> Result<Vec<OrganizationDotRow>, DbError> {
+    let rows = sqlx::query(&format!(
+        "SELECT {}, d.organization_id, d.name AS dot_name, d.active FROM agents a
+         JOIN system_principals p ON p.id = a.principal_id
+         JOIN dots d ON d.principal_id = a.principal_id
+         WHERE d.owner_user_id IS NULL AND d.organization_id IS NOT NULL AND d.active = 1
+           AND EXISTS (
+               SELECT 1 FROM organization_groups b
+               JOIN gateway_groups g ON g.name = b.gateway_group
+               WHERE b.organization_id = d.organization_id
+                 AND g.name IN (SELECT value FROM json_each(?))
+           )
+         ORDER BY a.created_at, p.name",
+        agent_cols()
+    ))
+    .bind(serde_json::to_string(role_ids).expect("string vector serializes"))
+    .fetch_all(pool)
+    .await?;
+    rows.iter().map(map_organization_dot).collect()
+}
+
+fn map_organization_dot(row: &SqliteRow) -> Result<OrganizationDotRow, DbError> {
+    Ok(OrganizationDotRow {
+        agent: map_agent(row)?,
+        organization_id: row.try_get("organization_id")?,
         name: row.try_get("dot_name")?,
         active: row.try_get("active")?,
     })
@@ -2277,6 +2323,135 @@ mod tests {
         assert_eq!(
             versions(&pool, &first.principal.id).await.unwrap(),
             original
+        );
+    }
+
+    #[tokio::test]
+    async fn organization_dot_listing_is_membership_scoped_and_active_only() {
+        use crate::db::{WriteTx, organizations, organizations::NewOrganization};
+        let pool = pool().await;
+        let now = Timestamp::now();
+        users::upsert(
+            &pool,
+            &User {
+                id: "alice".into(),
+                email: "alice@example.com".into(),
+                name: None,
+                roles: vec!["engineering".into()],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        users::upsert(
+            &pool,
+            &User {
+                id: "carol".into(),
+                email: "carol@example.com".into(),
+                name: None,
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO gateway_groups(name,created_at,updated_at) VALUES('engineering', ?, ?)",
+        )
+        .bind(now.to_string())
+        .bind(now.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let org = match organizations::create(
+            &pool,
+            &NewOrganization {
+                name: "Acme",
+                description: "",
+                member_groups: &["engineering".into()],
+            },
+            "alice",
+        )
+        .await
+        .unwrap()
+        {
+            organizations::OrganizationCreateResult::Created(row) => row,
+            _ => panic!("organization created"),
+        };
+        let mut tx = WriteTx::begin(&pool).await.unwrap();
+        let (_, dot) = create_organization_dot_in(
+            &mut tx,
+            &org.organization.id,
+            &NewPrincipal {
+                name: "ticket",
+                display: "Ticket",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        let dot = dot.unwrap();
+        let dot_id = dot.principal.id;
+        tx.commit().await.unwrap();
+
+        assert!(
+            list_organization_dots_for_member(&pool, &[])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let listed = list_organization_dots_for_member(&pool, &["engineering".to_owned()])
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].agent.principal.id, dot_id);
+        assert_eq!(listed[0].organization_id, org.organization.id);
+        assert_eq!(listed[0].name, "ticket");
+        assert!(listed[0].active);
+
+        create_personal_dot(
+            &pool,
+            &NewPrincipal {
+                name: "personal",
+                display: "Personal",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            list_organization_dots_for_member(&pool, &["engineering".to_owned()])
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let owner = DotOwner::Organization(org.organization.id.clone());
+        let mut tx = WriteTx::begin(&pool).await.unwrap();
+        assert!(
+            set_dot_active_in(&mut tx, &dot_id, &owner, false, 4, "alice")
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+        assert!(
+            list_organization_dots_for_member(&pool, &["engineering".to_owned()])
+                .await
+                .unwrap()
+                .is_empty()
         );
     }
 }

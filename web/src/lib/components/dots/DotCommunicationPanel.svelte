@@ -9,11 +9,11 @@
 	let { dot }: { dot: Dot } = $props();
 	let data = $state<DotCommunication | null>(null);
 	let loading = $state(false);
-	let saving = $state<string | null>(null);
+	let saving = $state(false);
 	let query = $state('');
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
-	let drafts = $state<Record<string, { peer: DotCommunicationPeer; enabled: boolean }>>({});
+	let drafts = $state<Record<string, boolean>>({});
 	let rowErrors = $state<Record<string, string>>({});
 	const directions: DotCommunicationDirection[] = ['outbound', 'inbound'];
 	const canManage = $derived(me.value?.can_manage_dots === true);
@@ -23,11 +23,21 @@
 		description: peer.dot.description, kind: 'dot', group: '', order: 0, icon: null
 	})), query));
 	const rowKey = (peer: DotCommunicationPeer, direction: DotCommunicationDirection) => `${direction}:${peer.dot.id}`;
-	const enabled = (peer: DotCommunicationPeer, direction: DotCommunicationDirection) => drafts[rowKey(peer, direction)]?.enabled ?? communicationDecision(peer, direction).enabled;
-	const pending = (peer: DotCommunicationPeer, direction: DotCommunicationDirection) => {
+	/** The organization's side of a cross-organization edge: read-only here. */
+	const organizationControl = (peer: DotCommunicationPeer, direction: DotCommunicationDirection) => peer.cross_organization && direction === 'inbound';
+	const enabled = (peer: DotCommunicationPeer, direction: DotCommunicationDirection) => drafts[rowKey(peer, direction)] ?? communicationDecision(peer, direction).enabled;
+	const pendingBody = (peer: DotCommunicationPeer, direction: DotCommunicationDirection) => {
 		const draft = drafts[rowKey(peer, direction)];
-		return draft ? communicationChange(currentDot, draft.peer, direction, draft.enabled) : null;
+		return draft === undefined ? null : communicationChange(currentDot, peer, direction, draft);
 	};
+	const pendingChanges = $derived(
+		(data?.peers ?? []).flatMap((peer) =>
+			directions
+				.filter((direction) => !organizationControl(peer, direction))
+				.map((direction) => ({ peer, direction, key: rowKey(peer, direction) }))
+				.filter(({ key }) => drafts[key] !== undefined)
+		)
+	);
 
 	async function refresh() {
 		loading = true;
@@ -51,30 +61,36 @@
 
 	function change(peer: DotCommunicationPeer, direction: DotCommunicationDirection, value: boolean) {
 		const key = rowKey(peer, direction);
-		drafts[key] = { peer: drafts[key]?.peer ?? peer, enabled: value };
+		if (value === communicationDecision(peer, direction).enabled) delete drafts[key];
+		else drafts[key] = value;
 		notice = null;
 	}
 
-	async function save(peer: DotCommunicationPeer, direction: DotCommunicationDirection) {
-		const body = pending(peer, direction);
-		if (!body || !canManage) return;
-		const key = rowKey(peer, direction);
-		saving = key;
-		delete rowErrors[key];
+	async function saveAll() {
+		if (!canManage || pendingChanges.length === 0) return;
+		saving = true;
 		notice = null;
-		try {
-			data = await dotCommunicationApi.save(dot.id, body);
-			delete drafts[key];
-			notice = t('dot-communication-saved');
-		} catch (caught) {
-			rowErrors[key] = caught instanceof ApiError ? caught.serverMessage ?? caught.message : caught instanceof Error ? caught.message : t('dot-communication-error-save');
-		} finally {
-			saving = null;
+		rowErrors = {};
+		let failed = false;
+		for (const { key, peer, direction } of pendingChanges) {
+			const current = data?.peers.find((item) => item.dot.id === peer.dot.id);
+			const body = current ? pendingBody(current, direction) : null;
+			if (!body) { delete drafts[key]; continue; }
+			try {
+				data = await dotCommunicationApi.save(dot.id, body);
+				delete drafts[key];
+			} catch (caught) {
+				rowErrors[key] = caught instanceof ApiError ? caught.serverMessage ?? caught.message : caught instanceof Error ? caught.message : t('dot-communication-error-save');
+				failed = true;
+				break;
+			}
 		}
+		if (!failed) notice = t('dot-communication-saved');
+		saving = false;
 	}
 </script>
 
-<details class="collapse collapse-arrow border border-base-300 bg-base-100" ontoggle={onToggle}>
+<details class="collapse collapse-arrow border border-base-300 bg-base-100" data-panel="communication" ontoggle={onToggle}>
 	<summary class="collapse-title min-h-0 py-3 text-sm font-medium">{t('dot-communication-heading')}</summary>
 	<div class="collapse-content min-w-0 space-y-3 text-sm">
 		<p class="text-base-content/60">{t('dot-communication-scope')}</p>
@@ -95,18 +111,19 @@
 							{@const key = rowKey(peer, direction)}
 							<li class="rounded-box border border-base-300 p-3">
 								<label class="flex items-start gap-2">
-									<input type="checkbox" class="checkbox checkbox-sm mt-0.5 shrink-0" checked={enabled(peer, direction)} disabled={!canManage || saving !== null || (!enabled(peer, direction) && !decision.enabled && (!currentDot.active || !peer.dot.active))} aria-label={t(`dot-communication-${direction}-aria`, { name: peer.dot.display || peer.dot.name, id: peer.dot.id })} onchange={(event) => change(peer, direction, event.currentTarget.checked)} />
-									<span class="min-w-0 break-words font-medium">{peer.dot.display || peer.dot.name}<code class="mt-1 block break-all font-mono text-xs font-normal text-base-content/50">{peer.dot.id}</code></span>
+									<input type="checkbox" class="checkbox checkbox-sm mt-0.5 shrink-0" checked={enabled(peer, direction)} disabled={!canManage || saving || organizationControl(peer, direction) || (!enabled(peer, direction) && !decision.enabled && (!currentDot.active || !peer.dot.active))} aria-label={t(`dot-communication-${direction}-aria`, { name: peer.dot.display || peer.dot.name, id: peer.dot.id })} onchange={(event) => change(peer, direction, event.currentTarget.checked)} />
+									<span class="min-w-0 break-words font-medium" title={peer.dot.id}>{peer.dot.display || peer.dot.name}</span>
 								</label>
 								{#if peer.dot.description}<p class="mt-2 break-words text-xs text-base-content/60">{peer.dot.description}</p>{/if}
 								<div class="mt-2 flex flex-wrap gap-2">
 									<span class="badge badge-outline badge-sm">{peer.dot.active ? t('dots-status-active') : t('dots-status-inactive')}</span>
+									{#if peer.cross_organization}<span class="badge badge-outline badge-sm">{t('dot-communication-cross-organization')}</span>{/if}
 									{#if decision.enabled && decision.counterpartEnabled}<span class="badge badge-outline badge-sm">{t('dot-communication-both')}</span>{/if}
 								</div>
-								<p class="mt-2 text-xs text-base-content/60">{t(`dot-communication-${direction}-counterpart-${decision.counterpartEnabled ? 'enabled' : 'disabled'}`)}</p>
+								{#if organizationControl(peer, direction)}<p class="mt-2 text-xs text-base-content/60">{t('dot-communication-inbound-organization')}</p>
+								{:else}<p class="mt-2 text-xs text-base-content/60">{t(`dot-communication-${direction}-counterpart-${decision.counterpartEnabled ? 'enabled' : 'disabled'}`)}</p>{/if}
 								{#if !currentDot.active || !peer.dot.active}<p class="mt-1 text-xs text-base-content/60">{t('dot-communication-inactive')}</p>{/if}
 								{#if rowErrors[key]}<div class="alert alert-error mt-2 py-2" role="alert"><span class="break-words">{rowErrors[key]}</span></div>{/if}
-								<div class="mt-2 flex justify-end"><button class="btn btn-sm" type="button" disabled={!canManage || saving !== null || pending(peer, direction) === null} onclick={() => void save(peer, direction)}>{saving === key ? t('dot-access-saving') : t('memory-save-button')}</button></div>
 							</li>
 						{:else}
 							<li class="text-base-content/60">{data.peers.length ? t('searchable-select-no-results') : t('dot-communication-empty')}</li>
@@ -115,6 +132,9 @@
 				</section>
 			{/each}
 		{/if}
-		<div class="flex justify-end"><button class="btn btn-ghost btn-sm" type="button" disabled={loading || saving !== null} onclick={() => void refresh()}>{t('dot-communication-reload')}</button></div>
+		<div class="flex flex-wrap justify-end gap-2">
+			{#if canManage && pendingChanges.length}<button class="btn btn-sm" type="button" disabled={saving || loading} onclick={() => void saveAll()}>{saving ? t('dot-access-saving') : t('dot-communication-save-changes')}</button>{/if}
+			<button class="btn btn-ghost btn-sm" type="button" disabled={loading || saving} onclick={() => void refresh()}>{t('dot-communication-reload')}</button>
+		</div>
 	</div>
 </details>

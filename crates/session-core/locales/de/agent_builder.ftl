@@ -398,6 +398,7 @@ dot-communication-inbound-counterpart-disabled = Dieser Dot darf nicht bei Ihnen
 dot-communication-inactive = Beide Dots müssen aktiv sein, um eine Zustimmung zu aktivieren. Bestehende Zustimmungen können weiterhin widerrufen werden.
 dot-communication-empty = Keine anderen persönlichen Dots verfügbar.
 dot-communication-reload = Kommunikation neu laden
+dot-communication-save-changes = Änderungen speichern
 dot-communication-saved = Kommunikationsberechtigung gespeichert.
 dot-communication-error-load = Die Kommunikationsberechtigungen konnten nicht geladen werden. Laden Sie sie erneut und versuchen Sie es noch einmal.
 dot-communication-error-save = Die Kommunikationsberechtigung konnte nicht gespeichert werden. Ihre Änderung bleibt erhalten; laden Sie die Berechtigungen erneut und versuchen Sie es noch einmal.
@@ -408,6 +409,14 @@ dot-activity-communication-changed = Dot-Kommunikationsberechtigungen geändert.
 
 dot-communication-error-busy = Eine delegierte Unterhaltung läuft bereits. Warten Sie, bis sie abgeschlossen ist, und antworten Sie erneut.
 dot-communication-error-unavailable = Diese Dot-Delegation ist nicht verfügbar. Prüfen Sie vor einem erneuten Versuch die aktiven Dots, die Kommunikationsfreigaben und den Werkzeugzugriff.
+dot-communication-cross-organization = Organisationübergreifend
+dot-communication-inbound-organization = Die Organisation entscheidet, welche Dots dieses Dot fragen dürfen.
+agent-communication-heading = Annimmt Anfragen von
+agent-communication-scope = Wählen Sie, welche persönlichen Dots an dieses Organisations-Dot delegieren dürfen. Bei einer Delegation wird nur die ausdrückliche Aufgabe geteilt; das Dot verwendet seine eigenen Werkzeuge und Freigaberegeln.
+agent-communication-empty = Keine persönlichen Dots wurden freigegeben.
+agent-communication-saved = Die Kommunikationsberechtigung wurde gespeichert.
+agent-communication-error-load = Die Kommunikationsberechtigungen konnten nicht geladen werden. Laden Sie sie erneut und versuchen Sie es noch einmal.
+agent-communication-error-save = Die Kommunikationsberechtigung konnte nicht gespeichert werden. Ihre Änderung bleibt erhalten; laden Sie die Berechtigungen erneut und versuchen Sie es noch einmal.
 
 dot-connection-heading = Connector-Identität
 dot-connection-user = Meine Verbindung

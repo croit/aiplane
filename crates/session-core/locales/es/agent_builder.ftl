@@ -398,6 +398,7 @@ dot-communication-inbound-counterpart-disabled = Este Dot no puede hacerte solic
 dot-communication-inactive = Ambos Dots deben estar activos para habilitar el consentimiento. El consentimiento existente se puede revocar.
 dot-communication-empty = No hay otros Dots personales disponibles.
 dot-communication-reload = Recargar comunicación
+dot-communication-save-changes = Guardar cambios
 dot-communication-saved = Permiso de comunicación guardado.
 dot-communication-error-load = No se pudieron cargar los permisos de comunicación. Recárgalos e inténtalo de nuevo.
 dot-communication-error-save = No se pudo guardar el permiso de comunicación. Tu cambio se conserva; recarga los permisos e inténtalo de nuevo.
@@ -408,6 +409,14 @@ dot-activity-communication-changed = Permisos de comunicación de Dots modificad
 
 dot-communication-error-busy = Ya hay una conversación delegada en curso. Espere a que termine y vuelva a responder.
 dot-communication-error-unavailable = Esta delegación entre Dots no está disponible. Compruebe los Dots activos, los permisos de comunicación y el acceso a las herramientas antes de volver a intentarlo.
+dot-communication-cross-organization = Interorganizacional
+dot-communication-inbound-organization = La organización decide quién puede pedir a este Dot.
+agent-communication-heading = Acepta solicitudes de
+agent-communication-scope = Elige qué Dots personales pueden delegar en este Dot de organización. La delegación solo comparte la tarea explícita; el Dot usa sus propias herramientas y reglas de aprobación.
+agent-communication-empty = No hay Dots personales con acceso.
+agent-communication-saved = El permiso de comunicación se guardó.
+agent-communication-error-load = No se pudieron cargar los permisos de comunicación. Recárgalos e inténtalo de nuevo.
+agent-communication-error-save = No se pudo guardar el permiso de comunicación. Tu cambio se conserva; recarga los permisos e inténtalo de nuevo.
 
 dot-connection-heading = Identidad del conector
 dot-connection-user = Mi conexión

@@ -311,6 +311,13 @@ pub(super) fn operations() -> Vec<Op> {
         get("/api/v0/agents/{id}/shares", Access::Session)
             .ok(json::<agents::ShareList>())
             .errors(&[400, 403, 404]),
+        get("/api/v0/agents/{id}/communication", Access::Session)
+            .ok(json::<agents::AgentCommunicationView>())
+            .errors(&[400, 403, 404]),
+        put("/api/v0/agents/{id}/communication", Access::Session)
+            .body(json::<agents::AgentCommunicationBody>())
+            .ok(json::<agents::AgentCommunicationView>())
+            .errors(&[400, 403, 404, 409]),
         post("/api/v0/agents/{id}/shares", Access::Session)
             .body(json::<agents::ShareBody>())
             .created(json::<agents::ShareSet>())
