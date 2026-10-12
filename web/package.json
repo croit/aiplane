@@ -32,6 +32,9 @@
 		"dompurify": "^3.4.16",
 		"marked": "^18.1.0"
 	},
+	"overrides": {
+		"postcss-selector-parser": "7.1.6"
+	},
 	"imports": {
 		"#lib/*": "./src/lib/*"
 	}
