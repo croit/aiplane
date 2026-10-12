@@ -83,7 +83,7 @@
         <fieldset class="fieldset min-w-0 gap-3" disabled={busy || loading || !data?.can_create_dot}>
             <label class="fieldset"><span class="label">{t('dots-create-name')}</span><input class="input w-full" bind:value={name} maxlength="80" required /></label>
             <label class="fieldset"><span class="label">{t('dots-create-display')}</span><input class="input w-full" bind:value={display} maxlength="80" /></label>
-            <label class="fieldset"><span class="label">{t('dots-create-description')}</span><textarea class="textarea w-full" bind:value={description} maxlength="16384"></textarea></label>
+            <label class="fieldset"><span class="label">{t('dots-create-description')}</span><textarea class="textarea w-full" bind:value={description} maxlength="16384" placeholder={t('dots-create-description-placeholder')}></textarea><span class="label text-xs text-base-content/60">{t('dots-create-description-help')}</span></label>
         </fieldset>
     </form>
 </Modal>

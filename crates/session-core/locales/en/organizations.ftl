@@ -9,6 +9,7 @@ organization-error-execution-unavailable = This organization Dot or its executio
 organizations-heading = Organizations
 organizations-empty = No organizations are available to you.
 organization-create = Create organization
+organization-edit = Edit organization
 organization-member-groups = Member groups
 organization-membership-explanation = Group membership provides organization access. Dot shares and tool grants are configured separately.
 organization-no-members = No member groups are configured for this organization.

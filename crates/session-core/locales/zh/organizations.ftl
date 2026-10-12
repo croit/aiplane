@@ -9,6 +9,7 @@ organization-error-execution-unavailable = 此组织 Dot 或其运行权限不�
 organizations-heading = 组织
 organizations-empty = 你没有可访问的组织。
 organization-create = 创建组织
+organization-edit = 编辑组织
 organization-member-groups = 成员组
 organization-membership-explanation = 组成员身份提供组织访问权限。Dot 共享权限和工具授权需要单独配置。
 organization-no-members = 此组织尚未配置成员组。

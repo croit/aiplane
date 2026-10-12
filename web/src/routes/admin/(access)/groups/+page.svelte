@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
+	import Modal from '#lib/components/ui/Modal.svelte';
 	import { adminDelete, adminJson, adminPut } from '#lib/admin-client.js';
 	import { selectedGroupAdminTab, skillMatrixRows, toolMatrixRows } from '#lib/admin-groups.js';
 	import AdminGroupForm from '#lib/components/admin/AdminGroupForm.svelte';
@@ -22,6 +23,9 @@
 
 	let data = $state<GroupsData | null>(null);
 	let error = $state<string | null>(null);
+	let creating = $state(false);
+	let editing = $state<AdminGroup | null>(null);
+	let editOpen = $state(false);
 	/** Prefills the create form when the identity tab sends a value over. */
 	let seedOidcValue = $state('');
 
@@ -41,9 +45,23 @@
 		await refresh();
 	}
 
+	async function createGroup(group: AdminGroup) {
+		await save(group);
+		creating = false;
+		seedOidcValue = '';
+	}
+
+	async function editGroup(group: AdminGroup) {
+		await save(group);
+		editing = null;
+		editOpen = false;
+	}
+
 	async function remove(name: string) {
 		if (!confirm(t('groups-delete-confirm', { name }))) return;
 		await adminDelete(`/api/v0/admin/groups/${encodeURIComponent(name)}`);
+		editing = null;
+		editOpen = false;
 		await refresh();
 	}
 
@@ -60,6 +78,7 @@
 	async function createFrom(value: string) {
 		seedOidcValue = value;
 		await goto('/admin/groups?tab=groups');
+		creating = true;
 	}
 
 	let toolRows = $derived(
@@ -103,19 +122,53 @@
 		{:else if selected === 'skills'}
 			<AdminGrantMatrix rows={skillRows} groups={data.groups} held={(group) => group.skills} onsave={saveSkills} />
 		{:else}
-			{#key seedOidcValue}
-				<AdminGroupForm seedOidcValue={seedOidcValue} toolIds={data.tools.map((tool) => tool.id)} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={save} />
-			{/key}
-			<div class="flex flex-col gap-4">
+			<header class="flex flex-wrap items-center gap-3">
 				<h3 class="text-lg font-semibold">{t('groups-existing-heading')}</h3>
-				{#if data.groups.length === 0}
-					<p class="text-sm text-base-content/60">{t('groups-empty')}</p>
-				{:else}
+				<button class="btn btn-primary btn-sm ml-auto" type="button" onclick={() => (creating = true)}>{t('groups-add')}</button>
+			</header>
+			{#if data.groups.length === 0}
+				<p class="text-sm text-base-content/60">{t('groups-empty')}</p>
+			{:else}
+				<div class="grid min-w-0 gap-3 md:grid-cols-2">
 					{#each data.groups as group (group.name)}
-						<AdminGroupForm {group} toolIds={data.tools.map((tool) => tool.id)} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={save} ondelete={remove} />
+						<article class="card card-border bg-base-100">
+							<div class="card-body gap-3 p-4">
+								<div class="min-w-0">
+									<h4 class="card-title break-words font-mono text-base">{group.name}</h4>
+									{#if group.description}<p class="mt-2 whitespace-pre-wrap break-words text-sm text-base-content/70">{group.description}</p>{/if}
+								</div>
+								<div class="flex flex-wrap gap-2">
+									{#if group.is_admin}<span class="badge badge-outline">{t('groups-field-admin')}</span>{/if}
+									{#if group.is_default}<span class="badge badge-outline">{t('groups-field-default')}</span>{/if}
+									{#if group.can_manage_agents || group.is_admin}<span class="badge badge-outline">{t('groups-field-manage-agents')}</span>{/if}
+									{#if group.can_manage_dots || group.is_admin}<span class="badge badge-outline">{t('groups-field-manage-dots')}</span>{/if}
+									{#if group.tools.length}<span class="badge badge-outline">{t('groups-field-tools')}: {group.tools.length}</span>{/if}
+									{#if group.skills.length}<span class="badge badge-outline">{t('groups-field-skills')}: {group.skills.length}</span>{/if}
+								</div>
+								<div class="card-actions justify-end">
+									<button class="btn btn-sm" type="button" onclick={() => { editing = group; editOpen = true; }}>{t('groups-edit')}</button>
+								</div>
+							</div>
+						</article>
 					{/each}
-				{/if}
-			</div>
+				</div>
+			{/if}
 		{/if}
 	{/if}
 </section>
+
+<Modal bind:open={creating} title={t('groups-new-heading')} size="xl">
+	{#if data}
+		{#key seedOidcValue}
+			<AdminGroupForm seedOidcValue={seedOidcValue} toolIds={data.tools.map((tool) => tool.id)} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={createGroup} />
+		{/key}
+	{/if}
+</Modal>
+
+<Modal bind:open={editOpen} title={editing?.name ?? t('groups-existing-heading')} size="xl">
+	{#if data && editing}
+		{#key editing.name}
+			<AdminGroupForm group={editing} toolIds={data.tools.map((tool) => tool.id)} toolFamilies={data.tool_families} mcpTools={data.mcp_tools} skillNames={data.skill_names} onsave={editGroup} ondelete={remove} />
+		{/key}
+	{/if}
+</Modal>

@@ -4,10 +4,7 @@
 	import { onMount } from 'svelte';
 	import Modal from '#lib/components/ui/Modal.svelte';
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
-	import DotActivityPanel from '#lib/components/dots/DotActivityPanel.svelte';
-	import DotMemoryPanel from '#lib/components/dots/DotMemoryPanel.svelte';
-	import DotAccessPanel from '#lib/components/dots/DotAccessPanel.svelte';
-	import DotCommunicationPanel from '#lib/components/dots/DotCommunicationPanel.svelte';
+	import DotDetailsPanel from '#lib/components/dots/DotDetailsPanel.svelte';
 	import { activeDotCount, canCreateDot, dotsApi, type Dot } from '#lib/dots.js';
 	import { t } from '#lib/i18n.svelte.js';
 
@@ -17,6 +14,7 @@
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
 	let creating = $state(false);
+	let expandedDotId = $state<string | null>(null);
 	let name = $state('');
 	let display = $state('');
 	let description = $state('');
@@ -33,6 +31,8 @@
 			const result = await dotsApi.list();
 			dots = result.dots;
 			activeLimit = result.active_limit;
+			const requestedDot = page.url.searchParams.get('dot_id');
+			if (requestedDot && result.dots.some((dot) => dot.id === requestedDot)) expandedDotId = requestedDot;
 		} catch {
 			error = t('dots-error-load');
 		} finally {
@@ -46,7 +46,8 @@
 		busy = true;
 		createError = null;
 		try {
-			await dotsApi.create({ name: name.trim(), display: display.trim() || undefined, description: description.trim() });
+			const result = await dotsApi.create({ name: name.trim(), display: display.trim() || undefined, description: description.trim() });
+			expandedDotId = result.dot.id;
 			creating = false;
 			name = '';
 			display = '';
@@ -111,7 +112,7 @@
 	{:else}
 		<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
 			{#each dots as dot (dot.id)}
-				<article id={`dot-${dot.id}`} class="card card-border has-[details[data-panel=communication][open]]:md:col-span-2 has-[details[data-panel=communication][open]]:xl:col-span-3">
+				<article id={`dot-${dot.id}`} class={expandedDotId === dot.id ? 'card card-border md:col-span-2 xl:col-span-3' : 'card card-border'}>
 					<div class="card-body gap-3 p-4">
 						<div class="flex items-start justify-between gap-2">
 							<div class="min-w-0">
@@ -120,18 +121,18 @@
 							</div>
 							{#if dot.active}<StatusPill tone="ok" size="sm">{t('dots-status-active')}</StatusPill>{:else}<StatusPill size="sm">{t('dots-status-inactive')}</StatusPill>{/if}
 						</div>
-						{#if dot.description}<p class="line-clamp-3 text-sm text-base-content/70">{dot.description}</p>{/if}
-						<DotMemoryPanel {dot} />
-						<DotActivityPanel {dot} />
-						<DotAccessPanel {dot} initiallyOpen={page.url.searchParams.get('dot_id') === dot.id} />
-						<DotCommunicationPanel {dot} />
+						{#if dot.description}<div class="space-y-1"><p class="text-xs font-medium text-base-content/60">{t('dots-purpose-label')}</p><p class="line-clamp-3 whitespace-pre-wrap break-words text-sm text-base-content/80">{dot.description}</p></div>{/if}
 						<div class="card-actions flex-wrap justify-end">
-							<a class="btn btn-sm" href={`/dots/${encodeURIComponent(dot.id)}/workspace`}>{t('dot-workspace-heading')}</a>
-							{#if dot.active}<a class="btn btn-sm" href={`/scheduled/new?dot_id=${encodeURIComponent(dot.id)}`}>{t('dot-background-add-schedule')}</a><a class="btn btn-sm" href={`/webhooks/new?dot_id=${encodeURIComponent(dot.id)}`}>{t('dot-background-add-webhook')}</a>{/if}
+							<button class="btn btn-sm" type="button" aria-expanded={expandedDotId === dot.id} aria-controls={`dot-${dot.id}-details`} onclick={() => (expandedDotId = expandedDotId === dot.id ? null : dot.id)}>{t(expandedDotId === dot.id ? 'dots-details-close' : 'dots-details-open')}</button>
 							{#if dot.active}<button class="btn btn-sm" type="button" disabled={openingId === dot.id} onclick={() => void openChat(dot)}>{openingId === dot.id ? t('dot-action-chat-opening') : t('dot-action-chat')}</button>{/if}
 							<button class="btn btn-sm" type="button" disabled={busyId === dot.id || (!dot.active && !createAllowed)} onclick={() => void setActive(dot)}>
 								{dot.active ? t('dots-action-deactivate') : t('dots-action-activate')}
 							</button>
+						</div>
+						<div id={`dot-${dot.id}-details`} class="w-full md:col-span-2 xl:col-span-3" hidden={expandedDotId !== dot.id}>
+							{#if expandedDotId === dot.id}
+								<DotDetailsPanel {dot} initiallyOpenTab={page.url.searchParams.get('dot_id') === dot.id ? 'access' : 'memory'} />
+							{/if}
 						</div>
 					</div>
 				</article>
@@ -158,7 +159,8 @@
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="label-text">{t('dots-create-description')}</span>
-			<textarea class="textarea w-full" bind:value={description} maxlength="500" rows="3"></textarea>
+			<textarea class="textarea w-full" bind:value={description} maxlength="500" rows="3" placeholder={t('dots-create-description-placeholder')}></textarea>
+			<span class="text-xs text-base-content/60">{t('dots-create-description-help')}</span>
 		</label>
 	</form>
 </Modal>

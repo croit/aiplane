@@ -35,6 +35,8 @@ test("existing automation forms retain Dot binding, filter reused chats and allo
 
         await page.goto(`${BASE}/dots`, { waitUntil: "networkidle" });
         const card = page.locator("article").filter({ has: page.getByRole("heading", { name: dotName, exact: true }) });
+        await card.getByRole("button", { name: "Details", exact: true }).click();
+        await card.getByRole("tab", { name: "Automation", exact: true }).click();
         await card.getByRole("link", { name: "Add scheduled work", exact: true }).click();
         await page.getByRole("combobox", { name: "Run as", exact: true }).getByText(dotName, { exact: true }).waitFor();
         await page.getByRole("textbox", { name: "Name", exact: true }).fill(`Dot schedule ${suffix}`);
@@ -55,6 +57,8 @@ test("existing automation forms retain Dot binding, filter reused chats and allo
         await page.getByRole("link", { name: `Dot: ${dotName}`, exact: true }).waitFor();
 
         await page.goto(`${BASE}/dots`, { waitUntil: "networkidle" });
+        await card.getByRole("button", { name: "Details", exact: true }).click();
+        await card.getByRole("tab", { name: "Automation", exact: true }).click();
         await card.getByRole("link", { name: "Add webhook", exact: true }).click();
         await page.getByRole("combobox", { name: "Run as", exact: true }).getByText(dotName, { exact: true }).waitFor();
         await page.getByRole("textbox", { name: "Name", exact: true }).fill(`Dot webhook ${suffix}`);

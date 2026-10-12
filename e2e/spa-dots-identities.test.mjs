@@ -50,10 +50,10 @@ test("Personal Dot OAuth connects without selecting, saves explicitly and discon
 
         await page.goto(`${BASE}/dots?dot_id=${encodeURIComponent(dotId)}`, { waitUntil: "networkidle" });
         const card = page.locator(`[id="dot-${dotId}"]`);
-        const access = card.locator("details").filter({ has: page.getByText("Access and approvals", { exact: true }) });
+        const access = card.getByRole("tabpanel", { name: "Access", exact: true });
         const row = access.getByRole("region", { name: initial.connector.title, exact: true });
         await row.getByRole("combobox", { name: "Connector identity", exact: true }).waitFor();
-        assert.equal(await access.evaluate((element) => element.open), true);
+        assert.equal(await card.getByRole("tab", { name: "Access", exact: true }).getAttribute("aria-selected"), "true");
         assert.equal(await row.getByRole("combobox").inputValue(), "user");
         await row.getByText("The provider decides which account you authorize. Connecting does not create an account or change this Dot’s saved selection.", { exact: true }).waitFor();
         assert.equal(await row.getByRole("button", { name: "Save", exact: true }).isDisabled(), true);
@@ -224,7 +224,7 @@ test("An owner reloads and erases selected or never-selected local Dot credentia
             assert.equal(initial.user_connection.connected, true);
             const userBefore = initial.user_connection;
             await page.goto(`${BASE}/dots?dot_id=${dotId}`, { waitUntil: "networkidle" });
-            const access = page.locator(`[id="dot-${dotId}"]`).locator("details").filter({ has: page.getByText("Access and approvals", { exact: true }) });
+            const access = page.locator(`[id="dot-${dotId}"]`).getByRole("tabpanel", { name: "Access", exact: true });
             const permittedRow = access.getByRole("region", { name: "Workspace", exact: true });
             const provider = page.waitForRequest((request) => request.isNavigationRequest()
                 && request.method() === "GET" && new URL(request.url()).pathname === "/authorize");
@@ -369,7 +369,7 @@ test("Catalog resource rotation requires own reauthorization and explicit select
         assert.equal(initial.user_connection.needs_reauth, false);
         const page = await context.newPage();
         await page.goto(`${BASE}/dots?dot_id=${dotId}`, { waitUntil: "networkidle" });
-        const access = page.locator(`[id="dot-${dotId}"]`).locator("details").filter({ has: page.getByText("Access and approvals", { exact: true }) });
+        const access = page.locator(`[id="dot-${dotId}"]`).getByRole("tabpanel", { name: "Access", exact: true });
         const row = access.getByRole("region", { name: initial.connector.title, exact: true });
         async function authorize(button) {
             const provider = page.waitForRequest((request) => request.method() === "GET"

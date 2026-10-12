@@ -6,7 +6,7 @@
 	import { me } from '#lib/session.svelte.js';
 	import { t } from '#lib/i18n.svelte.js';
 
-	let { dot }: { dot: Dot } = $props();
+	let { dot, tabbed = false, active = false }: { dot: Dot; tabbed?: boolean; active?: boolean } = $props();
 	let data = $state<DotCommunication | null>(null);
 	let loading = $state(false);
 	let saving = $state(false);
@@ -59,6 +59,10 @@
 		if (details instanceof HTMLDetailsElement && details.open && !data && !loading) void refresh();
 	}
 
+	$effect(() => {
+		if (tabbed && active && !data && !loading && !error) void refresh();
+	});
+
 	function change(peer: DotCommunicationPeer, direction: DotCommunicationDirection, value: boolean) {
 		const key = rowKey(peer, direction);
 		if (value === communicationDecision(peer, direction).enabled) delete drafts[key];
@@ -90,9 +94,8 @@
 	}
 </script>
 
-<details class="collapse collapse-arrow border border-base-300 bg-base-100" data-panel="communication" ontoggle={onToggle}>
-	<summary class="collapse-title min-h-0 py-3 text-sm font-medium">{t('dot-communication-heading')}</summary>
-	<div class="collapse-content min-w-0 space-y-3 text-sm">
+{#snippet panelBody()}
+	<div class="min-w-0 space-y-3 text-sm">
 		<p class="text-base-content/60">{t('dot-communication-scope')}</p>
 		<p class="text-xs text-base-content/60">{t('dot-communication-tool-policy')}</p>
 		{#if notice}<div class="alert alert-success py-2" role="status"><span>{notice}</span></div>{/if}
@@ -137,4 +140,13 @@
 			<button class="btn btn-ghost btn-sm" type="button" disabled={loading || saving} onclick={() => void refresh()}>{t('dot-communication-reload')}</button>
 		</div>
 	</div>
-</details>
+{/snippet}
+
+{#if tabbed}
+	<section hidden={!active} class="min-w-0" data-dot-panel="communication">{@render panelBody()}</section>
+{:else}
+	<details class="collapse collapse-arrow border border-base-300 bg-base-100" data-panel="communication" ontoggle={onToggle}>
+		<summary class="collapse-title min-h-0 py-3 text-sm font-medium">{t('dot-communication-heading')}</summary>
+		<div class="collapse-content">{@render panelBody()}</div>
+	</details>
+{/if}

@@ -35,29 +35,33 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
             { outbound_enabled: false, inbound_enabled: false, generation: null });
         await page.goto(`${BASE}/dots`, { waitUntil: "networkidle" });
         function panel(dot) {
-            return page.locator(`[id="dot-${dot.id}"]`).locator("details")
-                .filter({ has: page.getByText("Communication", { exact: true }) });
+            return page.locator(`[id="dot-${dot.id}"]`).getByRole("tabpanel", { name: "Communication", exact: true });
         }
         function section(dot, title) {
             return panel(dot).getByRole("region", { name: title, exact: true });
         }
         function row(dot, title, peer) {
-            return section(dot, title).locator("li").filter({ has: page.locator("code").filter({ hasText: new RegExp(`^${peer.id}$`) }) });
+            return section(dot, title).locator("li").filter({ has: page.locator(`[title="${peer.id}"]`) });
         }
         async function open(dot) {
-            await panel(dot).locator("summary").click();
+            const card = page.locator(`[id="dot-${dot.id}"]`);
+            if (await card.getByRole("button", { name: "Details", exact: true }).count()) {
+                await card.getByRole("button", { name: "Details", exact: true }).click();
+            }
+            await card.getByRole("tab", { name: "Communication", exact: true }).click();
             await section(dot, "Can ask").getByRole("checkbox").first().waitFor();
         }
         async function save(dot, title, peer, expectedStatus = 200) {
             const saved = page.waitForResponse((response) => response.request().method() === "PUT"
                 && response.url() === `${BASE}/api/v0/dots/${dot.id}/communication`);
-            await row(dot, title, peer).getByRole("button", { name: "Save", exact: true }).click();
+            await panel(dot).getByRole("button", { name: "Save changes", exact: true }).click();
             const response = await saved;
             assert.equal(response.status(), expectedStatus);
             if (expectedStatus === 200) await panel(dot).getByRole("status").waitFor();
             return response;
         }
         async function reload(dot) {
+            await open(dot);
             const loaded = page.waitForResponse((response) => response.request().method() === "GET"
                 && response.url() === `${BASE}/api/v0/dots/${dot.id}/communication`);
             await panel(dot).getByRole("button", { name: "Reload communication", exact: true }).click();
@@ -69,7 +73,7 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         const outgoing = row(harald, "Can ask", clara);
         const outgoingCheckbox = outgoing.getByRole("checkbox", { name: `Can ask Clara (${clara.id})`, exact: true });
         assert.equal(await outgoingCheckbox.isChecked(), false);
-        assert.equal(await outgoing.getByRole("button", { name: "Save", exact: true }).isDisabled(), true);
+        assert.equal(await panel(harald).getByRole("button", { name: "Save changes", exact: true }).count(), 0);
         await outgoing.getByText("This Dot has not accepted your requests.", { exact: true }).waitFor();
         await outgoingCheckbox.check();
         const firstSave = await save(harald, "Can ask", clara);
@@ -90,8 +94,10 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         await reload(harald);
         await outgoing.getByText("Both consents enabled", { exact: true }).waitFor();
         assert.equal(await row(harald, "Accepts requests from", clara).getByRole("checkbox").isChecked(), false);
+        await open(clara);
         assert.equal(await row(clara, "Can ask", harald).getByRole("checkbox").isChecked(), false);
-        assert.equal(await outgoing.getByRole("button", { name: "Save", exact: true }).isDisabled(), true);
+        await open(harald);
+        assert.equal(await panel(harald).getByRole("button", { name: "Save changes", exact: true }).count(), 0);
 
         const beforeNoop = (await inventory(harald)).peers.find((peer) => peer.dot.id === clara.id).outgoing;
         const noop = await context.request.put(`${BASE}/api/v0/dots/${harald.id}/communication`, {
@@ -105,7 +111,6 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         });
         assert.equal(competing.status(), 200);
         await row(harald, "Accepts requests from", clara).getByRole("checkbox").check();
-        await save(harald, "Accepts requests from", clara);
         const stale = await save(harald, "Can ask", clara, 409);
         assert.equal(stale.request().headers()["accept-language"], "en",
             "API errors must follow the explicitly selected UI language rather than the browser preference");
@@ -123,11 +128,15 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
             }));
             throw error;
         }
-        assert.equal(await outgoingCheckbox.isChecked(), false, "the failed save must preserve the draft");
-        assert.equal(await outgoing.getByRole("button", { name: "Save", exact: true }).isDisabled(), false);
+        assert.equal(await outgoingCheckbox.isChecked(), false, "the failed save must preserve the outgoing draft");
+        assert.equal(await row(harald, "Accepts requests from", clara).getByRole("checkbox").isChecked(), true,
+            "the failed save must preserve the other pending draft too");
+        assert.equal(await panel(harald).getByRole("button", { name: "Save changes", exact: true }).isVisible(), true);
         await reload(harald);
         assert.equal(await outgoingCheckbox.isChecked(), false);
-        assert.equal(await outgoing.getByRole("button", { name: "Save", exact: true }).isDisabled(), true);
+        assert.equal(await row(harald, "Accepts requests from", clara).getByRole("checkbox").isChecked(), false,
+            "reloading must discard the conflicting inbound draft and show the stored consent");
+        assert.equal(await panel(harald).getByRole("button", { name: "Save changes", exact: true }).count(), 0);
 
         const inactive = await context.request.put(`${BASE}/api/v0/dots/${clara.id}/active`, { data: { active: false } });
         assert.equal(inactive.status(), 200);
@@ -136,7 +145,7 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         assert.equal(await outgoingCheckbox.isDisabled(), true);
         await panel(harald).getByRole("textbox", { name: "Search Dots by name or ID", exact: true }).fill(clara.id.toUpperCase());
         await outgoingCheckbox.waitFor();
-        assert.equal(await outgoing.locator("code").innerText(), clara.id);
+        assert.equal(await outgoing.locator(`[title="${clara.id}"]`).getAttribute("title"), clara.id);
         await reload(clara);
         assert.equal(await acceptsCheckbox.isChecked(), true);
         assert.equal(await acceptsCheckbox.isDisabled(), false);
@@ -145,6 +154,7 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         assert.equal((await inventory(clara)).peers.find((peer) => peer.dot.id === harald.id).incoming.inbound_enabled, false);
         await page.setViewportSize({ width: 390, height: 844 });
         assert.ok(await page.locator("main").evaluate((element) => element.scrollWidth <= element.clientWidth));
+        await open(harald);
         await panel(harald).getByRole("button", { name: "Reload communication", exact: true }).focus();
         assert.equal(await panel(harald).getByRole("button", { name: "Reload communication", exact: true }).evaluate((element) => document.activeElement === element), true);
     } finally {

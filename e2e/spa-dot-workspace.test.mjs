@@ -31,7 +31,10 @@ test("Personal Dot workspace persists files, respects availability and supports 
         const route = `/dots/${dotId}/workspace`;
         const page = await context.newPage();
         await page.goto(`${BASE}/dots`, { waitUntil: "networkidle" });
-        await page.locator(`[id="dot-${dotId}"]`).getByRole("link", { name: "Workspace", exact: true }).click();
+        const card = page.locator(`[id="dot-${dotId}"]`);
+        await card.getByRole("button", { name: "Details", exact: true }).click();
+        await card.getByRole("tab", { name: "Workspace", exact: true }).click();
+        await card.getByRole("link", { name: "Open workspace", exact: true }).click();
         await page.waitForURL((url) => url.pathname === route);
         await page.getByText(dot.display || dot.name, { exact: true }).waitFor();
         await page.getByText("This folder is empty.", { exact: true }).waitFor();

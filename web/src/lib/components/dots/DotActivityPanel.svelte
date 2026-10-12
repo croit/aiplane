@@ -4,7 +4,7 @@
 	import { dt, t } from '#lib/i18n.svelte.js';
 	import type { Dot } from '#lib/dot-state.js';
 
-	let { dot }: { dot: Dot } = $props();
+	let { dot, tabbed = false, active = false }: { dot: Dot; tabbed?: boolean; active?: boolean } = $props();
 	let events = $state<ActivityEvent[]>([]);
 	let next = $state<number | null>(null);
 	let loading = $state(false);
@@ -36,15 +36,18 @@
 		if (details instanceof HTMLDetailsElement && details.open && !loaded && !loading) void load();
 	}
 
+	$effect(() => {
+		if (tabbed && active && !loaded && !loading && !error) void load();
+	});
+
 	const line = (event: ActivityEvent) => {
 		const summary = summarize(event);
 		return summary ? t(summary.key, summary.args) : event.kind;
 	};
 </script>
 
-<details class="collapse collapse-arrow border border-base-300 bg-base-100" ontoggle={onToggle}>
-	<summary class="collapse-title min-h-0 py-3 text-sm font-medium">{t('dot-activity-heading')}</summary>
-	<div class="collapse-content space-y-3 text-sm">
+{#snippet panelBody()}
+	<div class="space-y-3 text-sm">
 		{#if error}<div class="alert alert-error py-2" role="alert"><span>{error}</span><button class="btn btn-ghost btn-xs" type="button" onclick={() => void load()}>{t('dot-activity-retry')}</button></div>{/if}
 		{#if loading && !events.length}
 			<div class="skeleton h-10 w-full"></div>
@@ -69,4 +72,13 @@
 		{/if}
 		{#if next !== null}<button class="btn btn-sm" type="button" disabled={loading} onclick={() => void load(true)}>{loading ? t('dot-activity-loading-more') : t('dot-activity-more')}</button>{/if}
 	</div>
-</details>
+{/snippet}
+
+{#if tabbed}
+	<section hidden={!active} class="min-w-0" data-dot-panel="activity">{@render panelBody()}</section>
+{:else}
+	<details class="collapse collapse-arrow border border-base-300 bg-base-100" ontoggle={onToggle}>
+		<summary class="collapse-title min-h-0 py-3 text-sm font-medium">{t('dot-activity-heading')}</summary>
+		<div class="collapse-content">{@render panelBody()}</div>
+	</details>
+{/if}

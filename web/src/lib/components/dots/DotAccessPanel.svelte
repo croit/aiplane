@@ -6,7 +6,7 @@
 	import DotConnectionsPanel from './DotConnectionsPanel.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 
-	let { dot, initiallyOpen = false }: { dot: Dot; initiallyOpen?: boolean } = $props();
+	let { dot, initiallyOpen = false, tabbed = false, active = false }: { dot: Dot; initiallyOpen?: boolean; tabbed?: boolean; active?: boolean } = $props();
 	let stale = $state(false);
 	// svelte-ignore state_referenced_locally
 	let open = $state(initiallyOpen);
@@ -45,6 +45,10 @@
 		if (details instanceof HTMLDetailsElement && details.open && !loaded && !loading) void refresh();
 	}
 
+	$effect(() => {
+		if (tabbed && active && !loaded && !loading && !error) void refresh();
+	});
+
 	function change(id: string, patch: { selected?: boolean; permission?: DotToolPermission }) {
 		tools = tools.map((tool) => tool.id === id ? { ...tool, ...patch } : tool);
 		dirty = true;
@@ -81,9 +85,8 @@
 	}
 </script>
 
-<details class="collapse collapse-arrow border border-base-300 bg-base-100" bind:open ontoggle={onToggle}>
-	<summary class="collapse-title min-h-0 py-3 text-sm font-medium">{t('dot-access-heading')}</summary>
-	<div class="collapse-content min-w-0 space-y-3 text-sm">
+{#snippet panelBody()}
+	<div class="min-w-0 space-y-3 text-sm">
 		<p class="text-base-content/60">{t('dot-access-scope', { name: dot.display || dot.name })}</p>
 		{#if notice}<div class="alert alert-success py-2" role="status"><span>{notice}</span></div>{/if}
 		{#if error}<div class="alert alert-error py-2" role="alert"><span class="break-words">{error}</span></div>{/if}
@@ -160,4 +163,13 @@
 			{#if loaded}<button class="btn btn-sm" type="button" disabled={!dirty || loading || saving || selections === null || stale} onclick={() => void save()}>{saving ? t('dot-access-saving') : t('memory-save-button')}</button>{/if}
 		</div>
 	</div>
-</details>
+{/snippet}
+
+{#if tabbed}
+	<section hidden={!active} class="min-w-0" data-dot-panel="access">{@render panelBody()}</section>
+{:else}
+	<details class="collapse collapse-arrow border border-base-300 bg-base-100" bind:open ontoggle={onToggle}>
+		<summary class="collapse-title min-h-0 py-3 text-sm font-medium">{t('dot-access-heading')}</summary>
+		<div class="collapse-content">{@render panelBody()}</div>
+	</details>
+{/if}

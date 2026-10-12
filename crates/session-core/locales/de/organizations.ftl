@@ -9,6 +9,7 @@ organization-error-execution-unavailable = Dieser Organisations-Dot oder seine A
 organizations-heading = Organisationen
 organizations-empty = Für Sie sind keine Organisationen verfügbar.
 organization-create = Organisation erstellen
+organization-edit = Organisation bearbeiten
 organization-member-groups = Mitgliedergruppen
 organization-membership-explanation = Gruppenmitgliedschaft ermöglicht den Zugriff auf die Organisation. Dot-Freigaben und Werkzeugberechtigungen werden separat eingerichtet.
 organization-no-members = Für diese Organisation sind keine Mitgliedergruppen eingerichtet.

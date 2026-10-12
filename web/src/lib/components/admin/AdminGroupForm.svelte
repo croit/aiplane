@@ -142,10 +142,8 @@
 	}
 </script>
 
-<article class="card">
-	<div class="card-body gap-3 p-4">
+	<div class="flex flex-col gap-3">
 		<form class="flex flex-col gap-3" onsubmit={(event) => { event.preventDefault(); save(); }}>
-			<h2 class="font-semibold">{group?.name ?? t('groups-new-heading')}</h2>
 			{#if error}<div class="alert alert-error py-2 text-sm"><span>{error}</span></div>{/if}
 			<div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
 				<label class="flex flex-col gap-1">
@@ -207,4 +205,3 @@
 			</div>
 		{/if}
 	</div>
-</article>

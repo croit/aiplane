@@ -150,8 +150,11 @@ the optional limits feature switch. Group grant and identity subtabs remain
 inside the Groups tab. `/admin/settings` stays a separate sidebar page.
 
 The authenticated Workspace navigation includes **Organizations**
-(`/organizations`). It lists actual organizations for which the current user
-is a member. Each `/organizations/<id>` page shows the returned name,
+(`/organizations`) only when the current user belongs to at least one
+organization. The menu uses the existing `/api/v0/organizations` membership
+list, so users with no organization do not see an empty destination there.
+The page lists actual organizations for which the current user is a member.
+Each `/organizations/<id>` page shows the returned name,
 description, organization-wide active usage and readable shared Dots.
 Membership alone grants no Dot share. Members with agent-management permission
 open the shared creation dialog to create a named Dot; existing write access permits activation changes within
@@ -178,9 +181,16 @@ the retained local credential.
 gateway groups. Metadata saves send the returned revision. A conflict preserves
 the local draft until an explicit reload. Empty group bindings grant no member
 access, and removing a bound group changes the organization revision. The
-forms use the shared group selector and existing six-language catalogs. Creation
-uses the existing shared Modal; existing organization cards retain their
-metadata editor.
+list uses compact cards with the current description and configured member
+groups. Creation and editing both use the shared Modal and group selector.
+Saving closes the edit dialog after the returned revision is accepted; a
+conflict keeps the draft open until the administrator reloads or corrects it.
+
+`/admin/groups` lists gateway groups as compact cards with their description,
+enabled management permissions and counts of granted tools and skills. Group
+creation and editing open the group form in a shared Modal; the identity,
+tools and skills tabs remain available for their existing mapping and matrix
+workflows.
 
 The Notifications tab shows device controls when Web Push initialized. If the
 feature is configured but its sender failed to initialize, the tab shows an
@@ -594,6 +604,14 @@ independently of **Agent manager**, with admin implication and the same save
 and reset flow. List, create and active-state routes enforce the corresponding
 server permission; the sidebar is not an authorization boundary.
 See [personal Dots](dots.md) and [access administration](admin/access.md).
+
+Each personal Dot card has a compact summary and a Details view with tabs for
+memory, activity, access, communication, workspace and automation. The memory,
+activity, access and communication tabs load their owner-scoped data on first
+visit and retain their edits while switching tabs. Workspace opens the Dot's
+file manager; automation links to its schedule and webhook pages. A Dot's
+optional short description is card and collaboration context, not an instruction
+to the model.
 
 Each Dot card lazily loads **Communication** from its owner-scoped inventory.
 Separate outgoing and incoming rows edit one decision per save; the other

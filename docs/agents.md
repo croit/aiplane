@@ -8,11 +8,16 @@ other agent platforms over A2A.
 
 Organization Dots reuse the same principal, spec, model grants and share
 editor, with an immutable organization owner and current group-derived
-membership. Their configuration and publication are available; conversations,
-test runs, automation and external channels are refused while the organization
-runtime bridge remains unavailable. Current member writers can manage the
-Dot’s own OAuth credential in the existing Setup connection panel; administrator
-configuration recovery alone supplies no credential access. See [organization Dots](dots-organizations.md).
+membership. Members with write access can manage their conversations,
+automation, publication and the Dot’s own OAuth credential in the existing
+Setup connection panel. Administrator configuration recovery alone supplies
+no credential access. See [organization Dots](dots-organizations.md).
+
+The `/agents` list can include personal and organization Dots alongside
+ordinary agents. Dot cards identify the Dot type and active state, and omit the
+generated principal ID; ordinary agent cards continue to show their authored
+agent ID and publication state. The Dot owner and type come from the existing
+Dot metadata returned with each agent, not from its principal name.
 
 This file covers what an agent *is* — the trust rules, principals and grants,
 the agent definition with its shares, models — and where the code lives. The

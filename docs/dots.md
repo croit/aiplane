@@ -11,10 +11,17 @@ state table, transactional active-slot enforcement, and session-authenticated
 active cap is an operator setting at `/admin/settings` → Access, defaulting to
 four. The `/dots` page lists, creates, activates and deactivates personal Dots.
 Lifecycle endpoints require the independent `can_manage_dots` group
-permission; administrators hold it and other groups default to disabled. Each Dot card has a lazily loaded memory panel with separate
-preference, project and fact entries. Owners can add, edit and delete those
-notes; they remain separate from user-wide memory. A second lazily loaded
-panel shows the Dot's recent audited events and can page through older ones.
+permission; administrators hold it and other groups default to disabled. Each
+Dot card shows its name, active state and optional purpose description. Its
+Details button opens tabs for memory, activity, access, communication,
+workspace and automation. The workspace tab links to the Dot's file manager;
+automation links to the existing Dot-scoped schedule and webhook pages. Tabs
+keep their loaded state while switching so unsaved access edits are preserved.
+The short description appears on the card and to other Dots; it is not sent to
+the model as an instruction. Give the Dot a task in chat. The memory tab has
+separate preference, project and fact entries. Owners can add, edit and delete
+those notes; they remain separate from user-wide memory. The activity tab
+shows the Dot's recent audited events and can page through older ones.
 Starting a Dot chat adds a session-start event without copying conversation
 text. Personal Dot tool decisions and outcomes appear in the same feed with
 the acting user and Dot attribution; their activity detail contains the tool,
@@ -66,7 +73,7 @@ delegation trees are cancelled when a participating Dot is deactivated. The `/do
 page displays active usage against the operator limit, creates a personal Dot
 with a friendly name, starts a private chat, and lets the owner deactivate or
 reactivate it. A deactivated Dot stays in the list and can be reactivated when
-a slot is available. The Access and approvals disclosure offers selected tools
+a slot is available. The Access tab offers selected tools
 with `Allow` or `Ask before each call`; unselected tools are denied. Connector
 identity labels identify the selected user, Dot or shared connection. Supported
 personal OAuth connectors may use a separately authorized Dot connection;

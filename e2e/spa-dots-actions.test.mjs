@@ -29,10 +29,10 @@ test("Dot action overrides preserve the tool default, reload and require correct
 
         await page.goto(`${BASE}/dots`, { waitUntil: "networkidle" });
         const card = page.locator("article").filter({ has: page.getByRole("heading", { name, exact: true }) });
-        const access = card.locator("details").filter({ has: page.getByText("Access and approvals", { exact: true }) });
-        await access.locator("summary").first().click();
+        await card.getByRole("button", { name: "Details", exact: true }).click();
+        await card.getByRole("tab", { name: "Access", exact: true }).click();
+        const access = card.getByRole("tabpanel", { name: "Access", exact: true });
         await access.getByRole("textbox").fill("browse_page");
-        assert.equal(await access.evaluate((element) => element.open), true, "manual opening must survive lazy loading");
         const browserRow = access.locator("li").filter({ has: page.locator("code").filter({ hasText: /^browse_page$/ }) });
         await browserRow.getByRole("checkbox").check();
         await browserRow.getByRole("combobox", { name: "Approval rule", exact: true }).selectOption("always_ask");
@@ -44,7 +44,7 @@ test("Dot action overrides preserve the tool default, reload and require correct
         await read.selectOption("allow");
         await fill.selectOption("deny");
         const saved = page.waitForResponse((response) => response.request().method() === "PUT" && response.url() === accessUrl);
-        await access.locator(":scope > .collapse-content > .flex").getByRole("button", { name: "Save", exact: true }).click();
+        await access.getByRole("button", { name: "Save", exact: true }).last().click();
         const savedResponse = await saved;
         assert.equal(savedResponse.status(), 200);
         const body = savedResponse.request().postDataJSON();
@@ -62,7 +62,7 @@ test("Dot action overrides preserve the tool default, reload and require correct
         assert.equal(await browserRow.getByRole("combobox", { name: "Approval rule", exact: true }).inputValue(), "always_ask");
         await read.selectOption("");
         const inheritanceSaved = page.waitForResponse((response) => response.request().method() === "PUT" && response.url() === accessUrl);
-        await access.locator(":scope > .collapse-content > .flex").getByRole("button", { name: "Save", exact: true }).click();
+        await access.getByRole("button", { name: "Save", exact: true }).last().click();
         assert.deepEqual((await inheritanceSaved).request().postDataJSON().tools.find((tool) => tool.id === "browse_page").actions, [{ id: "fill", rule: "deny" }]);
         await access.getByRole("status").getByText("Access and approval rules saved.", { exact: true }).waitFor();
 
@@ -76,11 +76,11 @@ test("Dot action overrides preserve the tool default, reload and require correct
         });
         await access.getByRole("button", { name: "Reload access", exact: true }).click();
         await actions.getByText("This saved action is no longer available. Remove its rule before saving.", { exact: true }).waitFor();
-        assert.equal(await access.locator(":scope > .collapse-content > .flex").getByRole("button", { name: "Save", exact: true }).isDisabled(), true);
+        assert.equal(await access.getByRole("button", { name: "Save", exact: true }).last().isDisabled(), true);
         await actions.getByRole("button", { name: "Remove rule for fill", exact: true }).click();
         await page.unroute(accessUrl);
         const corrected = page.waitForResponse((response) => response.request().method() === "PUT" && response.url() === accessUrl);
-        await access.locator(":scope > .collapse-content > .flex").getByRole("button", { name: "Save", exact: true }).click();
+        await access.getByRole("button", { name: "Save", exact: true }).last().click();
         assert.deepEqual((await corrected).request().postDataJSON().tools.find((tool) => tool.id === "browse_page").actions, []);
         await access.getByRole("status").getByText("Access and approval rules saved.", { exact: true }).waitFor();
         await read.focus();

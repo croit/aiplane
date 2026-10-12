@@ -6,9 +6,8 @@
 	import { t } from '#lib/i18n.svelte.js';
 	import type { Dot } from '#lib/dot-state.js';
 
-	let { dot }: { dot: Dot } = $props();
+	let { dot, tabbed = false, active = false }: { dot: Dot; tabbed?: boolean; active?: boolean } = $props();
 	let list = $state<DotMemoryList | null>(null);
-	let open = $state(false);
 	let drafts = $state<Record<string, string>>({});
 	let loading = $state(false);
 	let loaded = $state(false);
@@ -52,6 +51,10 @@
 		const details = event.currentTarget;
 		if (details instanceof HTMLDetailsElement && details.open && !loaded && !loading) void refresh();
 	}
+
+	$effect(() => {
+		if (tabbed && active && !loaded && !loading && !error) void refresh();
+	});
 
 	function openAdd(memoryKind: MemoryKind, selected: DotMemoryScope) {
 		if (!writable(selected)) return;
@@ -113,9 +116,9 @@
 	}
 </script>
 
-<details bind:open class="collapse collapse-arrow border border-base-300 bg-base-100" ontoggle={onToggle}>
-	<summary class="collapse-title min-h-0 py-3 text-sm font-medium">{t('dot-memory-heading')}</summary>
-	<div class="collapse-content space-y-3 text-sm">
+
+{#snippet panelBody()}
+	<div class="space-y-3 text-sm">
 		{#if loaded}<button class="btn btn-ghost btn-xs" type="button" disabled={loading} onclick={() => void refresh()}>{t('dot-memory-reload')}</button>{/if}
 		{#if notice}<div class="alert alert-success py-2" role="status"><span>{notice}</span></div>{/if}
 		{#if error}<div class="alert alert-error py-2" role="alert"><span>{error}</span><button class="btn btn-ghost btn-xs" type="button" onclick={() => void refresh()}>{t('dot-memory-retry')}</button></div>{/if}
@@ -155,7 +158,16 @@
 			{/each}
 		{/if}
 	</div>
-</details>
+{/snippet}
+
+{#if tabbed}
+	<section hidden={!active} class="min-w-0 space-y-3" data-dot-panel="memory">{@render panelBody()}</section>
+{:else}
+	<details class="collapse collapse-arrow border border-base-300 bg-base-100" ontoggle={onToggle}>
+		<summary class="collapse-title min-h-0 py-3 text-sm font-medium">{t('dot-memory-heading')}</summary>
+		<div class="collapse-content space-y-3 text-sm">{@render panelBody()}</div>
+	</details>
+{/if}
 
 <EditModal
 	bind:open={adding}
