@@ -118,7 +118,9 @@ Identical to `/v1/chat/completions`, because it is the same pipeline:
   same way right before it is asked, so a session-affinity hit is not
   checked on it
   ([automatic routing](automatic-routing.md#limits));
-- a token's model allowlist applies to the alias *and* its target;
+- a token's model allowlist applies to the name the client sends: allowing an
+  alias covers whatever it currently resolves to, while naming a real id
+  directly needs that id on the list;
 - pool group restrictions apply.
 
 ## Streams and timeouts

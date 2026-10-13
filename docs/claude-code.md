@@ -243,7 +243,9 @@ Identical to `/v1/chat/completions`, because it is the same pipeline:
   `/v1/messages/count_tokens` too, so a session-affinity hit is not checked
   on it; an automatic-route failure is reported in the Anthropic error shape
   ([automatic routing](automatic-routing.md#limits));
-- a token's model allowlist applies to the alias *and* its target;
+- a token's model allowlist applies to the name the client sends: allowing an
+  alias covers whatever it currently resolves to, while naming a real id
+  directly needs that id on the list;
 - pool group restrictions apply, so a token can't reach a pool its owner's
   groups don't permit.
 

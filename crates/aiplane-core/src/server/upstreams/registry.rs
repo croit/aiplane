@@ -766,12 +766,13 @@ impl PoolAccess {
     }
 
     /// This access for a request naming `model`: [`Self::resolving`] when the
-    /// caller may name it, so the ids the gateway resolves it to route;
+    /// caller may name it (its grants and its token's allowlist), so the ids
+    /// the gateway resolves it to route;
     /// unchanged otherwise, so a name the caller holds no grant on stays
     /// unknown to it.
     #[must_use]
     pub fn for_request(&self, model: &str) -> Self {
-        if self.grants_model(model) {
+        if self.allows_model(model) {
             self.resolving()
         } else {
             self.clone()
@@ -802,6 +803,27 @@ impl PoolAccess {
         self.allowed_models
             .as_ref()
             .is_none_or(|set| set.contains(model))
+    }
+
+    /// [`Self::allowlist_allows`], on `pool`: when resolving
+    /// ([`Self::resolving`]), an allowlisted alias also lets through the id a
+    /// backend of `pool` currently resolves it to. The alias's target can
+    /// change without the allowlist changing, so a token allowed `qwen` keeps
+    /// working when `qwen` is repointed — but only for the id the alias
+    /// resolves to there, never for a name the caller sends itself.
+    pub fn allowlist_reaches(&self, pool: &Pool, model: &str) -> bool {
+        let Some(allowed) = &self.allowed_models else {
+            return true;
+        };
+        allowed.contains(model)
+            || (self.expand_aliases
+                && allowed.iter().any(|name| {
+                    name != model
+                        && pool
+                            .backends
+                            .iter()
+                            .any(|b| b.resolve(name).as_deref() == Some(model))
+                }))
     }
 
     /// Whether a system principal's grants name `model`; `true` for people.
@@ -2243,7 +2265,15 @@ impl UpstreamRegistry {
         // it has to keep behaving exactly as it does for an unrestricted
         // caller — 404, with the kind's fallback still applying — rather than
         // becoming an allowlist error that suppresses the fallback.
-        if !access.allowlist_allows(model) {
+        //
+        // When resolving, an allowlisted alias also clears the id it resolves
+        // to (`PoolAccess::allowlist_reaches`), on the pools where it does.
+        if !access.allowlist_allows(model)
+            && !d
+                .pools
+                .values()
+                .any(|p| p.kind == kind && access.allowlist_reaches(p, model))
+        {
             let known = d
                 .pools
                 .values()
@@ -2255,11 +2285,12 @@ impl UpstreamRegistry {
             });
         }
         // First, a pool with a healthy backend that serves the model.
-        if let Some(pool) = d
-            .pools
-            .values()
-            .find(|p| p.kind == kind && access.reaches(p, model) && p.serves_model(model))
-        {
+        if let Some(pool) = d.pools.values().find(|p| {
+            p.kind == kind
+                && access.reaches(p, model)
+                && access.allowlist_reaches(p, model)
+                && p.serves_model(model)
+        }) {
             return pool
                 .acquire_for_model_affine(model, affinity)
                 .map_err(RouteError::Acquire);
@@ -2267,11 +2298,12 @@ impl UpstreamRegistry {
         // No healthy serving backend. If the model is nonetheless known to a
         // pool of this kind the caller may access, it's a transient outage (all
         // replicas down) — surface 503, not 404.
-        if let Some(pool) = d
-            .pools
-            .values()
-            .find(|p| p.kind == kind && access.reaches(p, model) && p.knows_model(model))
-        {
+        if let Some(pool) = d.pools.values().find(|p| {
+            p.kind == kind
+                && access.reaches(p, model)
+                && access.allowlist_reaches(p, model)
+                && p.knows_model(model)
+        }) {
             return Err(RouteError::Acquire(AcquireError::NoHealthyBackend {
                 pool: pool.name.clone(),
             }));
@@ -2411,7 +2443,12 @@ impl UpstreamRegistry {
         access: &PoolAccess,
     ) -> Result<String, RouteError> {
         let d = self.data();
-        if !access.allowlist_allows(model) {
+        if !access.allowlist_allows(model)
+            && !d
+                .pools
+                .values()
+                .any(|p| p.kind == kind && access.allowlist_reaches(p, model))
+        {
             let known = d
                 .pools
                 .values()
@@ -2425,16 +2462,19 @@ impl UpstreamRegistry {
         if let Some(id) = d
             .pools
             .values()
-            .filter(|p| p.kind == kind && access.reaches(p, model))
+            .filter(|p| {
+                p.kind == kind && access.reaches(p, model) && access.allowlist_reaches(p, model)
+            })
             .find_map(|p| p.resolve_healthy(model))
         {
             return Ok(id);
         }
-        if let Some(pool) = d
-            .pools
-            .values()
-            .find(|p| p.kind == kind && access.reaches(p, model) && p.knows_model(model))
-        {
+        if let Some(pool) = d.pools.values().find(|p| {
+            p.kind == kind
+                && access.reaches(p, model)
+                && access.allowlist_reaches(p, model)
+                && p.knows_model(model)
+        }) {
             return Err(RouteError::Acquire(AcquireError::NoHealthyBackend {
                 pool: pool.name.clone(),
             }));
@@ -4389,10 +4429,10 @@ models = ["second"]
     }
 
     /// Aliases are matched as written. The allowlist is applied to the id the
-    /// caller asked for, before alias resolution, so picking `qwen` allows the
-    /// alias and not the underlying real id. Both appear in the picker (they
-    /// both appear in `/v1/models`), so this is a choice the operator makes
-    /// rather than a surprise — but it needs to stay deliberate.
+    /// caller asked for, so picking `qwen` allows the alias and not the
+    /// underlying real id when a caller names it. Both appear in the picker
+    /// (they both appear in `/v1/models`), so this is a choice the operator
+    /// makes rather than a surprise — but it needs to stay deliberate.
     #[test]
     fn an_allowlist_matches_the_requested_id_not_the_resolved_one() {
         let reg = build(vec![(
@@ -4417,6 +4457,63 @@ models = ["second"]
             reg.acquire_for_access("Qwen/Qwen3-235B", PoolKind::Chat, &alias_only),
             Err(RouteError::ModelNotAllowed(_))
         ));
+        // Requesting the real id is not a way to unlock it either.
+        assert!(matches!(
+            reg.acquire_for_access(
+                "Qwen/Qwen3-235B",
+                PoolKind::Chat,
+                &alias_only.for_request("Qwen/Qwen3-235B")
+            ),
+            Err(RouteError::ModelNotAllowed(_))
+        ));
+    }
+
+    /// A request for an allowlisted alias is dispatched under the id the
+    /// gateway resolved it to (the tool loop acquires per round with the real
+    /// id). The alias must authorise that id without the token listing it —
+    /// and keep doing so when the alias is repointed, which is the point of
+    /// an alias.
+    #[test]
+    fn an_allowlisted_alias_authorises_whatever_it_currently_resolves_to() {
+        let reg = build(vec![(
+            "chat",
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::RoundRobin,
+                vec![backend_alias("a", names(&["qwen"]))],
+            ),
+        )]);
+        seed_models(&reg, "chat", 0, &["Qwen/Qwen3-235B"]);
+
+        let alias_only = PoolAccess {
+            allowed_models: Some(Arc::new(HashSet::from(["qwen".to_string()]))),
+            ..Default::default()
+        };
+        let access = alias_only.for_request("qwen");
+        let real = reg
+            .resolve_route_access("qwen", PoolKind::Chat, &access)
+            .expect("the alias resolves");
+        assert_eq!(real, "Qwen/Qwen3-235B");
+        assert!(
+            reg.acquire_for_access(&real, PoolKind::Chat, &access)
+                .is_ok(),
+            "the resolved target of an allowed alias must route"
+        );
+
+        // The backend now serves a different model: the bare alias follows
+        // it, and so does the token's access — nothing to re-grant.
+        seed_models(&reg, "chat", 0, &["Qwen/Qwen3.5-397B"]);
+        let real = reg
+            .resolve_route_access("qwen", PoolKind::Chat, &access)
+            .expect("the alias follows its new target");
+        assert_eq!(real, "Qwen/Qwen3.5-397B");
+        assert!(
+            reg.acquire_for_access(&real, PoolKind::Chat, &access)
+                .is_ok()
+        );
+        // The old target is no longer the alias's, so the alias no longer
+        // covers it.
+        assert!(!access.allowlist_reaches(&reg.data().pools["chat"], "Qwen/Qwen3-235B"));
     }
 
     #[test]
