@@ -128,6 +128,30 @@ async fn a_restricted_token_is_refused_the_models_it_does_not_list() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+/// Allowing an alias is enough to use it: the request is dispatched under the
+/// real id the alias resolves to, and the token must not have to list that id
+/// as well — the alias's target is the operator's to repoint. Naming the real
+/// id directly still needs it on the list.
+#[tokio::test]
+async fn an_allowlisted_alias_routes_without_listing_its_target() {
+    let upstream = MockServer::start().await;
+    mount_chat(&upstream).await;
+    let state = common::state_with_alias(&upstream.uri(), "fast", "real-model").await;
+    let (bearer, token_id) = common::seed_user_with_token_id(&state, "alice").await;
+    token_models::set_for_token(&state.db, &token_id, &["fast".into()], ManagedBy::Owner)
+        .await
+        .unwrap();
+    let app = common::app(state);
+
+    let resp = app.serve(chat_req(&bearer, "fast")).await.unwrap();
+    let status = resp.status();
+    let body = common::read_body(resp).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+
+    let resp = app.serve(chat_req(&bearer, "real-model")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
 /// Clearing the allowlist restores the default. The write path spells
 /// "unrestricted" as *no rows*, and reading it back as an empty allowlist —
 /// deny everything — would lock the owner out of their own token.
