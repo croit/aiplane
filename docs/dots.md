@@ -773,6 +773,10 @@ documentation and generated artifacts together.
 
 The following adopted designs define the remaining implementation work:
 
+- [Conversational setup and chat participation](dots-conversational-setup.md)
+  records the requested natural-language Dot creation and reconfiguration,
+  guided prerequisites, organization peer delegation and ordinary-chat Dot
+  mentions. Its complex interaction mockup requires approval before UI work.
 - [Organization Dots](dots-organizations.md) defines an independent active
   cap, member/share approval standing and isolated principal execution.
 - [Dot identities](dots-identities.md) defines the reused user OAuth account

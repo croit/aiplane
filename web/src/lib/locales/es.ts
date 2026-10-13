@@ -2007,7 +2007,7 @@ export const es: Catalog = {
  "notifications-loading": "Cargando los ajustes de notificaciones…",
  "notifications-unavailable": "Las notificaciones no están disponibles en esta pasarela. Pide a un administrador que revise la configuración de Push.",
  "organization-active-count": "{count} de {limit} Dots activos",
- "organization-configuration-only": "Los miembros con acceso de escritura pueden configurar este Dot de la organización, utilizar su borrador guardado o una versión publicada en una conversación privada y programar tareas con una versión publicada seleccionada. Las suites de pruebas automatizadas, la delegación, los webhooks de la organización y los canales externos no están disponibles.",
+ "organization-configuration-only": "Los miembros con acceso de escritura pueden configurar este Dot de la organización, conversar en privado con su borrador guardado o una versión publicada y automatizar una versión publicada seleccionada mediante tareas programadas y webhooks. El Dot utiliza sus propios permisos y las cuentas conectadas seleccionadas.",
  "organization-create": "Crear organización",
  "organization-dots-empty": "No hay Dots compartidos contigo en esta organización.",
  "organization-edit": "Editar organización",

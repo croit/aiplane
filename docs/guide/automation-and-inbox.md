@@ -141,7 +141,10 @@ configuration, their own connected identities, private draft or published conver
 scoped memory. See [Organization Dots](../dots-organizations.md) for their
 current access requirements. Organization Dots also support scheduled work as
 described below. Organization event triggers are described in **Create an
-organization Dot webhook**. Automatic memory curation is not available yet.
+organization Dot webhook**. The organization Dot page links to its schedules
+and webhooks; both run a selected published version with the Dot's own
+permissions and selected connected accounts. Automatic memory curation is not
+available yet.
 Personal Dot computers provide persistent files and a saved server-side browser
 profile when the runner has verified persistent storage. During a Dot chat,
 **handover** lets you operate that Dot's browser for a login or other browser
@@ -151,7 +154,7 @@ availability](../dots-workspace.md#operator-implications).
 
 ## Configure communication consent
 
-Expand **Communication** on a Dot card. **Can ask** controls its outgoing
+Open **Details** on a personal Dot card and select **Communication**. **Can ask** controls its outgoing
 consent to each actual owned peer. **Accepts requests from** controls which
 peers it accepts requests from. The counterpart choice is read-only; configure
 it on the other Dot's card. Save each changed row separately. **Both consents

@@ -1992,7 +1992,7 @@ export const zh: Catalog = {
  "notifications-loading": "正在加载通知设置…",
  "notifications-unavailable": "此网关目前无法使用通知。请让管理员检查推送设置。",
  "organization-active-count": "已激活 {count} 个 Dot，上限 {limit} 个",
- "organization-configuration-only": "拥有写入权限的成员可以配置此组织 Dot，在私密对话中使用其已保存的草稿或已发布版本，并为选定的已发布版本安排任务。自动化测试套件、委派、组织 Webhook 和外部渠道不可用。",
+ "organization-configuration-only": "拥有写入权限的成员可以配置此组织 Dot，与其已保存的草稿或已发布版本进行私密对话，并通过定时任务和 Webhook 自动运行选定的已发布版本。Dot 使用自己的权限和所选的已连接账户。",
  "organization-create": "创建组织",
  "organization-dots-empty": "此组织中没有与你共享的 Dot。",
  "organization-edit": "编辑组织",

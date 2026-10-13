@@ -2007,7 +2007,7 @@ export const fr: Catalog = {
  "notifications-loading": "Chargement des paramètres de notification…",
  "notifications-unavailable": "Les notifications ne sont pas disponibles sur cette passerelle. Demandez à un administrateur de vérifier les paramètres Push.",
  "organization-active-count": "{count} Dots actifs sur {limit}",
- "organization-configuration-only": "Les membres disposant d’un accès en écriture peuvent configurer ce Dot d’organisation, utiliser son brouillon enregistré ou une version publiée dans une conversation privée, et planifier des tâches sur une version publiée sélectionnée. Les suites de tests automatisées, la délégation, les webhooks d’organisation et les canaux externes sont indisponibles.",
+ "organization-configuration-only": "Les membres disposant d’un accès en écriture peuvent configurer ce Dot d’organisation, discuter en privé avec son brouillon enregistré ou une version publiée, et automatiser une version publiée sélectionnée avec des tâches planifiées et des webhooks. Le Dot utilise ses propres autorisations et les comptes connectés sélectionnés.",
  "organization-create": "Créer une organisation",
  "organization-dots-empty": "Aucun Dot n’est partagé avec vous dans cette organisation.",
  "organization-edit": "Modifier l’organisation",

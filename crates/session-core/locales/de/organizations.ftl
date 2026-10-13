@@ -22,6 +22,6 @@ organization-saved = Organisation gespeichert.
 organization-dots-empty = In dieser Organisation sind keine Dots für Sie freigegeben.
 organization-active-count = { $count } von { $limit } Dots aktiv
 organization-owned-by = Organisation: { $name }
-organization-configuration-only = Mitglieder mit Schreibzugriff können diesen Organisations-Dot konfigurieren, seinen gespeicherten Entwurf oder eine veröffentlichte Version in einer privaten Unterhaltung verwenden und Aufgaben für eine ausgewählte veröffentlichte Version planen. Automatisierte Testsuiten, Delegation, Organisations-Webhooks und externe Kanäle sind nicht verfügbar.
+organization-configuration-only = Mitglieder mit Schreibzugriff können diesen Organisations-Dot konfigurieren, mit seinem gespeicherten Entwurf oder einer veröffentlichten Version privat chatten und eine ausgewählte veröffentlichte Version über Zeitpläne und Webhooks automatisieren. Der Dot verwendet seine eigenen Berechtigungen und die ausgewählten verbundenen Konten.
 organization-share-search-truncated = Die Suche hat ihr Limit erreicht. Geben Sie einen genaueren Namen oder eine vollständige E-Mail-Adresse ein.
 

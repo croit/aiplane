@@ -22,6 +22,6 @@ organization-saved = Organization saved.
 organization-dots-empty = No Dots are shared with you in this organization.
 organization-active-count = { $count } of { $limit } Dots active
 organization-owned-by = Organization: { $name }
-organization-configuration-only = Members with Write access can configure this organization Dot, use its saved draft or a published version in a private conversation, and schedule work on a selected published version. Automated test suites, delegation, organization webhooks and external channels are unavailable.
+organization-configuration-only = Members with Write access can configure this organization Dot, chat privately using its saved draft or a published version, and automate a selected published version with schedules and webhooks. The Dot uses its own permissions and selected connected accounts.
 organization-share-search-truncated = Search reached its limit. Enter a more specific name or an exact email address.
 

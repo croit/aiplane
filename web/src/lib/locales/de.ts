@@ -2007,7 +2007,7 @@ export const de: Catalog = {
  "notifications-loading": "Benachrichtigungseinstellungen werden geladen …",
  "notifications-unavailable": "Benachrichtigungen sind auf diesem Gateway derzeit nicht verfügbar. Bitten Sie eine Administratorin oder einen Administrator, die Push-Einstellungen zu prüfen.",
  "organization-active-count": "{count} von {limit} Dots aktiv",
- "organization-configuration-only": "Mitglieder mit Schreibzugriff können diesen Organisations-Dot konfigurieren, seinen gespeicherten Entwurf oder eine veröffentlichte Version in einer privaten Unterhaltung verwenden und Aufgaben für eine ausgewählte veröffentlichte Version planen. Automatisierte Testsuiten, Delegation, Organisations-Webhooks und externe Kanäle sind nicht verfügbar.",
+ "organization-configuration-only": "Mitglieder mit Schreibzugriff können diesen Organisations-Dot konfigurieren, mit seinem gespeicherten Entwurf oder einer veröffentlichten Version privat chatten und eine ausgewählte veröffentlichte Version über Zeitpläne und Webhooks automatisieren. Der Dot verwendet seine eigenen Berechtigungen und die ausgewählten verbundenen Konten.",
  "organization-create": "Organisation erstellen",
  "organization-dots-empty": "In dieser Organisation sind keine Dots für Sie freigegeben.",
  "organization-edit": "Organisation bearbeiten",
