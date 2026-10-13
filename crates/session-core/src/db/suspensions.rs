@@ -22,6 +22,8 @@ pub enum SuspensionKind {
     SecureInput,
     /// An answer from a human other than the one chatting.
     HumanAnswer,
+    /// The owner is temporarily operating a Dot's isolated browser.
+    BrowserHandover,
 }
 
 impl SuspensionKind {
@@ -30,6 +32,7 @@ impl SuspensionKind {
             Self::Approval => "approval",
             Self::SecureInput => "secure_input",
             Self::HumanAnswer => "human_answer",
+            Self::BrowserHandover => "browser_handover",
         }
     }
 
@@ -38,6 +41,7 @@ impl SuspensionKind {
             "approval" => Ok(Self::Approval),
             "secure_input" => Ok(Self::SecureInput),
             "human_answer" => Ok(Self::HumanAnswer),
+            "browser_handover" => Ok(Self::BrowserHandover),
             _ => Err(DbError::Decode {
                 column: "kind",
                 source: anyhow::anyhow!("unknown suspension kind `{s}`"),
@@ -51,6 +55,7 @@ impl SuspensionKind {
         match self {
             Self::Approval => &[DecisionKind::AllowOnce, DecisionKind::Deny],
             Self::SecureInput | Self::HumanAnswer => &[DecisionKind::Value, DecisionKind::Deny],
+            Self::BrowserHandover => &[],
         }
     }
 
@@ -60,7 +65,7 @@ impl SuspensionKind {
     pub fn answered_by(self) -> Answerer {
         match self {
             Self::SecureInput => Answerer::Participant,
-            Self::Approval | Self::HumanAnswer => Answerer::Staff,
+            Self::Approval | Self::HumanAnswer | Self::BrowserHandover => Answerer::Staff,
         }
     }
 
@@ -97,6 +102,7 @@ pub enum DecisionKind {
     AllowOnce,
     Deny,
     Value,
+    BrowserReturned,
 }
 
 /// Why a call was denied. The model is told which, because "the user said no"
@@ -118,6 +124,7 @@ pub enum Decision {
     AllowOnce,
     Deny { reason: DenyReason },
     Value { value: serde_json::Value },
+    BrowserReturned,
 }
 
 impl std::fmt::Debug for Decision {
@@ -126,6 +133,7 @@ impl std::fmt::Debug for Decision {
             Self::AllowOnce => f.write_str("AllowOnce"),
             Self::Deny { reason } => f.debug_struct("Deny").field("reason", reason).finish(),
             Self::Value { .. } => f.write_str("Value { value: <redacted> }"),
+            Self::BrowserReturned => f.write_str("BrowserReturned"),
         }
     }
 }
@@ -136,6 +144,7 @@ impl Decision {
             Self::AllowOnce => DecisionKind::AllowOnce,
             Self::Deny { .. } => DecisionKind::Deny,
             Self::Value { .. } => DecisionKind::Value,
+            Self::BrowserReturned => DecisionKind::BrowserReturned,
         }
     }
 }
@@ -722,10 +731,15 @@ mod tests {
         );
         assert_eq!(SuspensionKind::Approval.answered_by(), Answerer::Staff);
         assert_eq!(SuspensionKind::HumanAnswer.answered_by(), Answerer::Staff);
+        assert_eq!(
+            SuspensionKind::BrowserHandover.answered_by(),
+            Answerer::Staff
+        );
         for kind in [
             SuspensionKind::Approval,
             SuspensionKind::SecureInput,
             SuspensionKind::HumanAnswer,
+            SuspensionKind::BrowserHandover,
         ] {
             assert_eq!(
                 kind.timeout_fallback(TimeoutFallback::AllowOnce),
@@ -767,6 +781,19 @@ mod tests {
         let printed = format!("{decision:?}");
         assert!(!printed.contains("481516"), "{printed}");
         assert!(printed.contains("redacted"), "{printed}");
+    }
+
+    #[test]
+    fn browser_handover_has_no_public_resume_decisions() {
+        assert!(SuspensionKind::BrowserHandover.options().is_empty());
+        assert_eq!(
+            SuspensionKind::parse("browser_handover").unwrap(),
+            SuspensionKind::BrowserHandover
+        );
+        assert_eq!(
+            Decision::BrowserReturned.kind(),
+            DecisionKind::BrowserReturned
+        );
     }
 
     #[tokio::test]

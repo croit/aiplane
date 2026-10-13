@@ -904,7 +904,7 @@ async fn spawn_assistant_worker(
             return;
         }
     };
-    let tool_ctx = aiplane_runtime::openai_driver::build_tool_context(
+    let mut tool_ctx = aiplane_runtime::openai_driver::build_tool_context(
         state,
         aiplane_runtime::openai_driver::TurnFacts {
             actor,
@@ -929,6 +929,43 @@ async fn spawn_assistant_worker(
             suspendable: true,
         },
     );
+    if let Some(binding) = resume
+        .as_ref()
+        .and_then(|resume| resume.suspension.run_context.as_ref())
+        .and_then(|context| context.get("browser_handover"))
+        .and_then(|value| {
+            serde_json::from_value::<
+                aiplane_runtime::server::tools::sandbox::BrowserHandoverBinding,
+            >(value.clone())
+            .ok()
+        })
+    {
+        if binding.turn_id != assistant_turn_id || binding.workspace.owner_user_id != user.id {
+            let _ = chat::error_interrupted_turn(
+                &state.db,
+                assistant_turn_id,
+                "The Dot browser handover no longer matches this owner and turn.",
+            )
+            .await;
+            state.chats.clear(&user.id, worker);
+            return;
+        }
+        let Some(client) = state.sandbox_client() else {
+            let _ = chat::error_interrupted_turn(
+                &state.db,
+                assistant_turn_id,
+                "The Dot browser runner is unavailable; start a new browser session.",
+            )
+            .await;
+            state.chats.clear(&user.id, worker);
+            return;
+        };
+        tool_ctx.browser_lease = Some(
+            aiplane_runtime::server::tools::sandbox::SandboxLease::restore_browser_handover(
+                client, &binding,
+            ),
+        );
+    }
     let driver = Box::new(aiplane_runtime::openai_driver::OpenAiDriver {
         state: state.clone(),
         tool_ctx,
@@ -1167,6 +1204,82 @@ pub(crate) async fn resume_turn(
             }
         };
         tracing::info!(turn = %turn.id, decision = ?resume.decision.kind(), "resuming a suspended turn");
+        spawn_assistant_worker(
+            &state,
+            &user,
+            &turn.session_id,
+            &turn.id,
+            &model,
+            &worker,
+            req,
+            Some(resume),
+            Some(worker_guard),
+        )
+        .await;
+    });
+    Ok(())
+}
+
+pub(crate) struct BrowserResumeReservation {
+    model: String,
+    worker: session_core::workers::ActiveWorker,
+    worker_guard: aiplane_runtime::server::headless::BackgroundWorker,
+}
+
+pub(crate) fn reserve_browser_handover_resume(
+    state: &Arc<RamaState>,
+    user: &User,
+    turn: &chat::Turn,
+) -> Result<BrowserResumeReservation, ResumeTurnError> {
+    let Some(model) = turn.model.clone() else {
+        return Err(ResumeTurnError::Refused(
+            aiplane_runtime::suspend::ResumeRefused::NotSuspended,
+        ));
+    };
+    let worker = match state.chats.register(
+        &user.id,
+        &turn.id,
+        &turn.session_id,
+        state.config().chat.turns.max_parallel,
+    ) {
+        RegisterOutcome::Registered { worker } => worker,
+        RegisterOutcome::Busy { .. } | RegisterOutcome::AtCapacity { .. } => {
+            return Err(ResumeTurnError::Busy);
+        }
+    };
+    let worker_guard = aiplane_runtime::server::headless::BackgroundWorker::new(
+        state.clone(),
+        user.id.clone(),
+        worker.clone(),
+    );
+    Ok(BrowserResumeReservation {
+        model,
+        worker,
+        worker_guard,
+    })
+}
+
+pub(crate) async fn resume_browser_handover(
+    state: &Arc<RamaState>,
+    user: &User,
+    turn: &chat::Turn,
+    request_id: &str,
+    req: RequestCtx,
+    reservation: BrowserResumeReservation,
+) -> Result<(), ResumeTurnError> {
+    let resume = aiplane_runtime::suspend::claim_browser_handover(&state.db, &turn.id, request_id)
+        .await
+        .map_err(ResumeTurnError::Refused)?;
+    let state = state.clone();
+    let user = user.clone();
+    let turn = turn.clone();
+    tokio::spawn(async move {
+        let BrowserResumeReservation {
+            model,
+            worker,
+            worker_guard,
+        } = reservation;
+        tracing::info!(turn = %turn.id, "resuming a Dot browser handover");
         spawn_assistant_worker(
             &state,
             &user,

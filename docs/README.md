@@ -57,7 +57,7 @@ integrations and features vary with each installation's configuration.*
 - [AIplane Dots: implemented personal behavior and product specification](dots.md).
 - [Personal Dot scheduled and event-driven work](guide/automation-and-inbox.md#run-scheduled-or-event-driven-work-as-a-dot).
 - [Organization Dot webhooks](dots-webhooks.md): event-driven private runs with retained published versions, own identities, secret rotation and explicit replay.
-- [Personal Dot files](dots.md#personal-dot-files) and the [workspace design](dots-workspace.md): conditional persistent file storage; browser-profile persistence remains planned.
+- [Personal Dot files](dots.md#personal-dot-files) and the [workspace design](dots-workspace.md): persistent file storage and Dot-owned browser profiles on supported runner deployments.
 - [Dot identities](dots-identities.md): personal and organization Dot-owned connector identities.
 - [Organization Dots](dots-organizations.md): ownership, membership, configuration, own OAuth credentials, private conversations and pinned scheduled or event-driven work, with exact-turn Stop, writer-only Inbox decisions, isolated Dot notes and shared organization knowledge.
 - [Memory curation proposal](dots-memory-curation.md): planned reviewed learning through existing scheduling and approval mechanisms.
@@ -66,8 +66,8 @@ integrations and features vary with each installation's configuration.*
 - [Dot communication](dots-communication.md): directed consent and implemented personal request/reply delegation.
 - [Cross-organization delegation](dots-cross-organization.md): a personal Dot delegating to an organization Dot — consent, dispatch, the data boundary and durable waiting.
 - [Grok Bot comparison](dots-grok-comparison.md): researched capabilities, coverage and additional product gaps.
-- [Dot browser handover proposal](dots-browser-handover.md): planned human login and exclusive browser control.
-- [Dot workflow teaching proposal](dots-workflow-teaching.md): planned reviewed guidance through existing personal Skills.
+- [Personal Dot browser handover](dots-browser-handover.md): owner login assistance and exclusive control of a suspended Dot browser.
+- [Dot workflow teaching](dots-workflow-teaching.md): generate a reviewed personal Skill draft from written workflow steps.
 - [Create an agent](agent-guide/create.md).
 - [Configure permissions](agent-guide/permissions.md).
 - [Test and publish](agent-guide/test-publish.md).

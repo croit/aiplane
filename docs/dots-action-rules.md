@@ -63,7 +63,7 @@ Store the classified action IDs with the pending invocation facts when the actio
 
 ## API and actual-data web walkthrough
 
-Extend existing `/api/v0/dots/{id}/access` rows with nullable action catalogue data and saved action rules. PUT replaces the selected tools and their nested action rules through the existing owner-scoped audited spec save, preserving unrelated spec fields. Inventory is resolved from current tools; no action list is invented for unsupported MCP or built-in tools. Inactive Dots retain editable settings under the existing owner checks.
+Extend existing `/api/v0/dots/{id}/access` rows with nullable action catalogue data and saved action rules. GET returns an opaque SHA-256 revision of the current draft. PUT requires that revision and replaces the selected tools and their nested action rules through the existing owner-scoped audited spec save, preserving unrelated spec fields. A stale editor receives 409 and must reload before it can save. Inventory is resolved from current tools; no action list is invented for unsupported MCP or built-in tools. Inactive Dots retain editable settings under the existing owner checks.
 
 Walkthrough: expand **Access and approvals**, select actual `browse_page`, choose **Ask before each call** as its tool default and open an **Actions** disclosure supplied by that tool's catalogue. Each row displays the actual action ID and existing description plus **Use tool rule**, **Allow**, **Ask**, or **Deny**. Choose Allow for `read` and Deny for `fill`; save through the existing save/error/reload flow. The tool row shows the actual number of explicit overrides derived from saved data. It does not display a fabricated safety badge.
 

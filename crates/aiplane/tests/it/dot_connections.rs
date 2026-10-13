@@ -443,7 +443,7 @@ async fn saved_unavailable_tools_preserve_rules_and_require_explicit_removal() {
     assert_eq!(tool["description"], Value::Null);
     assert_eq!(tool["identity"], "unavailable");
     assert_eq!(tool["action_rules"], json!([{"id":"send","rule":"deny"}]));
-    let (status, _) = fx.send(Some(&fx.alice),Method::PUT,&path,Some(json!({"tools":[{"id":missing,"permission":"always_ask","actions":[{"id":"send","rule":"deny"}]}]}))).await;
+    let (status, _) = fx.send(Some(&fx.alice),Method::PUT,&path,Some(json!({"revision":inventory["revision"],"tools":[{"id":missing,"permission":"always_ask","actions":[{"id":"send","rule":"deny"}]}]}))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(
         aiplane_agents::db::agents::get_personal_dot(&fx.state.db, "alice", &dot)
@@ -459,7 +459,7 @@ async fn saved_unavailable_tools_preserve_rules_and_require_explicit_removal() {
             Some(&fx.alice),
             Method::PUT,
             &path,
-            Some(json!({"tools":[]}))
+            Some(json!({"revision":inventory["revision"],"tools":[]}))
         )
         .await
         .0,

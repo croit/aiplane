@@ -20,7 +20,11 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<skills::InlineSkillBody>())
             .body(Content::Multipart(SKILL_ARCHIVE))
             .created(json::<skills::SkillSaved>())
-            .errors(&[400, 503]),
+            .errors(&[400, 404, 409, 503]),
+        post("/api/v0/skills/draft", Access::Session)
+            .body(json::<skills::WorkflowDraftRequest>())
+            .ok(json::<skills::WorkflowDraft>())
+            .errors(&[400, 429, 502, 503]),
         get("/api/v0/skills/{name}/body", Access::Session)
             .ok(json::<skills::SkillSource>())
             .errors(&[400, 404]),

@@ -208,6 +208,43 @@ pub async fn claim_for_resume(
     Ok(resumed)
 }
 
+/// Claim a browser handover after the authenticated owner explicitly returns
+/// control. This decision is intentionally absent from `SuspensionKind::options`
+/// and can only be produced by the private browser-control route.
+pub async fn claim_browser_handover(
+    db: &Pool,
+    turn_id: &str,
+    request_id: &str,
+) -> Result<ResumeFrom, ResumeRefused> {
+    let mut tx = db
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(chat::DbError::from)?;
+    let current = chat::suspensions::get_suspension_in(&mut tx, turn_id)
+        .await?
+        .ok_or(ResumeRefused::NotSuspended)?;
+    if current.kind != SuspensionKind::BrowserHandover {
+        return Err(ResumeRefused::NotSuspended);
+    }
+    if current.request_id != request_id {
+        return Err(ResumeRefused::StaleRequest {
+            current: current.request_id,
+        });
+    }
+    if current.child_turn.is_some() {
+        return Err(ResumeRefused::NotSuspended);
+    }
+    let suspension = chat::suspensions::claim_suspension_in(&mut tx, turn_id, request_id)
+        .await?
+        .ok_or(ResumeRefused::NotSuspended)?;
+    tx.commit().await.map_err(chat::DbError::from)?;
+    Ok(ResumeFrom {
+        suspension,
+        decision: Decision::BrowserReturned,
+        child_result: None,
+    })
+}
+
 pub async fn claim_for_resume_in(
     connection: &mut sqlx::SqliteConnection,
     turn_id: &str,
@@ -295,6 +332,10 @@ mod tests {
     }
 
     async fn suspended_turn() -> (Pool, String) {
+        suspended_turn_with_kind(SuspensionKind::Approval).await
+    }
+
+    async fn suspended_turn_with_kind(kind: SuspensionKind) -> (Pool, String) {
         let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
             .await
             .unwrap();
@@ -323,7 +364,7 @@ mod tests {
             &TurnSuspension {
                 turn_id: "t1".into(),
                 request_id: "req-1".into(),
-                kind: SuspensionKind::Approval,
+                kind,
                 message: None,
                 tool_call: PendingCall {
                     execution_facts: None,
@@ -357,6 +398,20 @@ mod tests {
             claim_for_resume(&db, "t1", None, Decision::Value { value: "x".into() }).await;
         assert!(matches!(refused, Err(ResumeRefused::NotOffered { .. })));
         assert!(still_suspended(&db).await);
+    }
+
+    #[tokio::test]
+    async fn only_private_browser_handover_claim_can_return_control() {
+        let (db, _) = suspended_turn_with_kind(SuspensionKind::BrowserHandover).await;
+        assert!(matches!(
+            claim_for_resume(&db, "t1", Some("req-1"), Decision::BrowserReturned).await,
+            Err(ResumeRefused::NotOffered { .. })
+        ));
+        assert!(still_suspended(&db).await);
+
+        let resumed = claim_browser_handover(&db, "t1", "req-1").await.unwrap();
+        assert_eq!(resumed.decision, Decision::BrowserReturned);
+        assert!(!still_suspended(&db).await);
     }
 
     #[tokio::test]

@@ -11,6 +11,7 @@
 	// svelte-ignore state_referenced_locally
 	let open = $state(initiallyOpen);
 	let tools = $state<DotAccessTool[]>([]);
+	let revision = $state('');
 	let loaded = $state(false);
 	let loading = $state(false);
 	let saving = $state(false);
@@ -29,7 +30,9 @@
 		error = null;
 		notice = null;
 		try {
-			tools = (await dotAccessApi.load(dot.id)).tools;
+			const access = await dotAccessApi.load(dot.id);
+			tools = access.tools;
+			revision = access.revision;
 			loaded = true;
 			dirty = false;
 			stale = false;
@@ -74,7 +77,9 @@
 		error = null;
 		notice = null;
 		try {
-			tools = (await dotAccessApi.save(dot.id, selections)).tools;
+			const access = await dotAccessApi.save(dot.id, revision, selections);
+			tools = access.tools;
+			revision = access.revision;
 			dirty = false;
 			notice = t('dot-access-saved');
 		} catch (caught) {

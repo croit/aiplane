@@ -314,6 +314,26 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         )
         .with_get("/api/v0/dots", pages::json_dots::list)
         .with_post("/api/v0/dots", pages::json_dots::create)
+        .with_post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/claim",
+            pages::json_dot_browser::claim,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/frame",
+            pages::json_dot_browser::frame,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/input",
+            pages::json_dot_browser::input,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/finish",
+            pages::json_dot_browser::finish,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/abort",
+            pages::json_dot_browser::abort,
+        )
         .with_get(
             "/api/v0/dots/{id}/workspace",
             pages::json_dot_workspace::list,
@@ -623,6 +643,7 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         // Workspace JSON API for the SPA: skills, connectors, integrations.
         .with_get("/api/v0/skills", pages::json_skills::skills_list)
         .with_post("/api/v0/skills", pages::json_skills::skills_upload)
+        .with_post("/api/v0/skills/draft", pages::json_skills::skills_draft)
         .with_get("/api/v0/skills/{name}/body", pages::json_skills::skill_body)
         .with_get(
             "/api/v0/skills/{name}/archive",

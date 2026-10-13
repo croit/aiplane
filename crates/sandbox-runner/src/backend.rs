@@ -179,6 +179,7 @@ pub struct WorkspaceMount {
     pub name: String,
     pub files: Arc<crate::workspace::Workspace>,
     pub path: std::path::PathBuf,
+    pub browser_profile_path: Option<std::path::PathBuf>,
 }
 
 /// Abstracts "boot a sandbox", "run a job in it", "destroy it". Object-
@@ -207,6 +208,16 @@ pub trait ContainerBackend: Send + Sync + 'static {
         req: &RunRequest,
         timeout: Duration,
     ) -> Result<RunResponse, BackendError>;
+
+    async fn browser_control(
+        &self,
+        _id: &str,
+        _operation: &shared::sandbox::BrowserControlOperation,
+    ) -> Result<shared::sandbox::BrowserControlResponse, BackendError> {
+        Err(BackendError::Protocol(
+            "browser handover is unavailable on this backend".into(),
+        ))
+    }
 
     async fn destroy(&self, id: &str) -> Result<(), BackendError>;
 
@@ -770,10 +781,11 @@ print(json.dumps(dict(uid=os.getuid(),gid=os.getgid(),kernel=platform.release(),
         name: &str,
         workspace: Option<&WorkspaceMount>,
     ) -> Vec<String> {
-        self.run_args_with_workspace_path(
+        self.run_args_with_mount_paths(
             network,
             name,
             workspace.map(|mount| mount.path.as_path()),
+            workspace.and_then(|mount| mount.browser_profile_path.as_deref()),
         )
     }
 
@@ -782,6 +794,16 @@ print(json.dumps(dict(uid=os.getuid(),gid=os.getgid(),kernel=platform.release(),
         network: Network,
         name: &str,
         workspace_path: Option<&Path>,
+    ) -> Vec<String> {
+        self.run_args_with_mount_paths(network, name, workspace_path, None)
+    }
+
+    fn run_args_with_mount_paths(
+        &self,
+        network: Network,
+        name: &str,
+        workspace_path: Option<&Path>,
+        browser_profile_path: Option<&Path>,
     ) -> Vec<String> {
         let c = &self.cfg;
         let mut a: Vec<String> = vec![
@@ -816,6 +838,10 @@ print(json.dumps(dict(uid=os.getuid(),gid=os.getgid(),kernel=platform.release(),
         if let Some(path) = workspace_path {
             a.push("-v".into());
             a.push(format!("{}:/workspace:rw", path.display()));
+        }
+        if let Some(path) = browser_profile_path {
+            a.push("-v".into());
+            a.push(format!("{}:/dot-browser:rw", path.display()));
         }
         a.extend::<Vec<String>>(vec![
             "--cap-drop=ALL".into(),
@@ -890,6 +916,12 @@ impl ContainerBackend for PodmanBackend {
                 .files
                 .validate_mount_path(&mount.path)
                 .map_err(|error| BackendError::Protocol(error.to_string()))?;
+            if let Some(path) = &mount.browser_profile_path {
+                mount
+                    .files
+                    .validate_browser_profile_path(path)
+                    .map_err(|error| BackendError::Protocol(error.to_string()))?;
+            }
             mount
                 .files
                 .prepare_workload_owner(1001, 1001)
@@ -960,6 +992,39 @@ impl ContainerBackend for PodmanBackend {
         Ok(resp)
     }
 
+    async fn browser_control(
+        &self,
+        id: &str,
+        operation: &shared::sandbox::BrowserControlOperation,
+    ) -> Result<shared::sandbox::BrowserControlResponse, BackendError> {
+        self.validate_container_id(id)?;
+        let payload = browser_daemon_payload(operation)?;
+        let mut command = self.command(true);
+        command.args([
+            "exec",
+            "-i",
+            "--user",
+            "1001:1001",
+            id,
+            "python",
+            "-c",
+            BROWSER_CONTROL_CLIENT,
+        ]);
+        let output = crate::process::run_control_with_input(
+            command,
+            &payload,
+            Duration::from_secs(15),
+            3 * 1024 * 1024,
+        )
+        .await?;
+        if !output.status.success() {
+            return Err(BackendError::Protocol(
+                "the browser handover command did not complete".into(),
+            ));
+        }
+        decode_browser_control_response(&output.stdout)
+    }
+
     async fn image_id(&self) -> Result<String, BackendError> {
         let out = self
             .command(false)
@@ -984,6 +1049,71 @@ impl ContainerBackend for PodmanBackend {
     async fn destroy(&self, id: &str) -> Result<(), BackendError> {
         self.destroy_control(id, false).await
     }
+}
+
+const BROWSER_CONTROL_CLIENT: &str = r#"import socket,sys
+s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+s.settimeout(10)
+s.connect('/tmp/gwbp.sock')
+data=sys.stdin.buffer.read(16385)
+if len(data)>16384: raise SystemExit(2)
+s.sendall(data+b'\n')
+out=b''
+while not out.endswith(b'\n'):
+    part=s.recv(65536)
+    if not part: break
+    out+=part
+    if len(out)>3145728: raise SystemExit(3)
+s.close()
+sys.stdout.buffer.write(out)
+"#;
+
+fn browser_daemon_payload(
+    operation: &shared::sandbox::BrowserControlOperation,
+) -> Result<Vec<u8>, BackendError> {
+    let command = match operation {
+        shared::sandbox::BrowserControlOperation::Begin => {
+            serde_json::json!({ "action": "human_begin" })
+        }
+        shared::sandbox::BrowserControlOperation::Claim { .. } => {
+            return Err(BackendError::Protocol(
+                "browser controller claims are handled by the runner".into(),
+            ));
+        }
+        shared::sandbox::BrowserControlOperation::Frame { .. } => {
+            serde_json::json!({ "action": "human_frame" })
+        }
+        shared::sandbox::BrowserControlOperation::Input { input, .. } => serde_json::json!({
+            "action": "human_input",
+            "input": input,
+        }),
+        shared::sandbox::BrowserControlOperation::Finish { .. } => {
+            serde_json::json!({ "action": "human_finish" })
+        }
+    };
+    serde_json::to_vec(&command)
+        .map(|mut bytes| {
+            bytes.push(b'\n');
+            bytes
+        })
+        .map_err(|_| {
+            BackendError::Protocol("the browser handover request could not be encoded".into())
+        })
+}
+
+fn decode_browser_control_response(
+    bytes: &[u8],
+) -> Result<shared::sandbox::BrowserControlResponse, BackendError> {
+    let response: shared::sandbox::BrowserControlResponse =
+        serde_json::from_slice(bytes).map_err(|_| {
+            BackendError::Protocol("the browser returned an invalid handover response".into())
+        })?;
+    if !response.ok {
+        return Err(BackendError::Protocol(
+            "the browser could not complete the handover operation".into(),
+        ));
+    }
+    Ok(response)
 }
 
 #[async_trait::async_trait]
@@ -1451,6 +1581,8 @@ pub(crate) mod fake {
         pub fail_destroy: std::sync::atomic::AtomicBool,
         pub exec_entered: tokio::sync::Notify,
         pub exec_release: tokio::sync::Notify,
+        pub browser_controls: Mutex<Vec<shared::sandbox::BrowserControlOperation>>,
+        pub fail_browser_begin_once: std::sync::atomic::AtomicBool,
         pub hold_create: std::sync::atomic::AtomicBool,
         pub create_entered: tokio::sync::Notify,
         pub create_release: tokio::sync::Notify,
@@ -1534,6 +1666,30 @@ pub(crate) mod fake {
                 output_truncated: false,
                 artifacts_truncated: false,
                 container_id: None,
+            })
+        }
+
+        async fn browser_control(
+            &self,
+            _id: &str,
+            operation: &shared::sandbox::BrowserControlOperation,
+        ) -> Result<shared::sandbox::BrowserControlResponse, BackendError> {
+            self.browser_controls
+                .lock()
+                .unwrap()
+                .push(operation.clone());
+            if matches!(operation, shared::sandbox::BrowserControlOperation::Begin)
+                && self.fail_browser_begin_once.swap(false, Ordering::SeqCst)
+            {
+                return Err(BackendError::Protocol("browser control unavailable".into()));
+            }
+            Ok(shared::sandbox::BrowserControlResponse {
+                ok: true,
+                generation: 1,
+                expires_at: "2026-10-12T10:00:00Z".into(),
+                frame_b64: None,
+                width: None,
+                height: None,
             })
         }
 
@@ -2305,5 +2461,19 @@ mod workspace_readiness_tests {
         let backend = PodmanBackend::new(Arc::new(config));
         assert!(backend.verify_workspace_readiness().await.is_err());
         assert!(!backend.workspace_available());
+    }
+}
+
+#[cfg(test)]
+mod browser_control_response_tests {
+    use super::*;
+
+    #[test]
+    fn failed_browser_cleanup_cannot_be_reported_as_a_completed_handover() {
+        let response = br#"{"ok":false,"generation":1,"expires_at":"2026-10-12T10:00:00Z"}"#;
+        assert!(matches!(
+            decode_browser_control_response(response),
+            Err(BackendError::Protocol(_))
+        ));
     }
 }

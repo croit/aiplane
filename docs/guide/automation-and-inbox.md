@@ -125,6 +125,8 @@ remove its rule before saving; the interface preserves it for review.
 
 New Dots select the existing memory tools when available to your account.
 Memory writes belong to that Dot; user-wide memory remains read-only context.
+If access to organization memory is revoked, its loaded notes are cleared from
+the panel when the next request is refused.
 Read-only tools default to Allow when you select them. Writes and tools with
 unknown effects default to Ask before each call; you can adjust their rule
 within your existing rights.
@@ -138,7 +140,14 @@ personal runs and linked delegation work. Organization Dots support member
 configuration, their own connected identities, private draft or published conversations and
 scoped memory. See [Organization Dots](../dots-organizations.md) for their
 current access requirements. Organization Dots also support scheduled work as
-described below. Organization event triggers are described in **Create an organization Dot webhook**. Automatic memory curation and persistent Dot computers are not available.
+described below. Organization event triggers are described in **Create an
+organization Dot webhook**. Automatic memory curation is not available yet.
+Personal Dot computers provide persistent files and a saved server-side browser
+profile when the runner has verified persistent storage. During a Dot chat,
+**handover** lets you operate that Dot's browser for a login or other browser
+step, then return control to the Dot. See [Personal Dot browser
+handover](../dots-browser-handover.md) and [workspace
+availability](../dots-workspace.md#operator-implications).
 
 ## Configure communication consent
 

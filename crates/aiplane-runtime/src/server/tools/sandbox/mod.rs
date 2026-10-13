@@ -592,6 +592,16 @@ pub struct SandboxLease {
     state: tokio::sync::Mutex<LeaseState>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserHandoverBinding {
+    pub workspace: shared::sandbox::DotWorkspace,
+    pub turn_id: String,
+    pub container_id: String,
+    pub handover_id: String,
+    pub generation: u64,
+}
+
 /// One [`SandboxLease::run_tracked`] result: the runner's response plus
 /// whether the turn's `/work` survived into this call.
 pub struct LeaseRun {
@@ -617,6 +627,58 @@ impl SandboxLease {
         Arc::new(Self {
             client,
             state: tokio::sync::Mutex::new(LeaseState::default()),
+        })
+    }
+
+    pub async fn begin_browser_handover(
+        &self,
+        scope: &shared::sandbox::DotWorkspaceScope,
+        handover_id: String,
+    ) -> Result<BrowserHandoverBinding, ToolError> {
+        if scope.purpose != shared::sandbox::WorkspacePurpose::Browser
+            || handover_id.is_empty()
+            || handover_id.len() > 128
+        {
+            return Err(ToolError::Failed(
+                "the browser handover binding is invalid".into(),
+            ));
+        }
+        let mut state = self.state.lock().await;
+        let container_id = state.container_id.clone().ok_or_else(|| {
+            ToolError::Failed("open the Dot browser before asking for human control".into())
+        })?;
+        let response = self
+            .client
+            .browser_control(shared::sandbox::BrowserControlRequest {
+                workspace: scope.workspace.clone(),
+                turn_id: scope.turn_id.clone(),
+                container_id: container_id.clone(),
+                handover_id: handover_id.clone(),
+                controller_id: None,
+                operation: shared::sandbox::BrowserControlOperation::Begin,
+            })
+            .await
+            .map_err(|error| ToolError::Failed(error.to_string()))?;
+        state.container_id = None;
+        Ok(BrowserHandoverBinding {
+            workspace: scope.workspace.clone(),
+            turn_id: scope.turn_id.clone(),
+            container_id,
+            handover_id,
+            generation: response.generation,
+        })
+    }
+
+    pub fn restore_browser_handover(
+        client: Arc<SandboxClient>,
+        binding: &BrowserHandoverBinding,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            client,
+            state: tokio::sync::Mutex::new(LeaseState {
+                container_id: Some(binding.container_id.clone()),
+                network: true,
+            }),
         })
     }
 

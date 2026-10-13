@@ -141,8 +141,9 @@ output into `/work` to deliver it in the conversation.
 Persistent storage is available only with a configured persistent runner volume
 and a successful local rootful Linux/gVisor mount proof at runner startup. An
 unverified runner shows unavailability; it does not substitute scratch storage.
-Only personal ownership is supported in this increment. Saved browser logins
-and browser-profile reset are not implemented. See the complete
+The workspace API supports personal ownership. Browser logins persist in the
+Dot's server-side browser profile; a self-service browser-profile reset is not
+implemented. See the complete
 [workspace design](dots-workspace.md) and [runner requirements](sandbox.md).
 
 Deactivation preserves files. Dot and account deletion create durable cleanup
@@ -217,10 +218,11 @@ conflict while its run is executing or awaiting a decision: disable future
 triggers, then finish or stop the turn before deleting. The existing Dot UI
 provides deactivation, not a Dot-delete action.
 
-Persistent Dot computers are specified separately in
-[dots-workspace.md](dots-workspace.md) and are not implemented. Automatic
-memory curation remains planned. Organization conversation
-reuse remains unavailable. The user workflow is in
+Personal Dot files and persistent browser profiles are implemented for
+supported runner deployments; owner browser handover is described in
+[dots-browser-handover.md](dots-browser-handover.md). Automatic memory
+curation remains planned. Organization conversation reuse remains unavailable.
+The user workflow is in
 [Schedules, webhooks and inbox](guide/automation-and-inbox.md).
 
 ## Organization schedules and private run history
@@ -262,8 +264,10 @@ Navigation invalidates outstanding component operations so an older response
 cannot reopen a previous session or overwrite the current URL.
 
 Organization schedule conversation reuse, Dot delegation and public agent
-channels are unavailable. Organization webhooks use the same private history and exact-turn Stop; see [their admission contract](dots-webhooks.md). Persistent computers and automatic memory curation
-remain planned. See [organization Dots](dots-organizations.md) and
+channels are unavailable. Organization webhooks use the same private history
+and exact-turn Stop; see [their admission contract](dots-webhooks.md). Personal
+Dot computers and browser handover are implemented for supported runner
+deployments; automatic memory curation remains planned. See [organization Dots](dots-organizations.md) and
 [Schedules, webhooks and inbox](guide/automation-and-inbox.md).
 
 ## Product goal
@@ -419,14 +423,12 @@ use the intersection of those sources. Organization execution requires the
 separate current principal authority bridge described in
 [organization Dots](dots-organizations.md).
 
-The current sandbox does not provide the Dot computer's persistence. Its
-`SandboxLease` lives in a turn's `ToolContext` and is released at turn end; the
-runner's lease table has a configured TTL and capacity cap. Files can be
-staged across turns through the chat attachment store, but that store is
-conversation-scoped. Neither provides a Dot-owned browser profile or
-filesystem across separate runs. Dot workspace files need a Dot-owned storage
-key and access checks before sandbox staging; the runtime should not gain a
-shared-volume mount.
+Dot workspace files and browser profiles live outside per-turn containers in
+the runner's validated persistent workspace. A `SandboxLease` still lives in
+a turn's `ToolContext` and is released at turn end; the runner's lease table
+has a configured TTL and capacity cap. The filesystem and browser profile are
+mounted only for their typed Dot workspace purpose, and browser handover keeps
+the exact scoped container alive while its owner controls it.
 
 The MCP manager’s ordinary overlays are: `layer_for_user` resolves
 the user's allowed per-user OAuth connections plus allowed global connectors;
@@ -437,12 +439,12 @@ resolver before execution is enabled. Exposing both
 overlays wholesale and relying on the prompt to choose would exceed the
 confirmed permission boundary.
 
-Schedules and webhooks retain their user ownership and optionally bind to a
-personal Dot through `dot_id`. Their headless workers open private user-owned
-sessions carrying the Dot binding and resolve the same personal Dot persona
-as chat. `tools_enabled` is an additional ceiling, not approval for external
-writes. Webhook payloads retain their untrusted-input framing. Organization
-background ownership is not implemented.
+Personal schedules and webhooks retain user ownership and optionally bind to a
+personal Dot through `dot_id`. Organization schedules and asynchronous
+webhooks use the owning principal and pinned published version. Their headless
+workers open private conversations and resolve the same Dot execution policy
+as interactive runs. `tools_enabled` is an additional ceiling, not approval
+for external writes. Webhook payloads retain their untrusted-input framing.
 
 Personal memory has this split in the current code. `user_memories` is keyed only
 by `user_id`; the four existing memory tools use the acting user's identity
@@ -778,9 +780,11 @@ The following adopted designs define the remaining implementation work:
   organization member-writer credential management are implemented.
 - [Memory curation](dots-memory-curation.md) defines source selection and
   reviewed optimization; its background job remains to be implemented.
-- [Persistent workspace](dots-workspace.md) and [browser
-  handover](dots-browser-handover.md) define durable files, an isolated
-  computer and human control; implementation and runner verification remain.
+- [Persistent workspace](dots-workspace.md) provides durable personal Dot
+  files and browser profiles on supported runner deployments. [Browser
+  handover](dots-browser-handover.md) lets the owner control a suspended
+  personal Dot browser; organization handover and runner-replica coordination
+  remain outside the implemented scope.
 - Existing worker, run-budget and spend limits bound execution. The active
   Dot cap counts enabled Dots and does not impose a global parallel-run cap.
 

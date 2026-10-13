@@ -498,6 +498,7 @@ pub mod json_agent_resources;
 pub mod json_agent_test;
 pub mod json_agent_tests;
 pub mod json_agents;
+pub mod json_dot_browser;
 pub mod json_dot_workspace;
 pub mod json_dots;
 pub mod json_embed_keys;

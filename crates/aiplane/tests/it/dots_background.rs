@@ -217,12 +217,15 @@ async fn dot_webhook_fire_and_rerun_wait_for_approval_and_cannot_be_deleted_unti
         .post(&fx.alice, "/api/v0/dots", json!({"name":"Approver"}))
         .await;
     let dot_id = created["dot"]["id"].as_str().unwrap();
+    let access_url = format!("/api/v0/dots/{dot_id}/access");
+    let (access_status, access) = fx.get(&fx.alice, &access_url).await;
+    assert_eq!(access_status, StatusCode::OK, "{access}");
     let (status, access) = fx
         .send(
             Some(&fx.alice),
             Method::PUT,
-            &format!("/api/v0/dots/{dot_id}/access"),
-            Some(json!({"tools":[{"id":TIME,"permission":"always_ask"}]})),
+            &access_url,
+            Some(json!({"revision":access["revision"],"tools":[{"id":TIME,"permission":"always_ask"}]})),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{access}");

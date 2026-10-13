@@ -173,16 +173,17 @@ export interface DotAccessTool {
 }
 
 export interface DotAccess {
+	revision: string;
 	tools: DotAccessTool[];
 }
 
 export const dotAccessApi = {
 	load: (dotId: string) => request<DotAccess>(`/api/v0/dots/${encodeURIComponent(dotId)}/access`),
-	save: (dotId: string, tools: DotAccessSelection[]) =>
+	save: (dotId: string, revision: string, tools: DotAccessSelection[]) =>
 		request<DotAccess>(`/api/v0/dots/${encodeURIComponent(dotId)}/access`, {
 			method: 'PUT',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ tools })
+			body: JSON.stringify({ revision, tools })
 		})
 };
 
@@ -219,6 +220,10 @@ export function dotMemorySections(list: DotMemoryList | null | undefined) {
 		...scope,
 		grouped: groupMemories((list?.memories ?? []).filter((memory) => memory.scope === scope.scope)) as Record<MemoryKind, DotMemory[]>
 	}));
+}
+
+export function dotMemoryAuthorityRevoked(status: number): boolean {
+	return status === 401 || status === 403 || status === 404;
 }
 
 export const dotMemoriesApi = {

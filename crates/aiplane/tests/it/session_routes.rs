@@ -31,6 +31,31 @@ async fn me_anonymous_is_401() {
 }
 
 #[tokio::test]
+async fn dot_browser_control_rejects_an_untrusted_origin() {
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let app = common::app(state);
+    for action in ["claim", "frame", "input", "finish", "abort"] {
+        let path =
+            format!("/api/v0/chat/sessions/session/turns/turn/browser-handover/request/{action}");
+        let response = app
+            .serve(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(path)
+                    .header("cookie", format!("id={cookie}"))
+                    .header("origin", "https://attacker.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{action}");
+        assert_eq!(response.headers()["cache-control"], "no-store, private");
+    }
+}
+
+#[tokio::test]
 async fn me_with_session_returns_user() {
     let state = common::state_with_chat_pool("http://unused.invalid").await;
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;

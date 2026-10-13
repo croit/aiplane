@@ -10,6 +10,7 @@ use rama::http::{Request, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use session_core::i18n::{Lang, t};
+use sha2::{Digest, Sha256};
 
 use super::{bad_request, internal, json_error, json_ok, not_found, raw_path_segment};
 use aiplane_agents::db::agents::{self as agents_db, DotCreate};
@@ -1005,7 +1006,18 @@ pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Respon
 
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct DotAccessView {
+    pub revision: String,
     pub tools: Vec<DotAccessTool>,
+}
+
+fn access_revision(draft: &str) -> String {
+    let digest = Sha256::digest(draft.as_bytes());
+    let mut revision = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(revision, "{byte:02x}").expect("writing into a String cannot fail");
+    }
+    revision
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -1040,6 +1052,7 @@ pub struct DotActionRule {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DotAccessBody {
+    pub revision: String,
     pub tools: Vec<DotAccessSelection>,
 }
 
@@ -1231,7 +1244,10 @@ async fn access_view(
                 .unwrap_or_default(),
         });
     }
-    Ok(DotAccessView { tools })
+    Ok(DotAccessView {
+        revision: access_revision(draft),
+        tools,
+    })
 }
 
 pub async fn access_get(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -1267,6 +1283,13 @@ pub async fn access_put(State(state): State<Arc<RamaState>>, req: Request) -> Re
         Ok(body) => body,
         Err(response) => return response,
     };
+    if body.revision != access_revision(&dot.agent.draft_spec) {
+        return json_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            &t(lang, "dot-access-error-conflict"),
+        );
+    }
     let inventory = match access_view(&state, &user, &id, &dot.agent.draft_spec, lang).await {
         Ok(view) => view,
         Err(error) => return internal(error),

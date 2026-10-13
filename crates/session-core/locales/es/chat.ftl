@@ -21,6 +21,7 @@ chat-error-turn-interrupted = Un error interno interrumpió esta respuesta. Int�
 chat-list-empty = Aún no hay conversaciones. Empieza una arriba.
 chat-turn-stopped = detenido
 chat-waiting-approval = Ejecuta { $tool } solo cuando lo apruebes.
+chat-waiting-browser-handover = Ahora controlas el navegador del Dot.
 chat-waiting-value = Espera un valor que solo tú puedes escribir. Va a la herramienta, nunca al modelo.
 chat-waiting-answer = Espera la respuesta de una persona.
 chat-composer-paused = Aprueba o rechaza primero la solicitud de arriba; el siguiente mensaje espera esa decisión.

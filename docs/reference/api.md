@@ -165,6 +165,8 @@ Examples of its task families:
 | `/api/v0/admin/*` | Administrative models, grants, settings and catalogs; administration guides. |
 | `/api/v0/setup/*` | Verified setup/recovery state machine. |
 
+`POST /api/v0/skills/draft` accepts `{name, goal, steps, stop_conditions, model}` from a signed-in user and returns `{manifest, model, saved:false}`. It requires personal-skill storage, validates the model against the caller's currently offered chat models, and meters generation to that user. It has no tool execution or persistence side effect. `POST /api/v0/skills` saves the reviewed manifest; JSON skill edits must set `overwrite:true`, while a create that collides with an existing personal skill returns `409`.
+
 The running gateway supplies `/openapi.json`, a typed OpenAPI contract for the
 registered `/api/v0` routes. It describes operations, path parameters, request
 and response schemas, security requirements and the shared error envelope.
@@ -264,6 +266,21 @@ mutation. Respond-only and nonmember recovery access expose no notes. The
 server rechecks authority and applies each operation in the same transaction;
 returned writable flags do not authorize a later request. Foreign note IDs
 return 404 without revealing content.
+
+### Personal Dot browser handover
+
+An active personal Dot can request owner help through its existing `browse_page`
+tool. The exact chat turn pauses while the owner uses the Dot's server-side
+browser in the web conversation. The five `browser-handover` routes in the
+operation index claim one controller, return private JPEG frames, accept typed
+input, return control to the same turn, or stop that run. All require the same
+authenticated owner session and same-origin `Origin`; responses use
+`Cache-Control: no-store, private`. The claim body carries a client-generated
+`controller_id`; retrying with that same ID is idempotent, while another
+controller is refused. Frames and input are never added to model messages or
+chat attachments. This flow is personal-Dot-only and uses the runner's
+persistent browser profile when persistent storage is available; see [browser handover](../dots-browser-handover.md)
+and [workspace deployment limits](../dots-workspace.md#operator-implications).
 
 ### Conversation events
 
@@ -590,6 +607,11 @@ Debug fixture routes exist only in development builds.
 | `DELETE /api/v0/chat/sessions/{id}` |
 | `GET /api/v0/chat/sessions/{id}` |
 | `POST /api/v0/chat/sessions/{id}/cancel` |
+| `POST /api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/claim` |
+| `POST /api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/frame` |
+| `POST /api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/input` |
+| `POST /api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/finish` |
+| `POST /api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/abort` |
 | `GET /api/v0/chat/sessions/{id}/capabilities` |
 | `POST /api/v0/chat/sessions/{id}/capabilities` |
 | `GET /api/v0/chat/sessions/{id}/documents` |
@@ -682,6 +704,7 @@ Debug fixture routes exist only in development builds.
 | `POST /api/v0/setup/test` |
 | `GET /api/v0/skills` |
 | `POST /api/v0/skills` |
+| `POST /api/v0/skills/draft` |
 | `DELETE /api/v0/skills/{name}` |
 | `GET /api/v0/skills/{name}/archive` |
 | `GET /api/v0/skills/{name}/body` |

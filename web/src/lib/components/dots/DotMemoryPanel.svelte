@@ -1,6 +1,6 @@
 <script lang="ts">
 	import EditModal from '#lib/components/EditModal.svelte';
-	import { dotMemoriesApi, dotMemorySections, type DotMemory, type DotMemoryList, type DotMemoryScope } from '#lib/dots.js';
+	import { dotMemoriesApi, dotMemoryAuthorityRevoked, dotMemorySections, type DotMemory, type DotMemoryList, type DotMemoryScope } from '#lib/dots.js';
 	import { ApiError } from '#lib/api.js';
 	import { MEMORY_KINDS, type MemoryKind } from '#lib/memory.js';
 	import { t } from '#lib/i18n.svelte.js';
@@ -24,6 +24,14 @@
 	const writable = (selected: DotMemoryScope | null) => loaded && !loading && authorityValid && sections.some((section) => section.scope === selected && section.writable);
 	const message = (caught: unknown, key: string) => caught instanceof ApiError ? caught.serverMessage ?? caught.message : caught instanceof Error ? caught.message : t(key);
 	const withinLimit = (value: string) => new TextEncoder().encode(value).length <= 2000;
+	function clearIfAuthorityRevoked(caught: unknown) {
+		if (!(caught instanceof ApiError) || !dotMemoryAuthorityRevoked(caught.status)) return;
+		list = null;
+		drafts = {};
+		loaded = false;
+		adding = false;
+		content = '';
+	}
 
 	async function refresh() {
 		loading = true;
@@ -35,12 +43,7 @@
 			error = null;
 		} catch (caught) {
 			authorityValid = false;
-			if (caught instanceof ApiError && [401, 403, 404].includes(caught.status)) {
-				list = null;
-				drafts = {};
-				adding = false;
-				content = '';
-			}
+			clearIfAuthorityRevoked(caught);
 			error = message(caught, 'dot-memory-error-load');
 		} finally {
 			loading = false;
@@ -79,6 +82,7 @@
 			await refresh();
 		} catch (caught) {
 			authorityValid = false;
+			clearIfAuthorityRevoked(caught);
 			formError = message(caught, 'dot-memory-error-save');
 			error = formError;
 		} finally {
@@ -97,6 +101,7 @@
 			await refresh();
 		} catch (caught) {
 			authorityValid = false;
+			clearIfAuthorityRevoked(caught);
 			error = message(caught, 'dot-memory-error-save');
 		}
 	}
@@ -111,6 +116,7 @@
 			await refresh();
 		} catch (caught) {
 			authorityValid = false;
+			clearIfAuthorityRevoked(caught);
 			error = message(caught, 'dot-memory-error-delete');
 		}
 	}

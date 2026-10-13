@@ -959,6 +959,9 @@ pub(crate) fn decision_from(
         (chat::DecisionKind::Value, None) => {
             Err("a `value` decision needs a `value` field carrying it")
         }
+        (chat::DecisionKind::BrowserReturned, None) => {
+            Err("browser handovers can only be completed from the owner browser surface")
+        }
         (_, Some(_)) => Err("only a `value` decision carries a `value` field"),
     }
 }

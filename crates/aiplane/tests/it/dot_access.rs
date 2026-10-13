@@ -4,7 +4,13 @@
 use rama::http::{Method, StatusCode};
 use serde_json::json;
 
-use super::agents::{TIME, fixture};
+use super::agents::{Fx, TIME, fixture};
+
+async fn access_revision(fx: &Fx, user: &str, url: &str) -> String {
+    let (status, body) = fx.get(user, url).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["revision"].as_str().unwrap().to_owned()
+}
 
 #[tokio::test]
 async fn personal_dot_access_is_owner_scoped_and_records_spec_revisions() {
@@ -40,12 +46,13 @@ async fn personal_dot_access_is_owner_scoped_and_records_spec_revisions() {
     )
     .await
     .unwrap();
+    let revision = access_revision(&fx, &fx.alice, &url).await;
     let (status, saved) = fx
         .send(
             Some(&fx.alice),
             Method::PUT,
             &url,
-            Some(json!({"tools":[{"id":TIME,"permission":"always_ask"}]})),
+            Some(json!({"revision":revision,"tools":[{"id":TIME,"permission":"always_ask"}]})),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{saved}");
@@ -74,6 +81,54 @@ async fn personal_dot_access_is_owner_scoped_and_records_spec_revisions() {
 }
 
 #[tokio::test]
+async fn personal_dot_access_rejects_a_stale_editor_before_replacing_newer_rules() {
+    let fx = fixture().await;
+    let (_, created) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({"name":"Stale access"}))
+        .await;
+    let id = created["dot"]["id"].as_str().unwrap();
+    let url = format!("/api/v0/dots/{id}/access");
+    let stale_revision = access_revision(&fx, &fx.alice, &url).await;
+    let newer = json!({
+        "main": {
+            "tools": [TIME],
+            "tool_resources": {TIME: {"permission": "always_allow"}}
+        }
+    });
+    aiplane_agents::db::agents::update_draft(
+        &fx.state.db,
+        id,
+        &newer.to_string(),
+        "alice",
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    let (status, response) = fx
+        .send(
+            Some(&fx.alice),
+            Method::PUT,
+            &url,
+            Some(json!({
+                "revision": stale_revision,
+                "tools": [{"id": TIME, "permission": "always_ask"}]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{response}");
+    let saved = aiplane_agents::db::agents::get_personal_dot(&fx.state.db, "alice", id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&saved.agent.draft_spec).unwrap(),
+        newer
+    );
+    assert_ne!(access_revision(&fx, &fx.alice, &url).await, stale_revision);
+}
+
+#[tokio::test]
 async fn personal_dot_access_rejects_unknown_duplicate_and_invalid_permissions() {
     let fx = fixture().await;
     let (_, created) = fx
@@ -81,17 +136,18 @@ async fn personal_dot_access_rejects_unknown_duplicate_and_invalid_permissions()
         .await;
     let id = created["dot"]["id"].as_str().unwrap();
     let url = format!("/api/v0/dots/{id}/access");
+    let revision = access_revision(&fx, &fx.alice, &url).await;
     for (body, expected) in [
         (
-            json!({"tools":[{"id":"unknown","permission":"always_allow"}]}),
+            json!({"revision":revision,"tools":[{"id":"unknown","permission":"always_allow"}]}),
             StatusCode::BAD_REQUEST,
         ),
         (
-            json!({"tools":[{"id":TIME,"permission":"invalid"}]}),
+            json!({"revision":revision,"tools":[{"id":TIME,"permission":"invalid"}]}),
             StatusCode::BAD_REQUEST,
         ),
         (
-            json!({"tools":[{"id":TIME,"permission":"always_ask"},{"id":TIME,"permission":"always_allow"}]}),
+            json!({"revision":revision,"tools":[{"id":TIME,"permission":"always_ask"},{"id":TIME,"permission":"always_allow"}]}),
             StatusCode::BAD_REQUEST,
         ),
     ] {
@@ -127,7 +183,7 @@ async fn personal_dot_access_cannot_select_a_user_disabled_tool() {
             Some(&fx.alice),
             Method::PUT,
             &url,
-            Some(json!({"tools":[{"id":TIME,"permission":"always_allow"}]})),
+            Some(json!({"revision":view["revision"],"tools":[{"id":TIME,"permission":"always_allow"}]})),
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
@@ -207,7 +263,7 @@ async fn personal_dot_action_rules_use_actual_catalogue_and_preserve_saved_unava
         browse["action_rules"],
         json!([{"id":"removed","rule":"deny"}])
     );
-    let body = json!({"tools":[{"id":"browse_page","permission":"always_ask","actions":[{"id":"read","rule":"allow"},{"id":"fill","rule":"deny"},{"id":"click","rule":"ask"}]}]});
+    let body = json!({"revision":inventory["revision"],"tools":[{"id":"browse_page","permission":"always_ask","actions":[{"id":"read","rule":"allow"},{"id":"fill","rule":"deny"},{"id":"click","rule":"ask"}]}]});
     assert_eq!(
         fx.send(Some(&fx.bob), Method::PUT, &url, Some(body.clone()))
             .await
@@ -248,7 +304,7 @@ async fn personal_dot_action_rules_use_actual_catalogue_and_preserve_saved_unava
             Some(&fx.alice),
             Method::PUT,
             &url,
-            Some(json!({"tools":[{"id":"browse_page","permission":"always_ask"}]})),
+        Some(json!({"revision":saved["revision"],"tools":[{"id":"browse_page","permission":"always_ask"}]})),
         )
         .await;
     assert_eq!(status, StatusCode::OK);
@@ -272,6 +328,7 @@ async fn personal_dot_action_rules_reject_duplicates_unknown_values_and_unsuppor
         .await;
     let id = created["dot"]["id"].as_str().unwrap();
     let url = format!("/api/v0/dots/{id}/access");
+    let revision = access_revision(&fx, &fx.alice, &url).await;
     for (tool, actions) in [
         (
             "browse_page",
@@ -286,7 +343,7 @@ async fn personal_dot_action_rules_reject_duplicates_unknown_values_and_unsuppor
                 Some(&fx.alice),
                 Method::PUT,
                 &url,
-                Some(json!({"tools":[{"id":tool,"permission":"always_ask","actions":actions}]})),
+                Some(json!({"revision":revision,"tools":[{"id":tool,"permission":"always_ask","actions":actions}]})),
             )
             .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
@@ -301,6 +358,6 @@ async fn personal_dot_action_rules_reject_duplicates_unknown_values_and_unsuppor
     aiplane_core::server::db::user_tool_prefs::set(&fx.state.db, "alice", "browse_page", false)
         .await
         .unwrap();
-    let (status,response)=fx.send(Some(&fx.alice),Method::PUT,&url,Some(json!({"tools":[{"id":"browse_page","permission":"always_ask","actions":[{"id":"read","rule":"allow"}]}]}))).await;
+    let (status,response)=fx.send(Some(&fx.alice),Method::PUT,&url,Some(json!({"revision":revision,"tools":[{"id":"browse_page","permission":"always_ask","actions":[{"id":"read","rule":"allow"}]}]}))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
 }

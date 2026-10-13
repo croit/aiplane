@@ -12,6 +12,12 @@
  */
 import { detect } from './locale.ts';
 
+export type DotBrowserInput =
+	| { kind: 'click'; x: number; y: number }
+	| { kind: 'key'; key: string }
+	| { kind: 'text'; text: string }
+	| { kind: 'scroll'; delta_x: number; delta_y: number };
+
 /** The reasoning-effort scale, least thinking first. */
 export const EFFORTS = ['off', 'low', 'medium', 'high', 'xhigh'] as const;
 export type Effort = (typeof EFFORTS)[number];
@@ -386,6 +392,43 @@ export const api = {
 			}
 		),
 
+	/** Claim one private server-browser controller for a suspended personal Dot. */
+	dotBrowserClaim: async (sessionId: string, turnId: string, requestId: string) => {
+		const path = `/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/claim`;
+		const controllerId = crypto.randomUUID();
+		const init = {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ controller_id: controllerId })
+		};
+		try {
+			return await request<{ controller_id: string; expires_at: string }>(path, init);
+		} catch (error) {
+			if (error instanceof ApiError && error.status < 500) throw error;
+			return request<{ controller_id: string; expires_at: string }>(path, init);
+		}
+	},
+	dotBrowserFrame: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
+		request<{ frame_b64: string | null; width: number | null; height: number | null; expires_at: string }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/frame`,
+			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId }) }
+		),
+	dotBrowserInput: (sessionId: string, turnId: string, requestId: string, controllerId: string, sequence: number, input: DotBrowserInput) =>
+		request<{ expires_at: string }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/input`,
+			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId, sequence, input }) }
+		),
+	dotBrowserFinish: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
+		request<{ returned: boolean }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/finish`,
+			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId }) }
+		),
+	dotBrowserAbort: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
+		request<{ cancelled: boolean }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/abort`,
+			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId }) }
+		),
+
 	/** The events stream URL — for `new EventSource` (cookies ride along same-origin). */
 	chatEventsUrl: (id: string) => `/api/v0/chat/sessions/${encodeURIComponent(id)}/events`,
 
@@ -442,6 +485,20 @@ export const api = {
 	/** GET /api/v0/models — the caller's chat models (compliance flags included). */
 	listChatModels: () =>
 		request<{ models: ChatModelChoice[] }>('/api/v0/models'),
+
+	/** Build an unsaved personal skill from manually entered workflow steps. */
+	draftWorkflowSkill: (input: {
+		name: string;
+		goal: string;
+		steps: string[];
+		stop_conditions: string;
+		model: string;
+	}) =>
+		request<{ manifest: string; model: string; saved: false }>('/api/v0/skills/draft', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(input)
+		}),
 
 	/** Voice input and spoken-reply choices available to this user. */
 	chatVoiceConfig: () =>

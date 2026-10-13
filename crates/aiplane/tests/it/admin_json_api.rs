@@ -2155,6 +2155,41 @@ async fn private_skills_authoring_round_trip() {
     assert_eq!(detail["body"], "# Steps\n\nShip carefully.\n");
     assert_eq!(detail["manifest"], manifest);
 
+    let collision = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/skills",
+            &cookie,
+            Some(serde_json::json!({ "name": "release-helper", "manifest": manifest }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(collision.status(), StatusCode::CONFLICT);
+
+    let revised = manifest.replace("Ship carefully.", "Review every change.");
+    let resp = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/skills",
+            &cookie,
+            Some(serde_json::json!({ "name": "release-helper", "manifest": revised, "overwrite": true }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED, "{}", body(resp).await);
+
+    let resp = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/skills/release-helper/body",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let updated: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
+    assert_eq!(updated["body"], "# Steps\n\nReview every change.\n");
+
     let resp = app
         .serve(req(
             Method::DELETE,

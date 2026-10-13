@@ -27,8 +27,8 @@ use rama::http::{Request, Response, StatusCode, header};
 use rama::layer::{ArcLayer, Layer};
 use rama::net::address::SocketAddress;
 use shared::sandbox::{
-    MAX_RUN_REQUEST_BYTES, RunError, RunRequest, RunnerHealth, STAGE_TOTAL_MAX_BYTES,
-    WorkspaceOperation, WorkspaceRequest,
+    BrowserControlRequest, MAX_RUN_REQUEST_BYTES, RunError, RunRequest, RunnerHealth,
+    STAGE_TOTAL_MAX_BYTES, WorkspaceOperation, WorkspaceRequest,
 };
 
 use crate::pool::{Pool, RunnerError};
@@ -51,6 +51,7 @@ pub fn router(state: Arc<RunnerState>) -> Router<Arc<RunnerState>> {
         .with_get("/healthz", healthz)
         .with_post("/run", run)
         .with_post("/workspace", workspace)
+        .with_post("/browser/control", browser_control)
         .with_delete("/container/{id}", release_container)
 }
 
@@ -194,9 +195,33 @@ async fn workspace(State(state): State<Arc<RunnerState>>, req: Request) -> Respo
     }
 }
 
+async fn browser_control(State(state): State<Arc<RunnerState>>, req: Request) -> Response {
+    let bytes = match read_capped(req, 8 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(refusal) => return refusal,
+    };
+    let request: BrowserControlRequest = match serde_json::from_slice(&bytes) {
+        Ok(request) => request,
+        Err(_) => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "The browser handover request is invalid.",
+            );
+        }
+    };
+    match state.pool.browser_control(&request).await {
+        Ok(response) => json_ok(&response),
+        Err(error) => runner_failure(error),
+    }
+}
+
 fn runner_failure(error: RunnerError) -> Response {
     match error {
         RunnerError::Busy => err(StatusCode::SERVICE_UNAVAILABLE, "sandbox at capacity"),
+        RunnerError::BrowserUnavailable => err(
+            StatusCode::GONE,
+            "The Dot browser handover is no longer available. Start a new browser session.",
+        ),
         RunnerError::NetworkUnavailable => err(
             StatusCode::BAD_REQUEST,
             "network egress requested but not configured on this runner. Note: if you \

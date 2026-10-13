@@ -23,6 +23,7 @@
 	import ToolCalls from '#lib/components/chat/ToolCalls.svelte';
 	import ConversationCanvas from '#lib/components/chat/ConversationCanvas.svelte';
 	import MessageAttachments from '#lib/components/chat/MessageAttachments.svelte';
+	import BrowserHandoverPanel from '#lib/components/chat/BrowserHandoverPanel.svelte';
 	import SuspensionCard from '#lib/components/SuspensionCard.svelte';
 	import { pausedTurn, waitingFrom, waitingLead, type Answer, type SuspensionView } from '#lib/suspension.js';
 	import { feedback, openDialog as openFeedback } from '#lib/feedback.svelte.js';
@@ -1001,13 +1002,22 @@
 
 						{#if entry.turn.status === 'suspended' && entry.suspension}
 							{@const waiting = entry.suspension}
-							<SuspensionCard
-								waiting={waitingFrom({ ...waiting, options: canWrite ? waiting.options : [] }, entry.tool_calls)}
-								lead={t(waitingLead(waiting.kind, 'chat'), { tool: waiting.tool ?? '' })}
-								busy={answering === entry.turn.id}
-								error={answerErrors[entry.turn.id] ?? null}
-								onanswer={(answer) => answerSuspension(entry.turn.id, waiting, answer)}
-							/>
+			{#if waiting.kind === 'browser_handover' && canWrite}
+				<BrowserHandoverPanel
+					sessionId={id}
+					turnId={entry.turn.id}
+					{waiting}
+					oncomplete={() => { followEnd(); controller?.attach(); }}
+				/>
+			{:else}
+				<SuspensionCard
+					waiting={waitingFrom({ ...waiting, options: canWrite ? waiting.options : [] }, entry.tool_calls)}
+					lead={t(waitingLead(waiting.kind, 'chat'), { tool: waiting.tool ?? '' })}
+					busy={answering === entry.turn.id}
+					error={answerErrors[entry.turn.id] ?? null}
+					onanswer={(answer) => answerSuspension(entry.turn.id, waiting, answer)}
+				/>
+			{/if}
 						{/if}
 
 						{#if shownAttachments.length > 0}<MessageAttachments attachments={shownAttachments} removable={canWrite && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />{/if}

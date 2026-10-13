@@ -243,6 +243,8 @@ pub enum StoreError {
     /// [`UserSkillStore`].
     #[error("that is too large (the maximum is {0} bytes)")]
     TooLarge(usize),
+    #[error("a private skill named `{0}` already exists")]
+    AlreadyExists(String),
     /// The inline editor's `SKILL.md` frontmatter `name` didn't match the skill
     /// it's being saved as. Only raised by [`UserSkillStore::save_manifest`].
     #[error("the SKILL.md `name: {manifest}` must match the skill `{target}`")]
@@ -492,31 +494,42 @@ impl UserSkillStore {
         name: &str,
         skill_md: &str,
     ) -> Result<String, StoreError> {
-        if skill_md.len() > MAX_USER_MANIFEST_BYTES {
-            return Err(StoreError::TooLarge(MAX_USER_MANIFEST_BYTES));
-        }
-        if !is_valid_name(name) {
-            return Err(StoreError::BadName(name.to_string()));
-        }
-        let front = parse_frontmatter(skill_md);
-        let manifest_name = front
-            .get("name")
-            .ok_or(StoreError::MissingField("name"))?
-            .clone();
-        if !front.contains_key("description") {
-            return Err(StoreError::MissingField("description"));
-        }
-        if manifest_name != name {
-            return Err(StoreError::NameMismatch {
-                manifest: manifest_name,
-                target: name.to_string(),
-            });
-        }
+        validate_user_manifest(name, skill_md)?;
         self.check_quota(user_id, name)?;
 
         let dir = self.user_dir(user_id).join(name);
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join(MANIFEST_FILE), skill_md)?;
+        self.invalidate(user_id);
+        Ok(name.to_string())
+    }
+
+    /// Create a private skill only if its name has not already been claimed.
+    /// The directory creation is atomic, so concurrent creates cannot replace
+    /// each other's manifest.
+    pub fn create_manifest(
+        &self,
+        user_id: &str,
+        name: &str,
+        skill_md: &str,
+    ) -> Result<String, StoreError> {
+        validate_user_manifest(name, skill_md)?;
+        self.check_quota(user_id, name)?;
+
+        let user_dir = self.user_dir(user_id);
+        std::fs::create_dir_all(&user_dir)?;
+        let target = user_dir.join(name);
+        match std::fs::create_dir(&target) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(StoreError::AlreadyExists(name.to_string()));
+            }
+            Err(err) => return Err(err.into()),
+        }
+        if let Err(err) = std::fs::write(target.join(MANIFEST_FILE), skill_md) {
+            let _ = std::fs::remove_dir_all(target);
+            return Err(err.into());
+        }
         self.invalidate(user_id);
         Ok(name.to_string())
     }
@@ -547,6 +560,30 @@ impl UserSkillStore {
         }
         Ok(())
     }
+}
+
+fn validate_user_manifest(name: &str, skill_md: &str) -> Result<(), StoreError> {
+    if skill_md.len() > MAX_USER_MANIFEST_BYTES {
+        return Err(StoreError::TooLarge(MAX_USER_MANIFEST_BYTES));
+    }
+    if !is_valid_name(name) {
+        return Err(StoreError::BadName(name.to_string()));
+    }
+    let front = parse_frontmatter(skill_md);
+    let manifest_name = front
+        .get("name")
+        .ok_or(StoreError::MissingField("name"))?
+        .clone();
+    if !front.contains_key("description") {
+        return Err(StoreError::MissingField("description"));
+    }
+    if manifest_name != name {
+        return Err(StoreError::NameMismatch {
+            manifest: manifest_name,
+            target: name.to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Overlay a user's private skills on the global (operator) ones: private
@@ -1367,6 +1404,33 @@ mod tests {
             .save_manifest("u1", "foo", "---\nname: bar\ndescription: d.\n---\nbody")
             .unwrap_err();
         assert!(matches!(err, StoreError::NameMismatch { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn user_store_create_does_not_replace_an_existing_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = UserSkillStore::new(dir.path().to_path_buf());
+        store
+            .create_manifest(
+                "u1",
+                "workflow",
+                "---\nname: workflow\ndescription: first\n---\nfirst body",
+            )
+            .unwrap();
+
+        let error = store
+            .create_manifest(
+                "u1",
+                "workflow",
+                "---\nname: workflow\ndescription: second\n---\nsecond body",
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, StoreError::AlreadyExists(name) if name == "workflow"));
+        let registry = store.registry_for("u1");
+        let skill = registry.get("workflow").unwrap();
+        assert_eq!(skill.description, "first");
+        assert_eq!(skill.body().unwrap(), "first body");
     }
 
     #[test]

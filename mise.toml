@@ -383,14 +383,14 @@ dir = "{{ config_root }}"
 run = "python3 web/scripts/ftl-to-ts.py"
 
 [tasks.test-web]
-description = "Unit-test the SvelteKit SPA's TypeScript (node --test, Node's own type stripping). Tests live next to their module as `*.test.ts` in web/src/lib — the pure, framework-free halves of the SPA (chat event protocol, markdown), so they pin wire behaviour without jsdom."
+description = "Unit-test the SvelteKit SPA logic and static markup rules (node --test, Node's own type stripping). Tests live next to their module as `*.test.ts` in web/src/lib and include a scan of component markup for UI drift."
 # Load-bearing: some of these modules import real dependencies (marked,
 # svelte/store), so they need web/node_modules. Without the dependency mise's
 # DAG is free to run this in parallel with `npm ci` — which it does on a cold
 # CI checkout, and the tests fail with ERR_MODULE_NOT_FOUND against a
 # half-installed tree while passing locally where node_modules already exists.
 depends = ["web-install"]
-sources = ["web/src/lib/**/*.ts", "web/embed/**/*.ts", "web/shared/**/*.ts", "web/package-lock.json"]
+sources = ["web/src/lib/**/*.ts", "web/src/**/*.svelte", "web/embed/**/*.ts", "web/shared/**/*.ts", "web/package-lock.json"]
 dir = "{{ config_root }}"
 run = "node --test 'web/src/lib/**/*.test.ts' 'web/embed/**/*.test.ts' 'web/shared/**/*.test.ts'"
 

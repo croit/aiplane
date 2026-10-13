@@ -64,6 +64,7 @@ mod rbac;
 mod readme_routes;
 mod session_routes;
 mod setup_wizard;
+mod skill_draft;
 mod spa_routes;
 mod speech_voice;
 mod system_one;

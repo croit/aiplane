@@ -7,6 +7,7 @@
 	import PersonalSkillDetail from '#lib/components/skills/PersonalSkillDetail.svelte';
 	import PersonalSkillEditor from '#lib/components/skills/PersonalSkillEditor.svelte';
 	import PersonalSkillRail from '#lib/components/skills/PersonalSkillRail.svelte';
+	import WorkflowDraftDialog from '#lib/components/skills/WorkflowDraftDialog.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 	import { NEW_SKILL_TEMPLATE, selectedSkill, type PersonalSkill } from '#lib/skills.js';
 
@@ -20,9 +21,15 @@
 	let details = $state<Record<string, SkillDetail>>({});
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
+	let workflowDraftOpen = $state(false);
+	let generatedManifest = $state('');
 	let requested = $derived(page.url.searchParams.get('skill'));
 	let mode = $derived<'view' | 'edit' | 'new'>(page.url.searchParams.has('new') ? 'new' : page.url.searchParams.has('edit') ? 'edit' : 'view');
 	let selected = $derived(selectedSkill(skills, requested));
+
+	$effect(() => {
+		if (mode !== 'new') generatedManifest = '';
+	});
 
 	async function refresh() {
 		try {
@@ -57,9 +64,9 @@
 		} catch (caught) { notice = String(caught); }
 	}
 
-	async function save(name: string, manifest: string) {
+	async function save(name: string, manifest: string, overwrite: boolean) {
 		try {
-			const saved = await adminPost<{ name: string }>('/api/v0/skills', { name, manifest });
+			const saved = await adminPost<{ name: string }>('/api/v0/skills', { name, manifest, overwrite });
 			details = {};
 			await refresh();
 			await goto(`/tools/skills?skill=${encodeURIComponent(saved.name)}`);
@@ -76,6 +83,11 @@
 		} catch (caught) { notice = String(caught); }
 	}
 
+	async function useGeneratedDraft(manifest: string) {
+		await goto('/tools/skills?new=1');
+		generatedManifest = manifest;
+	}
+
 	onMount(refresh);
 </script>
 
@@ -85,11 +97,11 @@
 	{#if error}<div class="alert alert-error mb-4 text-sm"><span>{error}</span></div>{/if}
 	{#if notice}<div class="alert alert-warning mb-4 text-sm"><span>{notice}</span></div>{/if}
 	<div class="flex flex-col items-start gap-6 sm:flex-row">
-		<PersonalSkillRail {skills} {selected} {mode} {enabled} onupload={upload} />
+		<PersonalSkillRail {skills} {selected} {mode} {enabled} onupload={upload} onworkflowdraft={() => (workflowDraftOpen = true)} />
 		{#if !enabled}
 			<section class="min-w-0 flex-1 pt-2 text-sm text-base-content/60">{t('my-skills-empty-not-configured')}</section>
 		{:else if mode === 'new'}
-			<PersonalSkillEditor name="" initial={NEW_SKILL_TEMPLATE} isNew={true} onsave={save} />
+			<PersonalSkillEditor name="" initial={generatedManifest || NEW_SKILL_TEMPLATE} isNew={true} onsave={save} />
 		{:else if selected && details[selected.name] && mode === 'edit'}
 			<PersonalSkillEditor name={selected.name} initial={details[selected.name].manifest} isNew={false} onsave={save} />
 		{:else if selected && details[selected.name]}
@@ -101,3 +113,5 @@
 		{/if}
 	</div>
 </div>
+
+<WorkflowDraftDialog bind:open={workflowDraftOpen} ongenerated={useGeneratedDraft} />

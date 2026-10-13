@@ -51,7 +51,7 @@ test('Dot memory API retains actual scope authority and sends explicit scopes', 
 });
 
 test('Dot memory sections preserve actual names and isolate same-kind notes by declared scope', async () => {
-	const { dotMemorySections } = await import('./dots.ts');
+	const { dotMemoryAuthorityRevoked, dotMemorySections } = await import('./dots.ts');
 	const lesson = { id: 'lesson', kind: 'fact' as const, content: 'A reviewed lesson.', created_at: '2026-10-11' };
 	const shared = { ...lesson, id: 'shared', content: 'Reviewed shared knowledge.' };
 	const result = {
@@ -73,6 +73,8 @@ test('Dot memory sections preserve actual names and isolate same-kind notes by d
 	assert.deepEqual(dotMemorySections({ ...result, scopes: [] }), []);
 	assert.deepEqual(dotMemorySections(null), []);
 	assert.deepEqual(dotMemorySections(undefined), []);
+	assert.equal([401, 403, 404].every(dotMemoryAuthorityRevoked), true);
+	assert.equal([400, 409, 500].some(dotMemoryAuthorityRevoked), false);
 });
 
 test('Dot connection API sends exact scoped versions without credential authority fields', async (context) => {

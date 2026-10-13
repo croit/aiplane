@@ -136,6 +136,48 @@ pub async fn state_with_chat_pool(upstream_url: &str) -> RamaState {
     state_with_pool(upstream_url, PoolKind::Chat, "model-a").await
 }
 
+/// A chat pool with personal skill storage enabled, for workflow-draft routes.
+pub async fn state_with_chat_pool_and_user_skills(
+    upstream_url: &str,
+    root: std::path::PathBuf,
+) -> RamaState {
+    use aiplane_features::server::skills::UserSkillStore;
+
+    let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+    let mut pools = HashMap::new();
+    pools.insert(
+        "pool".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            compliance: Default::default(),
+            enforce_limits: true,
+            kind: PoolKind::Chat,
+            strategy: PickerStrategy::RoundRobin,
+            models: Vec::new(),
+            backend: vec![mock_backend("mock", upstream_url)],
+        },
+    );
+    let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
+    seed_pool_models(&registry, "pool", 0, &["model-a"]);
+    let app = AppState::new(
+        test_config(),
+        db_pool.clone(),
+        registry,
+        Arc::new(ToolRegistry::new()),
+        Arc::new(Resolver::empty()),
+    )
+    .with_user_skills(Arc::new(UserSkillStore::new(root)));
+    let sessions = SessionStore::new(db_pool, TEST_SECRET);
+    RamaState::new(
+        app,
+        sessions,
+        aiplane_core::server::usage::UsageHandle::disabled(),
+    )
+}
+
 /// Build a `RamaState` wired to a single backend pool of the requested
 /// kind. Tests bypass the health probe entirely — the pool's lone
 /// backend has its advertised-model set seeded directly via

@@ -59,8 +59,10 @@ pub enum WorkspaceError {
 
 pub struct Workspace {
     files: File,
+    browser_profile: File,
     work_root: PathBuf,
     files_path: PathBuf,
+    browser_profile_path: PathBuf,
     identity: DotWorkspace,
 }
 
@@ -93,10 +95,16 @@ impl Workspace {
             Err(error) => return Err(error),
         }
         let files_path = work_root.join("dots").join(&identity.dot_id).join("files");
+        let browser_profile_path = work_root
+            .join("dots")
+            .join(&identity.dot_id)
+            .join("browser-profile");
         Ok(Self {
             files: directory(&dot, "files", true)?,
+            browser_profile: directory(&dot, "browser-profile", true)?,
             work_root,
             files_path,
+            browser_profile_path,
             identity: identity.clone(),
         })
     }
@@ -206,7 +214,36 @@ impl Workspace {
 
     pub fn prepare_workload_owner(&self, uid: u32, gid: u32) -> Result<(), WorkspaceError> {
         self.validate_path(&self.files_path)?;
-        prepare_owner(&self.files, uid, gid)
+        self.validate_browser_profile_path(&self.browser_profile_path)?;
+        prepare_owner(&self.files, uid, gid)?;
+        prepare_owner(&self.browser_profile, uid, gid)
+    }
+
+    pub fn browser_profile_path(&self) -> Result<PathBuf, WorkspaceError> {
+        self.validate_browser_profile_path(&self.browser_profile_path)?;
+        Ok(self.browser_profile_path.clone())
+    }
+
+    pub fn validate_browser_profile_path(&self, path: &Path) -> Result<(), WorkspaceError> {
+        if path != self.browser_profile_path {
+            return Err(WorkspaceError::UnsafeEntry);
+        }
+        let root = open_root(&self.work_root)?;
+        require_private(&root)?;
+        check_not_retired(&root, &self.identity)?;
+        let dots = directory(&root, "dots", false)?;
+        require_private(&dots)?;
+        let dot = directory(&dots, &self.identity.dot_id, false)?;
+        require_private(&dot)?;
+        let mut manifest = open_regular(&dot, "owner.json")?;
+        require_private(&manifest)?;
+        let saved: DotWorkspace =
+            serde_json::from_slice(&read_bounded(&mut manifest, MAX_MANIFEST_BYTES)?)?;
+        if saved != self.identity {
+            return Err(WorkspaceError::OwnerMismatch);
+        }
+        let browser_profile = directory(&dot, "browser-profile", false)?;
+        same_directory(&browser_profile, &self.browser_profile)
     }
 
     fn validate_path(&self, path: &Path) -> Result<(), WorkspaceError> {

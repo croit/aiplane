@@ -51,6 +51,8 @@ pub enum RunnerError {
     WorkspaceMismatch,
     #[error("workspace filesystem operation failed: {0}")]
     Workspace(#[from] crate::workspace::WorkspaceError),
+    #[error("the Dot browser handover is expired or unavailable")]
+    BrowserUnavailable,
 }
 
 /// A pre-booted, idle container plus the workload-image id it was created
@@ -79,6 +81,54 @@ struct Leased {
     scope: Option<DotWorkspaceScope>,
     network: Network,
     workspace: Option<Arc<Workspace>>,
+    handover_generation: u64,
+    handover: Option<BrowserHandover>,
+}
+
+struct BrowserHandover {
+    id: String,
+    generation: u64,
+    last_sequence: u64,
+    started_at: Instant,
+    last_input_at: Instant,
+    expires_at: String,
+    sealed: bool,
+    controller_id: Option<String>,
+}
+
+const BROWSER_HANDOVER_IDLE: Duration = Duration::from_secs(5 * 60);
+const BROWSER_HANDOVER_MAX: Duration = Duration::from_secs(15 * 60);
+
+fn browser_remaining(started_at: Instant, last_input_at: Instant, now: Instant) -> Duration {
+    let idle = BROWSER_HANDOVER_IDLE.saturating_sub(now.saturating_duration_since(last_input_at));
+    let total = BROWSER_HANDOVER_MAX.saturating_sub(now.saturating_duration_since(started_at));
+    idle.min(total)
+}
+
+fn browser_expiry_in(remaining: Duration) -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .saturating_add(remaining.as_secs());
+    let timestamp: libc::time_t = seconds.try_into().unwrap_or(libc::time_t::MAX);
+    let mut broken_down = unsafe { std::mem::zeroed::<libc::tm>() };
+    if unsafe { libc::gmtime_r(&timestamp, &mut broken_down) }.is_null() {
+        return seconds.to_string();
+    }
+    let mut output = [0u8; 32];
+    let written = unsafe {
+        libc::strftime(
+            output.as_mut_ptr().cast(),
+            output.len(),
+            c"%Y-%m-%dT%H:%M:%SZ".as_ptr(),
+            &broken_down,
+        )
+    };
+    if written == 0 {
+        return seconds.to_string();
+    }
+    String::from_utf8_lossy(&output[..written]).into_owned()
 }
 
 pub struct Pool {
@@ -161,7 +211,16 @@ impl Pool {
             leased
                 .iter()
                 .filter(|(_, l)| {
-                    !l.busy && (l.retiring || now.saturating_duration_since(l.last_used) > ttl)
+                    !l.busy
+                        && (l.retiring
+                            || l.handover.as_ref().is_some_and(|handover| {
+                                now.saturating_duration_since(handover.last_input_at)
+                                    >= BROWSER_HANDOVER_IDLE
+                                    || now.saturating_duration_since(handover.started_at)
+                                        >= BROWSER_HANDOVER_MAX
+                            })
+                            || (l.handover.is_none()
+                                && now.saturating_duration_since(l.last_used) > ttl))
                 })
                 .map(|(id, _)| id.clone())
                 .collect()
@@ -197,9 +256,21 @@ impl Pool {
                 scope: None,
                 network: Network::None,
                 workspace: None,
+                handover_generation: 0,
+                handover: None,
             });
             if lease.busy {
                 return Err(RunnerError::Busy);
+            }
+            if let Some(handover) = &lease.handover {
+                let now = Instant::now();
+                let expired = now.saturating_duration_since(handover.last_input_at)
+                    >= BROWSER_HANDOVER_IDLE
+                    || now.saturating_duration_since(handover.started_at) >= BROWSER_HANDOVER_MAX;
+                if !expired {
+                    return Err(RunnerError::Busy);
+                }
+                lease.handover = None;
             }
             lease.retiring = true;
             lease.busy = true;
@@ -555,7 +626,7 @@ impl Pool {
         if req.network && !self.cfg.egress_available() {
             return Err(RunnerError::NetworkUnavailable);
         }
-        let (id, creating, files, path) = {
+        let (id, creating, files, path, browser_profile_path) = {
             let mut leased = self.leased.lock().unwrap();
             let files = Arc::new(Workspace::open(
                 self.cfg
@@ -565,10 +636,17 @@ impl Pool {
                 &scope.workspace,
             )?);
             let path = files.mount_path()?;
+            let browser_profile_path = match scope.purpose {
+                shared::sandbox::WorkspacePurpose::Workspace => None,
+                shared::sandbox::WorkspacePurpose::Browser => Some(files.browser_profile_path()?),
+            };
             if let Some(id) = &req.container_id {
                 let lease = leased.get_mut(id).ok_or(RunnerError::WorkspaceMismatch)?;
                 if lease.scope.as_ref() != Some(scope) || lease.network != network {
                     return Err(RunnerError::WorkspaceMismatch);
+                }
+                if lease.handover.is_some() {
+                    return Err(RunnerError::Busy);
                 }
                 if lease.busy || lease.retiring {
                     return Err(RunnerError::Busy);
@@ -579,14 +657,15 @@ impl Pool {
                     .ok_or(RunnerError::WorkspaceMismatch)?
                     .validate_mount_path(&path)?;
                 lease.busy = true;
-                (id.clone(), false, files, path)
+                (id.clone(), false, files, path, browser_profile_path)
             } else {
                 if leased.values().any(|lease| {
                     lease.scope.as_ref().is_some_and(|held| {
                         held.workspace.dot_id == scope.workspace.dot_id
                             && (held.workspace != scope.workspace
                                 || held.turn_id != scope.turn_id
-                                || lease.retiring)
+                                || lease.retiring
+                                || lease.handover.is_some())
                     })
                 }) {
                     return Err(RunnerError::Busy);
@@ -604,9 +683,11 @@ impl Pool {
                         scope: Some(scope.clone()),
                         network,
                         workspace: Some(files.clone()),
+                        handover_generation: 0,
+                        handover: None,
                     },
                 );
-                (id, true, files, path)
+                (id, true, files, path, browser_profile_path)
             }
         };
         if creating {
@@ -614,6 +695,7 @@ impl Pool {
                 name: id.clone(),
                 files,
                 path,
+                browser_profile_path,
             };
             match self.backend.create(network, Some(&mount)).await {
                 Ok(created) if created == id => {}
@@ -678,6 +760,232 @@ impl Pool {
         Ok(response)
     }
 
+    pub async fn browser_control(
+        &self,
+        request: &shared::sandbox::BrowserControlRequest,
+    ) -> Result<shared::sandbox::BrowserControlResponse, RunnerError> {
+        use shared::sandbox::{
+            BrowserControlOperation as Operation, BrowserInput, WorkspacePurpose,
+        };
+        if request.turn_id.is_empty()
+            || request.handover_id.is_empty()
+            || request.handover_id.len() > 128
+            || request.container_id.is_empty()
+        {
+            return Err(RunnerError::WorkspaceMismatch);
+        }
+        if matches!(request.operation, Operation::Begin) && request.controller_id.is_some()
+            || !matches!(request.operation, Operation::Begin)
+                && request.controller_id.as_deref().is_none_or(str::is_empty)
+        {
+            return Err(RunnerError::BrowserUnavailable);
+        }
+        let id = &request.container_id;
+        let (generation, mut expires_at) = {
+            let mut leases = self.leased.lock().unwrap();
+            let lease = leases.get_mut(id).ok_or(RunnerError::BrowserUnavailable)?;
+            let scope = lease.scope.as_ref().ok_or(RunnerError::WorkspaceMismatch)?;
+            if scope.workspace != request.workspace
+                || scope.turn_id != request.turn_id
+                || scope.purpose != WorkspacePurpose::Browser
+                || lease.retiring
+                || lease.busy
+            {
+                return Err(RunnerError::WorkspaceMismatch);
+            }
+            let (generation, expiry) = match &request.operation {
+                Operation::Begin => {
+                    if lease.handover.is_some() {
+                        return Err(RunnerError::Busy);
+                    }
+                    lease.handover_generation = lease.handover_generation.saturating_add(1);
+                    let generation = lease.handover_generation;
+                    let now = Instant::now();
+                    let expiry = browser_expiry_in(BROWSER_HANDOVER_IDLE);
+                    lease.handover = Some(BrowserHandover {
+                        id: request.handover_id.clone(),
+                        generation,
+                        last_sequence: 0,
+                        started_at: now,
+                        last_input_at: now,
+                        expires_at: expiry.clone(),
+                        sealed: true,
+                        controller_id: None,
+                    });
+                    lease.busy = true;
+                    (generation, expiry)
+                }
+                Operation::Claim { generation: wanted }
+                | Operation::Frame { generation: wanted }
+                | Operation::Input {
+                    generation: wanted, ..
+                }
+                | Operation::Finish { generation: wanted } => {
+                    let handover = lease
+                        .handover
+                        .as_mut()
+                        .filter(|handover| handover.id == request.handover_id)
+                        .ok_or(RunnerError::BrowserUnavailable)?;
+                    let now = Instant::now();
+                    if handover.generation != *wanted
+                        || handover.sealed
+                        || now.saturating_duration_since(handover.last_input_at)
+                            >= BROWSER_HANDOVER_IDLE
+                        || now.saturating_duration_since(handover.started_at)
+                            >= BROWSER_HANDOVER_MAX
+                    {
+                        return Err(RunnerError::BrowserUnavailable);
+                    }
+                    handover.expires_at = browser_expiry_in(browser_remaining(
+                        handover.started_at,
+                        handover.last_input_at,
+                        now,
+                    ));
+                    match request.operation {
+                        Operation::Claim { .. } => {
+                            let Some(controller_id) = request.controller_id.as_deref() else {
+                                return Err(RunnerError::BrowserUnavailable);
+                            };
+                            if controller_id.is_empty()
+                                || controller_id.len() > 128
+                                || handover
+                                    .controller_id
+                                    .as_deref()
+                                    .is_some_and(|current| current != controller_id)
+                            {
+                                return Err(RunnerError::BrowserUnavailable);
+                            }
+                            handover
+                                .controller_id
+                                .get_or_insert_with(|| controller_id.to_owned());
+                        }
+                        Operation::Frame { .. }
+                        | Operation::Input { .. }
+                        | Operation::Finish { .. } => {
+                            if handover.controller_id.as_deref() != request.controller_id.as_deref()
+                                || handover.controller_id.is_none()
+                            {
+                                return Err(RunnerError::BrowserUnavailable);
+                            }
+                        }
+                        Operation::Begin => unreachable!(),
+                    }
+                    if let Operation::Input {
+                        sequence, input, ..
+                    } = &request.operation
+                    {
+                        if *sequence <= handover.last_sequence {
+                            return Err(RunnerError::BrowserUnavailable);
+                        }
+                        match input {
+                            BrowserInput::Click { x, y } if *x < 1280 && *y < 900 => {}
+                            BrowserInput::Key { key }
+                                if matches!(
+                                    key.as_str(),
+                                    "Enter"
+                                        | "Tab"
+                                        | "Escape"
+                                        | "ArrowUp"
+                                        | "ArrowDown"
+                                        | "ArrowLeft"
+                                        | "ArrowRight"
+                                        | "Backspace"
+                                        | "Delete"
+                                        | "Home"
+                                        | "End"
+                                        | "PageUp"
+                                        | "PageDown"
+                                        | "Space"
+                                ) => {}
+                            BrowserInput::Text { text } if text.len() <= 2048 => {}
+                            BrowserInput::Scroll { delta_x, delta_y }
+                                if delta_x.abs() <= 1000 && delta_y.abs() <= 1000 => {}
+                            _ => return Err(RunnerError::BrowserUnavailable),
+                        }
+                    }
+                    (handover.generation, handover.expires_at.clone())
+                }
+            };
+            lease.busy = true;
+            (generation, expiry)
+        };
+
+        let result = if matches!(request.operation, Operation::Claim { .. }) {
+            Ok(shared::sandbox::BrowserControlResponse {
+                ok: true,
+                generation,
+                expires_at: expires_at.clone(),
+                frame_b64: None,
+                width: None,
+                height: None,
+            })
+        } else {
+            self.backend.browser_control(id, &request.operation).await
+        };
+        let result = match result {
+            Ok(response) => response,
+            Err(error) => {
+                let cleanup = if matches!(request.operation, Operation::Begin) {
+                    self.backend
+                        .browser_control(id, &Operation::Finish { generation })
+                        .await
+                        .is_ok()
+                } else {
+                    false
+                };
+                let mut leases = self.leased.lock().unwrap();
+                if let Some(lease) = leases.get_mut(id) {
+                    lease.busy = false;
+                    if cleanup
+                        && lease
+                            .handover
+                            .as_ref()
+                            .is_some_and(|handover| handover.id == request.handover_id)
+                    {
+                        lease.handover = None;
+                    }
+                }
+                return Err(error.into());
+            }
+        };
+        let mut leases = self.leased.lock().unwrap();
+        let lease = leases.get_mut(id).ok_or(RunnerError::BrowserUnavailable)?;
+        lease.busy = false;
+        let handover = lease
+            .handover
+            .as_mut()
+            .filter(|handover| handover.id == request.handover_id)
+            .ok_or(RunnerError::BrowserUnavailable)?;
+        match request.operation {
+            Operation::Begin => handover.sealed = false,
+            Operation::Claim { .. } => {}
+            Operation::Frame { .. } => {}
+            Operation::Input { sequence, .. } => {
+                handover.last_sequence = sequence;
+                handover.last_input_at = Instant::now();
+                handover.expires_at = browser_expiry_in(browser_remaining(
+                    handover.started_at,
+                    handover.last_input_at,
+                    handover.last_input_at,
+                ));
+                expires_at = handover.expires_at.clone();
+                lease.last_used = handover.last_input_at;
+            }
+            Operation::Finish { .. } => {
+                lease.handover = None;
+                lease.last_used = Instant::now();
+            }
+        }
+        Ok(shared::sandbox::BrowserControlResponse {
+            ok: true,
+            generation,
+            expires_at,
+            frame_b64: result.frame_b64,
+            width: result.width,
+            height: result.height,
+        })
+    }
+
     fn mark_lease_busy(&self, id: &str) -> Result<bool, RunnerError> {
         let mut leased = self.leased.lock().unwrap();
         match leased.get_mut(id) {
@@ -738,6 +1046,8 @@ impl Pool {
                             scope: None,
                             network: Network::None,
                             workspace: None,
+                            handover_generation: 0,
+                            handover: None,
                         },
                     );
                     true
@@ -768,6 +1078,8 @@ impl Pool {
                 scope: None,
                 network: Network::None,
                 workspace: None,
+                handover_generation: 0,
+                handover: None,
             });
             lease.retiring = true;
         }
@@ -839,6 +1151,27 @@ fn clip_head_tail(s: &mut String, budget: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_handover_deadline_tracks_idle_and_total_limits() {
+        let start = Instant::now();
+        assert_eq!(
+            browser_remaining(start, start, start),
+            BROWSER_HANDOVER_IDLE
+        );
+        let one_minute = start + Duration::from_secs(60);
+        assert_eq!(
+            browser_remaining(start, start, one_minute),
+            Duration::from_secs(4 * 60)
+        );
+        let fourteen_minutes = start + Duration::from_secs(14 * 60);
+        assert_eq!(
+            browser_remaining(start, fourteen_minutes, fourteen_minutes),
+            Duration::from_secs(60)
+        );
+        let deadline = start + BROWSER_HANDOVER_MAX;
+        assert_eq!(browser_remaining(start, deadline, deadline), Duration::ZERO);
+    }
 
     #[tokio::test]
     async fn workspace_request_never_falls_back_to_unscoped_container() {
@@ -991,6 +1324,124 @@ mod tests {
         pool.release_container(&browser).await.unwrap();
         let next = pool.run(&other).await.unwrap().container_id.unwrap();
         pool.release_container(&next).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_handover_fences_dot_execution_and_rejects_stale_input() {
+        use shared::sandbox::{
+            BrowserControlOperation as Operation, BrowserControlRequest, BrowserInput,
+            WorkspacePurpose,
+        };
+
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let browser_scope = scoped_request("turn-a", WorkspacePurpose::Browser)
+            .workspace
+            .unwrap();
+        let browser_id = pool
+            .run(&scoped_request("turn-a", WorkspacePurpose::Browser))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        let request = |operation, controller: Option<&str>| BrowserControlRequest {
+            workspace: browser_scope.workspace.clone(),
+            turn_id: browser_scope.turn_id.clone(),
+            container_id: browser_id.clone(),
+            handover_id: "handover-1".into(),
+            controller_id: controller.map(str::to_owned),
+            operation,
+        };
+
+        backend
+            .fail_browser_begin_once
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            pool.browser_control(&request(Operation::Begin, None))
+                .await
+                .is_err()
+        );
+        let started = pool
+            .browser_control(&request(Operation::Begin, None))
+            .await
+            .unwrap();
+        assert_eq!(started.generation, 2);
+        assert!(matches!(
+            pool.run(&scoped_request("turn-a", WorkspacePurpose::Workspace))
+                .await,
+            Err(RunnerError::Busy)
+        ));
+        pool.browser_control(&request(
+            Operation::Claim { generation: 2 },
+            Some("control-1"),
+        ))
+        .await
+        .unwrap();
+        assert!(
+            pool.browser_control(&request(
+                Operation::Claim { generation: 2 },
+                Some("control-1")
+            ))
+            .await
+            .is_ok()
+        );
+        assert!(matches!(
+            pool.browser_control(&request(
+                Operation::Claim { generation: 2 },
+                Some("control-2")
+            ))
+            .await,
+            Err(RunnerError::BrowserUnavailable)
+        ));
+        assert!(matches!(
+            pool.browser_control(&request(
+                Operation::Input {
+                    generation: 2,
+                    sequence: 0,
+                    input: BrowserInput::Key {
+                        key: "Enter".into()
+                    },
+                },
+                Some("control-1")
+            ))
+            .await,
+            Err(RunnerError::BrowserUnavailable)
+        ));
+        pool.browser_control(&request(
+            Operation::Input {
+                generation: 2,
+                sequence: 1,
+                input: BrowserInput::Key {
+                    key: "Enter".into(),
+                },
+            },
+            Some("control-1"),
+        ))
+        .await
+        .unwrap();
+        pool.browser_control(&request(
+            Operation::Input {
+                generation: 2,
+                sequence: 3,
+                input: BrowserInput::Key { key: "Tab".into() },
+            },
+            Some("control-1"),
+        ))
+        .await
+        .unwrap();
+        pool.browser_control(&request(
+            Operation::Finish { generation: 2 },
+            Some("control-1"),
+        ))
+        .await
+        .unwrap();
+
+        let mut resumed = scoped_request("turn-a", WorkspacePurpose::Browser);
+        resumed.container_id = Some(browser_id.clone());
+        assert!(pool.run(&resumed).await.is_ok());
+        assert_eq!(backend.browser_controls.lock().unwrap().len(), 6);
+        pool.release_container(&browser_id).await.unwrap();
     }
 
     #[tokio::test]
@@ -1558,6 +2009,8 @@ mod tests {
                 scope: None,
                 network: Network::None,
                 workspace: None,
+                handover_generation: 0,
+                handover: None,
             },
         );
         assert_eq!(pool.dispose("fake-0", true, true, false), None);
@@ -1714,6 +2167,8 @@ mod tests {
                 scope: None,
                 network: Network::None,
                 workspace: None,
+                handover_generation: 0,
+                handover: None,
             },
         );
 
@@ -1825,6 +2280,8 @@ mod tests {
                 scope: None,
                 network: Network::None,
                 workspace: None,
+                handover_generation: 0,
+                handover: None,
             },
         );
         let mut r = req();

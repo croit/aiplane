@@ -3,7 +3,10 @@
 
 use super::SandboxClient;
 use aiplane_core::server::capped_read::{self, CappedReadError};
-use shared::sandbox::{WorkspaceListResponse, WorkspaceOperation, WorkspaceRequest};
+use shared::sandbox::{
+    BrowserControlRequest, BrowserControlResponse, WorkspaceListResponse, WorkspaceOperation,
+    WorkspaceRequest,
+};
 use std::sync::atomic::Ordering;
 
 #[derive(Debug)]
@@ -41,6 +44,42 @@ fn read_error(error: CappedReadError) -> WorkspaceClientError {
 }
 
 impl SandboxClient {
+    pub async fn browser_control(
+        &self,
+        request: BrowserControlRequest,
+    ) -> Result<BrowserControlResponse, WorkspaceClientError> {
+        self.probe_capabilities().await;
+        if !self.workspace.load(Ordering::Acquire) {
+            return Err(WorkspaceClientError::Unavailable);
+        }
+        let response = self
+            .http
+            .post(format!(
+                "{}/browser/control",
+                self.cfg.runner_url.trim_end_matches('/')
+            ))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|_| WorkspaceClientError::Unavailable)?;
+        let status = response.status();
+        if !status.is_success() {
+            capped_read::read_capped(response, 16 * 1024)
+                .await
+                .map_err(read_error)?;
+            return Err(match status.as_u16() {
+                400 => WorkspaceClientError::InvalidRequest,
+                409 | 410 => WorkspaceClientError::Conflict,
+                413 => WorkspaceClientError::TooLarge,
+                503 | 502 => WorkspaceClientError::Unavailable,
+                _ => WorkspaceClientError::Failed,
+            });
+        }
+        capped_read::read_capped_json(response, 3 * 1024 * 1024)
+            .await
+            .map_err(read_error)
+    }
+
     pub async fn workspace_operation(
         &self,
         request: WorkspaceRequest,

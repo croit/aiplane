@@ -2,9 +2,15 @@
 
 ## Status and scope
 
-Adopted design under the maintainer's delegated Dot product decisions. Implementation is in progress. The internal runner supports personal Dot file scopes and bounded file operations; the owner API, web interface and durable deletion integration are being built. Persistent browser login is a subsequent increment. This document distinguishes the complete design from the currently verified foundation. The background automation slice remains separate in [dots-background.md](dots-background.md).
+Personal Dot file storage, bounded owner workspace operations, lifecycle cleanup,
+and persistent browser profiles are implemented for supported runner
+deployments. The browser profile is available only when the runner reports
+validated persistent storage; see [operator implications](#operator-implications).
+Personal owner handover is described in [dots-browser-handover.md](dots-browser-handover.md).
+Organization workspace ownership remains outside this personal storage scope.
+Background automation is documented separately in [dots-background.md](dots-background.md).
 
-A personal Dot needs files that survive turns, schedules, webhook runs and container expiry, plus its own server-side browser state. This slice extends the existing sandbox runner and `browse_page` implementation. The Dot uses the existing model, tool permissions, pending approvals, metering and owner identity. It does not require a connected browser extension. Organization ownership and human remote desktop control are outside this slice.
+A personal Dot uses files that survive turns, schedules, webhook runs and container expiry, plus its own server-side browser state. This extends the existing sandbox runner and `browse_page` implementation. The Dot uses the existing model, tool permissions, pending approvals, metering and owner identity. It does not require a connected browser extension. Browser handover supports the owner using the Dot's browser through the web chat; it does not provide a general remote desktop.
 
 ## Verified existing mechanisms
 
@@ -46,7 +52,7 @@ The root and control metadata are never mounted into a container. Generic Dot co
 
 The optional `RunRequest.workspace` contains `DotWorkspaceScope { workspace: DotWorkspace { owner_user_id, dot_id }, turn_id, purpose }`. Purpose is `workspace` or `browser`. Ordinary requests omit it. This first slice uses personal ownership; organization execution must retain its own principal and requires a separate admission integration. No organization claim is converted to an employee identity.
 
-The gateway derives every scope field from `PersonalDotExecution.binding()` and compares it with the actual tool principal, Dot identity, session and assistant turn. It reuses the local dispatch execution validator for current ownership, active Dot, model access and ancestor consent, and additionally requires the exact executing assistant turn to be in progress. No field is accepted from model arguments. Browser purpose is chosen by the browser wrapper. In the files increment, both purposes mount only `/workspace`; browser profile persistence is not yet enabled. Management requests use `DotWorkspace` without a fabricated execution turn.
+The gateway derives every scope field from `PersonalDotExecution.binding()` and compares it with the actual tool principal, Dot identity, session and assistant turn. It reuses the local dispatch execution validator for current ownership, active Dot, model access and ancestor consent, and additionally requires the exact executing assistant turn to be in progress. No field is accepted from model arguments. Browser purpose is chosen by the browser wrapper. Workspace containers mount only `/workspace`; browser containers additionally mount the private Dot profile at `/dot-browser`. Management requests use `DotWorkspace` without a fabricated execution turn.
 
 The runner validates canonical Dot UUID syntax before deriving a directory. The owner ID is opaque metadata, never a path component. On first use, create the private root and owner manifest atomically; on subsequent use, compare the manifest with the trusted owner claim. A mismatch is a hard error, never an opportunity to overwrite ownership. Missing or malformed metadata on an existing nonempty root also fails closed.
 
@@ -64,8 +70,8 @@ The shared `ContainerBackend::destroy` path returns confirmed absence or an erro
 The existing pool retains retiring containers until confirmation, refuses their
 reuse and retries failures through its sweeper. Startup refuses to serve when
 labelled stale containers cannot be enumerated and removed. Persistent scope
-occupancy and browser-profile locks still require integration with this lifecycle:
-retain the occupied scope on failure and deny a second mount until absence is
+scope occupancy and browser-profile locks follow this lifecycle: failed
+teardown retains the occupied scope and denies a second mount until absence is
 confirmed. Gateway disconnection or TTL expiry alone is not proof of absence.
 
 Container timeouts, egress, gVisor, CPU/memory/PID limits and TTL remain the existing operator controls. `/work` and `/tmp` remain scratch and normal artifact collection remains limited to its existing outputs. Do not enumerate and upload `/workspace` on each tool call. A Dot explicitly copies a chosen output into `/work` when it wants to produce a conversation attachment.
@@ -76,7 +82,10 @@ For Dot browser requests, replace ephemeral `launch` plus `new_context` with Pla
 
 Navigation, page reading, clicking, filling and screenshots use the existing `browse_page` actions and approval rules. Cookies and local storage created by real use survive later containers. Processes, open tabs and a live desktop are not promised to survive expiry or restart. Existing MCP OAuth credentials are not automatically browser cookies; establishing a browser login remains an actual browser operation and must use the supported authentication flow.
 
-Profile contents are sensitive credentials. They are excluded from workspace listings, attachments, memories and diagnostic logs. An explicit owner action can reset the browser profile after confirmed container teardown; it preserves workspace files. The server browser is independent of the user's Chrome extension connection.
+Profile contents are sensitive credentials. They are excluded from workspace
+listings, attachments, memories and diagnostic logs. Browser profiles persist
+with the Dot's workspace; a self-service profile reset is not available. The
+server browser is independent of the user's Chrome extension connection.
 
 ## Filesystem safety
 
@@ -95,7 +104,7 @@ Do not execute user file contents in the web origin. Download with attachment di
 
 ## API and web walkthrough
 
-Extend `/api/v0/dots/{id}` with owner-scoped workspace operations, using existing Dot authentication/access checks. Adopted owner API routes (implementation in progress):
+The implemented `/api/v0/dots/{id}` workspace operations use existing Dot authentication and access checks:
 
 | Route | Result |
 |---|---|
@@ -104,7 +113,6 @@ Extend `/api/v0/dots/{id}` with owner-scoped workspace operations, using existin
 | `PUT /workspace/file?path=` | Capped raw upload, atomically replacing a regular file; conflict if the computer is in use. |
 | `POST /workspace/folder` | Body with relative path; create an actual directory. |
 | `DELETE /workspace/entry?path=` | Remove a regular file or empty directory with explicit confirmation. |
-| `POST /workspace/browser-reset` | Explicit confirmed profile reset, preserving files; conflict while teardown cannot be confirmed. |
 
 These routes forward only validated owner/Dot claims to internal runner operations. The runner repeats path and ownership checks. No runner URL or host directory is selected by the user. Existing disabled Dot ownership still allows inspection and file management; execution additionally requires active state and current granted tools.
 
@@ -115,10 +123,9 @@ Walkthrough with actual resource data:
 3. Reuse the existing asset row treatment for filename, kind, size and download. Opening a directory navigates to its actual path. Do not create a duplicate attachment/document collection.
 4. Upload a chosen file or create a folder using the existing form/save/error patterns. Show progress and the server's outcome, then reload the listing. Preserve the current path after failure.
 5. Delete a selected file or empty folder after showing its actual name. A busy conflict explains that the current Dot run must finish or be stopped; it does not bypass that run's approvals.
-6. A separate **Reset browser login** confirmation explains that the Dot's saved browser logins will be removed and files preserved. It does not display browser credentials.
-7. On mobile, keep row names and action buttons within the viewport, use existing loading/error components and accessible translated controls. No new library is needed.
+6. On mobile, keep row names and action buttons within the viewport, use existing loading/error components and accessible translated controls. No new library is needed.
 
-All visible strings use the six Fluent catalogs. Required groups cover workspace navigation/empty/loading/unavailable/busy, entry actions, upload outcome, browser reset confirmation/outcome and actionable storage/path/ownership errors. Resource names and descriptions are API data, not translation defaults. The coordinator verifies desktop/mobile UI in the real seeded gateway before completion.
+All visible strings use the six Fluent catalogs. Required groups cover workspace navigation/empty/loading/unavailable/busy, entry actions, upload outcome and actionable storage/path/ownership errors. Resource names and descriptions are API data, not translation defaults. The coordinator verifies desktop/mobile UI in the real seeded gateway before completion.
 
 ## Retention, deletion and retries
 
@@ -141,7 +148,7 @@ Document the persistent runner volume in README, sandbox deployment and Kubernet
 | Owner package | Files and responsibility |
 |---|---|
 | Coordinator: contract/schema/docs | `shared/src/sandbox.rs`, one Dot migration plus fixtures/checksum, architecture rules, docs index/README/deployment/API guides. Settle the typed scope and health fields before dependent edits. |
-| Runner | `sandbox-runner/src/{config,backend,pool,server}.rs` and one filesystem module: mounts, owner proof, bounded paths, exclusive scope/profile locks, checked teardown and internal file/reset/delete operations. |
+| Runner | `sandbox-runner/src/{config,backend,pool,server}.rs` and the workspace module: mounts, owner proof, bounded paths, exclusive scope/profile locks, checked teardown and internal file/delete operations. |
 | Runtime | `aiplane-runtime/src/server/tools/sandbox/{mod,browse}.rs`, tool context callers and state-dependent cleanup worker; `aiplane-agents` cleanup accessors if leased explicitly. No UI/catalog edits. |
 | API/UI | `aiplane-api` Dot workspace handlers and gateway routing; web workspace page/components/client, six catalogs/generated TS and new targeted browser scenario. Backend/API and UI files can be leased separately after the contract is fixed. |
 
@@ -156,7 +163,7 @@ Tests are written red before implementation and assert observable state using re
 - Dot/account deletion queue survives identity deletion; cleanup idempotence, retry after failure and hostile symlinks; deactivate/reactivate preserves data.
 - Owner-authenticated workspace routes reject another user's Dot, overlarge bodies and profile paths; inactive inspection works while execution is denied.
 - Browser daemon tests exercise persistent versus ordinary context setup and existing proxy settings; a real runner smoke scenario verifies a file and browser state across two containers.
-- UI fixture uses actual listed names, unknown metadata, empty/unavailable/busy/error states, upload/download/delete, browser reset confirmation, keyboard access and mobile layout.
+- UI fixture uses actual listed names, unknown metadata, empty/unavailable/busy/error states, upload/download/delete, keyboard access and mobile layout.
 
 ## Constraints to verify during implementation
 

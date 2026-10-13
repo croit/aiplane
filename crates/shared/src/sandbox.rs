@@ -81,6 +81,61 @@ pub struct WorkspaceRequest {
     pub operation: WorkspaceOperation,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserControlRequest {
+    pub workspace: DotWorkspace,
+    pub turn_id: String,
+    pub container_id: String,
+    pub handover_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_id: Option<String>,
+    pub operation: BrowserControlOperation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BrowserControlOperation {
+    Begin,
+    Claim {
+        generation: u64,
+    },
+    Frame {
+        generation: u64,
+    },
+    Input {
+        generation: u64,
+        sequence: u64,
+        input: BrowserInput,
+    },
+    Finish {
+        generation: u64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BrowserInput {
+    Click { x: u32, y: u32 },
+    Key { key: String },
+    Text { text: String },
+    Scroll { delta_x: i32, delta_y: i32 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserControlResponse {
+    pub ok: bool,
+    pub generation: u64,
+    pub expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_b64: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkspaceOperation {
