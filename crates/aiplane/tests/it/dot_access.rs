@@ -270,28 +270,31 @@ async fn personal_dot_action_rules_use_actual_catalogue_and_preserve_saved_unava
             .0,
         StatusCode::NOT_FOUND
     );
-    let (status, saved) = fx
+    let (status, access) = fx
         .send(Some(&fx.alice), Method::PUT, &url, Some(body))
         .await;
-    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(status, StatusCode::OK, "{access}");
     let dot = aiplane_agents::db::agents::get_personal_dot(&fx.state.db, "alice", id)
         .await
         .unwrap()
         .unwrap();
-    let saved: serde_json::Value = serde_json::from_str(&dot.agent.draft_spec).unwrap();
+    let saved_spec: serde_json::Value = serde_json::from_str(&dot.agent.draft_spec).unwrap();
     assert_eq!(
-        saved["main"]["tool_resources"]["browse_page"]["actions"],
+        saved_spec["main"]["tool_resources"]["browse_page"]["actions"],
         json!({"read":"allow","fill":"deny","click":"ask"})
     );
     assert_eq!(
-        saved["main"]["tool_resources"]["browse_page"]["bind"],
+        saved_spec["main"]["tool_resources"]["browse_page"]["bind"],
         draft["main"]["tool_resources"]["browse_page"]["bind"]
     );
     assert_eq!(
-        saved["main"]["tool_resources"]["browse_page"]["approval_timeout"],
+        saved_spec["main"]["tool_resources"]["browse_page"]["approval_timeout"],
         "5m"
     );
-    assert_eq!(saved["main"]["instructions"], draft["main"]["instructions"]);
+    assert_eq!(
+        saved_spec["main"]["instructions"],
+        draft["main"]["instructions"]
+    );
     let revisions: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM agent_draft_revisions WHERE principal_id=?")
             .bind(id)
@@ -299,22 +302,22 @@ async fn personal_dot_action_rules_use_actual_catalogue_and_preserve_saved_unava
             .await
             .unwrap();
     assert_eq!(revisions, 2);
-    let (status, _) = fx
+    let (status, cleared_access) = fx
         .send(
             Some(&fx.alice),
             Method::PUT,
             &url,
-        Some(json!({"revision":saved["revision"],"tools":[{"id":"browse_page","permission":"always_ask"}]})),
+        Some(json!({"revision":access["revision"],"tools":[{"id":"browse_page","permission":"always_ask"}]})),
         )
         .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "{cleared_access}");
     let dot = aiplane_agents::db::agents::get_personal_dot(&fx.state.db, "alice", id)
         .await
         .unwrap()
         .unwrap();
-    let saved: serde_json::Value = serde_json::from_str(&dot.agent.draft_spec).unwrap();
+    let saved_spec: serde_json::Value = serde_json::from_str(&dot.agent.draft_spec).unwrap();
     assert_eq!(
-        saved["main"]["tool_resources"]["browse_page"]["actions"],
+        saved_spec["main"]["tool_resources"]["browse_page"]["actions"],
         json!({})
     );
 }

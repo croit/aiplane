@@ -2,10 +2,17 @@
 
 ## Status
 
-This is a design proposal for the requested conversational setup and shared
-chat experience. It does not describe an implemented Dot creation assistant or
-an implemented chat mention feature. The complex user flow requires the
-maintainer's mockup approval before implementation.
+The conversational setup mockup is approved. The first implementation slice
+creates personal Dots from a reviewed proposal in the existing architect
+conversation. It reuses actual tool and knowledge resources, checks current
+permissions and active limits when applying, and uses the configured work
+instructions in personal Dot runs. The user flow is documented in
+[Automation and inbox](guide/automation-and-inbox.md#set-up-a-personal-dot-in-conversation).
+
+Organization setup, conversational editing of existing Dots, guided account
+connections, automation application and chat mentions remain design work in
+this document. A proposal requesting unsupported settings is blocked until
+those requirements are resolved; personal strict scope is not implemented.
 
 The existing agent architect can converse, inspect resources, propose setup,
 create ordinary agent drafts, update drafts and run a test turn. The existing
@@ -67,7 +74,8 @@ Reuse the architect persona and conversation controller, the typed `AgentSpec`
 and actual grantable resources, the ordinary model catalog and routing,
 `side_call` metering, existing owner/share checks, Dot lifecycle admission,
 connector OAuth and generation pinning, existing memory and automation APIs,
-draft revisions, `forward_request`, directed consent, `RunChain`, shared
+the agent profile's owner brief renderer, `ToolBinds`/`BoundTool` for selected
+knowledge arguments, draft revisions, `forward_request`, directed consent, `RunChain`, shared
 budgets, `chat_turn_suspensions` and Inbox. Use the existing Modal, chat
 components, daisyUI and six Fluent catalogs.
 

@@ -331,17 +331,28 @@ pub async fn create_personal_dot(
     active_limit: u32,
 ) -> Result<(DotCreate, Option<AgentRow>), DbError> {
     let mut tx = WriteTx::begin(pool).await?;
-    let result = create_dot_in(
-        &mut tx,
+    let result =
+        create_personal_dot_in(&mut tx, owner_user_id, new, draft_spec, active_limit).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+pub async fn create_personal_dot_in(
+    tx: &mut WriteTx,
+    owner_user_id: &str,
+    new: &NewPrincipal<'_>,
+    draft_spec: &str,
+    active_limit: u32,
+) -> Result<(DotCreate, Option<AgentRow>), DbError> {
+    create_dot_in(
+        tx,
         &DotOwner::User(owner_user_id.into()),
         new,
         draft_spec,
         owner_user_id,
         active_limit,
     )
-    .await?;
-    tx.commit().await?;
-    Ok(result)
+    .await
 }
 
 pub async fn create_organization_dot_in(

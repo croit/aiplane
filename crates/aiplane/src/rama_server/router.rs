@@ -277,6 +277,14 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         // The agent architect (docs/agent-builder.md → "Agent architect"): a person's
         // chat that plans an agent with them.
         .with_post("/api/v0/agent-architect", pages::architect::start)
+        .with_get(
+            "/api/v0/agent-architect/{session_id}/dot-plan",
+            pages::architect::get_plan,
+        )
+        .with_post(
+            "/api/v0/agent-architect/{session_id}/dot-plan",
+            pages::architect::apply_plan,
+        )
         // The inbox (docs/agent-hil.md): before `/agents/{id}`,
         // because rama matches in registration order.
         .with_get("/api/v0/agents/inbox", pages::json_inbox::list)

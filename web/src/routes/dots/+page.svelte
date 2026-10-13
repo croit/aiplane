@@ -5,6 +5,7 @@
 	import Modal from '#lib/components/ui/Modal.svelte';
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
 	import DotDetailsPanel from '#lib/components/dots/DotDetailsPanel.svelte';
+	import ArchitectChat from '#lib/components/agents/ArchitectChat.svelte';
 	import { activeDotCount, canCreateDot, dotsApi, type Dot } from '#lib/dots.js';
 	import { t } from '#lib/i18n.svelte.js';
 
@@ -14,6 +15,7 @@
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
 	let creating = $state(false);
+	let planning = $state(false);
 	let expandedDotId = $state<string | null>(null);
 	let name = $state('');
 	let display = $state('');
@@ -96,9 +98,12 @@
 			<p class="mt-2 max-w-3xl text-sm text-base-content/60">{t('dots-intro')}</p>
 			{#if !loading}<p class="mt-2 text-sm font-medium">{t('dots-active-count', { active, limit: activeLimit })}</p>{/if}
 		</div>
-		<button class="btn btn-primary btn-sm" type="button" disabled={!createAllowed || loading} onclick={() => { createError = null; creating = true; }}>
+		<div class="flex flex-wrap gap-2">
+		<button class="btn btn-primary btn-sm" type="button" disabled={loading} onclick={() => (planning = true)}>{t('dot-setup-title')}</button>
+		<button class="btn btn-sm" type="button" disabled={!createAllowed || loading} onclick={() => { createError = null; creating = true; }}>
 			{t('dots-create')}
 		</button>
+		</div>
 	</header>
 
 	{#if notice}<div class="alert alert-success" role="status"><span>{notice}</span><button class="btn btn-ghost btn-xs" type="button" aria-label={t('ui-close')} onclick={() => (notice = null)}>✕</button></div>{/if}
@@ -163,4 +168,8 @@
 			<span class="text-xs text-base-content/60">{t('dots-create-description-help')}</span>
 		</label>
 	</form>
+</Modal>
+
+<Modal bind:open={planning} title={t('dot-setup-title')} size="lg">
+	<ArchitectChat dotOwner="personal" oncreated={(id) => { planning = false; expandedDotId = id; notice = t('dots-toast-created'); void reload(); }} />
 </Modal>

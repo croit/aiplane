@@ -300,3 +300,26 @@ agents-setup-ready-recommended-pill = 就绪，附带建议
 agents-setup-test-save-all = 全部保存为测试
 agents-setup-proposing = 正在根据您的描述起草设置，通常需要 20 到 40 秒。
 agents-setup-abilities-search = 搜索能力
+dot-setup-title = 一起设置 Dot
+dot-setup-intro = 描述你希望 Dot 完成的工作。我们会检查可用资源，并针对缺失的信息提问。只有确认方案后才会创建 Dot。
+dot-setup-empty = 例如：每天早上汇总工单和邮件中的公司动态。在进行更改前先询问我。
+dot-setup-placeholder = 你希望 Dot 为你做什么？
+dot-setup-preview = 你的 Dot 方案
+dot-setup-identity = 身份
+dot-setup-personal-identity = 使用你的权限的个人 Dot；连接账户需单独设置。
+dot-setup-details = 检查工作指令
+dot-setup-unresolved = 请先在对话中澄清这些要求，再创建 Dot。
+dot-setup-apply = 设置 Dot
+architect-tool-propose-dot-setup = 已准备 Dot 方案
+dot-setup-error-conflict = 方案已更改。请检查当前方案后再设置 Dot。
+dot-setup-error-incomplete = 方案中仍有未明确的要求。请先在对话中澄清，再设置 Dot。
+dot-setup-error-unavailable = 此设置对话不可用。请重新打开 Dot 设置并重试。
+dot-setup-error-running = 助手仍在处理。请等待回复后再设置 Dot。
+
+dot-plan-unsupported = 创建此 Dot 前需要手动配置此设置。
+dot-plan-strict-scope-unavailable = 个人 Dot 设置暂不支持严格的主题限制。
+dot-plan-one-knowledge = 请为此设置选择一个知识集合。
+dot-plan-task-required = 请描述此 Dot 应完成的工作。
+dot-plan-connection-required = 此工具需要先配置账户连接。
+
+dot-setup-tool-count = { $count } 个工具

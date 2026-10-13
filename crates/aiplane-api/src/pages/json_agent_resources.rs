@@ -338,7 +338,7 @@ pub struct AgentResources {
     /// key runs on.
     defaults: DefaultModels,
     /// Tools, connectors, skills and knowledge bases.
-    items: Vec<GrantableItem>,
+    pub(super) items: Vec<GrantableItem>,
 }
 
 /// The models the caller may grant, by kind.

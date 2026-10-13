@@ -42,6 +42,7 @@ pub(super) struct Ctx {
     pub state: Arc<RamaState>,
     pub user: User,
     pub session_id: String,
+    pub personal: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,11 +54,13 @@ pub(super) enum Kind {
     CreateAgentDraft,
     UpdateAgentDraft,
     RunTestTurn,
+    ProposeDotSetup,
 }
 
 impl Kind {
     fn id(self) -> &'static str {
         match self {
+            Kind::ProposeDotSetup => "propose_dot_setup",
             Kind::ListAgents => "list_agents",
             Kind::ReadAgent => "read_agent",
             Kind::ListGrantable => "list_grantable",
@@ -70,6 +73,8 @@ impl Kind {
 }
 
 /// Every tool the architect has. Publishing is deliberately not one.
+pub(super) const PERSONAL_KINDS: &[Kind] = &[Kind::ListGrantable, Kind::ProposeDotSetup];
+
 pub(super) const KINDS: &[Kind] = &[
     Kind::ListAgents,
     Kind::ReadAgent,
@@ -106,6 +111,14 @@ impl Tool for ArchitectTool {
 
     fn schema(&self) -> ToolDef {
         let (description, parameters) = match self.kind {
+            Kind::ProposeDotSetup => (
+                "Store a complete reviewed personal Dot proposal, without creating a Dot. Only task, tone, non-strict scope, abilities and one knowledge collection are supported. The changes field must be an actual JSON object, never a string containing JSON. Every requested prerequisite that cannot be configured must be listed in unresolved. Replaces the previous proposal.",
+                json!({"type":"object","additionalProperties":false,"required":["name","changes"],"properties":{"name":{"type":"string"},"display":{"type":"string"},"description":{"type":"string"},"changes":super::dot::personal_changes_schema(),"unresolved":{"type":"array","items":{"type":"string"}}}}),
+            ),
+            Kind::ListGrantable if self.ctx.personal => (
+                "Inspect the personal Dot's actual resources. Each ability reports read_only and default_permission: known read-only tools allow, external or unknown writes ask, permitted default_memory_tools allow only Dot-scoped memory writes. Use these existing defaults; valid defaults do not need an unresolved approval-rule prerequisite. This is resource information, not approval of a tool call.",
+                json!({"type":"object","properties":{},"additionalProperties":false}),
+            ),
             Kind::ListAgents => (
                 "List the agents shared with the person: id, name, whether one is live.",
                 json!({ "type": "object", "properties": {}, "additionalProperties": false }),
@@ -182,11 +195,11 @@ impl Tool for ArchitectTool {
         }
     }
 
-    fn run<'a>(&'a self, _ctx: ToolContext, args: Value) -> ToolFuture<'a> {
+    fn run<'a>(&'a self, tool_ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         Box::pin(async move {
             let ctx = &self.ctx;
             let role_ids = ctx.state.rbac.role_ids_for(&ctx.user.roles);
-            if !ctx.state.rbac.can_manage_agents(&role_ids) {
+            if !ctx.personal && !ctx.state.rbac.can_manage_agents(&role_ids) {
                 return Err(ToolError::Failed(
                     "the person no longer holds the agent-management permission, so the \
                      architect cannot act for them — an admin can enable `can_manage_agents` \
@@ -194,7 +207,28 @@ impl Tool for ArchitectTool {
                         .into(),
                 ));
             }
+            if ctx.personal && !PERSONAL_KINDS.contains(&self.kind) {
+                return Err(ToolError::Failed(
+                    "this tool is unavailable in personal Dot planning".into(),
+                ));
+            }
             let out = match self.kind {
+                Kind::ProposeDotSetup => super::dot::propose(
+                    &ctx.state,
+                    &ctx.user,
+                    &ctx.session_id,
+                    tool_ctx.assistant_turn_id.as_deref().ok_or_else(|| {
+                        ToolError::Failed(
+                            "personal planning needs its current conversation turn".into(),
+                        )
+                    })?,
+                    parse(args)?,
+                )
+                .await
+                .map_err(Refusal::from),
+                Kind::ListGrantable if ctx.personal => super::dot::resources(&ctx.state, &ctx.user)
+                    .await
+                    .map_err(Refusal::from),
                 Kind::ListAgents => list_agents(ctx).await,
                 Kind::ReadAgent => read_agent(ctx, parse(args)?).await,
                 Kind::ListGrantable => resources_for(&ctx.state, &ctx.user, Lang::En)

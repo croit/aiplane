@@ -306,3 +306,26 @@ agents-setup-ready-recommended-pill = Prêt, avec des recommandations
 agents-setup-test-save-all = Tout enregistrer comme tests
 agents-setup-proposing = Un paramétrage est en cours de rédaction à partir de votre description. Cela prend généralement de 20 à 40 secondes.
 agents-setup-abilities-search = Rechercher des capacités
+dot-setup-title = Configurer un Dot ensemble
+dot-setup-intro = Décrivez ce que votre Dot doit faire. Nous vérifions les ressources disponibles et posons des questions ciblées. Le Dot est créé seulement après votre confirmation.
+dot-setup-empty = Par exemple : Chaque matin, résumer les activités de l’entreprise à partir des tickets et des e-mails. Me demander avant toute modification.
+dot-setup-placeholder = Que souhaitez-vous confier à votre Dot ?
+dot-setup-preview = Votre proposition de Dot
+dot-setup-identity = Identité
+dot-setup-personal-identity = Dot personnel avec vos autorisations ; les comptes connectés sont configurés séparément.
+dot-setup-details = Vérifier les consignes de travail
+dot-setup-unresolved = Précisez ces exigences dans la conversation avant de créer le Dot.
+dot-setup-apply = Configurer le Dot
+architect-tool-propose-dot-setup = Proposition de Dot préparée
+dot-setup-error-conflict = La proposition a changé. Vérifiez la proposition actuelle avant de configurer le Dot.
+dot-setup-error-incomplete = Certaines exigences restent à préciser. Clarifiez-les dans la conversation avant de configurer le Dot.
+dot-setup-error-unavailable = Cette conversation de configuration est indisponible. Rouvrez la configuration du Dot et réessayez.
+dot-setup-error-running = L’assistant travaille encore. Attendez sa réponse avant de configurer le Dot.
+
+dot-plan-unsupported = Ce paramètre doit être configuré manuellement avant de créer ce Dot.
+dot-plan-strict-scope-unavailable = La restriction stricte des sujets est indisponible pour la configuration des Dots personnels.
+dot-plan-one-knowledge = Choisissez une collection de connaissances pour cette configuration.
+dot-plan-task-required = Décrivez ce que ce Dot doit faire.
+dot-plan-connection-required = Cet outil nécessite une connexion à un compte qui doit être configurée au préalable.
+
+dot-setup-tool-count = { $count } outils

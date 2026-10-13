@@ -95,6 +95,20 @@ pub(super) fn operations() -> Vec<Op> {
             .ok(json::<architect::ArchitectConversation>())
             .created(json::<architect::ArchitectConversation>())
             .errors(&[400, 403, 404, 503]),
+        get(
+            "/api/v0/agent-architect/{session_id}/dot-plan",
+            Access::Session,
+        )
+        .ok(json::<architect::DotPlanReply>())
+        .errors(&[403, 404]),
+        post(
+            "/api/v0/agent-architect/{session_id}/dot-plan",
+            Access::Session,
+        )
+        .body(json::<architect::ApplyDotPlanBody>())
+        .ok(json::<architect::AppliedDotPlan>())
+        .created(json::<architect::AppliedDotPlan>())
+        .errors(&[400, 403, 404, 409]),
         get("/api/v0/agents/inbox", Access::Session)
             .ok(json::<aiplane_runtime::agents::inbox::InboxList>()),
         get("/api/v0/agents/inbox/events", Access::Session).ok(sse::<inbox::InboxEvent>()),

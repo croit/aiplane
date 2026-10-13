@@ -37,6 +37,11 @@ by tests that read the workspace's own source, in
 | `action_rules_classify_and_validate_before_using_shared_approvals` | permission and approval gates validate classified actions before resolving or accepting approval | `Tool::classify_actions`, `validate_actions`, `Permissions`, `AskFirst` |
 | `agent_resume_claims_use_one_request_aware_transaction` | a paused agent chain uses one transaction and request-aware connection claims, avoiding independently committed levels | `WriteTx`, `claim_for_resume_in`, `claim_suspension_in` |
 
+The personal architect proposal builder, like the prompt assistant, constructs
+draft JSON before final `AgentSpec` validation. Its narrow exception permits
+those writes; proposal task, tools, defaults and collection bindings are read
+from the typed spec. It does not dispatch tools or execute a spec.
+
 How they work: each production `.rs` file under `crates/` (not `tests/`,
 `tests.rs`, `examples/`, or a `#[cfg(test)]` item) is masked — comments
 blanked, string literal contents blanked except for the spec-key rule, which

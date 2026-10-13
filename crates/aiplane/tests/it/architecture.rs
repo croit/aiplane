@@ -736,6 +736,12 @@ const SPEC_JSON_READERS: &[Allowed] = &[
               yet, and hands every result to the validator; it never runs a spec",
     },
     Allowed {
+        path: "aiplane-api/src/pages/architect/dot.rs",
+        why: "the personal proposal builder writes reviewed permissions into draft JSON before \
+              AgentSpec validation, like assist/; its task, tools, defaults and bindings are \
+              read through typed AgentSpec fields, and it never executes a spec",
+    },
+    Allowed {
         path: "aiplane-agents/src/db/agent_analytics.rs",
         why: "an audit row's `routes` detail, not a spec",
     },

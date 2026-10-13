@@ -18,6 +18,7 @@ mod live;
 pub mod personal_dot;
 
 use crate::agents::approval::Permissions;
+use crate::agents::bind::{BoundTool, ToolBinds, without_bound};
 use crate::agents::spec::AgentSpec;
 use crate::server::tools::{GrantedToolSource, Tool, ToolSource};
 use shared::api::ToolDef;
@@ -26,7 +27,7 @@ pub struct ChatPersona {
     instructions: String,
     tools: Arc<dyn ToolSource>,
     user_context: bool,
-    access: Option<(Vec<String>, Permissions)>,
+    access: Option<(Vec<String>, Permissions, ToolBinds)>,
 }
 
 impl ChatPersona {
@@ -45,7 +46,11 @@ impl ChatPersona {
     }
 
     pub fn with_tool_access(mut self, spec: &AgentSpec) -> Self {
-        self.access = Some((spec.main.tools.clone(), Permissions::from_spec(spec)));
+        self.access = Some((
+            spec.main.tools.clone(),
+            Permissions::from_spec(spec),
+            ToolBinds::from_spec(spec),
+        ));
         self
     }
 
@@ -55,12 +60,14 @@ impl ChatPersona {
         state: Option<&Arc<crate::server::AppState>>,
     ) -> PersonaToolSource<'a> {
         match &self.access {
-            Some((selected, permissions)) => PersonaToolSource {
+            Some((selected, permissions, binds)) => PersonaToolSource {
+                binds: Some(binds),
                 source: GrantedToolSource::new(granted, selected.iter().cloned()),
                 permissions: Some(permissions),
                 state: state.cloned(),
             },
             None => PersonaToolSource {
+                binds: None,
                 source: GrantedToolSource::new(self.tools(), self.offer()),
                 permissions: None,
                 state: None,
@@ -70,7 +77,7 @@ impl ChatPersona {
 
     pub fn offered(&self, granted: &[String]) -> Vec<String> {
         match &self.access {
-            Some((selected, _)) => selected
+            Some((selected, _, _)) => selected
                 .iter()
                 .filter(|id| granted.contains(id))
                 .cloned()
@@ -104,6 +111,7 @@ impl ChatPersona {
 pub(crate) struct PersonaToolSource<'a> {
     source: GrantedToolSource<'a>,
     permissions: Option<&'a Permissions>,
+    binds: Option<&'a ToolBinds>,
     state: Option<Arc<crate::server::AppState>>,
 }
 
@@ -113,20 +121,50 @@ impl ToolSource for PersonaToolSource<'_> {
     }
 
     fn get(&self, id: &str) -> Option<Arc<dyn Tool>> {
-        self.source.get(id).map(|tool| match self.permissions {
+        let tool = self.source.get(id)?;
+        let gated = match self.permissions {
             Some(permissions) => match &self.state {
-                Some(state) => Arc::new(live::LivePersonalDotTool {
-                    state: state.clone(),
-                    initial: tool,
-                }),
+                Some(state) => {
+                    return Some(Arc::new(live::LivePersonalDotTool {
+                        state: state.clone(),
+                        initial_bindings: self
+                            .binds
+                            .map(|binds| binds.for_tool(id, &tool.schema()))
+                            .transpose()
+                            .ok()?
+                            .unwrap_or_default(),
+                        initial: tool,
+                    }));
+                }
                 None => permissions.gate_dot(tool),
             },
             None => tool,
-        })
+        };
+        match self.binds {
+            Some(binds) => {
+                let bound = binds.for_tool(id, &gated.schema()).ok()?;
+                if bound.is_empty() {
+                    Some(gated)
+                } else {
+                    Some(Arc::new(BoundTool::new(gated, bound, None, Arc::default())))
+                }
+            }
+            None => Some(gated),
+        }
     }
 
     fn defs_for(&self, allowed: &[String]) -> Vec<ToolDef> {
-        self.source.defs_for(allowed)
+        self.source
+            .defs_for(allowed)
+            .into_iter()
+            .filter_map(|definition| match self.binds {
+                Some(binds) => binds
+                    .for_tool(&definition.function.name, &definition)
+                    .ok()
+                    .map(|bound| without_bound(definition, &bound)),
+                None => Some(definition),
+            })
+            .collect()
     }
 
     fn ids(&self) -> Vec<String> {
@@ -161,6 +199,34 @@ mod tests {
         let persona = ChatPersona::new("You are a personal Dot.", Arc::new(ToolRegistry::new()))
             .with_user_context();
         assert!(persona.includes_user_context());
+    }
+
+    #[tokio::test]
+    async fn a_personal_dot_hides_and_enforces_saved_constant_tool_arguments() {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let spec=AgentSpec::from_value(&serde_json::json!({"main":{"tools":["company_echo"],"tool_resources":{"company_echo":{"permission":"always_allow","bind":{"message":{"const":"Reviewed collection"}}}}}})).unwrap();
+        let persona =
+            ChatPersona::new("Dot", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
+        let registry = ToolRegistry::new().with(Echo);
+        let source = persona.source(&registry, None);
+        let definitions = source.defs_for(&["company_echo".into()]);
+        assert!(
+            definitions[0].function.parameters["properties"]
+                .get("message")
+                .is_none()
+        );
+        let result = source
+            .get("company_echo")
+            .unwrap()
+            .run(
+                crate::server::tools::ToolContext::for_test(db),
+                serde_json::json!({"message":"Different collection"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result, serde_json::json!({"message":"Reviewed collection"}));
     }
 
     #[test]

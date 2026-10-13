@@ -69,9 +69,52 @@ deactivating one frees a slot. Removing management permission blocks lifecycle
 management, without deactivating existing Dots or stopping their runs. Tool
 access and approvals remain bounded by the current permissions on execution.
 
+### Set up a personal Dot in conversation
+
+1. Choose **Set up a Dot together** on `/dots`.
+2. Describe the work in your own words. Include what the Dot should read, what
+   result you expect and which actions need your approval. You can dictate the
+   description when transcription is available.
+3. Answer the assistant's questions. It checks your available tools and
+   knowledge collections. Describe missing information or ask for changes in
+   the same conversation.
+4. Review **Your Dot proposal**: the name, purpose, identity, selected knowledge
+   collection, tools and approval rules. Tools with the same capability and
+   approval rule appear together, with a count when there is more than one.
+   Open **Review work instructions** to read the actual instructions, tone,
+   topics and each individual tool ID with its approval rule.
+5. Resolve any requirements listed in the warning. Then choose **Set up Dot**.
+   AIplane checks your current permissions and the active limit again. Planning
+   a Dot does not use an active slot.
+6. Open the created Dot's **Details** to adjust tools, memory, connections or
+   automation, or start its private chat.
+
+For example, describe a research assistant that reads public documentation and
+explains its findings with sources. Its work instructions are saved with the
+Dot and apply to its chats and background runs. You can continue refining a
+proposal before creation; starting a new conversation gives you a separate
+proposal. After requesting a change, wait for a new proposal to review; the
+previous proposal cannot be applied. Reopening setup resumes your latest
+personal Dot planning conversation.
+
+Available memory tools are included by default and shown in the proposal. Their
+Allow rule lets the Dot save, recall, update and remove its own notes without
+asking for each call. User-wide memory remains read-only context. Other selected
+read-only tools default to Allow; writes and tools with unknown effects default
+to Ask. You can adjust these rules in the Dot's access settings after creation.
+
+This setup flow creates personal Dots. Use the existing settings to create
+organization Dots or edit an existing Dot; conversational editing is not
+available in this flow. The assistant cannot
+complete provider authentication, create schedules or authorize communication
+peers in this flow. Requested settings that it cannot apply remain unresolved;
+it does not create a partially configured Dot. Select a supported configuration
+or configure those capabilities through the existing settings after creation.
+Strict topic enforcement is not available for personal Dots in this setup flow.
+
 ## Configure a personal Dot's tool access
 
-Open `/dots` and expand **Access and approvals** on your Dot's card. Search
+Open `/dots`, open your Dot's **Details** and select the **Access** tab. Search
 by tool name, description or ID, select each tool the Dot may use, and
 choose **Allow** or **Ask before each call**. Save your changes. Unselected
 tools are denied. Tool IDs distinguish actions that share a capability title.
@@ -123,11 +166,11 @@ remove its rule before saving; the interface preserves it for review.
 
 ![A personal Dot’s access and action rules](../img/guide/dot-action-rules.png)
 
-New Dots select the existing memory tools when available to your account.
-Memory writes belong to that Dot; user-wide memory remains read-only context.
+New Dots select the existing memory tools with Allow when available to your
+account. Memory writes belong to that Dot; user-wide memory remains read-only context.
 If access to organization memory is revoked, its loaded notes are cleared from
 the panel when the next request is refused.
-Read-only tools default to Allow when you select them. Writes and tools with
+Read-only tools default to Allow when you select them. Other writes and tools with
 unknown effects default to Ask before each call; you can adjust their rule
 within your existing rights.
 

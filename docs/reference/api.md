@@ -530,6 +530,8 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/admin/users` |
 | `POST /api/v0/admin/users/{id}/impersonate` |
 | `POST /api/v0/agent-architect` |
+| `GET /api/v0/agent-architect/{session_id}/dot-plan` |
+| `POST /api/v0/agent-architect/{session_id}/dot-plan` |
 | `GET /api/v0/agent-resources` |
 | `GET /api/v0/agents` |
 | `POST /api/v0/agents` |

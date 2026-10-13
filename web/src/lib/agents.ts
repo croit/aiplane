@@ -358,11 +358,15 @@ export const agentsApi = {
 	restoreDraft: (id: string, revision: number) =>
 		call<{ draft_spec: Spec; revision: number | null }>(`/api/v0/agents/${id}/draft/restore`, json('POST', { revision })),
 	/** The person's architect conversation about `agent_id` (or a new agent). */
-	startArchitect: (body: { agent_id?: string; title: string; fresh?: boolean }) =>
+	startArchitect: (body: { agent_id?: string; title: string; fresh?: boolean; dot_owner?: 'personal' }) =>
 		call<{ session_id: string; model: string; agent_id: string | null; resumed: boolean }>(
 			'/api/v0/agent-architect',
 			json('POST', body)
 		),
+	dotPlan: (sessionId: string) =>
+		call<{ proposal: import('./architect.ts').DotSetupPlan | null; dot_id: string | null }>(`/api/v0/agent-architect/${sessionId}/dot-plan`),
+	applyDotPlan: (sessionId: string, revision: string) =>
+		call<{ dot: import('./dots.ts').Dot; session_id: string }>(`/api/v0/agent-architect/${sessionId}/dot-plan`, json('POST', { revision })),
 	publish: (id: string) =>
 		call<{ version: number; live_version: number }>(`/api/v0/agents/${id}/publish`, json('POST', {})),
 	versions: (id: string) =>

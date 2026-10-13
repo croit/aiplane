@@ -1502,6 +1502,15 @@ impl AgentSurface {
     }
 }
 
+pub fn render_owner_brief(display: &str, spec: &AgentSpec) -> String {
+    Brief {
+        display: display.into(),
+        instructions: spec.main.instructions.clone(),
+        scope: spec.scope.clone(),
+    }
+    .render()
+}
+
 /// What the owner wrote for the model, as the sections that open the
 /// system message. They never change within a run.
 struct Brief {
@@ -2022,12 +2031,7 @@ mod tests {
 
     fn brief(spec: Value) -> String {
         let spec = AgentSpec::from_value(&spec).unwrap();
-        Brief {
-            display: "croit Support".into(),
-            instructions: spec.main.instructions,
-            scope: spec.scope,
-        }
-        .render()
+        render_owner_brief("croit Support", &spec)
     }
 
     #[test]

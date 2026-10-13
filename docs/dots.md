@@ -3,7 +3,7 @@
 Status: implementation in progress; personal Dot ownership, active lifecycle,
 the first web management page, manually managed Dot memory, recent activity,
 owner-scoped memory/activity APIs, private Dot chat sessions, and personal
-tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; current member writers can authorize and explicitly select each organization Dot’s own OAuth credential. Active organization Dots support private saved-draft and published conversations for current member writers, including durable approvals, selected own credentials, isolated Dot notes and shared organization knowledge. Published private conversations retain their original version and use current member Write access for history and Inbox decisions. Organization schedules and asynchronous webhooks run pinned published versions in fresh private principal conversations. Organization conversation reuse, delegation and public agent channels remain unavailable.
+tool selection with durable approvals, per-action rules for `browse_page` and `browser_control`, Dot-bound schedules and webhooks, and same-owner directed delegation with durable child approvals are implemented. Organization ownership, group-derived membership, independent active limits and configuration through the existing agent builder are implemented; current member writers can authorize and explicitly select each organization Dot’s own OAuth credential. Active organization Dots support private saved-draft and published conversations for current member writers, including durable approvals, selected own credentials, isolated Dot notes and shared organization knowledge. Published private conversations retain their original version and use current member Write access for history and Inbox decisions. Organization schedules and asynchronous webhooks run pinned published versions in fresh private principal conversations. Personal Dots can delegate bounded tasks to consented organization Dots. Organization conversation reuse, outgoing organization delegation and public agent channels remain unavailable.
 
 The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
@@ -18,7 +18,11 @@ workspace and automation. The workspace tab links to the Dot's file manager;
 automation links to the existing Dot-scoped schedule and webhook pages. Tabs
 keep their loaded state while switching so unsaved access edits are preserved.
 The short description appears on the card and to other Dots; it is not sent to
-the model as an instruction. Give the Dot a task in chat. The memory tab has
+the model as an instruction. Conversational setup saves separate work
+instructions that the personal Dot uses in its runs. The manual creation
+dialog leaves those instructions unset; give that Dot its task in chat. See
+[the setup walkthrough](guide/automation-and-inbox.md#set-up-a-personal-dot-in-conversation).
+The memory tab has
 separate preference, project and fact entries. Owners can add, edit and delete
 those notes; they remain separate from user-wide memory. The activity tab
 shows the Dot's recent audited events and can page through older ones.
@@ -84,8 +88,9 @@ Dot notes and shared organization knowledge. Member writers change own notes;
 shared-note changes also require current gateway administration. Runtime memory
 reads both scopes under its Recall grant; writes remain Dot-specific and no
 employee profile is read. Organization schedules and webhooks use the selected published
-version and independent principal; organization delegation and public agent
-channels remain unavailable. An owned local credential remains visible
+version and independent principal. They can receive consented personal Dot
+requests; outgoing organization delegation and public agent channels remain
+unavailable. An owned local credential remains visible
 for explicit
 disconnect after catalogue access is lost, including credentials never selected
 for execution. Restricted catalogue and user-account details stay hidden.

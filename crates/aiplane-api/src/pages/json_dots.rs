@@ -935,6 +935,19 @@ pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response
     }
 }
 
+pub(super) fn default_personal_spec(allowed: &[String]) -> serde_json::Value {
+    let memory_tools: Vec<_> = catalog::MEMORY_TOOL_IDS
+        .iter()
+        .copied()
+        .filter(|id| allowed.iter().any(|allowed| allowed == id))
+        .collect();
+    let resources: serde_json::Map<String, serde_json::Value> = memory_tools
+        .iter()
+        .map(|id| ((*id).to_string(), json!({"permission":"always_allow"})))
+        .collect();
+    json!({"main":{"tools":memory_tools,"tool_resources":resources}})
+}
+
 pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let user = match require_dot_manager(&state, &req).await {
         Ok(user) => user,
@@ -960,16 +973,7 @@ pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         .filter(|s| !s.is_empty())
         .unwrap_or(name);
     let allowed = state.allowed_tools_for_user(&user.roles, &user.id).await;
-    let memory_tools: Vec<_> = catalog::MEMORY_TOOL_IDS
-        .iter()
-        .copied()
-        .filter(|id| allowed.iter().any(|allowed| allowed == id))
-        .collect();
-    let resources: serde_json::Map<String, serde_json::Value> = memory_tools
-        .iter()
-        .map(|id| ((*id).to_string(), json!({"permission":"always_allow"})))
-        .collect();
-    let spec = json!({"main":{"tools":memory_tools,"tool_resources":resources}}).to_string();
+    let spec = default_personal_spec(&allowed).to_string();
     match agents_db::create_personal_dot(
         &state.db,
         &NewPrincipal {
@@ -1872,4 +1876,26 @@ pub async fn activity(State(state): State<Arc<RamaState>>, req: Request) -> Resp
             order: "desc",
         },
     )
+}
+
+#[cfg(test)]
+mod defaults_tests {
+    use super::*;
+
+    #[test]
+    fn personal_creation_includes_only_permitted_memory_tools() {
+        let spec = default_personal_spec(&["remember".into(), "recall".into(), "fetch_url".into()]);
+        assert_eq!(spec["main"]["tools"], json!(["remember", "recall"]));
+        assert_eq!(
+            spec["main"]["tool_resources"]["remember"]["permission"],
+            "always_allow"
+        );
+        assert!(
+            default_personal_spec(&[])["main"]["tools"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(AgentSpec::from_value(&spec).is_ok());
+    }
 }

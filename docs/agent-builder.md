@@ -410,7 +410,8 @@ the model to answer in the person's language.
 through the function the matching route uses, so the share, the validator and
 the grant cap decide exactly as for a click in the setup UI, and a refusal
 reaches the model — and the chat — as the route's own message and code. Each
-checks `can_manage_agents` again when it runs.
+checks `can_manage_agents` again when it runs. The personal Dot planning
+persona described below checks the independent `can_manage_dots` permission.
 
 | Tool | Does | Through |
 |---|---|---|
@@ -425,6 +426,67 @@ checks `can_manage_agents` again when it runs.
 There is **no publish tool**: the prompt tells the model to send the person to
 the setup page (`setup_url`), where Publish stays a click. An agent may be
 named by its id or its name.
+
+### Personal Dot planning
+
+The `/dots` setup dialog uses the same architect conversation, chat controller
+and metered model execution. Start it with
+`POST /api/v0/agent-architect` `{title, dot_owner: "personal", fresh?}`.
+Its persona exposes only `list_grantable` and `propose_dot_setup`; it cannot
+create ordinary agents or apply a Dot proposal itself.
+
+`propose_dot_setup` stores a complete proposal in the existing
+`agent_architect_sessions` row. Each proposal replaces the previous proposal
+and gets a revision. It checks supported changes through `assist::apply_changes`
+and validates the resulting spec as `AgentSpec`. No principal or active Dot
+slot is allocated during planning. Actual user tools, disabled capabilities,
+knowledge metadata and access determine the offered resources. `list_grantable`
+includes each tool's actual `read_only` status, its `default_permission` and
+catalogue `capability_key`, plus the permitted default memory tool IDs.
+
+`propose_dot_setup` takes `name`, optional `display` and `description`, a
+`changes` JSON object, and optional `unresolved` requirements. A JSON-encoded
+string is not accepted as `changes`. Its schema exposes only `task`, `tone`,
+`scope`, `abilities` and `knowledge` from the existing changes schema.
+The proposal starts with the same permitted memory tools as manual personal
+Dot creation: `remember`, `recall`, `update_memory` and `forget`, with Allow.
+Other read-only tools default to Allow; other writes and tools with unknown
+effects default to Ask. Per-action rule configuration is left to existing
+access settings.
+
+`GET /api/v0/agent-architect/{session_id}/dot-plan` returns
+`{proposal, dot_id}` to the conversation's owner with current personal Dot
+management permission. The proposal contains `revision`, `source_turn_id`, `name`, `display`,
+`description`, `draft_spec`, selected `tools`, selected `knowledge`, `dropped` changes and `unresolved`
+requirements. Each selected tool includes its ID, catalogue `capability_key`,
+label, description and permission. The UI groups tools by capability and
+permission, shows a count for multiple tools and lets the person inspect each
+tool ID and rule alongside the work instructions, tone and scope topics.
+Supported settings are work instructions, tone, non-strict scope,
+available built-in tools and one available knowledge collection. Unsupported
+requirements prevent application. `source_turn_id` identifies the actual
+assistant turn that proposed the plan. A later accepted user message hides the
+old proposal from GET and prevents its application, even when the assistant
+asks a question or fails before producing a replacement.
+
+`POST /api/v0/agent-architect/{session_id}/dot-plan` `{revision}` applies the
+stored reviewed proposal. It rejects a stale revision, a proposal superseded
+by a later user message, a running planning turn
+or unresolved requirements. Creation and conversation binding share the
+existing personal lifecycle transaction: current permission, active capacity,
+tool availability and the actual knowledge collection ID and access are
+checked before creation. Collection argument bindings use the existing
+`ToolBinds` and `BoundTool` at execution; the model cannot substitute a
+different collection. A retry
+returns the same Dot; it does not allocate another active slot. The response
+is `{dot, session_id}`. Personal execution retains the owner's authority and
+uses the saved work instructions and tone through the existing owner brief
+renderer. Organization planning, account authorization, per-action rules,
+automation and peer configuration use existing settings. Conversational editing
+of an existing Dot is not supported; an applied planning conversation links to
+the created Dot's settings.
+
+### Ordinary agent draft changes
 
 **`changes`** (`assist::changes_schema`): `display`, `model`, `task`, `tone`,
 `scope`, `abilities` and `slots` in the prompt assistant's step shape, plus

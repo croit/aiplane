@@ -20,11 +20,12 @@ use crate::server::tools::{
 pub(super) struct LivePersonalDotTool {
     pub state: Arc<AppState>,
     pub initial: Arc<dyn Tool>,
+    pub initial_bindings: std::collections::BTreeMap<String, crate::agents::bind::BindSource>,
 }
 
 impl Tool for LivePersonalDotTool {
     fn execution_facts(&self) -> Option<Value> {
-        self.initial.execution_facts()
+        binding_facts(&self.initial_bindings, self.initial.execution_facts())
     }
 
     fn phase(&self) -> crate::server::tools::ToolPhase {
@@ -43,7 +44,29 @@ impl Tool for LivePersonalDotTool {
         ctx: ToolContext,
         args: Value,
     ) -> crate::server::tools::ToolActionFuture<'a> {
-        self.initial.classify_actions(ctx, args)
+        Box::pin(async move {
+            let mut ctx = ctx;
+            crate::server::tools::ask_first::validate_execution_facts(
+                &ctx,
+                self.id(),
+                &self.execution_facts(),
+            )?;
+            if let Some(pending) = ctx.pending_execution_facts.as_mut() {
+                pending.execution_facts = self.initial.execution_facts();
+            }
+            if self.initial_bindings.is_empty() {
+                self.initial.classify_actions(ctx, args).await
+            } else {
+                crate::agents::bind::BoundTool::new(
+                    self.initial.clone(),
+                    self.initial_bindings.clone(),
+                    None,
+                    Arc::default(),
+                )
+                .classify_actions(ctx, args)
+                .await
+            }
+        })
     }
 
     fn schema(&self) -> ToolDef {
@@ -167,10 +190,24 @@ impl Tool for LivePersonalDotTool {
                     return Err(ToolError::AuditUnavailable);
                 }
             }
-            Permissions::from_spec(&spec)
-                .gate_dot(tool)
-                .run(ctx, args)
-                .await
+            let bindings=crate::agents::bind::ToolBinds::from_spec(&spec).for_tool(self.id(),&tool.schema()).map_err(|_| self.unavailable())?;
+            let original_facts=tool.execution_facts();
+            let facts=binding_facts(&bindings,original_facts.clone());
+            crate::server::tools::ask_first::validate_execution_facts(&ctx,self.id(),&facts)?;
+            if let Some(pending)=ctx.pending_execution_facts.as_mut() { pending.execution_facts=original_facts; }
+            let gated=Permissions::from_spec(&spec).gate_dot(tool);
+            let result=if bindings.is_empty() {
+                gated.run(ctx,args).await
+            } else {
+                crate::agents::bind::BoundTool::new(gated,bindings,None,Arc::default()).run(ctx,args).await
+            }?;
+            match crate::suspend::extract_suspend(&result) {
+                Some(mut request) if request.kind==session_core::db::SuspensionKind::Approval=> {
+                    request.execution_facts=facts;
+                    Ok(crate::suspend::tool_suspend(request))
+                },
+                _=>Ok(result),
+            }
             }.await;
             if fresh
                 && !admission_recorded
@@ -191,6 +228,32 @@ impl Tool for LivePersonalDotTool {
     }
 }
 
+fn binding_facts(
+    bindings: &std::collections::BTreeMap<String, crate::agents::bind::BindSource>,
+    facts: Option<Value>,
+) -> Option<Value> {
+    if bindings.is_empty() {
+        return facts;
+    }
+    let descriptor: std::collections::BTreeMap<_, _> = bindings
+        .iter()
+        .map(|(name, source)| {
+            let value = match source {
+                crate::agents::bind::BindSource::Const(value) => serde_json::json!({"const":value}),
+                crate::agents::bind::BindSource::State(path) => serde_json::json!({"state":path}),
+                crate::agents::bind::BindSource::Route(path) => serde_json::json!({"route":path}),
+            };
+            (name, value)
+        })
+        .collect();
+    let fingerprint = aiplane_core::server::crypto::sha256_hex(
+        serde_json::to_string(&descriptor)
+            .expect("binding descriptors serialize")
+            .as_bytes(),
+    );
+    Some(serde_json::json!({"personal_dot_bindings":fingerprint,"tool":facts}))
+}
+
 impl LivePersonalDotTool {
     fn unavailable(&self) -> ToolError {
         ToolError::Failed(format!(
@@ -208,6 +271,185 @@ impl LivePersonalDotTool {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn personal_bound_approval_replays_through_the_real_runner_and_classifies_bound_actions()
+    {
+        let (tool, mut ctx) = fixture_with_probe(Arc::new(FactsEcho)).await;
+        let mut value = spec("always_ask");
+        value["main"]["tool_resources"]["company_echo"]["bind"] =
+            json!({"message":{"const":"Original approved collection"}});
+        save(&tool, &ctx, value.clone()).await;
+        let typed = AgentSpec::from_value(&value).unwrap();
+        let persona = crate::persona::ChatPersona::new("Dot", Arc::new(ToolRegistry::new()))
+            .with_tool_access(&typed);
+        let registry = tool.state.tools();
+        let source = persona.source(registry.as_ref(), Some(&tool.state));
+        let calls = [crate::server::tools::runner::ToolCallRef {
+            id: "binding-call".into(),
+            name: "company_echo".into(),
+            arguments_raw: "{}".into(),
+        }];
+        let scanner = crate::server::tools::injection::InjectionScan::default();
+        let fresh =
+            crate::server::tools::runner::execute_tool_calls(&source, &ctx, &calls, &scanner).await;
+        assert!(!fresh[0].failed, "{}", fresh[0].body);
+        let request = crate::suspend::extract_suspend(&fresh[0].body).expect("approval requested");
+        assert_eq!(request.actions, Some(vec!["original".into()]));
+        ctx.suspend = crate::suspend::Suspend::Decided(
+            session_core::db::SuspensionKind::Approval,
+            session_core::db::Decision::AllowOnce,
+        );
+        ctx.pending_execution_facts = Some(crate::server::tools::PendingExecutionFacts {
+            execution_facts: request.execution_facts,
+        });
+        ctx.pending_actions = Some(crate::server::tools::PendingActionFacts {
+            actions: request.actions,
+        });
+        let resumed =
+            crate::server::tools::runner::execute_tool_calls(&source, &ctx, &calls, &scanner).await;
+        assert!(!resumed[0].failed, "{}", resumed[0].body);
+        assert_eq!(
+            resumed[0].body,
+            json!({"message":"Original approved collection"})
+        );
+        for binding in [
+            Some(json!({"message":{"const":"Different collection"}})),
+            None,
+        ] {
+            if let Some(binding) = binding {
+                value["main"]["tool_resources"]["company_echo"]["bind"] = binding;
+            } else {
+                value["main"]["tool_resources"]["company_echo"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("bind");
+            }
+            save(&tool, &ctx, value.clone()).await;
+            let changed = AgentSpec::from_value(&value).unwrap();
+            let persona = crate::persona::ChatPersona::new("Dot", Arc::new(ToolRegistry::new()))
+                .with_tool_access(&changed);
+            let changed_source = persona.source(registry.as_ref(), Some(&tool.state));
+            let refused = crate::server::tools::runner::execute_tool_calls(
+                &changed_source,
+                &ctx,
+                &calls,
+                &scanner,
+            )
+            .await;
+            assert!(refused[0].failed, "{}", refused[0].body);
+        }
+    }
+
+    #[tokio::test]
+    async fn personal_binding_approval_preserves_underlying_facts_and_rejects_changes_or_removal() {
+        let (tool, mut ctx) = fixture_with_probe(Arc::new(FactsEcho)).await;
+        let mut value = spec("always_ask");
+        value["main"]["tool_resources"]["company_echo"]["bind"] =
+            json!({"message":{"const":"Original approved collection"}});
+        save(&tool, &ctx, value.clone()).await;
+        let pause = tool.run(ctx.clone(), json!({})).await.unwrap();
+        let request = crate::suspend::extract_suspend(&pause).expect("approval requested");
+        ctx.suspend = crate::suspend::Suspend::Decided(
+            session_core::db::SuspensionKind::Approval,
+            session_core::db::Decision::AllowOnce,
+        );
+        ctx.pending_execution_facts = Some(crate::server::tools::PendingExecutionFacts {
+            execution_facts: request.execution_facts,
+        });
+        assert_eq!(
+            tool.run(ctx.clone(), json!({})).await.unwrap(),
+            json!({"message":"Original approved collection"})
+        );
+        value["main"]["tool_resources"]["company_echo"]["bind"]["message"] =
+            json!({"const":"Different collection"});
+        save(&tool, &ctx, value.clone()).await;
+        assert!(tool.run(ctx.clone(), json!({})).await.is_err());
+        value["main"]["tool_resources"]["company_echo"]
+            .as_object_mut()
+            .unwrap()
+            .remove("bind");
+        save(&tool, &ctx, value).await;
+        assert!(
+            tool.run(ctx, json!({"message":"Different collection"}))
+                .await
+                .is_err()
+        );
+    }
+
+    struct FactsEcho;
+    impl Tool for FactsEcho {
+        fn id(&self) -> &str {
+            "company_echo"
+        }
+        fn schema(&self) -> ToolDef {
+            crate::server::tools::echo::Echo.schema()
+        }
+        fn execution_facts(&self) -> Option<Value> {
+            Some(json!({"credential":"fixture"}))
+        }
+        fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+            Some(&[
+                crate::server::tools::ToolAction {
+                    id: "original",
+                    description: "Read the original collection",
+                },
+                crate::server::tools::ToolAction {
+                    id: "different",
+                    description: "Read another collection",
+                },
+            ])
+        }
+        fn classify_actions<'a>(
+            &'a self,
+            _ctx: ToolContext,
+            args: Value,
+        ) -> crate::server::tools::ToolActionFuture<'a> {
+            Box::pin(async move {
+                Ok(Some(vec![
+                    if args["message"] == "Original approved collection" {
+                        "original"
+                    } else {
+                        "different"
+                    }
+                    .into(),
+                ]))
+            })
+        }
+        fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
+            Box::pin(async move {
+                crate::server::tools::ask_first::validate_execution_facts(
+                    &ctx,
+                    self.id(),
+                    &self.execution_facts(),
+                )?;
+                crate::server::tools::echo::Echo.run(ctx, args).await
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn live_personal_tools_enforce_the_current_saved_constant_binding() {
+        let (tool, ctx) = fixture_with_echo(true).await;
+        let identity = ctx.personal_dot.as_ref().unwrap();
+        let mut value = spec("always_allow");
+        value["main"]["tool_resources"]["company_echo"]["bind"] =
+            serde_json::json!({"message":{"const":"Current reviewed collection"}});
+        sqlx::query("UPDATE agents SET draft_spec=? WHERE principal_id=?")
+            .bind(value.to_string())
+            .bind(&identity.dot_id)
+            .execute(&ctx.db)
+            .await
+            .unwrap();
+        let result = tool
+            .run(ctx, serde_json::json!({"message":"Another collection"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!({"message":"Current reviewed collection"})
+        );
+    }
+
     #[tokio::test]
     async fn live_admission_is_audited_once_without_opaque_metadata_or_resume_duplicates() {
         let (tool, mut ctx) = fixture().await;
@@ -590,6 +832,19 @@ mod tests {
     }
 
     async fn fixture() -> (LivePersonalDotTool, ToolContext) {
+        fixture_with_echo(false).await
+    }
+
+    async fn fixture_with_echo(echo: bool) -> (LivePersonalDotTool, ToolContext) {
+        let probe: Arc<dyn Tool> = if echo {
+            Arc::new(crate::server::tools::echo::Echo)
+        } else {
+            Arc::new(PrincipalEcho)
+        };
+        fixture_with_probe(probe).await
+    }
+
+    async fn fixture_with_probe(probe: Arc<dyn Tool>) -> (LivePersonalDotTool, ToolContext) {
         let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
             .await
             .unwrap();
@@ -626,7 +881,7 @@ mod tests {
             Default::default(),
             db.clone(),
             aiplane_core::server::upstreams::UpstreamRegistry::new(&Default::default()).unwrap(),
-            Arc::new(ToolRegistry::new().with(PrincipalEcho)),
+            Arc::new(ToolRegistry::new().with_family_replaced("company_", vec![probe.clone()])),
             Arc::new(
                 Resolver::build(
                     RbacConfig {
@@ -664,7 +919,8 @@ mod tests {
         (
             LivePersonalDotTool {
                 state,
-                initial: Arc::new(PrincipalEcho),
+                initial: probe,
+                initial_bindings: Default::default(),
             },
             ctx,
         )

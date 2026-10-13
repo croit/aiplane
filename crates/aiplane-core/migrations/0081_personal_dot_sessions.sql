@@ -310,3 +310,8 @@ CREATE TABLE cross_boundary_delegations (
 ) STRICT;
 
 CREATE INDEX idx_cross_boundary_delegations_caller ON cross_boundary_delegations (caller_dot_id);
+
+ALTER TABLE agent_architect_sessions ADD COLUMN dot_owner TEXT
+    CHECK (dot_owner IS NULL OR dot_owner = 'personal');
+ALTER TABLE agent_architect_sessions ADD COLUMN dot_plan TEXT
+    CHECK (dot_plan IS NULL OR json_valid(dot_plan));
