@@ -453,8 +453,8 @@ model.
   the target the route pinned for the session, else its fallback
   (`compaction::compaction_target`).
 - **Fallback.** The kind's unknown-model fallback (`[fallback].<kind>`)
-  applies to an agent only when it is granted as well. A person's token
-  allowlist stops at the alias.
+  applies to an agent only when it is granted as well, and to a person's
+  token only when its allowlist lets the fallback through.
 
 The builder offers one picker per model key over this list
 ([`ui.md`](ui.md#agent-setup)): choosing a model stages its grant; choosing
