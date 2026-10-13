@@ -104,12 +104,51 @@ pub async fn get_principal_session(
     principal_id: &str,
     session_id: &str,
 ) -> Result<Option<RunSession>, DbError> {
+    get_principal_session_with(pool, principal_id, session_id).await
+}
+
+pub async fn get_principal_session_in(
+    tx: &mut super::WriteTx,
+    principal_id: &str,
+    session_id: &str,
+) -> Result<Option<RunSession>, DbError> {
+    get_principal_session_with(&mut **tx, principal_id, session_id).await
+}
+
+async fn get_principal_session_with<'e, E>(
+    executor: E,
+    principal_id: &str,
+    session_id: &str,
+) -> Result<Option<RunSession>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let row = sqlx::query(&format!(
         "SELECT {RUN_SESSION_COLUMNS} FROM chat_sessions WHERE id = ? AND principal_id = ?"
     ))
     .bind(session_id)
     .bind(principal_id)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
+    .await?;
+    row.as_ref().map(map_run_session).transpose()
+}
+
+pub async fn get_private_principal_session_in(
+    tx: &mut super::WriteTx,
+    principal_id: &str,
+    session_id: &str,
+    expected_version: i64,
+) -> Result<Option<RunSession>, DbError> {
+    if expected_version < 0 {
+        return Ok(None);
+    }
+    let row = sqlx::query(&format!(
+        "SELECT {RUN_SESSION_COLUMNS} FROM chat_sessions WHERE id=? AND principal_id=? AND user_id IS NULL AND shared=0 AND agent_version=? AND visitor_id IS NULL AND parent_turn_id IS NULL"
+    ))
+    .bind(session_id)
+    .bind(principal_id)
+    .bind(expected_version)
+    .fetch_optional(&mut **tx)
     .await?;
     row.as_ref().map(map_run_session).transpose()
 }
@@ -120,13 +159,21 @@ pub async fn run_session_of_turn(
     pool: &Pool,
     turn_id: &str,
 ) -> Result<Option<RunSession>, DbError> {
+    let mut connection = pool.acquire().await?;
+    run_session_of_turn_in(&mut connection, turn_id).await
+}
+
+pub async fn run_session_of_turn_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+) -> Result<Option<RunSession>, DbError> {
     let row = sqlx::query(&format!(
         "SELECT {RUN_SESSION_COLUMNS} FROM chat_sessions \
          WHERE principal_id IS NOT NULL \
            AND id = (SELECT session_id FROM chat_turns WHERE id = ?)"
     ))
     .bind(turn_id)
-    .fetch_optional(pool)
+    .fetch_optional(connection)
     .await?;
     row.as_ref().map(map_run_session).transpose()
 }
@@ -210,7 +257,10 @@ pub async fn expired_run_suspensions(
            FROM chat_turn_suspensions s
            JOIN chat_turns t ON t.id = s.turn_id
            JOIN chat_sessions cs ON cs.id = t.session_id
-           WHERE cs.principal_id IS NOT NULL AND cs.parent_turn_id IS NULL
+           WHERE cs.principal_id IS NOT NULL
+             AND (cs.parent_turn_id IS NULL
+                  OR EXISTS (SELECT 1 FROM cross_boundary_delegations cb
+                             WHERE cb.child_session_id = cs.id))
              AND s.expires_at < ?"#,
     )
     .bind(deadline_bound(now))
@@ -240,7 +290,10 @@ pub async fn expired_run_suspensions(
 /// A conversation's own pause, with what the inbox needs to know about the
 /// conversation: who owns it and, for an agent's, which version runs. A
 /// pause inside a sub-agent run is never one of these: its conversation's
-/// turn mirrors it.
+/// turn mirrors it. The single exception is a cross-boundary child, whose
+/// pause settles in the receiver organization's Inbox and is enumerated on
+/// its own session; the personal mirror of that same pause is excluded,
+/// because the user cannot give the organization's decision.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingSuspension {
     pub suspension: TurnSuspension,
@@ -258,7 +311,13 @@ const PENDING_SELECT: &str = "SELECT s.turn_id, s.request_id, s.kind, s.message,
      FROM chat_turn_suspensions s \
      JOIN chat_turns t ON t.id = s.turn_id \
      JOIN chat_sessions cs ON cs.id = t.session_id \
-     WHERE cs.parent_turn_id IS NULL";
+     WHERE (cs.parent_turn_id IS NULL
+            OR EXISTS (SELECT 1 FROM cross_boundary_delegations cb
+                       WHERE cb.child_session_id = cs.id))
+       AND NOT (cs.user_id IS NOT NULL AND s.child_turn IS NOT NULL
+            AND EXISTS (SELECT 1 FROM chat_turns ct
+                        JOIN cross_boundary_delegations cb2 ON cb2.child_session_id = ct.session_id
+                        WHERE ct.id = s.child_turn))";
 
 fn map_pending(row: &SqliteRow) -> Result<PendingSuspension, DbError> {
     Ok(PendingSuspension {
@@ -405,15 +464,18 @@ mod tests {
             kind: SuspensionKind::Approval,
             message: None,
             tool_call: PendingCall {
+                execution_facts: None,
                 id: "call-1".into(),
                 name: "company_echo".into(),
                 arguments: r#"{"message":"hi"}"#.into(),
+                actions: None,
             },
             tail: vec![serde_json::json!({"role": "assistant", "content": null})],
             budget_used: BudgetUsed {
                 rounds: 1,
                 seconds: 3,
                 tokens: 120,
+                tree: None,
             },
             child_turn: None,
             on_timeout: TimeoutFallback::Deny,
@@ -454,6 +516,134 @@ mod tests {
                 .is_none(),
             "another principal cannot open the run"
         );
+    }
+
+    #[tokio::test]
+    async fn cross_boundary_children_wait_in_their_own_inbox_and_expire_their_own_pause() {
+        use crate::db::{
+            WriteTx, agents,
+            organizations::{self, NewOrganization},
+            system_principals::NewPrincipal,
+        };
+        let fx = fixture().await;
+        let now = Timestamp::now();
+        let expired = now - jiff::SignedDuration::from_secs(60);
+        // A member group, an organization, and the organization's receiver dot.
+        sqlx::query("INSERT INTO gateway_groups(name,created_at,updated_at) VALUES ('ops', ?, ?)")
+            .bind(now.to_string())
+            .bind(now.to_string())
+            .execute(&fx.pool)
+            .await
+            .unwrap();
+        let org = organizations::create(
+            &fx.pool,
+            &NewOrganization {
+                name: "Support",
+                description: "Support org",
+                member_groups: &["ops".to_owned()],
+            },
+            "u1",
+        )
+        .await
+        .unwrap();
+        let organizations::OrganizationCreateResult::Created(org) = org else {
+            panic!("organization created");
+        };
+        let mut tx = WriteTx::begin(&fx.pool).await.unwrap();
+        let (_, receiver) = agents::create_organization_dot_in(
+            &mut tx,
+            &org.organization.id,
+            &NewPrincipal {
+                name: "receiver",
+                display: "Receiver",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "u1",
+            4,
+        )
+        .await
+        .unwrap();
+        let receiver = receiver.unwrap().principal.id;
+        tx.commit().await.unwrap();
+        let (_, caller) = agents::create_personal_dot(
+            &fx.pool,
+            &NewPrincipal {
+                name: "caller",
+                display: "Caller",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "u1",
+            4,
+        )
+        .await
+        .unwrap();
+        let caller = caller.unwrap().principal.id;
+        // The organization child: a parented principal session with a pause.
+        let child = create_principal_session(
+            &fx.pool,
+            &NewRunSession {
+                principal_id: &receiver,
+                title: None,
+                parent_turn_id: Some("parent-turn"),
+                agent_version: Some(3),
+            },
+        )
+        .await
+        .unwrap();
+        create_assistant_turn_in_progress(&fx.pool, &child.id, "child-turn", "m")
+            .await
+            .unwrap();
+        suspend_turn(&fx.pool, &suspension("child-turn", expired))
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO cross_boundary_delegations (child_session_id, caller_dot_id, \
+             receiver_dot_id, caller_owner_user_id, receiver_org_id, parent_turn_id, \
+             parent_tool_call_id, edge_generation, created_at) \
+             VALUES (?, ?, ?, 'u1', ?, 'parent-turn', 'forward-call', 'gen-1', ?)",
+        )
+        .bind(&child.id)
+        .bind(&caller)
+        .bind(&receiver)
+        .bind(&org.organization.id)
+        .bind(now.to_string())
+        .execute(&fx.pool)
+        .await
+        .unwrap();
+        // The personal mirror: a user root session whose pause points at the child.
+        let personal = create_session(&fx.pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&fx.pool, &personal.id, "parent-turn", "m")
+            .await
+            .unwrap();
+        let mut mirror = suspension("parent-turn", expired);
+        mirror.child_turn = Some("child-turn".into());
+        suspend_turn(&fx.pool, &mirror).await.unwrap();
+        // Control: an ordinary personal root pause still enumerates.
+        let ordinary = create_session(&fx.pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&fx.pool, &ordinary.id, "ordinary-turn", "m")
+            .await
+            .unwrap();
+        suspend_turn(&fx.pool, &suspension("ordinary-turn", in_an_hour()))
+            .await
+            .unwrap();
+
+        let pending = pending_suspensions(&fx.pool).await.unwrap();
+        assert!(
+            pending.iter().any(|p| p.session_id == child.id),
+            "the child's pause waits in the organization's inbox"
+        );
+        assert!(
+            !pending.iter().any(|p| p.session_id == personal.id),
+            "the personal mirror is not answerable by the user"
+        );
+        assert!(pending.iter().any(|p| p.session_id == ordinary.id));
+
+        // The parented child is swept by the run expiry, like an ordinary root.
+        let expired = expired_run_suspensions(&fx.pool, now).await.unwrap();
+        assert!(expired.iter().any(|e| e.session_id == child.id));
+        assert!(!expired.iter().any(|e| e.session_id == personal.id));
     }
 
     #[tokio::test]
@@ -650,5 +840,233 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(after.notified_at.is_some());
+    }
+    #[tokio::test]
+    async fn private_draft_session_admission_reads_current_transaction_and_rejects_other_contexts()
+    {
+        let fx = fixture().await;
+        let mut tx = crate::db::WriteTx::begin(&fx.pool).await.unwrap();
+        let draft = create_principal_session(
+            &mut *tx,
+            &NewRunSession {
+                agent_version: Some(0),
+                ..fx.run_session(None)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            get_private_principal_session_in(&mut tx, &fx.principal, &draft.id, 0)
+                .await
+                .unwrap(),
+            Some(draft.clone())
+        );
+        assert!(
+            get_private_principal_session_in(&mut tx, "wrong-principal", &draft.id, 0)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            get_private_principal_session_in(&mut tx, &fx.principal, "missing", 0)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            sqlx::query("UPDATE chat_sessions SET shared=1 WHERE id=?")
+                .bind(&draft.id)
+                .execute(&mut *tx)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            get_private_principal_session_in(&mut tx, &fx.principal, &draft.id, 0)
+                .await
+                .unwrap(),
+            Some(draft.clone())
+        );
+        for mutation in [
+            "UPDATE chat_sessions SET agent_version=1 WHERE id=?",
+            "UPDATE chat_sessions SET agent_version=NULL WHERE id=?",
+            "UPDATE chat_sessions SET parent_turn_id='opaque-parent' WHERE id=?",
+            "UPDATE chat_sessions SET principal_id=NULL,user_id='u1' WHERE id=?",
+        ] {
+            sqlx::query(mutation)
+                .bind(&draft.id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            assert!(
+                get_private_principal_session_in(&mut tx, &fx.principal, &draft.id, 0)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "{mutation}"
+            );
+            sqlx::query("UPDATE chat_sessions SET shared=0,agent_version=0,parent_turn_id=NULL,principal_id=?,user_id=NULL WHERE id=?")
+                .bind(&fx.principal).bind(&draft.id).execute(&mut *tx).await.unwrap();
+        }
+        drop(tx);
+        assert!(
+            get_principal_session(&fx.pool, &fx.principal, &draft.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn private_principal_session_reads_exact_nonnegative_version_and_transaction_state() {
+        let fx = fixture().await;
+        let mut tx = crate::db::WriteTx::begin(&fx.pool).await.unwrap();
+        let mut sessions = Vec::new();
+        for version in [0, 1, 7] {
+            let session = create_principal_session(
+                &mut *tx,
+                &NewRunSession {
+                    agent_version: Some(version),
+                    ..fx.run_session(None)
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                get_private_principal_session_in(&mut tx, &fx.principal, &session.id, version)
+                    .await
+                    .unwrap(),
+                Some(session.clone())
+            );
+            assert_eq!(
+                get_principal_session_in(&mut tx, &fx.principal, &session.id)
+                    .await
+                    .unwrap(),
+                Some(session.clone())
+            );
+            assert!(
+                get_principal_session_in(&mut tx, "foreign-principal", &session.id)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            for wrong in [-1, version + 1] {
+                assert!(
+                    get_private_principal_session_in(&mut tx, &fx.principal, &session.id, wrong)
+                        .await
+                        .unwrap()
+                        .is_none()
+                );
+            }
+            assert!(
+                get_private_principal_session_in(&mut tx, "wrong-principal", &session.id, version)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            sessions.push(session);
+        }
+        let published = &sessions[1];
+        assert!(
+            sqlx::query("UPDATE chat_sessions SET shared=1 WHERE id=?")
+                .bind(&published.id)
+                .execute(&mut *tx)
+                .await
+                .is_err()
+        );
+        for mutation in [
+            "UPDATE chat_sessions SET agent_version=NULL WHERE id=?",
+            "UPDATE chat_sessions SET parent_turn_id='opaque-parent' WHERE id=?",
+            "UPDATE chat_sessions SET principal_id=NULL,user_id='u1' WHERE id=?",
+        ] {
+            sqlx::query(mutation)
+                .bind(&published.id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            assert!(
+                get_private_principal_session_in(&mut tx, &fx.principal, &published.id, 1)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "{mutation}"
+            );
+            sqlx::query("UPDATE chat_sessions SET shared=0,agent_version=1,parent_turn_id=NULL,principal_id=?,user_id=NULL WHERE id=?")
+                .bind(&fx.principal).bind(&published.id).execute(&mut *tx).await.unwrap();
+        }
+        assert!(
+            get_private_principal_session_in(&mut tx, &fx.principal, "missing", 0)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        drop(tx);
+        for session in sessions {
+            assert!(
+                get_principal_session(&fx.pool, &fx.principal, &session.id)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn private_principal_session_rejects_actual_visitor_context() {
+        let fx = fixture().await;
+        let agent = crate::db::agents::create(
+            &fx.pool,
+            &sp::NewPrincipal {
+                name: "private-reader-visitor",
+                display: "Visitor fixture",
+                description: "",
+            },
+            "{}",
+            "u1",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let principal = &agent.principal.id;
+        let key = crate::db::embed_keys::create(
+            &fx.pool,
+            &crate::db::embed_keys::NewEmbedKey {
+                principal_id: principal,
+                name: "Visitor fixture",
+                origins: &[],
+                key_hash: "private-reader-key",
+            },
+            "u1",
+        )
+        .await
+        .unwrap();
+        let visitor = crate::db::visitor_sessions::start(
+            &fx.pool,
+            &crate::db::visitor_sessions::NewVisitorSession {
+                principal_id: principal,
+                embed_key_id: &key.id,
+                agent_version: 1,
+                token_hash: "private-reader-visitor-token",
+                client_ip: None,
+                idle_ttl: jiff::SignedDuration::from_secs(60),
+                max_age: jiff::SignedDuration::from_secs(600),
+                now: Timestamp::now(),
+            },
+        )
+        .await
+        .unwrap();
+        let mut tx = crate::db::WriteTx::begin(&fx.pool).await.unwrap();
+        assert!(
+            get_private_principal_session_in(&mut tx, principal, &visitor.session_id, 1)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        drop(tx);
+        assert!(
+            get_principal_session(&fx.pool, principal, &visitor.session_id)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 }

@@ -177,7 +177,7 @@ fn decode_payload(args: &UploadArgs) -> Result<Vec<u8>, ToolError> {
             "missing file contents (need `content` or `content_base64`)".into(),
         )),
         (Some(s), None) => Ok(s.as_bytes().to_vec()),
-        (None, Some(b64)) => chat_attachments::decode_base64(b64).map_err(ToolError::InvalidArgs),
+        (None, Some(b64)) => shared::b64::decode(b64).map_err(ToolError::InvalidArgs),
     }
 }
 
@@ -265,6 +265,10 @@ mod tests {
             suspend: Default::default(),
             granted_tools: None,
             agent: None,
+            personal_dot: None,
+            personal_execution: None,
+            pending_actions: None,
+            pending_execution_facts: None,
             call_id: None,
         };
         let err = UploadAttachment
@@ -315,6 +319,10 @@ mod tests {
             suspend: Default::default(),
             granted_tools: None,
             agent: None,
+            personal_dot: None,
+            personal_execution: None,
+            pending_actions: None,
+            pending_execution_facts: None,
             call_id: None,
         };
         let err = UploadAttachment

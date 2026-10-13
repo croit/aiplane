@@ -14,10 +14,16 @@
 //! `/admin/groups` UI owns it. The resolver holds a snapshot ([`load_snapshot`])
 //! that is rebuilt from these tables at startup and after every admin edit.
 
+use std::collections::BTreeMap;
+
 use jiff::Timestamp;
 use sqlx::Row;
 
-use super::{DbError, Pool};
+use super::{DbError, Pool, WriteTx};
+
+const GROUPS_SQL: &str = "SELECT name, description, is_admin, is_default, can_manage_agents, can_manage_dots, priority FROM gateway_groups ORDER BY name";
+const MAPPINGS_SQL: &str = "SELECT oidc_value, gateway_group FROM oidc_group_mappings";
+const TOOL_GRANTS_SQL: &str = "SELECT gateway_group, tool_id FROM group_tool_grants";
 
 /// A gateway group definition (without its grants — those live in the
 /// `group_tool_grants` / `skill_role_grants` / per-resource tables).
@@ -31,6 +37,7 @@ pub struct GroupRow {
     /// May create and configure system principals (`docs/agents.md` → "Principals").
     /// `is_admin` implies it; see `Resolver::can_manage_agents`.
     pub can_manage_agents: bool,
+    pub can_manage_dots: bool,
 }
 
 /// Everything the [`crate::server::rbac::Resolver`] needs to answer access
@@ -52,18 +59,14 @@ fn map_group(row: &sqlx::sqlite::SqliteRow) -> Result<GroupRow, DbError> {
         is_admin: row.try_get::<i64, _>("is_admin")? != 0,
         is_default: row.try_get::<i64, _>("is_default")? != 0,
         can_manage_agents: row.try_get::<i64, _>("can_manage_agents")? != 0,
+        can_manage_dots: row.try_get::<i64, _>("can_manage_dots")? != 0,
     })
 }
 
 /// Every group, name-ordered. Powers the `/admin/groups` roster and the
 /// group-picker `<datalist>` reused on every resource form.
 pub async fn list_groups(pool: &Pool) -> Result<Vec<GroupRow>, DbError> {
-    let rows = sqlx::query(
-        "SELECT name, description, is_admin, is_default, can_manage_agents, priority
-           FROM gateway_groups ORDER BY name",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query(GROUPS_SQL).fetch_all(pool).await?;
     rows.iter().map(map_group).collect()
 }
 
@@ -72,8 +75,19 @@ pub async fn list_groups(pool: &Pool) -> Result<Vec<GroupRow>, DbError> {
 /// those used to re-derive the names from [`list_groups`] and throw the rest of
 /// each row away.
 pub async fn list_group_names(pool: &Pool) -> Result<Vec<String>, DbError> {
+    list_group_names_with(pool).await
+}
+
+pub async fn list_group_names_in(tx: &mut super::WriteTx) -> Result<Vec<String>, DbError> {
+    list_group_names_with(&mut **tx).await
+}
+
+async fn list_group_names_with<'e, E>(executor: E) -> Result<Vec<String>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let rows = sqlx::query("SELECT name FROM gateway_groups ORDER BY name")
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await?;
     rows.iter().map(|row| Ok(row.try_get("name")?)).collect()
 }
@@ -197,6 +211,18 @@ pub async fn set_can_manage_agents(
     Ok(changed > 0)
 }
 
+pub async fn set_can_manage_dots(pool: &Pool, name: &str, enabled: bool) -> Result<bool, DbError> {
+    let changed =
+        sqlx::query("UPDATE gateway_groups SET can_manage_dots = ?, updated_at = ? WHERE name = ?")
+            .bind(i64::from(enabled))
+            .bind(Timestamp::now().to_string())
+            .bind(name)
+            .execute(pool)
+            .await?
+            .rows_affected();
+    Ok(changed > 0)
+}
+
 /// Delete a group. `ON DELETE CASCADE` drops its mappings + tool grants; the
 /// resource `allowed_groups` (plain JSON string lists, not FKs) are left with a
 /// now-dangling name, which the resolver treats as "no user holds it" — i.e. a
@@ -214,18 +240,16 @@ pub async fn delete_group(pool: &Pool, name: &str) -> Result<bool, DbError> {
 
 /// Every `(oidc_value, gateway_group)` mapping row.
 pub async fn all_mappings(pool: &Pool) -> Result<Vec<(String, String)>, DbError> {
-    let rows = sqlx::query("SELECT oidc_value, gateway_group FROM oidc_group_mappings")
+    sqlx::query(MAPPINGS_SQL)
         .fetch_all(pool)
-        .await?;
-    rows.iter()
-        .map(|r| {
-            Ok((
-                r.try_get::<String, _>("oidc_value")?,
-                r.try_get::<String, _>("gateway_group")?,
-            ))
-        })
-        .collect::<Result<Vec<_>, sqlx::Error>>()
-        .map_err(DbError::from)
+        .await?
+        .iter()
+        .map(map_mapping)
+        .collect()
+}
+
+fn map_mapping(row: &sqlx::sqlite::SqliteRow) -> Result<(String, String), DbError> {
+    Ok((row.try_get("oidc_value")?, row.try_get("gateway_group")?))
 }
 
 /// The OIDC claim values mapped to `group`, for the group's edit form.
@@ -276,18 +300,16 @@ pub async fn set_mappings_for_group(
 
 /// Every `(gateway_group, tool_id)` grant row.
 pub async fn all_tool_grants(pool: &Pool) -> Result<Vec<(String, String)>, DbError> {
-    let rows = sqlx::query("SELECT gateway_group, tool_id FROM group_tool_grants")
+    sqlx::query(TOOL_GRANTS_SQL)
         .fetch_all(pool)
-        .await?;
-    rows.iter()
-        .map(|r| {
-            Ok((
-                r.try_get::<String, _>("gateway_group")?,
-                r.try_get::<String, _>("tool_id")?,
-            ))
-        })
-        .collect::<Result<Vec<_>, sqlx::Error>>()
-        .map_err(DbError::from)
+        .await?
+        .iter()
+        .map(map_tool_grant)
+        .collect()
+}
+
+fn map_tool_grant(row: &sqlx::sqlite::SqliteRow) -> Result<(String, String), DbError> {
+    Ok((row.try_get("gateway_group")?, row.try_get("tool_id")?))
 }
 
 /// The tool ids granted to `group` (may include `*`).
@@ -342,6 +364,32 @@ pub async fn load_snapshot(pool: &Pool) -> Result<GroupSnapshot, DbError> {
     })
 }
 
+pub async fn load_snapshot_in(tx: &mut WriteTx) -> Result<GroupSnapshot, DbError> {
+    let groups = sqlx::query(GROUPS_SQL)
+        .fetch_all(&mut **tx)
+        .await?
+        .iter()
+        .map(map_group)
+        .collect::<Result<_, _>>()?;
+    let mappings = sqlx::query(MAPPINGS_SQL)
+        .fetch_all(&mut **tx)
+        .await?
+        .iter()
+        .map(map_mapping)
+        .collect::<Result<_, _>>()?;
+    let tool_grants = sqlx::query(TOOL_GRANTS_SQL)
+        .fetch_all(&mut **tx)
+        .await?
+        .iter()
+        .map(map_tool_grant)
+        .collect::<Result<_, _>>()?;
+    Ok(GroupSnapshot {
+        groups,
+        mappings,
+        tool_grants,
+    })
+}
+
 /// Distinct OIDC claim values seen across all users' stored `roles`, for the
 /// mapping form's autocomplete `<datalist>`. Best-effort: a decode hiccup on
 /// one row is skipped rather than failing the page.
@@ -362,6 +410,46 @@ pub async fn observed_oidc_values(pool: &Pool) -> Result<Vec<String>, DbError> {
     }
     out.sort();
     Ok(out)
+}
+
+/// Count locally known users that resolve to each requested group. Membership
+/// follows the same stored claim mappings and default-group rule as RBAC.
+pub async fn group_member_counts_in(
+    tx: &mut WriteTx,
+    groups: &[String],
+) -> Result<BTreeMap<String, u64>, DbError> {
+    if groups.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let groups = serde_json::to_string(groups).expect("string vector serializes");
+    let rows = sqlx::query(
+        r#"SELECT requested.value AS group_name, COUNT(DISTINCT u.id) AS user_count
+           FROM json_each(?) AS requested
+           LEFT JOIN gateway_groups AS g ON g.name = requested.value
+           LEFT JOIN users AS u ON g.is_default = 1 OR EXISTS (
+               SELECT 1
+               FROM oidc_group_mappings AS mapping
+               JOIN json_each(u.roles_json) AS role_value
+                 ON role_value.value = mapping.oidc_value
+               WHERE mapping.gateway_group = g.name
+           )
+           GROUP BY requested.value"#,
+    )
+    .bind(groups)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    rows.iter()
+        .map(|row| {
+            let group: String = row.try_get("group_name")?;
+            let count: i64 = row.try_get("user_count")?;
+            let count = u64::try_from(count).map_err(|source| DbError::Decode {
+                column: "user_count",
+                source: source.into(),
+            })?;
+            Ok((group, count))
+        })
+        .collect()
 }
 
 /// True when no group has been created yet — the trigger for a one-time
@@ -475,6 +563,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transactional_snapshot_reads_uncommitted_current_policy_without_pool_fallback() {
+        let pool = fresh().await;
+        upsert_group(&pool, "members", "Members", false, true)
+            .await
+            .unwrap();
+        set_can_manage_agents(&pool, "members", true).await.unwrap();
+        set_mappings_for_group(&pool, "members", &v(&["member-claim"]))
+            .await
+            .unwrap();
+        set_tools_for_group(&pool, "members", &v(&["company_echo"]))
+            .await
+            .unwrap();
+        let original = load_snapshot(&pool).await.unwrap();
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        let initial = load_snapshot_in(&mut tx).await.unwrap();
+        assert_eq!(initial.groups, original.groups);
+        assert_eq!(initial.mappings, original.mappings);
+        assert_eq!(initial.tool_grants, original.tool_grants);
+        sqlx::query(
+            "UPDATE gateway_groups SET can_manage_agents=0,is_default=0 WHERE name='members'",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM oidc_group_mappings WHERE gateway_group='members'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM group_tool_grants WHERE gateway_group='members'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let revoked = load_snapshot_in(&mut tx).await.unwrap();
+        assert!(!revoked.groups[0].can_manage_agents);
+        assert!(!revoked.groups[0].is_default);
+        assert!(revoked.mappings.is_empty());
+        assert!(revoked.tool_grants.is_empty());
+        drop(tx);
+        assert_eq!(load_snapshot(&pool).await.unwrap().groups, original.groups);
+    }
+
+    #[tokio::test]
     async fn groups_round_trip() {
         let pool = fresh().await;
         assert!(is_empty(&pool).await.unwrap());
@@ -494,6 +624,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn member_counts_include_mapped_users_once_and_every_user_in_default_groups() {
+        let pool = fresh().await;
+        upsert_group(&pool, "admins", "", true, false)
+            .await
+            .unwrap();
+        upsert_group(&pool, "everyone", "", false, true)
+            .await
+            .unwrap();
+        upsert_group(&pool, "support", "", false, false)
+            .await
+            .unwrap();
+        set_mappings_for_group(&pool, "admins", &v(&["admin-a", "admin-b"]))
+            .await
+            .unwrap();
+        set_mappings_for_group(&pool, "support", &v(&["support-team"]))
+            .await
+            .unwrap();
+        for (id, roles) in [
+            ("one", r#"["admin-a","admin-b","support-team"]"#),
+            ("two", r#"["admin-a"]"#),
+            ("three", r#"["unmapped"]"#),
+        ] {
+            sqlx::query("INSERT INTO users(id,email,roles_json,created_at,updated_at) VALUES(?,?,?,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+                .bind(id)
+                .bind(format!("{id}@example.test"))
+                .bind(roles)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        let counts =
+            group_member_counts_in(&mut tx, &v(&["admins", "everyone", "support", "missing"]))
+                .await
+                .unwrap();
+
+        assert_eq!(
+            counts["admins"], 2,
+            "one user matching two claims counts once"
+        );
+        assert_eq!(
+            counts["everyone"], 3,
+            "default groups include all known users"
+        );
+        assert_eq!(counts["support"], 1);
+        assert_eq!(counts["missing"], 0);
+    }
+
+    #[tokio::test]
     async fn agent_management_is_off_by_default_and_survives_a_plain_upsert() {
         let pool = fresh().await;
         upsert_group(&pool, "agents", "", false, false)
@@ -510,6 +690,58 @@ mod tests {
         assert_eq!(group.description, "renamed");
 
         assert!(!set_can_manage_agents(&pool, "ghost", true).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn dot_management_defaults_false_and_is_independent_in_list_and_snapshot() {
+        let pool = fresh().await;
+        upsert_group(&pool, "managers", "", false, false)
+            .await
+            .unwrap();
+        let group = &list_groups(&pool).await.unwrap()[0];
+        assert!(!group.can_manage_dots);
+        assert!(!group.can_manage_agents);
+        set_can_manage_agents(&pool, "managers", true)
+            .await
+            .unwrap();
+        assert!(!list_groups(&pool).await.unwrap()[0].can_manage_dots);
+        assert!(set_can_manage_dots(&pool, "managers", true).await.unwrap());
+        set_can_manage_agents(&pool, "managers", false)
+            .await
+            .unwrap();
+        upsert_group(&pool, "managers", "edited", false, false)
+            .await
+            .unwrap();
+        let group = &list_groups(&pool).await.unwrap()[0];
+        assert!(group.can_manage_dots);
+        assert!(!group.can_manage_agents);
+        assert_eq!(group.description, "edited");
+        assert!(load_snapshot(&pool).await.unwrap().groups[0].can_manage_dots);
+        assert!(set_can_manage_dots(&pool, "managers", false).await.unwrap());
+        assert!(!load_snapshot(&pool).await.unwrap().groups[0].can_manage_dots);
+        assert!(!set_can_manage_dots(&pool, "missing", true).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn transactional_group_names_observe_actual_uncommitted_rows_and_rollback() {
+        let pool = fresh().await;
+        upsert_group(&pool, "original", "", false, false)
+            .await
+            .unwrap();
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        sqlx::query("INSERT INTO gateway_groups(name,created_at,updated_at) VALUES('added','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+            .execute(&mut *tx).await.unwrap();
+        assert_eq!(
+            list_group_names_in(&mut tx).await.unwrap(),
+            v(&["added", "original"])
+        );
+        sqlx::query("DELETE FROM gateway_groups WHERE name='original'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(list_group_names_in(&mut tx).await.unwrap(), v(&["added"]));
+        drop(tx);
+        assert_eq!(list_group_names(&pool).await.unwrap(), v(&["original"]));
     }
 
     #[tokio::test]

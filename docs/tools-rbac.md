@@ -50,6 +50,25 @@ pub trait Tool: Send + Sync + 'static {
   use it — their jobs (LibreOffice, headless Chromium, cold start) legitimately
   exceed 30s.
 
+### Declared tool actions
+
+`Tool::action_catalogue` supplies optional actual action IDs and descriptions;
+`Tool::classify_actions` validates an invocation and returns its ordered IDs
+without executing it. `browse_page` shares its `ActionPlan::parse` between
+classification and execution. `browser_control` shares its complete validated
+batch parser, preserves ordered IDs including repeats, and emits no prefix
+before permission is resolved for the entire batch. Wrapper tools forward both methods. JSON schema
+enums alone do not establish an action contract.
+
+Agent `ToolResource.actions` stores `allow`, `ask` and `deny` overrides in the
+existing typed spec. `Permissions` resolves them after binding arguments,
+retains the whole-tool permission as fallback, and uses `AskFirst` for Ask.
+Current grants and connector modes remain ceilings. Invalid or unavailable
+rules refuse execution. Pending-call JSON carries the classified IDs; resume
+checks the same facts before accepting approval, including when the original
+Ask wrapper has been removed. This metadata applies only to the pending call.
+The shared runner also checks resumed calls before dispatching a raw tool.
+
 ### Tool ids are a contract
 
 `ToolRegistry::with` asserts at registration that an id matches OpenAI's
@@ -330,6 +349,15 @@ request-time schemas and execution come from the caller's live user layer.
 Global connectors intentionally use one shared credential, but still apply
 each user's RBAC, connector ACL, tool modes, and token states separately.
 
+Owned connections and pending OAuth carry the catalogue dispatch generation
+under which authorization started. Shared and owned tool caches and suspended
+MCP calls also retain the actual resource generation. Changes to applicable
+server/authentication configuration invalidate these earlier facts; token
+refresh preserves credential generation only while the catalogue provenance
+still matches. Final dispatch reloads current user or active principal grants
+and resource authority in the existing write transaction. Late handshakes
+cannot publish stale tool metadata. See [Dot identities](dots-identities.md#catalogue-dispatch-fence).
+
 Authoring per-tool grants needs a tool list, and an MCP server's tools are only
 visible while connected on some user's behalf — which an admin editing a group
 cannot do. So `mcp_connector_tools` caches what each connector reported the last
@@ -554,13 +582,17 @@ client tool in one turn.
   `LOOP_MESSAGE`, because it is written into the turn row at generation time.
 - **Per-tool timeout** — 30s, overridable per tool via `max_duration`.
 - **Concurrency** — tool calls within one round run concurrently, bounded by a
-  per-request semaphore of 4. The exception is an agent run's synthetic tools:
-  `ToolSource::phase` tags each call with a `ToolPhase`, and the runner runs the
+  per-request semaphore of 4. Tools declare their ordering through
+  `Tool::phase`; `ToolSource::phase` preserves it through registries, grants,
+  discovery, personal tool policies and wrappers. Agent synthetic tools can
+  supply their own source phase. The runner runs the
   state writers (`set_<slot>`, verifiers) first and one at a time, then the
   concurrent rest, then the tools that act on state (`forward_request`,
   `request_human`) one at a time, then the `Terminal` one (`finish`), which
-  the driver only lets run as the round's sole call. Only `RunToolSource`
-  returns anything but `Concurrent`. Results keep call order whatever order the calls ran in
+  the driver only lets run as the round's sole call. The actual local
+  `forward_request` tool declares `ActsOnState`, including through approval
+  wrappers; a denied or undiscovered tool does not acquire a source phase.
+  Results keep call order whatever order the calls ran in
   ([`agent-runs.md`](agent-runs.md#synthetic-tools)).
 - **Tool-result context budget** — once cumulative `role:"tool"` content passes
   128 KB (`/v1` loop) or the turn's allowance derived from the model's context
@@ -770,8 +802,11 @@ call only while the turn lives in memory; this pause is durable.
 - **Resuming.** `suspend::claim_for_resume` checks the decision against the
   kind's options (`approval`: allow once / deny; `secure_input`,
   `human_answer`: value / deny) and the optional `request_id`, then deletes the
-  row and flips the turn back to `in_progress` atomically, so a decision is
-  claimed once. The chat path reserves the worker slot *before* claiming. The
+  exact request row and flips a suspended turn back to `in_progress` in
+  the same transaction. A stale request cannot consume a newer pause, and a
+  failed status transition rolls back the deletion. The connection-capable
+  helpers let agent chains claim every verified level in one transaction;
+  an unavailable ancestor leaves the entire chain paused. The chat path reserves the worker slot *before* claiming. The
   driver (`OpenAiDriver::resume`) rebuilds history and the system message as
   for any turn, appends `tail`, settles the waiting call and continues the
   round loop at the stored round count — and against the stored seconds and

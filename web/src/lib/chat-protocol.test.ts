@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 
 import {
 	applyEvent,
+	conversationAccess,
 	newConversationState,
 	parseUserContent,
 	replaceUserText,
@@ -246,4 +247,28 @@ test('content without markers parses to itself', () => {
 test('editing prose preserves existing attachment markers', () => {
 	const marker = '[gw-attachment file="shot.png" mime="image/png" url="/chat/attachment/t1/shot.png" size=123]';
 	assert.equal(replaceUserText(`before\n\n${marker}`, 'after'), `after\n\n${marker}`);
+});
+
+
+test('conversation access fails closed until both identity and metadata are known', () => {
+    const session = { user_id: 'alice', shared: false };
+    const permissions = { can_write: true, can_delete: true, delegation: null };
+    assert.deepEqual(conversationAccess(null, 'alice', permissions), { isOwner: false, canWrite: false, canFork: false });
+    assert.deepEqual(conversationAccess(session, null, permissions), { isOwner: false, canWrite: false, canFork: false });
+    assert.deepEqual(conversationAccess(session, 'alice', null), { isOwner: true, canWrite: false, canFork: false });
+});
+
+test('ordinary owner can write and shared viewers retain Fork without write authority', () => {
+    const permissions = { can_write: true, can_delete: true, delegation: null };
+    assert.deepEqual(conversationAccess({ user_id: 'alice', shared: false }, 'alice', permissions), { isOwner: true, canWrite: true, canFork: false });
+    assert.deepEqual(conversationAccess({ user_id: 'alice', shared: true }, 'bob', { ...permissions, can_write: false }), { isOwner: false, canWrite: false, canFork: true });
+    assert.equal(conversationAccess({ user_id: 'alice', shared: false }, 'bob', permissions).canWrite, false);
+});
+
+test('delegated child stays owner history with no independent writes or Fork even if root is unavailable', () => {
+    for (const root_session_id of ['root', null]) {
+        const permissions = { can_write: false, can_delete: false, delegation: { root_session_id } };
+        assert.deepEqual(conversationAccess({ user_id: 'alice', shared: false }, 'alice', permissions), { isOwner: true, canWrite: false, canFork: false });
+        assert.equal(conversationAccess({ user_id: 'alice', shared: true }, 'bob', permissions).canFork, false);
+    }
 });

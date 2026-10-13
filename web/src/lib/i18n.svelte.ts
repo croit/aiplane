@@ -35,6 +35,8 @@
  * catalogs in step so this stays a safety net rather than a strategy.
  */
 import { en } from './locales/en';
+import { detect, LANG_COOKIE, type Locale } from './locale.ts';
+export { LOCALES, LANG_COOKIE, detect, type Locale } from './locale.ts';
 
 /**
  * A catalog entry: a message with `{name}` placeholders, or a set of variants.
@@ -50,9 +52,6 @@ export type Message = string | Record<string, string>;
 
 /** A flat catalog: Fluent-style key → message. */
 export type Catalog = Record<string, Message>;
-
-export const LOCALES = ['en', 'de', 'fr', 'es', 'ru', 'zh'] as const;
-export type Locale = (typeof LOCALES)[number];
 
 /** Native names, for the switcher — a language is listed as its speakers write it. */
 export const LOCALE_NAMES: Record<Locale, string> = {
@@ -97,25 +96,6 @@ export async function loadCatalog(which: Locale): Promise<void> {
 		// primed, a bad deploy) must not take the app down with it: English
 		// is already in memory, and `t()` falls back to it.
 	}
-}
-
-export const LANG_COOKIE = 'lang';
-
-function isLocale(v: string | undefined | null): v is Locale {
-	return !!v && (LOCALES as readonly string[]).includes(v);
-}
-
-/** The cookie, then the browser's preference list, then English. */
-export function detect(): Locale {
-	if (typeof document === 'undefined') return 'en';
-	const cookie = document.cookie.match(/(?:^|;\s*)lang=([a-zA-Z-]+)/)?.[1];
-	if (isLocale(cookie)) return cookie;
-	for (const tag of navigator.languages ?? []) {
-		// `de-AT` and `de` are the same catalog to us; match the primary subtag.
-		const primary = tag.split('-')[0]?.toLowerCase();
-		if (isLocale(primary)) return primary;
-	}
-	return 'en';
 }
 
 export const locale = $state<{ current: Locale }>({ current: detect() });

@@ -21,6 +21,7 @@ chat-error-turn-interrupted = Une erreur interne a interrompu cette réponse. Ve
 chat-list-empty = Aucune conversation pour l'instant. Lancez-en une ci-dessus.
 chat-turn-stopped = arrêté
 chat-waiting-approval = N’exécute { $tool } qu’une fois que vous l’avez approuvé.
+chat-waiting-browser-handover = Vous contrôlez le navigateur du Dot.
 chat-waiting-value = Attend une valeur que vous seul pouvez saisir. Elle va à l’outil, jamais au modèle.
 chat-waiting-answer = Attend la réponse d’une personne.
 chat-composer-paused = Approuvez ou refusez d’abord la demande ci-dessus ; le message suivant attend cette décision.
@@ -51,3 +52,5 @@ chat-attempt-reason-loop = le modèle s’est répété
 chat-attempt-reason-repeated_call = le même appel d’outil, encore et encore
 chat-attempt-retry = Nouvelle tentative avec la réflexion { $effort } (tentative { $n })
 chat-loop-exhausted = Le modèle s’est répété lors des { $attempts } tentatives, même avec moins de réflexion. Reformulez la question ou découpez-la en parties plus petites.
+
+chat-error-run-cancelled = L’exécution a été annulée.

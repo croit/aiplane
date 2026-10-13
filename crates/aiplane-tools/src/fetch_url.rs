@@ -74,6 +74,10 @@ struct FetchArgs {
 }
 
 impl Tool for FetchUrl {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "fetch_url"
     }

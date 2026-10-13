@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { api } from '#lib/api.js';
 	import { t } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
@@ -10,21 +9,23 @@
 	 * Which chat a reusing schedule or webhook continues in. Shared by both
 	 * forms, so the choice reads and behaves the same on each.
 	 */
-	let { value = $bindable('') } = $props<{ value?: string }>();
+	let { value = $bindable(''), dotId = undefined } = $props<{ value?: string; dotId?: string | null }>();
 	let sessions = $state<ChatSession[]>([]);
 	let options = $derived(linkedChatOptions(sessions, {
 		fresh: t('linked-chat-fresh'),
 		untitled: t('nav-untitled-chat')
 	}));
 
-	onMount(async () => {
-		try {
-			sessions = (await api.listChatSessions()).sessions;
-		} catch {
-			// Without the list the picker still offers a fresh chat, and the
-			// current link stays untouched unless the user picks that.
-			sessions = [];
-		}
+	$effect(() => {
+		const scope = dotId;
+		let cancelled = false;
+		sessions = [];
+		void api.listChatSessions(scope).then((result) => {
+			if (!cancelled) sessions = result.sessions;
+		}).catch(() => {
+			if (!cancelled) sessions = [];
+		});
+		return () => { cancelled = true; };
 	});
 </script>
 

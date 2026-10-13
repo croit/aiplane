@@ -59,10 +59,12 @@ If detection fails, confirm the paired origin and select **Recheck**. If AIplane
 A skill provides reusable instructions and supporting files. Personal skills require the operator to enable personal-skill storage.
 
 1. Open **Tools → Skills** (`/tools/skills`).
-2. Select the new-skill action or upload a `.skill` archive.
-3. For an authored skill, fill in the manifest's `name`, `title` and `description`, then write its instructions in Markdown.
-4. Save and inspect its rendered instructions and file list.
-5. Use the skill in an appropriate conversation with the required capabilities available.
+2. Select **New skill** to write one yourself, **Draft from workflow** to describe a repeatable task, or upload a `.skill` archive.
+3. For a workflow draft, enter its name, goal, ordered steps, and when the Dot must stop or ask for approval. Choose a chat model available to your account. These fields are sent to that model to create an unsaved draft; AIplane does not run the workflow.
+4. Review and edit the generated `SKILL.md` in the existing editor, then select **Save** yourself. Cancel to discard the draft. Creating a skill in the editor cannot overwrite an existing personal skill; open that skill's **Edit** action to replace its contents.
+5. For a skill you write yourself, fill in the manifest's `name`, `title` and `description`, then write its instructions in Markdown.
+6. Save and inspect its rendered instructions and file list.
+7. Use the skill in an appropriate conversation with the required capabilities available.
 
 The supplied editor template is:
 
@@ -78,4 +80,4 @@ description: One line describing when the assistant should use this skill.
 Write what the assistant should do when this skill is loaded.
 ```
 
-You can edit, download an archive or delete a personal skill. A personal skill with the same name as a global skill shadows it for your account. Global skills are filtered by role grants; personal authoring does not grant additional tools or models.
+You can edit, download an archive or delete a personal skill. Creating a skill in the editor with an existing personal name is refused; editing an existing skill is an explicit overwrite through its **Edit** action. A personal skill with the same name as a global skill shadows it for your account. Global skills are filtered by role grants; personal authoring does not grant additional tools or models.

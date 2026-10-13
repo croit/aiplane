@@ -121,6 +121,7 @@ impl Tool for CaptureWebpage {
                 network: true,
                 container_id: None,
                 keep_alive: false,
+                workspace: None,
             };
             self.0.execute(&ctx, req).await
         })

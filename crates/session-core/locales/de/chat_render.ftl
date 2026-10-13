@@ -95,3 +95,7 @@ chat-render-canvas-assets-count = { $count ->
 chat-render-canvas-assets-empty = Dieser Unterhaltung wurden noch keine Dateien hinzugefügt.
 chat-render-canvas-asset-download = Datei herunterladen
 chat-render-canvas-close-title = Canvas schließen
+
+chat-render-delegated-readonly-banner = Delegierte Unterhaltung — schreibgeschützter Verlauf. Setzen Sie diese Arbeit über die Hauptunterhaltung oder den Posteingang fort, geben Sie sie dort frei oder stoppen Sie sie.
+chat-render-delegated-root-link = Hauptunterhaltung öffnen
+chat-render-delegated-root-unavailable = Die Hauptunterhaltung ist nicht verfügbar. Dieser Verlauf bleibt schreibgeschützt.

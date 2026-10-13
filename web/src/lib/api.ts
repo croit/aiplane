@@ -10,6 +10,13 @@
  * sent automatically; a 401 means "signed out" and callers decide what
  * to do with it (the layout redirects to the OIDC login).
  */
+import { detect } from './locale.ts';
+
+export type DotBrowserInput =
+	| { kind: 'click'; x: number; y: number }
+	| { kind: 'key'; key: string }
+	| { kind: 'text'; text: string }
+	| { kind: 'scroll'; delta_x: number; delta_y: number };
 
 /** The reasoning-effort scale, least thinking first. */
 export const EFFORTS = ['off', 'low', 'medium', 'high', 'xhigh'] as const;
@@ -48,6 +55,7 @@ export interface Me {
 	features?: string[];
 	/** May build agents; the Agents section is shown only when true. */
 	can_manage_agents?: boolean;
+	can_manage_dots: boolean;
 }
 
 /** A canvas document belonging to a conversation. */
@@ -199,10 +207,13 @@ function errorEnvelope(detail: string | undefined): { code?: string; message?: s
  * admin surfaces — funnels through here so error envelopes, credentials and
  * headers live in exactly one place. */
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+	const headers = new Headers(init?.headers);
+	if (!headers.has('accept')) headers.set('accept', 'application/json');
+	if (!headers.has('accept-language')) headers.set('accept-language', detect());
 	const res = await fetch(path, {
 		credentials: 'same-origin',
 		...init,
-		headers: { accept: 'application/json', ...init?.headers }
+		headers
 	});
 	if (!res.ok) throw await responseError(res);
 	if (res.status === 204) return undefined as T;
@@ -257,8 +268,10 @@ export const api = {
 	// --- Chat (issue #22 phase 2; wire shapes in chat-protocol.ts) --------
 
 	/** GET /api/v0/chat/sessions — the sidebar list (pinned first). */
-	listChatSessions: () =>
-		request<{ sessions: import('./chat-protocol.js').ChatSession[] }>('/api/v0/chat/sessions'),
+	listChatSessions: (dotId?: string | null) =>
+		request<{ sessions: import('./chat-protocol.js').ChatSession[] }>(
+			`/api/v0/chat/sessions${dotId === undefined ? '' : `?dot_id=${encodeURIComponent(dotId ?? '')}`}`
+		),
 
 	/** GET /api/v0/chat/landing — latest conversation, or the caller's first. */
 	chatLanding: () =>
@@ -272,7 +285,7 @@ export const api = {
 
 	/** GET /api/v0/chat/sessions/{id} — full snapshot (owner or shared). */
 	getChatSession: (id: string) =>
-		request<{
+		request<import('./chat-protocol.js').ConversationPermissions & {
 			session: import('./chat-protocol.js').ChatSession;
 			turns: import('./chat-protocol.js').TurnWithTools[];
 			effort: Effort;
@@ -380,6 +393,43 @@ export const api = {
 			}
 		),
 
+	/** Claim one private server-browser controller for a suspended personal Dot. */
+	dotBrowserClaim: async (sessionId: string, turnId: string, requestId: string) => {
+		const path = `/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/claim`;
+		const controllerId = crypto.randomUUID();
+		const init = {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ controller_id: controllerId })
+		};
+		try {
+			return await request<{ controller_id: string; expires_at: string }>(path, init);
+		} catch (error) {
+			if (error instanceof ApiError && error.status < 500) throw error;
+			return request<{ controller_id: string; expires_at: string }>(path, init);
+		}
+	},
+	dotBrowserFrame: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
+		request<{ frame_b64: string | null; width: number | null; height: number | null; expires_at: string }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/frame`,
+			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId }) }
+		),
+	dotBrowserInput: (sessionId: string, turnId: string, requestId: string, controllerId: string, sequence: number, input: DotBrowserInput) =>
+		request<{ expires_at: string }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/input`,
+			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId, sequence, input }) }
+		),
+	dotBrowserFinish: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
+		request<{ returned: boolean }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/finish`,
+			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId }) }
+		),
+	dotBrowserAbort: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
+		request<{ cancelled: boolean }>(
+			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/abort`,
+			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId }) }
+		),
+
 	/** The events stream URL — for `new EventSource` (cookies ride along same-origin). */
 	chatEventsUrl: (id: string) => `/api/v0/chat/sessions/${encodeURIComponent(id)}/events`,
 
@@ -436,6 +486,20 @@ export const api = {
 	/** GET /api/v0/models — the caller's chat models (compliance flags included). */
 	listChatModels: () =>
 		request<{ models: ChatModelChoice[] }>('/api/v0/models'),
+
+	/** Build an unsaved personal skill from manually entered workflow steps. */
+	draftWorkflowSkill: (input: {
+		name: string;
+		goal: string;
+		steps: string[];
+		stop_conditions: string;
+		model: string;
+	}) =>
+		request<{ manifest: string; model: string; saved: false }>('/api/v0/skills/draft', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(input)
+		}),
 
 	/** Voice input and spoken-reply choices available to this user. */
 	chatVoiceConfig: () =>

@@ -27,12 +27,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
-use shared::sandbox::{RunRequest, RunResponse};
+use shared::sandbox::{DotWorkspace, DotWorkspaceScope, RunRequest, RunResponse};
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
-use crate::backend::{ContainerBackend, Network};
+use crate::backend::{ContainerBackend, Network, WorkspaceMount};
 use crate::config::Config;
+use crate::workspace::Workspace;
 
 #[derive(Debug, Error)]
 pub enum RunnerError {
@@ -42,6 +43,16 @@ pub enum RunnerError {
     Busy,
     #[error("network egress requested but not configured on this runner")]
     NetworkUnavailable,
+    #[error(
+        "persistent Dot workspace storage is unavailable; configure and verify the runner's persistent storage"
+    )]
+    WorkspaceUnavailable,
+    #[error("sandbox lease does not match this Dot, turn or purpose")]
+    WorkspaceMismatch,
+    #[error("workspace filesystem operation failed: {0}")]
+    Workspace(#[from] crate::workspace::WorkspaceError),
+    #[error("the Dot browser handover is expired or unavailable")]
+    BrowserUnavailable,
 }
 
 /// A pre-booted, idle container plus the workload-image id it was created
@@ -66,6 +77,58 @@ struct Leased {
     /// reap it even if `last_used` is old (a single exec can legitimately
     /// run up to `max_timeout_secs`).
     busy: bool,
+    retiring: bool,
+    scope: Option<DotWorkspaceScope>,
+    network: Network,
+    workspace: Option<Arc<Workspace>>,
+    handover_generation: u64,
+    handover: Option<BrowserHandover>,
+}
+
+struct BrowserHandover {
+    id: String,
+    generation: u64,
+    last_sequence: u64,
+    started_at: Instant,
+    last_input_at: Instant,
+    expires_at: String,
+    sealed: bool,
+    controller_id: Option<String>,
+}
+
+const BROWSER_HANDOVER_IDLE: Duration = Duration::from_secs(5 * 60);
+const BROWSER_HANDOVER_MAX: Duration = Duration::from_secs(15 * 60);
+
+fn browser_remaining(started_at: Instant, last_input_at: Instant, now: Instant) -> Duration {
+    let idle = BROWSER_HANDOVER_IDLE.saturating_sub(now.saturating_duration_since(last_input_at));
+    let total = BROWSER_HANDOVER_MAX.saturating_sub(now.saturating_duration_since(started_at));
+    idle.min(total)
+}
+
+fn browser_expiry_in(remaining: Duration) -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .saturating_add(remaining.as_secs());
+    let timestamp: libc::time_t = seconds.try_into().unwrap_or(libc::time_t::MAX);
+    let mut broken_down = unsafe { std::mem::zeroed::<libc::tm>() };
+    if unsafe { libc::gmtime_r(&timestamp, &mut broken_down) }.is_null() {
+        return seconds.to_string();
+    }
+    let mut output = [0u8; 32];
+    let written = unsafe {
+        libc::strftime(
+            output.as_mut_ptr().cast(),
+            output.len(),
+            c"%Y-%m-%dT%H:%M:%SZ".as_ptr(),
+            &broken_down,
+        )
+    };
+    if written == 0 {
+        return seconds.to_string();
+    }
+    String::from_utf8_lossy(&output[..written]).into_owned()
 }
 
 pub struct Pool {
@@ -79,9 +142,22 @@ pub struct Pool {
     /// the first [`Self::refresh_image`]; updated when the image changes.
     image: Mutex<String>,
     /// Caps concurrent in-flight jobs.
-    sem: Semaphore,
+    sem: Arc<Semaphore>,
     /// Serializes refill so we never overshoot `pool_size`.
     refill_lock: tokio::sync::Mutex<()>,
+}
+
+struct TeardownAttempt<'a> {
+    pool: &'a Pool,
+    id: &'a str,
+}
+
+impl Drop for TeardownAttempt<'_> {
+    fn drop(&mut self) {
+        if let Some(lease) = self.pool.leased.lock().unwrap().get_mut(self.id) {
+            lease.busy = false;
+        }
+    }
 }
 
 impl Pool {
@@ -99,7 +175,7 @@ impl Pool {
             ready: Mutex::new(VecDeque::new()),
             leased: Mutex::new(HashMap::new()),
             image: Mutex::new(String::new()),
-            sem: Semaphore::new(permits),
+            sem: Arc::new(Semaphore::new(permits)),
             refill_lock: tokio::sync::Mutex::new(()),
         })
     }
@@ -134,7 +210,18 @@ impl Pool {
             let leased = self.leased.lock().unwrap();
             leased
                 .iter()
-                .filter(|(_, l)| !l.busy && now.saturating_duration_since(l.last_used) > ttl)
+                .filter(|(_, l)| {
+                    !l.busy
+                        && (l.retiring
+                            || l.handover.as_ref().is_some_and(|handover| {
+                                now.saturating_duration_since(handover.last_input_at)
+                                    >= BROWSER_HANDOVER_IDLE
+                                    || now.saturating_duration_since(handover.started_at)
+                                        >= BROWSER_HANDOVER_MAX
+                            })
+                            || (l.handover.is_none()
+                                && now.saturating_duration_since(l.last_used) > ttl))
+                })
                 .map(|(id, _)| id.clone())
                 .collect()
         };
@@ -153,36 +240,67 @@ impl Pool {
     /// that id and start an exec (marking it busy); this re-check ensures we
     /// don't destroy a container mid-exec. Nothing removed → nothing destroyed.
     async fn reap_if_idle(self: &Arc<Self>, id: &str) {
-        let removed = {
-            let mut leased = self.leased.lock().unwrap();
-            match leased.get(id) {
-                Some(l) if !l.busy => leased.remove(id).is_some(),
-                _ => false,
-            }
-        };
-        if removed {
-            self.backend.destroy(id).await;
+        if let Err(error) = self.release_container(id).await {
+            tracing::warn!(container = %id, error = %error, "sandbox teardown not confirmed; retaining container for retry");
         }
     }
 
-    /// Free a leased container: drop it from the lease table and destroy it.
-    /// Idempotent — a DELETE for an id we no longer track (already swept, or
-    /// never leased) still best-effort destroys and returns cleanly, so the
-    /// gateway's turn-end release and the sweeper can't double-fault.
-    pub async fn release_container(self: &Arc<Self>, id: &str) {
-        let tracked = { self.leased.lock().unwrap().remove(id).is_some() };
-        // Destroy regardless: the id came from us, and `destroy` is itself
-        // best-effort (a no-op on an unknown/gone container).
-        self.backend.destroy(id).await;
-        if tracked {
-            tracing::debug!(container = %id, "sandbox lease released");
+    pub async fn release_container(self: &Arc<Self>, id: &str) -> Result<(), RunnerError> {
+        self.backend.validate_container_id(id)?;
+        {
+            let mut leased = self.leased.lock().unwrap();
+            let lease = leased.entry(id.to_owned()).or_insert(Leased {
+                last_used: Instant::now(),
+                busy: false,
+                retiring: true,
+                scope: None,
+                network: Network::None,
+                workspace: None,
+                handover_generation: 0,
+                handover: None,
+            });
+            if lease.busy {
+                return Err(RunnerError::Busy);
+            }
+            if let Some(handover) = &lease.handover {
+                let now = Instant::now();
+                let expired = now.saturating_duration_since(handover.last_input_at)
+                    >= BROWSER_HANDOVER_IDLE
+                    || now.saturating_duration_since(handover.started_at) >= BROWSER_HANDOVER_MAX;
+                if !expired {
+                    return Err(RunnerError::Busy);
+                }
+                lease.handover = None;
+            }
+            lease.retiring = true;
+            lease.busy = true;
+        }
+        let _attempt = TeardownAttempt { pool: self, id };
+        let result = self.backend.destroy(id).await;
+        let mut leased = self.leased.lock().unwrap();
+        match result {
+            Ok(()) => {
+                leased.remove(id);
+                Ok(())
+            }
+            Err(error) => {
+                if let Some(lease) = leased.get_mut(id) {
+                    lease.busy = false;
+                }
+                Err(error.into())
+            }
         }
     }
 
     /// Number of live leases — test/observability only.
     #[cfg(test)]
     pub fn leased_len(&self) -> usize {
-        self.leased.lock().unwrap().len()
+        self.leased
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|lease| !lease.retiring)
+            .count()
     }
 
     /// Number of pre-booted containers currently idle. Test-only today;
@@ -216,7 +334,7 @@ impl Pool {
             if have >= self.cfg.pool_size {
                 break;
             }
-            match self.backend.create(Network::None).await {
+            match self.backend.create(Network::None, None).await {
                 Ok(id) => self.ready.lock().unwrap().push_back(Warm {
                     id,
                     image: target.clone(),
@@ -261,8 +379,7 @@ impl Pool {
             // and torn down on completion regardless.
             let stale: Vec<Warm> = { self.ready.lock().unwrap().drain(..).collect() };
             for w in stale {
-                let backend = self.backend.clone();
-                tokio::spawn(async move { backend.destroy(&w.id).await });
+                self.spawn_destroy(w.id);
             }
         }
         self.refill().await;
@@ -279,7 +396,7 @@ impl Pool {
         want_egress: bool,
     ) -> Result<(String, bool), RunnerError> {
         if want_egress {
-            return Ok((self.backend.create(Network::Egress).await?, false));
+            return Ok((self.backend.create(Network::Egress, None).await?, false));
         }
         let warm = { self.ready.lock().unwrap().pop_front() };
         let target = { self.image.lock().unwrap().clone() };
@@ -289,13 +406,11 @@ impl Pool {
             // stamped with a superseded image is destroyed, not served, and
             // we boot a fresh one (which uses the new image).
             Some(w) if !target.is_empty() && w.image != target => {
-                let backend = self.backend.clone();
-                let stale = w.id.clone();
-                tokio::spawn(async move { backend.destroy(&stale).await });
-                Ok((self.backend.create(Network::None).await?, false))
+                self.spawn_destroy(w.id.clone());
+                Ok((self.backend.create(Network::None, None).await?, false))
             }
             Some(w) => Ok((w.id, true)),
-            None => Ok((self.backend.create(Network::None).await?, false)),
+            None => Ok((self.backend.create(Network::None, None).await?, false)),
         }
     }
 
@@ -314,6 +429,9 @@ impl Pool {
     /// A background refill tops the pool back up whenever a warm container
     /// was consumed (whether it became a lease or was torn down).
     pub async fn run(self: &Arc<Self>, req: &RunRequest) -> Result<RunResponse, RunnerError> {
+        if req.workspace.is_some() {
+            return self.run_scoped(req.clone()).await;
+        }
         let _permit = self.sem.try_acquire().map_err(|_| RunnerError::Busy)?;
 
         let want_egress = req.network;
@@ -331,7 +449,7 @@ impl Pool {
         let mut reused = false;
         let mut pooled = false;
         let id = match req.container_id.as_deref() {
-            Some(want) if self.mark_lease_busy(want) => {
+            Some(want) if self.mark_lease_busy(want)? => {
                 reused = true;
                 want.to_string()
             }
@@ -375,16 +493,509 @@ impl Pool {
         Ok(resp)
     }
 
-    /// Mark an existing lease busy (so the sweeper won't reap it) if it's
-    /// live. Returns whether the id named a tracked lease.
-    fn mark_lease_busy(&self, id: &str) -> bool {
-        let mut leased = self.leased.lock().unwrap();
-        match leased.get_mut(id) {
-            Some(l) => {
-                l.busy = true;
+    pub fn workspace_available(&self) -> bool {
+        self.cfg.work_root.is_some() && self.backend.workspace_available()
+    }
+
+    pub fn workspace_operation<T>(
+        &self,
+        identity: &DotWorkspace,
+        mutating: bool,
+        operation: impl FnOnce(&Workspace, bool) -> Result<T, crate::workspace::WorkspaceError>,
+    ) -> Result<T, RunnerError> {
+        if !self.workspace_available() {
+            return Err(RunnerError::WorkspaceUnavailable);
+        }
+        let leased = self.leased.lock().unwrap();
+        let busy = leased.values().any(|lease| {
+            lease
+                .scope
+                .as_ref()
+                .is_some_and(|scope| &scope.workspace == identity)
+        });
+        if mutating && busy {
+            return Err(RunnerError::Busy);
+        }
+        let files = Workspace::open(self.cfg.work_root.as_ref().unwrap(), identity)?;
+        let result = operation(&files, busy)?;
+        drop(leased);
+        Ok(result)
+    }
+
+    pub async fn retire_workspace(
+        self: &Arc<Self>,
+        identity: &DotWorkspace,
+    ) -> Result<bool, RunnerError> {
+        if !self.workspace_available() {
+            return Err(RunnerError::WorkspaceUnavailable);
+        }
+        let root = self
+            .cfg
+            .work_root
+            .as_ref()
+            .ok_or(RunnerError::WorkspaceUnavailable)?;
+        let containers = {
+            let mut leased = self.leased.lock().unwrap();
+            Workspace::seal_retirement(root, identity)?;
+            let mut containers = Vec::new();
+            for (id, lease) in leased.iter_mut() {
+                if lease
+                    .scope
+                    .as_ref()
+                    .is_some_and(|scope| &scope.workspace == identity)
+                {
+                    lease.retiring = true;
+                    containers.push(id.clone());
+                }
+            }
+            containers
+        };
+        let mut failure = None;
+        for id in containers {
+            if let Err(error) = self.release_container(&id).await {
+                failure = Some(error);
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        let leased = self.leased.lock().unwrap();
+        if leased.values().any(|lease| {
+            lease
+                .scope
+                .as_ref()
+                .is_some_and(|scope| &scope.workspace == identity)
+        }) {
+            return Err(RunnerError::Busy);
+        }
+        let completed = Workspace::cleanup_retired(root, identity)?;
+        drop(leased);
+        Ok(completed)
+    }
+
+    async fn run_scoped(self: &Arc<Self>, req: RunRequest) -> Result<RunResponse, RunnerError> {
+        if !self.workspace_available() {
+            return Err(RunnerError::WorkspaceUnavailable);
+        }
+        let permit = self
+            .sem
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| RunnerError::Busy)?;
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let pool = self.clone();
+        tokio::spawn(async move {
+            let _permit = permit;
+            let result = pool.run_scoped_owned(&req).await;
+            if sender.is_closed()
+                && let Ok(response) = &result
+                && let Some(id) = &response.container_id
+                && let Err(error) = pool.release_container(id).await
+            {
+                tracing::warn!(container = %id, error = %error, "cancelled workspace request retained for teardown retry");
+            }
+            if let Err(result) = sender.send(result)
+                && let Ok(response) = result
+                && let Some(id) = response.container_id
+                && let Err(error) = pool.release_container(&id).await
+            {
+                tracing::warn!(container = %id, error = %error, "undelivered workspace response retained for teardown retry");
+            }
+        });
+        receiver
+            .await
+            .map_err(|_| RunnerError::WorkspaceUnavailable)?
+    }
+
+    async fn run_scoped_owned(
+        self: &Arc<Self>,
+        req: &RunRequest,
+    ) -> Result<RunResponse, RunnerError> {
+        let scope = req
+            .workspace
+            .as_ref()
+            .ok_or(RunnerError::WorkspaceMismatch)?;
+        if scope.turn_id.is_empty() {
+            return Err(RunnerError::WorkspaceMismatch);
+        }
+        let network = if req.network {
+            Network::Egress
+        } else {
+            Network::None
+        };
+        if req.network && !self.cfg.egress_available() {
+            return Err(RunnerError::NetworkUnavailable);
+        }
+        let (id, creating, files, path, browser_profile_path) = {
+            let mut leased = self.leased.lock().unwrap();
+            let files = Arc::new(Workspace::open(
+                self.cfg
+                    .work_root
+                    .as_ref()
+                    .ok_or(RunnerError::WorkspaceUnavailable)?,
+                &scope.workspace,
+            )?);
+            let path = files.mount_path()?;
+            let browser_profile_path = match scope.purpose {
+                shared::sandbox::WorkspacePurpose::Workspace => None,
+                shared::sandbox::WorkspacePurpose::Browser => Some(files.browser_profile_path()?),
+            };
+            if let Some(id) = &req.container_id {
+                let lease = leased.get_mut(id).ok_or(RunnerError::WorkspaceMismatch)?;
+                if lease.scope.as_ref() != Some(scope) || lease.network != network {
+                    return Err(RunnerError::WorkspaceMismatch);
+                }
+                if lease.handover.is_some() {
+                    return Err(RunnerError::Busy);
+                }
+                if lease.busy || lease.retiring {
+                    return Err(RunnerError::Busy);
+                }
+                lease
+                    .workspace
+                    .as_ref()
+                    .ok_or(RunnerError::WorkspaceMismatch)?
+                    .validate_mount_path(&path)?;
+                lease.busy = true;
+                (id.clone(), false, files, path, browser_profile_path)
+            } else {
+                if leased.values().any(|lease| {
+                    lease.scope.as_ref().is_some_and(|held| {
+                        held.workspace.dot_id == scope.workspace.dot_id
+                            && (held.workspace != scope.workspace
+                                || held.turn_id != scope.turn_id
+                                || lease.retiring
+                                || lease.handover.is_some())
+                    })
+                }) {
+                    return Err(RunnerError::Busy);
+                }
+                if leased.len() >= self.cfg.max_leases {
+                    return Err(RunnerError::Busy);
+                }
+                let id = crate::backend::new_container_name();
+                leased.insert(
+                    id.clone(),
+                    Leased {
+                        last_used: Instant::now(),
+                        busy: true,
+                        retiring: false,
+                        scope: Some(scope.clone()),
+                        network,
+                        workspace: Some(files.clone()),
+                        handover_generation: 0,
+                        handover: None,
+                    },
+                );
+                (id, true, files, path, browser_profile_path)
+            }
+        };
+        if creating {
+            let mount = WorkspaceMount {
+                name: id.clone(),
+                files,
+                path,
+                browser_profile_path,
+            };
+            match self.backend.create(network, Some(&mount)).await {
+                Ok(created) if created == id => {}
+                Ok(created) => {
+                    self.spawn_destroy(created);
+                    if let Some(lease) = self.leased.lock().unwrap().get_mut(&id) {
+                        lease.busy = false;
+                    }
+                    self.spawn_destroy(id);
+                    return Err(RunnerError::WorkspaceMismatch);
+                }
+                Err(error) => {
+                    if let Some(lease) = self.leased.lock().unwrap().get_mut(&id) {
+                        lease.busy = false;
+                    }
+                    self.spawn_destroy(id);
+                    return Err(error.into());
+                }
+            }
+        }
+        let retired = {
+            let mut leased = self.leased.lock().unwrap();
+            match leased.get_mut(&id) {
+                Some(lease) if !lease.retiring => false,
+                Some(lease) => {
+                    lease.busy = false;
+                    true
+                }
+                None => true,
+            }
+        };
+        if retired {
+            self.spawn_destroy(id);
+            return Err(RunnerError::WorkspaceMismatch);
+        }
+        let started = Instant::now();
+        let result = self
+            .backend
+            .exec(&id, req, self.cfg.effective_timeout(req.timeout_secs))
+            .await;
+        let healthy = matches!(&result, Ok(response) if !response.timed_out);
+        let retiring = {
+            let mut leased = self.leased.lock().unwrap();
+            if let Some(lease) = leased.get_mut(&id) {
+                lease.busy = false;
+                lease.last_used = Instant::now();
+                lease.retiring |= !healthy || !req.keep_alive;
+                lease.retiring
+            } else {
                 true
             }
-            None => false,
+        };
+        if retiring {
+            self.spawn_destroy(id.clone());
+        }
+        let mut response = result?;
+        if !response.timed_out {
+            response.duration_ms = started.elapsed().as_millis() as u64;
+        }
+        response.container_id = (!retiring).then_some(id);
+        clamp_output(&mut response, self.cfg.max_output_bytes);
+        Ok(response)
+    }
+
+    pub async fn browser_control(
+        &self,
+        request: &shared::sandbox::BrowserControlRequest,
+    ) -> Result<shared::sandbox::BrowserControlResponse, RunnerError> {
+        use shared::sandbox::{
+            BrowserControlOperation as Operation, BrowserInput, WorkspacePurpose,
+        };
+        if request.turn_id.is_empty()
+            || request.handover_id.is_empty()
+            || request.handover_id.len() > 128
+            || request.container_id.is_empty()
+        {
+            return Err(RunnerError::WorkspaceMismatch);
+        }
+        if matches!(request.operation, Operation::Begin) && request.controller_id.is_some()
+            || !matches!(request.operation, Operation::Begin)
+                && request.controller_id.as_deref().is_none_or(str::is_empty)
+        {
+            return Err(RunnerError::BrowserUnavailable);
+        }
+        let id = &request.container_id;
+        let (generation, mut expires_at) = {
+            let mut leases = self.leased.lock().unwrap();
+            let lease = leases.get_mut(id).ok_or(RunnerError::BrowserUnavailable)?;
+            let scope = lease.scope.as_ref().ok_or(RunnerError::WorkspaceMismatch)?;
+            if scope.workspace != request.workspace
+                || scope.turn_id != request.turn_id
+                || scope.purpose != WorkspacePurpose::Browser
+                || lease.retiring
+                || lease.busy
+            {
+                return Err(RunnerError::WorkspaceMismatch);
+            }
+            let (generation, expiry) = match &request.operation {
+                Operation::Begin => {
+                    if lease.handover.is_some() {
+                        return Err(RunnerError::Busy);
+                    }
+                    lease.handover_generation = lease.handover_generation.saturating_add(1);
+                    let generation = lease.handover_generation;
+                    let now = Instant::now();
+                    let expiry = browser_expiry_in(BROWSER_HANDOVER_IDLE);
+                    lease.handover = Some(BrowserHandover {
+                        id: request.handover_id.clone(),
+                        generation,
+                        last_sequence: 0,
+                        started_at: now,
+                        last_input_at: now,
+                        expires_at: expiry.clone(),
+                        sealed: true,
+                        controller_id: None,
+                    });
+                    lease.busy = true;
+                    (generation, expiry)
+                }
+                Operation::Claim { generation: wanted }
+                | Operation::Frame { generation: wanted }
+                | Operation::Input {
+                    generation: wanted, ..
+                }
+                | Operation::Finish { generation: wanted } => {
+                    let handover = lease
+                        .handover
+                        .as_mut()
+                        .filter(|handover| handover.id == request.handover_id)
+                        .ok_or(RunnerError::BrowserUnavailable)?;
+                    let now = Instant::now();
+                    if handover.generation != *wanted
+                        || handover.sealed
+                        || now.saturating_duration_since(handover.last_input_at)
+                            >= BROWSER_HANDOVER_IDLE
+                        || now.saturating_duration_since(handover.started_at)
+                            >= BROWSER_HANDOVER_MAX
+                    {
+                        return Err(RunnerError::BrowserUnavailable);
+                    }
+                    handover.expires_at = browser_expiry_in(browser_remaining(
+                        handover.started_at,
+                        handover.last_input_at,
+                        now,
+                    ));
+                    match request.operation {
+                        Operation::Claim { .. } => {
+                            let Some(controller_id) = request.controller_id.as_deref() else {
+                                return Err(RunnerError::BrowserUnavailable);
+                            };
+                            if controller_id.is_empty()
+                                || controller_id.len() > 128
+                                || handover
+                                    .controller_id
+                                    .as_deref()
+                                    .is_some_and(|current| current != controller_id)
+                            {
+                                return Err(RunnerError::BrowserUnavailable);
+                            }
+                            handover
+                                .controller_id
+                                .get_or_insert_with(|| controller_id.to_owned());
+                        }
+                        Operation::Frame { .. }
+                        | Operation::Input { .. }
+                        | Operation::Finish { .. } => {
+                            if handover.controller_id.as_deref() != request.controller_id.as_deref()
+                                || handover.controller_id.is_none()
+                            {
+                                return Err(RunnerError::BrowserUnavailable);
+                            }
+                        }
+                        Operation::Begin => unreachable!(),
+                    }
+                    if let Operation::Input {
+                        sequence, input, ..
+                    } = &request.operation
+                    {
+                        if *sequence <= handover.last_sequence {
+                            return Err(RunnerError::BrowserUnavailable);
+                        }
+                        match input {
+                            BrowserInput::Click { x, y } if *x < 1280 && *y < 900 => {}
+                            BrowserInput::Key { key }
+                                if matches!(
+                                    key.as_str(),
+                                    "Enter"
+                                        | "Tab"
+                                        | "Escape"
+                                        | "ArrowUp"
+                                        | "ArrowDown"
+                                        | "ArrowLeft"
+                                        | "ArrowRight"
+                                        | "Backspace"
+                                        | "Delete"
+                                        | "Home"
+                                        | "End"
+                                        | "PageUp"
+                                        | "PageDown"
+                                        | "Space"
+                                ) => {}
+                            BrowserInput::Text { text } if text.len() <= 2048 => {}
+                            BrowserInput::Scroll { delta_x, delta_y }
+                                if delta_x.abs() <= 1000 && delta_y.abs() <= 1000 => {}
+                            _ => return Err(RunnerError::BrowserUnavailable),
+                        }
+                    }
+                    (handover.generation, handover.expires_at.clone())
+                }
+            };
+            lease.busy = true;
+            (generation, expiry)
+        };
+
+        let result = if matches!(request.operation, Operation::Claim { .. }) {
+            Ok(shared::sandbox::BrowserControlResponse {
+                ok: true,
+                generation,
+                expires_at: expires_at.clone(),
+                frame_b64: None,
+                width: None,
+                height: None,
+            })
+        } else {
+            self.backend.browser_control(id, &request.operation).await
+        };
+        let result = match result {
+            Ok(response) => response,
+            Err(error) => {
+                let cleanup = if matches!(request.operation, Operation::Begin) {
+                    self.backend
+                        .browser_control(id, &Operation::Finish { generation })
+                        .await
+                        .is_ok()
+                } else {
+                    false
+                };
+                let mut leases = self.leased.lock().unwrap();
+                if let Some(lease) = leases.get_mut(id) {
+                    lease.busy = false;
+                    if cleanup
+                        && lease
+                            .handover
+                            .as_ref()
+                            .is_some_and(|handover| handover.id == request.handover_id)
+                    {
+                        lease.handover = None;
+                    }
+                }
+                return Err(error.into());
+            }
+        };
+        let mut leases = self.leased.lock().unwrap();
+        let lease = leases.get_mut(id).ok_or(RunnerError::BrowserUnavailable)?;
+        lease.busy = false;
+        let handover = lease
+            .handover
+            .as_mut()
+            .filter(|handover| handover.id == request.handover_id)
+            .ok_or(RunnerError::BrowserUnavailable)?;
+        match request.operation {
+            Operation::Begin => handover.sealed = false,
+            Operation::Claim { .. } => {}
+            Operation::Frame { .. } => {}
+            Operation::Input { sequence, .. } => {
+                handover.last_sequence = sequence;
+                handover.last_input_at = Instant::now();
+                handover.expires_at = browser_expiry_in(browser_remaining(
+                    handover.started_at,
+                    handover.last_input_at,
+                    handover.last_input_at,
+                ));
+                expires_at = handover.expires_at.clone();
+                lease.last_used = handover.last_input_at;
+            }
+            Operation::Finish { .. } => {
+                lease.handover = None;
+                lease.last_used = Instant::now();
+            }
+        }
+        Ok(shared::sandbox::BrowserControlResponse {
+            ok: true,
+            generation,
+            expires_at,
+            frame_b64: result.frame_b64,
+            width: result.width,
+            height: result.height,
+        })
+    }
+
+    fn mark_lease_busy(&self, id: &str) -> Result<bool, RunnerError> {
+        let mut leased = self.leased.lock().unwrap();
+        match leased.get_mut(id) {
+            Some(lease) if lease.scope.is_some() => Err(RunnerError::WorkspaceMismatch),
+            Some(lease) if lease.busy || lease.retiring => Err(RunnerError::Busy),
+            Some(lease) => {
+                lease.busy = true;
+                Ok(true)
+            }
+            None => Ok(false),
         }
     }
 
@@ -409,12 +1020,10 @@ impl Pool {
                 }
                 return Some(id.to_string());
             }
-            // The reused container's job failed or timed out — treat the lease
-            // as poisoned: drop it and destroy the container so the gateway's
-            // next call recreates a clean one (a stale id it re-sends will miss
-            // the table and fall through to a fresh container) instead of
-            // re-exec'ing into a dead/saturated container all turn.
-            self.leased.lock().unwrap().remove(id);
+            if let Some(lease) = self.leased.lock().unwrap().get_mut(id) {
+                lease.busy = false;
+                lease.retiring = true;
+            }
             self.spawn_destroy(id.to_string());
             return None;
         }
@@ -433,6 +1042,12 @@ impl Pool {
                         Leased {
                             last_used: Instant::now(),
                             busy: false,
+                            retiring: false,
+                            scope: None,
+                            network: Network::None,
+                            workspace: None,
+                            handover_generation: 0,
+                            handover: None,
                         },
                     );
                     true
@@ -453,10 +1068,27 @@ impl Pool {
         None
     }
 
-    /// Fire-and-forget container teardown.
     fn spawn_destroy(self: &Arc<Self>, id: String) {
-        let backend = self.backend.clone();
-        tokio::spawn(async move { backend.destroy(&id).await });
+        {
+            let mut leased = self.leased.lock().unwrap();
+            let lease = leased.entry(id.clone()).or_insert(Leased {
+                last_used: Instant::now(),
+                busy: false,
+                retiring: true,
+                scope: None,
+                network: Network::None,
+                workspace: None,
+                handover_generation: 0,
+                handover: None,
+            });
+            lease.retiring = true;
+        }
+        let pool = self.clone();
+        tokio::spawn(async move {
+            if let Err(error) = pool.release_container(&id).await {
+                tracing::warn!(container = %id, error = %error, "sandbox teardown not confirmed; retaining container for retry");
+            }
+        });
     }
 }
 
@@ -519,7 +1151,608 @@ fn clip_head_tail(s: &mut String, budget: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_handover_deadline_tracks_idle_and_total_limits() {
+        let start = Instant::now();
+        assert_eq!(
+            browser_remaining(start, start, start),
+            BROWSER_HANDOVER_IDLE
+        );
+        let one_minute = start + Duration::from_secs(60);
+        assert_eq!(
+            browser_remaining(start, start, one_minute),
+            Duration::from_secs(4 * 60)
+        );
+        let fourteen_minutes = start + Duration::from_secs(14 * 60);
+        assert_eq!(
+            browser_remaining(start, fourteen_minutes, fourteen_minutes),
+            Duration::from_secs(60)
+        );
+        let deadline = start + BROWSER_HANDOVER_MAX;
+        assert_eq!(browser_remaining(start, deadline, deadline), Duration::ZERO);
+    }
+
+    #[tokio::test]
+    async fn workspace_request_never_falls_back_to_unscoped_container() {
+        let backend = Arc::new(crate::backend::fake::FakeBackend::new());
+        let pool = Pool::new(backend.clone(), Arc::new(Config::for_test()));
+        let mut request = crate::backend::fake::req();
+        request.workspace = Some(shared::sandbox::DotWorkspaceScope {
+            workspace: shared::sandbox::DotWorkspace {
+                owner_user_id: "person".into(),
+                dot_id: "00000000-0000-4000-8000-000000000001".into(),
+            },
+            turn_id: "persisted-turn".into(),
+            purpose: shared::sandbox::WorkspacePurpose::Workspace,
+        });
+        assert!(pool.run(&request).await.is_err());
+    }
     use crate::backend::fake::{FakeBackend, req};
+
+    struct WorkspaceFixture(std::path::PathBuf);
+
+    impl WorkspaceFixture {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "aiplane-pool-workspace-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&root).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+            Self(std::fs::canonicalize(root).unwrap())
+        }
+
+        fn config(&self) -> Arc<Config> {
+            let mut config = (*cfg(1, 4, false)).clone();
+            config.work_root = Some(self.0.clone());
+            Arc::new(config)
+        }
+    }
+
+    impl Drop for WorkspaceFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn scoped_request(turn: &str, purpose: shared::sandbox::WorkspacePurpose) -> RunRequest {
+        let mut request = req();
+        request.keep_alive = true;
+        request.workspace = Some(shared::sandbox::DotWorkspaceScope {
+            workspace: shared::sandbox::DotWorkspace {
+                owner_user_id: "person".into(),
+                dot_id: "00000000-0000-4000-8000-000000000001".into(),
+            },
+            turn_id: turn.into(),
+            purpose,
+        });
+        request
+    }
+
+    #[tokio::test]
+    async fn workspace_retirement_waits_for_confirmed_teardown_and_blocks_delayed_runs() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let request = scoped_request("turn-a", shared::sandbox::WorkspacePurpose::Workspace);
+        let identity = request.workspace.as_ref().unwrap().workspace.clone();
+        pool.workspace_operation(&identity, true, |files, _| files.write("keep.txt", b"keep"))
+            .unwrap();
+        pool.run(&request).await.unwrap();
+        backend
+            .fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(pool.retire_workspace(&identity).await.is_err());
+        assert!(
+            root.0
+                .join("dots")
+                .join(&identity.dot_id)
+                .join("files/keep.txt")
+                .exists()
+        );
+        assert!(pool.run(&request).await.is_err());
+        backend
+            .fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(pool.retire_workspace(&identity).await.unwrap());
+        assert!(!root.0.join("dots").join(&identity.dot_id).exists());
+        assert!(pool.retire_workspace(&identity).await.unwrap());
+        assert!(pool.run(&request).await.is_err());
+        assert!(!backend.destroyed.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn workspace_scoped_run_bypasses_warm_container_and_rejects_foreign_lease() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        pool.refill().await;
+        let warm = backend.created.lock().unwrap()[0].0.clone();
+        let request = scoped_request("turn-a", shared::sandbox::WorkspacePurpose::Workspace);
+        let id = pool.run(&request).await.unwrap().container_id.unwrap();
+        assert_ne!(id, warm);
+        let before = backend.execs.load(std::sync::atomic::Ordering::SeqCst);
+        let mut foreign = request.clone();
+        foreign.container_id = Some(id.clone());
+        foreign.workspace.as_mut().unwrap().workspace.owner_user_id = "foreign".into();
+        assert!(pool.run(&foreign).await.is_err());
+        let mut ordinary = req();
+        ordinary.container_id = Some(id.clone());
+        assert!(pool.run(&ordinary).await.is_err());
+        let mut unknown = request;
+        unknown.container_id = Some("fake-999".into());
+        assert!(pool.run(&unknown).await.is_err());
+        assert_eq!(
+            backend.execs.load(std::sync::atomic::Ordering::SeqCst),
+            before
+        );
+        pool.release_container(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_same_turn_code_and_browser_share_occupancy_until_both_released() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend, root.config());
+        let code = pool
+            .run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        let browser = pool
+            .run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Browser,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        assert_ne!(code, browser);
+        let other = scoped_request("turn-b", shared::sandbox::WorkspacePurpose::Workspace);
+        assert!(matches!(pool.run(&other).await, Err(RunnerError::Busy)));
+        pool.release_container(&code).await.unwrap();
+        assert!(matches!(pool.run(&other).await, Err(RunnerError::Busy)));
+        pool.release_container(&browser).await.unwrap();
+        let next = pool.run(&other).await.unwrap().container_id.unwrap();
+        pool.release_container(&next).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_handover_fences_dot_execution_and_rejects_stale_input() {
+        use shared::sandbox::{
+            BrowserControlOperation as Operation, BrowserControlRequest, BrowserInput,
+            WorkspacePurpose,
+        };
+
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let browser_scope = scoped_request("turn-a", WorkspacePurpose::Browser)
+            .workspace
+            .unwrap();
+        let browser_id = pool
+            .run(&scoped_request("turn-a", WorkspacePurpose::Browser))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        let request = |operation, controller: Option<&str>| BrowserControlRequest {
+            workspace: browser_scope.workspace.clone(),
+            turn_id: browser_scope.turn_id.clone(),
+            container_id: browser_id.clone(),
+            handover_id: "handover-1".into(),
+            controller_id: controller.map(str::to_owned),
+            operation,
+        };
+
+        backend
+            .fail_browser_begin_once
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            pool.browser_control(&request(Operation::Begin, None))
+                .await
+                .is_err()
+        );
+        let started = pool
+            .browser_control(&request(Operation::Begin, None))
+            .await
+            .unwrap();
+        assert_eq!(started.generation, 2);
+        assert!(matches!(
+            pool.run(&scoped_request("turn-a", WorkspacePurpose::Workspace))
+                .await,
+            Err(RunnerError::Busy)
+        ));
+        pool.browser_control(&request(
+            Operation::Claim { generation: 2 },
+            Some("control-1"),
+        ))
+        .await
+        .unwrap();
+        assert!(
+            pool.browser_control(&request(
+                Operation::Claim { generation: 2 },
+                Some("control-1")
+            ))
+            .await
+            .is_ok()
+        );
+        assert!(matches!(
+            pool.browser_control(&request(
+                Operation::Claim { generation: 2 },
+                Some("control-2")
+            ))
+            .await,
+            Err(RunnerError::BrowserUnavailable)
+        ));
+        assert!(matches!(
+            pool.browser_control(&request(
+                Operation::Input {
+                    generation: 2,
+                    sequence: 0,
+                    input: BrowserInput::Key {
+                        key: "Enter".into()
+                    },
+                },
+                Some("control-1")
+            ))
+            .await,
+            Err(RunnerError::BrowserUnavailable)
+        ));
+        pool.browser_control(&request(
+            Operation::Input {
+                generation: 2,
+                sequence: 1,
+                input: BrowserInput::Key {
+                    key: "Enter".into(),
+                },
+            },
+            Some("control-1"),
+        ))
+        .await
+        .unwrap();
+        pool.browser_control(&request(
+            Operation::Input {
+                generation: 2,
+                sequence: 3,
+                input: BrowserInput::Key { key: "Tab".into() },
+            },
+            Some("control-1"),
+        ))
+        .await
+        .unwrap();
+        pool.browser_control(&request(
+            Operation::Finish { generation: 2 },
+            Some("control-1"),
+        ))
+        .await
+        .unwrap();
+
+        let mut resumed = scoped_request("turn-a", WorkspacePurpose::Browser);
+        resumed.container_id = Some(browser_id.clone());
+        assert!(pool.run(&resumed).await.is_ok());
+        assert_eq!(backend.browser_controls.lock().unwrap().len(), 6);
+        pool.release_container(&browser_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_failed_teardown_retains_dot_turn_occupancy_until_confirmed() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let id = pool
+            .run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        backend
+            .fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(pool.release_container(&id).await.is_err());
+        let identity = scoped_request("turn-a", shared::sandbox::WorkspacePurpose::Workspace)
+            .workspace
+            .unwrap()
+            .workspace;
+        assert!(matches!(
+            pool.workspace_operation(&identity, true, |files, _| files
+                .write("blocked.txt", b"blocked")),
+            Err(RunnerError::Busy)
+        ));
+        let listing = pool
+            .workspace_operation(&identity, false, |files, busy| {
+                assert!(busy);
+                files.list("", None)
+            })
+            .unwrap();
+        assert!(listing.entries.is_empty());
+        assert!(matches!(
+            pool.run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Workspace
+            ))
+            .await,
+            Err(RunnerError::Busy)
+        ));
+        backend
+            .fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        pool.release_container(&id).await.unwrap();
+        let next = pool
+            .run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        pool.release_container(&next).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_same_turn_refused_while_prior_teardown_unconfirmed() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let id = pool
+            .run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        backend
+            .fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(pool.release_container(&id).await.is_err());
+        // A fresh same-turn request must not mount the files directory while
+        // the prior container's absence is unconfirmed.
+        assert!(matches!(
+            pool.run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Workspace
+            ))
+            .await,
+            Err(RunnerError::Busy)
+        ));
+        backend
+            .fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        pool.release_container(&id).await.unwrap();
+        let next = pool
+            .run(&scoped_request(
+                "turn-a",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        pool.release_container(&next).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_cancelled_creation_keeps_reservation_and_confirms_cleanup() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        backend
+            .hold_create
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let pool = Pool::new(backend.clone(), root.config());
+        let task_pool = pool.clone();
+        let task = tokio::spawn(async move {
+            task_pool
+                .run(&scoped_request(
+                    "turn-a",
+                    shared::sandbox::WorkspacePurpose::Workspace,
+                ))
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), backend.create_entered.notified())
+            .await
+            .unwrap();
+        task.abort();
+        let _ = task.await;
+        let blocked = tokio::time::timeout(
+            Duration::from_secs(2),
+            pool.run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            )),
+        )
+        .await;
+        backend
+            .hold_create
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        backend.create_release.notify_one();
+        assert!(matches!(blocked, Ok(Err(RunnerError::Busy))));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if !backend.destroyed.lock().unwrap().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(backend.live_count(), 0);
+        let next = pool
+            .run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Workspace,
+            ))
+            .await
+            .unwrap()
+            .container_id
+            .unwrap();
+        pool.release_container(&next).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_retirement_during_creation_blocks_exec_and_preserves_files_until_absence() {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let request = scoped_request("turn-a", shared::sandbox::WorkspacePurpose::Workspace);
+        let identity = request.workspace.as_ref().unwrap().workspace.clone();
+        pool.workspace_operation(&identity, true, |files, _| files.write("keep.txt", b"keep"))
+            .unwrap();
+        let payload = root
+            .0
+            .join("dots")
+            .join(&identity.dot_id)
+            .join("files/keep.txt");
+        backend
+            .hold_create
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let task_pool = pool.clone();
+        let task = tokio::spawn(async move { task_pool.run(&request).await });
+        let entered =
+            tokio::time::timeout(Duration::from_secs(2), backend.create_entered.notified()).await;
+        let retired =
+            tokio::time::timeout(Duration::from_secs(2), pool.retire_workspace(&identity)).await;
+        let retained = std::fs::read(&payload);
+        let delayed = tokio::time::timeout(
+            Duration::from_secs(2),
+            pool.run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Browser,
+            )),
+        )
+        .await;
+        let tombstone = root
+            .0
+            .join(".dot-retired")
+            .join(&identity.dot_id)
+            .join("owner.json")
+            .is_file();
+        backend
+            .hold_create
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        backend.create_release.notify_one();
+        let result = tokio::time::timeout(Duration::from_secs(2), task).await;
+        assert!(entered.is_ok());
+        assert!(matches!(retired, Ok(Err(RunnerError::Busy))));
+        assert_eq!(retained.unwrap(), b"keep");
+        assert!(tombstone);
+        assert!(matches!(delayed, Ok(Err(_))));
+        assert!(result.unwrap().unwrap().is_err());
+        assert_eq!(backend.execs.load(std::sync::atomic::Ordering::SeqCst), 0);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match pool.retire_workspace(&identity).await {
+                    Ok(true) => break,
+                    Ok(false) | Err(RunnerError::Busy) => tokio::task::yield_now().await,
+                    Err(error) => panic!("retirement failed: {error}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(backend.live_count(), 0);
+        assert!(!payload.exists());
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                pool.run(&scoped_request(
+                    "turn-c",
+                    shared::sandbox::WorkspacePurpose::Workspace
+                ))
+            )
+            .await
+            .unwrap()
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_retirement_during_execution_keeps_seal_and_confirms_teardown_before_cleanup()
+    {
+        let root = WorkspaceFixture::new();
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), root.config());
+        let mut request = scoped_request("turn-a", shared::sandbox::WorkspacePurpose::Workspace);
+        let identity = request.workspace.as_ref().unwrap().workspace.clone();
+        pool.workspace_operation(&identity, true, |files, _| files.write("keep.txt", b"keep"))
+            .unwrap();
+        let payload = root
+            .0
+            .join("dots")
+            .join(&identity.dot_id)
+            .join("files/keep.txt");
+        request.code = "hold-exec".into();
+        let task_pool = pool.clone();
+        let task = tokio::spawn(async move { task_pool.run(&request).await });
+        let entered =
+            tokio::time::timeout(Duration::from_secs(2), backend.exec_entered.notified()).await;
+        let retired =
+            tokio::time::timeout(Duration::from_secs(2), pool.retire_workspace(&identity)).await;
+        let retained = std::fs::read(&payload);
+        let delayed = tokio::time::timeout(
+            Duration::from_secs(2),
+            pool.run(&scoped_request(
+                "turn-b",
+                shared::sandbox::WorkspacePurpose::Browser,
+            )),
+        )
+        .await;
+        let tombstone = root
+            .0
+            .join(".dot-retired")
+            .join(&identity.dot_id)
+            .join("owner.json")
+            .is_file();
+        backend.exec_release.notify_one();
+        let result = tokio::time::timeout(Duration::from_secs(2), task).await;
+        assert!(entered.is_ok());
+        assert!(matches!(retired, Ok(Err(RunnerError::Busy))));
+        assert_eq!(retained.unwrap(), b"keep");
+        assert!(tombstone);
+        assert!(matches!(delayed, Ok(Err(_))));
+        assert!(result.unwrap().unwrap().unwrap().container_id.is_none());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match pool.retire_workspace(&identity).await {
+                    Ok(true) => break,
+                    Ok(false) | Err(RunnerError::Busy) => tokio::task::yield_now().await,
+                    Err(error) => panic!("retirement failed: {error}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(backend.execs.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(backend.live_count(), 0);
+        assert!(!payload.exists());
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                pool.run(&scoped_request(
+                    "turn-c",
+                    shared::sandbox::WorkspacePurpose::Workspace
+                ))
+            )
+            .await
+            .unwrap()
+            .is_err()
+        );
+    }
 
     fn cfg(pool_size: usize, max_concurrent: usize, egress: bool) -> Arc<Config> {
         Arc::new(Config {
@@ -753,6 +1986,128 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn checked_teardown_invalid_release_never_enters_retirement_tracking() {
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), cfg_leases(0, 6, 600));
+        for id in ["-f", "", "fake-1/../other"] {
+            assert!(pool.release_container(id).await.is_err());
+            assert!(pool.leased.lock().unwrap().is_empty());
+        }
+        assert!(backend.destroyed.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn checked_teardown_poisoned_lease_is_retiring_before_async_destruction() {
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), cfg_leases(0, 6, 600));
+        pool.leased.lock().unwrap().insert(
+            "fake-0".into(),
+            Leased {
+                last_used: Instant::now(),
+                busy: true,
+                retiring: false,
+                scope: None,
+                network: Network::None,
+                workspace: None,
+                handover_generation: 0,
+                handover: None,
+            },
+        );
+        assert_eq!(pool.dispose("fake-0", true, true, false), None);
+        assert!(matches!(
+            pool.mark_lease_busy("fake-0"),
+            Err(RunnerError::Busy)
+        ));
+        assert!(pool.leased.lock().unwrap().get("fake-0").unwrap().retiring);
+        settle_destroyed(&backend, 1).await;
+    }
+
+    #[tokio::test]
+    async fn checked_teardown_release_failure_retains_tracking_until_retry_confirms_absence() {
+        let be = Arc::new(FakeBackend::new());
+        let pool = Pool::new(be.clone(), cfg_leases(0, 6, 600));
+        let mut request = req();
+        request.keep_alive = true;
+        let id = pool.run(&request).await.unwrap().container_id.unwrap();
+        be.fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(pool.release_container(&id).await.is_err());
+        assert_eq!(be.live_count(), 1);
+        assert!(
+            pool.leased.lock().unwrap().contains_key(&id),
+            "unconfirmed container absence must retain tracking"
+        );
+        request.container_id = Some(id.clone());
+        assert!(matches!(pool.run(&request).await, Err(RunnerError::Busy)));
+        assert_eq!(be.execs.load(std::sync::atomic::Ordering::SeqCst), 1);
+        be.fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        pool.release_container(&id).await.unwrap();
+        assert_eq!(be.live_count(), 0);
+        assert_eq!(pool.leased_len(), 0);
+    }
+
+    #[tokio::test]
+    async fn checked_teardown_ttl_failure_retains_tracking_until_sweeper_retry() {
+        let be = Arc::new(FakeBackend::new());
+        let pool = Pool::new(be.clone(), cfg_leases(0, 6, 600));
+        let mut request = req();
+        request.keep_alive = true;
+        let id = pool.run(&request).await.unwrap().container_id.unwrap();
+        pool.leased.lock().unwrap().get_mut(&id).unwrap().last_used =
+            Instant::now() - Duration::from_secs(601);
+        be.fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        pool.sweep_expired().await;
+        assert_eq!(be.live_count(), 1);
+        assert!(
+            pool.leased.lock().unwrap().contains_key(&id),
+            "failed TTL teardown must retain tracking"
+        );
+        be.fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        pool.sweep_expired().await;
+        assert_eq!(be.live_count(), 0);
+        assert_eq!(pool.leased_len(), 0);
+    }
+
+    #[tokio::test]
+    async fn checked_teardown_same_container_concurrent_exec_is_refused() {
+        let be = Arc::new(FakeBackend::new());
+        let pool = Pool::new(be.clone(), cfg_leases(0, 6, 600));
+        let mut request = req();
+        request.keep_alive = true;
+        let id = pool.run(&request).await.unwrap().container_id.unwrap();
+        request.container_id = Some(id.clone());
+        let mut blocked = request.clone();
+        blocked.code = "hold-exec".into();
+        let active = tokio::spawn({
+            let pool = pool.clone();
+            async move { pool.run(&blocked).await }
+        });
+        tokio::time::timeout(Duration::from_secs(2), be.exec_entered.notified())
+            .await
+            .unwrap();
+        let concurrent = tokio::time::timeout(Duration::from_secs(2), pool.run(&request))
+            .await
+            .unwrap();
+        be.exec_release.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), active)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(concurrent, Err(RunnerError::Busy)),
+            "{concurrent:?}"
+        );
+        assert_eq!(be.execs.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(be.live_count(), 1);
+        assert_eq!(pool.leased_len(), 1);
+        pool.release_container(&id).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn release_container_destroys_and_untracks_and_is_idempotent() {
         let be = Arc::new(FakeBackend::new());
         let pool = Pool::new(be.clone(), cfg_leases(0, 6, 600));
@@ -761,12 +2116,12 @@ mod tests {
         let id = pool.run(&r).await.unwrap().container_id.unwrap();
         assert_eq!(pool.leased_len(), 1);
 
-        pool.release_container(&id).await;
+        pool.release_container(&id).await.unwrap();
         assert_eq!(pool.leased_len(), 0);
         assert!(be.destroyed.lock().unwrap().contains(&id));
 
         // A second release (e.g. sweeper raced the gateway) must not panic.
-        pool.release_container(&id).await;
+        pool.release_container(&id).await.unwrap();
         assert_eq!(pool.leased_len(), 0);
     }
 
@@ -808,6 +2163,12 @@ mod tests {
             Leased {
                 last_used: Instant::now(),
                 busy: true,
+                retiring: false,
+                scope: None,
+                network: Network::None,
+                workspace: None,
+                handover_generation: 0,
+                handover: None,
             },
         );
 
@@ -835,7 +2196,24 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl ContainerBackend for FailExecBackend {
-        async fn create(&self, _network: Network) -> Result<String, crate::backend::BackendError> {
+        fn validate_container_id(&self, id: &str) -> Result<(), crate::backend::BackendError> {
+            if !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            {
+                Ok(())
+            } else {
+                Err(crate::backend::BackendError::Protocol(
+                    "invalid test container ID".into(),
+                ))
+            }
+        }
+        async fn create(
+            &self,
+            _network: Network,
+            _workspace: Option<&WorkspaceMount>,
+        ) -> Result<String, crate::backend::BackendError> {
             let mut n = self.created.lock().unwrap();
             *n += 1;
             Ok(format!("fail-{n}"))
@@ -848,8 +2226,9 @@ mod tests {
         ) -> Result<RunResponse, crate::backend::BackendError> {
             Err(crate::backend::BackendError::Protocol("boom".into()))
         }
-        async fn destroy(&self, id: &str) {
+        async fn destroy(&self, id: &str) -> Result<(), crate::backend::BackendError> {
             self.destroyed.lock().unwrap().push(id.to_string());
+            Ok(())
         }
     }
 
@@ -897,6 +2276,12 @@ mod tests {
             Leased {
                 last_used: Instant::now(),
                 busy: false,
+                retiring: false,
+                scope: None,
+                network: Network::None,
+                workspace: None,
+                handover_generation: 0,
+                handover: None,
             },
         );
         let mut r = req();
@@ -915,7 +2300,24 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl ContainerBackend for TimeoutBackend {
-        async fn create(&self, _network: Network) -> Result<String, crate::backend::BackendError> {
+        fn validate_container_id(&self, id: &str) -> Result<(), crate::backend::BackendError> {
+            if !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            {
+                Ok(())
+            } else {
+                Err(crate::backend::BackendError::Protocol(
+                    "invalid test container ID".into(),
+                ))
+            }
+        }
+        async fn create(
+            &self,
+            _network: Network,
+            _workspace: Option<&WorkspaceMount>,
+        ) -> Result<String, crate::backend::BackendError> {
             let mut n = self.created.lock().unwrap();
             *n += 1;
             Ok(format!("to-{n}"))
@@ -938,8 +2340,9 @@ mod tests {
                 container_id: None,
             })
         }
-        async fn destroy(&self, id: &str) {
+        async fn destroy(&self, id: &str) -> Result<(), crate::backend::BackendError> {
             self.destroyed.lock().unwrap().push(id.to_string());
+            Ok(())
         }
     }
 

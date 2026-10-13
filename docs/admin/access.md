@@ -16,9 +16,67 @@ The matrices edit the same group grants as the group form. Tool rows include ind
 
 In the group's form, enable **Agent manager** to let its members create agents and read or edit agents shared with them. Administrator groups already have this permission, so the form shows it as enabled and unavailable to change. This permission does not grant access to every model, connector or tool: agents still need their own resource grants, described in [agent permissions](../agent-guide/permissions.md).
 
+Enable **Personal Dot manager** independently to let members list, create,
+activate and deactivate their own personal Dots and change directed
+communication consent between their own Dots. Administrators hold this
+permission. Fresh groups default to disabled; enable it on an existing default
+group if every authenticated user should be able to manage personal Dots.
+It grants neither ordinary agent management nor additional tool access.
+The saved group flag is `can_manage_dots`; live RBAC reload applies changes
+immediately. Revoking it blocks lifecycle management and consent changes, but does not deactivate
+Dots or stop existing runs. Current user/tool grants, active state and approval
+rules continue to govern execution. See [Dots](../dots.md).
+
+![The Engineering group with Personal Dot manager enabled and Agent manager disabled. Synthetic data in the real group form.](../img/guide/dot-management-permission.png)
+
+*Independent personal Dot management in the existing group form. The wildcard
+tool grant shown belongs to the synthetic fixture; its existing warning remains
+visible and the Dot checkbox does not add tool grants.*
+
 Builder permission does not itself give an agent permission to use every model or tool: the agent has separate grants, documented in [agent permissions](../agent-guide/permissions.md).
 
 Pool allowed groups, collection allowed groups, connector allowed groups, tool grants and skill grants serve different resources. A tool being listed in a permission matrix does not establish that its external service is configured or reachable.
+
+## Organization membership and Dot limits
+
+Organization metadata is administered through
+`/api/v0/admin/organizations`, or use **Access & limits → Organizations**
+(`/admin/organizations`). Select actual gateway groups as membership
+sources. Existing OIDC mappings continue to resolve those groups; the
+organization does not introduce a second identity roster. Each member-group
+badge shows the number of locally known users currently resolved into that
+group. Counts use users' latest stored OIDC claims; a default group includes
+every locally known user. These counts reflect people who have signed in to
+AIplane and are not a live query to the IdP directory. Empty bindings provide
+no membership. Deleting a bound gateway group removes that binding; recreating
+a group with the same name does not restore it.
+
+Choose **Create organization** to open its metadata dialog. Existing cards
+edit the organization's actual name, description and selected member groups.
+
+![Organization administration with configured member groups. The image uses synthetic data in the real application.](../img/guide/organizations-admin.png)
+
+Metadata edits require the organization's returned revision. A concurrent
+metadata or binding change returns a conflict rather than overwriting the
+newer choice. The administrator can repair an organization with no members.
+Creator attribution does not determine ownership: deleting the creator's
+account leaves the organization and its organization-owned Dots intact.
+
+Members need **Agent manager** and a write share to configure an existing
+organization Dot. A member with Agent manager can create one and receives its
+initial write share. **Personal Dot manager** controls personal Dot lifecycle
+independently. Membership alone exposes neither a Dot configuration nor its
+principal grants. Administration retains configuration recovery access.
+
+`dots.max_active_per_organization` defaults to four, independently of
+`dots.max_active_per_user`. Each limit counts stored active Dots, including
+idle ones. Deactivating a Dot frees a slot; publishing an organization Dot
+does not enable execution. A current member with Write access can authorize,
+explicitly select and erase that Dot’s own OAuth connection from its existing
+agent editor. Personal Dot management permission is not required. Nonmember
+administrator recovery grants no credential access. Organization execution,
+organization-wide credentials and organization knowledge require their
+remaining implementation packages. See [organization Dots](../dots-organizations.md).
 
 ## Inspect users and impersonation
 
@@ -66,6 +124,7 @@ The page shows summary metrics and breakdowns by backend, source, model and toke
 |---|---|
 | Admin page returns forbidden | Effective `admin` role shown for the signed-in identity |
 | Group does not match | Actual observed OIDC values, group mapping and effective roles |
+| Dots management unavailable | `can_manage_dots` on a resolved group |
 | Builder unavailable | `can_manage_agents` on a resolved group |
 | Token cannot request a model | Token scope and owner access to the model's pool |
 | Limit has no effect | `limits.enabled`, subject/model match and pool `enforce_limits` |

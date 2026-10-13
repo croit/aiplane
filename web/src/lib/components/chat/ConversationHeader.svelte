@@ -7,6 +7,8 @@
 		id,
 		title,
 		isOwner,
+		canWrite,
+		canFork,
 		shared,
 		models,
 		model = $bindable(),
@@ -24,6 +26,8 @@
 		id: string;
 		title: string | null | undefined;
 		isOwner: boolean;
+		canWrite: boolean;
+		canFork: boolean;
 		shared: boolean;
 		models: ChatModelOption[];
 		model: string;
@@ -54,7 +58,7 @@
 	<h1 class="hidden min-w-0 flex-1 truncate text-lg font-semibold sm:block">
 		{title?.trim() || t('chat-render-new-conversation-fallback')}
 	</h1>
-	{#if isOwner}
+	{#if canWrite}
 		<div class="order-last flex w-full min-w-0 items-center gap-2 sm:order-none sm:w-auto">
 			{#if models.length > 0}
 				<label class="flex min-w-0 flex-1 items-center gap-1.5 sm:flex-none">
@@ -93,12 +97,12 @@
 			</ul>
 		</div>
 
-		{#if isOwner}
-			{#if hasCanvas}<button class="btn btn-ghost btn-sm" onclick={oncanvas} aria-label={t('chat-render-canvas-toggle-title')} title={t('chat-render-canvas-toggle-title')}><span aria-hidden="true">▣</span><span class="hidden sm:inline">{t('chat-render-canvas-toggle-label')}</span></button>{/if}
+		{#if isOwner && hasCanvas}<button class="btn btn-ghost btn-sm" onclick={oncanvas} aria-label={t('chat-render-canvas-toggle-title')} title={t('chat-render-canvas-toggle-title')}><span aria-hidden="true">▣</span><span class="hidden sm:inline">{t('chat-render-canvas-toggle-label')}</span></button>{/if}
+		{#if canWrite}
 			<button class="btn btn-ghost btn-sm" onclick={onshare} title={t('chat-render-share-tooltip')}>
 				{shared ? t('chat-render-share-label-on') : t('chat-render-share-label-off')}
 			</button>
-		{:else}
+		{:else if canFork}
 			<button class="btn btn-ghost btn-sm" onclick={onfork} title={t('chat-render-fork-tooltip')}>{t('chat-render-fork-label')}</button>
 		{/if}
 	</div>

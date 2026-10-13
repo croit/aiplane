@@ -18,9 +18,16 @@ use super::{DbError, Pool};
 /// Read one setting. `None` means the key was never set — callers fall
 /// through to their built-in default.
 pub async fn get(pool: &Pool, key: &str) -> Result<Option<String>, DbError> {
+    get_with(pool, key).await
+}
+
+pub(crate) async fn get_with<'e, E>(executor: E, key: &str) -> Result<Option<String>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let row = sqlx::query("SELECT value FROM app_settings WHERE key = ?")
         .bind(key)
-        .fetch_optional(pool)
+        .fetch_optional(executor)
         .await?;
     row.map(|r| r.try_get::<String, _>("value"))
         .transpose()

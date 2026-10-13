@@ -59,14 +59,17 @@ pub async fn get(pool: &Pool, session_id: &str) -> Result<Option<Compaction>, Db
 /// Insert or replace a session's compaction overlay. Idempotent upsert keyed on
 /// `session_id`, so the first compaction inserts and every re-compaction
 /// overwrites in place (bumping `up_to_seq` and replacing the summary).
-pub async fn upsert(
-    pool: &Pool,
+pub async fn upsert<'e, E>(
+    executor: E,
     session_id: &str,
     up_to_seq: i64,
     summary: &str,
     tokens_before: Option<i64>,
     tokens_after: Option<i64>,
-) -> Result<(), DbError> {
+) -> Result<(), DbError>
+where
+    E: sqlx::SqliteExecutor<'e>,
+{
     let now = Timestamp::now().to_string();
     sqlx::query(
         r#"INSERT INTO chat_compactions
@@ -86,7 +89,7 @@ pub async fn upsert(
     .bind(tokens_after)
     .bind(&now)
     .bind(&now)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }
@@ -114,6 +117,24 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_can_share_authority_transaction_and_rollback() {
+        let pool = open(Path::new(":memory:")).await.unwrap();
+        seed_session(&pool, "s1").await;
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        upsert(&mut *tx, "s1", 4, "actual summary", Some(9000), Some(200))
+            .await
+            .unwrap();
+        let summary: String =
+            sqlx::query_scalar("SELECT summary FROM chat_compactions WHERE session_id='s1'")
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(summary, "actual summary");
+        drop(tx);
+        assert_eq!(get(&pool, "s1").await.unwrap(), None);
     }
 
     #[tokio::test]

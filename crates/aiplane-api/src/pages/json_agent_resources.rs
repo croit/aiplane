@@ -32,19 +32,21 @@ use std::sync::Arc;
 
 use rama::http::service::web::extract::State;
 use rama::http::{Request, Response, StatusCode};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use session_core::i18n::Lang;
 
 use super::json_principals::require_agent_manager;
 use super::tool_toggles::{CapabilityEntry, entries_for_tools, sort_entries};
 use super::{internal, json_ok};
 use aiplane_core::server::db::users::User;
-use aiplane_core::server::db::{mcp_catalog, rag as rag_db};
-use aiplane_core::server::feature_defaults::Feature;
-use aiplane_core::server::upstreams::PoolKind;
+use aiplane_core::server::db::{WriteTx, mcp_catalog, rag as rag_db};
+use aiplane_core::server::feature_defaults::{self, Feature};
+use aiplane_core::server::upstreams::{PoolAccess, PoolKind};
 use aiplane_runtime::agents::assist::Ability;
 use aiplane_runtime::rama_server::state::RamaState;
+use aiplane_runtime::server::grant_holding;
 use aiplane_runtime::server::model_choices::{self, ModelChoice, gateway_default};
-use aiplane_runtime::server::tools::catalog;
+use aiplane_runtime::server::{AppState, tools::catalog};
 
 const MCP_TOOL_PREFIX: &str = aiplane_runtime::server::tools::mcp::MCP_ID_PREFIX;
 
@@ -89,7 +91,7 @@ impl GrantableItem {
 
 /// The registry tool ids (MCP tools aside: those come with their connector)
 /// a manager in groups `role_ids` holds and may therefore grant.
-fn grantable_tool_ids(state: &RamaState, role_ids: &[String]) -> Vec<String> {
+fn grantable_tool_ids(state: &AppState, role_ids: &[String]) -> Vec<String> {
     let grantable = state.grantable_tool_ids();
     let mut held = state.rbac.allowed_tools(role_ids, &state.tools());
     state.expand_comfyui_tools(&mut held, role_ids);
@@ -100,9 +102,14 @@ fn grantable_tool_ids(state: &RamaState, role_ids: &[String]) -> Vec<String> {
 
 /// The tools a manager in groups `role_ids` may grant, one row per catalog
 /// entry, granting every tool id the entry stands for.
-fn tool_items(state: &RamaState, role_ids: &[String]) -> Vec<GrantableItem> {
+fn tool_items(
+    display: &RamaState,
+    state: &AppState,
+    role_ids: &[String],
+    lang: Lang,
+) -> Vec<GrantableItem> {
     let held = grantable_tool_ids(state, role_ids);
-    entries_for_tools(state, &held)
+    entries_for_tools(display, &held, lang)
         .into_iter()
         .map(|entry| {
             let refs: Vec<String> = held
@@ -120,7 +127,7 @@ fn tool_items(state: &RamaState, role_ids: &[String]) -> Vec<GrantableItem> {
 /// The tools a manager in groups `role_ids` may grant, by tool id, each
 /// named as its catalog entry names it.
 pub(super) fn grantable_tools(state: &RamaState, role_ids: &[String]) -> Vec<Ability> {
-    tool_items(state, role_ids)
+    tool_items(state, state, role_ids, Lang::En)
         .into_iter()
         .flat_map(|item| {
             let entry = item.entry;
@@ -138,28 +145,50 @@ pub(super) fn grantable_tools(state: &RamaState, role_ids: &[String]) -> Vec<Abi
 pub(super) async fn grantable_items(
     state: &RamaState,
     user: &User,
+    lang: Lang,
 ) -> Result<Vec<GrantableItem>, Response> {
+    let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+    let Some((current, policy)) =
+        aiplane_runtime::agents::access::current_user_policy_in(state, &mut tx, &user.id)
+            .await
+            .map_err(internal)?
+    else {
+        return Ok(Vec::new());
+    };
+    let keys = grant_holding::grantable_connectors_in(state, &mut tx, &current.id, None)
+        .await
+        .map_err(internal)?;
+    let connectors = mcp_catalog::list_enabled_in(&mut tx)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .filter(|connector| keys.contains(&connector.key))
+        .collect();
+    let collections = rag_db::list_collections_in(&mut tx)
+        .await
+        .map_err(internal)?;
+    let mut app = (**state).clone();
+    app.rbac = Arc::new(policy);
+    let items = assemble_items(state, &app, &current, lang, connectors, collections);
+    tx.commit().await.map_err(internal)?;
+    Ok(items)
+}
+
+fn assemble_items(
+    display: &RamaState,
+    state: &AppState,
+    user: &User,
+    lang: Lang,
+    connectors: Vec<mcp_catalog::Connector>,
+    collections: Vec<rag_db::Collection>,
+) -> Vec<GrantableItem> {
     let role_ids = state.rbac.role_ids_for(&user.roles);
     let is_admin = state.rbac.is_admin(&role_ids);
     let admin_page = |url: String| is_admin.then_some(url);
-    let mut items = tool_items(state, &role_ids);
+    let mut items = tool_items(display, state, &role_ids, lang);
 
     let grantable = state.grantable_tool_ids();
-    let mcp_grant = state.mcp_grant_for(&user.roles);
-    for connector in mcp_catalog::list_enabled(&state.db)
-        .await
-        .map_err(internal)?
-    {
-        let offered = connector.has_shared_identity()
-            && if connector.is_agent() {
-                connector.grantable_by(&role_ids, is_admin)
-            } else {
-                let key = format!("{MCP_TOOL_PREFIX}{}", connector.key);
-                connector.allows(&role_ids, is_admin) && mcp_grant.allows(&key, &key)
-            };
-        if !offered {
-            continue;
-        }
+    for connector in connectors {
         let prefix = format!("{MCP_TOOL_PREFIX}{}__", connector.key);
         let key = connector.key.clone();
         let mut item = GrantableItem::new(
@@ -190,7 +219,11 @@ pub(super) async fn grantable_items(
         }
     }
 
-    for collection in grantable_collections(state, &role_ids).await? {
+    for collection in collections.into_iter().filter(|collection| {
+        state
+            .rbac
+            .resource_allowed(&role_ids, &collection.allowed_groups)
+    }) {
         let id = collection.id.to_string();
         let url = admin_page(format!("/rag/{id}/edit"));
         items.push(
@@ -203,7 +236,7 @@ pub(super) async fn grantable_items(
         );
     }
     sort_entries(&mut items, |item| &item.entry);
-    Ok(items)
+    items
 }
 
 /// The knowledge bases (RAG collections) a manager in groups `role_ids` may
@@ -243,15 +276,58 @@ pub(super) async fn grantable_chat_models(state: &RamaState, user: &User) -> Vec
         .collect()
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct AgentResourcesQuery {
+    pub agent_id: Option<String>,
+}
+
 pub async fn resources(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let user = match require_agent_manager(&state, &req).await {
         Ok(user) => user,
-        Err(resp) => return resp,
+        Err(response) => return response,
     };
-    match resources_for(&state, &user).await {
-        Ok(view) => json_ok(StatusCode::OK, view),
-        Err(resp) => resp,
+    let query = AgentResourcesQuery {
+        agent_id: super::query_map(&req).get("agent_id").cloned(),
+    };
+    async {
+        let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
+        let (current, policy) =
+            super::json_organizations::current_policy_in(&state, &mut tx, &user.id, lang).await?;
+        if !policy.can_manage_agents(&policy.role_ids_for(&current.roles)) {
+            return Err(super::json_error(
+                StatusCode::FORBIDDEN,
+                "forbidden",
+                &session_core::i18n::t(lang, "agent-management-error-permission-required"),
+            ));
+        }
+        if let Some(id) = query.agent_id.as_deref() {
+            let held = aiplane_runtime::agents::access::effective_access_in(
+                &state,
+                &mut tx,
+                id,
+                &current.id,
+            )
+            .await
+            .map_err(internal)?;
+            super::json_agents::require_held(held, id, aiplane_agents::db::agents::Access::Read)?;
+        }
+        let mut app = (**state).clone();
+        app.rbac = Arc::new(policy);
+        let view = resources_in(
+            &state,
+            &app,
+            &mut tx,
+            &current,
+            lang,
+            query.agent_id.as_deref(),
+        )
+        .await?;
+        tx.commit().await.map_err(internal)?;
+        Ok::<_, Response>(json_ok(StatusCode::OK, view))
     }
+    .await
+    .unwrap_or_else(|response| response)
 }
 
 /// What the caller holds and may grant an agent.
@@ -262,7 +338,7 @@ pub struct AgentResources {
     /// key runs on.
     defaults: DefaultModels,
     /// Tools, connectors, skills and knowledge bases.
-    items: Vec<GrantableItem>,
+    pub(super) items: Vec<GrantableItem>,
 }
 
 /// The models the caller may grant, by kind.
@@ -293,8 +369,11 @@ pub struct DefaultModels {
 }
 
 async fn model_list(state: &RamaState, user: &User, kind: PoolKind) -> Vec<GrantableModel> {
-    grantable_models(state, user, kind)
-        .await
+    model_views(state, kind, grantable_models(state, user, kind).await)
+}
+
+fn model_views(state: &AppState, kind: PoolKind, choices: Vec<ModelChoice>) -> Vec<GrantableModel> {
+    choices
         .into_iter()
         .map(|c| GrantableModel {
             voices: (kind == PoolKind::Speech).then(|| state.upstreams.speech_voices_of(&c.id)),
@@ -310,6 +389,7 @@ async fn model_list(state: &RamaState, user: &User, kind: PoolKind) -> Vec<Grant
 pub(super) async fn resources_for(
     state: &RamaState,
     user: &User,
+    lang: Lang,
 ) -> Result<AgentResources, Response> {
     let models = GrantableModels {
         chat: model_list(state, user, PoolKind::Chat).await,
@@ -317,7 +397,7 @@ pub(super) async fn resources_for(
         speech: model_list(state, user, PoolKind::Speech).await,
     };
 
-    let items = grantable_items(state, user).await?;
+    let items = grantable_items(state, user, lang).await?;
 
     let defaults = DefaultModels {
         chat: gateway_default(state, Feature::Chat).await,
@@ -325,6 +405,73 @@ pub(super) async fn resources_for(
         speech: gateway_default(state, Feature::Speech).await,
     };
 
+    Ok(AgentResources {
+        models,
+        defaults,
+        items,
+    })
+}
+
+async fn model_list_in(
+    state: &AppState,
+    tx: &mut WriteTx,
+    user: &User,
+    kind: PoolKind,
+) -> Result<Vec<GrantableModel>, Response> {
+    let mut choices =
+        model_choices::offered_in(state, tx, kind, &state.pool_access_for(&user.roles))
+            .await
+            .map_err(internal)?;
+    choices.retain(ModelChoice::grantable);
+    Ok(model_views(state, kind, choices))
+}
+
+async fn default_in(
+    state: &AppState,
+    tx: &mut WriteTx,
+    feature: Feature,
+) -> Result<Option<String>, Response> {
+    let offered = model_choices::offered_in(state, tx, feature.pool_kind(), &PoolAccess::all())
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|choice| choice.id)
+        .collect::<Vec<_>>();
+    let configured = feature_defaults::get_in(tx, feature)
+        .await
+        .map_err(internal)?;
+    Ok(feature_defaults::resolve(configured.as_deref(), &offered))
+}
+
+async fn resources_in(
+    display: &RamaState,
+    state: &AppState,
+    tx: &mut WriteTx,
+    user: &User,
+    lang: Lang,
+    target_principal_id: Option<&str>,
+) -> Result<AgentResources, Response> {
+    let models = GrantableModels {
+        chat: model_list_in(state, tx, user, PoolKind::Chat).await?,
+        transcription: model_list_in(state, tx, user, PoolKind::Transcription).await?,
+        speech: model_list_in(state, tx, user, PoolKind::Speech).await?,
+    };
+    let keys = grant_holding::grantable_connectors_in(display, tx, &user.id, target_principal_id)
+        .await
+        .map_err(internal)?;
+    let connectors = mcp_catalog::list_enabled_in(tx)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .filter(|connector| keys.contains(&connector.key))
+        .collect();
+    let collections = rag_db::list_collections_in(tx).await.map_err(internal)?;
+    let items = assemble_items(display, state, user, lang, connectors, collections);
+    let defaults = DefaultModels {
+        chat: default_in(state, tx, Feature::Chat).await?,
+        transcription: default_in(state, tx, Feature::Transcription).await?,
+        speech: default_in(state, tx, Feature::Speech).await?,
+    };
     Ok(AgentResources {
         models,
         defaults,

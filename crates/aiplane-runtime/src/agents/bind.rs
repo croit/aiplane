@@ -214,8 +214,30 @@ impl WithheldTool {
 }
 
 impl Tool for WithheldTool {
+    fn execution_facts(&self) -> Option<Value> {
+        self.inner.execution_facts()
+    }
+
+    fn phase(&self) -> crate::server::tools::ToolPhase {
+        self.inner.phase()
+    }
+
     fn id(&self) -> &str {
         self.inner.id()
+    }
+
+    fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+        self.inner.action_catalogue()
+    }
+    fn classify_actions<'a>(
+        &'a self,
+        ctx: ToolContext,
+        args: Value,
+    ) -> crate::server::tools::ToolActionFuture<'a> {
+        Box::pin(async move {
+            self.run(ctx, args).await?;
+            Ok(None)
+        })
     }
 
     fn schema(&self) -> ToolDef {
@@ -305,8 +327,37 @@ pub fn without_bound(mut def: ToolDef, bound: &BTreeMap<String, BindSource>) -> 
 }
 
 impl Tool for BoundTool {
+    fn execution_facts(&self) -> Option<Value> {
+        self.inner.execution_facts()
+    }
+
+    fn phase(&self) -> crate::server::tools::ToolPhase {
+        self.inner.phase()
+    }
+
     fn id(&self) -> &str {
         self.inner.id()
+    }
+
+    fn action_catalogue(&self) -> Option<&'static [crate::server::tools::ToolAction]> {
+        self.inner.action_catalogue()
+    }
+    fn classify_actions<'a>(
+        &'a self,
+        ctx: ToolContext,
+        args: Value,
+    ) -> crate::server::tools::ToolActionFuture<'a> {
+        Box::pin(async move {
+            let mut args = match args {
+                Value::Object(map) => map,
+                _ => Map::new(),
+            };
+            args.extend(self.bound_values(&ctx).await?);
+            self.inner.classify_actions(ctx, Value::Object(args)).await
+        })
+    }
+    fn read_only(&self) -> bool {
+        self.inner.read_only()
     }
 
     fn schema(&self) -> ToolDef {
@@ -339,6 +390,22 @@ impl Tool for BoundTool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bound_and_withheld_wrappers_preserve_the_tools_phase() {
+        let inner: Arc<dyn Tool> = Arc::new(crate::server::tools::tests::PhasedEcho);
+        let bound = BoundTool::new(inner.clone(), BTreeMap::new(), None, Arc::default());
+        let withheld = WithheldTool::new(inner, vec!["message".into()]);
+        assert_eq!(bound.phase(), crate::server::tools::ToolPhase::ActsOnState);
+        assert_eq!(
+            bound.execution_facts(),
+            Some(serde_json::json!({"resource":"fixture"}))
+        );
+        assert_eq!(withheld.execution_facts(), bound.execution_facts());
+        assert_eq!(
+            withheld.phase(),
+            crate::server::tools::ToolPhase::ActsOnState
+        );
+    }
     use super::*;
     use crate::agents::state::tests::{at, schema};
     use aiplane_agents::db::agent_state::StoredSlot;

@@ -26,9 +26,15 @@ use rama::http::service::web::response::{IntoResponse, Json};
 use rama::http::{Request, Response, StatusCode, header};
 use rama::layer::{ArcLayer, Layer};
 use rama::net::address::SocketAddress;
-use shared::sandbox::{MAX_RUN_REQUEST_BYTES, RunError, RunRequest, RunnerHealth};
+use shared::sandbox::{
+    BrowserControlRequest, MAX_RUN_REQUEST_BYTES, RunError, RunRequest, RunnerHealth,
+    STAGE_TOTAL_MAX_BYTES, WorkspaceOperation, WorkspaceRequest,
+};
 
 use crate::pool::{Pool, RunnerError};
+
+#[cfg(test)]
+mod workspace_tests;
 
 /// Shared handler state. The pool already carries its own `Arc<Config>`,
 /// so the handlers only need the pool.
@@ -44,6 +50,8 @@ pub fn router(state: Arc<RunnerState>) -> Router<Arc<RunnerState>> {
         // a tool whose every call must fail. See `RunnerHealth`.
         .with_get("/healthz", healthz)
         .with_post("/run", run)
+        .with_post("/workspace", workspace)
+        .with_post("/browser/control", browser_control)
         .with_delete("/container/{id}", release_container)
 }
 
@@ -52,22 +60,28 @@ async fn healthz(State(state): State<Arc<RunnerState>>) -> Json<RunnerHealth> {
     Json(RunnerHealth {
         status: "ok".into(),
         egress: Some(state.pool.config().egress_available()),
+        workspace: Some(state.pool.workspace_available()),
     })
 }
 
-/// DELETE /container/{id} — release a kept-alive (leased) container. The
-/// gateway calls this at turn end (and on `reset`) so the container's RAM is
-/// freed promptly rather than waiting for the TTL sweeper. Idempotent: an
-/// unknown / already-reaped id is a clean `204`, so the gateway's turn-end
-/// release never has to care whether the sweeper got there first. Container
-/// ids are lowercase hex, so the path extractor's case handling is a non-issue
-/// here.
 async fn release_container(
     State(state): State<Arc<RunnerState>>,
     Path(id): Path<String>,
 ) -> Response {
-    state.pool.release_container(&id).await;
-    (StatusCode::NO_CONTENT, ()).into_response()
+    match state.pool.release_container(&id).await {
+        Ok(()) => (StatusCode::NO_CONTENT, ()).into_response(),
+        Err(RunnerError::Busy) => err(
+            StatusCode::CONFLICT,
+            "The container is busy; retry release after its active operation finishes.",
+        ),
+        Err(error) => {
+            tracing::warn!(container = %id, error = %error, "container release not confirmed");
+            err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Container removal could not be confirmed; retry release. The runner retains it for cleanup.",
+            )
+        }
+    }
 }
 
 /// POST /run — decode the request, execute it, return the result.
@@ -88,14 +102,163 @@ async fn run(State(state): State<Arc<RunnerState>>, req: Request) -> Response {
 
     match state.pool.run(&request).await {
         Ok(resp) => json_ok(&resp),
-        Err(RunnerError::Busy) => err(StatusCode::SERVICE_UNAVAILABLE, "sandbox at capacity"),
-        Err(RunnerError::NetworkUnavailable) => err(
+        Err(error) => runner_failure(error),
+    }
+}
+
+async fn workspace(State(state): State<Arc<RunnerState>>, req: Request) -> Response {
+    let bytes = match read_capped(req, MAX_RUN_REQUEST_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(refusal) => return refusal,
+    };
+    let request: WorkspaceRequest = match serde_json::from_slice(&bytes) {
+        Ok(request) => request,
+        Err(_) => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "The workspace request is invalid. Supply the trusted Dot identity and a supported file operation.",
+            );
+        }
+    };
+    if matches!(request.operation, WorkspaceOperation::Retire) {
+        return match state.pool.retire_workspace(&request.workspace).await {
+            Ok(true) => (StatusCode::NO_CONTENT, ()).into_response(),
+            Ok(false) | Err(RunnerError::Busy) => err(
+                StatusCode::CONFLICT,
+                "Dot storage retirement is pending. Retry after container teardown or the next bounded cleanup pass.",
+            ),
+            Err(error) => runner_failure(error),
+        };
+    }
+    let result = tokio::task::spawn_blocking(move || {
+        let mutating = matches!(
+            &request.operation,
+            WorkspaceOperation::Write { .. }
+                | WorkspaceOperation::CreateFolder { .. }
+                | WorkspaceOperation::Remove { .. }
+        );
+        state
+            .pool
+            .workspace_operation(&request.workspace, mutating, |files, busy| {
+                match request.operation {
+                    WorkspaceOperation::List { path, after } => {
+                        Ok(json_ok(&shared::sandbox::WorkspaceListResponse {
+                            listing: files.list(&path, after.as_deref())?,
+                            busy,
+                        }))
+                    }
+                    WorkspaceOperation::Read { path } => Ok((
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "application/octet-stream")],
+                        files.read(&path)?,
+                    )
+                        .into_response()),
+                    WorkspaceOperation::Write { path, content_b64 } => {
+                        if content_b64.len() > STAGE_TOTAL_MAX_BYTES.div_ceil(3) * 4 {
+                            return Err(crate::workspace::WorkspaceError::FileTooLarge);
+                        }
+                        let bytes = shared::b64::decode(&content_b64).map_err(|_| {
+                            crate::workspace::WorkspaceError::InvalidPath("invalid file base64")
+                        })?;
+                        files.write(&path, &bytes)?;
+                        Ok((StatusCode::NO_CONTENT, ()).into_response())
+                    }
+                    WorkspaceOperation::CreateFolder { path } => {
+                        files.mkdir(&path)?;
+                        Ok((StatusCode::NO_CONTENT, ()).into_response())
+                    }
+                    WorkspaceOperation::Remove { path } => {
+                        files.remove(&path)?;
+                        Ok((StatusCode::NO_CONTENT, ()).into_response())
+                    }
+                    // Retire is routed through `retire_workspace` above.
+                    WorkspaceOperation::Retire => {
+                        Err(crate::workspace::WorkspaceError::InvalidPath(
+                            "retirement requires the checked lifecycle operation",
+                        ))
+                    }
+                }
+            })
+    })
+    .await;
+    match result {
+        Ok(Ok(response)) => response,
+        Ok(Err(RunnerError::Busy)) => err(
+            StatusCode::CONFLICT,
+            "The Dot computer is in use. Finish or stop its current turn and wait for confirmed container removal before changing files.",
+        ),
+        Ok(Err(error)) => runner_failure(error),
+        Err(_) => err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The workspace operation could not finish. Retry after checking runner storage.",
+        ),
+    }
+}
+
+async fn browser_control(State(state): State<Arc<RunnerState>>, req: Request) -> Response {
+    let bytes = match read_capped(req, 8 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(refusal) => return refusal,
+    };
+    let request: BrowserControlRequest = match serde_json::from_slice(&bytes) {
+        Ok(request) => request,
+        Err(_) => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "The browser handover request is invalid.",
+            );
+        }
+    };
+    match state.pool.browser_control(&request).await {
+        Ok(response) => json_ok(&response),
+        Err(error) => runner_failure(error),
+    }
+}
+
+fn runner_failure(error: RunnerError) -> Response {
+    match error {
+        RunnerError::Busy => err(StatusCode::SERVICE_UNAVAILABLE, "sandbox at capacity"),
+        RunnerError::BrowserUnavailable => err(
+            StatusCode::GONE,
+            "The Dot browser handover is no longer available. Start a new browser session.",
+        ),
+        RunnerError::NetworkUnavailable => err(
             StatusCode::BAD_REQUEST,
             "network egress requested but not configured on this runner. Note: if you \
              wanted the network to install packages, don't — the sandbox image is fixed \
              and single-use; retry with network=false using only preinstalled tools",
         ),
-        Err(RunnerError::Backend(e)) => {
+        RunnerError::WorkspaceUnavailable => err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Persistent Dot storage is unavailable. Configure and verify the runner's persistent storage.",
+        ),
+        RunnerError::WorkspaceMismatch => err(
+            StatusCode::CONFLICT,
+            "The container does not belong to this Dot, turn or purpose. Start a new authorized container.",
+        ),
+        RunnerError::Workspace(error) => {
+            let status = match &error {
+                crate::workspace::WorkspaceError::FileTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+                crate::workspace::WorkspaceError::InvalidPath(_) => StatusCode::BAD_REQUEST,
+                crate::workspace::WorkspaceError::OwnerMismatch
+                | crate::workspace::WorkspaceError::UnsafeEntry => StatusCode::CONFLICT,
+                crate::workspace::WorkspaceError::Io(error)
+                    if error.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    StatusCode::NOT_FOUND
+                }
+                crate::workspace::WorkspaceError::Io(error)
+                    if error.raw_os_error().is_some_and(|code| {
+                        [libc::EEXIST, libc::ENOTEMPTY, libc::ENOTDIR, libc::ELOOP].contains(&code)
+                    }) =>
+                {
+                    StatusCode::CONFLICT
+                }
+                _ => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            err(status, &error.to_string())
+        }
+        RunnerError::Backend(e) => {
             tracing::warn!(error = %e, "sandbox backend failed");
             err(StatusCode::BAD_GATEWAY, &format!("sandbox backend: {e}"))
         }
@@ -197,6 +360,67 @@ mod tests {
             Arc::new(Config::for_test()),
         );
         Arc::new(RunnerState { pool })
+    }
+
+    #[tokio::test]
+    async fn workspace_operations_report_unavailable_without_verified_storage() {
+        let app = service(state());
+        for operation in [
+            serde_json::json!({"kind":"list","path":"","after":null}),
+            serde_json::json!({"kind":"read","path":"file"}),
+            serde_json::json!({"kind":"write","path":"file","content_b64":"YQ=="}),
+            serde_json::json!({"kind":"create_folder","path":"folder"}),
+            serde_json::json!({"kind":"remove","path":"file"}),
+        ] {
+            let response = app.serve(Request::builder()
+                .method(Method::POST).uri("/workspace")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&serde_json::json!({
+                    "workspace":{"owner_user_id":"person","dot_id":"12345678-1234-4234-8234-123456789abc"},
+                    "operation":operation
+                })).unwrap())).unwrap()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+
+    #[tokio::test]
+    async fn checked_teardown_release_route_reports_failure_until_retry_confirms_absence() {
+        let backend = Arc::new(FakeBackend::new());
+        let pool = Pool::new(backend.clone(), Arc::new(Config::for_test()));
+        let mut request = crate::backend::fake::req();
+        request.keep_alive = true;
+        let id = pool.run(&request).await.unwrap().container_id.unwrap();
+        let app = service(Arc::new(RunnerState { pool }));
+        backend
+            .fail_destroy
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let response = app
+            .serve(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/container/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(backend.live_count(), 1);
+        backend
+            .fail_destroy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let response = app
+            .serve(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(format!("/container/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(backend.live_count(), 0);
     }
 
     #[tokio::test]

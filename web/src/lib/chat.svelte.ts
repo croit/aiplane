@@ -57,7 +57,7 @@ const EVENT_NAMES = [
  * `eventsUrl` is the conversation's stream: a person's chat by default, or
  * any other conversation speaking the same protocol (an agent's test chat).
  */
-export function createConversationController(sessionId: string, eventsUrl = api.chatEventsUrl(sessionId)): ConversationController {
+export function createConversationController(sessionId: string, eventsUrl = api.chatEventsUrl(sessionId), canWrite: () => boolean = () => true): ConversationController {
 	// The state object is plain data (see ConversationState for why the
 	// turns are an array) — `$state`'s deep proxy tracks every mutation
 	// applyEvent makes to it.
@@ -122,7 +122,7 @@ export function createConversationController(sessionId: string, eventsUrl = api.
 			// a page load would stall the transcript this same stream delivers.
 			// `handleBrowserAction` always reports back, including when no
 			// extension is there, so a turn never waits on silence from here.
-			if (event.type === 'browser_action') {
+			if (event.type === 'browser_action' && canWrite()) {
 				void handleBrowserAction(event, { post: api.browserFeedback });
 			}
 			if (event.type === 'sidebar_changed') controller.onSidebarChanged?.();

@@ -539,8 +539,9 @@ pub struct TurnFacts {
     /// model allowlist. `None` on the session paths, where access is exactly
     /// what the user's groups grant and is derived from `roles` below.
     pub pool_access: Option<aiplane_core::server::upstreams::PoolAccess>,
-    /// Whether a tool may pause this turn for a decision. Only where a turn
-    /// can be resumed later: the interactive chat path.
+    /// Whether a tool may pause this turn for a decision. Set only where a
+    /// durable resume path exists, such as interactive chat or a headless run
+    /// surfaced in the owner's Inbox.
     pub suspendable: bool,
 }
 
@@ -557,12 +558,16 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
     } = facts;
     let principal = actor.principal();
     let agent = actor.agent().cloned();
+    let personal_dot = actor.personal_dot_identity().cloned();
+    let personal_execution = actor.personal_execution().cloned();
     // Session paths: whatever the user's groups reach. Bearer paths hand in
     // their own, already narrowed by the token's allowlist.
     let pool_access = pool_access.unwrap_or_else(|| state.pool_access_for_principal(&principal));
     ToolContext {
         principal,
         agent,
+        personal_dot,
+        personal_execution,
         call_id: None,
         token_id: None,
         pool_access,
@@ -620,6 +625,8 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
             .clone()
             .map(crate::server::tools::PushNotifier::new),
         model,
+        pending_actions: None,
+        pending_execution_facts: None,
         suspend: if suspendable {
             crate::suspend::Suspend::Available
         } else {
@@ -629,6 +636,39 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
         // depends on.
         granted_tools: None,
     }
+}
+
+struct PersonalRoundUsage {
+    meter: Option<Arc<crate::budget::SpendMeter>>,
+}
+
+impl PersonalRoundUsage {
+    fn new(meter: Option<Arc<crate::budget::SpendMeter>>) -> Self {
+        Self { meter }
+    }
+    fn record(&mut self, tokens: Option<u64>) {
+        if let Some(meter) = self.meter.take() {
+            meter.record_tokens(tokens);
+        }
+    }
+}
+
+impl Drop for PersonalRoundUsage {
+    fn drop(&mut self) {
+        self.record(None);
+    }
+}
+
+fn known_round_tokens(tokens: (Option<i64>, Option<i64>, Option<i64>)) -> Option<u64> {
+    tokens
+        .2
+        .or_else(|| {
+            tokens
+                .0
+                .zip(tokens.1)
+                .map(|(prompt, completion)| prompt.saturating_add(completion))
+        })
+        .map(|tokens| tokens.max(0) as u64)
 }
 
 #[async_trait]
@@ -662,8 +702,13 @@ impl SessionDriver for OpenAiDriver {
         // broadcasts `Finalized` the moment `run_turn` returns), exactly like
         // title generation.
         if result.is_ok() && !ctx.cancel.load(Ordering::SeqCst) {
+            let completion = self
+                .agent()
+                .filter(|run| run.organization().is_some())
+                .map(|_| ctx.broadcast.subscribe());
             let state = self.state.clone();
             let session_id = ctx.session_id.clone();
+            let assistant_turn_id = ctx.assistant_turn_id.clone();
             let (model, access) = crate::server::compaction::compaction_target(
                 &self.state,
                 &ctx.model,
@@ -678,13 +723,33 @@ impl SessionDriver for OpenAiDriver {
             } else {
                 None
             };
-            let payer = crate::server::side_call::Payer::of_turn(
+            let mut payer = crate::server::side_call::Payer::of_turn(
                 &self.tool_ctx.principal,
                 self.agent().map(|run| run.chain().clone()),
                 email,
                 self.source,
-            );
+            )
+            .with_model_context(&self.tool_ctx);
+            if let Some(run) = self
+                .tool_ctx
+                .agent
+                .clone()
+                .filter(|run| run.organization().is_some())
+            {
+                payer = payer.for_compaction(run, ctx.model.clone());
+            }
             tokio::spawn(async move {
+                if let Some(completion) = completion
+                    && !crate::server::compaction::wait_for_completed_turn(
+                        &state,
+                        &session_id,
+                        &assistant_turn_id,
+                        completion,
+                    )
+                    .await
+                {
+                    return;
+                }
                 crate::server::compaction::maybe_autocompact(
                     &state,
                     &session_id,
@@ -1019,7 +1084,18 @@ async fn classify_and_dispatch_tool_calls(
             granted && disabled_keys.contains(key),
             allowed_tools.contains(&acc.name),
         );
-        call_policy::audit(&d.tool_ctx, &acc.id, &acc.name, policy).await;
+        let terminal_refused = matches!(policy, CallPolicy::Granted)
+            && !alone
+            && tool_source.phase(&acc.name) == ToolPhase::Terminal;
+        let defer_audit = d.tool_ctx.personal_dot.is_some()
+            && policy.allows()
+            && !terminal_refused
+            && tool_source.personal_call_audit_is_deferred();
+        if !defer_audit && !call_policy::audit(&d.tool_ctx, &acc.id, &acc.name, policy).await {
+            return Err(TurnError::Upstream {
+                message: crate::agents::audit::LOG_UNAVAILABLE.into(),
+            });
+        }
         let refusal = match policy {
             CallPolicy::Granted
                 if !alone && tool_source.phase(&acc.name) == ToolPhase::Terminal =>
@@ -1151,13 +1227,27 @@ async fn run_one_turn(
     // can advertise the connectors the model could turn on (progressive
     // disclosure — the tools themselves stay out of the request until the
     // model, or the user via the composer, enables the connector).
-    let user_mcp = d
-        .state
-        .mcp_layer_for(
-            &d.tool_ctx.principal,
-            crate::server::tools::mcp::manager::AskContext::Chat,
-        )
-        .await;
+    let model_authority = d
+        .tool_ctx
+        .agent
+        .clone()
+        .map(crate::server::model_route::ModelAuthority::live);
+    if let Some(authority) = &model_authority {
+        authority
+            .check_turn(Some(&ctx.session_id), Some(&ctx.assistant_turn_id))
+            .map_err(upstream_err)?;
+    }
+    let user_mcp = if let Some(run) = d.tool_ctx.agent.as_deref() {
+        d.state.mcp_layer_for_run(run).await.map_err(upstream_err)?
+    } else {
+        d.state
+            .mcp_layer_for_dot(
+                &d.tool_ctx.principal,
+                d.tool_ctx.personal_dot.as_ref(),
+                crate::server::tools::mcp::manager::AskContext::Chat,
+            )
+            .await
+    };
     let comfyui = d
         .state
         .comfyui()
@@ -1169,17 +1259,37 @@ async fn run_one_turn(
     let every_tool =
         crate::server::tools::mcp::manager::CompositeToolSource::new(tools.as_ref(), &user_mcp)
             .with_comfyui(comfyui.as_ref());
-    let granted = d
+    let mut granted = d
         .state
         .granted_tool_ids(&d.tool_ctx.principal, &user_mcp)
         .await;
+    if d.tool_ctx.personal_dot.is_some() {
+        let disabled = aiplane_core::server::db::user_tool_prefs::disabled_for_user(
+            &d.state.db,
+            d.tool_ctx.principal.subject_id(),
+        )
+        .await
+        .map_err(|error| TurnError::Upstream {
+            message: format!("Could not load the personal Dot owner's tool settings: {error}. Retry the turn after the database is available."),
+        })?;
+        crate::server::tools::catalog::retain_enabled(&mut granted, &disabled);
+    }
+    if d.tool_ctx.personal_execution.is_none() {
+        granted.retain(|id| id != crate::agents::router::FORWARD_TOOL_NAME);
+    }
     let granted_source =
         crate::server::tools::GrantedToolSource::new(&every_tool, granted.iter().cloned());
     // An agent run's synthetic tools are no grant: they sit over the
     // grant-narrowed source, never inside it.
-    let tool_source = policy.tool_source(&granted_source);
+    let live_state = Arc::new((**d.state).clone());
+    let tool_source = policy.tool_source(&granted_source, &live_state);
+    let context_grants = if d.tool_ctx.personal_dot.is_some() {
+        tool_source.ids()
+    } else {
+        granted.clone()
+    };
     let tool_ctx = ToolContext {
-        granted_tools: Some(Arc::new(granted.iter().cloned().collect())),
+        granted_tools: Some(Arc::new(context_grants.into_iter().collect())),
         ..d.tool_ctx.clone()
     };
 
@@ -1246,6 +1356,8 @@ async fn run_one_turn(
                     session: &ctx.session_id,
                 },
             ),
+            &d.tool_ctx.principal,
+            model_authority.as_ref(),
         ),
     )
     .await
@@ -1255,9 +1367,15 @@ async fn run_one_turn(
     let target = target.map_err(upstream_err)?;
     let (routing_model, access, automatic_decision) =
         (target.model.as_str(), target.access, target.decision);
-    match crate::content_guard::evaluate_for_model(&d.state, &routing_state, routing_model, &access)
-        .await
-        .map_err(upstream_err)?
+    match crate::content_guard::evaluate_for_turn(
+        &d.state,
+        &routing_state,
+        routing_model,
+        &access,
+        &tool_ctx,
+    )
+    .await
+    .map_err(upstream_err)?
     {
         crate::content_guard::Action::Allow => {}
         crate::content_guard::Action::Confirm => {
@@ -1308,7 +1426,11 @@ async fn run_one_turn(
             serving.dialect,
         )
         .await;
-    let budget = policy.budget(effort);
+    let personal_execution = d.tool_ctx.personal_execution.as_ref();
+    let budget = personal_execution.map_or_else(
+        || policy.budget(effort),
+        |execution| execution.local_budget(),
+    );
     let injection = policy.injection();
     let max_rounds = budget.rounds();
     // A resumed run continues against what it had spent before the pause.
@@ -1392,6 +1514,7 @@ async fn run_one_turn(
     // Set once the model ignored its final round: the one request past the
     // budget is the closing round (`runner::prepare_closing_round`).
     let mut closing = false;
+    let mut tree_final_sent = false;
     let mut repeated_calls = crate::repeated_calls::RepeatedCallGuard::new();
 
     // Names of the tools that ran this turn, for the gateway's own account of
@@ -1512,6 +1635,24 @@ async fn run_one_turn(
         if limit_hit.is_none() {
             limit_hit = budget.exhausted((d.clock)().duration_since(run_started), tokens_used);
         }
+        if let Some(execution) = personal_execution {
+            if execution.unknown_token_usage(budget) {
+                limit_hit = Some(crate::budget::Limit::Tokens);
+            }
+            crate::agents::router::local::validate_execution(execution)
+                .await
+                .map_err(|error| TurnError::Aborted {
+                    message: error.to_string(),
+                })?;
+            if let Err(limit) = execution.meter().begin_round() {
+                if tree_final_sent {
+                    break;
+                }
+                execution.meter().begin_final_round();
+                tree_final_sent = true;
+                limit_hit = Some(limit);
+            }
+        }
         let final_round = round + 1 == max_rounds || limit_hit.is_some();
 
         // Build the request. `stream: true` so we can forward
@@ -1523,14 +1664,17 @@ async fn run_one_turn(
         // parsed for metrics below and for the compaction trigger (which reads
         // `prompt_tokens` to size the context), and otherwise ignored (its
         // `choices` is empty, so the delta loop skips it). Requested when
-        // *either* usage metrics or compaction is on; omitted only when both
-        // are off, so a fully-disabled gateway doesn't alter the request.
+        // personal turns also need these facts before a receiver introduces
+        // a finite token cap.
         let mut request_body = serde_json::json!({
             "model": ctx.model,
             "messages": messages,
             "stream": true,
         });
-        if (metrics_on || compaction_enabled || budget.tokens().is_some())
+        if (metrics_on
+            || compaction_enabled
+            || budget.tokens().is_some()
+            || personal_execution.is_some())
             && let Some(obj) = request_body.as_object_mut()
         {
             obj.insert(
@@ -1592,6 +1736,44 @@ async fn run_one_turn(
             real_model: &real_model,
             backend,
         };
+        let current_request_access = || async {
+            if let Some(execution) = personal_execution {
+                let owner = aiplane_core::server::db::users::find_by_id(
+                    &d.state.db,
+                    &execution.identity().owner_user_id,
+                )
+                .await
+                .map_err(persist_err("find_by_id", &ctx.assistant_turn_id))?
+                .ok_or_else(|| TurnError::Aborted {
+                    message: concat!(
+                        "The personal Dot owner is unavailable. ",
+                        "Restore its owner before continuing."
+                    )
+                    .into(),
+                })?;
+                let principal = aiplane_core::server::principal::Principal::User {
+                    id: owner.id,
+                    roles: owner.roles,
+                };
+                let access = crate::persona::personal_dot::current_pool_access(
+                    &d.state, &principal, &access,
+                )
+                .for_request(&ctx.model);
+                Ok(access)
+            } else {
+                crate::server::model_route::live_model_access(
+                    &d.state,
+                    &d.tool_ctx.principal,
+                    model_authority.as_ref(),
+                    &access,
+                    &ctx.model,
+                    automatic_decision.as_ref(),
+                )
+                .await
+                .map_err(upstream_err)
+            }
+        };
+        let request_access = current_request_access().await?;
         let priority = d.state.config().gateway.priority_enabled.then(|| {
             d.state.rbac.request_priority(
                 tool_ctx.principal.user_roles().unwrap_or_default(),
@@ -1604,7 +1786,7 @@ async fn run_one_turn(
                 &d.state.upstreams,
                 &real_model,
                 aiplane_core::server::upstreams::PoolKind::Chat,
-                &access,
+                &request_access,
                 if priority.is_some() {
                     d.state.upstream_wait()
                 } else {
@@ -1635,6 +1817,15 @@ async fn run_one_turn(
                 return Err(err);
             }
         };
+        if priority.is_some() {
+            let dispatch_access = current_request_access().await?;
+            crate::server::model_route::validate_acquired_access(
+                &d.state,
+                &dispatch_access,
+                &acquired,
+            )
+            .map_err(upstream_err)?;
+        }
         d.state
             .upstreams
             .apply_priority(&acquired, &mut request_body, priority);
@@ -1663,6 +1854,8 @@ async fn run_one_turn(
             real_model: &real_model,
             backend: Some(&backend_name),
         };
+        let mut tree_usage =
+            PersonalRoundUsage::new(personal_execution.map(|execution| execution.meter().clone()));
         let upstream = match http_req.send().await {
             Ok(upstream) => upstream,
             Err(err) => {
@@ -2013,6 +2206,7 @@ async fn run_one_turn(
                         .map_or(0, |t| t.max(0) as u64);
                     tokens_used += spent;
                     policy.record_spend(spent);
+                    tree_usage.record(known_round_tokens(round_tokens));
                     effort = lower;
                     wrote_any_content = marks.is_some_and(|(content, _)| content > 0);
                     frozen_reasoning_elapsed &= wrote_any_content;
@@ -2023,6 +2217,7 @@ async fn run_one_turn(
                 LoopRetry::Stop => {}
             }
         }
+        tree_usage.record(known_round_tokens(round_tokens));
         if let Some(end) = streamed? {
             return Ok(end);
         }
@@ -2327,6 +2522,27 @@ async fn run_one_turn(
                 }));
             }
         };
+        if results
+            .iter()
+            .any(|record| record.failure_cause == Some(runner::ToolFailureCause::AuditUnavailable))
+        {
+            for record in &results {
+                resume::settle_call(
+                    d,
+                    &ctx,
+                    &record.call_id,
+                    &record.body.to_string(),
+                    record.status(),
+                )
+                .await?;
+            }
+            for (id, reason) in &refused {
+                resume::settle_call(d, &ctx, id, reason, ToolCallStatus::Errored).await?;
+            }
+            return Err(TurnError::Upstream {
+                message: crate::agents::audit::LOG_UNAVAILABLE.into(),
+            });
+        }
         tools_run.extend(
             call_refs
                 .iter()
@@ -2468,6 +2684,8 @@ async fn run_one_turn(
                     rounds: round + 1,
                     seconds: (d.clock)().duration_since(run_started).as_secs(),
                     tokens: tokens_used,
+                    tree: personal_execution
+                        .map(|execution| execution.meter().snapshot(execution.local_budget())),
                 },
             )
             .await?;
@@ -3855,6 +4073,118 @@ mod tests {
                 .is_none()
         );
     }
+
+    #[tokio::test]
+    async fn organization_model_round_two_is_refused_after_round_one_revocation() {
+        use super::*;
+        use crate::server::headless::tests::{organization_draft_fixture, state_for};
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        let upstream = MockServer::start().await;
+        let reached = Arc::new(tokio::sync::Notify::new());
+        let sent = reached.clone();
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(move |_: &wiremock::Request| {
+                sent.notify_one();
+                let chunk = serde_json::json!({"choices":[{"delta":{"tool_calls":[{
+                    "index":0,"id":"echo-checkpoint","type":"function",
+                    "function":{"name":"company_echo","arguments":"{\"message\":\"checkpoint\"}"}
+                }]}}]});
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(300))
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(format!("data: {chunk}\n\ndata: [DONE]\n\n"))
+            })
+            .mount(&upstream)
+            .await;
+        let state = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&state).await;
+        let tool_ctx = build_tool_context(
+            &state,
+            TurnFacts {
+                actor: params.actor,
+                session_id: params.session_id.clone(),
+                assistant_turn_id: params.assistant_turn_id.clone(),
+                client_ip: None,
+                chat_feedback: None,
+                model: Some(params.model.clone()),
+                pool_access: None,
+                suspendable: true,
+            },
+        );
+        let driver = OpenAiDriver {
+            state: state.clone(),
+            tool_ctx,
+            source: params.source,
+            history_limit: None,
+            voice_mode: false,
+            clock: crate::budget::system_clock(),
+            resume: None,
+            persona: None,
+        };
+        let ctx = SessionContext {
+            user_id: None,
+            session_id: params.session_id,
+            assistant_turn_id: params.assistant_turn_id,
+            model: params.model.clone(),
+            cancel: Default::default(),
+            broadcast: tokio::sync::broadcast::channel(16).0,
+            steers: Default::default(),
+        };
+        let worker = tokio::spawn(async move { driver.run_turn(ctx).await });
+        tokio::time::timeout(std::time::Duration::from_secs(3), reached.notified())
+            .await
+            .unwrap();
+        aiplane_agents::db::system_principals::remove_grant(
+            &state.db,
+            &profile.principal.id,
+            aiplane_core::server::principal::GrantKind::Model,
+            &params.model,
+            "creator",
+        )
+        .await
+        .unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), worker)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(upstream.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn personal_round_usage_requires_complete_token_facts_and_marks_abandoned_requests_unknown() {
+        assert_eq!(super::known_round_tokens((None, None, None)), None);
+        assert_eq!(super::known_round_tokens((Some(3), None, None)), None);
+        assert_eq!(super::known_round_tokens((Some(3), Some(2), None)), Some(5));
+        assert_eq!(super::known_round_tokens((None, None, Some(7))), Some(7));
+        let limits =
+            crate::budget::Budget::from_limits(session_core::db::suspensions::BudgetLimits {
+                rounds: 4,
+                seconds: None,
+                tokens: Some(20),
+            });
+        let meter = std::sync::Arc::new(crate::budget::SpendMeter::for_budget(
+            limits,
+            crate::budget::system_clock(),
+            None,
+        ));
+        let mut completed = super::PersonalRoundUsage::new(Some(meter.clone()));
+        completed.record(Some(5));
+        drop(completed);
+        assert_eq!(meter.tokens(), 5);
+        assert!(meter.remaining().is_some());
+        drop(super::PersonalRoundUsage::new(Some(meter.clone())));
+        assert_eq!(meter.tokens(), 5);
+        assert!(!meter.snapshot(limits).usage_known);
+        assert!(meter.remaining().is_none());
+    }
+
     use super::{
         STEER_PREFIX, SessionContext, THINK_TAGS, ToolCallAcc, ToolCallStatus,
         ensure_unique_tool_call_ids, fold_in_steers, inject_ocr_blocks, message_for_history,

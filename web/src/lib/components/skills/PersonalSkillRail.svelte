@@ -3,12 +3,13 @@
 	import { t } from '#lib/i18n.svelte.js';
 	import type { PersonalSkill } from '#lib/skills.js';
 
-	let { skills, selected, mode, enabled, onupload } = $props<{
+	let { skills, selected, mode, enabled, onupload, onworkflowdraft } = $props<{
 		skills: PersonalSkill[];
 		selected: PersonalSkill | null;
 		mode: 'view' | 'edit' | 'new';
 		enabled: boolean;
 		onupload: (file: File) => void | Promise<void>;
+		onworkflowdraft: () => void;
 	}>();
 	let file = $state<File | null>(null);
 	let uploading = $state(false);
@@ -24,6 +25,7 @@
 <aside class="flex w-full shrink-0 flex-col gap-3 sm:sticky sm:top-6 sm:w-60">
 	{#if enabled}
 		<a href="/tools/skills?new=1" class="btn btn-sm w-full gap-1 {mode === 'new' ? 'btn-primary' : 'btn-outline'}"><NavIcon name="sparkles" size={14} /> {t('my-skills-new-button')}</a>
+		<button type="button" class="btn btn-sm btn-outline w-full gap-1" onclick={onworkflowdraft}><NavIcon name="sparkles" size={14} /> {t('my-skills-draft-button')}</button>
 		<form class="card border border-base-300" onsubmit={upload}>
 			<div class="card-body gap-2 p-3">
 				<div class="text-xs uppercase tracking-wide text-base-content/50">{t('my-skills-upload-heading')}</div>

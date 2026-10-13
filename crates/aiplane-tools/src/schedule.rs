@@ -287,10 +287,16 @@ impl Tool for ScheduleAction {
             let action = scheduled::create(
                 &ctx.db,
                 NewAction {
-                    user_id: ctx.person(self.id())?.to_string(),
+                    dot_id: ctx.personal_dot.as_ref().map(|dot| dot.dot_id.clone()),
+                    linked_session_id: None,
+                    owner: aiplane_runtime::server::background::AutomationOwner::User(
+                        ctx.person(self.id())?.to_string(),
+                    ),
+                    created_by: ctx.person(self.id())?.to_string(),
+                    agent_version: None,
                     name: name.to_string(),
                     prompt: prompt.to_string(),
-                    model,
+                    model: Some(model),
                     cron: cron.as_str().to_string(),
                     timezone,
                     // Never from the model: see the module docs. A model-created
@@ -403,15 +409,21 @@ impl Tool for DeleteScheduledAction {
             // Scoped read first: this both tells us the name (for a
             // confirmation the user can actually judge) and makes another
             // user's action indistinguishable from a nonexistent one.
-            let action = scheduled::get(&ctx.db, ctx.person(self.id())?, id)
-                .await
-                .map_err(|e| ToolError::Failed(format!("reading the scheduled action: {e}")))?
-                .ok_or_else(|| {
-                    ToolError::InvalidArgs(format!(
-                        "no scheduled action `{id}` — call `list_scheduled_actions` \
+            let action = scheduled::get(
+                &ctx.db,
+                &aiplane_runtime::server::background::AutomationOwner::User(
+                    ctx.person(self.id())?.into(),
+                ),
+                id,
+            )
+            .await
+            .map_err(|e| ToolError::Failed(format!("reading the scheduled action: {e}")))?
+            .ok_or_else(|| {
+                ToolError::InvalidArgs(format!(
+                    "no scheduled action `{id}` — call `list_scheduled_actions` \
                          to see the ids"
-                    ))
-                })?;
+                ))
+            })?;
 
             let preview = format!(
                 "“{}”: {}",
@@ -424,9 +436,25 @@ impl Tool for DeleteScheduledAction {
                 return Ok(pause);
             }
 
-            let removed = scheduled::delete(&ctx.db, ctx.person(self.id())?, id)
-                .await
-                .map_err(|e| ToolError::Failed(format!("deleting the scheduled action: {e}")))?;
+            let removed = scheduled::delete(
+                &ctx.db,
+                &aiplane_runtime::server::background::AutomationOwner::User(
+                    ctx.person(self.id())?.into(),
+                ),
+                id,
+            )
+            .await
+            .map_err(|e| ToolError::Failed(format!("deleting the scheduled action: {e}")))?;
+            let removed = match removed {
+                scheduled::DeleteOutcome::Deleted => true,
+                scheduled::DeleteOutcome::Missing => false,
+                scheduled::DeleteOutcome::Pending => {
+                    return Err(ToolError::Failed(session_core::i18n::t(
+                        session_core::i18n::Lang::En,
+                        "dot-background-error-pending-delete",
+                    )));
+                }
+            };
             Ok(json!({
                 "deleted": removed,
                 "id": action.id,
@@ -487,10 +515,14 @@ mod tests {
         scheduled::create(
             pool,
             NewAction {
-                user_id: "u1".into(),
+                dot_id: None,
+                linked_session_id: None,
+                owner: aiplane_runtime::server::background::AutomationOwner::User("u1".into()),
+                created_by: "u1".into(),
+                agent_version: None,
                 name: "Nightly".into(),
                 prompt: "check".into(),
-                model: "qwen-32b".into(),
+                model: Some("qwen-32b".into()),
                 cron: "0 3 * * *".into(),
                 timezone: "UTC".into(),
                 tools_enabled: false,
@@ -759,10 +791,14 @@ mod tests {
             scheduled::create(
                 &pool,
                 NewAction {
-                    user_id: user.into(),
+                    dot_id: None,
+                    linked_session_id: None,
+                    owner: aiplane_runtime::server::background::AutomationOwner::User(user.into()),
+                    created_by: user.into(),
+                    agent_version: None,
                     name: name.into(),
                     prompt: "p".into(),
-                    model: "qwen-32b".into(),
+                    model: Some("qwen-32b".into()),
                     cron: "0 8 * * 1".into(),
                     timezone: "Europe/Berlin".into(),
                     tools_enabled: false,
@@ -816,10 +852,14 @@ mod tests {
         let theirs = scheduled::create(
             &pool,
             NewAction {
-                user_id: "u2".into(),
+                dot_id: None,
+                linked_session_id: None,
+                owner: aiplane_runtime::server::background::AutomationOwner::User("u2".into()),
+                created_by: "u2".into(),
+                agent_version: None,
                 name: "Theirs".into(),
                 prompt: "p".into(),
-                model: "m".into(),
+                model: Some("m".into()),
                 cron: "0 8 * * 1".into(),
                 timezone: "UTC".into(),
                 tools_enabled: false,
@@ -843,5 +883,34 @@ mod tests {
             scheduled::list_for_user(&pool, "u2").await.unwrap().len(),
             1
         );
+    }
+    #[tokio::test]
+    async fn a_dot_created_schedule_keeps_its_dot_binding() {
+        let pool = seeded().await;
+        let (_, dot) = aiplane_agents::db::agents::create_personal_dot(
+            &pool,
+            &aiplane_agents::db::system_principals::NewPrincipal {
+                name: "Scheduler",
+                display: "Scheduler",
+                description: "",
+            },
+            r#"{"main":{}}"#,
+            "u1",
+            4,
+        )
+        .await
+        .unwrap();
+        let dot_id = dot.unwrap().principal.id;
+        let mut context = ctx_with(&pool, approved());
+        context.personal_dot = Some(aiplane_runtime::agent_run::PersonalDotIdentity {
+            owner_user_id: "u1".into(),
+            dot_id: dot_id.clone(),
+        });
+        let result = ScheduleAction.run(context, create_args()).await.unwrap();
+        assert_eq!(result["created"], true);
+        let actions = scheduled::list_for_user(&pool, "u1").await.unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].dot_id.as_deref(), Some(dot_id.as_str()));
+        assert!(!actions[0].tools_enabled);
     }
 }

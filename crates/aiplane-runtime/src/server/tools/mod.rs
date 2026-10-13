@@ -15,6 +15,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use serde_json::Value;
 use shared::api::ToolDef;
@@ -28,6 +29,7 @@ pub mod echo;
 pub mod feedback;
 pub mod injection;
 pub mod mcp;
+pub mod memory;
 pub mod registry;
 pub mod runner;
 pub mod sandbox;
@@ -41,6 +43,7 @@ pub use registry::{GrantedToolSource, ToolPhase, ToolRegistry, ToolSource};
 /// preferences) through the trait signature each time we add one.
 #[derive(Clone)]
 pub struct ToolContext {
+    pub personal_execution: Option<Arc<crate::agent_run::PersonalDotExecution>>,
     /// Who the tool acts for. A person on the chat page and on a `gwk_`
     /// bearer; a system principal on a `gws_` bearer. Scope rows by
     /// [`Principal::subject_id`]; a tool that acts *for a person* must go
@@ -162,9 +165,11 @@ pub struct ToolContext {
     /// tool needing it must ask for it explicitly or refuse.
     pub model: Option<String>,
     /// Whether this call may pause its turn for a decision from outside the
-    /// model, or what was decided if it is running again after one. Only the
-    /// interactive chat path can pause. See [`crate::suspend`].
+    /// model, or what was decided if it is running again after one. Persisted
+    /// interactive and headless turns can pause. See [`crate::suspend`].
     pub suspend: crate::suspend::Suspend,
+    pub pending_actions: Option<PendingActionFacts>,
+    pub pending_execution_facts: Option<PendingExecutionFacts>,
     /// The tool ids the acting principal is granted, resolved once per chat
     /// turn by the driver. `enable_tools` refuses a key that none of them
     /// belongs to, so a conversation never records an ungranted tool as on.
@@ -175,6 +180,9 @@ pub struct ToolContext {
     /// scheduled action or a `/v1` request. `principal` is then its
     /// principal; see [`Self::agent_active`].
     pub agent: Option<std::sync::Arc<crate::agent_run::AgentRun>>,
+    /// Personal Dot identity carried beside the user's principal. It scopes
+    /// Dot-owned data without changing the permissions of the user.
+    pub personal_dot: Option<crate::agent_run::PersonalDotIdentity>,
     /// The id of the tool call this run answers. The runner sets it on the
     /// copy of the context it hands each call; `None` outside a call. A
     /// sub-agent dispatch records it as the call site of the run it starts.
@@ -216,8 +224,12 @@ impl ToolContext {
             push: None,
             model: None,
             suspend: crate::suspend::Suspend::Unavailable,
+            pending_actions: None,
+            pending_execution_facts: None,
             granted_tools: None,
             agent: None,
+            personal_dot: None,
+            personal_execution: None,
             call_id: None,
         }
     }
@@ -242,7 +254,14 @@ impl ToolContext {
 
     /// The agent call chain this call runs in, inside an agent run.
     pub fn chain(&self) -> Option<&aiplane_core::server::run_chain::RunChain> {
-        self.agent.as_deref().map(|run| run.chain().as_ref())
+        self.agent
+            .as_deref()
+            .map(|run| run.chain().as_ref())
+            .or_else(|| {
+                self.personal_execution
+                    .as_ref()
+                    .map(|run| run.chain().as_ref())
+            })
     }
 
     /// The person this tool acts for, or the refusal to hand the model when
@@ -392,6 +411,8 @@ impl std::fmt::Debug for ToolContext {
 
 #[derive(Debug, Error)]
 pub enum ToolError {
+    #[error("{message}", message = crate::agents::audit::LOG_UNAVAILABLE)]
+    AuditUnavailable,
     #[error("tool arguments did not match the declared schema: {0}")]
     InvalidArgs(String),
     #[error("tool execution failed: {0}")]
@@ -480,7 +501,34 @@ pub fn extract_content_parts(body: &Value) -> Option<&Vec<Value>> {
 ///
 /// Implementations are typically zero-sized or hold an `Arc<Service>`; cloning
 /// them must be cheap because they're held in `Arc` by the registry.
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+pub struct ToolAction {
+    pub id: &'static str,
+    pub description: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingActionFacts {
+    pub actions: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingExecutionFacts {
+    pub execution_facts: Option<Value>,
+}
+
+pub type ToolActionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<Vec<String>>, ToolError>> + Send + 'a>>;
+
 pub trait Tool: Send + Sync + 'static {
+    fn execution_facts(&self) -> Option<Value> {
+        None
+    }
+
+    fn phase(&self) -> ToolPhase {
+        ToolPhase::Concurrent
+    }
+
     /// Stable identifier. Used as the OpenAI function name and as the lookup
     /// key in `ToolRegistry`. Must be unique across all registered tools.
     /// Convention: `"company.<area>.<verb>"`, e.g. `"company_wiki_search"`.
@@ -489,6 +537,14 @@ pub trait Tool: Send + Sync + 'static {
     /// The OpenAI-shaped definition the model sees. Generated fresh each call
     /// so the schema can interpolate runtime context if needed (most don't).
     fn schema(&self) -> ToolDef;
+
+    fn action_catalogue(&self) -> Option<&'static [ToolAction]> {
+        None
+    }
+
+    fn classify_actions<'a>(&'a self, _ctx: ToolContext, _args: Value) -> ToolActionFuture<'a> {
+        Box::pin(async { Ok(None) })
+    }
 
     /// Executes the tool. Returns a JSON value that's stringified into the
     /// `role: "tool"` message we send back to the model in the next round.
@@ -526,12 +582,38 @@ pub trait Tool: Send + Sync + 'static {
     fn changes_state(&self) -> bool {
         false
     }
+
+    /// Positive read-only metadata for autonomous personal Dot calls. Unknown
+    /// tools require approval unless the owner's spec permits them explicitly.
+    fn read_only(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    pub(crate) struct PhasedEcho;
+
+    impl Tool for PhasedEcho {
+        fn execution_facts(&self) -> Option<Value> {
+            Some(json!({"resource":"fixture"}))
+        }
+        fn id(&self) -> &str {
+            "company_echo"
+        }
+        fn schema(&self) -> shared::api::ToolDef {
+            echo::Echo.schema()
+        }
+        fn phase(&self) -> ToolPhase {
+            ToolPhase::ActsOnState
+        }
+        fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
+            echo::Echo.run(ctx, args)
+        }
+    }
 
     #[test]
     fn parts_envelope_round_trips_through_extract() {

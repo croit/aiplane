@@ -1,26 +1,38 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
-	import { adminPost, adminPut } from '#lib/admin-client.js';
+	import { onDestroy, onMount, untrack } from 'svelte';
+	import type { AgentVersion } from '#lib/agents.js';
 	import { locale, t } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
 	import LinkedChatPicker from '#lib/components/LinkedChatPicker.svelte';
+	import DotRunPicker from '#lib/components/dots/DotRunPicker.svelte';
+	import type { Dot } from '#lib/dot-state.js';
 	import { initialLinkedSession, linkedSessionField } from '#lib/linked-chat.js';
 	import { modelSelectOptions, type ChatModelOption } from '#lib/model-option.js';
-	import { cronFromSchedule, defaultSchedule, formatScheduledRun, scheduleFromCron, type ScheduledAction } from '#lib/scheduled.js';
+	import { cronFromSchedule, defaultSchedule, formatScheduledRun, scheduleFromCron, scheduledApi, scheduledVersionModel, type ScheduledAction, type ScheduledBody } from '#lib/scheduled.js';
 	import { timezoneOptions } from '#lib/timezones.js';
 
-	let { action = null, models, defaultTimezone, onsaved, oncancel } = $props<{
+	let { action = null, models, dots, presetDotId = null, defaultTimezone, principalId = null, versions = [], canWrite = false, onsaved, oncancel }: {
 		action?: ScheduledAction | null;
 		models: ChatModelOption[];
-		defaultTimezone: string;
+		dots: Dot[];
+		presetDotId?: string | null;
+		defaultTimezone: string | null;
+		principalId?: string | null;
+		versions?: AgentVersion[];
+		canWrite?: boolean;
 		onsaved: () => void | Promise<void>;
 		oncancel?: () => void;
-	}>();
+	} = $props();
 	const initial = untrack(() => action);
+	const initialDotId = untrack(() => initial?.dot_id ?? presetDotId);
+	let dotId = $state(initialDotId ?? '');
 	let name = $state(initial?.name ?? '');
 	let model = $state(untrack(() => initial?.model ?? models[0]?.id ?? ''));
 	let prompt = $state(initial?.prompt ?? '');
-	let timezone = $state(untrack(() => initial?.timezone ?? defaultTimezone));
+	let timezone = $state(untrack(() => initial?.timezone ?? defaultTimezone ?? ''));
+	let agentVersion = $state<number | null>(initial?.agent_version ?? null);
+	const organization = $derived(!!principalId);
+	const authoredModel = $derived(scheduledVersionModel(versions, agentVersion));
 	let toolsEnabled = $state(initial?.tools_enabled ?? true);
 	let reuseConversation = $state(initial?.reuse_conversation ?? false);
 	let reuseRounds = $state(initial?.reuse_rounds ?? 5);
@@ -31,6 +43,8 @@
 	let error = $state<string | null>(null);
 	let busy = $state(false);
 	let previewVersion = 0;
+	let disposed = false;
+	onDestroy(() => { disposed = true; });
 
 	const modes = ['hourly', 'daily', 'weekly', 'monthly', 'advanced'] as const;
 	const weekdays = [
@@ -55,6 +69,7 @@
 	}
 
 	async function loadPreview() {
+		if (disposed) return;
 		const cron = cronFromSchedule(schedule);
 		if (!cron || !timezone.trim()) {
 			preview = null;
@@ -62,13 +77,13 @@
 		}
 		const version = ++previewVersion;
 		try {
-			const result = await adminPost<{ summary: string; upcoming: string[] }>('/api/v0/scheduled/preview', { cron, timezone });
-			if (version === previewVersion) {
+			const result = await scheduledApi.preview(cron, timezone);
+			if (!disposed && version === previewVersion) {
 				preview = result;
 				error = null;
 			}
 		} catch (caught) {
-			if (version === previewVersion) {
+			if (!disposed && version === previewVersion) {
 				preview = null;
 				error = String(caught);
 			}
@@ -76,29 +91,32 @@
 	}
 
 	async function save() {
+		if (disposed || busy) return;
 		const cron = cronFromSchedule(schedule);
 		if (!cron) {
 			error = t(schedule.mode === 'weekly' ? 'scheduled-err-pick-weekday' : 'scheduled-err-enter-cron');
 			return;
 		}
+		if (!canWrite) return;
+		if (organization && !versions.some((version) => version.version === agentVersion)) { error = t('scheduled-organization-version-required'); return; }
 		busy = true;
 		error = null;
-		const body = {
-			name, prompt, model, cron, timezone, tools_enabled: toolsEnabled,
-			reuse_conversation: reuseConversation, reuse_rounds: reuseRounds,
-			...linkedSessionField(reuseConversation, initialLinked, linkedSession)
+		const body: ScheduledBody = {
+			name, prompt, cron, timezone, tools_enabled: toolsEnabled, reuse_rounds: reuseRounds,
+			...(principalId ? { principal_id: principalId, agent_version: agentVersion!, reuse_conversation: false } : { model, dot_id: dotId || null, reuse_conversation: reuseConversation, ...linkedSessionField(reuseConversation, initialLinked, linkedSession) })
 		};
 		try {
-			if (action) await adminPut(`/api/v0/scheduled/${action.id}`, body);
-			else await adminPost('/api/v0/scheduled', body);
+			if (action) await scheduledApi.update(action.id, { ...body, expected_configuration_generation: action.configuration_generation });
+			else await scheduledApi.create(body);
+			if (disposed) return;
 			// Both paths leave for /scheduled, so there is no form left to
 			// clear — the create form used to live above the list and had to
 			// reset itself in place.
 			await onsaved();
 		} catch (caught) {
-			error = String(caught);
+			if (!disposed) error = String(caught);
 		} finally {
-			busy = false;
+			if (!disposed) busy = false;
 		}
 	}
 
@@ -112,6 +130,18 @@
 			<div class="label"><span class="label-text">{t('scheduled-name-label')}</span></div>
 			<input class="input min-w-0 w-full" bind:value={name} maxlength="128" required aria-label={t('scheduled-name-label')} placeholder={t('scheduled-name-placeholder')} />
 		</label>
+		{#if organization}
+			{#each dots as dot}<a class="link link-hover" href={`/agents/${encodeURIComponent(dot.id)}`}>{dot.display || dot.name}</a>{/each}
+			<label class="fieldset"><span class="fieldset-legend">{t('scheduled-organization-version')}</span>
+				<select class="select w-full" bind:value={agentVersion} disabled={!canWrite || busy} required>
+					<option value={null} disabled>{t('scheduled-organization-version-required')}</option>
+					{#if agentVersion !== null && !versions.some((version) => version.version === agentVersion)}<option value={agentVersion} disabled>{t('agents-test-source-published', { version: agentVersion })}</option>{/if}
+					{#each versions as version}<option value={version.version}>{t('agents-test-source-published', { version: version.version })}</option>{/each}
+				</select>
+			</label>
+			<p class="inline-flex gap-1 text-sm"><span class="text-base-content/70">{t('scheduled-model-label')}:</span><span>{authoredModel ?? t('scheduled-organization-model-missing')}</span></p>
+			<p class="text-sm text-base-content/70">{t('scheduled-organization-fresh')}</p>
+		{:else}
 		<label class="flex min-w-0 w-full flex-col gap-1">
 			<div class="label"><span class="label-text">{t('scheduled-model-label')}</span></div>
 			{#if models.length}
@@ -120,8 +150,10 @@
 				<input class="input min-w-0 w-full" bind:value={model} required aria-label={t('scheduled-model-label')} placeholder={t('scheduled-model-placeholder')} />
 			{/if}
 		</label>
+		<DotRunPicker {dots} initialId={initial?.dot_id ?? null} bind:value={dotId} onchange={() => (linkedSession = '')} />
 		{#if selectedModel && !selectedModel.gdpr}<div class="alert alert-error"><span>{t('scheduled-gdpr-warning')}</span></div>{/if}
 		{#if selectedModel && !selectedModel.nda}<div class="alert alert-error"><span>{t('scheduled-nda-warning')}</span></div>{/if}
+		{/if}
 		<label class="flex min-w-0 w-full flex-col gap-1">
 			<div class="label"><span class="label-text">{t('scheduled-prompt-label')}</span></div>
 			<textarea class="textarea min-h-28 min-w-0 max-w-full w-full" bind:value={prompt} maxlength="8000" required aria-label={t('scheduled-prompt-label')} placeholder={t('scheduled-prompt-placeholder')}></textarea>
@@ -182,15 +214,17 @@
 		</div>
 
 		<label class="label cursor-pointer justify-start gap-3 whitespace-normal"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={toolsEnabled} /><span>{t('scheduled-tools-toggle-label')}</span></label>
+		{#if !organization}
 		<div class="flex flex-wrap items-center gap-3">
 			<label class="label cursor-pointer justify-start gap-3 whitespace-normal"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={reuseConversation} /><span>{t('scheduled-reuse-toggle-label')}</span></label>
 			{#if reuseConversation}<label class="flex items-center gap-2 text-sm"><span class="opacity-70">{t('scheduled-reuse-rounds-prefix')}</span><input class="input input-sm w-20" type="number" min="1" max="50" bind:value={reuseRounds} aria-label={t('scheduled-reuse-rounds-aria')} /><span class="opacity-70">{t('scheduled-reuse-rounds-suffix')}</span></label>{/if}
 		</div>
-		{#if reuseConversation}<LinkedChatPicker bind:value={linkedSession} />{/if}
+		{#if reuseConversation}<LinkedChatPicker bind:value={linkedSession} dotId={dotId || null} />{/if}
+		{/if}
 
 		<div class="card-actions justify-end">
 			{#if oncancel}<button class="btn" type="button" onclick={oncancel}>{t('admin-cancel')}</button>{/if}
-			<button class="btn btn-primary" type="submit" disabled={busy || !name.trim() || !prompt.trim() || !model.trim() || !cronFromSchedule(schedule)}>{action ? t('scheduled-save-submit') : t('scheduled-create-submit')}</button>
+			<button class="btn btn-primary" type="submit" disabled={!canWrite || busy || !name.trim() || !prompt.trim() || !timezone.trim() || (organization ? !versions.some((version) => version.version === agentVersion) : !model.trim()) || !cronFromSchedule(schedule)}>{action ? t('scheduled-save-submit') : t('scheduled-create-submit')}</button>
 		</div>
 	</div>
 </form>

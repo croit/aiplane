@@ -41,6 +41,44 @@ use aiplane_core::server::config::SandboxConfig;
 use aiplane_features::server::chat_attachments::{self, AttachmentRef};
 use aiplane_features::server::file_refs;
 
+pub(crate) async fn personal_workspace_scope(
+    ctx: &ToolContext,
+    purpose: shared::sandbox::WorkspacePurpose,
+) -> Result<Option<shared::sandbox::DotWorkspaceScope>, ToolError> {
+    if ctx.personal_dot.is_none() && ctx.personal_execution.is_none() {
+        return Ok(None);
+    }
+    let unavailable = || {
+        ToolError::Failed(
+            "The Dot workspace execution identity is unavailable. Start a new authorized Dot turn."
+                .into(),
+        )
+    };
+    let execution = ctx.personal_execution.as_ref().ok_or_else(unavailable)?;
+    let binding = execution.binding();
+    if ctx.person("run_in_sandbox")? != binding.identity.owner_user_id
+        || ctx.personal_dot.as_ref() != Some(&binding.identity)
+        || ctx.session_id.as_deref() != Some(binding.session_id.as_str())
+        || ctx.assistant_turn_id.as_deref() != Some(binding.assistant_turn_id.as_str())
+    {
+        return Err(unavailable());
+    }
+    crate::agents::router::local::validate_execution(execution).await?;
+    chat::get_turn(&ctx.db, &binding.session_id, &binding.assistant_turn_id)
+        .await
+        .map_err(|error| ToolError::Failed(error.to_string()))?
+        .filter(|turn| turn.status == chat::TurnStatus::InProgress)
+        .ok_or_else(unavailable)?;
+    Ok(Some(shared::sandbox::DotWorkspaceScope {
+        workspace: shared::sandbox::DotWorkspace {
+            owner_user_id: binding.identity.owner_user_id.clone(),
+            dot_id: binding.identity.dot_id.clone(),
+        },
+        turn_id: binding.assistant_turn_id.clone(),
+        purpose,
+    }))
+}
+
 /// Model-facing description of the `run_in_sandbox` tool. Extracted to a
 /// module const so `RunInSandbox::schema` reads as structure (the JSON
 /// argument schema) rather than being dominated by this ~70-line prose block
@@ -169,6 +207,7 @@ pub struct SandboxClient {
     /// What the runner said about egress on the last probe. Three-state, and
     /// the distinction matters: see [`SandboxClient::egress_available`].
     egress: std::sync::atomic::AtomicU8,
+    workspace: std::sync::atomic::AtomicBool,
 }
 
 /// Encoding for [`SandboxClient::egress`]. An atomic rather than a lock: it is
@@ -192,16 +231,14 @@ impl SandboxClient {
             runtime,
             http,
             egress: std::sync::atomic::AtomicU8::new(EGRESS_UNKNOWN),
+            workspace: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
     /// Ask the runner what it can do, and remember the answer.
     ///
-    /// Called once at boot. Not refreshed: egress is a deployment property
-    /// (a podman network + a proxy), so it changes when an operator edits a
-    /// unit file and restarts things — at which point the gateway restarts
-    /// too. A periodic re-probe would buy a capability set that changes under
-    /// a running conversation, which is worse than a stale one.
+    /// Scoped runs refresh the proof because an unverified runner could
+    /// otherwise ignore the workspace field and execute with scratch storage.
     ///
     /// Never fatal. An unreachable runner leaves the state `UNKNOWN`, which
     /// [`Self::egress_available`] reads optimistically — see there for why.
@@ -209,12 +246,14 @@ impl SandboxClient {
         use std::sync::atomic::Ordering;
         let url = format!("{}/healthz", self.cfg.runner_url.trim_end_matches('/'));
         let health = match self.http.get(&url).send().await {
-            Ok(resp) => capped_read::read_capped_json::<shared::sandbox::RunnerHealth>(
-                resp,
-                capped_read::API_ANSWER_BYTES,
+            Ok(resp) if resp.status().is_success() => capped_read::read_capped_json::<
+                shared::sandbox::RunnerHealth,
+            >(
+                resp, capped_read::API_ANSWER_BYTES
             )
             .await
             .ok(),
+            Ok(_) => None,
             Err(e) => {
                 tracing::warn!(error = %e,
                     "sandbox runner health probe failed; assuming egress is available \
@@ -222,6 +261,12 @@ impl SandboxClient {
                 None
             }
         };
+        self.workspace.store(
+            health
+                .as_ref()
+                .is_some_and(|health| health.status == "ok" && health.workspace == Some(true)),
+            Ordering::Release,
+        );
         match health.and_then(|h| h.egress) {
             Some(true) => {
                 self.egress.store(EGRESS_YES, Ordering::Relaxed);
@@ -266,6 +311,15 @@ impl SandboxClient {
 
     /// POST one job to the runner and decode the result.
     async fn call_runner(&self, req: &RunRequest) -> Result<RunResponse, ToolError> {
+        if req.workspace.is_some() {
+            self.probe_capabilities().await;
+            if !self.workspace.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(ToolError::Failed(
+                    "Persistent Dot storage is unavailable. Configure and verify the sandbox runner's persistent storage."
+                        .into(),
+                ));
+            }
+        }
         let url = format!("{}/run", self.cfg.runner_url.trim_end_matches('/'));
         let resp = self
             .http
@@ -538,6 +592,16 @@ pub struct SandboxLease {
     state: tokio::sync::Mutex<LeaseState>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserHandoverBinding {
+    pub workspace: shared::sandbox::DotWorkspace,
+    pub turn_id: String,
+    pub container_id: String,
+    pub handover_id: String,
+    pub generation: u64,
+}
+
 /// One [`SandboxLease::run_tracked`] result: the runner's response plus
 /// whether the turn's `/work` survived into this call.
 pub struct LeaseRun {
@@ -563,6 +627,58 @@ impl SandboxLease {
         Arc::new(Self {
             client,
             state: tokio::sync::Mutex::new(LeaseState::default()),
+        })
+    }
+
+    pub async fn begin_browser_handover(
+        &self,
+        scope: &shared::sandbox::DotWorkspaceScope,
+        handover_id: String,
+    ) -> Result<BrowserHandoverBinding, ToolError> {
+        if scope.purpose != shared::sandbox::WorkspacePurpose::Browser
+            || handover_id.is_empty()
+            || handover_id.len() > 128
+        {
+            return Err(ToolError::Failed(
+                "the browser handover binding is invalid".into(),
+            ));
+        }
+        let mut state = self.state.lock().await;
+        let container_id = state.container_id.clone().ok_or_else(|| {
+            ToolError::Failed("open the Dot browser before asking for human control".into())
+        })?;
+        let response = self
+            .client
+            .browser_control(shared::sandbox::BrowserControlRequest {
+                workspace: scope.workspace.clone(),
+                turn_id: scope.turn_id.clone(),
+                container_id: container_id.clone(),
+                handover_id: handover_id.clone(),
+                controller_id: None,
+                operation: shared::sandbox::BrowserControlOperation::Begin,
+            })
+            .await
+            .map_err(|error| ToolError::Failed(error.to_string()))?;
+        state.container_id = None;
+        Ok(BrowserHandoverBinding {
+            workspace: scope.workspace.clone(),
+            turn_id: scope.turn_id.clone(),
+            container_id,
+            handover_id,
+            generation: response.generation,
+        })
+    }
+
+    pub fn restore_browser_handover(
+        client: Arc<SandboxClient>,
+        binding: &BrowserHandoverBinding,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            client,
+            state: tokio::sync::Mutex::new(LeaseState {
+                container_id: Some(binding.container_id.clone()),
+                network: true,
+            }),
         })
     }
 
@@ -805,7 +921,7 @@ fn urlencode_segment(s: &str) -> String {
 /// Bounds the (base64-inflated) request payload and the runner's disk;
 /// files past the budget are skipped with a note rather than silently
 /// dropping the model's inputs.
-const STAGE_TOTAL_MAX_BYTES: usize = 50 * 1024 * 1024;
+use shared::sandbox::STAGE_TOTAL_MAX_BYTES;
 
 /// The largest runner answer read. Artifacts ride in it as base64 and are
 /// bounded only by the sandbox's `/work` size (512 MiB by default), so this
@@ -1225,6 +1341,12 @@ pub use run::*;
 pub use video::*;
 
 #[cfg(test)]
+mod workspace_tests;
+
+mod workspace_client;
+pub use workspace_client::{WorkspaceClientError, WorkspaceReply};
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use aiplane_core::server::db;
@@ -1234,6 +1356,31 @@ mod tests {
     async fn ctx() -> ToolContext {
         let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
         ToolContext::for_test(pool)
+    }
+
+    #[tokio::test]
+    async fn workspace_scope_preserves_ordinary_calls_and_rejects_unproved_dot_identity() {
+        let mut context = ctx().await;
+        assert!(
+            personal_workspace_scope(&context, shared::sandbox::WorkspacePurpose::Workspace)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        context.personal_dot = Some(crate::agent_run::PersonalDotIdentity {
+            owner_user_id: "u".into(),
+            dot_id: "00000000-0000-4000-8000-000000000001".into(),
+        });
+        assert!(
+            personal_workspace_scope(&context, shared::sandbox::WorkspacePurpose::Workspace)
+                .await
+                .is_err()
+        );
+        assert!(
+            personal_workspace_scope(&context, shared::sandbox::WorkspacePurpose::Browser)
+                .await
+                .is_err()
+        );
     }
 
     fn client(runner_url: String) -> Arc<SandboxClient> {
@@ -1246,6 +1393,61 @@ mod tests {
             }),
             crate::server::state::RuntimeSettings::new_handle("https://gw.example"),
         )
+    }
+
+    #[tokio::test]
+    async fn workspace_runner_requires_explicit_verified_health_before_sending_scope() {
+        for (status, health, allowed) in [
+            (200, json!({"status":"ok","egress":true}), false),
+            (
+                200,
+                json!({"status":"ok","egress":true,"workspace":false}),
+                false,
+            ),
+            (
+                500,
+                json!({"status":"ok","egress":true,"workspace":true}),
+                false,
+            ),
+            (
+                200,
+                json!({"status":"failed","egress":true,"workspace":true}),
+                false,
+            ),
+            (
+                200,
+                json!({"status":"ok","egress":true,"workspace":true}),
+                true,
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/healthz"))
+                .respond_with(ResponseTemplate::new(status).set_body_json(health))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/run"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "exit_code":0,"stdout":"completed","stderr":"","duration_ms":1,"timed_out":false
+                })))
+                .mount(&server)
+                .await;
+            let mut request = lease_req();
+            request.workspace = Some(shared::sandbox::DotWorkspaceScope {
+                workspace: shared::sandbox::DotWorkspace {
+                    owner_user_id: "u".into(),
+                    dot_id: "12345678-1234-4234-8234-123456789abc".into(),
+                },
+                turn_id: "persisted-turn".into(),
+                purpose: shared::sandbox::WorkspacePurpose::Workspace,
+            });
+            let result = client(server.uri()).run_job(request).await;
+            assert_eq!(result.is_ok(), allowed);
+            if allowed {
+                assert_eq!(result.unwrap().stdout, "completed");
+            }
+        }
     }
 
     /// An S3 config whose credential env vars are unset, so `open_bucket`
@@ -2306,6 +2508,7 @@ mod tests {
             network: false,
             container_id: None,
             keep_alive: false,
+            workspace: None,
         }
     }
 

@@ -258,11 +258,11 @@ comes out flat. Turn it off per voice track.
 Anything the spec cannot express is still one `run_in_sandbox` call away — the
 gold image has ffmpeg and ~900 fonts.
 
-### Files across runs: attachments ARE the persistent store
+### Files across runs
 
-Within a turn `/work` persists in the leased container (above); *across* turns
-(and for the one-shot tools) runs are stateless, but files still persist
-through the conversation's attachment store, not a shared volume:
+Ordinary chat and API sandbox calls use `/work` for scratch data. Within a
+turn it persists in the leased container; across turns, files remain available
+through the conversation's attachment store:
 
 - every artifact a run produces is uploaded as a chat attachment (S3) and
   stays addressable for the rest of the conversation;
@@ -281,14 +281,94 @@ through the conversation's attachment store, not a shared volume:
   (newest match wins), so the model doesn't have to track turn ids;
 - `list_attachments` gives the model an inventory of everything available.
 
-A runner-side persistent directory (a per-conversation `shared/` mount) was
-considered and rejected: it would break the single-use container model (state
-bleeding across runs is exactly what the destroy-after-use design rules out),
-it doesn't survive a multi-runner deployment without a shared filesystem, and
-the staging path above already delivers the same UX (persist + reuse) through
-storage that's session-scoped and already access-controlled. If run-to-run
-state ever becomes a real need, stage-in/stage-out through S3 under a
-`shared/` prefix — not a mount — is the compatible shape.
+### Personal Dot workspaces
+
+A personal Dot also has a durable `/workspace` directory when the runner
+verifies persistent storage. Its files survive new turns, scheduled actions,
+webhook runs, container expiry and runner restarts. `/work` remains scratch;
+only its explicit artifacts become chat attachments. Files in `/workspace`
+are not automatically attached or sent to the model. Copy a result into
+`/work` when it should be delivered as an attachment.
+
+The gateway derives the owner, Dot and persisted assistant turn from admitted
+execution state. Tool arguments cannot choose the workspace identity. Scoped
+containers bypass the ordinary warm pool and reuse only their exact
+owner/Dot/turn/purpose/network lease. A different turn cannot use the same
+Dot's workspace until all occupying containers have been confirmed absent.
+The code and browser containers for one turn may share its files. Both mount
+files only: browser login cookies and profiles are not persisted, and there
+is no browser-profile reset operation in this increment.
+
+The owner's workspace API permits inspection and file management while a Dot
+is inactive. It requires the actual personal owner, without an additional
+Dot-management permission. Organization workspaces are not offered. Listing
+and bounded downloads remain available while the computer is occupied;
+upload, folder creation and deletion return a conflict until it is idle.
+Idle leased and retiring containers still occupy the workspace. Failed teardown retains that
+occupancy, and HTTP cancellation does not abandon a creation reservation.
+See the [workspace specification](dots-workspace.md) and
+[API reference](reference/api.md) for the routes.
+
+#### Storage readiness
+
+Use the existing `SANDBOX_WORK_ROOT` on the runner host, with one runner per
+storage root. Persistent files require a local rootful Linux deployment with
+runtime `runsc`, a root-owned private root and control directories, and the
+workload running as UID/GID 1001. The installer in
+`deploy/sandbox/setup-sandbox.sh` supports host-backed storage through
+`--work-image SIZE`. Preserve the mounted filesystem across runner upgrades.
+
+Before serving, the runner verifies local rootful Podman with
+`--remote=false`. It creates two fresh gVisor containers: the first writes a
+private directory and file as UID/GID 1001, and the second reads the retained
+data. Descriptor-based host reads verify the same bytes, ownership and modes;
+the guest kernel must differ from the host kernel. Both containers must be
+confirmed absent and the private probe storage safely removed before
+`/healthz` reports `workspace: true`.
+
+A missing storage root, unsupported host, rootless or remote configuration,
+failed probe or unconfirmed teardown leaves `workspace: false`. Ordinary
+scratch execution remains available under its existing configuration; a
+scoped request refuses rather than running with scratch storage. Starting a
+runner or configuring a volume alone does not establish persistent readiness.
+
+The root contains `dots/<Dot UUID>/files` and private owner metadata. Only the
+files directory is mounted into workloads. Protected traversal refuses path
+escapes, symlinks and special files. File upload and download are bounded at
+50 MiB; paths are limited to 4096 UTF-8 bytes and 32 components. Listings
+return up to 100 entries per page and inspect at most 10,000 entries in one
+directory. Split larger directories before listing them.
+
+`SANDBOX_WORK_SIZE` limits tmpfs scratch, not persistent Dot storage.
+Host-backed scratch and Dot files use the backing filesystem's capacity.
+Monitor its free space and choose an appropriately sized dedicated volume.
+
+#### Deletion, recovery and backups
+
+Deleting a personal Dot or its user records the original owner and Dot IDs in
+an independent durable cleanup queue in the same database transaction. Those
+records survive ownership cascades. The gateway cleanup worker polls every
+30 seconds and processes at most 16 claims serially per pass. Each claim has
+a 120-second lease; a runner request is bounded at 30 seconds. Failure retains
+the record with exponential retries from 30 seconds to one hour.
+
+Runner retirement first seals the identity under `.dot-retired/<Dot UUID>`,
+preventing delayed requests from reopening its workspace. It then confirms
+all scoped containers absent, quarantines the payload and removes it through
+protected traversal. Cleanup advances by at most 1000 nodes per request and
+refuses nesting beyond depth 128. Busy execution, failed teardown or unsafe
+storage retains the queue entry for retry. The permanent tombstone retains
+only the original owner/Dot identity after payload removal; keep it to prevent
+recreation by stale requests.
+
+Back up the gateway database and the runner's persistent root, including
+`dots/` and `.dot-retired/`. Quiesce gateway writes and runner executions for a
+consistent restore point across the database and filesystem. Follow the
+existing [database backup procedure](operations/backup-recovery.md); a gateway
+volume snapshot alone does not include the external runner's files. Restore
+retirement tombstones together with the matching database and files. Do not
+clear tombstones or cleanup records to bypass a failed retirement; restore
+runtime access and inspect the runner's controlled cleanup errors.
 
 ### Per-turn container reuse
 
@@ -325,14 +405,23 @@ Mechanics:
   exit. A `SandboxLease` `Drop` guard is the backstop for any exit that skips
   the explicit release. Backing all of that, the runner runs a
   **TTL sweeper** that reaps any lease left idle longer than `lease_ttl_secs`
-  (skipping one with an in-flight exec), so an instance that crashed mid-turn
-  can't leak a container indefinitely.
-- **Capacity is bounded** by `max_leases`, independent of `max_concurrent`
-  (which counts in-flight execs). A leased container pins RAM the whole time
-  it's idle — its `/work` + `/tmp` are RAM-backed tmpfs charged to `--memory` —
-  so when the cap is reached a keep-alive request still runs its job
+  (skipping one with an in-flight exec). Failed teardown remains tracked in a
+  retiring state and the same sweeper retries it. A retiring container cannot
+  run another job, and an already busy container refuses overlapping execution.
+  `DELETE /container/{id}` returns 204 only after the backend confirms absence,
+  409 during an active execution and 503 when absence cannot be confirmed.
+  Podman/Docker references are validated before tracking or passing them to the
+  runtime. A failed removal is accepted only when successful enumeration proves
+  the exact generated name or full ID absent; unavailable enumeration is an
+  error. Scratch removal follows confirmed absence. Startup refuses to serve
+  if labelled stale containers cannot be enumerated and removed.
+- **Ordinary lease capacity is bounded** by `max_leases`, independent of `max_concurrent`
+  (which counts in-flight execs). A leased container consumes resources while
+  idle; without `SANDBOX_WORK_ROOT`, its `/work` and `/tmp` are tmpfs charged
+  to `--memory`. When the cap is reached an ordinary keep-alive request runs its job
   single-use and simply returns no `container_id` (the turn gracefully loses
-  persistence rather than the runner over-committing host RAM).
+  persistence rather than the runner over-committing host RAM). Scoped Dot
+  requests refuse at capacity; they do not fall back to ordinary scratch.
 - **A lost lease is reported, not swallowed.** Graceful degradation still means
   `/work` empties out mid-turn, so when a call lands in a different container
   than the previous one did, the tool result carries a `workdir_reset` note (and
@@ -351,18 +440,12 @@ environment variables it is deployed with:
 | `SANDBOX_EGRESS_NETWORK` | Podman network attached to a container when a call asks for egress. Empty (the default) = **no network for any call**, whatever the caller requests. |
 | `SANDBOX_EGRESS_PROXY` | Value injected as `HTTP_PROXY`/`HTTPS_PROXY`. Empty = nothing to proxy through. |
 
-Nothing in the *gateway's* config can see those, which used to cause a
-concrete defect: `capture_webpage` was registered whenever `[sandbox]` was
-enabled, so on a runner without egress it was offered to the model and **every
-call failed** with `network egress requested but not configured on this
-runner`. The model cannot tell "misconfigured" from "wrong tool for the job",
-so it would keep trying.
-
-So AIplane asks. At startup it reads `GET /healthz` on the runner, which
-answers with its capabilities:
+The gateway probes `GET /healthz` at startup. It refreshes that probe before
+every scoped execution and workspace management request, including cleanup.
+The runner reports independently verified storage and its egress capability:
 
 ```json
-{"status": "ok", "egress": true}
+{"status": "ok", "egress": true, "workspace": true}
 ```
 
 and that answer decides what the model is offered:
@@ -379,15 +462,17 @@ and that answer decides what the model is offered:
   runner breaks every sandbox tool anyway, so hiding a subset would turn a
   transient outage into an apparent permanent capability loss.
 
-The probe runs **once**, at gateway startup. Egress changes when an operator
-edits a unit file and restarts things — at which point the gateway restarts too
-— and a capability set that shifted underneath a running conversation would be
-worse than a slightly stale one. So: **after enabling egress, restart AIplane**, or the web tools stay hidden.
+Storage requires a successful health response with `status: "ok"` and
+explicit `workspace: true` on every scoped request. Missing or false storage
+capability refuses persistence. Egress retains its three-state behavior:
+missing information is distinct from an explicit denial. Restart AIplane
+after changing deployment settings so its registered tool inventory is rebuilt.
 
 Verify the runner's side:
 
 ```sh
-curl -s http://10.88.0.1:9000/healthz     # → {"status":"ok","egress":true}
+curl -s http://10.88.0.1:9000/healthz
+# Inspect the actual egress and workspace fields; configuration is not proof.
 ```
 
 and the gateway's side, in its startup log:
@@ -755,7 +840,8 @@ role and toggleable per user/token on the `/tools` page — default-off.
 `SANDBOX_BIND`, `SANDBOX_IMAGE`, `SANDBOX_RUNTIME` (`runsc`/`crun`/`local-unsafe`),
 `SANDBOX_POOL_SIZE`, `SANDBOX_MAX_CONCURRENT`, `SANDBOX_TIMEOUT_SECS`,
 `SANDBOX_MAX_TIMEOUT_SECS`, `SANDBOX_MEMORY`, `SANDBOX_CPUS`, `SANDBOX_PIDS_LIMIT`,
-`SANDBOX_WORK_SIZE`, `SANDBOX_TMP_SIZE`, `SANDBOX_MAX_OUTPUT_BYTES`,
+`SANDBOX_WORK_SIZE`, `SANDBOX_TMP_SIZE`, `SANDBOX_WORK_ROOT`,
+`SANDBOX_MAX_OUTPUT_BYTES`,
 `SANDBOX_EGRESS_NETWORK`, `SANDBOX_EGRESS_PROXY` (these two also decide which
 tools AIplane offers at all — see
 [Egress and the capability probe](#egress-and-the-capability-probe)),
@@ -764,8 +850,9 @@ tools AIplane offers at all — see
 `SANDBOX_MAX_LEASES` (default 6 — cap on simultaneously kept-alive containers;
 see [Per-turn container reuse](#per-turn-container-reuse)).
 
-> **Sizing for large-file work (video, big datasets):** `/work` and `/tmp` are
-> RAM-backed tmpfs charged to the `--memory` cgroup, so
+> **Sizing for large-file work (video, big datasets):** without
+> `SANDBOX_WORK_ROOT`, `/work` and `/tmp` are RAM-backed tmpfs charged to the
+> `--memory` cgroup, so
 > `SANDBOX_WORK_SIZE + SANDBOX_TMP_SIZE` + the job's own RAM must stay under
 > `SANDBOX_MEMORY`. Warm/in-flight containers *and* idle per-turn leases both
 > count, so budget `SANDBOX_MEMORY × (SANDBOX_MAX_CONCURRENT + SANDBOX_MAX_LEASES)`

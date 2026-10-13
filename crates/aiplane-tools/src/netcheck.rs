@@ -77,6 +77,10 @@ const DNS_RECORD_TYPES: &[&str] = &[
 ];
 
 impl Tool for DnsLookup {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "dns_lookup"
     }
@@ -181,6 +185,10 @@ struct WhoisArgs {
 }
 
 impl Tool for WhoisLookup {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "whois_lookup"
     }
@@ -354,6 +362,10 @@ struct TlsArgs {
 }
 
 impl Tool for TlsCert {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "tls_cert"
     }

@@ -21,6 +21,7 @@ chat-error-turn-interrupted = 内部错误中断了此次回复。请重试。
 chat-list-empty = 还没有对话。在上方开始一个吧。
 chat-turn-stopped = 已停止
 chat-waiting-approval = 仅在您批准后才会运行 { $tool }。
+chat-waiting-browser-handover = 现在由您控制 Dot 的浏览器。
 chat-waiting-value = 等待只有您可以输入的值。它只会发送给工具，绝不会发送给模型。
 chat-waiting-answer = 等待人员的回答。
 chat-composer-paused = 请先批准或拒绝上方的请求；下一条消息需等待该决定。
@@ -51,3 +52,5 @@ chat-attempt-reason-loop = 模型开始重复自身
 chat-attempt-reason-repeated_call = 反复进行同一个工具调用
 chat-attempt-retry = 以思考强度 { $effort } 重新尝试（第 { $n } 次）
 chat-loop-exhausted = 模型在全部 { $attempts } 次尝试中都在重复，即使降低了思考强度。请换一种方式提问，或将问题拆分成更小的部分。
+
+chat-error-run-cancelled = 运行已取消。

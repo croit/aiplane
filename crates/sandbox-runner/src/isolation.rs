@@ -65,6 +65,7 @@ pub async fn check(pool: &Arc<Pool>, cfg: &Config) {
         network: false,
         container_id: None,
         keep_alive: false,
+        workspace: None,
     };
     let guest = match pool.run(&req).await {
         Ok(resp) => resp.stdout,

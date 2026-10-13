@@ -160,6 +160,9 @@ pub(crate) async fn fixture_with_pools(
     gateway_groups::set_can_manage_agents(&pool, "managers", true)
         .await
         .unwrap();
+    gateway_groups::set_can_manage_dots(&pool, "managers", true)
+        .await
+        .unwrap();
     gateway_groups::set_mappings_for_group(&pool, "managers", &["managers".into()])
         .await
         .unwrap();
@@ -221,6 +224,10 @@ impl Fx {
 
     pub(crate) async fn post(&self, cookie: &str, uri: &str, body: Value) -> (StatusCode, Value) {
         self.send(Some(cookie), Method::POST, uri, Some(body)).await
+    }
+
+    pub(crate) async fn put(&self, cookie: &str, uri: &str, body: Value) -> (StatusCode, Value) {
+        self.send(Some(cookie), Method::PUT, uri, Some(body)).await
     }
 
     pub(crate) async fn put_draft(
@@ -348,7 +355,7 @@ async fn a_non_manager_can_neither_create_list_read_nor_share() {
         body["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("can_manage_agents"),
+            .contains("enable agent management"),
         "{body}"
     );
     assert_eq!(
@@ -670,7 +677,7 @@ async fn share_subjects_are_searched_not_listed() {
     assert_eq!(status, StatusCode::OK, "{short}");
     assert_eq!(
         short,
-        json!({ "users": [], "groups": [] }),
+        json!({ "users": [], "groups": [], "truncated": false }),
         "one character finds nothing"
     );
 
@@ -751,13 +758,8 @@ async fn a_manager_who_loses_the_permission_loses_the_agent_despite_the_share() 
         .await
         .unwrap();
     fx.state.reload_rbac().await;
-    let user = users::find_by_id(&fx.state.db, "alice")
-        .await
-        .unwrap()
-        .unwrap();
-    let groups = fx.state.rbac.role_ids_for(&user.roles);
     assert_eq!(
-        aiplane_runtime::agents::access::effective_access(&fx.state, &id, "alice", &groups)
+        aiplane_runtime::agents::access::effective_access(&fx.state, &id, "alice")
             .await
             .unwrap(),
         None
@@ -772,7 +774,7 @@ async fn a_manager_who_loses_the_permission_loses_the_agent_despite_the_share() 
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(
-        aiplane_runtime::agents::access::effective_access(&fx.state, &id, "alice", &groups)
+        aiplane_runtime::agents::access::effective_access(&fx.state, &id, "alice")
             .await
             .unwrap(),
         Some(aiplane_agents::db::agents::Access::Respond),
@@ -1139,5 +1141,403 @@ async fn the_inbox_says_whether_its_viewer_answers_for_a_published_agent() {
     assert_eq!(
         answers(&fx.get(&fx.plain, "/api/v0/agents/inbox").await.1),
         Some(true)
+    );
+}
+
+#[tokio::test]
+async fn personal_dots_are_owner_scoped_and_deactivation_frees_capacity() {
+    let fx = fixture().await;
+    let (status, body) = fx.get(&fx.plain, "/api/v0/dots").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    let mut ids = Vec::new();
+    for n in 0..4 {
+        let (status, body) = fx
+            .post(
+                &fx.alice,
+                "/api/v0/dots",
+                json!({ "name": format!("alice-dot-{n}") }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        ids.push(body["dot"]["id"].as_str().unwrap().to_string());
+    }
+    let (status, body) = fx.get(&fx.alice, "/api/v0/dots").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["active_limit"], 4);
+    assert_eq!(body["dots"].as_array().unwrap().len(), 4);
+    assert!(
+        fx.get(&fx.bob, "/api/v0/dots").await.1["dots"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let (status, body) = fx
+        .post(&fx.bob, "/api/v0/dots", json!({ "name": "alice-dot-0" }))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "same name is scoped to its owner: {body}"
+    );
+
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/dots",
+            json!({ "name": "alice-dot-over-limit" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "active_dot_limit");
+
+    let (status, body) = fx
+        .send(
+            Some(&fx.alice),
+            Method::PUT,
+            &format!("/api/v0/dots/{}/active", ids[0]),
+            Some(json!({ "active": false })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/dots",
+            json!({ "name": "alice-dot-replacement" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    let (status, body) = fx
+        .send(
+            Some(&fx.bob),
+            Method::PUT,
+            &format!("/api/v0/dots/{}/active", ids[0]),
+            Some(json!({ "active": false })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn personal_dot_public_name_is_not_limited_to_a_principal_slug() {
+    let fx = fixture().await;
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/dots",
+            json!({ "name": "Harald", "description": "My personal assistant" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["dot"]["name"], "Harald");
+    assert_eq!(body["dot"]["display"], "Harald");
+    assert_eq!(body["dot"]["description"], "My personal assistant");
+
+    let dot_id = body["dot"]["id"].as_str().unwrap();
+    let (status, agent_list) = fx.get(&fx.alice, "/api/v0/agents").await;
+    assert_eq!(status, StatusCode::OK, "{agent_list}");
+    assert!(
+        !agent_list["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|agent| agent["id"] == dot_id)
+    );
+    let (status, body) = fx.get(&fx.alice, &format!("/api/v0/agents/{dot_id}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn personal_dot_memories_are_persistent_and_owner_scoped() {
+    let fx = fixture().await;
+    let (status, body) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "memory-dot" }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let dot_id = body["dot"]["id"].as_str().unwrap();
+    let memory_path = format!("/api/v0/dots/{dot_id}/memories");
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            &memory_path,
+            json!({ "scope":"dot", "kind": "fact", "content": "Avoid this recurring pitfall" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["kind"], "fact");
+    assert_eq!(body["scope"], "dot");
+    let memory_id = body["id"].as_str().unwrap();
+
+    let (status, body) = fx.get(&fx.bob, &memory_path).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = fx.get(&fx.alice, &memory_path).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["scopes"],
+        json!([{ "scope": "dot", "name": "memory-dot", "writable": true }])
+    );
+    assert_eq!(body["memories"][0]["scope"], "dot");
+    assert_eq!(
+        body["memories"][0]["content"],
+        "Avoid this recurring pitfall"
+    );
+
+    let memory_item_path = format!("{memory_path}/{memory_id}");
+    let (status, body) = fx
+        .send(
+            Some(&fx.bob),
+            Method::PUT,
+            &memory_item_path,
+            Some(json!({ "scope":"dot", "kind": "fact", "content": "unauthorized" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = fx
+        .send(
+            Some(&fx.alice),
+            Method::PUT,
+            &memory_item_path,
+            Some(json!({ "scope":"dot", "kind": "project", "content": "Keep this lesson" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["content"], "Keep this lesson");
+    let (status, body) = fx
+        .send(
+            Some(&fx.alice),
+            Method::DELETE,
+            &format!("{memory_item_path}?scope=dot"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+}
+
+#[tokio::test]
+async fn personal_dot_chat_sessions_are_private_and_remain_dot_owned_when_deactivated() {
+    let fx = fixture().await;
+    let (status, body) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "chat-dot" }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let dot_id = body["dot"]["id"].as_str().unwrap();
+
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/dots/{dot_id}/sessions"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let session_id = body["session"]["id"].as_str().unwrap();
+    assert_eq!(body["session"]["user_id"], "alice");
+    assert_eq!(body["session"]["title"], "chat-dot");
+    let (status, activity) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{dot_id}/activity"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{activity}");
+    let session_event = activity["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["kind"] == "personal_dot_session_started")
+        .expect("starting a Dot chat is recorded in Dot activity");
+    assert_eq!(session_event["principal_id"], dot_id);
+    assert_eq!(session_event["actor_id"], "alice");
+    assert_eq!(session_event["session_id"], session_id);
+    assert_eq!(
+        aiplane_agents::db::dot_sessions::for_session(&fx.state.db, "alice", session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .dot_id,
+        dot_id
+    );
+    assert_eq!(
+        fx.get(&fx.bob, &format!("/api/v0/chat/sessions/{session_id}"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+
+    fx.send(
+        Some(&fx.alice),
+        Method::PUT,
+        &format!("/api/v0/dots/{dot_id}/active"),
+        Some(json!({ "active": false })),
+    )
+    .await;
+    assert!(
+        !aiplane_agents::db::dot_sessions::for_session(&fx.state.db, "alice", session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .active
+    );
+    assert_eq!(
+        fx.post(
+            &fx.alice,
+            &format!("/api/v0/dots/{dot_id}/sessions"),
+            json!({})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/chat/sessions/{session_id}/messages"),
+            json!({ "model": "model-a", "message": "Continue" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+}
+
+#[tokio::test]
+async fn personal_dot_activity_is_available_only_to_its_owner() {
+    let fx = fixture().await;
+    let (status, created) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "activity-dot" }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let dot_id = created["dot"]["id"].as_str().unwrap();
+    let path = format!("/api/v0/dots/{dot_id}/activity");
+
+    let (status, denied) = fx.get(&fx.bob, &path).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{denied}");
+    let (status, body) = fx.get(&fx.alice, &path).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let events = body["events"].as_array().unwrap();
+    assert!(!events.is_empty());
+    assert!(events.iter().any(|event| event["kind"] == "agent_created"));
+}
+
+#[tokio::test]
+async fn dot_management_permission_is_independent_and_live_group_updates_control_lifecycle() {
+    let fx = fixture().await;
+    let (status, me) = fx.get(&fx.plain, "/api/v0/me").await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(me["can_manage_dots"], false);
+    assert_eq!(me["can_manage_agents"], false);
+    let (status, denied) = fx
+        .post(&fx.plain, "/api/v0/dots", json!({"name":"Denied"}))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+    assert_eq!(
+        denied["error"]["message"],
+        session_core::i18n::t(
+            session_core::i18n::Lang::En,
+            "dot-error-permission-required"
+        )
+    );
+    for allowed in [true, false] {
+        let (status,saved)=fx.send(Some(&fx.root),Method::PUT,"/api/v0/admin/groups",Some(json!({"name":"everyone","is_default":true,"can_manage_dots":allowed,"tools":[TIME]}))).await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+        let (_, me) = fx.get(&fx.plain, "/api/v0/me").await;
+        assert_eq!(me["can_manage_dots"], allowed);
+        assert_eq!(me["can_manage_agents"], false);
+        let expected = if allowed {
+            StatusCode::OK
+        } else {
+            StatusCode::FORBIDDEN
+        };
+        assert_eq!(fx.get(&fx.plain, "/api/v0/dots").await.0, expected);
+        assert_eq!(
+            fx.post(
+                &fx.plain,
+                "/api/v0/agents",
+                json!({"name":"forbidden-principal"})
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+        if allowed {
+            let (status, created) = fx
+                .post(&fx.plain, "/api/v0/dots", json!({"name":"Personal only"}))
+                .await;
+            assert_eq!(status, StatusCode::CREATED, "{created}");
+            let id = created["dot"]["id"].as_str().unwrap();
+            let url = format!("/api/v0/dots/{id}/active");
+            assert_eq!(
+                fx.send(
+                    Some(&fx.plain),
+                    Method::PUT,
+                    &url,
+                    Some(json!({"active":false}))
+                )
+                .await
+                .0,
+                StatusCode::OK
+            );
+            assert_eq!(
+                fx.send(
+                    Some(&fx.plain),
+                    Method::PUT,
+                    &url,
+                    Some(json!({"active":true}))
+                )
+                .await
+                .0,
+                StatusCode::OK
+            );
+            assert_eq!(
+                fx.send(
+                    Some(&fx.bob),
+                    Method::PUT,
+                    &url,
+                    Some(json!({"active":false}))
+                )
+                .await
+                .0,
+                StatusCode::NOT_FOUND
+            );
+        } else {
+            let owned = aiplane_agents::db::agents::list_personal_dots(&fx.state.db, "plain")
+                .await
+                .unwrap();
+            let id = &owned[0].agent.principal.id;
+            assert!(owned[0].active);
+            let access = format!("/api/v0/dots/{id}/access");
+            assert_eq!(fx.get(&fx.plain, &access).await.0, StatusCode::OK);
+            assert_eq!(
+                fx.send(
+                    Some(&fx.plain),
+                    Method::PUT,
+                    &format!("/api/v0/dots/{id}/active"),
+                    Some(json!({"active":false}))
+                )
+                .await
+                .0,
+                StatusCode::FORBIDDEN
+            );
+        }
+    }
+    let (_, me) = fx.get(&fx.root, "/api/v0/me").await;
+    assert_eq!(me["can_manage_dots"], true);
+    assert_eq!(me["can_manage_agents"], true);
+}
+
+#[tokio::test]
+async fn agent_management_does_not_imply_dot_management() {
+    let fx = fixture().await;
+    let (status,_)=fx.send(Some(&fx.root),Method::PUT,"/api/v0/admin/groups",Some(json!({"name":"managers","oidc_values":["managers"],"can_manage_agents":true,"can_manage_dots":false}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, me) = fx.get(&fx.alice, "/api/v0/me").await;
+    assert_eq!(me["can_manage_agents"], true);
+    assert_eq!(me["can_manage_dots"], false);
+    assert_eq!(
+        fx.post(
+            &fx.alice,
+            "/api/v0/dots",
+            json!({"name":"No implicit permission"})
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
     );
 }

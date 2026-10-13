@@ -8,9 +8,9 @@
 	import type { ExtensionStatus } from '#lib/browser-bridge.js';
 	import { createVoiceController } from '#lib/voice.svelte.js';
 	import { refreshSidebar, sidebar } from '#lib/sidebar.svelte.js';
-	import { parseUserContent, replaceUserText } from '#lib/chat-protocol.js';
+	import { conversationAccess, parseUserContent, replaceUserText } from '#lib/chat-protocol.js';
 	import { endScrollTop, nextFollow } from '#lib/chat-autoscroll.js';
-	import type { ChatSession } from '#lib/chat-protocol.js';
+	import type { ChatSession, ConversationPermissions } from '#lib/chat-protocol.js';
 	import { canonicalAttachments } from '#lib/conversation-assets.js';
 	import { renderPromptMarkdown, sanitizeSvgPreview } from '#lib/markdown.js';
 	import { DragDepth, carriesFiles, droppedOnlyDirectories, filesFrom } from '#lib/drop-files.js';
@@ -23,6 +23,7 @@
 	import ToolCalls from '#lib/components/chat/ToolCalls.svelte';
 	import ConversationCanvas from '#lib/components/chat/ConversationCanvas.svelte';
 	import MessageAttachments from '#lib/components/chat/MessageAttachments.svelte';
+	import BrowserHandoverPanel from '#lib/components/chat/BrowserHandoverPanel.svelte';
 	import SuspensionCard from '#lib/components/SuspensionCard.svelte';
 	import { pausedTurn, waitingFrom, waitingLead, type Answer, type SuspensionView } from '#lib/suspension.js';
 	import { feedback, openDialog as openFeedback } from '#lib/feedback.svelte.js';
@@ -97,7 +98,7 @@
 	function offerWhenInFront() {
 		// Not on somebody else's shared conversation: offering to drive this
 		// browser is a question for the person whose chat it is.
-		if (!isOwner) return;
+		if (!canWrite) return;
 		if (document.visibilityState !== 'visible') return;
 		if (!extension.present || extension.armed) return;
 		void requestActivation({ auto: true });
@@ -187,10 +188,11 @@
 	// The composer's feedback button captures the page before the dialog opens,
 	// so it needs the same busy state the floating button has elsewhere.
 	const feedbackCapturing = $derived(feedback.shotStatus === 'capturing' && !feedback.open);
-	/** A conversation shared *with* you renders read-only, plus a Fork action. */
-	const isOwner = $derived(
-		session === null || me.value === null || session.user_id === me.value.id
-	);
+	let permissions = $state<ConversationPermissions | null>(null);
+	const access = $derived(conversationAccess(session, me.value?.id ?? null, permissions));
+	const isOwner = $derived(access.isOwner);
+	const canWrite = $derived(access.canWrite);
+	const canFork = $derived(access.canFork);
 	/**
 	 * User turns the server has accepted but not started answering.
 	 *
@@ -215,8 +217,9 @@
 		const request = ++metaRequest;
 		try {
 			const snap = await api.getChatSession(id);
-			if (request !== metaRequest) return;
+			if (request !== metaRequest) return false;
 			session = snap.session;
+			permissions = { can_write: snap.can_write, can_delete: snap.can_delete, delegation: snap.delegation };
 			compactedUpToSeq = snap.compacted_up_to_seq;
 			effort = snap.effort;
 			assets = snap.assets;
@@ -230,9 +233,12 @@
 			// the first offered model, or the composer would open with an empty
 			// picker and refuse to send.
 			if (!model) model = lastModel ?? models[0]?.id ?? '';
+			return true;
 		} catch (err) {
-			if (request !== metaRequest) return;
+			if (request !== metaRequest) return false;
+			permissions = null;
 			notice = String(err);
+			return false;
 		}
 	}
 
@@ -281,6 +287,7 @@
 	}
 
 	async function saveSpeechVoice() {
+		if (!canWrite) return;
 		try {
 			await api.setSpeechVoice(speechVoice);
 		} catch (caught) {
@@ -289,6 +296,7 @@
 	}
 
 	async function setCapability(capability: ChatCapability, state: ChatCapability['state']) {
+		if (!canWrite) return;
 		try {
 			await api.setChatCapability(id, capability.kind, capability.key, state);
 			tools = tools.map((tool) =>
@@ -300,6 +308,7 @@
 	}
 
 	async function saveEffort() {
+		if (!canWrite) return;
 		try {
 			await api.setChatEffort(id, effort);
 		} catch {
@@ -313,7 +322,8 @@
 		void loadModels();
 		void loadTools();
 		void loadVoiceConfig();
-		const c = createConversationController(id);
+		let mounted = true;
+		const c = createConversationController(id, api.chatEventsUrl(id), () => canWrite);
 		c.onSidebarChanged = () => {
 			void refreshConversationMeta();
 			// A turn that wrote to the canvas bumps the sidebar too, so this is
@@ -327,9 +337,8 @@
 			void refreshConversationMeta();
 			void loadDocuments();
 		};
-		c.attach();
 		controller = c;
-		void loadMeta();
+		void loadMeta().then((loaded) => { if (mounted && loaded) c.attach(); });
 		void loadDocuments();
 		// Follow the end as the transcript grows. A ResizeObserver rather than
 		// a reaction to the turn state: the height also changes for things no
@@ -353,6 +362,7 @@
 		document.addEventListener('visibilitychange', offerWhenInFront);
 		const unwatch = onExtensionState((status) => (extension = status));
 		return () => {
+			mounted = false;
 			observer.disconnect();
 			window.clearInterval(timer);
 			document.removeEventListener('visibilitychange', offerWhenInFront);
@@ -366,6 +376,7 @@
 
 	/** Voice turns submit exactly like typed ones — plus the flag. */
 	async function submitVoiceTurn(text: string) {
+		if (!canWrite) return;
 		if (!model.trim() || sending || paused) return;
 		sending = true;
 		try {
@@ -381,6 +392,7 @@
 	}
 
 	function openVoice() {
+		if (!canWrite) return;
 		voice = createVoiceController(submitVoiceTurn);
 		voiceOpen.open = true;
 	}
@@ -435,6 +447,7 @@
 	 * "sent" was a fact only this browser knew.
 	 */
 	async function send(): Promise<boolean> {
+		if (!canWrite) return false;
 		const text = draft.trim();
 		if ((!text && files.length === 0) || !model.trim() || sending || paused) return false;
 		sending = true;
@@ -485,6 +498,7 @@
 	 * for the two to disagree.
 	 */
 	async function cancelWaitingTurn(turnId: string) {
+		if (!canWrite) return;
 		try {
 			await api.deleteChatTurn(id, turnId);
 			controller?.attach();
@@ -517,6 +531,7 @@
 	}
 
 	function addFiles(list: FileList | File[] | null) {
+		if (!canWrite) return;
 		if (!list) return;
 		files = [...files, ...Array.from(list)];
 	}
@@ -543,13 +558,14 @@
 	/// Files dropped while the edit dialog is open belong to *that* message,
 	/// not to a new one.
 	function stageFiles(dropped: File[]) {
+		if (!canWrite) return;
 		if (dropped.length === 0) return;
 		if (editingTurn) editFiles = [...editFiles, ...dropped];
 		else addFiles(dropped);
 	}
 
 	function onDragEnter(e: DragEvent) {
-		if (!isOwner || !carriesFiles(e.dataTransfer)) return;
+		if (!canWrite || !carriesFiles(e.dataTransfer)) return;
 		e.preventDefault();
 		dragging = dragDepth.enter();
 	}
@@ -560,7 +576,7 @@
 	}
 
 	function onDrop(e: DragEvent) {
-		if (!isOwner || !carriesFiles(e.dataTransfer)) return;
+		if (!canWrite || !carriesFiles(e.dataTransfer)) return;
 		// Without this the browser opens the file in the tab, taking the
 		// conversation with it.
 		e.preventDefault();
@@ -573,7 +589,7 @@
 	}
 
 	function onDragOver(e: DragEvent) {
-		if (!isOwner || !carriesFiles(e.dataTransfer)) return;
+		if (!canWrite || !carriesFiles(e.dataTransfer)) return;
 		// A drop only happens where dragover was prevented — on every frame,
 		// not once on enter.
 		e.preventDefault();
@@ -597,6 +613,7 @@
 	}
 
 	async function retry(turnId: string) {
+		if (!canWrite) return;
 		if (!model.trim() || streaming) return;
 		if (!window.confirm(t('render-retry-confirm'))) return;
 		try {
@@ -610,12 +627,14 @@
 	}
 
 	function editTurn(turnId: string, current: string) {
+		if (!canWrite) return;
 		editingTurn = { id: turnId, content: current };
 		editDraft = parseUserContent(current).text;
 		editFiles = [];
 	}
 
 	async function saveTurnEdit() {
+		if (!canWrite) return;
 		if (!editingTurn || !editDraft.trim() || !model.trim() || streaming) return;
 		if (!window.confirm(t('render-edit-confirm'))) return;
 		try {
@@ -638,6 +657,7 @@
 	}
 
 	async function toggleShare() {
+		if (!canWrite) return;
 		const shared = !(session?.shared ?? false);
 		try {
 			await postJson(`/api/v0/chat/sessions/${id}/share`, { shared });
@@ -653,6 +673,7 @@
 
 	/** Answer what a paused turn waits for; the rest of the turn streams in on a fresh attach. */
 	async function answerSuspension(turnId: string, waiting: SuspensionView, answer: Answer): Promise<boolean> {
+		if (!canWrite) return false;
 		answering = turnId;
 		delete answerErrors[turnId];
 		try {
@@ -670,6 +691,7 @@
 	}
 
 	async function stop() {
+		if (!canWrite) return;
 		try {
 			await api.cancelChatTurn(id);
 		} catch (err) {
@@ -679,6 +701,7 @@
 
 	/** Take a conversation shared with you into your own chats, then open it. */
 	async function fork() {
+		if (!canFork) return;
 		try {
 			const forked = await api.forkChatSession(id);
 			await refreshSidebar();
@@ -689,6 +712,7 @@
 	}
 
 	async function removeAttachment(turnId: string, filename: string) {
+		if (!canWrite) return;
 		if (!window.confirm(t('render-attachment-remove-confirm', { filename }))) return;
 		try {
 			await api.removeChatAttachment(id, turnId, filename);
@@ -726,6 +750,7 @@
 	/// `Confirmation::Approved` unreachable, so a user clicking "Yes, schedule
 	/// it" got a turn reporting that they had declined.
 	async function answerPrompt(choice: string | null, freeText?: string, choices = choice === null ? [] : [choice]) {
+		if (!canWrite) return;
 		if (!prompt || prompt.action !== 'show') return;
 		const payload =
 			choice === null && freeText === undefined
@@ -747,6 +772,7 @@
 	}
 
 	async function sharePromptLocation() {
+		if (!canWrite) return;
 		if (!prompt || prompt.action !== 'show' || prompt.kind !== 'location') return;
 		try {
 			const position = await new Promise<GeolocationPosition>((resolve, reject) =>
@@ -764,6 +790,7 @@
 	}
 
 	async function declinePromptLocation() {
+		if (!canWrite) return;
 		if (!prompt || prompt.action !== 'show' || prompt.kind !== 'location') return;
 		try {
 			await postJson(`/api/v0/me/location/feedback/${encodeURIComponent(prompt.turn_id)}`, { denied: true });
@@ -821,6 +848,8 @@
 		{id}
 		title={session?.title}
 		{isOwner}
+		{canWrite}
+		{canFork}
 		shared={session?.shared ?? false}
 		{models}
 		bind:model
@@ -836,7 +865,14 @@
 		onspeechvoice={saveSpeechVoice}
 	/>
 
-	{#if !isOwner}
+	{#if permissions?.delegation}
+		<div class="alert alert-info mb-4"><div class="space-y-2">
+			<p>{t('chat-render-delegated-readonly-banner')}</p>
+			{#if permissions.delegation.root_session_id}
+				<a class="link" href="/chat/{permissions.delegation.root_session_id}">{t('chat-render-delegated-root-link')}</a>
+			{:else}<p>{t('chat-render-delegated-root-unavailable')}</p>{/if}
+		</div></div>
+	{:else if session && me.value && !isOwner}
 		<div class="alert alert-info mb-4"><span>{t('chat-render-shared-readonly-banner')}</span></div>
 	{/if}
 	{#if selectedModel && !selectedModel.gdpr}
@@ -867,7 +903,7 @@
 			<div class="chat chat-end">
 				<div class="chat-bubble border border-primary/20 bg-primary/10 text-base-content backdrop-blur-sm">
 					{#if shownAttachments.length > 0}
-						<MessageAttachments attachments={shownAttachments} removable={isOwner && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />
+						<MessageAttachments attachments={shownAttachments} removable={canWrite && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />
 					{/if}
 					{#if parsed.text}
 						<div class="whitespace-pre-wrap">{parsed.text}</div>
@@ -880,13 +916,13 @@
 					<div class="chat-footer flex items-center gap-2 opacity-70" data-waiting-turn>
 						<span class="loading loading-dots loading-xs"></span>
 						<span>{t('chat-turn-waiting')}</span>
-						{#if isOwner}
+						{#if canWrite}
 							<button class="btn btn-ghost btn-xs" onclick={() => void cancelWaitingTurn(entry.turn.id)}>
 								{t('chat-turn-waiting-cancel')}
 							</button>
 						{/if}
 					</div>
-				{:else if isOwner && !streaming}
+				{:else if canWrite && !streaming}
 					<div class="chat-footer opacity-60">
 						<button class="btn btn-ghost btn-xs" onclick={() => editTurn(entry.turn.id, entry.turn.user_content ?? '')}>
 							{t('render-edit-button')}
@@ -935,7 +971,7 @@
 							</details>
 						{/if}
 
-						<ToolCalls calls={entry.tool_calls} />
+						<ToolCalls calls={entry.tool_calls} turnStatus={entry.turn.status} />
 
 						{#each entry.steers as note (note.id)}
 							<!-- What the user said while this answer was being
@@ -966,16 +1002,25 @@
 
 						{#if entry.turn.status === 'suspended' && entry.suspension}
 							{@const waiting = entry.suspension}
-							<SuspensionCard
-								waiting={waitingFrom({ ...waiting, options: isOwner ? waiting.options : [] }, entry.tool_calls)}
-								lead={t(waitingLead(waiting.kind, 'chat'), { tool: waiting.tool ?? '' })}
-								busy={answering === entry.turn.id}
-								error={answerErrors[entry.turn.id] ?? null}
-								onanswer={(answer) => answerSuspension(entry.turn.id, waiting, answer)}
-							/>
+			{#if waiting.kind === 'browser_handover' && canWrite}
+				<BrowserHandoverPanel
+					sessionId={id}
+					turnId={entry.turn.id}
+					{waiting}
+					oncomplete={() => { followEnd(); controller?.attach(); }}
+				/>
+			{:else}
+				<SuspensionCard
+					waiting={waitingFrom({ ...waiting, options: canWrite ? waiting.options : [] }, entry.tool_calls)}
+					lead={t(waitingLead(waiting.kind, 'chat'), { tool: waiting.tool ?? '' })}
+					busy={answering === entry.turn.id}
+					error={answerErrors[entry.turn.id] ?? null}
+					onanswer={(answer) => answerSuspension(entry.turn.id, waiting, answer)}
+				/>
+			{/if}
 						{/if}
 
-						{#if shownAttachments.length > 0}<MessageAttachments attachments={shownAttachments} removable={isOwner && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />{/if}
+						{#if shownAttachments.length > 0}<MessageAttachments attachments={shownAttachments} removable={canWrite && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />{/if}
 						<Markdown
 							content={parsed.text}
 							class="prose prose-sm chat-prose min-w-0 max-w-none"
@@ -991,7 +1036,7 @@
 							<div class="text-xs text-base-content/50">{t('chat-turn-stopped')}</div>
 						{/if}
 						<div class="text-xs opacity-50">{time(entry.turn.created_at)}</div>
-						{#if isOwner && entry.turn.status !== 'in_progress' && entry.turn.status !== 'suspended' && !streaming}
+						{#if canWrite && entry.turn.status !== 'in_progress' && entry.turn.status !== 'suspended' && !streaming}
 							<div class="flex gap-1 mt-1">
 								<button class="btn btn-ghost btn-xs" onclick={() => retry(entry.turn.id)}>
 									{t('render-retry-button')}
@@ -1008,11 +1053,11 @@
 		</div>
 		</main>
 		{#if canvasOpen && hasCanvas}
-			<ConversationCanvas {id} {documents} {assets} {isOwner} onclose={() => (canvasOpen = false)} onerror={(message) => (notice = message)} />
+			<ConversationCanvas {id} {documents} {assets} isOwner={canWrite} onclose={() => (canvasOpen = false)} onerror={(message) => (notice = message)} />
 		{/if}
 	</div>
 
-{#if isOwner}
+{#if canWrite}
 {#if prompt?.action === 'show'}
 	{@const shown = prompt}
 	<!-- A pending question takes the composer's place rather than sitting at the

@@ -22,6 +22,11 @@ Revoke removes the selected grant. Grants are not versioned with the spec: chang
 
 Open advanced **Edit** and expand the selected tool's settings. Set `permission` to `always_allow` or `always_ask`, or leave it unset for default policy. Configure `approval_timeout` through the supported spec editor when a task needs an explicit deadline.
 
+Personal and organization Dots ask for approval by default unless the tool
+explicitly declares itself read-only. Missing safety annotations therefore
+require approval. Explicit tool and action rules still apply; a connector's
+own requirement to ask for approval remains a minimum requirement.
+
 `always_ask` creates a persisted turn suspension before the permitted tool call executes. The waiting card includes the tool and its arguments/preview where available. Approving one call is separate from changing the agent's permanent grant. [Inbox handling](run-observe.md#answer-waiting-work) explains who can respond and what expiry means.
 
 Bound tool arguments come from configured constants/state rather than letting the model freely replace those inputs. Use a trusted state slot for an input that depends on verified identity. Test both accepted and refused paths before publishing.
@@ -42,6 +47,68 @@ Bound tool arguments come from configured constants/state rather than letting th
 Read and write recipients must be agent managers because those rights expose the spec and visitor conversations. Respond access can be granted to users/groups without builder permission. The server rejects a change that would remove the final write share. An error states the missing requirement; changing the browser form cannot bypass it.
 
 Share access is sensitive because it can expose visitor conversation content. Choose the narrow access needed for a responder, and review the existing table after each change.
+
+## Organization Dot configuration
+
+An organization Dot uses these same grants, shares and spec controls. Its
+persisted organization owner supplies an additional membership boundary:
+current membership and an appropriate share are both required. Read and write
+still require agent-management permission. Respond access supplies authorized
+Inbox standing without exposing the configuration. Administration retains
+configuration recovery rights.
+
+Organization share searches suggest eligible current members and the
+organization's bound groups. Results are capped at eight users and eight
+groups. A broad search can reach its bounded candidate budget before finding
+a member; when `truncated` is true, narrow the query. Absence from that partial
+result does not establish absence of an eligible account.
+
+The resource inventory describes configuration grants. Organization connector
+tool inventory and direct Connector grants require an explicitly selected,
+connected own-principal OAuth credential with current binding, credential and
+catalogue generations, plus the writer's existing resource grant ceiling. Current member writers can manage the
+Dot’s own OAuth credential through the connection panel in **Setup**.
+Authorization and explicit selection are separate actions. The server repeats
+current membership, Write access and catalogue checks before OAuth exchange
+and credential save. Read/respond shares and nonmember administrator recovery
+provide no credential access. An authorized writer can erase retained local
+credentials even when the connector is unavailable. Active organization Dots
+with enabled principals and explicit grants can run saved drafts or published versions in private
+Test chat for current member writers. Every response and new message checks
+current access; a resumed run retains its original source, version, authored snapshot and grant ceiling.
+Private published decisions appear only in the current member-writer Inbox.
+Automated and external organization callers remain unavailable. Configuration
+never gives the Dot an employee's account. See [organization
+Dots](../dots-organizations.md) for the implementation boundary.
+
+## Organization Dot memory
+
+Open the Dot's **Setup → Dot memory** panel. Current members with Read access
+can inspect the Dot's own notes and knowledge shared with all Dots of that
+organization. Respond-only access and administrator recovery without membership
+do not expose notes. Write access enables adding, editing and deleting the
+Dot's notes. Editing shared organization knowledge additionally requires
+current gateway administration rights and membership.
+
+Each section uses the actual Dot or organization name. The shared section
+explains that other Dots in that organization can read it. Select Add under
+Preferences, Project context or Facts; edit existing text and select Save, or
+confirm Delete. New or edited notes must fit within 2,000 UTF-8 bytes. Some
+characters use multiple bytes; shorten a refused note and save again.
+
+![Harald's editable private lesson and read-only organization knowledge in the existing memory panel.](../img/guide/organization-dot-memory.png)
+
+*The current member writer can edit Harald's own lesson. Shared organization
+knowledge remains read-only for this writer. This example uses synthetic demo
+data.*
+
+Use Reload memory to obtain current notes and rights. If access has been
+removed, reloading clears previously displayed notes. Runtime `recall` and
+standing context include the Dot's own notes and shared organization knowledge
+only when its actual Recall grant and tool selection permit them. Memory
+mutations retain the Dot's tool rules and approvals and affect only its own
+notes. Employee preferences and personal memory are excluded. Notes persist
+across private draft conversations; automatic memory curation remains planned.
 
 ## Troubleshooting
 

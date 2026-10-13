@@ -11,7 +11,7 @@
 | **Integration (mocked upstreams)** | `crates/aiplane/tests/` | `wiremock` instances stand in for LLM backends; verify routing, the tool-call loop, streaming, the full OIDC login flow (`oidc_integration.rs`), and the JSON-SSE chat event wire (`chat_json_api.rs`). |
 | **Contract generation** | `crates/aiplane/tests/it/` | `openapi_drift.rs` proves the backend serves the generated OpenAPI document with every operation declared (credential, success and error responses), checks representative schemas against the handlers' wire types (the groups save body, the chat submit, the event stream, the public and embed credentials), and that no detached spec exists; the unit tests in `rama_server/openapi` fail on a route without a declaration, a declaration without a route, a dangling schema reference, or an operation marked schema-unsupported that `docs/ui.md` does not list; `readme_routes.rs` checks the README's HTTP-endpoints table against `router.rs`; `spa_routes.rs` checks that the SPA catch-all is registered and reaches the SPA handler. |
 | **SPA unit** | `web/src/lib/*.test.ts` | `mise run test-web` — Node's own `node --test` with type stripping, no jsdom. Covers the framework-free halves of the SPA (the chat event fold in `chat-protocol.ts`, markdown rendering), which is what pins client-side wire behaviour. |
-| **E2E (browser ↔ gateway)** | `e2e/*.test.mjs` | Playwright + Node's `node:test` against a running `mise run dev`. The SPA suites are `e2e/spa*.test.mjs` (shell boot, signed-out OIDC redirect, signed-in identity, tokens, admin, a full chat turn streaming in); the rest cover the anonymous sign-in funnel and plain-`fetch` checks of the public HTTP surface. See `e2e/README.md`. |
+| **E2E (browser ↔ gateway)** | `e2e/*.test.mjs` | Playwright + Node's `node:test` against a running gateway. The SPA suites are `e2e/spa*.test.mjs` (shell boot, signed-out OIDC redirect, signed-in identity, tokens, admin, personal Dot lifecycle/access rules/chat/memory/activity, and a full chat turn streaming in); the rest cover the anonymous sign-in funnel and plain-`fetch` checks of the public HTTP surface. See `e2e/README.md`. |
 
 ## Architecture tests
 
@@ -29,6 +29,18 @@ by tests that read the workspace's own source, in
 | `workspace_crates_depend_only_down_the_stack` | every dependency between workspace members (normal, build, dev; from `cargo metadata --no-deps --offline`) points to a lower level of the AGENTS.md stack; siblings (`-features`/`-agents`, `-tools`/`-api`) never depend on each other; `sandbox-runner` uses only `shared` and nothing uses it; every member has a level | the stack in AGENTS.md → "The gateway crate stack" |
 | `activity_events_are_written_only_through_the_activity_log` | no SQL `INSERT`/`REPLACE`/`UPDATE`/`DELETE` of `agent_audit` outside its module (`aiplane-agents/src/db/agent_audit.rs`), and no call of its writers (`agent_audit::append`, `append_now`) outside the named agent DB modules that record a change on its own transaction (each listed) and the runtime's door | the activity log's one writer, `agent_audit::append`, reached through `aiplane_runtime::agents::audit` (bounded, fails a run closed) or on a management change's own transaction |
 | `model_tool_calls_dispatch_only_through_the_grant` | only the chat/agent driver, its resume path and the `/v1` loops hand calls to the runner, and each still builds its gate (`GrantedToolSource`, `DiscoverableToolSource`); `Tool::run` is called directly only by the runner and the listed wrappers/verifiers | `GrantedToolSource` (+ `RunToolSource` over it), `DiscoverableToolSource` |
+| `personal_dot_calls_revalidate_access_before_execution` | the personal Dot source wraps an initially granted tool, and dispatch keeps the live owner, active Dot, selected tools and approval checks | `LivePersonalDotTool`, `GrantedToolSource`, `Permissions`, `AskFirst` |
+| `organization_dot_calls_revalidate_private_authority_before_execution` | only the run source wraps organization tools; it retains the exact private turn, initial grant ceiling, current principal and selected-account checks before inner dispatch | `RunToolSource`, `OrganizationTool`, `validate_organization_turn_in`, `validate_organization_identity_in` |
+| `organization_memory_uses_shared_private_authority_for_tools_and_model_context` | scoped memory tools and the agent system message share current exact private-turn, initial/current grant and selected-tool admission | `organization_scope_in`, `organization_standing_context`, `validate_organization_turn_in`, `WriteTx` |
+| `organization_published_admission_uses_the_existing_private_opener_and_source_proof` | only the authenticated private opener directly loads organization published profiles; source proof retains actual version rows and exact captured identities | `RunProfile::load_private`, `OrganizationSpecSource`, `validate_source_in`, `agents::version_in` |
+| `organization_schedules_and_private_stop_use_shared_admission` | scheduled loading stays in the existing worker; webhook firing and replay share exact-run admission; private Stop validates original run/session proof before mutation | `RunProfile::load_scheduled`, `RunProfile::load_webhook_in`, `headless::open_principal_session_in`, `background::validate_turn_in`, `WriteTx` |
+| `action_rules_classify_and_validate_before_using_shared_approvals` | permission and approval gates validate classified actions before resolving or accepting approval | `Tool::classify_actions`, `validate_actions`, `Permissions`, `AskFirst` |
+| `agent_resume_claims_use_one_request_aware_transaction` | a paused agent chain uses one transaction and request-aware connection claims, avoiding independently committed levels | `WriteTx`, `claim_for_resume_in`, `claim_suspension_in` |
+
+The personal architect proposal builder, like the prompt assistant, constructs
+draft JSON before final `AgentSpec` validation. Its narrow exception permits
+those writes; proposal task, tools, defaults and collection bindings are read
+from the typed spec. It does not dispatch tools or execute a spec.
 
 How they work: each production `.rs` file under `crates/` (not `tests/`,
 `tests.rs`, `examples/`, or a `#[cfg(test)]` item) is masked — comments
@@ -153,6 +165,91 @@ The version-controlled pre-push git hook (`.githooks/pre-push`, enabled with `mi
 - **Not part of the CI default** — the browser suite needs a running gateway and Chromium, so it stays a local/opt-in loop.
 - Authenticated flows (`e2e/authed.test.mjs`, the `spa*` signed-in tests) don't need OIDC: they sign in through the debug-only `/__dev/*` seeding endpoints (`rama_server::dev_seed`), compiled in under `cfg(debug_assertions)` and never present in a release build. `/__dev/seed-session` resets the canonical fixture (user `alice@example.com` + her three tokens) and is reserved for the one file that asserts those counts; everything else uses the delete-free `/__dev/session`. Completing setup is also how the suite makes `/readyz` deterministic on a fresh dev database.
 
+## Personal Dot communication coverage
+
+Directed consent tests use actual owner records and named personal Dots in
+SQLite. They cover default denial, both independent choices, reverse-direction
+isolation, exact generations, unchanged/stale saves, inactive revocation,
+foreign owners, self-edge rejection and metadata-only audit. Migration tests
+pin the edge table/index shape. Gateway tests exercise both JSON routes,
+owner isolation and live group permission revocation.
+
+Frontend state/API tests preserve drafts and their original generation across
+unrelated saves, map each direction to its own field, and retain inactive
+choices. Chrome coverage in `spa-dots-communication.test.mjs` uses actual
+created peers and checks row saves, conflicts, reload and mobile layout.
+Consent configuration does not claim personal dispatch, durable child waiting
+or tree-budget coverage; those require their actual runtime implementation.
+
+Connection-level session and turn-pair tests prove rollback and commit as one
+unit and repeat idle admission inside the same write transaction. Existing
+pool-level admission, retry, pending-turn and sequence tests use the same
+writers.
+
+## Tool ordering coverage
+
+Tool-phase tests cover the actual published `forward_request`, registry/grant
+and discovery ceilings, seven forwarding wrappers, synthetic/terminal phases
+and finite sequential execution through the real runner.
+
+## Dot background coverage
+
+Organization background coverage uses the same mechanisms with principal-owned
+private conversations. Migration tests preserve every existing webhook source
+and history field with foreign keys enabled. Router tests cover actual published
+pins, immutable ownership, current member Write, strict configuration generations,
+malformed mutations without storage changes, paused replay and secret rotation
+during body reading. Replay also tests membership revocation during the model
+request before private result delivery. Runtime tests exercise uncommitted
+webhook admission with every other pool connection held, plus current source,
+principal, grant and publication checks on continuation. Chrome verifies both
+automation forms, private history, exact Stop, scope navigation and discarded
+revealed secrets through the real gateway.
+
+The file-backed activity test runs six actual agent conversations concurrently
+and checks terminal status and complete audit chains after awaiting their workers.
+Terminal persistence acquires SQLite's write lock through `BEGIN IMMEDIATE`;
+the test does not poll until a failed finalization appears successful.
+
+The background slice uses real registries, in-memory SQLite and mocked model
+upstreams. `crates/aiplane/tests/it/dots_background.rs` covers owner-bound
+schedule creation, same-Dot private linked conversations, ordinary versus
+Dot-filtered chat listings and retained inactive bindings. It also covers exact
+turn correlation, pending-run deletion conflicts and synchronous webhook
+fire/replay returning HTTP 202 when approval is required. Disabling an
+automation still permits its pending turn to settle.
+
+Runtime tests beside `server/background.rs` cover restoration of scheduled or
+webhook usage source, recorded history limits, original/current tools ceiling,
+owner and binding rejection, waiting/completed/cancelled reconciliation and
+protection of newer summaries from older continuations. Headless and shared
+worker/session-core tests cover atomic idle user/assistant insertion, refusal
+to append to running or suspended conversations, and background registration
+using the chat worker lifecycle. Atomic edit/retry tests verify that concurrent
+background admission cannot rewrite history or leave a partial prompt. Approval
+continuation uses actual suspension rows and a mocked upstream, asserting the
+resulting Dot memory and exact run state. A busy resume leaves the original
+approval unclaimed for retry; abandoned reservations clear their own worker.
+Fixtures that declare scheduled or webhook usage create the matching durable
+run and attach its actual session and turn before execution. A usage-source
+label alone does not establish background execution authority.
+
+`web/src/lib/dot-background.test.ts` and `background-api.test.ts` cover real
+choice availability and query semantics. `e2e/spa-dots-background.test.mjs`
+exercises the existing schedule/webhook forms, preselected Dot links, scoped
+linked conversations, resulting Dot sessions, retained inactive edits and
+mobile layout against the seeded gateway. Its pending webhook case inspects the
+original arguments in Inbox, approves once and verifies exact-run completion,
+Dot-only memory writes and settlement after the automation is disabled. Run it through the existing E2E
+mise task and a real debug gateway; it is an opt-in browser suite.
+
+Before calling the slice complete, verify an approval-required Dot webhook
+reaches waiting, returns HTTP 202 for synchronous fire/rerun, appears in Inbox,
+resumes under unchanged recorded tools/history ceilings, updates its exact run
+and prevents deletion until the turn settles. Disabling the automation must
+still permit settlement; deactivating the Dot must pause continuation. The
+workspace proposal is not included in current runtime coverage.
+
 ## Performance / load tests
 
 Not part of the per-PR loop, and no benchmark suite exists yet. If one is added, the natural target is the per-request middleware overhead and the upstream picker (e.g. a no-op `/v1/chat/completions` against a mocked instant upstream), measured with `criterion`.
@@ -220,4 +317,39 @@ rule or the source file.
 
 Request priority regression tests cover shared capacity retry passes, cancellation before GPU admission, selected UI language for admin errors, and browser-visible save failures. The chat cancellation case holds every backend slot until the cancelled worker has finished, then verifies that no model request was sent.
 
-Priority tests cover group inheritance and reload, token overrides and rotation, strict ordering with FIFO ties, cancellation before and after slot assignment, expired waiters, and independent model availability. Backend tests use wiremock to check SGLang scheduling flags and real gateway dispatch bodies, including ignored client priority and unsupported or disabled forwarding. Administrator routes cover priority writes, validation, access gates and published OpenAPI schemas. Migration 0080 tests preservation of existing groups, tokens and backend data.
+Priority tests cover group inheritance and reload, token overrides and rotation, strict ordering with FIFO ties, cancellation before and after slot assignment, expired waiters, and independent model availability. Backend tests use wiremock to check SGLang scheduling flags and real gateway dispatch bodies, including ignored client priority and unsupported or disabled forwarding. Administrator routes cover priority writes, validation, access gates and published OpenAPI schemas. Migration 0080 tests preservation of existing groups, tokens and backend data. Dot model admission tests revoke grants while a selector waits for capacity, then verify that dispatch is refused. Acquired-backend checks also reject a pool removed from the current grants even when the same model remains available in another pool.
+
+## Shared chat transaction and child guards
+
+Session-core state tests create a session and idle turn pair in one caller-held
+`BEGIN IMMEDIATE`, then prove both rollback and commit against SQLite. Child
+history and attachments stay owner-readable; even a stored shared flag cannot
+expose them to a second user. Owner sharing and independent deletion refuse a
+non-null opaque parent link. The person-owned expiry sweep covers root pauses only, leaving
+child continuation to the verified root chain. Budget snapshot JSON tests cover
+optional aggregate and local limits and unknown usage without changing the
+suspension table. These generic substrate operations contain no agent ownership
+types.
+
+## MCP OAuth state consumption
+
+The existing `user_mcp::take_pending` accessor is tested against migrated
+SQLite with sixteen concurrent consumers. Exactly one receives the complete
+recorded authorization, including PKCE, endpoint and sealed DCR metadata.
+Repeated and unknown states return no record. An expired authorization is
+removed while all consumers receive no record. The callback uses this same
+atomic accessor; these tests do not claim separate Dot credentials.
+
+## Current authority in agent fixtures
+
+Staff settlement and Inbox fixtures persist the actual user, gateway group,
+OIDC mapping and management permission before granting an agent share. A
+constructed viewer or creator Write share does not replace current policy.
+Nonadministrator manager and responder fixtures use their actual stored roles;
+organization membership is also resolved from current group bindings.
+
+Background dispatch fixtures capture the actual source configuration generation
+and published version in their run row. Missing snapshots must fail dispatch;
+fixtures must not bypass this proof. Structural cancellation tests retain the
+original private session/run pin while changing the current source, and prove
+that corrupted original bindings leave the suspension unchanged.

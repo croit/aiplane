@@ -17,6 +17,7 @@ pub fn base_registry(
     rt::tools::ToolRegistry::new()
         .with(rt::tools::echo::Echo)
         .with(rt::tools::time::CurrentTimestamp)
+        .with(aiplane_runtime::agents::router::ForwardRequest::personal())
         .with(aiplane_tools::fetch_url::FetchUrl::new(
             allow_private_networks,
         ))
@@ -143,6 +144,7 @@ mod tests {
         let tools = base_registry(rbac, None, false);
         for id in [
             "browser_control",
+            "forward_request",
             "show_screenshot",
             "dns_lookup",
             "create_document",

@@ -489,7 +489,7 @@ async fn the_test_chat_shows_its_manager_a_pause_they_can_answer() {
         &fx.state,
         &fx.alice,
         &e.agent,
-        json!({ "message": "test me" }),
+        json!({ "source": "draft", "message": "test me" }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{paused}");
@@ -507,7 +507,7 @@ async fn the_test_chat_shows_its_manager_a_pause_they_can_answer() {
         .post(
             &fx.alice,
             &format!("/api/v0/agents/{}/test/messages", e.agent),
-            json!({ "message": "next", "session_id": session }),
+            json!({ "source": "draft", "message": "next", "session_id": session }),
         )
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");

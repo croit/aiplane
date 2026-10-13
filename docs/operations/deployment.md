@@ -67,6 +67,14 @@ choices, not immutable version pins.
   runner needs a host with gVisor (`runsc`) for that configuration. The
   `local-unsafe` mode does not provide that isolation and is a development
   choice, not a production equivalent.
+  The runner refuses startup if it cannot confirm removal of stale labelled
+  containers. Keep access to the configured container runtime available;
+  failed teardown remains tracked and retried before scratch data is removed.
+  Personal Dot persistence additionally requires the verified local rootful
+  Linux host runner with `runsc` and an existing private `SANDBOX_WORK_ROOT`.
+  The sample Compose configuration does not provision that host storage layout.
+  Use the [host runner setup](../sandbox.md#personal-dot-workspaces); a socket
+  mount or volume setting alone does not prove persistent file access.
 
 ```bash
 docker compose -f deploy/compose.example.yml --profile ocr up -d
@@ -196,6 +204,25 @@ guard. Its default denies private networks; changing
 `AIPLANE_ALLOW_PRIVATE_NETWORKS` changes that policy. These guarded requests
 go directly to checked addresses rather than through environment HTTP
 proxies. Operator-configured model backends use the operator HTTP client.
+
+## Persistent Dot workspace storage
+
+The runner checks UID/GID 1001 private writes, host reads, persistence through
+another fresh isolated container and confirmed teardown before reporting
+`workspace: true`. Rootless, remote and `local-unsafe` runners do not qualify
+for this persistent storage deployment. Failed readiness leaves ordinary
+scratch execution available and refuses scoped persistence without fallback.
+The gateway refreshes the health proof for each scoped execution, file
+management and cleanup request.
+
+Use one runner per persistent root. Monitor the backing volume's free space;
+`SANDBOX_WORK_SIZE` is not a persistent storage quota. Include the runner's
+`dots/` and permanent `.dot-retired/` tombstones in backups alongside the
+separate gateway SQLite database. Quiesce gateway writes and runner executions
+for a consistent restore point. Restore the matching database, files and
+tombstones together; the gateway's durable cleanup queue retries retirement
+when runner access returns. The [sandbox guide](../sandbox.md#deletion-recovery-and-backups)
+describes bounded cleanup and retry behavior.
 
 See [environment reference](../reference/environment.md),
 [backup and recovery](backup-recovery.md), and

@@ -29,7 +29,8 @@ use std::sync::Arc;
 
 use aiplane::rama_server::{RamaState, SessionStore, router};
 use aiplane_core::server::config::{
-    ComfyuiConfig, FeedbackConfig, GatewayConfig, RagConfig, SkillsConfig, TypstConfig,
+    ComfyuiConfig, FeedbackConfig, GatewayConfig, RagConfig, SandboxConfig, SkillsConfig,
+    TypstConfig,
 };
 use aiplane_core::server::rbac::RoleConfig;
 use aiplane_core::server::rbac::{Resolver, config::RbacConfig, config::RoleMapping};
@@ -44,6 +45,7 @@ use aiplane_features::server::skills::{SkillStore, UserSkillStore};
 use aiplane_runtime::server::AppState;
 use aiplane_runtime::server::comfyui_tool::ComfyuiHandle;
 use aiplane_tools::{enable_tools, read_skill};
+use anyhow::Context;
 use jiff::{Timestamp, ToSpan};
 use rama::net::address::SocketAddress;
 use wiremock::matchers::{method, path};
@@ -77,6 +79,13 @@ async fn main() -> anyhow::Result<()> {
     //   voice mock: GET /models → `demo-whisper`
     //              POST /audio/transcriptions → JSON
     let chat_mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/run"))
+        .respond_with(ResponseTemplate::new(503).set_body_json(shared::sandbox::RunError {
+            error: "The UI fixture does not execute sandbox containers. Use a configured sandbox runner for execution.".into(),
+        }))
+        .mount(&chat_mock)
+        .await;
     Mock::given(method("GET"))
         .and(path("/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -92,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
         .await;
     mount_agent_model(&chat_mock).await;
     mount_architect_model(&chat_mock).await;
+    mount_dot_delegation_model(&chat_mock).await;
     Mock::given(method("POST"))
         .and(path("/systemone"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -159,6 +169,62 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(0);
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
+        .and(|request: &wiremock::Request| {
+            serde_json::from_slice::<serde_json::Value>(&request.body).is_ok_and(|body| {
+                body["messages"].as_array().is_some_and(|messages| {
+                    messages.iter().any(|message| {
+                        message["role"] == "user"
+                            && message["content"].as_str().is_some_and(|content| {
+                                content.starts_with("Dot background approval probe")
+                                    || content.starts_with("Dot action approval probe")
+                            })
+                    })
+                })
+            })
+        })
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap_or_default();
+            let browser_probe = body["messages"].as_array().is_some_and(|messages| {
+                messages.iter().any(|message| {
+                    message["role"] == "user"
+                        && message["content"]
+                            .as_str()
+                            .is_some_and(|content| content.starts_with("Dot action approval probe"))
+                })
+            });
+            let (call_id, tool, arguments, content) = if browser_probe {
+                (
+                    "dot-action-browser",
+                    "browse_page",
+                    serde_json::json!({"action": "navigate", "url": "https://example.com"}),
+                    "The browser action probe finished.",
+                )
+            } else {
+                (
+                    "dot-background-memory",
+                    "remember",
+                    serde_json::json!({"content": "Approved background lesson.", "kind": "fact"}),
+                    "The approved background lesson was recorded.",
+                )
+            };
+            let completed = body["messages"].as_array().is_some_and(|messages| {
+                messages
+                    .iter()
+                    .any(|message| message["role"] == "tool" && message["tool_call_id"] == call_id)
+            });
+            let delta = if completed {
+                serde_json::json!({"content": content})
+            } else {
+                serde_json::json!({"tool_calls": [{"index": 0, "id": call_id,
+                    "type": "function", "function": {"name": tool,
+                    "arguments": arguments.to_string()}}]})
+            };
+            completion(&body, delta)
+        })
+        .mount(&chat_mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -209,6 +275,8 @@ async fn main() -> anyhow::Result<()> {
 
     // --- RamaState (in-memory SQLite + chat + transcription pools) ---
     let pool = db::open(std::path::Path::new(":memory:")).await?;
+    // SQLite drops the in-memory database when the pool retires its last idle connection.
+    let _fixture_connection = pool.acquire().await?;
     let mut pools = HashMap::new();
     pools.insert(
         "chat".to_string(),
@@ -522,6 +590,12 @@ async fn main() -> anyhow::Result<()> {
         ],
     };
     let config = Config {
+        sandbox: Some(SandboxConfig {
+            enabled: true,
+            runner_url: std::env::var("DEV_UI_SANDBOX_URL").unwrap_or_else(|_| chat_mock.uri()),
+            timeout_secs: 5,
+            max_artifact_bytes: 25 * 1024 * 1024,
+        }),
         typst: Some(TypstConfig {
             templates_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../examples/typst-templates"),
@@ -605,13 +679,28 @@ async fn main() -> anyhow::Result<()> {
     let skill_store = Arc::new(SkillStore::load(skills_dir));
     let typst_family = aiplane::tool_families::typst();
     let typst_metas = aiplane_runtime::server::state::typst_template_metas(&config);
-    let base_tools = aiplane::tool_registry::base_registry(rbac.clone(), None, true)
-        .with(aiplane_tools::generate_image::GenerateImage)
-        .with(aiplane_tools::edit_image::EditImage)
-        .with_family_replaced(
-            aiplane_core::server::tool_naming::TYPST_PREFIX,
-            typst_family(&config, &Default::default()),
-        );
+    let runtime =
+        aiplane_runtime::server::state::RuntimeSettings::new_handle(config.public_url_fallback());
+    let sandbox_client = aiplane_runtime::server::tools::sandbox::SandboxClient::new(
+        Arc::new(
+            config
+                .sandbox
+                .clone()
+                .expect("seeded sandbox configuration"),
+        ),
+        runtime.clone(),
+    );
+    let base_tools =
+        aiplane::tool_registry::base_registry(rbac.clone(), Some(sandbox_client.clone()), true)
+            .with(aiplane_runtime::server::tools::sandbox::BrowsePage(
+                sandbox_client.clone(),
+            ))
+            .with(aiplane_tools::generate_image::GenerateImage)
+            .with(aiplane_tools::edit_image::EditImage)
+            .with_family_replaced(
+                aiplane_core::server::tool_naming::TYPST_PREFIX,
+                typst_family(&config, &Default::default()),
+            );
     let bootstrap_tool = enable_tools::EnableTools::from_registry(&base_tools);
     let tools = Arc::new(
         base_tools
@@ -637,6 +726,8 @@ async fn main() -> anyhow::Result<()> {
         chat_updates: ChatUpdateRegistry::default(),
     });
     let mut app = AppState::new(config, pool.clone(), registry, tools, rbac)
+        .with_runtime_handle(runtime)
+        .with_sandbox_client(sandbox_client)
         .with_skills(skill_store)
         .with_user_skills(user_skill_store)
         .with_typst_templates(typst_metas)
@@ -698,6 +789,8 @@ async fn main() -> anyhow::Result<()> {
     seed_demo_data(&state).await?;
     let erp_mock = erp_mock().await;
     seed_embed_agent(&state, &erp_mock.uri()).await?;
+    let dot_workspace = dot_workspace_mock().await;
+    seed_dot_workspace(&state, &dot_workspace.uri()).await?;
 
     let session = state.sessions.create("dev").await?;
     let cookie = state.sessions.sign(&session.id);
@@ -731,7 +824,9 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .map_err(|e| anyhow::anyhow!("parse bind address: {e}"))?;
     // `router::serve` binds the socket and listens until SIGINT / panic.
-    router::serve(Arc::new(state), addr).await?;
+    let state = Arc::new(state);
+    aiplane_runtime::server::scheduled::worker::spawn(state.clone());
+    router::serve(state, addr).await?;
     drop(chat_mock);
     drop(voice_mock);
     drop(erp_mock);
@@ -964,6 +1059,119 @@ async fn erp_mock() -> MockServer {
         .mount(&server)
         .await;
     server
+}
+
+async fn dot_workspace_mock() -> MockServer {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/authorize"))
+        .respond_with(|request: &wiremock::Request| {
+            let params: HashMap<_, _> = request.url.query_pairs().into_owned().collect();
+            let (Some(redirect), Some(state)) = (params.get("redirect_uri"), params.get("state"))
+            else {
+                return ResponseTemplate::new(400);
+            };
+            let Ok(mut redirect) = reqwest::Url::parse(redirect) else {
+                return ResponseTemplate::new(400);
+            };
+            redirect
+                .query_pairs_mut()
+                .append_pair("code", "dot-fixture-code")
+                .append_pair("state", state);
+            ResponseTemplate::new(302).insert_header("location", redirect.as_str())
+        })
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token":"dot-principal-fixture", "token_type":"Bearer", "expires_in":3600
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST")).and(path("/mcp"))
+        .respond_with(|request: &wiremock::Request| {
+            let Ok(body) = serde_json::from_slice::<serde_json::Value>(&request.body) else {
+                return ResponseTemplate::new(400);
+            };
+            let result = match body["method"].as_str() {
+                Some("initialize") => serde_json::json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"dot-workspace","version":"1"}}),
+                Some("tools/list") => serde_json::json!({"tools":[
+                    {"name":"read_workspace","description":"Read the fixture workspace.","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":true}},
+                    {"name":"write_workspace","description":"Write to the fixture workspace.","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":false}}
+                ]}),
+                Some("tools/call") => serde_json::json!({"content":[{"type":"text","text":"Fixture workspace operation completed."}]}),
+                _ => return ResponseTemplate::new(202),
+            };
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
+        }).mount(&server).await;
+    server
+}
+
+async fn seed_dot_workspace(state: &RamaState, origin: &str) -> anyhow::Result<()> {
+    use aiplane_core::server::db::{mcp_catalog, mcp_connections};
+    #[cfg(debug_assertions)]
+    aiplane::rama_server::dev_seed::ensure_user(&state.db).await?;
+    mcp_catalog::create(
+        &state.db,
+        mcp_catalog::ConnectorInput {
+            key: "dot-workspace".into(),
+            name: "Workspace".into(),
+            description: Some("Local OAuth workspace for Dot identity browser scenarios.".into()),
+            icon: None,
+            category: None,
+            url: format!("{origin}/mcp"),
+            auth: mcp_catalog::AuthKind::OAuth2,
+            scope: mcp_catalog::Scope::PerUser,
+            audit: true,
+            use_dcr: false,
+            client_id: Some("dot-ui-fixture".into()),
+            client_secret_ct: None,
+            client_secret_nonce: None,
+            authorize_url: Some(format!("{origin}/authorize")),
+            token_url: Some(format!("{origin}/token")),
+            registration_url: None,
+            scopes: vec![],
+            allowed_groups: vec![],
+        },
+    )
+    .await?;
+    mcp_catalog::set_enabled(&state.db, "dot-workspace", true).await?;
+    let catalog_generation = mcp_catalog::get(&state.db, "dot-workspace")
+        .await?
+        .context("the seeded Dot Workspace connector is missing")?
+        .dispatch_generation;
+    let users = ["dev", "eng"];
+    #[cfg(debug_assertions)]
+    let users = users
+        .into_iter()
+        .chain(std::iter::once(aiplane::rama_server::dev_seed::USER_ID));
+    for user in users {
+        let sealed = state.crypto.seal_str("dot-user-fixture")?;
+        mcp_connections::upsert_connection(
+            &state.db,
+            mcp_connections::NewConnection {
+                owner: mcp_connections::ConnectionOwner::User(user.into()),
+                connector_key: "dot-workspace".into(),
+                catalog_generation: catalog_generation.clone(),
+                access_token_ct: sealed.ciphertext,
+                access_token_nonce: sealed.nonce,
+                refresh_token_ct: None,
+                refresh_token_nonce: None,
+                token_expires_at: None,
+                scopes: vec![],
+                dcr_client_id: None,
+                dcr_client_secret_ct: None,
+                dcr_client_secret_nonce: None,
+                token_url: Some(format!("{origin}/token")),
+            },
+        )
+        .await?
+        .context(
+            "the seeded Dot Workspace connector changed while connecting its fixture account",
+        )?;
+    }
+    Ok(())
 }
 
 /// A scripted model for agent runs, so the builder's flows run end to end
@@ -1247,20 +1455,85 @@ fn calls(plan: &[(&str, serde_json::Value)]) -> serde_json::Value {
 /// One answer in the shape the request asked for: an SSE stream of one
 /// delta, or a whole completion.
 fn completion(body: &serde_json::Value, delta: serde_json::Value) -> ResponseTemplate {
+    completion_with_usage(body, delta, None)
+}
+
+fn completion_with_usage(
+    body: &serde_json::Value,
+    delta: serde_json::Value,
+    usage: Option<serde_json::Value>,
+) -> ResponseTemplate {
     if body["stream"] == true {
-        let sse = format!(
-            "data: {}\n\ndata: [DONE]\n\n",
+        let mut sse = format!(
+            "data: {}\n\n",
             serde_json::json!({"choices": [{"index": 0, "delta": delta}]})
         );
+        if let Some(usage) = usage {
+            sse.push_str(&format!(
+                "data: {}\n\n",
+                serde_json::json!({"choices": [], "usage": usage})
+            ));
+        }
+        sse.push_str("data: [DONE]\n\n");
         return ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream");
     }
     let mut message = delta;
     message["role"] = serde_json::json!("assistant");
-    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+    let mut response = serde_json::json!({
         "id": "dev-agent",
         "object": "chat.completion",
         "choices": [{ "index": 0, "message": message, "finish_reason": "stop" }],
-    }))
+    });
+    if let Some(usage) = usage {
+        response["usage"] = usage;
+    }
+    ResponseTemplate::new(200).set_body_json(response)
+}
+
+async fn mount_dot_delegation_model(chat_mock: &MockServer) {
+    const ROOT: &str = "Dot delegation approval probe ";
+    const CHILD: &str = "Dot delegated memory approval probe";
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(|request: &wiremock::Request| {
+            serde_json::from_slice::<serde_json::Value>(&request.body).is_ok_and(|body| {
+                body["messages"].as_array().is_some_and(|messages| messages.iter().any(|message| {
+                    message["role"] == "user" && message["content"].as_str().is_some_and(|content| {
+                        content.starts_with(ROOT) || content == CHILD
+                    })
+                }))
+            })
+        })
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            let messages = body["messages"].as_array().unwrap();
+            let receiver = messages.iter().filter(|message| message["role"] == "user")
+                .filter_map(|message| message["content"].as_str())
+                .find_map(|content| content.strip_prefix(ROOT));
+            let (id, tool, arguments, answer) = match receiver {
+                Some(receiver) => (
+                    "dot-delegation", "forward_request",
+                    serde_json::json!({"receiver_dot_id": receiver, "message": CHILD}),
+                    "The receiving Dot completed the explicit task.",
+                ),
+                None => (
+                    "dot-delegated-memory", "remember",
+                    serde_json::json!({"content": "Approved delegated lesson.", "kind": "fact"}),
+                    "The approved delegated lesson was recorded.",
+                ),
+            };
+            let completed = messages.iter().any(|message| message["role"] == "tool" && message["tool_call_id"] == id);
+            let delta = if completed {
+                serde_json::json!({"content": answer})
+            } else {
+                serde_json::json!({"tool_calls": [{"index": 0, "id": id, "type": "function",
+                    "function": {"name": tool, "arguments": arguments.to_string()}}]})
+            };
+            completion_with_usage(&body, delta, Some(serde_json::json!({"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5})))
+        })
+        .with_priority(1)
+        .mount(chat_mock)
+        .await;
 }
 
 /// Seed a handful of realistic, **non-croit** rows so the README
@@ -1706,15 +1979,19 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
         let action = scheduled::create(
             &state.db,
             NewAction {
-                user_id: "dev".into(),
+                owner: aiplane_runtime::server::background::AutomationOwner::User("dev".into()),
+                created_by: "dev".into(),
                 name: name.into(),
                 prompt: prompt.into(),
-                model: "demo-model".into(),
+                model: Some("demo-model".into()),
+                agent_version: None,
                 cron: cron.into(),
                 timezone: "Europe/Berlin".into(),
                 tools_enabled: true,
                 reuse_conversation: reuse,
                 reuse_rounds: 5,
+                dot_id: None,
+                linked_session_id: None,
                 next_run_at: Some(next.parse()?),
             },
         )
@@ -1739,19 +2016,19 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             let turn = uuid::Uuid::new_v4().to_string();
             chatdb::create_assistant_turn_in_progress(&state.db, &session, &turn, "demo-model")
                 .await?;
+            let run_id = scheduled::record_run_start(&state.db, &action.id).await?;
+            scheduled::attach_run_turn(&state.db, &run_id, &session, &turn, true, Some(5)).await?;
             chatdb::append_content(&state.db, &turn, "Here is the digest for this run.").await?;
-            chatdb::finalize_turn(&state.db, &turn, TurnStatus::Completed, None).await?;
 
             // The last run of the dependency report failed, so the page has a
             // failure to render as well as successes.
             let failed = reuse && run + 1 == runs;
-            let run_id = scheduled::record_run_start(&state.db, &action.id).await?;
             let (status, error) = if failed {
-                ("error", Some("upstream timed out after 60s"))
+                (TurnStatus::Errored, Some("upstream timed out after 60s"))
             } else {
-                ("ok", None)
+                (TurnStatus::Completed, None)
             };
-            scheduled::finish_run(&state.db, &run_id, status, Some(&session), error).await?;
+            chatdb::finalize_turn(&state.db, &turn, status, error).await?;
             // Seeded in a tight loop, so every run would carry the same
             // timestamp and the history page would look broken. Space them a
             // day apart, oldest first, the way real fires arrive.
@@ -1763,13 +2040,10 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
                 .bind(&run_id)
                 .execute(&state.db)
                 .await?;
-            scheduled::mark_ran(
+            aiplane_runtime::server::background::reconcile_turn(
                 &state.db,
-                &action.id,
-                status,
-                Some(&session),
-                Some(next.parse()?),
-                error,
+                &aiplane_runtime::server::background::AutomationOwner::User("dev".into()),
+                &turn,
             )
             .await?;
         }
@@ -1818,14 +2092,18 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
         let hook = webhooks::create(
             &state.db,
             NewWebhook {
-                user_id: "dev".into(),
+                owner: aiplane_runtime::server::background::AutomationOwner::User("dev".into()),
+                created_by: "dev".into(),
+                agent_version: None,
                 name: name.into(),
                 prompt: prompt.into(),
-                model: "demo-model".into(),
+                model: Some("demo-model".into()),
                 tools_enabled: false,
                 synchronous,
                 reuse_conversation: reuse,
                 reuse_rounds: 5,
+                dot_id: None,
+                linked_session_id: None,
                 // A hash of nothing anyone can fire: the fixture demonstrates
                 // the UI, and a guessable trigger secret would be a bad habit
                 // to ship even in an example.
@@ -1851,32 +2129,35 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             let turn = uuid::Uuid::new_v4().to_string();
             chatdb::create_assistant_turn_in_progress(&state.db, &session, &turn, "demo-model")
                 .await?;
-            chatdb::append_content(&state.db, &turn, "Here is the summary for this fire.").await?;
-            chatdb::finalize_turn(&state.db, &turn, TurnStatus::Completed, None).await?;
-
-            // The tracker's last fire failed, so the page has a failure to
-            // render as well as successes.
-            let failed = reuse && fire + 1 == fires;
-            let (status, error) = if failed {
-                ("error", Some("upstream returned 503"))
-            } else {
-                ("ok", None)
-            };
             let run = webhooks::record_run_start(
                 &state.db,
-                &hook.id,
-                &session,
-                prompt,
-                r#"{"ref":"refs/heads/main"}"#,
-                "fire",
+                webhooks::NewWebhookRun {
+                    webhook_id: &hook.id,
+                    expected_configuration_generation: &hook.configuration_generation,
+                    session_id: &session,
+                    prompt,
+                    payload: r#"{"ref":"refs/heads/main"}"#,
+                    source: "fire",
+                    assistant_turn_id: &turn,
+                    tools_enabled: false,
+                    history_limit: Some(5),
+                },
             )
             .await?;
-            webhooks::finish_run(&state.db, &run, status, error).await?;
-            webhooks::mark_fired(&state.db, &hook.id, status, Some(&session), error).await?;
-            // The stored payload is what a rerun replays, so it only exists
-            // once something has actually fired — a never-fired hook must not
-            // offer a rerun link.
-            webhooks::set_last_payload(&state.db, &hook.id, r#"{"ref":"refs/heads/main"}"#).await?;
+            chatdb::append_content(&state.db, &turn, "Here is the summary for this fire.").await?;
+            let failed = reuse && fire + 1 == fires;
+            let (status, error) = if failed {
+                (TurnStatus::Errored, Some("upstream returned 503"))
+            } else {
+                (TurnStatus::Completed, None)
+            };
+            chatdb::finalize_turn(&state.db, &turn, status, error).await?;
+            aiplane_runtime::server::background::reconcile_turn(
+                &state.db,
+                &aiplane_runtime::server::background::AutomationOwner::User("dev".into()),
+                &turn,
+            )
+            .await?;
             // Seeded in a tight loop; space the fires out so the history page
             // does not look like one instant.
             let fired_at = (jiff::Timestamp::now()

@@ -21,7 +21,7 @@ CREATE TABLE chat_turn_suspensions (
     message      TEXT,                   -- what the tool wants shown
     tool_call    TEXT NOT NULL,          -- JSON {id, name, args}
     tail         TEXT NOT NULL,          -- JSON: this turn's round messages so far
-    budget_used  TEXT NOT NULL,          -- JSON {rounds, seconds, tokens}
+    budget_used  TEXT NOT NULL,          -- JSON {rounds, seconds, tokens, tree?}
     child_turn   TEXT,                   -- set when the pause is inside a sub-agent run
     on_timeout   TEXT NOT NULL,          -- the fallback the kind allows
     expires_at   TEXT NOT NULL,          -- compared after parsing, not as a string
@@ -76,8 +76,11 @@ and answers is the conversation's.
   `RunChain`'s `MAX_DEPTH` levels, each level's session naming the level above
   as its parent), checks `request_id` against the conversation's row, the
   decision against the innermost kind's options and the answerer against
-  `answered_by()`, then claims the innermost row (the race two answers run)
-  and every ancestor.
+  `answered_by()`, then rechecks the exact pause snapshots and session links
+  inside one write transaction. It claims the innermost request and every
+  ancestor by their expected request IDs and commits them together. A changed
+  or missing ancestor, invalid decision or conflicting claim leaves every
+  suspension and turn status intact.
 - `run_claimed` rebuilds each level from its session (owner, pinned version; a
   test conversation's draft) and its parent's pause (the chain is
   `RunChain::root` plus one `enter` per level, `CallSite` = the parent's turn
@@ -155,6 +158,12 @@ A test-chat pause never reaches the inbox (`inbox::staff_item` skips version
 0); the manager answers it in the test chat through the staff route
 ([`ui.md`](ui.md#agent-builder)).
 
+A budget snapshot may include `tree`: the original aggregate and local limits,
+observed rounds, seconds and tokens, and whether upstream usage was reported.
+It uses the same suspension JSON column. Ordinary snapshots omit that optional
+field. The connection-level claim and creation helpers remain generic chat
+operations; child ownership is resolved in the agent layer.
+
 ## Per-tool approval
 
 `agents::approval`. `tool_resources.<tool>.permission` decides whether a call
@@ -220,11 +229,22 @@ message queued behind it runs afterwards as usual.
 
 ## The inbox
 
+Private organization Dot conversations require current organization membership
+and Write access for staff settlement. Draft pauses stay inline in Test chat.
+Published private approvals, human answers and secure input also appear in the
+Inbox after exact private session, captured source and original version-row
+proof. Read, Respond and administrator recovery without membership expose no
+such items. These conversations permit writer staff to supply secure input;
+ordinary published visitor conversations retain participant-only secure input.
+Organization announcements remain in the web interface and do not dispatch
+push or external channel messages. See [private organization
+authority](agent-runs.md#organization-private-conversation-authority).
+
 `agents::inbox`, `aiplane-api::pages::json_inbox`. An item is a
 conversation's own pause (`run_sessions::pending_suspensions`; a sub-agent's
 pause shows through its conversation's):
 
-- an agent conversation's `approval` or `human_answer`, outside the test chat,
+- an ordinary agent conversation's `approval` or `human_answer`, outside the test chat,
   for whoever holds access to the agent (`effective_access`): an admin or a
   manager with a `read` or `write` share (`standing: manager`), or a `respond`
   share (`standing: responder`);

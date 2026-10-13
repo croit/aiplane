@@ -465,6 +465,14 @@ const REQUEST_BODY_READS: &[(BodyRead, Allowed)] = &[
         },
     ),
     (
+        BodyRead::OwnCap,
+        Allowed {
+            path: "sandbox-runner/src/server/workspace_tests.rs",
+            why: "test helper draining an in-process response while asserting the \
+                  MAX_RUN_REQUEST_BYTES cap itself — test code, not a production reader",
+        },
+    ),
+    (
         BodyRead::BehindLimit,
         Allowed {
             path: "aiplane/src/rama_server/",
@@ -728,6 +736,12 @@ const SPEC_JSON_READERS: &[Allowed] = &[
               yet, and hands every result to the validator; it never runs a spec",
     },
     Allowed {
+        path: "aiplane-api/src/pages/architect/dot.rs",
+        why: "the personal proposal builder writes reviewed permissions into draft JSON before \
+              AgentSpec validation, like assist/; its task, tools, defaults and bindings are \
+              read through typed AgentSpec fields, and it never executes a spec",
+    },
+    Allowed {
         path: "aiplane-agents/src/db/agent_analytics.rs",
         why: "an audit row's `routes` detail, not a spec",
     },
@@ -813,6 +827,18 @@ const DISPATCHERS: &[(Allowed, Option<&str>)] = &[
 /// Who may call `Tool::run` directly rather than through the runner.
 const DIRECT_TOOL_RUNS: &[Allowed] = &[
     Allowed {
+        path: "aiplane-runtime/src/agents/profile.rs",
+        why: "the organization wrapper revalidates the initially granted tool's exact private turn, current principal grants and selected account before inner dispatch",
+    },
+    Allowed {
+        path: "aiplane-runtime/src/agents/approval.rs",
+        why: "the shared permission gate classifies a granted invocation before allowing, denying or suspending its original call",
+    },
+    Allowed {
+        path: "aiplane-runtime/src/persona/live.rs",
+        why: "a personal Dot wrapper reloads owner grants, active selection and approval rules before dispatch through GrantedToolSource",
+    },
+    Allowed {
         path: "aiplane-runtime/src/server/tools/runner.rs",
         why: "the runner, after resolving the call through the round's source",
     },
@@ -837,6 +863,285 @@ const DIRECT_TOOL_RUNS: &[Allowed] = &[
         why: "a connector verifier resolves through the principal's grant-bounded MCP layer",
     },
 ];
+
+#[test]
+fn action_rules_classify_and_validate_before_using_shared_approvals() {
+    let sources = production_sources();
+    for (path, approval) in [
+        ("aiplane-runtime/src/agents/approval.rs", "AskFirst::wrap"),
+        (
+            "aiplane-runtime/src/server/tools/ask_first.rs",
+            "match approval(",
+        ),
+    ] {
+        let source = sources
+            .iter()
+            .find(|source| source.rel == path)
+            .expect("the shared permission and approval implementations must exist");
+        let run = source
+            .code
+            .split_once("fn run")
+            .expect("the policy implements Tool::run")
+            .1;
+        let classifier = run
+            .find(".classify_actions(")
+            .expect("permission and approval gates must use the tool's classifier");
+        let validation = run
+            .find("validate_actions(")
+            .expect("permission and approval gates must share action-fact validation");
+        let approval = run
+            .find(approval)
+            .expect("action rules must use the existing approval mechanism");
+        assert!(
+            classifier < validation && validation < approval,
+            "{path} must classify and validate an invocation before using its approval"
+        );
+    }
+}
+
+#[test]
+fn agent_resume_claims_use_one_request_aware_transaction() {
+    let source = production_sources()
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/agents/resume.rs")
+        .expect("the shared agent resume implementation must exist");
+    assert!(source.code.contains("WriteTx::begin("));
+    assert!(source.code.contains("suspend::claim_chain_in("));
+    assert!(source.code.contains(".commit()"));
+    assert!(!source.code.contains("claim_for_resume("));
+    assert!(!source.code.contains("chat::claim_suspension("));
+    let shared = production_sources()
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/suspend.rs")
+        .expect("the shared suspension claims must exist");
+    let chain = shared
+        .code
+        .split("async fn claim_chain_in(")
+        .nth(1)
+        .expect("the shared chain claim must exist");
+    let chain = chain.split("\npub ").next().unwrap();
+    assert!(chain.contains("claim_for_resume_in("));
+    assert!(chain.contains("claim_suspension_in("));
+    assert!(!chain.contains("WriteTx::begin("));
+    assert!(!chain.contains(".commit()"));
+}
+
+#[test]
+fn personal_dot_calls_revalidate_access_before_execution() {
+    let source = production_sources()
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/persona/live.rs")
+        .expect("the personal Dot dispatch wrapper must exist");
+    for mechanism in [
+        "users::find_by_id",
+        "agents::get_personal_dot",
+        "dot.active",
+        "spec.main.tools",
+        "GrantedToolSource::new",
+        "gate_dot",
+    ] {
+        assert!(
+            source.code.contains(mechanism),
+            "personal Dot dispatch must keep {mechanism} before executing a tool"
+        );
+    }
+    let wrapping = scan(&["LivePersonalDotTool {"], |source| source.code.as_str());
+    assert_within(
+        "Only the grant-filtered personal Dot source may wrap a tool for live dispatch.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/persona.rs",
+                why: "the persona's selected source wraps an initially granted tool",
+            },
+            Allowed {
+                path: "aiplane-runtime/src/persona/live.rs",
+                why: "the wrapper type and its Tool implementation",
+            },
+        ],
+        &wrapping,
+    );
+}
+
+#[test]
+fn organization_dot_calls_revalidate_private_authority_before_execution() {
+    let source = production_sources()
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/agents/profile.rs")
+        .expect("the organization Dot dispatch wrapper must exist");
+    for mechanism in [
+        "validate_organization_turn_in",
+        "validate_organization_identity_in",
+        "Arc::ptr_eq",
+        "pending_execution_facts",
+        "dependency_tool_ids",
+    ] {
+        assert!(
+            source.code.contains(mechanism),
+            "organization Dot dispatch must keep {mechanism}"
+        );
+    }
+    let implementation = source
+        .code
+        .split_once("impl Tool for OrganizationTool")
+        .expect("the admitted tool implements Tool")
+        .1;
+    let execute = implementation
+        .split_once("fn run")
+        .expect("the wrapper executes the tool")
+        .1;
+    assert!(
+        execute.find("self.admit(&ctx)").unwrap() < execute.find("self.inner.run(ctx").unwrap()
+    );
+    let wrapping = scan(&["OrganizationTool {"], |source| source.code.as_str());
+    assert_within(
+        "Only the grant-filtered run source may wrap an organization tool for live dispatch.",
+        &[Allowed {
+            path: "aiplane-runtime/src/agents/profile.rs",
+            why: "the run source wraps an initially granted tool and verifies its live private authority",
+        }],
+        &wrapping,
+    );
+}
+
+#[test]
+fn organization_memory_uses_shared_private_authority_for_tools_and_model_context() {
+    let sources = production_sources();
+    let memory = sources
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/server/tools/memory.rs")
+        .expect("the organization memory admission mechanism must exist");
+    let compact = memory.code.split_whitespace().collect::<String>();
+    for mechanism in [
+        "validate_organization_turn_in",
+        "ctx.principal",
+        "ctx.session_id",
+        "ctx.assistant_turn_id",
+        "ctx.granted_tools",
+        "GrantKind::Tool",
+        "surface.offered",
+    ] {
+        assert!(
+            compact.contains(mechanism),
+            "organization memory must retain {mechanism}"
+        );
+    }
+    let scope_callers = scan(&["organization_scope_in("], |source| source.code.as_str());
+    assert_within(
+        "Organization memory tools must use the shared private-turn admission mechanism.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/server/tools/memory.rs",
+                why: "the canonical same-transaction memory admission mechanism",
+            },
+            Allowed {
+                path: "aiplane-tools/src/memory.rs",
+                why: "the four actual memory tools admit their scoped transaction before CRUD",
+            },
+        ],
+        &scope_callers,
+    );
+    let context_callers = scan(&["organization_standing_context("], |source| {
+        source.code.as_str()
+    });
+    assert_within(
+        "Organization standing memory must enter the existing agent system-message path.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/server/tools/memory.rs",
+                why: "the bounded reader uses the same current private-turn admission",
+            },
+            Allowed {
+                path: "aiplane-runtime/src/openai_driver/turn_policy.rs",
+                why: "the existing agent leading system message consumes bounded organization notes",
+            },
+        ],
+        &context_callers,
+    );
+}
+
+#[test]
+fn organization_published_admission_uses_the_existing_private_opener_and_source_proof() {
+    let sources = production_sources();
+    let profile = sources
+        .iter()
+        .find(|source| source.rel == "aiplane-runtime/src/agents/profile.rs")
+        .expect("the organization source proof must exist");
+    for mechanism in [
+        "ProfilePurpose::Private",
+        "OrganizationSpecSource",
+        "validate_source_in",
+        "agents_db::version_in",
+        "authority.principal_id",
+        "authority.session_id",
+        "authority.assistant_turn_id",
+    ] {
+        assert!(
+            profile.code.contains(mechanism),
+            "private published admission must retain {mechanism}"
+        );
+    }
+    let callers = scan(&["load_private("], |source| source.code.as_str());
+    assert_within(
+        "Only the authenticated private opener may load an organization published profile directly.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/agents/profile.rs",
+                why: "the common loader defines its explicit private admission purpose",
+            },
+            Allowed {
+                path: "aiplane-runtime/src/agents/run/draft.rs",
+                why: "the existing private opener verifies the authenticated member in the opening transaction",
+            },
+        ],
+        &callers,
+    );
+}
+
+#[test]
+fn organization_schedules_and_private_stop_use_shared_admission() {
+    assert_within(
+        "Only the scheduled worker may admit an organization schedule through its exact recorded source.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/agents/profile.rs",
+                why: "the shared loader defines exact scheduled-source admission",
+            },
+            Allowed {
+                path: "aiplane-runtime/src/server/scheduled/worker.rs",
+                why: "the existing worker opens and attaches the private principal turn in one transaction",
+            },
+        ],
+        &scan(&["load_scheduled("], |source| source.code.as_str()),
+    );
+    assert_within(
+        "Organization webhook admission must bind its exact recorded run in the trigger's transaction.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/agents/profile.rs",
+                why: "the shared principal loader validates the recorded webhook source",
+            },
+            Allowed {
+                path: "aiplane-api/src/pages/webhooks.rs",
+                why: "public firing and human replay share atomic admission and private turn attachment",
+            },
+        ],
+        &scan(&["load_webhook_in("], |source| source.code.as_str()),
+    );
+    assert_within(
+        "Private Stop must use the background structural proof in its mutation transaction.",
+        &[
+            Allowed {
+                path: "aiplane-runtime/src/server/background.rs",
+                why: "the existing background matcher owns original run and session proof",
+            },
+            Allowed {
+                path: "aiplane-runtime/src/agents/resume.rs",
+                why: "the private cancellation gate validates the binding before turn mutation",
+            },
+        ],
+        &scan(&["validate_turn_in("], |source| source.code.as_str()),
+    );
+}
 
 /// `.run(<context>, …)`: a `Tool::run` call, told from other `run` methods
 /// by its first argument being a tool context.
@@ -939,6 +1244,10 @@ const ACTIVITY_LOG_WRITERS: &[Allowed] = &[
         why: "agent create, draft, publish, live version, shares and delete",
     },
     Allowed {
+        path: "aiplane-agents/src/db/organizations.rs",
+        why: "organization metadata and group bindings are audited on their own management transaction",
+    },
+    Allowed {
         path: "aiplane-agents/src/db/system_principals.rs",
         why: "principal create and disable, grants, tokens",
     },
@@ -949,6 +1258,14 @@ const ACTIVITY_LOG_WRITERS: &[Allowed] = &[
     Allowed {
         path: "aiplane-agents/src/db/agent_channels.rs",
         why: "notification channels created and deleted",
+    },
+    Allowed {
+        path: "aiplane-agents/src/db/dot_sessions.rs",
+        why: "private Dot session binding and its event share one write transaction",
+    },
+    Allowed {
+        path: "aiplane-agents/src/db/dot_delegation.rs",
+        why: "directed consent and its management audit event share one write transaction",
     },
     Allowed {
         path: "aiplane-runtime/src/agents/audit.rs",

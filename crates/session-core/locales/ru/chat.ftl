@@ -21,6 +21,7 @@ chat-error-turn-interrupted = Внутренняя ошибка прервала
 chat-list-empty = Пока нет бесед. Начните новую выше.
 chat-turn-stopped = остановлено
 chat-waiting-approval = Запустит { $tool } только после вашего одобрения.
+chat-waiting-browser-handover = Теперь вы управляете браузером Dot.
 chat-waiting-value = Ждёт значение, которое можете ввести только вы. Оно передаётся инструменту, а не модели.
 chat-waiting-answer = Ждёт ответа человека.
 chat-composer-paused = Сначала одобрите или отклоните запрос выше; следующее сообщение ждёт этого решения.
@@ -51,3 +52,5 @@ chat-attempt-reason-loop = модель начала повторяться
 chat-attempt-reason-repeated_call = один и тот же вызов инструмента снова и снова
 chat-attempt-retry = Новая попытка с уровнем размышлений { $effort } (попытка { $n })
 chat-loop-exhausted = Модель повторялась во всех попытках ({ $attempts }), даже с меньшим уровнем размышлений. Сформулируйте вопрос иначе или разбейте его на части.
+
+chat-error-run-cancelled = Выполнение отменено.

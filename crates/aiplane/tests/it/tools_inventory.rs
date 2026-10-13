@@ -70,6 +70,7 @@ const EXPECTED_UTILITY: &[&str] = &[
     "company_echo",
     "convert_currency",
     "enable_tools",
+    "forward_request",
     "search_gateway_tools",
     "get_current_timestamp",
     "get_user_location",
@@ -93,6 +94,12 @@ const DYNAMIC_ID_IMPLS: &[&str] = &[
     "aiplane-runtime/src/server/comfyui_tool.rs",
     // AskFirst — delegates to the wrapped tool
     "aiplane-runtime/src/server/tools/ask_first.rs",
+    // ActionPolicy preserves the wrapped tool's id.
+    "aiplane-runtime/src/agents/approval.rs",
+    // LivePersonalDotTool preserves the selected tool's id.
+    "aiplane-runtime/src/persona/live.rs",
+    // OrganizationTool preserves the admitted principal tool's id.
+    "aiplane-runtime/src/agents/profile.rs",
     // set_<slot> — an agent run's synthetic state tools
     "aiplane-runtime/src/agents/slot_tools.rs",
     // BoundTool — delegates to the wrapped tool
@@ -108,7 +115,7 @@ const DYNAMIC_ID_IMPLS: &[&str] = &[
 /// Synthetic tools of an agent run. They are never registered nor offered to
 /// a person's chat, so `/tools` never renders them and the catalog checks do
 /// not apply; the inventory still documents them.
-const RUN_SCOPED: &[&str] = &["forward_request", "request_human", "finish"];
+const RUN_SCOPED: &[&str] = &["request_human", "finish"];
 
 fn repo_root() -> PathBuf {
     // CARGO_MANIFEST_DIR is <root>/crates/gateway.
@@ -353,6 +360,8 @@ fn every_visible_tool_has_hand_written_display_copy() {
                 && !RUN_SCOPED.contains(&id.as_str())
                 && catalog::entry_key_for(id) == id
                 && !has_display_copy(id)
+                && aiplane_api::pages::builtin_display_copy(id, session_core::i18n::Lang::En)
+                    .is_none()
         })
         .collect();
     assert!(

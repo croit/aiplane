@@ -36,6 +36,10 @@ struct TimestampArgs {
 }
 
 impl Tool for CurrentTimestamp {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "get_current_timestamp"
     }

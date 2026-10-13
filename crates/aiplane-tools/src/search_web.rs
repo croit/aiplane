@@ -119,6 +119,10 @@ fn normalize_sites(sites: Option<Vec<String>>) -> Result<Vec<String>, ToolError>
 }
 
 impl Tool for SearchWeb {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "search_web"
     }

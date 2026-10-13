@@ -1,5 +1,11 @@
+import type { ToolCall, Turn } from './chat-protocol.js';
+
 export const TOOL_GROUP_THRESHOLD = 3;
 export const TOOL_PAYLOAD_LIMIT = 16 * 1024;
+
+export function presentedToolCallStatus(status: ToolCall['status'], turnStatus: Turn['status']): ToolCall['status'] | 'waiting' {
+	return status === 'running' && turnStatus === 'suspended' ? 'waiting' : status;
+}
 
 export function prettyToolPayload(raw: string, limit = TOOL_PAYLOAD_LIMIT): { text: string; truncated: boolean; bytes: number; chars: number } {
 	let pretty = raw;

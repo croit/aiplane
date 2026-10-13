@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { adminJson } from '#lib/admin-client.js';
+	import { scheduledApi } from '#lib/scheduled.js';
 	import ScheduledActionRow from '#lib/components/scheduled/ScheduledActionRow.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 	import type { ScheduledData } from '#lib/scheduled.js';
@@ -10,6 +10,8 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let notice = $state<string | null>(null);
+	let disposed = false;
+	onDestroy(() => { disposed = true; });
 
 	// The create/edit form lives on its own route and reports back through the
 	// URL, so its confirmation shows up on the list the user returns to.
@@ -20,13 +22,16 @@
 	});
 
 	async function refresh() {
+		if (disposed) return;
 		try {
-			data = await adminJson<ScheduledData>('/api/v0/scheduled');
+			const loaded = await scheduledApi.list(page.url.searchParams.get('principal_id'));
+			if (disposed) return;
+			data = loaded;
 			error = null;
 		} catch (caught) {
-			error = String(caught);
+			if (!disposed) error = String(caught);
 		} finally {
-			loading = false;
+			if (!disposed) loading = false;
 		}
 	}
 
@@ -45,7 +50,7 @@
 	<section class="space-y-3">
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<h2 class="text-xl font-semibold">{t('scheduled-list-heading')}</h2>
-			<a class="btn btn-primary btn-sm" href="/scheduled/new">{t('scheduled-create-heading')}</a>
+			{#if data?.can_write}<a class="btn btn-primary btn-sm" href={`/scheduled/new${data?.principal_id ? `?principal_id=${encodeURIComponent(data.principal_id)}` : ''}`}>{t('scheduled-create-heading')}</a>{/if}
 		</div>
 		{#if loading}
 			<div class="skeleton h-28 w-full"></div>

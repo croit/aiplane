@@ -11,6 +11,7 @@ export interface SidebarSession {
 	title: string | null;
 	updated_at: string;
 	pinned: boolean;
+	can_delete: boolean;
 	/** FTS hit snippet — only present while searching. */
 	snippet?: string;
 }

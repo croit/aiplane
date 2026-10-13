@@ -143,11 +143,58 @@ see unregistered image, GeoIP, and sandbox tools as read-only rows linking to
 the matching operator setup page. These placeholder rows are not offered to
 the model or persisted as user tool preferences.
 
-The admin sidebar has one **Access & limits** entry. Its four path-backed tabs
-keep `/admin/users`, `/admin/tokens`, `/admin/groups` and `/admin/limits` at
-their existing URLs, with their existing forms and APIs. The Limits tab follows
+The admin sidebar has one **Access & limits** entry. Its path-backed tabs
+open `/admin/users`, `/admin/tokens`, `/admin/groups`, `/admin/organizations`
+and `/admin/limits`, with their own forms and APIs. The Limits tab follows
 the optional limits feature switch. Group grant and identity subtabs remain
 inside the Groups tab. `/admin/settings` stays a separate sidebar page.
+
+The authenticated Workspace navigation includes **Organizations**
+(`/organizations`) only when the current user belongs to at least one
+organization. The menu uses the existing `/api/v0/organizations` membership
+list, so users with no organization do not see an empty destination there.
+The page lists actual organizations for which the current user is a member.
+Each `/organizations/<id>` page shows the returned name,
+description, organization-wide active usage and readable shared Dots.
+Membership alone grants no Dot share. Members with agent-management permission
+open the shared creation dialog to create a named Dot; existing write access permits activation changes within
+the independent organization cap. Configuration opens the existing
+`/agents/<id>/setup/start` flow and editor. Organization owner metadata controls
+the return link and organization-specific controls. Current member writers use
+**Try it → Test chat** for private saved-draft or published conversations. The
+server returns their actual source and pinned version; newer publishing does
+not replace that version. **Scheduled actions** opens the existing schedule list
+under the Dot’s actual principal scope. Organization schedules select a real
+published version and explicit timezone, show its authored model without an
+employee override, and open fresh private principal conversations. Their
+Back/Cancel/save navigation preserves that scope. Test suites, website and
+external-channel controls
+are unavailable for these Dots. Current writers
+manage the Dot’s own OAuth identity in **Setup** through the existing connection
+panel. Organization choices contain no user identity; OAuth completion leaves
+the account unselected until Save. The returned action capabilities govern
+selection, authorization and local erasure independently. Removed catalogue
+access disables selection but still permits an authorized writer to disconnect
+the retained local credential.
+
+`/admin/organizations` edits actual organization metadata and selected existing
+gateway groups. Metadata saves send the returned revision. A conflict preserves
+the local draft until an explicit reload. Empty group bindings grant no member
+access, and removing a bound group changes the organization revision. The
+list uses compact cards with the current description and configured member
+groups, each with the number of locally known users assigned to that group.
+The count uses each user's most recently stored OIDC claim values; default
+groups count every locally known user. Creation and editing both use the shared
+Modal and group selector.
+Saving closes the edit dialog after the returned revision is accepted; a
+conflict keeps the draft open until the administrator reloads or corrects it.
+
+`/admin/groups` lists gateway groups as compact cards with their description,
+enabled management permissions and counts of granted tools and skills. Group
+creation and editing open the group form in a shared Modal. OIDC claims already
+observed at login can be selected from a searchable multi-select, while new
+claim values can be entered individually. The identity, tools and skills tabs
+remain available for their existing mapping and matrix workflows.
 
 The Notifications tab shows device controls when Web Push initialized. If the
 feature is configured but its sender failed to initialize, the tab shows an
@@ -356,7 +403,40 @@ Invariants worth knowing before you touch either side:
 - **A suspended turn is answered over JSON, not the stream.** `POST /api/v0/chat/sessions/{id}/turns/{turn_id}/resume` takes `{"decision": "allow_once" | "deny" | "value", "value"?: …, "request_id"?: …}`; owner-only, `202` once the turn's worker runs again, after which the client re-attaches. `409 not_suspended` when the turn is not waiting or `request_id` names an older pause, `400 decision_not_offered` for a decision its `options` lack, `409 turn_in_progress` when no slot is free. A message sent into a paused conversation is refused with `409 decision_pending`, and `…/cancel` on it gives the decision up; the chat page keeps the draft in its composer but will not send it meanwhile, and says why (`pausedTurn`, `chat-composer-paused`). The chat page draws a paused turn as the [suspension card](#suspension-card), led by `chat-waiting-*` and showing the waiting call's arguments from the transcript; only the owner gets its buttons. A person's paused run (a scheduled action or a webhook) is answered from the [inbox](#inbox), which calls this same resume.
 - **The stream ends at `turn_finalized` / `suspended` / `idle`.** The server closes there, so `chat.svelte.ts` closes the `EventSource` too, and fires `onTurnFinalized` on `turn_finalized` and `suspended` alike (the turn stopped running) — letting it auto-reconnect would loop snapshot/idle forever on a quiet session. `applyEvent` folds `suspended` into the turn (`status: suspended`, `suspension`), as a snapshot's row carries it. After a submit (or any suspected change) `attach()` reopens, and the fresh snapshot is the replay.
 - **An interrupted worker leaves a terminal turn.** The shared worker harness catches driver and tool panics, records the assistant turn and any still-running tool calls as `errored`, and broadcasts `Finalized`; its caller then releases the worker slot. On attach, if the owner has no live worker, the events handler also errors any already-present `in_progress` assistant turns before sending the snapshot. It targets only turn IDs read before rechecking the worker registry, so a newly starting turn cannot be mistaken for an orphan. Viewers of a shared conversation never perform this recovery because they cannot see the owner's worker in their own registry lookup.
-- **Every scheduled or webhook run links its chat and ends terminal.** A run's history row gets its `session_id` the moment the chat is opened (webhooks at `record_run_start`, schedules via `attach_run_session`, which also moves the action's `last_session_id` so a reusing schedule keeps its thread); closing a run with no session never erases that link. The scheduler wraps each run in a panic guard, so the row is always closed through `record`. A process that dies mid-run leaves rows pending; `sweep_interrupted_runs` closes them at startup as `error` — before the scheduler's first tick and before the server accepts webhook fires, so nothing live can be caught by it — and corrects the list row when the orphan was the newest run. The runs lists join `chat_sessions` and report `chat_deleted`; list rows get `last_chat_deleted`, and the SPA shows "chat deleted" rather than linking to a 404.
+- **Organization schedule history uses private principal chat.** Scoped lists
+  use `GET /api/v0/scheduled?principal_id={id}` and the returned target Dot,
+  versions and write capability. The same schedule editor hides user model and
+  conversation-reuse controls for this scope. Version and timezone are explicit;
+  the model display uses that published spec, with missing data shown as missing.
+  Edit and toggle requests compare the actual configuration generation. User
+  and personal-Dot forms keep their existing model and reuse choices. A single
+  organization run links to the existing agent Test chat through `test_session`;
+  multiple runs use the shared runs list. Each organization fire opens a fresh
+  private conversation, and run history shows its captured published version.
+  Cancelled turns reconcile to run `error`; disabling a schedule prevents future
+  fires without cancelling or approving a pending turn. Organization runs
+  always use fresh private conversations.
+- **Organization webhooks reuse the scoped automation surface.**
+  `GET /api/v0/webhooks?principal_id={id}` returns the actual Dot, retained
+  published versions and current Write capability. The existing form hides
+  personal model, synchronous response and conversation-reuse controls. Its
+  selected publication supplies the model and own-principal execution identity.
+  Creation and rotation reveal the trigger URL once, outside URL parameters.
+  Public firing returns only `{session_id}` with `202`; errors, output and
+  pending decisions remain private. History links to the same private agent
+  Test chat and shows each run's captured publication. Editing, toggling,
+  rotation and explicit replay require the actual configuration generation;
+  stale requests return `409`. Current member writers may explicitly replay
+  stored untrusted input while the source is paused. Pausing and rotating
+  secrets preserve admitted runs and their pending approvals. Replay checks
+  current membership again before delivering its private result.
+- **Automation scope changes discard the previous page instance.** Local
+  schedule and webhook layouts key their existing pages by route and owner
+  scope. Switching between organization and personal lists clears previous
+  rows, drafts, notices and revealed secrets. Returning in browser history
+  reloads actual data; it does not restore a revealed secret. Results and
+  navigation callbacks from disposed forms cannot update the replacement page.
+- **Every scheduled or webhook run links its chat and ends terminal.** A run's history row gets its `session_id` the moment the chat is opened (webhooks at `record_run_start`, schedules via `attach_run_session`, which also moves the action's `last_session_id` so a reusing schedule keeps its thread); closing a run with no session never erases that link. The scheduler wraps each run in a panic guard, so the row is always closed through `record`. A process that dies mid-run leaves rows pending; `sweep_interrupted_runs` closes them at startup as `error` — before the scheduler's first tick and before the server accepts webhook fires, so nothing live can be caught by it — and corrects the list row when the orphan was the newest run and the schedule configuration generation still matches. The runs lists join `chat_sessions` and report `chat_deleted`; list rows get `last_chat_deleted`, and the SPA shows "chat deleted" rather than linking to a 404.
 - **A reusing schedule or webhook can continue in any of its owner's chats.** Reuse always meant "append to `last_session_id`"; the form's *Continue in* picker (`LinkedChatPicker`) sets that pointer directly through `linked_session_id` on create/update — an id links that chat, `""` lets the next run open a fresh one, an absent field leaves it alone (a run may have moved it since the form opened). The server accepts only the caller's own chat, and only with `reuse_conversation` on. The picker starts on `last_session_id` even before reuse is switched on, because that is where a reusing run would continue; a deleted one reads as "a new chat", which is what the next run does.
 - **The public embed stream speaks the same frames, buffered.** `GET /api/v0/embed/events` (visitor token, read with `fetch` streaming) sends `snapshot`, then either `idle` or — once the running turn is terminal — its whole answer as one `turn_delta` with `full: true` and `turn_finalized`. When the conversation waits for a decision, or the running turn pauses, the stream ends with `suspended` (the visitor view above) instead. A request staff answer has empty `options`: the widget shows that it waits and re-attaches every 10 s until the answer arrives. The visitor answers a `secure_input` with `POST /api/v0/embed/resume {request_id, decision, value?}` (the widget's masked code field) and re-attaches. A host page's signed identity token goes to `POST /api/v0/embed/identity {token}`. A message sent meanwhile is queued (`placement: "queued"`) and shows in the snapshot's `waiting_turn_ids`. Tool calls, reasoning and unfinished answers are stripped from what a visitor receives. See [`agent-visitors.md`](agent-visitors.md) and [agent-run suspend](agent-hil.md#suspend-and-resume).
 - **Markdown is the wire format.** The server sends text; the client renders it (`marked` → `DOMPurify` → `{@html}`). Model output is untrusted input like any other, so the sanitise step is not optional.
@@ -376,6 +456,18 @@ shape so editing does not lose the composer's attachment support. The other
 mutations include `…/cancel`, `…/fork`, `…/share`, `…/effort`,
 `…/documents/*` (canvas and version history), `…/export.md`,
 `…/export.pdf`, and `…/turns/{turn_id}/retry`.
+
+The session detail also returns `can_write`, `can_delete` and nullable
+`delegation`. Ordinary owner conversations allow writes and deletion; shared
+readers do not. An opaque parent link makes a personal child history private
+and read-only, even when its binding cannot be resolved. Its `delegation`
+contains a nullable `root_session_id`, resolved from actual same-owner private
+parent links and the original forward call. Session lists and search results
+include `can_delete`, so the sidebar uses the same authority. The SPA loads
+these fields before attaching SSE and blocks automatic browser/feedback writes
+when `can_write` is false. The server independently rejects child mutations
+before parsing uploads or feedback. Owner read access still covers history,
+assets, canvas inspection and export; pinning does not enable execution.
 
 ## The composer during a turn
 
@@ -517,6 +609,37 @@ built-in default.
 
 `chat-protocol.ts` is deliberately framework-free — no Svelte, no DOM — so the fold is unit-testable under `node --test` (`chat-protocol.test.ts`, run by `mise run test-web`) and `chat.svelte.ts` stays a thin reactive wrapper around it. Keep it that way: wire behaviour that can only be tested through a browser is wire behaviour nobody tests.
 
+## Personal Dot navigation and management
+
+The Workspace Dots link uses the resolved `can_manage_dots` value from
+`GET /api/v0/me`. The existing group form exposes **Personal Dot manager**
+independently of **Agent manager**, with admin implication and the same save
+and reset flow. List, create and active-state routes enforce the corresponding
+server permission; the sidebar is not an authorization boundary.
+See [personal Dots](dots.md) and [access administration](admin/access.md).
+
+Each personal Dot card has a compact summary and a Details view with tabs for
+memory, activity, access, communication, workspace and automation. The memory,
+activity, access and communication tabs load their owner-scoped data on first
+visit and retain their edits while switching tabs. Workspace opens the Dot's
+file manager; automation links to its schedule and webhook pages. A Dot's
+optional short description is card and collaboration context, not an instruction
+to the model.
+
+Each Dot card lazily loads **Communication** from its owner-scoped inventory.
+Separate outgoing and incoming rows edit one decision per save; the other
+Dot's consent is read-only. Rows preserve actual IDs, names and inactive
+choices. An unsaved row retains its original generation when another row is
+saved, so a stale decision cannot overwrite a newer counterpart. Conflict
+responses retain the draft until explicit reload. Consent mutation checks
+current management permission. Both stored consents are necessary for personal
+delegation, together with selected tool access and current execution rules.
+Receiver histories use server-supplied read-only authority; approval and
+continuation remain on the root or Inbox. Tool-call rows and grouped headers
+use the actual turn status: suspended running calls show the existing neutral
+human-decision label and a static pause badge, while in-progress calls retain
+their running indicator.
+
 ## Agent builder
 
 `/agents` (sidebar: Workspace → Agents) is visible only when `GET /api/v0/me`
@@ -645,8 +768,14 @@ are in `web/src/lib/components/agents/`.
   JSON because `structuredClone` refuses a Svelte proxy.
 - **Test chat** (`TestChat`, `DebugPanel`). A streamed conversation like
   any other: `POST /api/v0/agents/{id}/test/messages` (`sendTestMessage`)
-  runs the **saved draft** in the background, so an unsaved buffer is
-  flagged with a Save button, and a `ConversationController` opened on
+  requires an explicit source and runs the **saved draft** or an organization
+  Dot’s actual **published version** in the background. The organization source
+  selector uses actual ownership and live-version data. Returned source and
+  `agent_version` remain attached to the conversation after later publishing.
+  Changing source resets the conversation; source/reset controls are disabled
+  during submission, live work, response submission and initial history metadata
+  loading. An unsaved draft buffer
+  is flagged with a Save button only for draft execution, and a `ConversationController` opened on
   `GET …/test/{session}/events` (`createConversationController(id,
   eventsUrl)`) folds the frames, exactly as the chat page does. The
   transcript and composer are `StreamedChat` (below). Whenever no turn runs,
@@ -664,7 +793,20 @@ are in `web/src/lib/components/agents/`.
   verdict, the routing decision, sub-agent calls with outcome, and tool-call
   decisions; the newest answer's is shown otherwise. Slots and gates are the
   conversation's as they are when the view is read. "New conversation"
-  forgets the conversation.
+  forgets the conversation and clears its `test_session` query; it does not
+  cancel a server turn. A schedule's history link opens the same component at
+  `/agents/{id}?tab=try&test_session={session_id}`. Its initial transcript comes
+  from the private events stream; source and version come from an actual
+  stopped-turn debug response. While they are unknown, source controls,
+  draft-specific hints and submission are hidden or disabled. The existing
+  composer snippet offers **Stop** for a streamed running or suspended turn,
+  sending its exact `turn_id` to `POST …/test/{session}/cancel`. Current
+  organization member Write and structural private-run proof govern that
+  cancellation even when activation or execution configuration has changed.
+  A component conversation epoch invalidates outstanding submit, answer and
+  stop responses after query changes or unmounting. Debug reads retain their
+  own controller and read-set identity, so an older response cannot update a
+  new conversation or restore its history URL.
 - **It fills the window.** Try it → Test chat is a
   [bounded viewport](#bounded-viewport) like the chat: the agent page passes
   the height down a flex column (`AgentShell` → the tab's content →
@@ -1026,6 +1168,14 @@ single string source for both server responses and the SPA. `mise run
 gen-locales` compiles them into `web/src/lib/locales/*.ts`; Svelte components
 use `t()`, `dt()`, and `n()` from `i18n.svelte.ts`. Never put a user-visible
 literal in a component.
+
+The shared `locale.ts` detector uses the explicit `lang` cookie, then the
+browser's language preferences and English. Both `i18n.svelte.ts` and the
+same-origin JSON request helper reuse it. Each JSON request sends the current
+selection as `Accept-Language`, preserving an explicitly supplied request
+header. Changing the interface language therefore also changes subsequent API
+error messages, even when the browser prefers another language. Bearer clients
+retain the server's existing header-based negotiation.
 
 `crates/session-core/build.rs` fails when the six catalog key sets or variables
 drift, and the web locale test verifies the generated catalogs against English.

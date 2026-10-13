@@ -135,7 +135,7 @@ export class AgentWorkspace {
 	async load() {
 		try {
 			await this.refresh();
-			const [r, a] = await Promise.all([agentsApi.resources(), agentsApi.list()]);
+			const [r, a] = await Promise.all([agentsApi.resources(this.id), agentsApi.list()]);
 			this.resources = r;
 			this.agents = a.filter((x) => x.id !== this.id);
 		} catch (err) {

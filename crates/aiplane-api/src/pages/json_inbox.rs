@@ -23,7 +23,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use session_core::chat_json::json_stream_response;
 use session_core::db as chat;
-use session_core::i18n::Lang;
+use session_core::i18n::{Lang, t};
 
 use super::agent_errors::resume_error;
 use super::json_agents::agent_at;
@@ -90,6 +90,7 @@ pub struct Resumed {
 /// again. The visitor gets the outcome on their own stream; the answering
 /// person's inbox drops the item.
 pub async fn answer(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let (_, user) = or_return!(super::require_session_json(&state, &req).await);
     let Some(id) = raw_path_segment(&req, 1) else {
         return bad_request("the URL is missing the inbox item id");
@@ -126,8 +127,15 @@ pub async fn answer(State(state): State<Arc<RamaState>>, req: Request) -> Respon
                 "another turn is running in that conversation or every parallel slot is in \
                  use — answer again once it has finished",
             ),
+            Err(super::chat::ResumeTurnError::Unavailable) => json_error(
+                StatusCode::CONFLICT,
+                "dot_unavailable",
+                &t(lang, "dot-background-error-unavailable"),
+            ),
+            Err(super::chat::ResumeTurnError::Context(err)) => internal(err),
             Err(super::chat::ResumeTurnError::Refused(refused)) => resume_error(
                 aiplane_runtime::agents::resume::AgentResumeError::Refused(refused),
+                lang,
             ),
         };
     }
@@ -143,6 +151,7 @@ pub async fn answer(State(state): State<Arc<RamaState>>, req: Request) -> Respon
             request_id: Some(&id),
             decision,
             user_id: &user.id,
+            lang,
         },
     )
     .await
@@ -151,6 +160,7 @@ pub async fn answer(State(state): State<Arc<RamaState>>, req: Request) -> Respon
 /// A member of staff's decision on a suspended turn of an agent's
 /// conversation.
 pub(super) struct StaffDecision<'a> {
+    pub lang: Lang,
     pub agent_id: &'a str,
     pub session_id: &'a str,
     pub turn_id: &'a str,
@@ -193,7 +203,7 @@ pub(super) async fn resume_as_staff(state: Arc<RamaState>, d: StaffDecision<'_>)
     .await
     {
         Ok(claimed) => claimed,
-        Err(err) => return resume_error(err),
+        Err(err) => return resume_error(err, d.lang),
     };
     embed_rt::spawn_guarded(state, runner, hold, TurnWork::Resume(claimed));
     json_ok(

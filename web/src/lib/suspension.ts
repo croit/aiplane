@@ -7,7 +7,7 @@
  */
 import { slotTitle } from './agent-setup.ts';
 
-export type SuspensionKind = 'approval' | 'secure_input' | 'human_answer';
+export type SuspensionKind = 'approval' | 'secure_input' | 'human_answer' | 'browser_handover';
 export type DecisionKind = 'allow_once' | 'deny' | 'value';
 
 /** A slot of a hand-off's context: its value, or who vouched for it when the model may not see it. */
@@ -89,7 +89,8 @@ export function waitingLead(kind: SuspensionKind, where: 'chat' | 'test'): strin
 	const keys: Record<SuspensionKind, [string, string]> = {
 		approval: ['chat-waiting-approval', 'agents-test-waiting-approval'],
 		secure_input: ['chat-waiting-value', 'agents-test-waiting-secure-input'],
-		human_answer: ['chat-waiting-answer', 'agents-test-waiting-human']
+		human_answer: ['chat-waiting-answer', 'agents-test-waiting-human'],
+		browser_handover: ['chat-waiting-browser-handover', 'agents-test-waiting-approval']
 	};
 	return keys[kind][where === 'chat' ? 0 : 1];
 }

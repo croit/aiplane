@@ -62,6 +62,7 @@ mod a2a;
 pub mod model;
 mod route_kinds;
 pub mod secrets;
+pub mod tool_access;
 mod verifiers;
 use super::state::StateSchema;
 use crate::finish::FinishContract;
@@ -87,6 +88,7 @@ pub enum Stage {
 pub struct SpecContext<'a> {
     /// The agent whose spec this is — its principal id.
     pub agent_id: &'a str,
+    pub action_catalogues: &'a std::collections::BTreeMap<String, BTreeSet<String>>,
     /// That principal's grants, as stored now.
     pub grants: &'a GrantSet,
     /// Every agent id, mapped to whether it has a live version.
@@ -138,7 +140,7 @@ const MAIN_KEYS: &[&str] = &[
     "budget",
 ];
 const INSTRUCTION_KEYS: &[&str] = &["orchestration", "response"];
-const TOOL_RESOURCE_KEYS: &[&str] = &["bind", "permission", "approval_timeout"];
+const TOOL_RESOURCE_KEYS: &[&str] = &["bind", "permission", "approval_timeout", "actions"];
 const PERMISSIONS: &[&str] = &["always_allow", "always_ask"];
 const BUDGET_KEYS: &[&str] = &["rounds", "seconds", "tokens"];
 const SLOT_KEYS: &[&str] = &[
@@ -900,6 +902,29 @@ impl<'a> Check<'a> {
             };
             if let Some(perm) = r.get("permission") {
                 self.one_of(perm, &join(&p, "permission"), PERMISSIONS);
+            }
+            if let Some(actions) = r.get("actions") {
+                let action_path = join(&p, "actions");
+                match actions.as_object() {
+                    Some(rules) => {
+                        for (id, rule) in rules {
+                            let item_path = join(&action_path, id);
+                            if !self
+                                .ctx
+                                .action_catalogues
+                                .get(tool)
+                                .is_some_and(|known| known.contains(id))
+                            {
+                                self.issue(&item_path, format!("`{tool}` does not declare action `{id}` — remove this rule or select an action from this tool's catalogue"));
+                            }
+                            self.one_of(rule, &item_path, &["allow", "ask", "deny"]);
+                        }
+                    }
+                    None => self.issue(
+                        &action_path,
+                        "must be an object keyed by declared tool action".to_string(),
+                    ),
+                }
             }
             if let Some(timeout) = r.get("approval_timeout") {
                 self.duration(timeout, &join(&p, "approval_timeout"));
@@ -1841,6 +1866,7 @@ mod tests {
         validate(
             &spec,
             &SpecContext {
+                action_catalogues: &Default::default(),
                 agent_id: SELF,
                 grants: &grants,
                 agents: &agents,
@@ -1851,6 +1877,45 @@ mod tests {
             },
             stage,
         )
+    }
+
+    #[test]
+    fn action_rules_validate_against_the_tools_actual_catalogue() {
+        let catalogues = std::collections::BTreeMap::from([(
+            "rag_search".into(),
+            BTreeSet::from(["read".into()]),
+        )]);
+        let ctx = SpecContext {
+            agent_id: SELF,
+            action_catalogues: &catalogues,
+            grants: &grants(),
+            agents: &agents(),
+            live_specs: &HashMap::new(),
+            model_defaults: &Default::default(),
+            speech_voices: &HashMap::new(),
+            allow_private: false,
+        };
+        for rule in ["allow", "ask", "deny"] {
+            let spec = json!({"main":{"tools":["rag_search"],"tool_resources":{"rag_search":{"actions":{"read":rule}}}}});
+            assert!(validate(&spec, &ctx, Stage::Draft).is_empty());
+        }
+        for actions in [
+            json!({"unknown":"allow"}),
+            json!({"read":"unknown"}),
+            json!(["read"]),
+        ] {
+            let spec = json!({"main":{"tools":["rag_search"],"tool_resources":{"rag_search":{"actions":actions}}}});
+            assert!(validate(&spec, &ctx, Stage::Draft).iter().any(|issue| {
+                issue
+                    .path
+                    .starts_with("main.tool_resources.rag_search.actions")
+            }));
+        }
+        let unsupported = SpecContext {
+            action_catalogues: &Default::default(),
+            ..ctx
+        };
+        assert!(!validate(&json!({"main":{"tools":["rag_search"],"tool_resources":{"rag_search":{"actions":{"read":"allow"}}}}}),&unsupported,Stage::Draft).is_empty());
     }
 
     fn paths(issues: &[SpecIssue]) -> Vec<&str> {
@@ -1934,6 +1999,7 @@ mod tests {
     fn a_spec_that_passes_comes_back_typed_with_its_defaults_applied() {
         let (grants, agents, live) = (grants(), agents(), HashMap::new());
         let ctx = SpecContext {
+            action_catalogues: &Default::default(),
             agent_id: SELF,
             grants: &grants,
             agents: &agents,
@@ -2734,6 +2800,7 @@ mod tests {
         validate(
             &spec,
             &SpecContext {
+                action_catalogues: &Default::default(),
                 agent_id: SELF,
                 grants: &grants,
                 agents: &agents,
@@ -3055,6 +3122,7 @@ mod tests {
         validate(
             &spec,
             &SpecContext {
+                action_catalogues: &Default::default(),
                 agent_id: SELF,
                 grants: &grants,
                 agents: &agents,
@@ -3102,6 +3170,7 @@ mod tests {
         validate(
             spec,
             &SpecContext {
+                action_catalogues: &Default::default(),
                 agent_id: SELF,
                 grants: &grants,
                 agents: &agents,

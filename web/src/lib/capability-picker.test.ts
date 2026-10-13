@@ -22,6 +22,15 @@ const row = (key: string, extra: Partial<CapabilityItem> = {}): CapabilityItem =
 	key, kind: 'tool', title: key.toUpperCase(), description: '', group: 'g', order: 0, icon: null, ...extra
 });
 
+test('search matches actual resource keys with trimmed case insensitive queries', () => {
+	const browser = row('browse_page', { title: 'Browse a website', description: 'Control a browser session' });
+	const rows = [browser, row('remember', { title: 'Memory', description: 'Store a lesson' })];
+	assert.deepEqual(searchCapabilities(rows, '  BROWSE_PAGE  '), [browser]);
+	assert.deepEqual(searchCapabilities(rows, 'website'), [browser]);
+	assert.deepEqual(searchCapabilities(rows, 'browser session'), [browser]);
+	assert.deepEqual(searchCapabilities(rows, 'missing_key'), []);
+});
+
 test('search matches the agent rows like the chat rows, and an empty query keeps them all', () => {
 	const rows = [row('a', { description: 'Reads the manual' }), row('b')];
 	assert.deepEqual(searchCapabilities(rows, ' manual ').map((r) => r.key), ['a']);

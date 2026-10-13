@@ -38,6 +38,8 @@ use shared::api::ToolDef;
 
 use super::{Tool, ToolContext, ToolError, ToolFuture, ToolResult, tool_content_parts};
 
+pub mod identities;
+pub use identities::{McpDispatchFacts, StoredMcpIdentity};
 pub mod manager;
 pub(crate) mod spill;
 pub mod worker;
@@ -66,7 +68,9 @@ pub(crate) struct McpConnection {
 }
 
 /// One MCP-server tool, adapted to the gateway's [`Tool`] trait.
+#[derive(Clone)]
 pub struct McpTool {
+    identity: Option<(McpDispatchFacts, Arc<aiplane_core::server::rbac::Resolver>)>,
     /// Namespaced id = registry key = OpenAI function name the model calls.
     registry_id: String,
     /// The server's own tool name — what we pass to `tools/call`.
@@ -84,6 +88,22 @@ pub struct McpTool {
 }
 
 impl McpTool {
+    pub(crate) fn with_identity(
+        mut self,
+        identity: StoredMcpIdentity,
+        rbac: Arc<aiplane_core::server::rbac::Resolver>,
+    ) -> Self {
+        self.identity = Some((McpDispatchFacts::Owned(identity), rbac));
+        self
+    }
+    pub(crate) fn with_dispatch_facts(
+        mut self,
+        facts: McpDispatchFacts,
+        rbac: Arc<aiplane_core::server::rbac::Resolver>,
+    ) -> Self {
+        self.identity = Some((facts, rbac));
+        self
+    }
     /// The server's own (un-namespaced) tool name.
     pub fn remote_name(&self) -> &str {
         &self.remote_name
@@ -106,12 +126,19 @@ impl McpTool {
 }
 
 impl Tool for McpTool {
+    fn execution_facts(&self) -> Option<Value> {
+        self.identity.as_ref().map(|(identity, _)| json!(identity))
+    }
     fn id(&self) -> &str {
         &self.registry_id
     }
 
     fn changes_state(&self) -> bool {
         self.destructive && !self.read_only
+    }
+
+    fn read_only(&self) -> bool {
+        self.read_only
     }
 
     fn schema(&self) -> ToolDef {
@@ -121,6 +148,8 @@ impl Tool for McpTool {
     fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         // Own everything the call needs so the future doesn't borrow `self`
         // across the await (and the `Arc` keeps the session alive regardless).
+        let identity = self.identity.clone();
+        let id = self.registry_id.clone();
         let conn = self.conn.clone();
         let remote = self.remote_name.clone();
         let schema = self.schema.function.parameters.clone();
@@ -135,6 +164,11 @@ impl Tool for McpTool {
             spill::default_blob_switches(&schema, &mut args);
             params.arguments = args.as_object().cloned();
 
+            if let Some((identity, rbac)) = &identity {
+                identities::validate_dispatch(&ctx, identity, &id, rbac).await?;
+            } else {
+                super::ask_first::validate_execution_facts(&ctx, &id, &None)?;
+            }
             let res = tokio::time::timeout(CALL_TIMEOUT, conn.service.call_tool(params))
                 .await
                 .map_err(|_| {
@@ -212,6 +246,7 @@ fn build_tools(
         };
         let schema = ToolDef::function(registry_id.clone(), description, parameters);
         out.push(McpTool {
+            identity: None,
             registry_id,
             remote_name: t.name.to_string(),
             schema,
@@ -417,6 +452,73 @@ mod tests {
         let id = sanitize_tool_id("server", &"x".repeat(200));
         assert!(id.len() <= 64, "len was {}", id.len());
         assert!(id.starts_with("mcp__server__x"));
+    }
+
+    #[tokio::test]
+    async fn personal_dot_mcp_defaults_pause_unknown_and_write_tools_before_dispatch() {
+        use crate::agents::spec::AgentSpec;
+        use crate::persona::ChatPersona;
+        use crate::server::tools::ToolSource;
+        use crate::suspend::{Suspend, extract_suspend};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(|request: &wiremock::Request| {
+                let request: Value = serde_json::from_slice(&request.body).unwrap();
+                let result = match request["method"].as_str() {
+                    Some("initialize") => json!({
+                        "protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "fixture", "version": "1"}
+                    }),
+                    Some("tools/list") => json!({"tools": [
+                        {"name": "read", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}},
+                        {"name": "write", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": false}},
+                        {"name": "unknown", "inputSchema": {"type": "object"}}
+                    ]}),
+                    Some("tools/call") => json!({"content": [{"type": "text", "text": "read result"}], "isError": false}),
+                    Some("notifications/initialized") => return ResponseTemplate::new(202),
+                    other => panic!("unexpected MCP method: {other:?}"),
+                };
+                ResponseTemplate::new(200).insert_header("content-type", "application/json")
+                    .set_body_json(json!({"jsonrpc": "2.0", "id": request["id"], "result": result}))
+            })
+            .mount(&server).await;
+        let connected = connect_http_server("fixture", &server.uri(), None)
+            .await
+            .unwrap();
+        let mut registry = ToolRegistry::new();
+        for tool in connected.tools {
+            registry = registry.with(tool);
+        }
+        let spec =
+            AgentSpec::from_value(&json!({"main": {"tools": ToolSource::ids(&registry)}})).unwrap();
+        let persona =
+            ChatPersona::new("Dot", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let ctx = ToolContext {
+            suspend: Suspend::Available,
+            ..ToolContext::for_test(db)
+        };
+        let source = persona.source(&registry, None);
+        for id in source.ids() {
+            let tool = source.get(&id).unwrap();
+            let should_ask = !id.ends_with("__read");
+            assert_eq!(tool.read_only(), !should_ask);
+            let body = tool.run(ctx.clone(), json!({})).await.unwrap();
+            assert_eq!(extract_suspend(&body).is_some(), should_ask);
+        }
+        let calls = server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|request| {
+                serde_json::from_slice::<Value>(&request.body).unwrap()["method"] == "tools/call"
+            })
+            .count();
+        assert_eq!(calls, 1);
     }
 
     #[tokio::test]

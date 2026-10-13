@@ -37,6 +37,7 @@ test('the lead says what the conversation waits for, in the chat and in the test
 	assert.equal(waitingLead('approval', 'chat'), 'chat-waiting-approval');
 	assert.equal(waitingLead('secure_input', 'chat'), 'chat-waiting-value');
 	assert.equal(waitingLead('human_answer', 'chat'), 'chat-waiting-answer');
+	assert.equal(waitingLead('browser_handover', 'chat'), 'chat-waiting-browser-handover');
 	assert.equal(waitingLead('secure_input', 'test'), 'agents-test-waiting-secure-input');
 	assert.equal(waitingLead('approval', 'test'), 'agents-test-waiting-approval');
 	assert.equal(waitingLead('human_answer', 'test'), 'agents-test-waiting-human');

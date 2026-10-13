@@ -35,7 +35,7 @@ const TYPST_VARIANT_SUFFIXES: &[&str] = &["_edit", "_read", "_pptx"];
 /// `remember`: a user who turns memory off must not be left with tools that
 /// can still mutate the store, and one who turns it on needs the store to be
 /// correctable, not append-only.
-const MEMORY_IDS: &[&str] = &["remember", RECALL_TOOL_ID, "update_memory", "forget"];
+pub const MEMORY_TOOL_IDS: &[&str] = &["remember", RECALL_TOOL_ID, "update_memory", "forget"];
 const MEMORY_KEY: &str = "memory";
 
 /// The document-canvas tools are one capability — building up and editing
@@ -255,7 +255,7 @@ pub fn entry_key_for(tool_id: &str) -> &str {
             .iter()
             .find_map(|s| tool_id.strip_suffix(s))
             .unwrap_or(tool_id)
-    } else if MEMORY_IDS.contains(&tool_id) {
+    } else if MEMORY_TOOL_IDS.contains(&tool_id) {
         MEMORY_KEY
     } else if ATTACH_IDS.contains(&tool_id) {
         ATTACH_KEY
@@ -319,6 +319,7 @@ pub fn requires_chat_session(tool_id: &str) -> bool {
         || tool_id == "read_sandbox_output"
         // Needs a live turn *and* a human watching it to answer.
         || tool_id == "ask_user"
+        || tool_id == "forward_request"
         // Acts through the browser extension paired with the *open* chat page.
         // Off the chat path there is no page to relay through, so there is
         // nothing for a /v1 caller to call.
@@ -393,7 +394,7 @@ pub fn category_for(tool_id: &str) -> Category {
         // Against the list, not literals: adding a fifth memory tool must not
         // be able to categorise it as Utility by omission. (It could, until
         // `update_memory` and `forget` landed and the drift guard said so.)
-        _ if MEMORY_IDS.contains(&tool_id) => Category::Memory,
+        _ if MEMORY_TOOL_IDS.contains(&tool_id) => Category::Memory,
         _ if SCHEDULE_IDS.contains(&tool_id) => Category::Scheduling,
         _ if tool_id.starts_with(crate::server::tools::mcp::MCP_ID_PREFIX) => {
             Category::Integrations
@@ -658,6 +659,13 @@ fn display_meta(tool_id: &str) -> Option<(&'static str, &'static str)> {
              JSON document you can edit by hand and re-render, so a revision keeps the same \
              look.",
         ),
+        "forward_request" => (
+            "Delegate to another Dot",
+            "Lets one of your Dots hand an explicit task to another Dot it may address — \
+             one of your own Dots, or an organization Dot your organization has consented \
+             to receive requests from — and work from the answer. The receiving Dot uses \
+             its own tools, memory and approval rules; only the task itself crosses over.",
+        ),
         _ => return None,
     };
     Some(meta)
@@ -740,13 +748,13 @@ pub fn entries(
             }
             continue;
         }
-        if MEMORY_IDS.contains(&id.as_str()) {
+        if MEMORY_TOOL_IDS.contains(&id.as_str()) {
             if !memory_seen {
                 memory_seen = true;
                 out.push(ToolEntry {
                     key: MEMORY_KEY.to_string(),
                     title: "Memory".to_string(),
-                    tech: MEMORY_IDS.join(" + "),
+                    tech: MEMORY_TOOL_IDS.join(" + "),
                     description: "Lets the assistant remember durable facts about you \
                                   (preferences, ongoing projects), recall them in later \
                                   conversations, and correct or delete one when it changes. \
@@ -1016,14 +1024,22 @@ mod tests {
     /// `forget` left them in `Utility` and outside the switch.
     #[test]
     fn every_memory_tool_shares_the_toggle_and_the_category() {
-        for id in MEMORY_IDS {
+        for id in MEMORY_TOOL_IDS {
             assert_eq!(entry_key_for(id), MEMORY_KEY, "`{id}` toggle key");
             assert_eq!(category_for(id), Category::Memory, "`{id}` category");
         }
         // And the mutating pair is really in the list — a toggle that leaves
         // them on would let a user who disabled memory still have it written.
-        assert!(MEMORY_IDS.contains(&"forget"));
-        assert!(MEMORY_IDS.contains(&"update_memory"));
+        assert!(MEMORY_TOOL_IDS.contains(&"forget"));
+        assert!(MEMORY_TOOL_IDS.contains(&"update_memory"));
+    }
+
+    #[test]
+    fn personal_forward_request_is_excluded_from_stateless_tools() {
+        assert!(requires_chat_session("forward_request"));
+        let keys = api_keys(["forward_request", "get_current_timestamp"]);
+        assert!(!keys.contains("forward_request"));
+        assert!(keys.contains("get_current_timestamp"));
     }
 
     #[test]

@@ -34,9 +34,49 @@ pub fn encode(bytes: &[u8]) -> String {
     out
 }
 
+/// Decode the standard alphabet, optional padding and ASCII whitespace.
+pub fn decode(s: &str) -> Result<Vec<u8>, String> {
+    let clean: String = s.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    let bytes = clean.as_bytes();
+    let trimmed = bytes.iter().rposition(|b| *b != b'=').map_or(0, |i| i + 1);
+    let body = &bytes[..trimmed];
+
+    let mut out = Vec::with_capacity(body.len() * 3 / 4);
+    let mut acc: u32 = 0;
+    let mut acc_bits: u8 = 0;
+    for (idx, &c) in body.iter().enumerate() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return Err(format!("invalid base64 character at position {idx}")),
+        };
+        acc = (acc << 6) | (v as u32);
+        acc_bits += 6;
+        if acc_bits >= 8 {
+            acc_bits -= 8;
+            out.push((acc >> acc_bits) as u8);
+            acc &= (1 << acc_bits) - 1;
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_existing_attachment_payload_conventions() {
+        assert_eq!(decode("YQ==").unwrap(), b"a");
+        assert_eq!(decode("YQ").unwrap(), b"a");
+        assert_eq!(decode(" Y W J j\n").unwrap(), b"abc");
+        assert!(decode("?-_").is_err());
+        let all: Vec<_> = (0u8..=255).collect();
+        assert_eq!(decode(&encode(&all)).unwrap(), all);
+    }
 
     #[test]
     fn matches_the_rfc_test_vectors() {

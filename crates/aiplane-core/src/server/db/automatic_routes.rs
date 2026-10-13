@@ -109,13 +109,22 @@ impl AutomaticRoute {
 }
 
 pub async fn all(db: &Pool) -> Result<Vec<AutomaticRoute>, DbError> {
+    let mut connection = db.acquire().await?;
+    all_with(&mut connection).await
+}
+
+pub async fn all_in(tx: &mut super::WriteTx) -> Result<Vec<AutomaticRoute>, DbError> {
+    all_with(tx).await
+}
+
+async fn all_with(db: &mut sqlx::SqliteConnection) -> Result<Vec<AutomaticRoute>, DbError> {
     let aliases: Vec<String> =
         sqlx::query_scalar("SELECT alias FROM automatic_routes ORDER BY alias")
-            .fetch_all(db)
+            .fetch_all(&mut *db)
             .await?;
     let mut routes = Vec::with_capacity(aliases.len());
     for alias in aliases {
-        if let Some(route) = get(db, &alias).await? {
+        if let Some(route) = get_with(db, &alias).await? {
             routes.push(route);
         }
     }
@@ -123,6 +132,14 @@ pub async fn all(db: &Pool) -> Result<Vec<AutomaticRoute>, DbError> {
 }
 
 pub async fn get(db: &Pool, alias: &str) -> Result<Option<AutomaticRoute>, DbError> {
+    let mut connection = db.acquire().await?;
+    get_with(&mut connection, alias).await
+}
+
+async fn get_with(
+    db: &mut sqlx::SqliteConnection,
+    alias: &str,
+) -> Result<Option<AutomaticRoute>, DbError> {
     let Some(row) = sqlx::query(
         r#"SELECT alias, selector_model, objective, instructions, minimum_confidence,
                   selector_timeout_ms, fallback_target, session_affinity,
@@ -130,7 +147,7 @@ pub async fn get(db: &Pool, alias: &str) -> Result<Option<AutomaticRoute>, DbErr
              FROM automatic_routes WHERE alias = ?"#,
     )
     .bind(alias)
-    .fetch_optional(db)
+    .fetch_optional(&mut *db)
     .await?
     else {
         return Ok(None);
@@ -140,7 +157,7 @@ pub async fn get(db: &Pool, alias: &str) -> Result<Option<AutomaticRoute>, DbErr
             WHERE route_alias = ? ORDER BY sort_order, key"#,
     )
     .bind(alias)
-    .fetch_all(db)
+    .fetch_all(&mut *db)
     .await?
     .into_iter()
     .map(|candidate| AutomaticRouteCandidate {
@@ -370,6 +387,28 @@ mod tests {
             value.validate().unwrap_err(),
             "automatic route candidate keys must be unique"
         );
+    }
+
+    #[tokio::test]
+    async fn transactional_route_inventory_observes_current_candidates_and_rollback() {
+        let db = crate::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        upsert(&db, &route()).await.unwrap();
+        let original = get(&db, "default").await.unwrap().unwrap();
+        let mut tx = crate::server::db::WriteTx::begin(&db).await.unwrap();
+        sqlx::query("UPDATE automatic_route_candidates SET target='changed-target' WHERE route_alias='default' AND key='expert'")
+            .execute(&mut *tx).await.unwrap();
+        let inventory = all_in(&mut tx).await.unwrap();
+        assert_eq!(inventory.len(), 1);
+        assert!(
+            inventory[0]
+                .candidates
+                .iter()
+                .any(|c| c.target == "changed-target")
+        );
+        drop(tx);
+        assert_eq!(get(&db, "default").await.unwrap().unwrap(), original);
     }
 
     #[tokio::test]

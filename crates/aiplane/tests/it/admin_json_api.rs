@@ -741,6 +741,11 @@ async fn groups_list_carries_families_and_cached_mcp_tools() {
     aiplane_core::server::db::mcp_catalog::replace_tools(
         &state.db,
         "slack",
+        &aiplane_core::server::db::mcp_catalog::get(&state.db, "slack")
+            .await
+            .unwrap()
+            .unwrap()
+            .dispatch_generation,
         &[aiplane_core::server::db::mcp_catalog::CachedTool {
             tool_id: "mcp__slack__post".into(),
             description: "Post a message".into(),
@@ -1567,16 +1572,12 @@ async fn workspace_surfaces_round_trip() {
     assert_eq!(deleted_flag(&gone.id), true);
 
     // The list row learns it too, so it never links into the deleted chat.
-    aiplane_runtime::server::scheduled::mark_ran(
-        &state.db,
-        action_id,
-        "ok",
-        Some(&gone.id),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+    sqlx::query("UPDATE scheduled_actions SET last_session_id = ? WHERE id = ?")
+        .bind(&gone.id)
+        .bind(action_id)
+        .execute(&state.db)
+        .await
+        .unwrap();
     let resp = app
         .serve(req(
             rama::http::Method::GET,
@@ -1660,13 +1661,32 @@ async fn workspace_surfaces_round_trip() {
     );
 
     // The owner still gets theirs.
+    let run_chat = session_core::db::create_session(&state.db, "boss")
+        .await
+        .unwrap();
+    let run_turn = session_core::db::create_assistant_turn_in_progress(
+        &state.db,
+        &run_chat.id,
+        "history-turn",
+        "mock",
+    )
+    .await
+    .unwrap();
     aiplane_runtime::server::webhooks::record_run_start(
         &state.db,
-        hook_id,
-        "session-1",
-        "summarise",
-        r#"{"event":"deploy"}"#,
-        "fire",
+        aiplane_runtime::server::webhooks::NewWebhookRun {
+            webhook_id: hook_id,
+            expected_configuration_generation: hook["webhook"]["configuration_generation"]
+                .as_str()
+                .unwrap(),
+            session_id: &run_chat.id,
+            prompt: "summarise",
+            payload: r#"{"event":"deploy"}"#,
+            source: "fire",
+            assistant_turn_id: &run_turn.id,
+            tools_enabled: false,
+            history_limit: None,
+        },
     )
     .await
     .unwrap();
@@ -1737,7 +1757,13 @@ async fn schedules_and_webhooks_continue_in_a_linked_chat() {
         StatusCode::BAD_REQUEST,
         "a fresh-chat schedule has nothing to continue in"
     );
-    assert!(err.to_string().contains("reuse_conversation"), "{err}");
+    assert!(
+        err.to_string().contains(&session_core::i18n::t(
+            session_core::i18n::Lang::En,
+            "dot-background-error-linked"
+        )),
+        "{err}"
+    );
 
     let (status, err) = send(
         rama::http::Method::POST,
@@ -1750,14 +1776,24 @@ async fn schedules_and_webhooks_continue_in_a_linked_chat() {
         StatusCode::BAD_REQUEST,
         "another user's chat is not linkable"
     );
-    assert!(err.to_string().contains("no chat of yours"), "{err}");
+    assert!(
+        err.to_string().contains(&session_core::i18n::t(
+            session_core::i18n::Lang::En,
+            "dot-background-error-linked"
+        )),
+        "{err}"
+    );
 
     // An edit that leaves the field out keeps the link; an empty one clears it.
     let keep = r#"{"name":"digest","prompt":"hi","model":"model-a","cron":"0 9 * * *","reuse_conversation":true,"reuse_rounds":5}"#;
     let (status, kept) = send(
         rama::http::Method::PUT,
         format!("/api/v0/scheduled/{action_id}"),
-        keep.into(),
+        {
+            let mut body: serde_json::Value = serde_json::from_str(keep).unwrap();
+            body["expected_configuration_generation"] = created["configuration_generation"].clone();
+            body.to_string()
+        },
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{kept}");
@@ -1765,7 +1801,11 @@ async fn schedules_and_webhooks_continue_in_a_linked_chat() {
     let (_, cleared) = send(
         rama::http::Method::PUT,
         format!("/api/v0/scheduled/{action_id}"),
-        schedule(true, ""),
+        {
+            let mut body: serde_json::Value = serde_json::from_str(&schedule(true, "")).unwrap();
+            body["expected_configuration_generation"] = kept["configuration_generation"].clone();
+            body.to_string()
+        },
     )
     .await;
     assert!(cleared["last_session_id"].is_null(), "{cleared}");
@@ -1785,7 +1825,12 @@ async fn schedules_and_webhooks_continue_in_a_linked_chat() {
     let (status, _) = send(
         rama::http::Method::PUT,
         format!("/api/v0/webhooks/{hook_id}"),
-        foreign,
+        {
+            let mut payload: serde_json::Value = serde_json::from_str(&foreign).unwrap();
+            payload["expected_configuration_generation"] =
+                created["webhook"]["configuration_generation"].clone();
+            payload.to_string()
+        },
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -1905,8 +1950,10 @@ async fn skills_and_connectors_surfaces() {
     );
     let error_page = body(resp).await;
     assert!(error_page.contains("That connection did not complete"));
-    assert!(error_page.contains("access_denied"));
-    assert!(error_page.contains("Consent cancelled"));
+    assert!(error_page.contains(&session_core::i18n::t(
+        session_core::i18n::Lang::En,
+        "integrations-error-callback-missing"
+    )));
     assert!(error_page.contains("Back to the app"));
 
     aiplane_core::server::db::mcp_audit::record(
@@ -2144,6 +2191,41 @@ async fn private_skills_authoring_round_trip() {
     let detail: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
     assert_eq!(detail["body"], "# Steps\n\nShip carefully.\n");
     assert_eq!(detail["manifest"], manifest);
+
+    let collision = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/skills",
+            &cookie,
+            Some(serde_json::json!({ "name": "release-helper", "manifest": manifest }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(collision.status(), StatusCode::CONFLICT);
+
+    let revised = manifest.replace("Ship carefully.", "Review every change.");
+    let resp = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/skills",
+            &cookie,
+            Some(serde_json::json!({ "name": "release-helper", "manifest": revised, "overwrite": true }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED, "{}", body(resp).await);
+
+    let resp = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/skills/release-helper/body",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let updated: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
+    assert_eq!(updated["body"], "# Steps\n\nReview every change.\n");
 
     let resp = app
         .serve(req(
@@ -2629,10 +2711,14 @@ async fn unconfigured_features_and_missing_resources_refuse_by_meaning() {
     let hook = aiplane_runtime::server::webhooks::create(
         &state.db,
         aiplane_runtime::server::webhooks::NewWebhook {
-            user_id: "boss".into(),
+            dot_id: None,
+            linked_session_id: None,
+            owner: aiplane_runtime::server::background::AutomationOwner::User("boss".into()),
+            created_by: "boss".into(),
+            agent_version: None,
             name: "never-called".into(),
             prompt: "summarise".into(),
-            model: "model-a".into(),
+            model: Some("model-a".into()),
             tools_enabled: false,
             synchronous: false,
             reuse_conversation: false,
@@ -2644,10 +2730,14 @@ async fn unconfigured_features_and_missing_resources_refuse_by_meaning() {
     .unwrap();
     let app = router(state);
     let rerun = |run: Option<&str>| {
-        Some(match run {
-            Some(run) => format!(r#"{{"prompt":"again","run":"{run}"}}"#),
-            None => r#"{"prompt":"again"}"#.to_string(),
-        })
+        let mut payload = serde_json::json!({
+            "prompt": "again",
+            "expected_configuration_generation": hook.configuration_generation,
+        });
+        if let Some(run) = run {
+            payload["run"] = serde_json::json!(run);
+        }
+        Some(payload.to_string())
     };
     for (method, path, payload, status, code) in [
         (
@@ -2768,5 +2858,43 @@ async fn priority_errors_use_the_selected_ui_language_over_browser_language() {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let response_body = body(response).await;
         assert!(response_body.contains(expected), "{uri}: {response_body}");
+    }
+}
+
+#[tokio::test]
+async fn groups_save_sets_clears_and_preserves_independent_dot_management() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+    for (extra, expected) in [
+        ("", false),
+        (r#","can_manage_dots":true"#, true),
+        ("", true),
+        (r#","can_manage_dots":false"#, false),
+    ] {
+        let saved = app
+            .serve(req(
+                Method::PUT,
+                "/api/v0/admin/groups",
+                &cookie,
+                Some(format!(
+                    r#"{{"name":"dot-users","can_manage_agents":false{extra}}}"#
+                )),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(saved.status(), StatusCode::OK, "{}", body(saved).await);
+        let listed = app
+            .serve(req(Method::GET, "/api/v0/admin/groups", &cookie, None))
+            .await
+            .unwrap();
+        let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+        let group = listed["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["name"] == "dot-users")
+            .unwrap();
+        assert_eq!(group["can_manage_dots"], expected);
+        assert_eq!(group["can_manage_agents"], false);
     }
 }

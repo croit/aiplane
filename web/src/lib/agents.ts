@@ -22,7 +22,11 @@ export type Spec = Record<string, any>;
 /** One problem the server found in a spec, at a dotted/indexed path such as `main.tools[0]`. */
 export type SpecIssue = ApiIssue;
 
+export type OrganizationOwner = { kind: 'organization'; id: string; name: string };
+export interface AgentDotMetadata { owner: OrganizationOwner | { kind: 'user'; id: string }; name: string; active: boolean }
+
 export interface AgentSummary {
+	dot: AgentDotMetadata | null;
 	id: string;
 	name: string;
 	display: string;
@@ -34,6 +38,34 @@ export interface AgentSummary {
 	/** `null` until the agent was published once. */
 	live_version: number | null;
 	access: 'read' | 'write';
+}
+
+export function organizationOwner(agent: Pick<AgentSummary, 'dot'> | null | undefined): OrganizationOwner | null {
+    return agent?.dot?.owner.kind === 'organization' ? agent.dot.owner : null;
+}
+
+export function agentPublicName(agent: Pick<AgentSummary, 'dot' | 'name'>): string {
+    return agent.dot?.name ?? agent.name;
+}
+
+export function agentUiCapabilities(agent: (Pick<AgentSummary, 'dot'> & Partial<Pick<AgentSummary, 'access'>>) | null | undefined) {
+    const enabled = !!agent && !organizationOwner(agent);
+    const draftChat = enabled || (!!organizationOwner(agent) && agent?.access === 'write');
+    return { draftChat, execution: enabled, site: enabled, channels: enabled, embed: enabled };
+}
+
+export type PrivateChatSource = 'draft' | 'published';
+
+export function testChatSources(agent: Pick<AgentSummary, 'dot' | 'live_version'> | null | undefined): PrivateChatSource[] {
+	return organizationOwner(agent) && agent?.live_version != null && agent.live_version > 0
+		? ['draft', 'published'] : ['draft'];
+}
+
+export interface TestMessageStarted {
+	session_id: string;
+	turn_id: string;
+	source: PrivateChatSource;
+	agent_version: number;
 }
 
 export interface Grant {
@@ -60,6 +92,7 @@ export interface Share {
 
 /** What `GET /api/v0/agents/{id}/share-subjects?q=` found: a search, never the roster (nothing under two characters, a few matches, an address only for an exact one). */
 export interface ShareSubjectMatches {
+	truncated: boolean;
 	users: { id: string; name: string | null; email?: string }[];
 	groups: string[];
 }
@@ -237,10 +270,11 @@ export interface TestDebug {
 	scope?: ScopeDebug | null;
 }
 
-/** One test-chat turn's debug view, read once the turn stopped running. */
+/** A private agent conversation's debug view, read once its turn stopped running. */
 export interface TestTurnView {
 	turn_id: string;
-	draft_version: number;
+	source: PrivateChatSource;
+	agent_version: number;
 	debug: TestDebug;
 	/** What the turn hands to a person while it waits on one: what the Inbox would show whoever answers it. */
 	handoff: HandoffContext | null;
@@ -324,11 +358,15 @@ export const agentsApi = {
 	restoreDraft: (id: string, revision: number) =>
 		call<{ draft_spec: Spec; revision: number | null }>(`/api/v0/agents/${id}/draft/restore`, json('POST', { revision })),
 	/** The person's architect conversation about `agent_id` (or a new agent). */
-	startArchitect: (body: { agent_id?: string; title: string; fresh?: boolean }) =>
+	startArchitect: (body: { agent_id?: string; title: string; fresh?: boolean; dot_owner?: 'personal' }) =>
 		call<{ session_id: string; model: string; agent_id: string | null; resumed: boolean }>(
 			'/api/v0/agent-architect',
 			json('POST', body)
 		),
+	dotPlan: (sessionId: string) =>
+		call<{ proposal: import('./architect.ts').DotSetupPlan | null; dot_id: string | null }>(`/api/v0/agent-architect/${sessionId}/dot-plan`),
+	applyDotPlan: (sessionId: string, revision: string) =>
+		call<{ dot: import('./dots.ts').Dot; session_id: string }>(`/api/v0/agent-architect/${sessionId}/dot-plan`, json('POST', { revision })),
 	publish: (id: string) =>
 		call<{ version: number; live_version: number }>(`/api/v0/agents/${id}/publish`, json('POST', {})),
 	versions: (id: string) =>
@@ -371,19 +409,21 @@ export const agentsApi = {
 		call<{ added: boolean }>(`/api/v0/system-principals/${id}/grants`, json('POST', { kind, ref })),
 	revokeGrant: (id: string, kind: GrantKind, ref: string) =>
 		call<void>(`/api/v0/system-principals/${id}/grants/revoke`, json('POST', { kind, ref })),
-	resources: () => call<AgentResources>('/api/v0/agent-resources'),
+	resources: (id?: string) => call<AgentResources>(`/api/v0/agent-resources${id ? `?agent_id=${encodeURIComponent(id)}` : ''}`),
 	suggest: (id: string, body: { scenario: string; template?: string; current_draft?: Spec }) =>
 		call<AssistSuggestion>(`/api/v0/agents/${id}/assist/suggest`, json('POST', body)),
 	improve: (id: string, field: ImproveField, text: string) =>
 		call<{ suggestion: string; why: string }>(`/api/v0/agents/${id}/assist/improve`, json('POST', { field, text })),
-	/** Send a test message to the draft; the turn streams on `testEventsUrl`. */
-	sendTestMessage: (id: string, message: string, sessionId: string | null) =>
-		call<{ session_id: string; turn_id: string }>(
+	/** Send a private message with its explicit source; subsequent turns retain the server's pinned version. */
+	sendTestMessage: (id: string, message: string, sessionId: string | null, source: PrivateChatSource) =>
+		call<TestMessageStarted>(
 			`/api/v0/agents/${id}/test/messages`,
-			json('POST', sessionId ? { message, session_id: sessionId } : { message })
+			json('POST', sessionId ? { message, session_id: sessionId, source } : { message, source })
 		),
 	testEventsUrl: (id: string, sessionId: string) =>
 		`/api/v0/agents/${encodeURIComponent(id)}/test/${encodeURIComponent(sessionId)}/events`,
+	cancelTestConversation: (id: string, sessionId: string, turnId: string) =>
+		call<{ ok: true }>(`/api/v0/agents/${encodeURIComponent(id)}/test/${encodeURIComponent(sessionId)}/cancel`, json('POST', { turn_id: turnId })),
 	testTurnView: (id: string, sessionId: string, turnId: string) =>
 		call<TestTurnView>(`/api/v0/agents/${id}/test/${sessionId}/turns/${turnId}/debug`),
 	resumeTurn: (id: string, sessionId: string, turnId: string, requestId: string, answer: Answer) =>

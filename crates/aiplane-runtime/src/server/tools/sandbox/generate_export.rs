@@ -101,6 +101,7 @@ impl Tool for GenerateDocument {
                 network: false,
                 container_id: None,
                 keep_alive: false,
+                workspace: None,
             };
             self.0.execute(&ctx, req).await
         })
@@ -247,6 +248,7 @@ impl Tool for ExportDocument {
                 network: false,
                 container_id: None,
                 keep_alive: false,
+                workspace: None,
             };
             self.0.execute(&ctx, req).await
         })

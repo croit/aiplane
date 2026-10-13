@@ -94,3 +94,11 @@ scheduled-run-chat-deleted = 对话已删除
 scheduled-run-status-ok = 成功
 scheduled-run-status-error = 错误
 scheduled-run-status-pending = 运行中
+
+scheduled-organization-version = 已发布版本
+scheduled-error-invalid-configuration = 请检查所选的已发布版本、模型、对话模式和工具设置，然后重新保存。
+scheduled-error-configuration-conflict = 此计划操作已更改。请重新加载其当前设置后再保存。
+scheduled-error-identity-retained = 此 Dot 仍拥有计划操作或 Webhook。请停止等待中的运行并删除这些来源，然后再删除 Dot。
+scheduled-organization-fresh = 每次运行都会开始新的私密对话。模型和工具访问权限来自所选的已发布版本。
+scheduled-organization-model-missing = 此已发布版本未指定模型。
+scheduled-organization-version-required = 保存前请选择可用的已发布版本。

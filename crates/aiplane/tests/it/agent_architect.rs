@@ -583,3 +583,399 @@ async fn only_an_agent_manager_may_talk_to_the_architect() {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 }
+
+async fn personal_converse(fx: &Fx) -> (String, chat::TurnWithTools) {
+    let (status, started) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/agent-architect",
+            json!({"title":"Plan a personal Dot", "dot_owner":"personal", "fresh":true}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{started}");
+    let id = started["session_id"].as_str().unwrap().to_string();
+    let (status, sent) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/chat/sessions/{id}/messages"),
+            json!({"model":started["model"],"message":"Build a clock assistant"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{sent}");
+    let turn_id = sent["assistant_turn_id"].as_str().unwrap();
+    for _ in 0..400 {
+        let turn = chat::get_turn_with_tools(&fx.state.db, &id, turn_id)
+            .await
+            .unwrap()
+            .unwrap();
+        if turn.turn.status != TurnStatus::InProgress
+            && fx.state.chats.running_for_user("alice") == 0
+        {
+            return (id, turn);
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("personal planning did not finish");
+}
+
+async fn enable_personal(fx: &Fx) {
+    gateway_groups::set_can_manage_dots(&fx.state.db, "managers", true)
+        .await
+        .unwrap();
+    fx.state.reload_rbac().await;
+}
+
+#[tokio::test]
+async fn personal_planning_consumes_no_slot_and_applies_only_the_reviewed_revision_once() {
+    let fx=fixture(vec![call("p1","propose_dot_setup",json!({"name":"Clock","display":"My clock","description":"Time questions","changes":{"task":"Answer time questions.","abilities":[{"id":"get_current_timestamp","why":"current time"}]}})),json!({"content":"Review your Dot."})]).await;
+    enable_personal(&fx).await;
+    let (id, turn) = personal_converse(&fx).await;
+    assert_eq!(
+        turn.tool_calls[0].status,
+        ToolCallStatus::Completed,
+        "{turn:?}"
+    );
+    assert!(
+        aiplane_agents::db::agents::list_personal_dots(&fx.state.db, "alice")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let uri = format!("/api/v0/agent-architect/{id}/dot-plan");
+    let (status, plan) = fx.send(&fx.alice, Method::GET, &uri, None).await;
+    assert_eq!(status, StatusCode::OK, "{plan}");
+    assert_eq!(plan["proposal"]["name"], "Clock");
+    assert_eq!(
+        plan["proposal"]["draft_spec"]["main"]["tools"],
+        json!(["get_current_timestamp"])
+    );
+    assert_eq!(plan["dot_id"], Value::Null);
+    let (status, _) = fx.post(&fx.alice, &uri, json!({"revision":"stale"})).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let revision = plan["proposal"]["revision"].clone();
+    let (status, applied) = fx.post(&fx.alice, &uri, json!({"revision":revision})).await;
+    assert_eq!(status, StatusCode::CREATED, "{applied}");
+    let (status, repeated) = fx.post(&fx.alice, &uri, json!({"revision":revision})).await;
+    assert_eq!(status, StatusCode::OK, "{repeated}");
+    assert_eq!(repeated["dot"]["id"], applied["dot"]["id"]);
+    assert_eq!(
+        aiplane_agents::db::agents::list_personal_dots(&fx.state.db, "alice")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    let (status, _) = fx.send(&fx.plain, Method::GET, &uri, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn personal_planning_uses_dot_permission_without_agent_management() {
+    let fx = fixture(vec![json!({"content":"What should your Dot do?"})]).await;
+    let (status, _) = fx
+        .post(
+            &fx.plain,
+            "/api/v0/agent-architect",
+            json!({"title":"My Dot","dot_owner":"personal"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    gateway_groups::set_can_manage_dots(&fx.state.db, "everyone", true)
+        .await
+        .unwrap();
+    fx.state.reload_rbac().await;
+    let (status, body) = fx
+        .post(
+            &fx.plain,
+            "/api/v0/agent-architect",
+            json!({"title":"My Dot","dot_owner":"personal"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, _) = fx
+        .post(
+            &fx.plain,
+            "/api/v0/agent-architect",
+            json!({"title":"Ordinary agent"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn personal_apply_rechecks_permission_and_does_not_create_an_ordinary_agent() {
+    let fx = fixture(vec![
+        call("bad", "create_agent_draft", json!({"display":"Forbidden"})),
+        call(
+            "p1",
+            "propose_dot_setup",
+            json!({"name":"Clock","changes":{"task":"Answer time questions."}}),
+        ),
+        json!({"content":"Review."}),
+    ])
+    .await;
+    enable_personal(&fx).await;
+    let (id, turn) = personal_converse(&fx).await;
+    assert_eq!(turn.tool_calls[0].status, ToolCallStatus::Errored);
+    assert_eq!(turn.tool_calls[1].status, ToolCallStatus::Completed);
+    assert_eq!(
+        aiplane_agents::db::agents::publication_status(&fx.state.db)
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+    let uri = format!("/api/v0/agent-architect/{id}/dot-plan");
+    let (_, plan) = fx.send(&fx.alice, Method::GET, &uri, None).await;
+    gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
+        .await
+        .unwrap();
+    let (status, _) = fx
+        .post(
+            &fx.alice,
+            &uri,
+            json!({"revision":plan["proposal"]["revision"]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        aiplane_agents::db::agents::list_personal_dots(&fx.state.db, "alice")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_personal_plan_reports_unsupported_requirements_and_refuses_incomplete_apply() {
+    let fx=fixture(vec![call("p1","propose_dot_setup",json!({"name":"Clock","changes":{"task":"Summarize every morning.","schedule":"Every morning","scope":{"topics":["Time"],"refusal":"Only time","strict":true}}})),json!({"content":"Some requirements need setup."})]).await;
+    enable_personal(&fx).await;
+    let (id, turn) = personal_converse(&fx).await;
+    assert_eq!(
+        turn.tool_calls[0].status,
+        ToolCallStatus::Completed,
+        "{turn:?}"
+    );
+    let uri = format!("/api/v0/agent-architect/{id}/dot-plan");
+    let (_, plan) = fx.send(&fx.alice, Method::GET, &uri, None).await;
+    assert_eq!(plan["proposal"]["dropped"].as_array().unwrap().len(), 2);
+    assert_eq!(plan["proposal"]["unresolved"].as_array().unwrap().len(), 2);
+    assert!(plan["proposal"]["draft_spec"]["scope"].is_null());
+    let (status, _) = fx
+        .post(
+            &fx.alice,
+            &uri,
+            json!({"revision":plan["proposal"]["revision"]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(
+        aiplane_agents::db::agents::list_personal_dots(&fx.state.db, "alice")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn personal_apply_rechecks_disabled_tools_and_active_limit() {
+    let fx=fixture(vec![call("p1","propose_dot_setup",json!({"name":"Clock","changes":{"task":"Answer time questions.","abilities":[{"id":"get_current_timestamp","why":"current time"}]}})),json!({"content":"Review."})]).await;
+    enable_personal(&fx).await;
+    let (id, _) = personal_converse(&fx).await;
+    let uri = format!("/api/v0/agent-architect/{id}/dot-plan");
+    let (_, plan) = fx.send(&fx.alice, Method::GET, &uri, None).await;
+    aiplane_core::server::db::user_tool_prefs::set(
+        &fx.state.db,
+        "alice",
+        "get_current_timestamp",
+        false,
+    )
+    .await
+    .unwrap();
+    let (status, _) = fx
+        .post(
+            &fx.alice,
+            &uri,
+            json!({"revision":plan["proposal"]["revision"]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    aiplane_core::server::db::user_tool_prefs::set(
+        &fx.state.db,
+        "alice",
+        "get_current_timestamp",
+        true,
+    )
+    .await
+    .unwrap();
+    for name in ["One", "Two", "Three", "Four"] {
+        let (status, body) = fx
+            .post(&fx.alice, "/api/v0/dots", json!({"name":name}))
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            &uri,
+            json!({"revision":plan["proposal"]["revision"]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "active_dot_limit");
+    assert_eq!(
+        aiplane_agents::db::agents::list_personal_dots(&fx.state.db, "alice")
+            .await
+            .unwrap()
+            .len(),
+        4
+    );
+}
+
+#[tokio::test]
+async fn personal_apply_waits_for_an_active_planning_turn() {
+    let fx = fixture(vec![
+        call(
+            "p1",
+            "propose_dot_setup",
+            json!({"name":"Clock","changes":{"task":"Answer time questions."}}),
+        ),
+        json!({"content":"Review."}),
+    ])
+    .await;
+    enable_personal(&fx).await;
+    let (id, _) = personal_converse(&fx).await;
+    let uri = format!("/api/v0/agent-architect/{id}/dot-plan");
+    let (_, plan) = fx.send(&fx.alice, Method::GET, &uri, None).await;
+    let running = chat::create_assistant_turn_in_progress(
+        &fx.state.db,
+        &id,
+        "running-plan-turn",
+        "arch-model",
+    )
+    .await
+    .unwrap();
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            &uri,
+            json!({"revision":plan["proposal"]["revision"]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "dot_plan_busy");
+    chat::finalize_turn(&fx.state.db, &running.id, TurnStatus::Completed, None)
+        .await
+        .unwrap();
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            &uri,
+            json!({"revision":plan["proposal"]["revision"]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+}
+
+#[tokio::test]
+async fn a_new_accepted_user_request_invalidates_a_previous_dot_proposal_without_a_replacement() {
+    let fx = fixture(vec![
+        call(
+            "p1",
+            "propose_dot_setup",
+            json!({"name":"Clock","changes":{"task":"Answer time questions."}}),
+        ),
+        json!({"content":"Review this plan."}),
+        json!({"content":"Which reports should the new assistant summarize?"}),
+    ])
+    .await;
+    enable_personal(&fx).await;
+    let (id, _) = personal_converse(&fx).await;
+    let uri = format!("/api/v0/agent-architect/{id}/dot-plan");
+    let (_, plan) = fx.send(&fx.alice, Method::GET, &uri, None).await;
+    let revision = plan["proposal"]["revision"].clone();
+    let (status, sent) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/chat/sessions/{id}/messages"),
+            json!({"model":"arch-model","message":"Change it into a reporting assistant."}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{sent}");
+    let (status, current) = fx.send(&fx.alice, Method::GET, &uri, None).await;
+    assert_eq!(status, StatusCode::OK, "{current}");
+    assert_eq!(current["proposal"], Value::Null);
+    let turn_id = sent["assistant_turn_id"].as_str().unwrap();
+    for _ in 0..400 {
+        let turn = chat::get_turn(&fx.state.db, &id, turn_id)
+            .await
+            .unwrap()
+            .unwrap();
+        if turn.status != TurnStatus::InProgress && fx.state.chats.running_for_user("alice") == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(
+        chat::get_turn(&fx.state.db, &id, turn_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Completed
+    );
+    let (_, current) = fx.send(&fx.alice, Method::GET, &uri, None).await;
+    assert_eq!(current["proposal"], Value::Null);
+    let (status, _) = fx.post(&fx.alice, &uri, json!({"revision":revision})).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(
+        aiplane_agents::db::agents::list_personal_dots(&fx.state.db, "alice")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn personal_planning_exposes_actual_defaults_and_rejects_encoded_changes_without_an_approval_error()
+ {
+    let fx=fixture(vec![call("r1","list_grantable",json!({})),call("p1","propose_dot_setup",json!({"name":"Clock","changes":"{\"task\":\"Report the time\"}"})),call("p2","propose_dot_setup",json!({"name":"Clock","changes":{"task":"Report the time.","abilities":[{"id":"get_current_timestamp","why":"current time"}]}})),json!({"content":"Review this plan."})]).await;
+    enable_personal(&fx).await;
+    let (id, turn) = personal_converse(&fx).await;
+    assert_eq!(turn.tool_calls[0].status, ToolCallStatus::Completed);
+    assert_eq!(turn.tool_calls[1].status, ToolCallStatus::Errored);
+    let invalid = turn.tool_calls[1].output_json.as_deref().unwrap();
+    assert!(invalid.contains("expected a map"), "{invalid}");
+    assert!(!invalid.to_lowercase().contains("approval"), "{invalid}");
+    assert_eq!(turn.tool_calls[2].status, ToolCallStatus::Completed);
+    let resources = output(&turn, 0);
+    let time = resources["abilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|ability| ability["id"] == "get_current_timestamp")
+        .unwrap();
+    assert_eq!(time["read_only"], true);
+    assert_eq!(time["default_permission"], "always_allow");
+    assert_eq!(resources["default_memory_tools"], json!([]));
+    let (_, plan) = fx
+        .send(
+            &fx.alice,
+            Method::GET,
+            &format!("/api/v0/agent-architect/{id}/dot-plan"),
+            None,
+        )
+        .await;
+    assert_eq!(plan["proposal"]["unresolved"], json!([]));
+    assert_eq!(plan["proposal"]["tools"][0]["permission"], "always_allow");
+    assert_eq!(
+        plan["proposal"]["tools"][0]["capability_key"],
+        aiplane_runtime::server::tools::catalog::entry_key_for("get_current_timestamp")
+    );
+    assert!(
+        aiplane_agents::db::agents::list_personal_dots(&fx.state.db, "alice")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

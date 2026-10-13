@@ -23,7 +23,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use crate::common::{self, TEST_SECRET};
 
 use aiplane::rama_server::{RamaState, SessionStore};
-use aiplane_core::server::db::{self, gateway_groups, mcp_catalog, skill_grants, user_mcp, users};
+use aiplane_core::server::db::{self, gateway_groups, mcp_catalog, skill_grants, users};
 use aiplane_core::server::principal::{GrantKind, Principal};
 use aiplane_core::server::rbac::Resolver;
 use aiplane_core::server::upstreams::{
@@ -482,11 +482,18 @@ async fn fixture_with_usage(metered: bool) -> Fixture {
     for (user, secret) in [("alice", "alice-secret"), ("bob", "bob-secret")] {
         person(&state, user, &[]).await;
         let sealed = state.crypto.seal_str(secret).unwrap();
-        user_mcp::upsert_connection(
+        aiplane_core::server::db::mcp_connections::upsert_connection(
             &pool,
-            user_mcp::NewConnection {
-                user_id: user.into(),
+            aiplane_core::server::db::mcp_connections::NewConnection {
+                owner: aiplane_core::server::db::mcp_connections::ConnectionOwner::User(
+                    user.into(),
+                ),
                 connector_key: PER_USER.into(),
+                catalog_generation: mcp_catalog::get(&pool, PER_USER)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .dispatch_generation,
                 access_token_ct: sealed.ciphertext,
                 access_token_nonce: sealed.nonce,
                 refresh_token_ct: None,
@@ -500,6 +507,7 @@ async fn fixture_with_usage(metered: bool) -> Fixture {
             },
         )
         .await
+        .unwrap()
         .unwrap();
     }
 
@@ -684,7 +692,7 @@ async fn a_person_without_agent_management_cannot_create_or_configure() {
         body["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("can_manage_agents"),
+            .contains("enable agent management"),
         "{body}"
     );
     for uri in [
@@ -913,6 +921,12 @@ async fn headless_run(
     actor: aiplane_runtime::agent_run::Actor,
 ) -> Value {
     use aiplane_runtime::server::headless::{self, DriveParams, OpenParams};
+    let source = if actor.agent().is_some() {
+        aiplane_core::server::db::usage::UsageSource::Agent
+    } else {
+        aiplane_core::server::db::usage::UsageSource::Chat
+    };
+    let before = fx.upstream.received_requests().await.unwrap().len();
     let (session_id, turn_id) = headless::open_session(
         &fx.state.db,
         OpenParams {
@@ -921,6 +935,7 @@ async fn headless_run(
             prompt: "what do you know about me?",
             model: "model-a",
             existing_session: None,
+            dot_id: None,
         },
     )
     .await
@@ -929,14 +944,21 @@ async fn headless_run(
         &Arc::new(fx.state.clone()),
         DriveParams {
             actor,
-            session_id,
-            assistant_turn_id: turn_id,
+            session_id: session_id.clone(),
+            assistant_turn_id: turn_id.clone(),
             model: "model-a".into(),
-            source: aiplane_core::server::db::usage::UsageSource::Scheduled,
+            source,
             history_limit: None,
         },
     )
     .await;
+    let turn = session_core::db::get_turn(&fx.state.db, &session_id, &turn_id)
+        .await
+        .unwrap();
+    assert!(
+        fx.upstream.received_requests().await.unwrap().len() > before,
+        "headless upstream was not called; owner={owner:?}, persisted_turn={turn:?}"
+    );
     fx.last_upstream_body().await
 }
 

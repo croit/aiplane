@@ -19,6 +19,68 @@ mod catalog_tests {
     use aiplane_tools::search_web::SearchWeb;
     use std::collections::HashSet;
 
+    #[test]
+    fn research_tools_are_explicitly_read_only_and_memory_writes_are_not() {
+        use aiplane_runtime::server::tools::Tool;
+        use aiplane_tools::{
+            fetch_url::FetchUrl,
+            lookup_ip::LookupIp,
+            memory::{Forget, Recall, Remember, UpdateMemory},
+            netcheck::{DnsLookup, TlsCert, WhoisLookup},
+            wikipedia::Wikipedia,
+        };
+        let research: Vec<Box<dyn Tool>> = vec![
+            Box::new(SearchWeb),
+            Box::new(FetchUrl::default()),
+            Box::new(LookupIp),
+            Box::new(DnsLookup),
+            Box::new(WhoisLookup),
+            Box::new(TlsCert::default()),
+            Box::new(Wikipedia),
+            Box::new(Recall),
+        ];
+        for tool in research {
+            assert!(
+                tool.read_only(),
+                "{} must supply its read-only classification",
+                tool.id()
+            );
+        }
+        for tool in [
+            Box::new(Remember) as Box<dyn Tool>,
+            Box::new(UpdateMemory),
+            Box::new(Forget),
+        ] {
+            assert!(!tool.read_only(), "{} writes memory", tool.id());
+        }
+    }
+
+    #[test]
+    fn retrieval_tools_are_read_only_without_running_a_query() {
+        use aiplane_core::server::rbac::Resolver;
+        use aiplane_runtime::server::tools::Tool;
+        use aiplane_tools::{
+            rag::{RagGrep, RagListCollections, RagSearch},
+            rag_documents::{RagFetchDocument, RagListDocuments, RagQueryDocuments},
+        };
+        let rbac = std::sync::Arc::new(Resolver::empty());
+        let tools: Vec<Box<dyn Tool>> = vec![
+            Box::new(RagListCollections::new(rbac.clone())),
+            Box::new(RagSearch::new(rbac.clone())),
+            Box::new(RagGrep::new(rbac.clone())),
+            Box::new(RagQueryDocuments::new(rbac.clone())),
+            Box::new(RagListDocuments::new(rbac.clone())),
+            Box::new(RagFetchDocument::new(rbac)),
+        ];
+        for tool in tools {
+            assert!(
+                tool.read_only(),
+                "{} only retrieves granted knowledge",
+                tool.id()
+            );
+        }
+    }
+
     /// Every category's heading has to exist in the catalogs, in every language.
     ///
     /// The slug is all the SPA gets — it renders `tool-category-<key>` — so a

@@ -110,6 +110,61 @@ pub(super) fn operations() -> Vec<Op> {
         .body(json::<chat::ResumeBody>())
         .accepted(json::<chat::Resumed>())
         .errors(&[400, 404, 409]),
+        post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/claim",
+            Access::Session,
+        )
+        .body(json::<
+            aiplane_api::pages::json_dot_browser::BrowserControlBody,
+        >())
+        .ok(json::<
+            aiplane_api::pages::json_dot_browser::BrowserControlView,
+        >())
+        .errors(&[400, 403, 404, 409, 413, 503]),
+        post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/frame",
+            Access::Session,
+        )
+        .body(json::<
+            aiplane_api::pages::json_dot_browser::BrowserControlBody,
+        >())
+        .ok(json::<
+            aiplane_api::pages::json_dot_browser::BrowserControlView,
+        >())
+        .errors(&[400, 403, 404, 409, 503]),
+        post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/input",
+            Access::Session,
+        )
+        .body(json::<
+            aiplane_api::pages::json_dot_browser::BrowserControlBody,
+        >())
+        .ok(json::<
+            aiplane_api::pages::json_dot_browser::BrowserControlView,
+        >())
+        .errors(&[400, 403, 404, 409, 503]),
+        post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/finish",
+            Access::Session,
+        )
+        .body(json::<
+            aiplane_api::pages::json_dot_browser::BrowserControlBody,
+        >())
+        .accepted(json::<
+            aiplane_api::pages::json_dot_browser::BrowserHandoverReturned,
+        >())
+        .errors(&[400, 403, 404, 409, 503]),
+        post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/abort",
+            Access::Session,
+        )
+        .body(json::<
+            aiplane_api::pages::json_dot_browser::BrowserControlBody,
+        >())
+        .ok(json::<
+            aiplane_api::pages::json_dot_browser::BrowserHandoverAborted,
+        >())
+        .errors(&[400, 403, 404, 409, 503]),
         get("/api/v0/chat/sessions/{id}/events", Access::Session)
             .ok(sse::<ChatEvent>())
             .errors(&[404]),

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { CHANNEL_KINDS, agentsApi, type NotifyChannel, type Spec } from '#lib/agents.js';
+	import { CHANNEL_KINDS, agentsApi, agentUiCapabilities, type NotifyChannel, type Spec } from '#lib/agents.js';
 	import ChannelsPanel from '../ChannelsPanel.svelte';
 	import { applySuggestedRules, deriveBind, identityLabels, identityWriter, notifyEverywhere, notifyOn, readHandoffs, readSlots, setNotify, sharedNotify, writeHandoffs, type Rule } from '#lib/agent-setup.js';
 	import { useWorkspace } from '#lib/agent-workspace.svelte.js';
@@ -16,6 +16,7 @@
 	 */
 	let { spec = $bindable() }: { spec: Spec } = $props();
 	const ws = useWorkspace();
+	const capabilities = $derived(agentUiCapabilities(ws.detail));
 
 	let model = $state(readHandoffs(spec));
 	writeOnChange(() => $state.snapshot(model), (m) => writeHandoffs(spec, m));
@@ -58,6 +59,7 @@
 	let channels = $state<NotifyChannel[]>([]);
 	let pushEnabled = $state(false);
 	onMount(() => {
+		if (!capabilities.channels) return;
 		agentsApi.pushEnabled().then((on) => (pushEnabled = on)).catch(() => (pushEnabled = false));
 	});
 	const toPerson = $derived(model.fallback || model.rules.some((r) => r.target.kind === 'human'));
@@ -181,7 +183,7 @@
 	{#if model.custom.length}
 		<p class="m-0 text-sm text-base-content/60">{t('agents-setup-routes-custom', { count: model.custom.length })}</p>
 	{/if}
-	{#if toPerson}
+	{#if toPerson && capabilities.channels}
 		<fieldset class="flex flex-col gap-2">
 			<legend class="font-semibold">{t('agents-setup-notify')}</legend>
 			<span class="text-sm text-base-content/60">{t('agents-setup-notify-hint')}</span>

@@ -120,7 +120,7 @@
 					<div class="chat chat-start">
 						{#if assistantLabel}<div class="chat-header text-xs opacity-60">{assistantLabel}</div>{/if}
 						<div class="chat-bubble flex w-full max-w-full flex-col gap-2 border bg-base-200 text-base-content {highlighted === live.turn.id ? 'border-primary' : 'border-base-300'}">
-							{#if live.tool_calls.length}<ToolCalls calls={live.tool_calls} label={toolLabel} />{/if}
+							{#if live.tool_calls.length}<ToolCalls calls={live.tool_calls} turnStatus={live.turn.status} label={toolLabel} />{/if}
 							{#if live.turn.content}<Markdown content={live.turn.content} class="prose prose-sm max-w-none text-inherit" />{/if}
 							{#if live.turn.status === 'in_progress'}
 								<span class="flex items-center gap-2 text-sm text-base-content/60"><span class="loading loading-dots loading-sm"></span>{t(live.turn.content ? 'render-still-working-spinner' : 'render-thinking-spinner')}</span>

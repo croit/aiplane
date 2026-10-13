@@ -26,7 +26,7 @@ use aiplane_core::server::principal::{Principal, SystemPrincipal};
 use aiplane_core::server::run_chain::RunChain;
 
 use crate::agents::profile::AgentSurface;
-use crate::budget::Budget;
+use crate::budget::{Budget, SpendMeter};
 use crate::finish::{FinishContract, FinishTool, IncompleteReason, RunOutcome};
 use crate::server::tools::Tool;
 use crate::server::tools::injection::InjectionScan;
@@ -43,8 +43,17 @@ pub struct MismatchedRun {
     pub principal: String,
 }
 
+pub struct OrganizationTurnContext {
+    pub organization_id: String,
+    pub session_id: String,
+    pub assistant_turn_id: String,
+    pub state: Arc<crate::rama_server::state::RamaState>,
+}
+
 /// Everything that makes a turn an agent's run.
 pub struct AgentRun {
+    organization: Option<OrganizationTurnContext>,
+    organization_resume: Option<crate::agents::profile::OrganizationResumeAuthority>,
     principal: SystemPrincipal,
     chain: Arc<RunChain>,
     finish: Option<Arc<FinishTool>>,
@@ -90,6 +99,8 @@ impl AgentRun {
         Ok(Self {
             principal,
             chain,
+            organization: None,
+            organization_resume: None,
             finish: None,
             budget: None,
             injection: InjectionScan::default(),
@@ -105,6 +116,29 @@ impl AgentRun {
     pub fn with_contract(mut self, contract: FinishContract) -> Self {
         self.finish = Some(Arc::new(FinishTool::new(contract)));
         self
+    }
+
+    pub(crate) fn with_organization(mut self, organization: OrganizationTurnContext) -> Self {
+        self.organization = Some(organization);
+        self
+    }
+
+    pub(crate) fn with_organization_resume(
+        mut self,
+        authority: crate::agents::profile::OrganizationResumeAuthority,
+    ) -> Self {
+        self.organization_resume = Some(authority);
+        self
+    }
+
+    pub(crate) fn organization_resume(
+        &self,
+    ) -> Option<&crate::agents::profile::OrganizationResumeAuthority> {
+        self.organization_resume.as_ref()
+    }
+
+    pub fn organization(&self) -> Option<&OrganizationTurnContext> {
+        self.organization.as_ref()
     }
 
     pub fn with_budget(mut self, budget: Budget) -> Self {
@@ -246,8 +280,95 @@ pub enum Actor {
     /// A person, gated by their roles: their real roles offer their normal
     /// tools, an empty list offers none (the scheduler's "tools off").
     Person { id: String, roles: Vec<String> },
+    /// A personal Dot is named separately, but exercises the owner's user
+    /// principal. The Dot identity travels beside that principal for scoped
+    /// data and audit attribution.
+    PersonalDot {
+        id: String,
+        roles: Vec<String>,
+        dot: PersonalDotIdentity,
+        execution: Option<Arc<PersonalDotExecution>>,
+    },
     /// An agent's run, offered exactly its principal's grants.
     Agent(Arc<AgentRun>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonalDotIdentity {
+    pub owner_user_id: String,
+    pub dot_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonalExecutionBinding {
+    pub identity: PersonalDotIdentity,
+    pub session_id: String,
+    pub assistant_turn_id: String,
+    pub model: String,
+}
+
+pub struct PersonalDotExecution {
+    pub(crate) state: Arc<crate::rama_server::state::RamaState>,
+    binding: PersonalExecutionBinding,
+    chain: Arc<RunChain>,
+    local_budget: Budget,
+    meter: Arc<SpendMeter>,
+}
+
+impl std::fmt::Debug for PersonalDotExecution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersonalDotExecution")
+            .field("binding", &self.binding)
+            .field("chain", &self.chain)
+            .field("local_budget", &self.local_budget)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PersonalDotExecution {
+    pub(crate) fn new(
+        state: Arc<crate::rama_server::state::RamaState>,
+        binding: PersonalExecutionBinding,
+        chain: Arc<RunChain>,
+        local_budget: Budget,
+        meter: Arc<SpendMeter>,
+    ) -> Result<Self, MismatchedRun> {
+        if chain.current().principal_id != binding.identity.dot_id {
+            return Err(MismatchedRun {
+                chain_agent: chain.current().name.clone(),
+                principal: binding.identity.dot_id,
+            });
+        }
+        Ok(Self {
+            state,
+            binding,
+            chain,
+            local_budget,
+            meter,
+        })
+    }
+
+    pub fn binding(&self) -> &PersonalExecutionBinding {
+        &self.binding
+    }
+    pub fn identity(&self) -> &PersonalDotIdentity {
+        &self.binding.identity
+    }
+    pub fn model(&self) -> &str {
+        &self.binding.model
+    }
+    pub fn chain(&self) -> &Arc<RunChain> {
+        &self.chain
+    }
+    pub fn local_budget(&self) -> Budget {
+        self.local_budget
+    }
+    pub fn meter(&self) -> &Arc<SpendMeter> {
+        &self.meter
+    }
+    pub(crate) fn unknown_token_usage(&self, budget: Budget) -> bool {
+        budget.tokens().is_some() && !self.meter.snapshot(budget).usage_known
+    }
 }
 
 impl Actor {
@@ -258,9 +379,30 @@ impl Actor {
         }
     }
 
+    pub fn personal_dot(
+        owner_user_id: impl Into<String>,
+        roles: Vec<String>,
+        dot_id: impl Into<String>,
+    ) -> Self {
+        let owner_user_id = owner_user_id.into();
+        Self::PersonalDot {
+            id: owner_user_id.clone(),
+            roles,
+            dot: PersonalDotIdentity {
+                owner_user_id,
+                dot_id: dot_id.into(),
+            },
+            execution: None,
+        }
+    }
+
     pub fn principal(&self) -> Principal {
         match self {
             Self::Person { id, roles } => Principal::User {
+                id: id.clone(),
+                roles: roles.clone(),
+            },
+            Self::PersonalDot { id, roles, .. } => Principal::User {
                 id: id.clone(),
                 roles: roles.clone(),
             },
@@ -270,7 +412,7 @@ impl Actor {
 
     pub fn agent(&self) -> Option<&Arc<AgentRun>> {
         match self {
-            Self::Person { .. } => None,
+            Self::Person { .. } | Self::PersonalDot { .. } => None,
             Self::Agent(run) => Some(run),
         }
     }
@@ -278,8 +420,38 @@ impl Actor {
     /// The person behind the turn; `None` for an agent's run.
     pub fn person_id(&self) -> Option<&str> {
         match self {
-            Self::Person { id, .. } => Some(id),
+            Self::Person { id, .. } | Self::PersonalDot { id, .. } => Some(id),
             Self::Agent(_) => None,
+        }
+    }
+
+    pub fn personal_dot_identity(&self) -> Option<&PersonalDotIdentity> {
+        match self {
+            Self::PersonalDot { dot, .. } => Some(dot),
+            Self::Person { .. } | Self::Agent(_) => None,
+        }
+    }
+
+    pub fn personal_execution(&self) -> Option<&Arc<PersonalDotExecution>> {
+        match self {
+            Self::PersonalDot { execution, .. } => execution.as_ref(),
+            Self::Person { .. } | Self::Agent(_) => None,
+        }
+    }
+
+    pub(crate) fn with_personal_execution(
+        mut self,
+        run: Arc<PersonalDotExecution>,
+    ) -> Result<Self, MismatchedRun> {
+        match &mut self {
+            Self::PersonalDot { dot, execution, .. } if dot == run.identity() => {
+                *execution = Some(run);
+                Ok(self)
+            }
+            _ => Err(MismatchedRun {
+                chain_agent: run.chain().current().name.clone(),
+                principal: self.principal().subject_id().to_owned(),
+            }),
         }
     }
 }
@@ -312,6 +484,24 @@ mod tests {
         let run = AgentRun::new(billing.clone(), chain_of(&billing)).unwrap();
         assert_eq!(run.principal(), Principal::System(billing));
         assert_eq!(run.chain().current().principal_id, "p2");
+    }
+
+    #[test]
+    fn a_personal_dot_keeps_the_users_principal_and_the_dots_attribution() {
+        let actor = Actor::personal_dot("u1", vec!["staff".into()], "dot-7");
+        assert_eq!(
+            actor.principal(),
+            Principal::User {
+                id: "u1".into(),
+                roles: vec!["staff".into()],
+            }
+        );
+        assert_eq!(actor.person_id(), Some("u1"));
+        assert_eq!(
+            actor.personal_dot_identity().map(|dot| dot.dot_id.as_str()),
+            Some("dot-7")
+        );
+        assert!(actor.agent().is_none());
     }
 
     #[test]

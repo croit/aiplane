@@ -14,6 +14,37 @@ You need `can_manage_agents` on a resolved group to use the builder. Ask an admi
 
 The list shows name, description when supplied, live version or unpublished state, update date and read-only/disabled badges when applicable. A new agent does not inherit all the creator's resources. Configure [grants](permissions.md) for its model and abilities.
 
+## Create an organization Dot
+
+An administrator configures an organization and its member groups in
+**Access & limits → Organizations**. Open **Organizations** in the Workspace
+navigation and select an organization you belong to. Members with
+agent-management permission choose **Create Dot**, enter its name, display name
+and purpose in the dialog, then create it while the organization has an active
+slot. The organization cap
+counts active Dots even when idle; deactivation frees a slot without deleting
+the configuration.
+
+The Dot opens the existing setup assistant and advanced editor. Its header
+shows the actual organization owner, and the return link leads back to that
+organization. Configure model and resource grants, instructions and shares
+through the same controls as an agent. Current organization membership is
+required in addition to a read or write share. Creation gives the creator a
+write share; it does not give every member access to the Dot.
+
+Organization Dots currently support configuration and publication. Their
+conversations, tests, automation, website widgets and external channels remain
+unavailable. The setup assistant omits its Site step, and the editor displays
+this limitation. Publication does not enable execution. A current member writer can connect the Dot’s own OAuth account in **Setup**,
+then explicitly Save that account as the selected identity. This uses the
+provider’s real account authorization; it does not create a provider account.
+Personal Dot management permission is not required. OAuth completion does not
+select the account automatically, and the selector offers no employee account.
+Organization execution and memory require the runtime packages described
+in [organization Dots](../dots-organizations.md).
+
+![An organization lists its named Dot and active capacity, with creation available through a dialog. The image uses synthetic data in the real application.](../img/guide/organization-dots.png)
+
 ## Follow the setup assistant
 
 ![The agent setup checklist reports missing prerequisites before publication.](../img/guide/agent-checklist.png)

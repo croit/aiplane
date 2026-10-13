@@ -84,6 +84,8 @@ mod title;
 #[derive(Debug)]
 pub(crate) enum SubmitTurnError {
     RateLimited(aiplane_core::server::limits::LimitExceeded),
+    DotInactive,
+    BackgroundBusy,
     /// The conversation waits for a decision on a paused turn; the message
     /// was not stored. The text says which turn and what to do.
     DecisionPending(String),
@@ -142,6 +144,7 @@ pub(crate) async fn submit_turn(
     submit: ChatSubmit,
     req: RequestCtx,
 ) -> Result<SubmitOutcome, SubmitTurnError> {
+    refuse_if_dot_inactive(state, &user.id, &active.id).await?;
     // Rate-limit / quota gate — before reserving a worker or touching the DB,
     // so an over-budget user is turned away cleanly (details on `/usage`).
     if let Some(exceeded) = state
@@ -192,6 +195,20 @@ pub(crate) async fn submit_turn(
     ))
 }
 
+pub(crate) async fn refuse_if_dot_inactive(
+    state: &RamaState,
+    user_id: &str,
+    session_id: &str,
+) -> Result<(), SubmitTurnError> {
+    match aiplane_agents::db::dot_sessions::for_session(&state.db, user_id, session_id)
+        .await
+        .map_err(|error| SubmitTurnError::Db(error.to_string()))?
+    {
+        Some(link) if !link.active => Err(SubmitTurnError::DotInactive),
+        _ => Ok(()),
+    }
+}
+
 /// [`SubmitTurnError::DecisionPending`] while conversation `session_id` waits
 /// for a decision — the agent runs' rule ([`refuse_if_waiting`]).
 ///
@@ -236,6 +253,9 @@ async fn submit_once(
     );
     let worker = match outcome {
         RegisterOutcome::Registered { worker } => worker,
+        RegisterOutcome::Busy { existing } if existing.is_background() => {
+            return Err(SubmitTurnError::BackgroundBusy);
+        }
         // This conversation is already being answered. The text belongs to
         // that answer, not to the one after it: it goes into the running
         // worker's prompt at its next round. A message carrying attachments
@@ -260,14 +280,27 @@ async fn submit_once(
     // Slot held. Any early-return from here must `state.chats.clear`
     // the worker so the next submit isn't permanently blocked.
     let user_turn_id = submit.user_turn_id.clone();
-    let user_turn =
-        match chat::create_user_turn(&state.db, &active.id, &user_turn_id, user_msg).await {
-            Ok(t) => t,
-            Err(err) => {
-                state.chats.clear(&user.id, &worker);
-                return Err(SubmitTurnError::Db(err.to_string()));
-            }
-        };
+    let (user_turn, assistant_turn) = match chat::create_turn_pair_if_idle(
+        &state.db,
+        &active.id,
+        &user_turn_id,
+        &assistant_turn_id,
+        user_msg,
+        &submit.model,
+        false,
+    )
+    .await
+    {
+        Ok(Some(turns)) => turns,
+        Ok(None) => {
+            state.chats.clear(&user.id, &worker);
+            return Err(SubmitTurnError::BackgroundBusy);
+        }
+        Err(err) => {
+            state.chats.clear(&user.id, &worker);
+            return Err(SubmitTurnError::Db(err.to_string()));
+        }
+    };
     // Auto-title on the first user turn. Two-stage so the sidebar
     // never sits on "Untitled chat" for long:
     //   1. Immediately persist a heuristic title (the user message,
@@ -287,22 +320,6 @@ async fn submit_once(
         let fallback = first_message_title(&submit.user_text);
         let _ = chat::set_session_title(&state.db, &active.id, &fallback).await;
     }
-    let assistant_turn = match chat::create_assistant_turn_in_progress(
-        &state.db,
-        &active.id,
-        &assistant_turn_id,
-        &submit.model,
-    )
-    .await
-    {
-        Ok(t) => t,
-        Err(err) => {
-            state.chats.clear(&user.id, &worker);
-            return Err(SubmitTurnError::Db(err.to_string()));
-        }
-    };
-    let _ = chat::touch_session(&state.db, &active.id).await;
-
     // Push the heuristic-titled sidebar row update into the broadcast
     // *now* (synchronously, before any other tasks can send) so the
     // forwarding subscriber's first action after the initial bubble
@@ -322,6 +339,7 @@ async fn submit_once(
         &submit.model,
         &worker,
         req.clone(),
+        None,
         None,
     )
     .await;
@@ -460,7 +478,7 @@ async fn start_pending_turns_inner(state: &Arc<RamaState>, user_id: &str) {
     loop {
         let limit = state.config().chat.turns.max_parallel.max(1);
         let busy = state.chats.sessions_for_user(user_id);
-        if busy.len() >= limit {
+        if state.chats.running_for_user(user_id) >= limit {
             return;
         }
         let pending = match chat::take_next_for_user(&state.db, user_id, &busy).await {
@@ -495,6 +513,16 @@ async fn start_pending_turn(state: &Arc<RamaState>, pending: &chat::PendingTurn)
         tracing::warn!(user_id = %pending.user_id, "waiting turn for an unknown user");
         return false;
     };
+    match aiplane_agents::db::dot_sessions::for_session(&state.db, &user.id, &pending.session_id)
+        .await
+    {
+        Ok(Some(link)) if !link.active => return false,
+        Err(error) => {
+            tracing::warn!(session_id = %pending.session_id, %error, "waiting Dot turn has no safe runtime context");
+            return false;
+        }
+        _ => {}
+    }
     // The budget is spent when the work runs, not when it was asked for. A
     // user who queued three messages and then ran out of quota gets the ones
     // that fit, and the rest wait rather than running for free.
@@ -528,19 +556,19 @@ async fn start_pending_turn(state: &Arc<RamaState>, pending: &chat::PendingTurn)
         // here, or the ceiling filled up. Either way this turn waits.
         _ => return false,
     };
-    if chat::create_assistant_turn_in_progress(
-        &state.db,
-        &pending.session_id,
-        &assistant_turn_id,
-        &pending.model,
-    )
-    .await
-    .is_err()
-    {
+    if !matches!(
+        chat::create_assistant_turn_if_idle(
+            &state.db,
+            &pending.session_id,
+            &assistant_turn_id,
+            &pending.model,
+        )
+        .await,
+        Ok(Some(_))
+    ) {
         state.chats.clear(&user.id, &worker);
         return false;
     }
-    let _ = chat::touch_session(&state.db, &pending.session_id).await;
     spawn_assistant_worker(
         state,
         &user,
@@ -553,6 +581,7 @@ async fn start_pending_turn(state: &Arc<RamaState>, pending: &chat::PendingTurn)
             secure: pending.secure,
             voice_mode: pending.voice,
         },
+        None,
         None,
     )
     .await;
@@ -825,7 +854,15 @@ async fn spawn_assistant_worker(
     worker: &session_core::workers::ActiveWorker,
     req: RequestCtx,
     resume: Option<aiplane_runtime::suspend::ResumeFrom>,
+    worker_guard: Option<aiplane_runtime::server::headless::BackgroundWorker>,
 ) {
+    let worker_guard = worker_guard.unwrap_or_else(|| {
+        aiplane_runtime::server::headless::BackgroundWorker::new(
+            state.clone(),
+            user.id.clone(),
+            worker.clone(),
+        )
+    });
     // Per-conversation tool overlay. The driver re-resolves the allowed-tool
     // set per round via `allowed_tools_for_session` (core ∪ this-conversation's
     // enabled, intersected with the user's RBAC grant), so a mid-turn
@@ -834,10 +871,43 @@ async fn spawn_assistant_worker(
     // uses the unfiltered per-user set. Everything but the two interactive
     // handles below is shared with the headless scheduler via
     // `build_tool_context`.
-    let tool_ctx = aiplane_runtime::openai_driver::build_tool_context(
+    use aiplane_runtime::persona::personal_dot::{
+        PersonalDotContext, PersonalTurnContext, initialize_for_turn,
+    };
+    let clock = aiplane_runtime::budget::system_clock();
+    let dot_context = initialize_for_turn(
+        state,
+        user,
+        true,
+        PersonalTurnContext {
+            session_id,
+            assistant_turn_id,
+            model,
+            clock: clock.clone(),
+            resume_checkpoint: resume
+                .as_ref()
+                .and_then(|resume| resume.suspension.budget_used.tree.as_ref()),
+            child_execution: None,
+        },
+    )
+    .await;
+    let (actor, persona) = match dot_context {
+        Ok(Some(PersonalDotContext::Active { actor, persona })) => (actor, Some(persona)),
+        Ok(None) => (
+            aiplane_runtime::agent_run::Actor::person(user.id.clone(), user.roles.clone()),
+            crate::pages::architect::persona_for(state, user, session_id).await,
+        ),
+        unavailable => {
+            tracing::warn!(session_id, error = ?unavailable.err(), "personal Dot context unavailable");
+            let _ = chat::error_interrupted_turn(&state.db, assistant_turn_id, "The personal Dot context is unavailable. Activate the Dot or restore its owned binding before continuing.").await;
+            state.chats.clear(&user.id, worker);
+            return;
+        }
+    };
+    let mut tool_ctx = aiplane_runtime::openai_driver::build_tool_context(
         state,
         aiplane_runtime::openai_driver::TurnFacts {
-            actor: aiplane_runtime::agent_run::Actor::person(user.id.clone(), user.roles.clone()),
+            actor,
             session_id: session_id.to_string(),
             assistant_turn_id: assistant_turn_id.to_string(),
             client_ip: req.client_ip,
@@ -859,17 +929,50 @@ async fn spawn_assistant_worker(
             suspendable: true,
         },
     );
-    // An architect conversation (docs/agent-builder.md → "Agent architect") runs as
-    // the architect persona: its prompt and its tools instead of the
-    // person's chat tools.
-    let persona = crate::pages::architect::persona_for(state, user, session_id).await;
+    if let Some(binding) = resume
+        .as_ref()
+        .and_then(|resume| resume.suspension.run_context.as_ref())
+        .and_then(|context| context.get("browser_handover"))
+        .and_then(|value| {
+            serde_json::from_value::<
+                aiplane_runtime::server::tools::sandbox::BrowserHandoverBinding,
+            >(value.clone())
+            .ok()
+        })
+    {
+        if binding.turn_id != assistant_turn_id || binding.workspace.owner_user_id != user.id {
+            let _ = chat::error_interrupted_turn(
+                &state.db,
+                assistant_turn_id,
+                "The Dot browser handover no longer matches this owner and turn.",
+            )
+            .await;
+            state.chats.clear(&user.id, worker);
+            return;
+        }
+        let Some(client) = state.sandbox_client() else {
+            let _ = chat::error_interrupted_turn(
+                &state.db,
+                assistant_turn_id,
+                "The Dot browser runner is unavailable; start a new browser session.",
+            )
+            .await;
+            state.chats.clear(&user.id, worker);
+            return;
+        };
+        tool_ctx.browser_lease = Some(
+            aiplane_runtime::server::tools::sandbox::SandboxLease::restore_browser_handover(
+                client, &binding,
+            ),
+        );
+    }
     let driver = Box::new(aiplane_runtime::openai_driver::OpenAiDriver {
         state: state.clone(),
         tool_ctx,
         source: aiplane_core::server::db::usage::UsageSource::Chat,
         history_limit: None,
         voice_mode: req.voice_mode,
-        clock: aiplane_runtime::budget::system_clock(),
+        clock,
         resume,
         persona,
     });
@@ -883,16 +986,13 @@ async fn spawn_assistant_worker(
         steers: worker.steers.clone(),
     };
     let worker_state = state.clone();
-    let worker_for_task = worker.clone();
     let user_id_for_clear = user.id.clone();
     let pool_for_worker = state.db.clone();
     let session_id_for_push = session_id.to_string();
     let turn_id_for_push = assistant_turn_id.to_string();
     tokio::spawn(async move {
         session_core::worker::run_session_turn(pool_for_worker, driver, driver_ctx).await;
-        worker_state
-            .chats
-            .clear(&user_id_for_clear, &worker_for_task);
+        drop(worker_guard);
         // Turn's done — ping the user's subscribed browsers (no-op unless push
         // is enabled and they opted in). Runs after the worker so the row is
         // finalized and the status is readable.
@@ -928,6 +1028,72 @@ pub(crate) enum ResumeTurnError {
     /// Something else is running in this conversation, or every parallel
     /// slot is in use. The suspension is untouched; try again later.
     Busy,
+    Unavailable,
+    Context(aiplane_core::server::db::DbError),
+}
+
+impl From<aiplane_runtime::agents::resume::AgentResumeError> for ResumeTurnError {
+    fn from(error: aiplane_runtime::agents::resume::AgentResumeError) -> Self {
+        use aiplane_runtime::agents::resume::AgentResumeError;
+        match error {
+            AgentResumeError::Busy => Self::Busy,
+            AgentResumeError::Unavailable => Self::Unavailable,
+            AgentResumeError::Refused(error) => Self::Refused(error),
+            AgentResumeError::Db(error) => Self::Context(error),
+            AgentResumeError::StaffOnly { .. } | AgentResumeError::ParticipantOnly { .. } => {
+                Self::Unavailable
+            }
+        }
+    }
+}
+
+enum RootResume {
+    Ordinary(Box<aiplane_runtime::suspend::ResumeFrom>),
+    Personal(aiplane_runtime::agents::resume::ClaimedPersonalResume),
+}
+
+impl RootResume {
+    async fn claim(
+        state: &Arc<RamaState>,
+        owner: &str,
+        turn_id: &str,
+        request_id: Option<&str>,
+        decision: chat::Decision,
+    ) -> Result<Self, ResumeTurnError> {
+        let suspension = chat::get_suspension(&state.db, turn_id)
+            .await
+            .map_err(|error| ResumeTurnError::Context(error.into()))?
+            .ok_or(ResumeTurnError::Refused(
+                aiplane_runtime::suspend::ResumeRefused::NotSuspended,
+            ))?;
+        if suspension.child_turn.is_some() {
+            aiplane_runtime::agents::resume::claim_personal(
+                state, owner, turn_id, request_id, decision,
+            )
+            .await
+            .map(Self::Personal)
+            .map_err(Into::into)
+        } else {
+            aiplane_runtime::suspend::claim_for_resume(&state.db, turn_id, request_id, decision)
+                .await
+                .map(|resume| Self::Ordinary(Box::new(resume)))
+                .map_err(ResumeTurnError::Refused)
+        }
+    }
+
+    async fn continue_children(
+        self,
+        state: &Arc<RamaState>,
+    ) -> Result<aiplane_runtime::suspend::ResumeFrom, ResumeTurnError> {
+        match self {
+            Self::Ordinary(resume) => Ok(*resume),
+            Self::Personal(claimed) => {
+                aiplane_runtime::agents::resume::run_personal_children(state, claimed)
+                    .await
+                    .map_err(Into::into)
+            }
+        }
+    }
 }
 
 /// Continue a suspended turn with `decision`, through the same worker
@@ -944,10 +1110,131 @@ pub(crate) async fn resume_turn(
     decision: chat::Decision,
     req: RequestCtx,
 ) -> Result<(), ResumeTurnError> {
-    use aiplane_runtime::suspend::{ResumeRefused, claim_for_resume};
+    use aiplane_runtime::suspend::ResumeRefused;
     // Only an assistant turn, which always names its model, can be suspended.
     let Some(model) = turn.model.clone() else {
         return Err(ResumeTurnError::Refused(ResumeRefused::NotSuspended));
+    };
+    let background = aiplane_runtime::server::background::for_turn(
+        &state.db,
+        &aiplane_runtime::server::background::AutomationOwner::User(user.id.clone()),
+        &turn.id,
+    )
+    .await
+    .map_err(|error| match error {
+        aiplane_core::server::db::DbError::Decode { .. } => ResumeTurnError::Unavailable,
+        error => ResumeTurnError::Context(error),
+    })?;
+    if let Some(background) = background {
+        use aiplane_runtime::persona::personal_dot::{PersonalDotContext, context_for};
+        let actor = match context_for(state, user, &turn.session_id, background.tools_enabled)
+            .await
+            .map_err(ResumeTurnError::Context)?
+        {
+            Some(PersonalDotContext::Active { actor, .. }) => actor,
+            Some(PersonalDotContext::Unavailable) => return Err(ResumeTurnError::Unavailable),
+            None => aiplane_runtime::agent_run::Actor::person(user.id.clone(), user.roles.clone()),
+        };
+        let worker = match state
+            .chats
+            .register_background(&user.id, &turn.id, &turn.session_id)
+        {
+            RegisterOutcome::Registered { worker } => worker,
+            RegisterOutcome::Busy { .. } | RegisterOutcome::AtCapacity { .. } => {
+                return Err(ResumeTurnError::Busy);
+            }
+        };
+        let worker = aiplane_runtime::server::headless::BackgroundWorker::new(
+            state.clone(),
+            user.id.clone(),
+            worker,
+        );
+        let resume = RootResume::claim(state, &user.id, &turn.id, request_id, decision).await?;
+        let state = state.clone();
+        let params = aiplane_runtime::server::headless::DriveParams {
+            actor,
+            session_id: turn.session_id.clone(),
+            assistant_turn_id: turn.id.clone(),
+            model,
+            source: background.source,
+            history_limit: background.history_limit,
+        };
+        tokio::spawn(async move {
+            let resume = match resume.continue_children(&state).await {
+                Ok(resume) => resume,
+                Err(error) => {
+                    tracing::warn!(turn = %params.assistant_turn_id, ?error, "continuing the personal background delegation failed");
+                    return;
+                }
+            };
+            aiplane_runtime::server::headless::drive_resumed(&state, params, resume, Some(worker))
+                .await;
+        });
+        return Ok(());
+    }
+    let worker = match state.chats.register(
+        &user.id,
+        &turn.id,
+        &turn.session_id,
+        state.config().chat.turns.max_parallel,
+    ) {
+        RegisterOutcome::Registered { worker } => worker,
+        RegisterOutcome::Busy { .. } | RegisterOutcome::AtCapacity { .. } => {
+            return Err(ResumeTurnError::Busy);
+        }
+    };
+    let worker_guard = aiplane_runtime::server::headless::BackgroundWorker::new(
+        state.clone(),
+        user.id.clone(),
+        worker.clone(),
+    );
+    let resume = match RootResume::claim(state, &user.id, &turn.id, request_id, decision).await {
+        Ok(resume) => resume,
+        Err(error) => return Err(error),
+    };
+    let state = state.clone();
+    let user = user.clone();
+    let turn = turn.clone();
+    tokio::spawn(async move {
+        let resume = match resume.continue_children(&state).await {
+            Ok(resume) => resume,
+            Err(error) => {
+                tracing::warn!(turn = %turn.id, ?error, "continuing the personal chat delegation failed");
+                return;
+            }
+        };
+        tracing::info!(turn = %turn.id, decision = ?resume.decision.kind(), "resuming a suspended turn");
+        spawn_assistant_worker(
+            &state,
+            &user,
+            &turn.session_id,
+            &turn.id,
+            &model,
+            &worker,
+            req,
+            Some(resume),
+            Some(worker_guard),
+        )
+        .await;
+    });
+    Ok(())
+}
+
+pub(crate) struct BrowserResumeReservation {
+    model: String,
+    worker: session_core::workers::ActiveWorker,
+    worker_guard: aiplane_runtime::server::headless::BackgroundWorker,
+}
+
+pub(crate) fn reserve_browser_handover_resume(
+    state: &Arc<RamaState>,
+    user: &User,
+    turn: &chat::Turn,
+) -> Result<BrowserResumeReservation, ResumeTurnError> {
+    let Some(model) = turn.model.clone() else {
+        return Err(ResumeTurnError::Refused(
+            aiplane_runtime::suspend::ResumeRefused::NotSuspended,
+        ));
     };
     let worker = match state.chats.register(
         &user.id,
@@ -960,29 +1247,52 @@ pub(crate) async fn resume_turn(
             return Err(ResumeTurnError::Busy);
         }
     };
-    let resume = match claim_for_resume(&state.db, &turn.id, request_id, decision).await {
-        Ok(resume) => resume,
-        Err(refused) => {
-            state.chats.clear(&user.id, &worker);
-            return Err(ResumeTurnError::Refused(refused));
-        }
-    };
-    tracing::info!(
-        turn = %turn.id,
-        decision = ?resume.decision.kind(),
-        "resuming a suspended turn"
+    let worker_guard = aiplane_runtime::server::headless::BackgroundWorker::new(
+        state.clone(),
+        user.id.clone(),
+        worker.clone(),
     );
-    spawn_assistant_worker(
-        state,
-        user,
-        &turn.session_id,
-        &turn.id,
-        &model,
-        &worker,
-        req,
-        Some(resume),
-    )
-    .await;
+    Ok(BrowserResumeReservation {
+        model,
+        worker,
+        worker_guard,
+    })
+}
+
+pub(crate) async fn resume_browser_handover(
+    state: &Arc<RamaState>,
+    user: &User,
+    turn: &chat::Turn,
+    request_id: &str,
+    req: RequestCtx,
+    reservation: BrowserResumeReservation,
+) -> Result<(), ResumeTurnError> {
+    let resume = aiplane_runtime::suspend::claim_browser_handover(&state.db, &turn.id, request_id)
+        .await
+        .map_err(ResumeTurnError::Refused)?;
+    let state = state.clone();
+    let user = user.clone();
+    let turn = turn.clone();
+    tokio::spawn(async move {
+        let BrowserResumeReservation {
+            model,
+            worker,
+            worker_guard,
+        } = reservation;
+        tracing::info!(turn = %turn.id, "resuming a Dot browser handover");
+        spawn_assistant_worker(
+            &state,
+            &user,
+            &turn.session_id,
+            &turn.id,
+            &model,
+            &worker,
+            req,
+            Some(resume),
+            Some(worker_guard),
+        )
+        .await;
+    });
     Ok(())
 }
 
@@ -1035,7 +1345,10 @@ pub async fn resume_expired_suspensions(state: &Arc<RamaState>) {
                 fallback = suspension.on_timeout.as_str(),
                 "suspension expired; resumed with its timeout fallback"
             ),
-            Err(ResumeTurnError::Busy) => {}
+            Err(ResumeTurnError::Busy | ResumeTurnError::Unavailable) => {}
+            Err(ResumeTurnError::Context(error)) => {
+                tracing::warn!(turn = %turn.id, %error, "background resume context unavailable");
+            }
             Err(ResumeTurnError::Refused(refused)) => {
                 tracing::debug!(turn = %turn.id, %refused, "expired suspension already settled");
             }

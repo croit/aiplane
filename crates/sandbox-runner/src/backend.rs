@@ -30,6 +30,87 @@ pub enum BackendError {
     },
     #[error("sandbox-agent protocol error: {0}")]
     Protocol(String),
+    #[error("sandbox control command failed: {0}")]
+    Control(#[from] crate::process::ProcessError),
+}
+
+fn validate_podman_id(id: &str) -> Result<(), BackendError> {
+    let hex = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    let full_id = id.len() == 64 && hex(id);
+    let name = id.strip_prefix("sbx-").is_some_and(|suffix| {
+        let parts: Vec<_> = suffix.split('-').collect();
+        parts.len() == 3
+            && !parts[0].is_empty()
+            && parts[0].len() <= 10
+            && parts[0].bytes().all(|byte| byte.is_ascii_digit())
+            && parts[1].len() <= 32
+            && parts[2].len() <= 16
+            && hex(parts[1])
+            && hex(parts[2])
+    });
+    if full_id || name {
+        Ok(())
+    } else {
+        Err(BackendError::Protocol(
+            "container reference is not a full ID or generated sandbox name".into(),
+        ))
+    }
+}
+
+fn parse_container_ids(bytes: &[u8]) -> Result<Vec<String>, BackendError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| {
+        BackendError::Protocol("container enumeration returned invalid UTF-8".into())
+    })?;
+    text.lines()
+        .map(|line| {
+            let id = line.trim();
+            validate_podman_id(id)?;
+            if id.len() != 64 {
+                return Err(BackendError::Protocol(
+                    "container enumeration requires full IDs".into(),
+                ));
+            }
+            Ok(id.to_owned())
+        })
+        .collect()
+}
+
+fn listed_container_exists(bytes: &[u8], expected: &str) -> Result<bool, BackendError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| {
+        BackendError::Protocol("container enumeration returned invalid UTF-8".into())
+    })?;
+    let mut found = false;
+    for line in text.lines() {
+        let (id, name) = line.split_once('\t').ok_or_else(|| {
+            BackendError::Protocol("container enumeration omitted its ID or name".into())
+        })?;
+        validate_podman_id(id)?;
+        if id.len() != 64 {
+            return Err(BackendError::Protocol(
+                "container enumeration returned a truncated ID".into(),
+            ));
+        }
+        let mut name_matches = false;
+        for name in name.split(',').map(str::trim) {
+            if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
+            {
+                return Err(BackendError::Protocol(
+                    "container enumeration returned an invalid name".into(),
+                ));
+            }
+            name_matches |= name == expected;
+        }
+        found |= id == expected || name_matches;
+    }
+    Ok(found)
 }
 
 /// Label every sandbox container this runner creates carries, so a restart
@@ -55,13 +136,68 @@ pub enum Network {
     Egress,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GuestProof {
+    uid: u32,
+    gid: u32,
+    kernel: String,
+    directory_uid: u32,
+    directory_gid: u32,
+    directory_mode: u32,
+    file_uid: u32,
+    file_gid: u32,
+    file_mode: u32,
+    nonce: String,
+}
+
+fn validate_guest_proof(
+    proof: &GuestProof,
+    host_kernel: &str,
+    nonce: &str,
+) -> Result<(), BackendError> {
+    if proof.uid != 1001
+        || proof.gid != 1001
+        || proof.directory_uid != 1001
+        || proof.directory_gid != 1001
+        || proof.directory_mode != 0o700
+        || proof.file_uid != 1001
+        || proof.file_gid != 1001
+        || proof.file_mode != 0o600
+        || proof.nonce != nonce
+        || crate::isolation::verdict(host_kernel, &proof.kernel)
+            != crate::isolation::Verdict::Isolated
+    {
+        return Err(BackendError::Protocol("workspace probe did not establish workload identity, private permissions, persistent data and isolation".into()));
+    }
+    Ok(())
+}
+
+const CONTROL_DEADLINE: Duration = Duration::from_secs(30);
+
+pub struct WorkspaceMount {
+    pub name: String,
+    pub files: Arc<crate::workspace::Workspace>,
+    pub path: std::path::PathBuf,
+    pub browser_profile_path: Option<std::path::PathBuf>,
+}
+
 /// Abstracts "boot a sandbox", "run a job in it", "destroy it". Object-
 /// safe via `async_trait` so the pool can hold `Arc<dyn ContainerBackend>`
 /// and tests can swap in a fake.
 #[async_trait::async_trait]
 pub trait ContainerBackend: Send + Sync + 'static {
+    fn validate_container_id(&self, id: &str) -> Result<(), BackendError>;
     /// Boot one fresh, idle sandbox container and return its id.
-    async fn create(&self, network: Network) -> Result<String, BackendError>;
+    async fn create(
+        &self,
+        network: Network,
+        workspace: Option<&WorkspaceMount>,
+    ) -> Result<String, BackendError>;
+
+    fn workspace_available(&self) -> bool {
+        false
+    }
 
     /// Run one job inside an existing container. `timeout` is the hard
     /// wall-clock stop; on overrun the returned response has
@@ -73,10 +209,17 @@ pub trait ContainerBackend: Send + Sync + 'static {
         timeout: Duration,
     ) -> Result<RunResponse, BackendError>;
 
-    /// Tear a container down. Best-effort: failures are logged, not
-    /// surfaced — a leaked container is a monitoring concern, not a
-    /// request error.
-    async fn destroy(&self, id: &str);
+    async fn browser_control(
+        &self,
+        _id: &str,
+        _operation: &shared::sandbox::BrowserControlOperation,
+    ) -> Result<shared::sandbox::BrowserControlResponse, BackendError> {
+        Err(BackendError::Protocol(
+            "browser handover is unavailable on this backend".into(),
+        ))
+    }
+
+    async fn destroy(&self, id: &str) -> Result<(), BackendError>;
 
     /// Content id of the configured workload image as it resolves *right
     /// now*. The pool snapshots this and re-checks periodically; a change
@@ -101,7 +244,7 @@ static CONTAINER_SEQ: AtomicU64 = AtomicU64::new(0);
 /// back `/work` and `/tmp` have to be created — and passed as bind mounts —
 /// *before* `podman run` returns an id. Deriving the paths from the name keeps
 /// the mapping stateless: `destroy` and `read_spill` recompute it.
-fn new_container_name() -> String {
+pub(crate) fn new_container_name() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -207,11 +350,261 @@ enum Mount {
 /// caps, and no network unless [`Network::Egress`] is requested.
 pub struct PodmanBackend {
     cfg: Arc<Config>,
+    workspace_ready: std::sync::atomic::AtomicBool,
 }
 
 impl PodmanBackend {
     pub fn new(cfg: Arc<Config>) -> Self {
-        Self { cfg }
+        Self {
+            cfg,
+            workspace_ready: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn command(&self, local: bool) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new(&self.cfg.podman);
+        if local || self.workspace_available() {
+            command.arg("--remote=false");
+        }
+        command
+    }
+
+    async fn control(
+        &self,
+        args: &[String],
+        local: bool,
+    ) -> Result<std::process::Output, BackendError> {
+        let mut command = self.command(local);
+        command.args(args);
+        Ok(crate::process::run_control(command, CONTROL_DEADLINE).await?)
+    }
+
+    async fn destroy_control(&self, id: &str, local: bool) -> Result<(), BackendError> {
+        self.validate_container_id(id)?;
+        let removed = self
+            .control(&["rm".into(), "-f".into(), id.into()], local)
+            .await;
+        if !matches!(&removed, Ok(output) if output.status.success()) {
+            let listed = self
+                .control(
+                    &[
+                        "ps".into(),
+                        "-a".into(),
+                        "--no-trunc".into(),
+                        "--format".into(),
+                        "{{.ID}}\t{{.Names}}".into(),
+                    ],
+                    local,
+                )
+                .await?;
+            if !listed.status.success() {
+                return Err(BackendError::Command {
+                    op: "ps",
+                    code: listed.status.to_string(),
+                    stderr: String::from_utf8_lossy(&listed.stderr).into_owned(),
+                });
+            }
+            if listed_container_exists(&listed.stdout, id)? {
+                return Err(BackendError::Protocol(
+                    "container removal failed and the container remains present; retry teardown"
+                        .into(),
+                ));
+            }
+        }
+        self.remove_host_dirs(id);
+        Ok(())
+    }
+
+    pub async fn verify_workspace_readiness(&self) -> Result<(), BackendError> {
+        self.workspace_ready
+            .store(false, std::sync::atomic::Ordering::Release);
+        if !cfg!(target_os = "linux")
+            || unsafe { libc::geteuid() } != 0
+            || self.cfg.runtime != "runsc"
+        {
+            return Err(BackendError::Protocol(
+                "persistent workspaces require the verified local rootful Linux gVisor deployment"
+                    .into(),
+            ));
+        }
+        if ["CONTAINER_HOST", "CONTAINER_CONNECTION"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+        {
+            return Err(BackendError::Protocol(
+                "remote Podman configuration cannot establish local persistent workspace readiness"
+                    .into(),
+            ));
+        }
+        let root = self.cfg.work_root.as_ref().ok_or_else(|| {
+            BackendError::Protocol("persistent workspace storage is not configured".into())
+        })?;
+        let rootless = self
+            .control(
+                &[
+                    "info".into(),
+                    "--format".into(),
+                    "{{.Host.Security.Rootless}}".into(),
+                ],
+                true,
+            )
+            .await?;
+        if !rootless.status.success()
+            || std::str::from_utf8(&rootless.stdout).ok().map(str::trim) != Some("false")
+        {
+            return Err(BackendError::Protocol(
+                "Podman did not verify local rootful execution".into(),
+            ));
+        }
+        let host_kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")?;
+        if host_kernel.trim().is_empty() {
+            return Err(BackendError::Protocol(
+                "host kernel identity is unavailable".into(),
+            ));
+        }
+        let probe = crate::workspace::WorkspaceProbe::create(root)
+            .map_err(|error| BackendError::Protocol(error.to_string()))?;
+        let prepared = probe
+            .prepare_workload_owner(1001, 1001)
+            .map_err(|error| BackendError::Protocol(error.to_string()));
+        if let Err(error) = prepared {
+            let _ = probe.cleanup();
+            return Err(error);
+        }
+        let path = probe
+            .mount_path()
+            .map_err(|error| BackendError::Protocol(error.to_string()))?;
+        if path.to_str().is_none_or(|path| path.contains(':')) {
+            probe
+                .cleanup()
+                .map_err(|error| BackendError::Protocol(error.to_string()))?;
+            return Err(BackendError::Protocol(
+                "workspace storage path cannot be used as a Podman bind mount".into(),
+            ));
+        }
+        use std::io::Read;
+        let mut random = [0u8; 32];
+        std::fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
+        let nonce: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        for write in [true, false] {
+            let name = new_container_name();
+            let outcome = self
+                .probe_container(&probe, &path, &name, &nonce, &host_kernel, write)
+                .await;
+            // A failed CLI may have created the named container before reporting failure.
+            self.destroy_control(&name, true).await?;
+            if let Err(error) = outcome {
+                probe
+                    .cleanup()
+                    .map_err(|cleanup| BackendError::Protocol(cleanup.to_string()))?;
+                return Err(error);
+            }
+        }
+        probe
+            .cleanup()
+            .map_err(|error| BackendError::Protocol(error.to_string()))?;
+        self.workspace_ready
+            .store(true, std::sync::atomic::Ordering::Release);
+        Ok(())
+    }
+
+    async fn probe_container(
+        &self,
+        probe: &crate::workspace::WorkspaceProbe,
+        path: &Path,
+        name: &str,
+        nonce: &str,
+        host_kernel: &str,
+        write: bool,
+    ) -> Result<(), BackendError> {
+        use std::os::unix::fs::MetadataExt;
+        self.validate_container_id(name)?;
+        probe
+            .validate_mount_path(path)
+            .map_err(|error| BackendError::Protocol(error.to_string()))?;
+        let root = self
+            .cfg
+            .work_root
+            .as_ref()
+            .ok_or_else(|| BackendError::Protocol("workspace storage unavailable".into()))?;
+        let (work, tmp) = host_dirs(root, name);
+        prepare_host_dirs(root, &work, &tmp)?;
+        let started = self
+            .control(
+                &self.run_args_with_workspace_path(Network::None, name, Some(path)),
+                true,
+            )
+            .await?;
+        if !started.status.success() || parse_container_ids(&started.stdout)?.len() != 1 {
+            return Err(BackendError::Protocol(
+                "workspace probe container could not be started".into(),
+            ));
+        }
+        let script = format!(
+            r#"import os,json,stat,platform
+os.umask(0o077)
+assert os.getuid()==1001 and os.getgid()==1001
+if {write}:
+    os.mkdir('/workspace/private',0o700)
+    fd=os.open('/workspace/private/probe.bin',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    with os.fdopen(fd,'wb') as f:
+        f.write(b'{nonce}')
+        f.flush()
+        os.fsync(f.fileno())
+d=os.stat('/workspace/private',follow_symlinks=False)
+f=os.stat('/workspace/private/probe.bin',follow_symlinks=False)
+with open('/workspace/private/probe.bin','rb') as handle:
+    data=handle.read(65).decode('ascii')
+print(json.dumps(dict(uid=os.getuid(),gid=os.getgid(),kernel=platform.release(),directory_uid=d.st_uid,directory_gid=d.st_gid,directory_mode=stat.S_IMODE(d.st_mode),file_uid=f.st_uid,file_gid=f.st_gid,file_mode=stat.S_IMODE(f.st_mode),nonce=data)))
+"#,
+            write = if write { "True" } else { "False" }
+        );
+        let output = self
+            .control(
+                &[
+                    "exec".into(),
+                    name.into(),
+                    "python3".into(),
+                    "-c".into(),
+                    script,
+                ],
+                true,
+            )
+            .await?;
+        if !output.status.success() {
+            return Err(BackendError::Protocol(
+                "workspace probe execution failed".into(),
+            ));
+        }
+        let proof: GuestProof = serde_json::from_slice(&output.stdout).map_err(|_| {
+            BackendError::Protocol("workspace probe returned an invalid proof".into())
+        })?;
+        validate_guest_proof(&proof, host_kernel, nonce)?;
+        let bytes = probe
+            .read("private/probe.bin")
+            .map_err(|error| BackendError::Protocol(error.to_string()))?;
+        let directory = probe
+            .metadata("private")
+            .map_err(|error| BackendError::Protocol(error.to_string()))?;
+        let file = probe
+            .metadata("private/probe.bin")
+            .map_err(|error| BackendError::Protocol(error.to_string()))?;
+        if bytes != nonce.as_bytes()
+            || !directory.is_dir()
+            || directory.uid() != 1001
+            || directory.gid() != 1001
+            || directory.mode() & 0o7777 != 0o700
+            || !file.is_file()
+            || file.uid() != 1001
+            || file.gid() != 1001
+            || file.mode() & 0o7777 != 0o600
+            || file.len() != 64
+        {
+            return Err(BackendError::Protocol(
+                "host filesystem did not confirm the private workload data".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Best-effort removal of one container's scratch directories, keyed by
@@ -246,43 +639,46 @@ impl PodmanBackend {
     /// Without this they linger until someone notices (and, with host-backed
     /// scratch, keep their directories pinned too). Assumes one runner per
     /// host, which the fixed bind address already implies.
-    pub async fn reap_stale_containers(&self) {
+    pub async fn reap_stale_containers(&self) -> Result<(), BackendError> {
         // Two passes rather than one `--filter` with two labels: podman ANDs
         // repeated filters, so asking for both at once matches nothing.
         let mut ids: Vec<String> = Vec::new();
         for label in [LABEL, LEGACY_LABEL] {
-            let out = tokio::process::Command::new(&self.cfg.podman)
-                .args(["ps", "-aq", "--filter", &format!("label={label}")])
+            let out = self
+                .command(false)
+                .args([
+                    "ps",
+                    "-aq",
+                    "--no-trunc",
+                    "--filter",
+                    &format!("label={label}"),
+                ])
                 .stdin(Stdio::null())
                 .output()
                 .await;
-            let Ok(out) = out else {
-                tracing::warn!("listing stale sandbox containers failed; skipping reap");
-                return;
-            };
+            let out = out?;
             if !out.status.success() {
-                tracing::warn!("listing stale sandbox containers failed; skipping reap");
-                return;
+                return Err(BackendError::Command {
+                    op: "ps",
+                    code: out.status.to_string(),
+                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                });
             }
-            ids.extend(
-                String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .map(|l| l.trim().to_string())
-                    .filter(|l| !l.is_empty()),
-            );
+            ids.extend(parse_container_ids(&out.stdout)?);
         }
         ids.sort();
         ids.dedup();
         if ids.is_empty() {
-            return;
+            return Ok(());
         }
         tracing::info!(
             count = ids.len(),
             "reaping sandbox containers from a previous run"
         );
         for id in ids {
-            self.destroy(&id).await;
+            self.destroy(&id).await?;
         }
+        Ok(())
     }
 
     /// Read artifacts the agent deliberately left on disk.
@@ -330,7 +726,8 @@ impl PodmanBackend {
         let Some(root) = &self.cfg.work_root else {
             return;
         };
-        let out = tokio::process::Command::new(&self.cfg.podman)
+        let out = self
+            .command(false)
             .args([
                 "ps",
                 "-a",
@@ -378,7 +775,36 @@ impl PodmanBackend {
     ///
     /// `name` is ours (see [`new_container_name`]) so the scratch bind mounts
     /// can be derived from it later without extra bookkeeping.
-    fn run_args(&self, network: Network, name: &str) -> Vec<String> {
+    fn run_args(
+        &self,
+        network: Network,
+        name: &str,
+        workspace: Option<&WorkspaceMount>,
+    ) -> Vec<String> {
+        self.run_args_with_mount_paths(
+            network,
+            name,
+            workspace.map(|mount| mount.path.as_path()),
+            workspace.and_then(|mount| mount.browser_profile_path.as_deref()),
+        )
+    }
+
+    fn run_args_with_workspace_path(
+        &self,
+        network: Network,
+        name: &str,
+        workspace_path: Option<&Path>,
+    ) -> Vec<String> {
+        self.run_args_with_mount_paths(network, name, workspace_path, None)
+    }
+
+    fn run_args_with_mount_paths(
+        &self,
+        network: Network,
+        name: &str,
+        workspace_path: Option<&Path>,
+        browser_profile_path: Option<&Path>,
+    ) -> Vec<String> {
         let c = &self.cfg;
         let mut a: Vec<String> = vec![
             "run".into(),
@@ -408,6 +834,14 @@ impl PodmanBackend {
             a.push(format!("/work:rw,size={},mode=1777", c.work_size));
             a.push("--tmpfs".into());
             a.push(format!("/tmp:rw,exec,size={},mode=1777", c.tmp_size));
+        }
+        if let Some(path) = workspace_path {
+            a.push("-v".into());
+            a.push(format!("{}:/workspace:rw", path.display()));
+        }
+        if let Some(path) = browser_profile_path {
+            a.push("-v".into());
+            a.push(format!("{}:/dot-browser:rw", path.display()));
         }
         a.extend::<Vec<String>>(vec![
             "--cap-drop=ALL".into(),
@@ -460,8 +894,43 @@ impl PodmanBackend {
 
 #[async_trait::async_trait]
 impl ContainerBackend for PodmanBackend {
-    async fn create(&self, network: Network) -> Result<String, BackendError> {
-        let name = new_container_name();
+    fn validate_container_id(&self, id: &str) -> Result<(), BackendError> {
+        validate_podman_id(id)
+    }
+    fn workspace_available(&self) -> bool {
+        self.workspace_ready
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+    async fn create(
+        &self,
+        network: Network,
+        workspace: Option<&WorkspaceMount>,
+    ) -> Result<String, BackendError> {
+        if workspace.is_some() && !self.workspace_available() {
+            return Err(BackendError::Protocol(
+                "persistent workspace mount readiness has not been verified".into(),
+            ));
+        }
+        if let Some(mount) = workspace {
+            mount
+                .files
+                .validate_mount_path(&mount.path)
+                .map_err(|error| BackendError::Protocol(error.to_string()))?;
+            if let Some(path) = &mount.browser_profile_path {
+                mount
+                    .files
+                    .validate_browser_profile_path(path)
+                    .map_err(|error| BackendError::Protocol(error.to_string()))?;
+            }
+            mount
+                .files
+                .prepare_workload_owner(1001, 1001)
+                .map_err(|error| BackendError::Protocol(error.to_string()))?;
+        }
+        let name = workspace
+            .map(|mount| mount.name.clone())
+            .unwrap_or_else(new_container_name);
+        self.validate_container_id(&name)?;
         if let Some(root) = &self.cfg.work_root {
             let (work, tmp) = host_dirs(root, &name);
             prepare_host_dirs(root, &work, &tmp).map_err(|e| {
@@ -471,24 +940,23 @@ impl ContainerBackend for PodmanBackend {
                 ))
             })?;
         }
-        let args = self.run_args(network, &name);
-        let out = tokio::process::Command::new(&self.cfg.podman)
-            .args(&args)
-            .stdin(Stdio::null())
-            .output()
-            .await?;
+        let args = self.run_args(network, &name, workspace);
+        let out = self.control(&args, false).await?;
         if !out.status.success() {
-            // No container to clean up, but the scratch directories exist.
-            self.remove_host_dirs(&name);
+            if workspace.is_none() {
+                self.remove_host_dirs(&name);
+            }
             return Err(BackendError::Command {
                 op: "run",
                 code: out.status.code().map(|c| c.to_string()).unwrap_or_default(),
                 stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
             });
         }
-        if String::from_utf8_lossy(&out.stdout).trim().is_empty() {
-            self.remove_host_dirs(&name);
-            return Err(BackendError::Protocol("podman run printed no id".into()));
+        let ids = parse_container_ids(&out.stdout)?;
+        if ids.len() != 1 {
+            return Err(BackendError::Protocol(
+                "podman run did not return exactly one full ID".into(),
+            ));
         }
         // Hand back the name, not the id podman printed: podman accepts either
         // wherever a container is named, and the name is what the scratch
@@ -504,7 +972,7 @@ impl ContainerBackend for PodmanBackend {
     ) -> Result<RunResponse, BackendError> {
         // The job marshalling lives inside the image: pipe the RunRequest to
         // `sandbox-agent` on stdin, read a RunResponse back on stdout.
-        let mut cmd = tokio::process::Command::new(&self.cfg.podman);
+        let mut cmd = self.command(false);
         cmd.arg("exec").arg("-i");
         if self.cfg.work_root.is_some() {
             // Host-backed scratch: tell the agent to leave produced files on
@@ -524,8 +992,42 @@ impl ContainerBackend for PodmanBackend {
         Ok(resp)
     }
 
+    async fn browser_control(
+        &self,
+        id: &str,
+        operation: &shared::sandbox::BrowserControlOperation,
+    ) -> Result<shared::sandbox::BrowserControlResponse, BackendError> {
+        self.validate_container_id(id)?;
+        let payload = browser_daemon_payload(operation)?;
+        let mut command = self.command(true);
+        command.args([
+            "exec",
+            "-i",
+            "--user",
+            "1001:1001",
+            id,
+            "python",
+            "-c",
+            BROWSER_CONTROL_CLIENT,
+        ]);
+        let output = crate::process::run_control_with_input(
+            command,
+            &payload,
+            Duration::from_secs(15),
+            3 * 1024 * 1024,
+        )
+        .await?;
+        if !output.status.success() {
+            return Err(BackendError::Protocol(
+                "the browser handover command did not complete".into(),
+            ));
+        }
+        decode_browser_control_response(&output.stdout)
+    }
+
     async fn image_id(&self) -> Result<String, BackendError> {
-        let out = tokio::process::Command::new(&self.cfg.podman)
+        let out = self
+            .command(false)
             .args(["image", "inspect", &self.cfg.image, "--format", "{{.Id}}"])
             .stdin(Stdio::null())
             .output()
@@ -544,25 +1046,74 @@ impl ContainerBackend for PodmanBackend {
         Ok(id)
     }
 
-    async fn destroy(&self, id: &str) {
-        // `rm -f` (no `-t`) so the same command works under both podman and
-        // docker — handy for dev (SANDBOX_PODMAN=docker on macOS).
-        let res = tokio::process::Command::new(&self.cfg.podman)
-            .args(["rm", "-f", id])
-            .stdin(Stdio::null())
-            .output()
-            .await;
-        match res {
-            Ok(o) if !o.status.success() => tracing::warn!(
-                container = id,
-                stderr = %String::from_utf8_lossy(&o.stderr).trim(),
-                "podman rm failed; container may be leaked"
-            ),
-            Err(e) => tracing::warn!(container = id, error = %e, "podman rm could not run"),
-            _ => {}
-        }
-        self.remove_host_dirs(id);
+    async fn destroy(&self, id: &str) -> Result<(), BackendError> {
+        self.destroy_control(id, false).await
     }
+}
+
+const BROWSER_CONTROL_CLIENT: &str = r#"import socket,sys
+s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+s.settimeout(10)
+s.connect('/tmp/gwbp.sock')
+data=sys.stdin.buffer.read(16385)
+if len(data)>16384: raise SystemExit(2)
+s.sendall(data+b'\n')
+out=b''
+while not out.endswith(b'\n'):
+    part=s.recv(65536)
+    if not part: break
+    out+=part
+    if len(out)>3145728: raise SystemExit(3)
+s.close()
+sys.stdout.buffer.write(out)
+"#;
+
+fn browser_daemon_payload(
+    operation: &shared::sandbox::BrowserControlOperation,
+) -> Result<Vec<u8>, BackendError> {
+    let command = match operation {
+        shared::sandbox::BrowserControlOperation::Begin => {
+            serde_json::json!({ "action": "human_begin" })
+        }
+        shared::sandbox::BrowserControlOperation::Claim { .. } => {
+            return Err(BackendError::Protocol(
+                "browser controller claims are handled by the runner".into(),
+            ));
+        }
+        shared::sandbox::BrowserControlOperation::Frame { .. } => {
+            serde_json::json!({ "action": "human_frame" })
+        }
+        shared::sandbox::BrowserControlOperation::Input { input, .. } => serde_json::json!({
+            "action": "human_input",
+            "input": input,
+        }),
+        shared::sandbox::BrowserControlOperation::Finish { .. } => {
+            serde_json::json!({ "action": "human_finish" })
+        }
+    };
+    serde_json::to_vec(&command)
+        .map(|mut bytes| {
+            bytes.push(b'\n');
+            bytes
+        })
+        .map_err(|_| {
+            BackendError::Protocol("the browser handover request could not be encoded".into())
+        })
+}
+
+fn decode_browser_control_response(
+    bytes: &[u8],
+) -> Result<shared::sandbox::BrowserControlResponse, BackendError> {
+    let response: shared::sandbox::BrowserControlResponse =
+        serde_json::from_slice(bytes).map_err(|_| {
+            BackendError::Protocol("the browser returned an invalid handover response".into())
+        })?;
+    if !response.ok {
+        return Err(BackendError::Protocol(
+            "the browser could not complete the handover operation".into(),
+        ));
+    }
+    Ok(response)
 }
 
 #[async_trait::async_trait]
@@ -607,7 +1158,8 @@ impl SpillReader for PodmanBackend {
         let mut buf: Vec<u8> = Vec::with_capacity(len);
         let mut block: u64 = 0;
         while buf.len() < len {
-            let out = tokio::process::Command::new(&self.cfg.podman)
+            let out = self
+                .command(false)
                 .arg("exec")
                 .arg(container)
                 .arg("dd")
@@ -749,6 +1301,83 @@ async fn drive_agent(
 }
 
 #[cfg(test)]
+mod teardown_validation_tests {
+    use super::*;
+
+    #[test]
+    fn checked_teardown_validates_actual_generated_names_and_strict_full_ids() {
+        for name in [new_container_name(), "a".repeat(64)] {
+            validate_podman_id(&name).unwrap();
+        }
+        for invalid in [
+            "",
+            "-f",
+            "sbx-",
+            "sbx-1-x-2",
+            "sbx-1-a-2-extra",
+            "abcdef",
+            "../sbx-1-a-2",
+        ] {
+            assert!(validate_podman_id(invalid).is_err(), "{invalid}");
+        }
+        assert!(parse_container_ids(&[0xff]).is_err());
+        assert!(parse_container_ids(b"\n").is_err());
+        assert!(parse_container_ids(b"sbx-1-a-2\n").is_err());
+        let id = "a".repeat(64);
+        assert_eq!(
+            parse_container_ids(format!("{id}\n").as_bytes()).unwrap(),
+            vec![id]
+        );
+        assert!(parse_container_ids(b"").unwrap().is_empty());
+    }
+
+    #[test]
+    fn checked_teardown_enumeration_requires_exact_name_or_id_and_all_valid_rows() {
+        let id = "a".repeat(64);
+        let listing = format!("{id}\tsbx-1-ab-2\n");
+        assert!(listed_container_exists(listing.as_bytes(), "sbx-1-ab-2").unwrap());
+        assert!(listed_container_exists(listing.as_bytes(), &id).unwrap());
+        assert!(!listed_container_exists(listing.as_bytes(), "sbx-1-ab-20").unwrap());
+        assert!(!listed_container_exists(listing.as_bytes(), "aaaaaaaaaaaa").unwrap());
+        assert!(!listed_container_exists(b"", "sbx-1-ab-2").unwrap());
+        for invalid in [
+            format!("{listing}bad\tother\n"),
+            format!("{id}\n"),
+            format!("{id}\t\n"),
+        ] {
+            assert!(listed_container_exists(invalid.as_bytes(), "sbx-1-ab-2").is_err());
+        }
+        assert!(listed_container_exists(&[0xff], "sbx-1-ab-2").is_err());
+    }
+
+    #[test]
+    fn checked_teardown_local_validation_rejects_foreign_and_parent_paths() {
+        let backend = LocalBackend {
+            agent: PathBuf::new(),
+        };
+        let base = std::env::temp_dir().join("llm-sandbox-local");
+        backend
+            .validate_container_id(base.join("work-1-2").to_str().unwrap())
+            .unwrap();
+        for path in [
+            base.clone(),
+            base.join(".."),
+            base.join("work-1-2/child"),
+            base.join("sandbox-agent-1-2.py"),
+            base.join("work-x-2"),
+        ] {
+            assert!(
+                backend
+                    .validate_container_id(path.to_str().unwrap())
+                    .is_err(),
+                "{}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod podman_args_tests {
     use super::*;
 
@@ -786,7 +1415,7 @@ mod podman_args_tests {
     /// the runner before these were enforced).
     #[test]
     fn run_args_enforce_resource_caps() {
-        let a = PodmanBackend::new(cfg()).run_args(Network::None, "sbx-test");
+        let a = PodmanBackend::new(cfg()).run_args(Network::None, "sbx-test", None);
         assert!(has_pair(&a, "--memory", "1024m"));
         // swap pinned to memory → guest can't escape the cap via swap
         assert!(has_pair(&a, "--memory-swap", "1024m"));
@@ -842,7 +1471,39 @@ impl LocalBackend {
 
 #[async_trait::async_trait]
 impl ContainerBackend for LocalBackend {
-    async fn create(&self, _network: Network) -> Result<String, BackendError> {
+    fn validate_container_id(&self, id: &str) -> Result<(), BackendError> {
+        let path = Path::new(id);
+        let base = std::env::temp_dir().join("llm-sandbox-local");
+        let valid = path.parent() == Some(base.as_path())
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("work-"))
+                .is_some_and(|suffix| {
+                    let parts: Vec<_> = suffix.split('-').collect();
+                    parts.len() == 2
+                        && parts.iter().all(|part| {
+                            !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())
+                        })
+                });
+        if valid {
+            Ok(())
+        } else {
+            Err(BackendError::Protocol(
+                "local container reference is not a generated work directory".into(),
+            ))
+        }
+    }
+    async fn create(
+        &self,
+        _network: Network,
+        workspace: Option<&WorkspaceMount>,
+    ) -> Result<String, BackendError> {
+        if workspace.is_some() {
+            return Err(BackendError::Protocol(
+                "local backend does not support persistent workspace mounts".into(),
+            ));
+        }
         let dir = std::env::temp_dir().join("llm-sandbox-local").join(format!(
             "work-{}-{}",
             std::process::id(),
@@ -868,8 +1529,13 @@ impl ContainerBackend for LocalBackend {
         drive_agent(child, id, req, timeout, self).await
     }
 
-    async fn destroy(&self, id: &str) {
-        let _ = tokio::fs::remove_dir_all(id).await;
+    async fn destroy(&self, id: &str) -> Result<(), BackendError> {
+        self.validate_container_id(id)?;
+        match tokio::fs::remove_dir_all(id).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 }
 
@@ -912,6 +1578,14 @@ pub(crate) mod fake {
         pub created: Mutex<Vec<(String, Network)>>,
         pub destroyed: Mutex<Vec<String>>,
         pub execs: AtomicUsize,
+        pub fail_destroy: std::sync::atomic::AtomicBool,
+        pub exec_entered: tokio::sync::Notify,
+        pub exec_release: tokio::sync::Notify,
+        pub browser_controls: Mutex<Vec<shared::sandbox::BrowserControlOperation>>,
+        pub fail_browser_begin_once: std::sync::atomic::AtomicBool,
+        pub hold_create: std::sync::atomic::AtomicBool,
+        pub create_entered: tokio::sync::Notify,
+        pub create_release: tokio::sync::Notify,
         /// Simulated workload-image id; `set_image` mutates it so pool tests
         /// can exercise the auto-recycle path.
         image: Mutex<String>,
@@ -934,10 +1608,36 @@ pub(crate) mod fake {
 
     #[async_trait::async_trait]
     impl ContainerBackend for FakeBackend {
-        async fn create(&self, network: Network) -> Result<String, BackendError> {
+        fn validate_container_id(&self, id: &str) -> Result<(), BackendError> {
+            if validate_podman_id(id).is_ok()
+                || id.strip_prefix("fake-").is_some_and(|suffix| {
+                    !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+                })
+            {
+                Ok(())
+            } else {
+                Err(BackendError::Protocol(
+                    "invalid fake container reference".into(),
+                ))
+            }
+        }
+        fn workspace_available(&self) -> bool {
+            true
+        }
+        async fn create(
+            &self,
+            network: Network,
+            workspace: Option<&WorkspaceMount>,
+        ) -> Result<String, BackendError> {
             let n = self.next.fetch_add(1, Ordering::SeqCst);
-            let id = format!("fake-{n}");
+            let id = workspace
+                .map(|mount| mount.name.clone())
+                .unwrap_or_else(|| format!("fake-{n}"));
             self.created.lock().unwrap().push((id.clone(), network));
+            if self.hold_create.load(Ordering::SeqCst) {
+                self.create_entered.notify_one();
+                self.create_release.notified().await;
+            }
             Ok(id)
         }
 
@@ -952,6 +1652,10 @@ pub(crate) mod fake {
             _timeout: Duration,
         ) -> Result<RunResponse, BackendError> {
             self.execs.fetch_add(1, Ordering::SeqCst);
+            if req.code == "hold-exec" {
+                self.exec_entered.notify_one();
+                self.exec_release.notified().await;
+            }
             Ok(RunResponse {
                 exit_code: 0,
                 stdout: format!("ran {} in {id}", req.language.as_str()),
@@ -965,8 +1669,39 @@ pub(crate) mod fake {
             })
         }
 
-        async fn destroy(&self, id: &str) {
-            self.destroyed.lock().unwrap().push(id.to_string());
+        async fn browser_control(
+            &self,
+            _id: &str,
+            operation: &shared::sandbox::BrowserControlOperation,
+        ) -> Result<shared::sandbox::BrowserControlResponse, BackendError> {
+            self.browser_controls
+                .lock()
+                .unwrap()
+                .push(operation.clone());
+            if matches!(operation, shared::sandbox::BrowserControlOperation::Begin)
+                && self.fail_browser_begin_once.swap(false, Ordering::SeqCst)
+            {
+                return Err(BackendError::Protocol("browser control unavailable".into()));
+            }
+            Ok(shared::sandbox::BrowserControlResponse {
+                ok: true,
+                generation: 1,
+                expires_at: "2026-10-12T10:00:00Z".into(),
+                frame_b64: None,
+                width: None,
+                height: None,
+            })
+        }
+
+        async fn destroy(&self, id: &str) -> Result<(), BackendError> {
+            if self.fail_destroy.load(Ordering::SeqCst) {
+                return Err(BackendError::Protocol("teardown unavailable".into()));
+            }
+            let mut destroyed = self.destroyed.lock().unwrap();
+            if !destroyed.iter().any(|previous| previous == id) {
+                destroyed.push(id.to_string());
+            }
+            Ok(())
         }
     }
 
@@ -979,6 +1714,7 @@ pub(crate) mod fake {
             network: false,
             container_id: None,
             keep_alive: false,
+            workspace: None,
         }
     }
 }
@@ -1010,7 +1746,7 @@ mod local_tests {
             return;
         }
         let be = LocalBackend::new().unwrap();
-        let id = be.create(Network::None).await.unwrap();
+        let id = be.create(Network::None, None).await.unwrap();
         let req = RunRequest {
             language: Language::Python,
             // Reads an input file, writes an output artifact, prints to stdout.
@@ -1023,9 +1759,10 @@ mod local_tests {
             network: false,
             container_id: None,
             keep_alive: false,
+            workspace: None,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
 
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
         assert!(resp.stdout.contains("in=foo"), "stdout={}", resp.stdout);
@@ -1046,7 +1783,7 @@ mod local_tests {
             return;
         }
         let be = LocalBackend::new().unwrap();
-        let id = be.create(Network::None).await.unwrap();
+        let id = be.create(Network::None, None).await.unwrap();
         // Print ~300 KB (> the agent's 32 KiB preserve threshold).
         let req = RunRequest {
             language: Language::Python,
@@ -1056,9 +1793,10 @@ mod local_tests {
             network: false,
             container_id: None,
             keep_alive: false,
+            workspace: None,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         let art = resp.artifacts.iter().find(|a| a.name == "stdout.txt");
         assert!(
             art.is_some(),
@@ -1092,7 +1830,7 @@ mod local_tests {
             return;
         }
         let be = LocalBackend::new().unwrap();
-        let id = be.create(Network::None).await.unwrap();
+        let id = be.create(Network::None, None).await.unwrap();
         let req = RunRequest {
             language: Language::Python,
             code: "import os\n\
@@ -1106,9 +1844,10 @@ mod local_tests {
             network: false,
             container_id: None,
             keep_alive: false,
+            workspace: None,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
 
         let by_name = |n: &str| resp.artifacts.iter().find(|a| a.name == n).cloned();
@@ -1137,7 +1876,7 @@ mod local_tests {
             return;
         }
         let be = LocalBackend::new().unwrap();
-        let id = be.create(Network::None).await.unwrap();
+        let id = be.create(Network::None, None).await.unwrap();
         let req = RunRequest {
             language: Language::Python,
             code: "import os\n\
@@ -1150,9 +1889,10 @@ mod local_tests {
             network: false,
             container_id: None,
             keep_alive: false,
+            workspace: None,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
 
         let flat = resp
@@ -1181,7 +1921,7 @@ mod local_tests {
             return;
         }
         let be = LocalBackend::new().unwrap();
-        let id = be.create(Network::None).await.unwrap();
+        let id = be.create(Network::None, None).await.unwrap();
         let req = RunRequest {
             language: Language::Python,
             code: "import os\n\
@@ -1196,9 +1936,10 @@ mod local_tests {
             network: false,
             container_id: None,
             keep_alive: false,
+            workspace: None,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
         let names: Vec<&str> = resp.artifacts.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(
@@ -1219,7 +1960,7 @@ mod local_tests {
             return;
         }
         let be = LocalBackend::new().unwrap();
-        let id = be.create(Network::None).await.unwrap();
+        let id = be.create(Network::None, None).await.unwrap();
         let req = RunRequest {
             language: Language::Python,
             code: "import os\n\
@@ -1233,9 +1974,10 @@ mod local_tests {
             network: false,
             container_id: None,
             keep_alive: false,
+            workspace: None,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
         let names: Vec<&str> = resp.artifacts.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(
@@ -1256,7 +1998,7 @@ mod local_tests {
             return;
         }
         let be = LocalBackend::new().unwrap();
-        let id = be.create(Network::None).await.unwrap();
+        let id = be.create(Network::None, None).await.unwrap();
         let mk = |code: &str| RunRequest {
             language: Language::Python,
             code: code.into(),
@@ -1265,6 +2007,7 @@ mod local_tests {
             network: false,
             container_id: None,
             keep_alive: false,
+            workspace: None,
         };
 
         // Call 1 writes a.txt.
@@ -1288,7 +2031,7 @@ mod local_tests {
             )
             .await
             .unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
         assert_eq!(r2.exit_code, 0, "stderr={}", r2.stderr);
         let names: Vec<&str> = r2.artifacts.iter().map(|a| a.name.as_str()).collect();
         assert!(names.contains(&"b.txt"), "new file collected: {names:?}");
@@ -1305,7 +2048,7 @@ mod local_tests {
             return;
         }
         let be = LocalBackend::new().unwrap();
-        let id = be.create(Network::None).await.unwrap();
+        let id = be.create(Network::None, None).await.unwrap();
         // A ~500 KB artifact makes the RunResponse far exceed the agent's
         // 60 KB inline cap, so it is spilled to a file and read back via
         // `SpillReader` rather than arriving inline on stdout — exercising the
@@ -1319,9 +2062,10 @@ mod local_tests {
             network: false,
             container_id: None,
             keep_alive: false,
+            workspace: None,
         };
         let resp = be.exec(&id, &req, Duration::from_secs(30)).await.unwrap();
-        be.destroy(&id).await;
+        be.destroy(&id).await.unwrap();
 
         assert_eq!(resp.exit_code, 0, "stderr={}", resp.stderr);
         let art = resp
@@ -1468,7 +2212,7 @@ mod scratch_mount_tests {
 
     #[test]
     fn defaults_to_internal_tmpfs() {
-        let a = PodmanBackend::new(cfg_with_root(None)).run_args(Network::None, "sbx-1");
+        let a = PodmanBackend::new(cfg_with_root(None)).run_args(Network::None, "sbx-1", None);
         let joined = a.join(" ");
         assert!(
             joined.contains("--tmpfs /work:rw,size=512m,mode=1777"),
@@ -1483,8 +2227,11 @@ mod scratch_mount_tests {
 
     #[test]
     fn bind_mounts_scratch_when_work_root_is_set() {
-        let a = PodmanBackend::new(cfg_with_root(Some("/srv/scratch")))
-            .run_args(Network::None, "sbx-2");
+        let a = PodmanBackend::new(cfg_with_root(Some("/srv/scratch"))).run_args(
+            Network::None,
+            "sbx-2",
+            None,
+        );
         let joined = a.join(" ");
         // Per-container paths, derived from the name, so two sandboxes can
         // never see each other's files.
@@ -1500,6 +2247,35 @@ mod scratch_mount_tests {
         assert!(
             !joined.contains("--tmpfs"),
             "tmpfs must be replaced: {joined}"
+        );
+    }
+
+    #[test]
+    fn mounts_only_the_workspace_files_directory_read_write() {
+        let a = PodmanBackend::new(cfg_with_root(Some("/srv/scratch")))
+            .run_args_with_workspace_path(
+                Network::None,
+                "sbx-3",
+                Some(Path::new("/srv/dots/abc/files")),
+            );
+        let joined = a.join(" ");
+        assert!(
+            joined.contains("-v /srv/dots/abc/files:/workspace:rw"),
+            "{joined}"
+        );
+        // Only `files` is mounted; private owner metadata and retired roots never are.
+        assert!(!joined.contains("owner.json"), "{joined}");
+        assert!(!joined.contains(".dot-retired"), "{joined}");
+    }
+
+    #[test]
+    fn omits_the_workspace_mount_without_a_scope() {
+        let a = PodmanBackend::new(cfg_with_root(Some("/srv/scratch")))
+            .run_args_with_workspace_path(Network::None, "sbx-4", None);
+        let joined = a.join(" ");
+        assert!(
+            !joined.contains("/workspace"),
+            "no workspace mount without a scope: {joined}"
         );
     }
 }
@@ -1611,5 +2387,93 @@ mod inplace_artifact_tests {
 
         assert_eq!(r.artifacts.len(), 1, "must not touch the response");
         assert_eq!(r.artifacts[0].content_b64, "");
+    }
+}
+
+#[cfg(test)]
+mod workspace_readiness_tests {
+    use super::*;
+
+    fn proof() -> GuestProof {
+        GuestProof {
+            uid: 1001,
+            gid: 1001,
+            kernel: "gvisor-kernel".into(),
+            directory_uid: 1001,
+            directory_gid: 1001,
+            directory_mode: 0o700,
+            file_uid: 1001,
+            file_gid: 1001,
+            file_mode: 0o600,
+            nonce: "ab".repeat(32),
+        }
+    }
+
+    #[test]
+    fn workspace_readiness_guest_proof_requires_exact_identity_modes_nonce_and_isolation() {
+        let nonce = "ab".repeat(32);
+        validate_guest_proof(&proof(), "host-kernel", &nonce).unwrap();
+        for field in 0..10 {
+            let mut value = serde_json::to_value(proof()).unwrap();
+            let (key, replacement) = match field {
+                0 => ("uid", serde_json::json!(0)),
+                1 => ("gid", serde_json::json!(0)),
+                2 => ("kernel", serde_json::json!("host-kernel")),
+                3 => ("directory_uid", serde_json::json!(0)),
+                4 => ("directory_gid", serde_json::json!(0)),
+                5 => ("directory_mode", serde_json::json!(0o777)),
+                6 => ("file_uid", serde_json::json!(0)),
+                7 => ("file_gid", serde_json::json!(0)),
+                8 => ("file_mode", serde_json::json!(0o644)),
+                _ => ("nonce", serde_json::json!("cd".repeat(32))),
+            };
+            value[key] = replacement;
+            let changed: GuestProof = serde_json::from_value(value).unwrap();
+            assert!(
+                validate_guest_proof(&changed, "host-kernel", &nonce).is_err(),
+                "{key}"
+            );
+        }
+        let mut empty = proof();
+        empty.kernel.clear();
+        assert!(validate_guest_proof(&empty, "host-kernel", &nonce).is_err());
+        assert!(validate_guest_proof(&proof(), "", &nonce).is_err());
+        let mut malformed = serde_json::to_value(proof()).unwrap();
+        malformed["extra"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<GuestProof>(malformed).is_err());
+    }
+
+    #[tokio::test]
+    async fn workspace_readiness_missing_storage_never_advertises_or_invokes_container_daemon() {
+        let mut config = Config::for_test();
+        config.work_root = None;
+        config.podman = "/nonexistent-workspace-proof-podman".into();
+        let backend = PodmanBackend::new(Arc::new(config));
+        assert!(backend.verify_workspace_readiness().await.is_err());
+        assert!(!backend.workspace_available());
+    }
+
+    #[tokio::test]
+    async fn workspace_readiness_unproven_host_remains_unavailable_after_failure() {
+        let mut config = Config::for_test();
+        config.work_root = Some(std::env::temp_dir());
+        config.podman = "/nonexistent-workspace-proof-podman".into();
+        let backend = PodmanBackend::new(Arc::new(config));
+        assert!(backend.verify_workspace_readiness().await.is_err());
+        assert!(!backend.workspace_available());
+    }
+}
+
+#[cfg(test)]
+mod browser_control_response_tests {
+    use super::*;
+
+    #[test]
+    fn failed_browser_cleanup_cannot_be_reported_as_a_completed_handover() {
+        let response = br#"{"ok":false,"generation":1,"expires_at":"2026-10-12T10:00:00Z"}"#;
+        assert!(matches!(
+            decode_browser_control_response(response),
+            Err(BackendError::Protocol(_))
+        ));
     }
 }

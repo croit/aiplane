@@ -4,6 +4,7 @@
 //! Tool API, shared state, and the state-dependent background workers. Module
 //! paths keep the historical `server::` prefix; see the crate docs.
 
+pub mod background;
 pub mod comfyui_tool;
 pub mod compaction;
 pub mod grant_holding;
@@ -15,5 +16,6 @@ pub mod side_call;
 pub mod state;
 pub mod tools;
 pub mod webhooks;
+pub mod workspace_cleanup;
 
 pub use state::AppState;

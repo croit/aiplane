@@ -344,6 +344,7 @@ mod tests {
         validate(
             &spec,
             &SpecContext {
+                action_catalogues: &Default::default(),
                 agent_id: "self",
                 grants: &grants,
                 agents: &agents,

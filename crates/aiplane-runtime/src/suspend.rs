@@ -57,6 +57,10 @@ pub struct SuspendRequest {
     /// the slots the model may see. Never anything a resume relies on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_facts: Option<Value>,
 }
 
 /// The paused sub-agent run a call is waiting on.
@@ -77,6 +81,8 @@ impl SuspendRequest {
             message: None,
             timeout_secs: timeout.as_secs(),
             on_timeout: TimeoutFallback::Deny,
+            actions: None,
+            execution_facts: None,
             child: None,
             context: None,
         }
@@ -91,6 +97,8 @@ impl SuspendRequest {
             message: Some(question.into()),
             timeout_secs: timeout.as_secs(),
             on_timeout: TimeoutFallback::Deny,
+            actions: None,
+            execution_facts: None,
             child: None,
             context: Some(context),
         }
@@ -105,6 +113,8 @@ impl SuspendRequest {
             message: Some(message.into()),
             timeout_secs: timeout.as_secs(),
             on_timeout: TimeoutFallback::Deny,
+            actions: None,
+            execution_facts: None,
             child: None,
             context: None,
         }
@@ -128,8 +138,8 @@ pub fn extract_suspend(body: &Value) -> Option<SuspendRequest> {
 /// run again after one.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Suspend {
-    /// The path cannot pause: `/v1`, scheduled and webhook runs, tests. A tool
-    /// that needs a decision must refuse rather than proceed.
+    /// The caller cannot resume a pause. A tool that needs a decision must
+    /// refuse rather than proceed.
     #[default]
     Unavailable,
     /// The chat path and agent runs: returning [`tool_suspend`] pauses the
@@ -189,7 +199,59 @@ pub async fn claim_for_resume(
     request_id: Option<&str>,
     decision: Decision,
 ) -> Result<ResumeFrom, ResumeRefused> {
-    let current = chat::get_suspension(db, turn_id)
+    let mut tx = db
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(chat::DbError::from)?;
+    let resumed = claim_for_resume_in(&mut tx, turn_id, request_id, decision).await?;
+    tx.commit().await.map_err(chat::DbError::from)?;
+    Ok(resumed)
+}
+
+/// Claim a browser handover after the authenticated owner explicitly returns
+/// control. This decision is intentionally absent from `SuspensionKind::options`
+/// and can only be produced by the private browser-control route.
+pub async fn claim_browser_handover(
+    db: &Pool,
+    turn_id: &str,
+    request_id: &str,
+) -> Result<ResumeFrom, ResumeRefused> {
+    let mut tx = db
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(chat::DbError::from)?;
+    let current = chat::suspensions::get_suspension_in(&mut tx, turn_id)
+        .await?
+        .ok_or(ResumeRefused::NotSuspended)?;
+    if current.kind != SuspensionKind::BrowserHandover {
+        return Err(ResumeRefused::NotSuspended);
+    }
+    if current.request_id != request_id {
+        return Err(ResumeRefused::StaleRequest {
+            current: current.request_id,
+        });
+    }
+    if current.child_turn.is_some() {
+        return Err(ResumeRefused::NotSuspended);
+    }
+    let suspension = chat::suspensions::claim_suspension_in(&mut tx, turn_id, request_id)
+        .await?
+        .ok_or(ResumeRefused::NotSuspended)?;
+    tx.commit().await.map_err(chat::DbError::from)?;
+    Ok(ResumeFrom {
+        suspension,
+        decision: Decision::BrowserReturned,
+        child_result: None,
+    })
+}
+
+pub async fn claim_for_resume_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+    request_id: Option<&str>,
+    decision: Decision,
+) -> Result<ResumeFrom, ResumeRefused> {
+    let current = chat::suspensions::get_suspension_in(connection, turn_id)
         .await?
         .ok_or(ResumeRefused::NotSuspended)?;
     if let Some(asked) = request_id
@@ -207,15 +269,50 @@ pub async fn claim_for_resume(
             offered,
         });
     }
-    let suspension = chat::claim_suspension(db, turn_id)
-        .await?
-        .filter(|claimed| claimed.request_id == current.request_id)
-        .ok_or(ResumeRefused::NotSuspended)?;
+    let suspension =
+        chat::suspensions::claim_suspension_in(connection, turn_id, &current.request_id)
+            .await?
+            .filter(|claimed| claimed.request_id == current.request_id)
+            .ok_or(ResumeRefused::NotSuspended)?;
     Ok(ResumeFrom {
         suspension,
         decision,
         child_result: None,
     })
+}
+
+pub(crate) async fn claim_chain_in(
+    connection: &mut sqlx::SqliteConnection,
+    snapshots: &[TurnSuspension],
+    decision: Decision,
+) -> Result<Vec<TurnSuspension>, ResumeRefused> {
+    let Some(leaf) = snapshots.last() else {
+        return Err(ResumeRefused::NotSuspended);
+    };
+    for snapshot in snapshots {
+        if chat::get_suspension_in(connection, &snapshot.turn_id)
+            .await?
+            .as_ref()
+            != Some(snapshot)
+        {
+            return Err(ResumeRefused::NotSuspended);
+        }
+    }
+    let deepest =
+        claim_for_resume_in(connection, &leaf.turn_id, Some(&leaf.request_id), decision).await?;
+    if deepest.suspension != *leaf {
+        return Err(ResumeRefused::NotSuspended);
+    }
+    let mut claimed = vec![deepest.suspension];
+    for snapshot in snapshots[..snapshots.len() - 1].iter().rev() {
+        let row = chat::claim_suspension_in(connection, &snapshot.turn_id, &snapshot.request_id)
+            .await?
+            .filter(|row| row == snapshot)
+            .ok_or(ResumeRefused::NotSuspended)?;
+        claimed.push(row);
+    }
+    claimed.reverse();
+    Ok(claimed)
 }
 
 #[cfg(test)]
@@ -235,6 +332,10 @@ mod tests {
     }
 
     async fn suspended_turn() -> (Pool, String) {
+        suspended_turn_with_kind(SuspensionKind::Approval).await
+    }
+
+    async fn suspended_turn_with_kind(kind: SuspensionKind) -> (Pool, String) {
         let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
             .await
             .unwrap();
@@ -263,9 +364,11 @@ mod tests {
             &TurnSuspension {
                 turn_id: "t1".into(),
                 request_id: "req-1".into(),
-                kind: SuspensionKind::Approval,
+                kind,
                 message: None,
                 tool_call: PendingCall {
+                    execution_facts: None,
+                    actions: None,
                     id: "call-1".into(),
                     name: "company_echo".into(),
                     arguments: "{}".into(),
@@ -295,6 +398,20 @@ mod tests {
             claim_for_resume(&db, "t1", None, Decision::Value { value: "x".into() }).await;
         assert!(matches!(refused, Err(ResumeRefused::NotOffered { .. })));
         assert!(still_suspended(&db).await);
+    }
+
+    #[tokio::test]
+    async fn only_private_browser_handover_claim_can_return_control() {
+        let (db, _) = suspended_turn_with_kind(SuspensionKind::BrowserHandover).await;
+        assert!(matches!(
+            claim_for_resume(&db, "t1", Some("req-1"), Decision::BrowserReturned).await,
+            Err(ResumeRefused::NotOffered { .. })
+        ));
+        assert!(still_suspended(&db).await);
+
+        let resumed = claim_browser_handover(&db, "t1", "req-1").await.unwrap();
+        assert_eq!(resumed.decision, Decision::BrowserReturned);
+        assert!(!still_suspended(&db).await);
     }
 
     #[tokio::test]
@@ -328,5 +445,47 @@ mod tests {
             claim_for_resume(&db, "t1", None, Decision::AllowOnce).await,
             Err(ResumeRefused::NotSuspended)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_connection_claim_rolls_back_with_its_callers_transaction() {
+        let (db, session_id) = suspended_turn().await;
+        let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let resumed = claim_for_resume_in(&mut tx, "t1", Some("req-1"), Decision::AllowOnce)
+            .await
+            .unwrap();
+        assert_eq!(resumed.suspension.request_id, "req-1");
+        tx.rollback().await.unwrap();
+        assert!(still_suspended(&db).await);
+        assert_eq!(
+            chat::get_turn(&db, &session_id, "t1")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::Suspended
+        );
+    }
+
+    #[tokio::test]
+    async fn a_connection_claim_refuses_stale_and_unoffered_decisions_without_consuming() {
+        let (db, _) = suspended_turn().await;
+        let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        assert!(matches!(
+            claim_for_resume_in(&mut tx, "t1", Some("old"), Decision::AllowOnce).await,
+            Err(ResumeRefused::StaleRequest { .. })
+        ));
+        assert!(matches!(
+            claim_for_resume_in(
+                &mut tx,
+                "t1",
+                Some("req-1"),
+                Decision::Value { value: "x".into() }
+            )
+            .await,
+            Err(ResumeRefused::NotOffered { .. })
+        ));
+        tx.commit().await.unwrap();
+        assert!(still_suspended(&db).await);
     }
 }

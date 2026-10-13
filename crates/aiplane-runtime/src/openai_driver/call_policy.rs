@@ -89,9 +89,14 @@ pub(super) fn not_granted_message(tool: &str, agent: Option<&AgentRun>) -> Strin
 
 /// Record one decision when the call is part of an agent run. Best-effort: the
 /// decision stands whether or not the row lands.
-pub(super) async fn audit(ctx: &ToolContext, call_id: &str, tool: &str, policy: CallPolicy) {
-    if !ctx.agent_active() {
-        return;
+pub(super) async fn audit(
+    ctx: &ToolContext,
+    call_id: &str,
+    tool: &str,
+    policy: CallPolicy,
+) -> bool {
+    if !ctx.agent_active() && ctx.personal_dot.is_none() {
+        return true;
     }
     let detail = serde_json::json!({
         "tool": tool,
@@ -99,7 +104,20 @@ pub(super) async fn audit(ctx: &ToolContext, call_id: &str, tool: &str, policy: 
         "decision": if policy.allows() { "allowed" } else { "denied" },
         "policy": policy.as_str(),
     });
-    ctx.audit(AuditKind::ToolCall, detail).await;
+    if ctx.personal_dot.is_some() {
+        crate::agents::audit::record_personal_tool_call(
+            ctx,
+            Some(call_id),
+            tool,
+            policy.allows(),
+            policy.as_str(),
+            None,
+        )
+        .await
+    } else {
+        ctx.audit(AuditKind::ToolCall, detail).await;
+        true
+    }
 }
 
 #[cfg(test)]

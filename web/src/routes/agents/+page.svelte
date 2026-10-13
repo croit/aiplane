@@ -78,13 +78,23 @@
 					<div class="card-body gap-2 p-4">
 						<div class="flex items-start justify-between gap-2">
 							<h2 class="card-title text-base">{agent.display || agent.name}</h2>
-							{#if agent.live_version === null}
+							{#if agent.dot}
+								<span class="badge badge-outline badge-sm">{agent.dot.owner.kind === 'organization' ? t('agents-dot-organization', { name: agent.dot.owner.name }) : t('agents-dot-personal')}</span>
+							{:else if agent.live_version === null}
 								<StatusPill size="sm">{t('agents-never-published')}</StatusPill>
 							{:else}
 								<StatusPill tone="ok" size="sm">{t('agents-live-badge', { version: agent.live_version })}</StatusPill>
 							{/if}
 						</div>
-						<p class="font-mono text-xs text-base-content/60">{agent.name}</p>
+						{#if agent.dot}
+							<div class="flex flex-wrap items-center gap-2">
+								<StatusPill size="sm" tone={agent.dot.active ? 'ok' : 'warn'}>{t(agent.dot.active ? 'dots-status-active' : 'dots-status-inactive')}</StatusPill>
+								{#if agent.dot.owner.kind === 'organization' && agent.live_version === null}<StatusPill size="sm">{t('agents-never-published')}</StatusPill>{/if}
+								{#if agent.dot.owner.kind === 'organization' && agent.live_version !== null}<StatusPill size="sm" tone="ok">{t('agents-live-badge', { version: agent.live_version })}</StatusPill>{/if}
+							</div>
+						{:else}
+							<p class="font-mono text-xs text-base-content/60">{agent.name}</p>
+						{/if}
 						{#if agent.description}<p class="line-clamp-2 text-sm text-base-content/70">{agent.description}</p>{/if}
 						<div class="mt-1 flex items-center gap-2 text-xs text-base-content/50">
 							{#if agent.access === 'read'}<span class="badge badge-outline badge-xs">{t('agents-read-only')}</span>{/if}

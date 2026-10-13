@@ -703,7 +703,7 @@ fn visitor_resume_refused(err: AgentResumeError, lang: Lang) -> Response {
         ),
         AgentResumeError::Refused(ResumeRefused::NotSuspended)
         | AgentResumeError::Refused(ResumeRefused::StaleRequest { .. }) => not_waiting(lang),
-        other => super::agent_errors::resume_error(other),
+        other => super::agent_errors::resume_error(other, lang),
     }
 }
 

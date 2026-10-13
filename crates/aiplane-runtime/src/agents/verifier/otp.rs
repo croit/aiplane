@@ -488,6 +488,7 @@ impl Flow<'_> {
             self.run,
             self.ctx,
             &self.cfg.id,
+            &crate::server::tools::mcp::tool_id(&self.cfg.connector, &self.cfg.check_tool),
             &self.cfg.writes,
             answer.as_ref().expect("a confirming answer is an object"),
             &inputs,

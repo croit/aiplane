@@ -56,6 +56,8 @@ settings-s-usage = Usage metrics
 settings-s-usage-blurb = Per-request accounting behind /usage.
 settings-s-limits = Rate limits & quotas
 settings-s-limits-blurb = Master switch for the rules configured at /admin/limits.
+settings-s-dots = AIplane Dots
+settings-s-dots-blurb = Capacity for personal Dots.
 settings-s-content_guard = Content guard
 settings-s-content_guard-blurb = Checks content before a selected model receives it.
 settings-s-feedback = Feedback widget
@@ -204,6 +206,8 @@ settings-f-usage-currency-help = Currency that costs are reported in.
 
 settings-f-limits-enabled = Enforce limits and quotas
 settings-f-limits-enabled-help = Off means the rules at /admin/limits are ignored.
+settings-f-dots-max_active_per_user = Active personal Dots per user
+settings-f-dots-max_active_per_user-help = Maximum number of active personal Dots a user may own. Default: 4.
 
 settings-f-feedback-enabled = Offer the feedback widget
 settings-f-feedback-enabled-help = Master switch for the in-app feedback button.
@@ -292,3 +296,6 @@ settings-f-gateway-default_priority-help = Used when neither a token nor a group
 settings-f-gateway-default_priority-opt-low = Low
 settings-f-gateway-default_priority-opt-medium = Medium
 settings-f-gateway-default_priority-opt-high = High
+
+settings-f-dots-max_active_per_organization = Active Dots per organization
+settings-f-dots-max_active_per_organization-help = Maximum number of active Dots an organization may own, including idle Dots. Default: 4.

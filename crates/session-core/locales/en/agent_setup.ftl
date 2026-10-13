@@ -305,3 +305,26 @@ agents-setup-ready-recommended-pill = Ready, with recommendations
 agents-setup-test-save-all = Save all as tests
 agents-setup-proposing = Drafting a setup from your description. This usually takes 20 to 40 seconds.
 agents-setup-abilities-search = Search abilities
+dot-setup-title = Set up a Dot together
+dot-setup-intro = Describe what your Dot should do. We check available resources and ask about anything missing. A Dot is created only when you confirm the proposal.
+dot-setup-empty = For example: Every morning, summarize company activity from tickets and email. Ask me before making changes.
+dot-setup-placeholder = What would you like your Dot to do?
+dot-setup-preview = Your Dot proposal
+dot-setup-identity = Identity
+dot-setup-personal-identity = Personal Dot with your permissions; connected accounts are configured separately.
+dot-setup-details = Review work instructions
+dot-setup-unresolved = Please clarify these requirements in the conversation before creating the Dot.
+dot-setup-apply = Set up Dot
+architect-tool-propose-dot-setup = Prepared a Dot proposal
+dot-setup-error-conflict = The proposal changed. Review the current proposal before setting up the Dot.
+dot-setup-error-incomplete = The proposal has unresolved requirements. Clarify them in the conversation before setting up the Dot.
+dot-setup-error-unavailable = This setup conversation is unavailable. Reopen Dot setup and try again.
+dot-setup-error-running = The assistant is still working. Wait for its reply before setting up the Dot.
+
+dot-plan-unsupported = This setting needs manual configuration before this Dot can be created.
+dot-plan-strict-scope-unavailable = Strict topic enforcement is not available in personal Dot setup.
+dot-plan-one-knowledge = Choose one knowledge collection for this setup.
+dot-plan-task-required = Describe what this Dot should do.
+dot-plan-connection-required = This tool requires an account connection that must be configured first.
+
+dot-setup-tool-count = { $count } tools

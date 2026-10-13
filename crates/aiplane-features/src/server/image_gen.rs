@@ -362,7 +362,7 @@ impl ImageGenerator {
                         ),
                         Some(datum) => {
                             let result = match (datum.b64_json, datum.url) {
-                                (Some(b64), _) => chat_attachments::decode_base64(&b64)
+                                (Some(b64), _) => shared::b64::decode(&b64)
                                     .map_err(ImageGenError::BadResponse)
                                     .and_then(|bytes| {
                                         if bytes.len() > chat_attachments::MAX_IMAGE_BYTES {

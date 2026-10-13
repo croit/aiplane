@@ -306,3 +306,26 @@ agents-setup-ready-recommended-pill = Bereit, mit Empfehlungen
 agents-setup-test-save-all = Alle als Tests speichern
 agents-setup-proposing = Aus Ihrer Beschreibung wird eine Einrichtung entworfen. Das dauert meist 20 bis 40 Sekunden.
 agents-setup-abilities-search = Fähigkeiten suchen
+dot-setup-title = Dot gemeinsam einrichten
+dot-setup-intro = Beschreibe, was dein Dot tun soll. Wir prüfen verfügbare Ressourcen und fragen gezielt nach. Erst wenn du den Vorschlag bestätigst, wird ein Dot angelegt.
+dot-setup-empty = Zum Beispiel: Fasse jeden Morgen die Firmenaktivitäten aus Tickets und E-Mails zusammen. Frage mich, bevor du Änderungen vornimmst.
+dot-setup-placeholder = Was soll dein Dot für dich tun?
+dot-setup-preview = Dein Dot-Vorschlag
+dot-setup-identity = Identität
+dot-setup-personal-identity = Persönlicher Dot mit deinen Berechtigungen; verbundene Konten werden separat eingerichtet.
+dot-setup-details = Arbeitsanweisungen prüfen
+dot-setup-unresolved = Kläre diese Anforderungen im Gespräch, bevor du den Dot anlegst.
+dot-setup-apply = Dot einrichten
+architect-tool-propose-dot-setup = Dot-Vorschlag vorbereitet
+dot-setup-error-conflict = Der Vorschlag hat sich geändert. Prüfe den aktuellen Vorschlag, bevor du den Dot einrichtest.
+dot-setup-error-incomplete = Im Vorschlag sind Anforderungen offen. Kläre sie im Gespräch, bevor du den Dot einrichtest.
+dot-setup-error-unavailable = Dieses Einrichtungsgespräch ist nicht verfügbar. Öffne die Dot-Einrichtung erneut und versuche es noch einmal.
+dot-setup-error-running = Der Assistent arbeitet noch. Warte auf seine Antwort, bevor du den Dot einrichtest.
+
+dot-plan-unsupported = Diese Einstellung muss manuell konfiguriert werden, bevor dieser Dot angelegt werden kann.
+dot-plan-strict-scope-unavailable = Die strikte Themenbegrenzung ist bei der Einrichtung persönlicher Dots nicht verfügbar.
+dot-plan-one-knowledge = Wähle für diese Einrichtung eine Wissenssammlung aus.
+dot-plan-task-required = Beschreibe, was dieser Dot tun soll.
+dot-plan-connection-required = Dieses Werkzeug benötigt eine Kontoverbindung, die zuerst eingerichtet werden muss.
+
+dot-setup-tool-count = { $count } Werkzeuge

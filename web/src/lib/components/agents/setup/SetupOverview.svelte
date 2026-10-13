@@ -2,8 +2,8 @@
 	import Modal from '#lib/components/ui/Modal.svelte';
 	import ArchitectModal from '#lib/components/agents/ArchitectModal.svelte';
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
-	import { ensureShape, type Spec } from '#lib/agents.js';
-	import { SECTIONS, checklist, sectionStatus, summary, type SectionStatus, type StepKey } from '#lib/agent-setup.js';
+	import { ensureShape, agentUiCapabilities, type Spec } from '#lib/agents.js';
+	import { visibleSetupSteps, checklist, sectionStatus, summary, type SectionStatus, type StepKey } from '#lib/agent-setup.js';
 	import { emptyPlan, type GrantPlan } from '#lib/agent-grant-plan.js';
 	import { useWorkspace } from '#lib/agent-workspace.svelte.js';
 	import { t } from '#lib/i18n.svelte.js';
@@ -37,7 +37,9 @@
 	};
 	const SIZE: Partial<Record<StepKey, 'md' | 'lg'>> = { scope: 'md', slots: 'lg' };
 
-	const todos = $derived(checklist(ws.spec, ws.dirty ? [] : (ws.detail?.publish_issues ?? []), ws.resources?.defaults));
+	const capabilities = $derived(agentUiCapabilities(ws.detail));
+	const sections = $derived(visibleSetupSteps(ws.detail).filter((step) => step !== 'start' && step !== 'review'));
+	const todos = $derived(checklist(ws.spec, ws.dirty ? [] : (ws.detail?.publish_issues ?? []), ws.resources?.defaults, ws.detail));
 	const ctx = $derived({ tr: t, grants: ws.grants, resources: ws.resources, agents: ws.agents });
 
 	let editing = $state<StepKey | null>(null);
@@ -101,7 +103,7 @@
 		{/if}
 
 		<ul class="m-0 flex list-none flex-col gap-2.5 p-0">
-			{#each SECTIONS as step (step)}
+			{#each sections as step (step)}
 				{@const status = sectionStatus(step, ws.spec, todos)}
 				<li class="grid grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-3.5 rounded-box border bg-base-200 p-3.5 {status === 'open' ? 'border-warning/50' : 'border-base-300'}">
 					<span class="grid size-10 place-items-center rounded-field bg-base-300 text-lg" aria-hidden="true">{ICONS[step]}</span>
@@ -130,10 +132,10 @@
 			<h3 class="m-0 text-base font-semibold">{t('agents-setup-checklist')}</h3>
 			<SetupChecklist {todos} spec={ws.spec} onfix={edit} />
 		</section>
-		<section class="card flex flex-col gap-3 p-4">
+		{#if capabilities.site}<section class="card flex flex-col gap-3 p-4">
 			<h3 class="m-0 text-base font-semibold">{t('agents-setup-preview')}</h3>
 			<WidgetPreview spec={ws.spec} />
-		</section>
+		</section>{/if}
 	</aside>
 </div>
 

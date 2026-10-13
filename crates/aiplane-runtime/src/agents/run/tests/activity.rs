@@ -1028,7 +1028,13 @@ async fn a_lost_tool_result_stops_the_run_before_its_next_round() {
     assert_eq!(reply.status, chat::TurnStatus::Errored);
     assert_eq!(
         reply.error.as_deref(),
-        Some(crate::agents::audit::LOG_UNAVAILABLE)
+        Some(
+            session_core::driver::TurnError::Upstream {
+                message: crate::agents::audit::LOG_UNAVAILABLE.into(),
+            }
+            .to_string()
+            .as_str()
+        )
     );
     assert_eq!(
         requests(&main).await.len(),

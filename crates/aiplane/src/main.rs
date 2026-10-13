@@ -653,6 +653,7 @@ async fn main() -> anyhow::Result<()> {
     // expire (and exercise idle refresh tokens) so connectors stay alive
     // without the user re-authenticating; also sweeps stale pending auths.
     rt::tools::mcp::worker::spawn(state.clone());
+    rt::workspace_cleanup::spawn(state.clone());
 
     // `$IP`/`$PORT`, else loopback:8080. See `Config::bind_address`.
     let addr = state.config().bind_address();

@@ -21,6 +21,7 @@ chat-error-turn-interrupted = Ein interner Fehler hat diese Antwort unterbrochen
 chat-list-empty = Noch keine Unterhaltungen. Starte oben eine neue.
 chat-turn-stopped = gestoppt
 chat-waiting-approval = Führt { $tool } erst aus, wenn du es freigibst.
+chat-waiting-browser-handover = Du steuerst jetzt den Browser des Dots.
 chat-waiting-value = Wartet auf einen Wert, den nur du eingeben darfst. Er geht an das Tool, nie an das Modell.
 chat-waiting-answer = Wartet auf die Antwort einer Person.
 chat-composer-paused = Gib oder verweigere zuerst die Freigabe oben; die nächste Nachricht wartet auf diese Entscheidung.
@@ -53,3 +54,5 @@ chat-attempt-reason-loop = das Modell hat sich wiederholt
 chat-attempt-reason-repeated_call = immer wieder derselbe Tool-Aufruf
 chat-attempt-retry = Neuer Versuch mit Denkaufwand { $effort } (Versuch { $n })
 chat-loop-exhausted = Das Modell hat sich bei allen { $attempts } Versuchen wiederholt, auch mit weniger Denkaufwand. Formuliere die Frage bitte anders oder teile sie auf.
+
+chat-error-run-cancelled = Der Run wurde abgebrochen.

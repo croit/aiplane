@@ -33,6 +33,38 @@ use crate::server::side_call::SideExchange;
 use crate::server::tools::ToolContext;
 use crate::suspend::Suspend;
 
+pub(crate) async fn record_personal_tool_call(
+    ctx: &ToolContext,
+    call_id: Option<&str>,
+    tool: &str,
+    allowed: bool,
+    policy: &str,
+    identity: Option<&crate::server::tools::mcp::McpDispatchFacts>,
+) -> bool {
+    let mut detail = json!({"tool": tool, "call_id": call_id, "decision": if allowed { "allowed" } else { "denied" }, "policy": policy});
+    if let Some(identity) = identity {
+        detail["identity"] = match identity {
+            crate::server::tools::mcp::McpDispatchFacts::Owned(identity) => json!({
+                "owner": identity.connection.owner,
+                "connector_key": identity.connection.connector_key,
+                "connection_id": identity.connection.connection_id,
+                "generation": identity.connection.generation,
+                "binding_generation": identity.binding_generation,
+                "catalog_generation": identity.catalog_generation,
+            }),
+            crate::server::tools::mcp::McpDispatchFacts::Shared {
+                connector_key,
+                catalog_generation,
+            } => json!({
+                "connector_key": connector_key, "catalog_generation": catalog_generation,
+            }),
+        };
+    }
+    ctx.audit_event(AuditKind::ToolCall, None, detail)
+        .await
+        .is_some()
+}
+
 /// The longest a run waits for one event to be written.
 pub const WRITE_BOUND: Duration = Duration::from_secs(5);
 
@@ -293,6 +325,9 @@ impl ToolContext {
             .in_run(self.chain())
             .at(self.correlation())
             .redacted(self.redaction());
+        if let Some(dot) = self.personal_dot.as_ref() {
+            event = event.by(Some(&dot.owner_user_id)).for_agent(&dot.dot_id);
+        }
         event.duration_ms = duration_ms;
         record_for_run(&self.db, self.agent.as_deref(), event).await
     }

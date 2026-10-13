@@ -22,6 +22,8 @@ pub enum SuspensionKind {
     SecureInput,
     /// An answer from a human other than the one chatting.
     HumanAnswer,
+    /// The owner is temporarily operating a Dot's isolated browser.
+    BrowserHandover,
 }
 
 impl SuspensionKind {
@@ -30,6 +32,7 @@ impl SuspensionKind {
             Self::Approval => "approval",
             Self::SecureInput => "secure_input",
             Self::HumanAnswer => "human_answer",
+            Self::BrowserHandover => "browser_handover",
         }
     }
 
@@ -38,6 +41,7 @@ impl SuspensionKind {
             "approval" => Ok(Self::Approval),
             "secure_input" => Ok(Self::SecureInput),
             "human_answer" => Ok(Self::HumanAnswer),
+            "browser_handover" => Ok(Self::BrowserHandover),
             _ => Err(DbError::Decode {
                 column: "kind",
                 source: anyhow::anyhow!("unknown suspension kind `{s}`"),
@@ -51,6 +55,7 @@ impl SuspensionKind {
         match self {
             Self::Approval => &[DecisionKind::AllowOnce, DecisionKind::Deny],
             Self::SecureInput | Self::HumanAnswer => &[DecisionKind::Value, DecisionKind::Deny],
+            Self::BrowserHandover => &[],
         }
     }
 
@@ -60,7 +65,7 @@ impl SuspensionKind {
     pub fn answered_by(self) -> Answerer {
         match self {
             Self::SecureInput => Answerer::Participant,
-            Self::Approval | Self::HumanAnswer => Answerer::Staff,
+            Self::Approval | Self::HumanAnswer | Self::BrowserHandover => Answerer::Staff,
         }
     }
 
@@ -97,6 +102,7 @@ pub enum DecisionKind {
     AllowOnce,
     Deny,
     Value,
+    BrowserReturned,
 }
 
 /// Why a call was denied. The model is told which, because "the user said no"
@@ -118,6 +124,7 @@ pub enum Decision {
     AllowOnce,
     Deny { reason: DenyReason },
     Value { value: serde_json::Value },
+    BrowserReturned,
 }
 
 impl std::fmt::Debug for Decision {
@@ -126,6 +133,7 @@ impl std::fmt::Debug for Decision {
             Self::AllowOnce => f.write_str("AllowOnce"),
             Self::Deny { reason } => f.debug_struct("Deny").field("reason", reason).finish(),
             Self::Value { .. } => f.write_str("Value { value: <redacted> }"),
+            Self::BrowserReturned => f.write_str("BrowserReturned"),
         }
     }
 }
@@ -136,6 +144,7 @@ impl Decision {
             Self::AllowOnce => DecisionKind::AllowOnce,
             Self::Deny { .. } => DecisionKind::Deny,
             Self::Value { .. } => DecisionKind::Value,
+            Self::BrowserReturned => DecisionKind::BrowserReturned,
         }
     }
 }
@@ -189,6 +198,29 @@ pub struct PendingCall {
     pub name: String,
     /// The model's raw JSON arguments string.
     pub arguments: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_facts: Option<serde_json::Value>,
+}
+
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub struct BudgetLimits {
+    pub rounds: u32,
+    pub seconds: Option<u64>,
+    pub tokens: Option<u64>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TreeBudgetCheckpoint {
+    pub limits: BudgetLimits,
+    pub local_limits: BudgetLimits,
+    pub rounds: u32,
+    pub seconds: u64,
+    pub tokens: u64,
+    pub usage_known: bool,
 }
 
 /// What the turn had spent when it paused, so a resumed run continues against
@@ -200,6 +232,8 @@ pub struct BudgetUsed {
     pub rounds: u32,
     pub seconds: u64,
     pub tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<TreeBudgetCheckpoint>,
 }
 
 /// One paused turn: everything a resume needs to continue it.
@@ -382,11 +416,19 @@ pub async fn suspend_turn(pool: &Pool, suspension: &TurnSuspension) -> Result<bo
 
 /// The suspension a turn is paused on, if any.
 pub async fn get_suspension(pool: &Pool, turn_id: &str) -> Result<Option<TurnSuspension>, DbError> {
+    let mut connection = pool.acquire().await?;
+    get_suspension_in(&mut connection, turn_id).await
+}
+
+pub async fn get_suspension_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+) -> Result<Option<TurnSuspension>, DbError> {
     let row = sqlx::query(&format!(
         "SELECT {SUSPENSION_COLUMNS} FROM chat_turn_suspensions WHERE turn_id = ?"
     ))
     .bind(turn_id)
-    .fetch_optional(pool)
+    .fetch_optional(connection)
     .await?;
     row.as_ref().map(map_suspension).transpose()
 }
@@ -414,36 +456,58 @@ pub async fn set_suspension_run_context(
 pub async fn claim_suspension(
     pool: &Pool,
     turn_id: &str,
+    expected_request_id: &str,
 ) -> Result<Option<TurnSuspension>, DbError> {
     let mut tx = pool.begin().await?;
+    let suspension = claim_suspension_in(&mut tx, turn_id, expected_request_id).await?;
+    tx.commit().await?;
+    Ok(suspension)
+}
+
+pub async fn claim_suspension_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+    expected_request_id: &str,
+) -> Result<Option<TurnSuspension>, DbError> {
     let row = sqlx::query(&format!(
-        "DELETE FROM chat_turn_suspensions WHERE turn_id = ? RETURNING {SUSPENSION_COLUMNS}"
+        "DELETE FROM chat_turn_suspensions WHERE turn_id = ? AND request_id = ?
+         AND EXISTS (SELECT 1 FROM chat_turns WHERE id = chat_turn_suspensions.turn_id
+                     AND status = 'suspended') RETURNING {SUSPENSION_COLUMNS}"
     ))
     .bind(turn_id)
-    .fetch_optional(&mut *tx)
+    .bind(expected_request_id)
+    .fetch_optional(&mut *connection)
     .await?;
     let Some(row) = row else {
         return Ok(None);
     };
     let suspension = map_suspension(&row)?;
     sqlx::query(
-        r#"UPDATE chat_turns SET status = 'in_progress' WHERE id = ? AND status = 'suspended'"#,
+        r#"UPDATE chat_turns SET status = 'in_progress' WHERE id = ? AND status = 'suspended' RETURNING id"#,
     )
     .bind(turn_id)
-    .execute(&mut *tx)
+    .fetch_one(connection)
     .await?;
-    tx.commit().await?;
     Ok(Some(suspension))
 }
 
 /// Give up on a paused turn: it ends `cancelled`, like a stopped one, and its
 /// waiting call is recorded as never run. Returns whether anything was paused.
 pub async fn cancel_suspended_turn(pool: &Pool, turn_id: &str) -> Result<bool, DbError> {
-    let now = Timestamp::now().to_string();
     let mut tx = pool.begin().await?;
+    let cancelled = cancel_suspended_turn_in(&mut tx, turn_id).await?;
+    tx.commit().await?;
+    Ok(cancelled)
+}
+
+pub async fn cancel_suspended_turn_in(
+    connection: &mut sqlx::SqliteConnection,
+    turn_id: &str,
+) -> Result<bool, DbError> {
+    let now = Timestamp::now().to_string();
     let removed = sqlx::query("DELETE FROM chat_turn_suspensions WHERE turn_id = ?")
         .bind(turn_id)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await?
         .rows_affected()
         > 0;
@@ -456,21 +520,14 @@ pub async fn cancel_suspended_turn(pool: &Pool, turn_id: &str) -> Result<bool, D
     )
     .bind(&now)
     .bind(turn_id)
-    .execute(&mut *tx)
+    .execute(&mut *connection)
     .await?;
-    sqlx::query(
-        r#"UPDATE chat_tool_calls
-           SET status = 'errored',
-               output_json = COALESCE(output_json, ?),
-               completed_at = ?
-           WHERE turn_id = ? AND status = 'running'"#,
+    super::turns::error_running_tool_calls_in(
+        connection,
+        turn_id,
+        &crate::i18n::t(crate::i18n::Lang::En, "chat-error-run-cancelled"),
     )
-    .bind(serde_json::Value::String("Cancelled while waiting for a decision.".into()).to_string())
-    .bind(&now)
-    .bind(turn_id)
-    .execute(&mut *tx)
     .await?;
-    tx.commit().await?;
     Ok(true)
 }
 
@@ -517,7 +574,7 @@ pub async fn expired_suspensions(
            FROM chat_turn_suspensions s
            JOIN chat_turns t ON t.id = s.turn_id
            JOIN chat_sessions cs ON cs.id = t.session_id
-           WHERE cs.user_id IS NOT NULL AND s.expires_at < ?"#,
+           WHERE cs.user_id IS NOT NULL AND cs.parent_turn_id IS NULL AND s.expires_at < ?"#,
     )
     .bind(deadline_bound(now))
     .fetch_all(pool)
@@ -586,6 +643,58 @@ mod tests {
     use super::*;
     use crate::db::tests::pool;
 
+    #[test]
+    fn pending_call_execution_facts_round_trip_without_entering_presentation_views() {
+        let facts = serde_json::json!({"connection": {"owner": {"Principal": "opaque-principal"}, "connector_key": "workspace", "connection_id": "opaque-connection", "generation": "opaque-generation"}, "binding_generation": "opaque-binding"});
+        let pending: PendingCall = serde_json::from_value(serde_json::json!({
+            "id": "call", "name": "workspace_write", "arguments": "{}", "execution_facts": facts
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&pending).unwrap()["execution_facts"],
+            facts
+        );
+        let mut waiting = suspension("turn", Timestamp::now());
+        waiting.tool_call = pending;
+        let view = waiting.view();
+        let encoded = serde_json::to_string(&view).unwrap();
+        assert!(!encoded.contains("opaque-principal"));
+        assert!(!encoded.contains("opaque-connection"));
+        assert!(!encoded.contains("execution_facts"));
+        let absent: PendingCall = serde_json::from_value(serde_json::json!({
+            "id": "ordinary", "name": "company_echo", "arguments": "{}"
+        }))
+        .unwrap();
+        assert!(
+            serde_json::to_value(absent)
+                .unwrap()
+                .get("execution_facts")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn pending_call_action_facts_round_trip_and_absence_is_explicit() {
+        let pending = PendingCall {
+            execution_facts: None,
+            id: "call".into(),
+            name: "browser".into(),
+            arguments: "{}".into(),
+            actions: Some(vec!["fill".into()]),
+        };
+        let encoded = serde_json::to_value(&pending).unwrap();
+        assert_eq!(encoded["actions"], serde_json::json!(["fill"]));
+        assert_eq!(
+            serde_json::from_value::<PendingCall>(encoded).unwrap(),
+            pending
+        );
+        let absent: PendingCall = serde_json::from_value(
+            serde_json::json!({"id":"call","name":"browser","arguments":"{}"}),
+        )
+        .unwrap();
+        assert_eq!(absent.actions, None);
+    }
+
     fn suspension(turn_id: &str, expires_at: Timestamp) -> TurnSuspension {
         TurnSuspension {
             turn_id: turn_id.into(),
@@ -593,6 +702,8 @@ mod tests {
             kind: SuspensionKind::Approval,
             message: None,
             tool_call: PendingCall {
+                execution_facts: None,
+                actions: None,
                 id: "call-1".into(),
                 name: "company_echo".into(),
                 arguments: r#"{"message":"hi"}"#.into(),
@@ -602,6 +713,7 @@ mod tests {
                 rounds: 1,
                 seconds: 3,
                 tokens: 120,
+                tree: None,
             },
             child_turn: None,
             on_timeout: TimeoutFallback::Deny,
@@ -619,10 +731,15 @@ mod tests {
         );
         assert_eq!(SuspensionKind::Approval.answered_by(), Answerer::Staff);
         assert_eq!(SuspensionKind::HumanAnswer.answered_by(), Answerer::Staff);
+        assert_eq!(
+            SuspensionKind::BrowserHandover.answered_by(),
+            Answerer::Staff
+        );
         for kind in [
             SuspensionKind::Approval,
             SuspensionKind::SecureInput,
             SuspensionKind::HumanAnswer,
+            SuspensionKind::BrowserHandover,
         ] {
             assert_eq!(
                 kind.timeout_fallback(TimeoutFallback::AllowOnce),
@@ -666,6 +783,19 @@ mod tests {
         assert!(printed.contains("redacted"), "{printed}");
     }
 
+    #[test]
+    fn browser_handover_has_no_public_resume_decisions() {
+        assert!(SuspensionKind::BrowserHandover.options().is_empty());
+        assert_eq!(
+            SuspensionKind::parse("browser_handover").unwrap(),
+            SuspensionKind::BrowserHandover
+        );
+        assert_eq!(
+            Decision::BrowserReturned.kind(),
+            DecisionKind::BrowserReturned
+        );
+    }
+
     #[tokio::test]
     async fn a_run_context_rides_with_the_pause_it_belongs_to() {
         let pool = pool().await;
@@ -694,7 +824,7 @@ mod tests {
             Some(context.clone())
         );
         assert_eq!(
-            claim_suspension(&pool, "a1")
+            claim_suspension(&pool, "a1", "req-a1")
                 .await
                 .unwrap()
                 .unwrap()
@@ -766,10 +896,127 @@ mod tests {
         let row = suspension("a1", in_an_hour());
         suspend_turn(&pool, &row).await.unwrap();
 
-        assert_eq!(claim_suspension(&pool, "a1").await.unwrap(), Some(row));
-        assert_eq!(claim_suspension(&pool, "a1").await.unwrap(), None);
+        assert_eq!(
+            claim_suspension(&pool, "a1", "req-a1").await.unwrap(),
+            Some(row)
+        );
+        assert_eq!(claim_suspension(&pool, "a1", "req-a1").await.unwrap(), None);
         let turn = get_turn(&pool, &session_id, "a1").await.unwrap().unwrap();
         assert_eq!(turn.status, TurnStatus::InProgress);
+    }
+
+    #[tokio::test]
+    async fn a_stale_request_cannot_claim_the_current_pause() {
+        let pool = pool().await;
+        let session = running_turn(&pool, "a1").await;
+        let row = suspension("a1", in_an_hour());
+        suspend_turn(&pool, &row).await.unwrap();
+        assert!(
+            claim_suspension(&pool, "a1", "previous-request")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(get_suspension(&pool, "a1").await.unwrap(), Some(row));
+        assert_eq!(
+            get_turn(&pool, &session, "a1")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::Suspended
+        );
+    }
+
+    #[tokio::test]
+    async fn connection_claims_commit_together_and_rollback_together() {
+        let pool = pool().await;
+        for turn in ["parent", "child"] {
+            running_turn(&pool, turn).await;
+            suspend_turn(&pool, &suspension(turn, in_an_hour()))
+                .await
+                .unwrap();
+        }
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            claim_suspension_in(&mut tx, "child", "req-child")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            claim_suspension_in(&mut tx, "parent", "stale-parent")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        tx.rollback().await.unwrap();
+        for turn in ["parent", "child"] {
+            assert!(get_suspension(&pool, turn).await.unwrap().is_some());
+        }
+        let mut tx = pool.begin().await.unwrap();
+        for turn in ["child", "parent"] {
+            let row = get_suspension_in(&mut tx, turn).await.unwrap().unwrap();
+            assert_eq!(
+                claim_suspension_in(&mut tx, turn, &row.request_id)
+                    .await
+                    .unwrap(),
+                Some(row)
+            );
+        }
+        tx.commit().await.unwrap();
+        for turn in ["parent", "child"] {
+            assert!(get_suspension(&pool, turn).await.unwrap().is_none());
+            let status: String = sqlx::query_scalar("SELECT status FROM chat_turns WHERE id = ?")
+                .bind(turn)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(status, "in_progress");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_terminal_turn_cannot_be_claimed_from_a_leftover_pause() {
+        let pool = pool().await;
+        running_turn(&pool, "a1").await;
+        let row = suspension("a1", in_an_hour());
+        suspend_turn(&pool, &row).await.unwrap();
+        sqlx::query("UPDATE chat_turns SET status = 'cancelled' WHERE id = 'a1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            claim_suspension(&pool, "a1", &row.request_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(get_suspension(&pool, "a1").await.unwrap(), Some(row));
+    }
+
+    #[tokio::test]
+    async fn a_failed_status_transition_rolls_back_the_claimed_pause() {
+        let pool = pool().await;
+        let session = running_turn(&pool, "a1").await;
+        let row = suspension("a1", in_an_hour());
+        suspend_turn(&pool, &row).await.unwrap();
+        sqlx::query("CREATE TRIGGER cancel_during_claim AFTER DELETE ON chat_turn_suspensions BEGIN UPDATE chat_turns SET status = 'cancelled' WHERE id = OLD.turn_id; END")
+            .execute(&pool).await.unwrap();
+        assert!(
+            claim_suspension(&pool, "a1", &row.request_id)
+                .await
+                .is_err()
+        );
+        assert_eq!(get_suspension(&pool, "a1").await.unwrap(), Some(row));
+        assert_eq!(
+            get_turn(&pool, &session, "a1")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::Suspended
+        );
     }
 
     /// A restart must not take a paused turn for a crashed one: its waiting
@@ -793,6 +1040,62 @@ mod tests {
             .unwrap();
         assert_eq!(turn.turn.status, TurnStatus::Suspended);
         assert_eq!(turn.tool_calls[0].status, ToolCallStatus::Running);
+    }
+
+    #[test]
+    fn tree_checkpoint_json_preserves_original_limits_and_unknown_usage() {
+        let checkpoint = TreeBudgetCheckpoint {
+            limits: BudgetLimits {
+                rounds: 8,
+                seconds: Some(60),
+                tokens: Some(100),
+            },
+            local_limits: BudgetLimits {
+                rounds: 3,
+                seconds: Some(20),
+                tokens: Some(50),
+            },
+            rounds: 2,
+            seconds: 4,
+            tokens: 25,
+            usage_known: false,
+        };
+        let used = BudgetUsed {
+            rounds: 1,
+            seconds: 2,
+            tokens: 10,
+            tree: Some(checkpoint),
+        };
+        let restored: BudgetUsed =
+            serde_json::from_str(&serde_json::to_string(&used).unwrap()).unwrap();
+        assert_eq!(restored, used);
+        let ordinary = BudgetUsed {
+            rounds: 1,
+            seconds: 2,
+            tokens: 10,
+            tree: None,
+        };
+        assert!(
+            serde_json::to_value(ordinary)
+                .unwrap()
+                .get("tree")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn delegated_child_does_not_expire_independently() {
+        let pool = pool().await;
+        running_turn(&pool, "child").await;
+        sqlx::query("UPDATE chat_sessions SET parent_turn_id = 'parent' WHERE id = (SELECT session_id FROM chat_turns WHERE id = 'child')").execute(&pool).await.unwrap();
+        let now = Timestamp::now();
+        suspend_turn(
+            &pool,
+            &suspension("child", now - jiff::SignedDuration::from_secs(5)),
+        )
+        .await
+        .unwrap();
+        assert!(expired_suspensions(&pool, now).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -931,7 +1234,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(take_next_for_user(&pool, "u1", &[]).await.unwrap(), None);
-        claim_suspension(&pool, "a1").await.unwrap();
+        claim_suspension(&pool, "a1", "req-a1").await.unwrap();
         assert_eq!(
             take_next_for_user(&pool, "u1", &[])
                 .await
@@ -995,6 +1298,64 @@ mod tests {
             Decision::Deny {
                 reason: DenyReason::Timeout
             }
+        );
+    }
+    #[tokio::test]
+    async fn cancellation_and_finalization_share_the_callers_transaction() {
+        let pool = pool().await;
+        let paused_session = running_turn(&pool, "paused").await;
+        let active_session = running_turn(&pool, "active").await;
+        suspend_turn(&pool, &suspension("paused", in_an_hour()))
+            .await
+            .unwrap();
+        let before = get_suspension(&pool, "paused").await.unwrap().unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        assert!(cancel_suspended_turn_in(&mut tx, "paused").await.unwrap());
+        super::super::finalize_turn_in(&mut tx, "active", TurnStatus::Cancelled, None)
+            .await
+            .unwrap();
+        tx.rollback().await.unwrap();
+        assert_eq!(get_suspension(&pool, "paused").await.unwrap(), Some(before));
+        assert_eq!(
+            get_turn(&pool, &active_session, "active")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            TurnStatus::InProgress
+        );
+        assert_eq!(
+            get_turn_with_tools(&pool, &active_session, "active")
+                .await
+                .unwrap()
+                .unwrap()
+                .tool_calls[0]
+                .status,
+            ToolCallStatus::Running
+        );
+        let mut tx = pool.begin().await.unwrap();
+        assert!(cancel_suspended_turn_in(&mut tx, "paused").await.unwrap());
+        assert!(!cancel_suspended_turn_in(&mut tx, "paused").await.unwrap());
+        super::super::finalize_turn_in(&mut tx, "active", TurnStatus::Cancelled, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let paused = get_turn_with_tools(&pool, &paused_session, "paused")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(paused.turn.status, TurnStatus::Cancelled);
+        assert!(paused.suspension.is_none());
+        assert_eq!(paused.tool_calls[0].status, ToolCallStatus::Errored);
+        let active = get_turn_with_tools(&pool, &active_session, "active")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(active.turn.status, TurnStatus::Cancelled);
+        assert_eq!(active.tool_calls[0].status, ToolCallStatus::Errored);
+        assert_eq!(
+            active.tool_calls[0].output_json.as_deref(),
+            Some("\"The run was cancelled.\"")
         );
     }
 }

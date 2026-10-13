@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { freshName, issuesUnder, renameKey, splitList, type Spec, type SpecIssue } from '#lib/agents.js';
+	import { type agentUiCapabilities, freshName, issuesUnder, renameKey, splitList, type Spec, type SpecIssue } from '#lib/agents.js';
 	import { t } from '#lib/i18n.svelte.js';
 	import FieldIssues from './FieldIssues.svelte';
 
@@ -12,7 +12,7 @@
 	 * JSON: an unsupported keyword is a save error, so a form over the subset
 	 * would only restate the validator.
 	 */
-	let { spec = $bindable(), issues }: { spec: Spec; issues: SpecIssue[] } = $props();
+	let { spec = $bindable(), issues, capabilities }: { spec: Spec; issues: SpecIssue[]; capabilities: ReturnType<typeof agentUiCapabilities> } = $props();
 
 	let finishText = $state(spec.finish?.schema ? JSON.stringify(spec.finish.schema, null, 2) : '');
 	let finishError = $state<string | null>(null);
@@ -56,11 +56,13 @@
 				<input class="input w-56" value={spec.profile?.display ?? ''} onchange={(e) => setProfile('display', e.currentTarget.value)} />
 				<FieldIssues {issues} path="profile.display" />
 			</label>
+			{#if capabilities.site}
 			<label class="flex flex-col gap-1">
 				<span class="label-text">{t('agents-profile-color')}</span>
 				<input class="input w-36 font-mono" value={spec.profile?.color ?? ''} onchange={(e) => setProfile('color', e.currentTarget.value)} placeholder="#2563eb" />
 				<FieldIssues {issues} path="profile.color" />
 			</label>
+			{/if}
 		</div>
 	</section>
 
@@ -95,6 +97,7 @@
 
 	<section class="space-y-3">
 		<h4 class="font-semibold">{t('agents-publish')}</h4>
+		{#if capabilities.site}
 		<p class="text-sm text-base-content/70">{t('agents-publish-hint')}</p>
 		<label class="flex flex-col gap-1">
 			<span class="label-text">{t('agents-publish-origins')}</span>
@@ -119,12 +122,15 @@
 				<FieldIssues {issues} path="publish.retention_days" />
 			</label>
 		</div>
+		{/if}
+		{#if capabilities.execution}
 		<label class="flex items-center gap-2">
 			<input type="checkbox" class="checkbox checkbox-sm" checked={spec.publish?.require_passing_tests === true} onchange={(e) => (publish().require_passing_tests = e.currentTarget.checked)} />
 			<span class="label-text">{t('agents-publish-require-tests')}</span>
 		</label>
 		<p class="-mt-2 text-xs text-base-content/60">{t('agents-publish-require-tests-hint')}</p>
 		<FieldIssues {issues} path="publish.require_passing_tests" />
+		{/if}
 		<div class="space-y-2">
 			<span class="label-text">{t('agents-publish-filter')}</span>
 			<p class="text-xs text-base-content/60">{t('agents-publish-filter-hint')}</p>

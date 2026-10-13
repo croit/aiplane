@@ -67,3 +67,12 @@ The speech voice selector appears in the desktop header when the installation of
 - **Conversion fails:** retain the tool error. The required converter or sidecar may not be configured.
 - **Canvas button is absent:** the conversation has no canvas document or asset to show.
 - **Voice button is absent:** transcription and speech output are both required for voice mode.
+
+## Personal Dot workspace
+
+A personal Dot card’s **Workspace** opens its persistent files when the runner
+provides verified persistent storage. This directory is separate from
+conversation attachments. Download a file to inspect it, upload files of at most
+50 MiB, create folders or delete files and empty folders after confirmation.
+Writes wait until the Dot computer is idle; directory browsing and downloads
+may observe files changing during a run. See [personal Dot files](../dots.md#personal-dot-files).

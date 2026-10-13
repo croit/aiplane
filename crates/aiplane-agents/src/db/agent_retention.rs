@@ -334,9 +334,11 @@ mod tests {
             kind: chat::SuspensionKind::Approval,
             message: None,
             tool_call: chat::PendingCall {
+                execution_facts: None,
                 id: "call-1".into(),
                 name: "refund".into(),
                 arguments: "{}".into(),
+                actions: None,
             },
             tail: Vec::new(),
             budget_used: chat::BudgetUsed::default(),

@@ -4,7 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { boundedViewport } from '#lib/viewport.js';
-	import { agentsApi } from '#lib/agents.js';
+	import { agentsApi, agentPublicName, organizationOwner } from '#lib/agents.js';
 	import { checklist, publishState } from '#lib/agent-setup.js';
 	import { AgentWorkspace, provideWorkspace } from '#lib/agent-workspace.svelte.js';
 	import { t } from '#lib/i18n.svelte.js';
@@ -25,7 +25,11 @@
 	onMount(() => void ws.load());
 	$effect(() => ws.remember());
 
-	const todos = $derived(checklist(ws.spec, ws.dirty ? [] : (ws.detail?.publish_issues ?? []), ws.resources?.defaults));
+	const todos = $derived(checklist(ws.spec, ws.dirty ? [] : (ws.detail?.publish_issues ?? []), ws.resources?.defaults, ws.detail));
+	const owner = $derived(organizationOwner(ws.detail));
+	const isDot = $derived(ws.detail?.dot !== null && ws.detail?.dot !== undefined);
+	const personalDot = $derived(ws.detail?.dot?.owner.kind === 'user');
+	const returnPath = $derived(owner ? `/organizations/${encodeURIComponent(owner.id)}` : '/agents');
 	const open = $derived(todos.filter((x) => x.blocking).length);
 	const state = $derived(publishState(todos));
 
@@ -38,10 +42,10 @@
 	}
 
 	async function remove() {
-		if (!ws.detail || !confirm(t('agents-delete-confirm', { name: ws.detail.name }))) return;
+		if (!ws.detail || !confirm(t('agents-delete-confirm', { name: agentPublicName(ws.detail) }))) return;
 		try {
 			await agentsApi.remove(id);
-			await goto('/agents');
+			await goto(returnPath);
 		} catch (err) {
 			ws.fail(err);
 		}
@@ -49,23 +53,31 @@
 </script>
 
 <div data-agent-page class="flex w-full flex-col gap-4 {bounded ? 'h-full min-h-0' : ''}">
-	<a class="link link-hover text-sm text-base-content/60" href="/agents">← {t('agents-back')}</a>
+	<a class="link link-hover text-sm text-base-content/60" href={returnPath}>← {owner?.name ?? t('agents-back')}</a>
 
 	{#if ws.loadError}
 		<div class="alert alert-error"><span>{ws.loadError}</span></div>
 	{:else if ws.loading || !ws.detail}
 		<div class="skeleton h-96 w-full"></div>
 	{:else}
+		{#if owner}<div class="alert alert-info"><span>{t('organization-owned-by', { name: owner.name })} {t('organization-configuration-only')}</span></div>{/if}
 		<header class="flex flex-wrap items-center gap-3">
 			<div class="min-w-0">
-				<h1 class="m-0 truncate text-2xl font-bold">{ws.spec.profile?.display || ws.detail.display || ws.detail.name}</h1>
-				<p class="m-0 font-mono text-xs text-base-content/60">{ws.detail.name}</p>
+				<h1 class="m-0 truncate text-2xl font-bold">{ws.spec.profile?.display || ws.detail.display || agentPublicName(ws.detail)}</h1>
+				{#if isDot}
+					<span class="badge badge-outline badge-sm max-w-full whitespace-normal">{owner ? t('agents-dot-organization', { name: owner.name }) : t('agents-dot-personal')}</span>
+				{:else}
+					<p class="m-0 font-mono text-xs text-base-content/60">{agentPublicName(ws.detail)}</p>
+				{/if}
 			</div>
-			{#if ws.detail.live_version === null}
+			{#if personalDot}
+				<StatusPill size="sm" tone={ws.detail.dot!.active ? 'ok' : 'warn'}>{t(ws.detail.dot!.active ? 'dots-status-active' : 'dots-status-inactive')}</StatusPill>
+			{:else if ws.detail.live_version === null}
 				<StatusPill>{t('agents-never-published')}</StatusPill>
 			{:else}
 				<StatusPill tone="ok">{t('agents-live-badge', { version: ws.detail.live_version })}</StatusPill>
 			{/if}
+			{#if isDot && owner}<StatusPill size="sm" tone={ws.detail.dot!.active ? 'ok' : 'warn'}>{t(ws.detail.dot!.active ? 'dots-status-active' : 'dots-status-inactive')}</StatusPill>{/if}
 			{#if ws.writable}
 				{#if state === 'blocked'}
 					<StatusPill tone="warn">{t('agents-setup-open-count', { count: open })}</StatusPill>

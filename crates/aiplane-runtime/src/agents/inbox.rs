@@ -125,6 +125,14 @@ pub async fn list(state: &RamaState, viewer: &Viewer) -> Result<Vec<InboxItem>, 
         let standing = match &p.owner {
             SessionOwner::User(owner) => (owner == &viewer.user_id).then_some(Standing::Owner),
             SessionOwner::Principal(agent) => {
+                if let Some(standing) =
+                    organization_pending_standing(state, &p, &viewer.user_id).await?
+                {
+                    if let Some(standing) = standing {
+                        items.push(item(state, p, standing).await?);
+                    }
+                    continue;
+                }
                 if !staff_item(&p) {
                     continue;
                 }
@@ -154,6 +162,12 @@ pub async fn find(
     let Some(p) = run_sessions::pending_by_request(&state.db, request_id).await? else {
         return Ok(None);
     };
+    if let Some(standing) = organization_pending_standing(state, &p, &viewer.user_id).await? {
+        return match standing {
+            Some(standing) => item(state, p, standing).await.map(Some),
+            None => Ok(None),
+        };
+    }
     let standing = match &p.owner {
         SessionOwner::User(owner) => (owner == &viewer.user_id).then_some(Standing::Owner),
         SessionOwner::Principal(agent) if staff_item(&p) => {
@@ -164,6 +178,55 @@ pub async fn find(
     match standing {
         Some(standing) => item(state, p, standing).await.map(Some),
         None => Ok(None),
+    }
+}
+
+async fn organization_pending_standing(
+    state: &RamaState,
+    pending: &PendingSuspension,
+    user: &str,
+) -> Result<Option<Option<Standing>>, DbError> {
+    let SessionOwner::Principal(id) = &pending.owner else {
+        return Ok(None);
+    };
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
+    if !matches!(
+        agents_db::dot_owner_in(&mut tx, id).await?,
+        Some(agents_db::DotOwner::Organization(_))
+    ) {
+        return Ok(None);
+    }
+    let authorized = organization_pending_proof_in(&mut tx, pending).await?
+        && super::access::organization_access_in(state, &mut tx, id, user).await?
+            == Some(Access::Write);
+    tx.commit().await?;
+    Ok(Some(authorized.then_some(Standing::Manager)))
+}
+
+async fn organization_pending_proof_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    pending: &PendingSuspension,
+) -> Result<bool, DbError> {
+    let SessionOwner::Principal(id) = &pending.owner else {
+        return Ok(false);
+    };
+    let Some(authority) = super::profile::OrganizationResumeAuthority::from_context(
+        pending.suspension.run_context.as_ref(),
+    ) else {
+        return Ok(false);
+    };
+    if authority.principal_id != *id
+        || authority.session_id != pending.session_id
+        || authority.assistant_turn_id != pending.suspension.turn_id
+        || authority.version() != pending.agent_version
+        || !pending.agent_version.is_some_and(|version| version > 0)
+    {
+        return Ok(false);
+    }
+    match super::profile::validate_organization_resume_in(tx, &authority).await {
+        Ok(_) => Ok(true),
+        Err(super::profile::AgentRunError::Db(error)) => Err(error),
+        Err(_) => Ok(false),
     }
 }
 
@@ -179,8 +242,22 @@ pub async fn agent_standing(
     viewer: &Viewer,
     agent_id: &str,
 ) -> Result<Option<Standing>, DbError> {
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
+    if matches!(
+        agents_db::dot_owner_in(&mut tx, agent_id).await?,
+        Some(agents_db::DotOwner::Organization(_))
+    ) {
+        let standing =
+            (super::access::organization_access_in(state, &mut tx, agent_id, &viewer.user_id)
+                .await?
+                == Some(Access::Write))
+            .then_some(Standing::Manager);
+        tx.commit().await?;
+        return Ok(standing);
+    }
+    drop(tx);
     Ok(
-        super::access::effective_access(state, agent_id, &viewer.user_id, &viewer.groups)
+        super::access::effective_access(state, agent_id, &viewer.user_id)
             .await?
             .map(|access| match access {
                 Access::Respond => Standing::Responder,
@@ -200,6 +277,30 @@ async fn innermost(
         let Some(child) = current.child_turn.clone() else {
             break;
         };
+        let owner = chat::user_for_turn(db, &current.turn_id).await?;
+        let linked = match aiplane_agents::db::child_sessions::child_of_turn(db, &child).await? {
+            Some(aiplane_agents::db::child_sessions::LocalChild::Principal(session)) => {
+                owner.is_none()
+                    && session.parent_turn_id.as_deref() == Some(current.turn_id.as_str())
+            }
+            Some(aiplane_agents::db::child_sessions::LocalChild::Personal(binding)) => {
+                owner.as_deref() == Some(binding.session.owner_user_id.as_str())
+                    && binding.link.parent_turn_id == current.turn_id
+                    && binding.link.parent_tool_call_id == current.tool_call.id
+                    && current.tool_call.name == super::router::FORWARD_TOOL_NAME
+                    && aiplane_agents::db::child_sessions::root_session_id(
+                        db,
+                        &binding.session.owner_user_id,
+                        &binding.session.session_id,
+                    )
+                    .await?
+                    .is_some()
+            }
+            None => false,
+        };
+        if !linked {
+            break;
+        }
         match chat::get_suspension(db, &child).await? {
             Some(next) => current = next,
             None => break,
@@ -266,11 +367,22 @@ async fn agent_answerers(state: &RamaState, agent_id: &str) -> Result<Vec<String
     }
     let mut out = BTreeSet::new();
     for user in users::list_all(&state.db).await? {
-        let viewer = Viewer::of(state, &user);
-        let named = direct.contains(&user.id) || viewer.groups.iter().any(|g| groups.contains(g));
-        if named && agent_standing(state, &viewer, agent_id).await?.is_some() {
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
+        let Some((user, policy)) =
+            super::access::current_user_policy_in(state, &mut tx, &user.id).await?
+        else {
+            continue;
+        };
+        let current_groups = policy.role_ids_for(&user.roles);
+        let named = direct.contains(&user.id) || current_groups.iter().any(|g| groups.contains(g));
+        if named
+            && super::access::effective_access_in(state, &mut tx, agent_id, &user.id)
+                .await?
+                .is_some()
+        {
             out.insert(user.id);
         }
+        tx.commit().await?;
     }
     Ok(out.into_iter().collect())
 }
@@ -319,6 +431,30 @@ pub async fn announce(state: &RamaState, request_id: &str) -> bool {
             return false;
         }
     };
+    if let SessionOwner::Principal(id) = &pending.owner {
+        let mut tx = match aiplane_core::server::db::WriteTx::begin(&state.db).await {
+            Ok(tx) => tx,
+            Err(_) => return false,
+        };
+        let owner = match agents_db::dot_owner_in(&mut tx, id).await {
+            Ok(owner) => owner,
+            Err(error) => {
+                tracing::warn!(%error, request_id, "reading a pause owner to announce");
+                return false;
+            }
+        };
+        if matches!(owner, Some(agents_db::DotOwner::Organization(_))) {
+            let valid = organization_pending_proof_in(&mut tx, &pending)
+                .await
+                .unwrap_or(false);
+            if tx.commit().await.is_err() || !valid {
+                return false;
+            }
+            return chat::mark_suspension_notified(&state.db, request_id, Timestamp::now())
+                .await
+                .unwrap_or(false);
+        }
+    }
     let (recipients, agent) = match &pending.owner {
         SessionOwner::User(owner) => (vec![owner.clone()], None),
         SessionOwner::Principal(agent_id) => {
@@ -518,6 +654,113 @@ impl InboxList {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn named_group_recipients_use_current_policy_without_notifying_unshared_admins() {
+        use aiplane_agents::db::agents::{self, Access, SubjectKind};
+        use aiplane_core::server::db::gateway_groups;
+        let (state, _, dot) = crate::agents::access::tests::fixture().await;
+        agents::remove_share(&state.db, &dot, SubjectKind::User, "responder", "creator")
+            .await
+            .unwrap();
+        agents::remove_share(&state.db, &dot, SubjectKind::User, "outsider", "creator")
+            .await
+            .unwrap();
+        agents::set_share(
+            &state.db,
+            &dot,
+            SubjectKind::Group,
+            "responders",
+            Access::Respond,
+            "creator",
+        )
+        .await
+        .unwrap();
+        gateway_groups::set_mappings_for_group(&state.db, "responders", &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            super::agent_answerers(&state, &dot).await.unwrap(),
+            vec!["creator"]
+        );
+        gateway_groups::set_mappings_for_group(
+            &state.db,
+            "responders",
+            &["claim-outsiders".into()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            super::agent_answerers(&state, &dot).await.unwrap(),
+            vec!["creator", "outsider"]
+        );
+        gateway_groups::set_mappings_for_group(&state.db, "responders", &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            super::agent_answerers(&state, &dot).await.unwrap(),
+            vec!["creator"]
+        );
+    }
+
+    #[tokio::test]
+    async fn personal_inbox_does_not_follow_a_forged_other_owner_child_reference() {
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let now = jiff::Timestamp::now();
+        for owner in ["caller", "other"] {
+            aiplane_core::server::db::users::upsert(
+                &db,
+                &aiplane_core::server::db::users::User {
+                    id: owner.into(),
+                    email: format!("{owner}@example.test"),
+                    name: None,
+                    roles: Vec::new(),
+                    created_at: now,
+                    updated_at: now,
+                    timezone: None,
+                    speech_voice: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let mut rows = Vec::new();
+        for (owner, turn, child) in [
+            ("caller", "root", Some("unrelated")),
+            ("other", "unrelated", None),
+        ] {
+            let session = session_core::db::create_session(&db, owner).await.unwrap();
+            session_core::db::create_assistant_turn_in_progress(&db, &session.id, turn, "model")
+                .await
+                .unwrap();
+            let row = session_core::db::TurnSuspension {
+                turn_id: turn.into(),
+                request_id: format!("request-{turn}"),
+                kind: session_core::db::SuspensionKind::Approval,
+                message: None,
+                tool_call: session_core::db::PendingCall {
+                    execution_facts: None,
+                    id: format!("call-{turn}"),
+                    name: "forward_request".into(),
+                    arguments: format!("{{\"private_owner\":\"{owner}\"}}"),
+                    actions: None,
+                },
+                tail: Vec::new(),
+                budget_used: Default::default(),
+                child_turn: child.map(str::to_owned),
+                on_timeout: session_core::db::TimeoutFallback::Deny,
+                expires_at: now,
+                created_at: now,
+                run_context: None,
+            };
+            session_core::db::suspend_turn(&db, &row).await.unwrap();
+            rows.push(row);
+        }
+        let visible = super::innermost(&db, &rows[0]).await.unwrap();
+        assert_eq!(visible, rows[0]);
+        assert!(!visible.tool_call.arguments.contains("other"));
+    }
 
     use aiplane_agents::db::agent_channels::ChannelKind;
 

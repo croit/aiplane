@@ -970,7 +970,12 @@ mod tests {
                 op.method,
                 op.path
             );
-            if matches!(op.method, "get" | "delete") {
+            // The Dot connection's DELETE is the one body-carrying deletion:
+            // it carries the version body for the same conflict check as its
+            // PUT and connect.
+            if matches!(op.method, "get" | "delete")
+                && op.path != "/api/v0/dots/{id}/connections/{key}"
+            {
                 assert!(
                     op.request.is_empty(),
                     "{} {} declares a request body",

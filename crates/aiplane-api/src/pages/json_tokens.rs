@@ -7,6 +7,7 @@ use std::sync::Arc;
 use jiff::Timestamp;
 use rama::http::service::web::extract::State;
 use rama::http::{Request, Response, StatusCode};
+use session_core::i18n::Lang;
 
 use super::{bad_request, internal, json_error, json_ok, raw_path_segment};
 use aiplane_core::server::db::{
@@ -158,6 +159,7 @@ pub async fn priority(State(state): State<Arc<RamaState>>, req: Request) -> Resp
 }
 
 pub async fn details(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let (session, user) = require_session_json!(state, req);
     let token_rows = match tokens::list_for_user(&state.db, &user.id).await {
         Ok(rows) => rows,
@@ -205,7 +207,7 @@ pub async fn details(State(state): State<Arc<RamaState>>, req: Request) -> Respo
     };
 
     let capabilities =
-        super::tool_toggles::token_capabilities_for_user(&state, &user.roles, &user.id).await;
+        super::tool_toggles::token_capabilities_for_user(&state, &user.roles, &user.id, lang).await;
     let mut token_details = Vec::with_capacity(token_rows.len());
     for token in token_rows {
         let lists = model_lists.get(&token.id).cloned().unwrap_or_default();

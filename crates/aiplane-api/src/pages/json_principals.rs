@@ -21,6 +21,7 @@
 //! again at every request, at what its minter holds then
 //! (`grant_holding::capped_to_minter`).
 
+use session_core::i18n::{Lang, t};
 use std::sync::Arc;
 
 use jiff::Timestamp;
@@ -50,8 +51,10 @@ pub(crate) async fn require_agent_manager(
         return Err(json_error(
             StatusCode::FORBIDDEN,
             "forbidden",
-            "managing system principals needs the agent-management permission — ask an admin \
-             to enable `can_manage_agents` on one of your groups",
+            &t(
+                Lang::from_request(req.headers()),
+                "agent-management-error-permission-required",
+            ),
         ));
     }
     Ok(user)
@@ -64,6 +67,68 @@ macro_rules! require_agent_manager {
             Err(resp) => return resp,
         }
     };
+}
+
+async fn begin_principal_write(
+    state: &RamaState,
+    manager: &users::User,
+    id: &str,
+    lang: Lang,
+) -> Result<aiplane_core::server::db::WriteTx, Response> {
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+        .await
+        .map_err(internal)?;
+    let (current, policy) =
+        super::json_organizations::current_policy_in(state, &mut tx, &manager.id, lang).await?;
+    let groups = policy.role_ids_for(&current.roles);
+    if !policy.can_manage_agents(&groups) {
+        return Err(json_error(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            &t(lang, "agent-management-error-permission-required"),
+        ));
+    }
+    let principal = sp_db::get_in(&mut tx, id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found(t(lang, "organization-error-not-found")))?;
+    if agents_db::get_in(&mut tx, id)
+        .await
+        .map_err(internal)?
+        .is_some()
+    {
+        if aiplane_runtime::agents::access::effective_access_in(state, &mut tx, id, &manager.id)
+            .await
+            .map_err(internal)?
+            != Some(Access::Write)
+        {
+            return Err(not_found(t(lang, "organization-error-not-found")));
+        }
+    } else if principal.created_by != current.id && !policy.is_admin(&groups) {
+        return Err(not_found(t(lang, "organization-error-not-found")));
+    }
+    Ok(tx)
+}
+
+async fn refuse_organization_execution(
+    state: &RamaState,
+    id: &str,
+    lang: Lang,
+) -> Result<(), Response> {
+    if matches!(
+        agents_db::dot_owner(&state.db, id)
+            .await
+            .map_err(internal)?,
+        Some(agents_db::DotOwner::Organization(_))
+    ) {
+        Err(json_error(
+            StatusCode::FORBIDDEN,
+            "organization_execution_unavailable",
+            &t(lang, "organization-error-execution-unavailable"),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /// A system principal as the API shows it.
@@ -361,13 +426,25 @@ pub async fn detail(State(state): State<Arc<RamaState>>, req: Request) -> Respon
 /// every token it holds. Its grants stay, so re-enabling later is a
 /// reconfiguration, not a rebuild.
 pub async fn disable(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let manager = require_agent_manager!(state, req);
     let p = match principal_at(&state, &req, &manager, 1, Access::Write).await {
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    if let Err(err) = sp_db::disable(&state.db, &p.id, &manager.id).await {
-        return internal(err);
+    let mut tx = match begin_principal_write(&state, &manager, &p.id, lang).await {
+        Ok(tx) => tx,
+        Err(response) => return response,
+    };
+    let changed = match sp_db::disable_in(&mut tx, &p.id, &manager.id).await {
+        Ok(changed) => changed,
+        Err(error) => return internal(error),
+    };
+    if let Err(error) = tx.commit().await {
+        return internal(error);
+    }
+    if changed {
+        aiplane_agents::db::embed_keys::origins_changed();
     }
     match sp_db::get(&state.db, &p.id).await {
         Ok(Some(p)) => json_ok(
@@ -496,6 +573,7 @@ fn kind_label(kind: GrantKind) -> &'static str {
 /// when it is new; `200` otherwise, with `widened` true when a `model` grant
 /// now reaches more pools (a regrant never narrows one).
 pub async fn grant(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let manager = require_agent_manager!(state, req);
     let p = match principal_at(&state, &req, &manager, 1, Access::Write).await {
         Ok(p) => p,
@@ -509,7 +587,7 @@ pub async fn grant(State(state): State<Arc<RamaState>>, req: Request) -> Respons
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    let change = match add_capped_grant(&state, &manager, &p.id, kind, reference).await {
+    let change = match add_capped_grant(&state, &manager, &p.id, kind, reference, lang).await {
         Ok(change) => change,
         Err(resp) => return resp,
     };
@@ -537,40 +615,65 @@ pub(crate) async fn add_capped_grant(
     principal_id: &str,
     kind: GrantKind,
     reference: &str,
+    lang: Lang,
 ) -> Result<GrantChange, Response> {
-    if !manager_holds(state, manager, kind, reference).await? {
+    let mut tx = begin_principal_write(state, manager, principal_id, lang).await?;
+    if kind == GrantKind::A2aCaller {
+        let held = aiplane_runtime::agents::access::effective_access_in(
+            state,
+            &mut tx,
+            reference,
+            &manager.id,
+        )
+        .await
+        .map_err(internal)?;
+        super::json_agents::require_held(held, reference, Access::Write)?;
+    }
+    let scope = grant_holding::grant_scope_in(
+        state,
+        &mut tx,
+        &manager.id,
+        kind,
+        reference,
+        Some(principal_id),
+    )
+    .await
+    .map_err(|refusal| match refusal {
+        HoldRefusal::Missing(_) => not_found(refusal.to_string()),
+        HoldRefusal::Invalid(why) => bad_request(why),
+        HoldRefusal::AdminOnly(why) => {
+            json_error(StatusCode::FORBIDDEN, "grant_exceeds_manager", &why)
+        }
+        HoldRefusal::Db(error) => internal(error),
+    })?;
+    let Some(scope) = scope else {
         return Err(json_error(
             StatusCode::FORBIDDEN,
             "grant_exceeds_manager",
             &format!(
-                "cannot grant {} `{reference}`: you do not hold it yourself, and a manager \
-                 can only grant what they hold. Ask an admin to grant it to one of your \
-                 groups, or have someone who holds it make this grant.",
+                "cannot grant {} `{reference}`: you do not hold it yourself, and a manager can only grant what they hold. Ask an admin to grant it to one of your groups, or have someone who holds it make this grant.",
                 kind_label(kind)
             ),
         ));
-    }
-    let pools = match kind {
-        GrantKind::Model => grant_holding::model_grant_pools(state, manager, reference)
-            .await
-            .map_err(internal)?,
-        _ => None,
     };
-    sp_db::add_scoped_grant(
-        &state.db,
+    let result = sp_db::add_scoped_grant_in(
+        &mut tx,
         principal_id,
         kind,
         reference,
-        pools.as_deref(),
+        scope.pools.as_deref(),
         &manager.id,
     )
     .await
-    .map_err(internal)
+    .map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+    Ok(result)
 }
 
 /// POST /api/v0/system-principals/{id}/grants/revoke — remove one grant. Any
 /// manager may narrow a principal; no holding check.
 pub async fn revoke_grant(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let manager = require_agent_manager!(state, req);
     let p = match principal_at(&state, &req, &manager, 2, Access::Write).await {
         Ok(p) => p,
@@ -584,7 +687,17 @@ pub async fn revoke_grant(State(state): State<Arc<RamaState>>, req: Request) -> 
         return bad_request(format!("`{}` is not a grant kind", body.kind));
     };
     let reference = body.reference.trim();
-    match sp_db::remove_grant(&state.db, &p.id, kind, reference, &manager.id).await {
+    let mut tx = match begin_principal_write(&state, &manager, &p.id, lang).await {
+        Ok(tx) => tx,
+        Err(response) => return response,
+    };
+    let result = sp_db::remove_grant_in(&mut tx, &p.id, kind, reference, &manager.id).await;
+    if result.is_ok()
+        && let Err(error) = tx.commit().await
+    {
+        return internal(error);
+    }
+    match result {
         Ok(true) => no_content(),
         Ok(false) => not_found(format!(
             "`{}` holds no {} grant `{reference}`",
@@ -606,11 +719,16 @@ pub struct TokenBody {
 /// like a grant ([`manager_holds_every_grant`]). The plaintext is in this
 /// response and nowhere else, ever.
 pub async fn issue_token(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let manager = require_agent_manager!(state, req);
     let p = match principal_at(&state, &req, &manager, 1, Access::Write).await {
         Ok(p) => p,
         Err(resp) => return resp,
     };
+
+    if let Err(response) = refuse_organization_execution(&state, &p.id, lang).await {
+        return response;
+    }
     if p.disabled_at.is_some() {
         return json_error(
             StatusCode::CONFLICT,
@@ -652,11 +770,16 @@ pub async fn issue_token(State(state): State<Arc<RamaState>>, req: Request) -> R
 
 /// POST /api/v0/system-principals/{id}/tokens/{token_id}/revoke
 pub async fn revoke_token(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let manager = require_agent_manager!(state, req);
     let p = match principal_at(&state, &req, &manager, 3, Access::Write).await {
         Ok(p) => p,
         Err(resp) => return resp,
     };
+
+    if let Err(response) = refuse_organization_execution(&state, &p.id, lang).await {
+        return response;
+    }
     let Some(token_id) = raw_path_segment(&req, 1) else {
         return bad_request("the URL is missing the token id");
     };

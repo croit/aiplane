@@ -72,3 +72,6 @@ tools-browser-notes-heading = Gut zu wissen
 tools-browser-note-window = Der Assistent arbeitet in einem eigenen Fenster, in einer Tab-Gruppe namens „Assistant“. Solange die Erweiterung an ist, ist ihr Symbol grün und Chrome zeigt eine Leiste, dass der Browser debuggt wird.
 tools-browser-note-open = Es funktioniert nur, solange die Unterhaltung in einem Tab offen ist. Schalte die Erweiterung über ihr Symbol aus, wenn du fertig bist.
 tools-browser-note-injection = Seiten, die der Assistent liest, können Text enthalten, der sich an ihn richtet. In den Einstellungen der Erweiterung kannst du sie auf Seiten beschränken, die du freigibst.
+
+tool-forward-request-title = Anderen Dot fragen
+tool-forward-request-description = Sendet eine ausdrückliche Aufgabe an einen anderen persönlichen Dot. Beide Dots müssen die Anfrage erlauben; der empfangende Dot verwendet seine eigenen Werkzeuge und Freigaberegeln.

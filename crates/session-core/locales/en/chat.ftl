@@ -20,6 +20,7 @@ chat-error-turn-interrupted = An internal error interrupted this response. Pleas
 chat-list-empty = No conversations yet. Start one above.
 chat-turn-stopped = stopped
 chat-waiting-approval = Runs { $tool } only once you approve it.
+chat-waiting-browser-handover = You have control of the Dot's browser.
 chat-waiting-value = Waits for a value only you may type. It goes to the tool, never to the model.
 chat-waiting-answer = Waits for a person's answer.
 chat-composer-paused = Approve or deny the request above first; the next message waits for that decision.
@@ -52,3 +53,5 @@ chat-attempt-reason-loop = the model repeated itself
 chat-attempt-reason-repeated_call = the same tool call over and over
 chat-attempt-retry = Trying again with thinking { $effort } (attempt { $n })
 chat-loop-exhausted = The model repeated itself on all { $attempts } attempts, even with less thinking. Ask the question differently, or split it into smaller parts.
+
+chat-error-run-cancelled = The run was cancelled.

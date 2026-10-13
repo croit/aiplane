@@ -1,7 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { prettyToolPayload, summarizeToolCalls } from './chat-transcript.ts';
+import { prettyToolPayload, summarizeToolCalls, presentedToolCallStatus } from './chat-transcript.ts';
+import type { Turn } from './chat-protocol.ts';
+
+test('suspended turns present unfinished tool calls as waiting', () => {
+	assert.equal(presentedToolCallStatus('running', 'suspended'), 'waiting');
+	assert.equal(presentedToolCallStatus('running', 'in_progress'), 'running');
+});
+
+test('completed and errored tool calls retain their result while the turn waits', () => {
+	const statuses: Turn['status'][] = ['in_progress', 'suspended', 'completed', 'cancelled', 'errored'];
+	for (const status of statuses) {
+		assert.equal(presentedToolCallStatus('completed', status), 'completed');
+		assert.equal(presentedToolCallStatus('errored', status), 'errored');
+	}
+});
+
+test('only an actually suspended turn gives a running call the waiting presentation', () => {
+	const statuses: Turn['status'][] = ['in_progress', 'completed', 'cancelled', 'errored'];
+	for (const status of statuses) assert.equal(presentedToolCallStatus('running', status), 'running');
+});
 
 test('tool payloads are pretty printed and bounded for the browser', () => {
 	assert.equal(prettyToolPayload('{"query":"nginx"}', 100).text, '{\n  "query": "nginx"\n}');

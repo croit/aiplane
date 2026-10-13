@@ -14,6 +14,7 @@ export const sectionTabs = {
 		{ path: '/settings/tokens', label: 'tokens-page-heading' }
 	],
 	adminAccess: [
+		{ path: '/admin/organizations', label: 'organizations-heading' },
 		{ path: '/admin/users', label: 'nav-users' },
 		{ path: '/admin/tokens', label: 'nav-admin-tokens' },
 		{ path: '/admin/groups', label: 'nav-groups' },

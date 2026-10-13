@@ -350,6 +350,8 @@ The mise task builds the SPA and sets `AIPLANE_STATIC_DIR`.
 This runs the `dev_ui` example (`crates/aiplane/examples/dev_ui.rs`), which boots the real rama gateway on `127.0.0.1:8080` against:
 
 - an **in-memory SQLite**;
+- the existing **scheduled-action worker**, so authored cron jobs fire against
+  the same mock model and durable run-history path used by the UI;
 - an in-process **`wiremock` chat pool** that serves `GET /models` (advertising `demo-model` + `demo-model-pro`) and `POST /chat/completions` (a streaming variant emitting two SSE deltas + `[DONE]`, plus non-streaming and feedback-extraction variants);
 - a published agent (`website-helper`, on the `chat` pool) with a fixed embed key for `http://localhost:8000`, so the embed widget example works: `python3 -m http.server 8000 -d examples/embed`, then open `http://localhost:8000/` (see [`embed.md`](embed.md));
 - a **scripted agent model** on the chat mock, so every agent flow runs end to end: it answers only requests that offer an agent's synthetic tools (and the test-case judge, always "passed") and acts on the visitor's last message — an email address sets `email` and requests a verification code, "invoice"/"billing" sets `issue` and calls `forward_request`, "human"/"person" calls `request_human`, and a routed sub-agent calls `finish`. `website-helper` is wired for all of it: an `otp` verifier on a mock **Demo ERP** MCP connector (`erp`, agent scope) that accepts the code `123456`, a `billing` route behind that verifier to the published sub-agent `billing-helper`, and a `staff` handoff route that `eng@example.com` answers through a `respond` share (log in with the printed non-admin cookie to answer it from `/inbox`);
@@ -359,8 +361,14 @@ This runs the `dev_ui` example (`crates/aiplane/examples/dev_ui.rs`), which boot
 The example maps the debug `/__dev/session` user's `admin` group to the admin
 role, so that URL shows the same setup hints as the printed admin seed cookie.
 It uses the same built-in tool registry as the real binary and loads
-the example Typst templates. Tools whose operator backend is missing (GeoIP,
-sandbox) still appear to the seeded admin as disabled rows with setup links.
+the example Typst templates. Its sandbox client uses the same registry and
+`browse_page` action catalogue as production; the local mock refuses `/run`
+with an explicit fixture error and does not execute containers. This supports
+access-rule UI checks, not sandbox execution verification. The exact prompt
+`Dot action approval probe` produces a `browse_page` navigation call for
+checking action revocation through the real Inbox flow. Tools whose operator
+backend is missing (GeoIP) appear as disabled rows with setup links. A retained
+SQLite connection keeps the fixture database alive while the server is idle.
 The mock has no file storage or RAG indexer, so dependent tools, including the
 tools for its mock image pool, are also shown disabled. It initializes the
 same Web Push sender as production so device notification settings can be

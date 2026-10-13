@@ -65,10 +65,14 @@ constructor and returns `MismatchedRun` when the chain's running frame is not
 that principal, so a run that acts as one agent and audits as another cannot
 be built.
 
-A turn's `Actor` is `Person { id, roles }` or `Agent(Arc<AgentRun>)`.
-`DriveParams` and `TurnFacts` take one, and `build_tool_context` derives
-`ToolContext.principal` from it, so the principal and the run cannot disagree.
-The run then lives in `ToolContext.agent` (the driver reads it back through
+A turn's `Actor` is `Person { id, roles }`, `PersonalDot { id, roles, dot }`,
+or `Agent(Arc<AgentRun>)`. A personal Dot retains the owner's user principal
+and carries its Dot id alongside it; `build_tool_context` puts that attribution
+in `ToolContext.personal_dot`. This scopes Dot-owned data without changing the
+user's existing grants. `DriveParams` and `TurnFacts` take one, and
+`build_tool_context` derives `ToolContext.principal` from it, so the principal
+and the run cannot disagree. An agent run then lives in `ToolContext.agent`
+(the driver reads it back through
 `OpenAiDriver::agent()`), and every question "is this an agent run" asks that
 one value: the call policy, the injection audit, the usage row's chain
 (`ctx.chain()`), and whether `headless::drive` announces a person's pause.
@@ -602,3 +606,50 @@ the classifier, `order`, separate budgets, a cycle, an injection in a
 sub-agent result, the audit chain, models), `agents/run/tests/output_filter.rs`,
 `agents/run/tests/loop_route.rs`, `agents/run/tests/topic_guard.rs`,
 `agents/output_filter.rs`, `agents/topic_guard.rs`, `agents/profile.rs`.
+
+## Organization private conversation authority
+
+An organization Dot's private test turn is owned by its system principal. The
+conversation has no user owner, visitor or parent turn, is not shared, and
+uses `DRAFT_VERSION` or a captured positive published version. The private
+opener checks current organization membership
+and Write access in the same transaction as its session and assistant rows.
+A member's identity supplies admission and audit attribution only.
+
+`OrganizationTurnContext` binds the runtime to the actual organization,
+principal, session and assistant turn. Before model and tool acquisition,
+`validate_organization_turn_in` verifies active ownership, the enabled
+principal, captured source and exact private turn. Published runs also prove
+that their actual version row matches the original authored snapshot. Current grants and model-pool
+scopes are intersected with the initial principal snapshot. Retained tool
+references repeat that proof. Selected own MCP credentials also retain their
+original catalogue, credential and binding generations. A missing selection
+never falls back to a member or gateway connection.
+
+The driver captures `OrganizationResumeAuthority` into the existing internal
+suspension `run_context`. It contains the required source, original authored
+snapshot, actual resolved
+model, initial grants/model pools and synthetic tool dependencies from the
+loaded profile. Tools cannot supply the reserved authority field. The public
+suspension view omits this context. Staff claim checks current member Write
+access, exact saved owner/turn authority and original account facts before
+consuming the request. The common profile loader seeds the original authority
+before constructing surfaces and verifier closures, including after restart.
+Editing the current draft or adding grants does not expand that paused run.
+
+Compaction waits for finalization and admits only the original completed
+assistant turn. Its model request and summary write repeat current ownership
+and grant checks; the final persistence proof shares the summary transaction.
+Live execution cannot use this completed-turn admission purpose.
+
+Generic Live/Pinned, public, embedded, child and automated organization callers
+remain unavailable. Private published admission starts on the actual live
+version and pins it for continuation, including after newer publication or
+rollback. Draft/source mismatches refuse continuation. Missing or malformed
+saved authority, a missing original version or a changed snapshot leaves a
+paused request unclaimed. Private organization runs do not acquire employee
+profile, memory, credentials or personal tool preferences.
+
+Published private approvals, human answers and secure input use the existing
+Inbox for current member writers only. Draft pauses stay inline. Organization
+announcements do not dispatch push or external channel messages.

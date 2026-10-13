@@ -58,7 +58,7 @@ mod tests {
     async fn the_write_lock_is_held_from_the_first_statement() {
         let dir = std::env::temp_dir().join(format!("write-tx-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let pool = aiplane_core::server::db::open(&dir.join("db.sqlite"))
+        let pool = crate::server::db::open(&dir.join("db.sqlite"))
             .await
             .unwrap();
         let first = WriteTx::begin(&pool).await.unwrap();

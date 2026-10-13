@@ -278,6 +278,14 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         // The agent architect (docs/agent-builder.md → "Agent architect"): a person's
         // chat that plans an agent with them.
         .with_post("/api/v0/agent-architect", pages::architect::start)
+        .with_get(
+            "/api/v0/agent-architect/{session_id}/dot-plan",
+            pages::architect::get_plan,
+        )
+        .with_post(
+            "/api/v0/agent-architect/{session_id}/dot-plan",
+            pages::architect::apply_plan,
+        )
         // The inbox (docs/agent-hil.md): before `/agents/{id}`,
         // because rama matches in registration order.
         .with_get("/api/v0/agents/inbox", pages::json_inbox::list)
@@ -288,6 +296,121 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         )
         .with_get("/api/v0/agents", pages::json_agents::list)
         .with_post("/api/v0/agents", pages::json_agents::create)
+        .with_get(
+            "/api/v0/admin/organizations",
+            pages::json_organizations::admin_list,
+        )
+        .with_post(
+            "/api/v0/admin/organizations",
+            pages::json_organizations::admin_create,
+        )
+        .with_put(
+            "/api/v0/admin/organizations/{id}",
+            pages::json_organizations::admin_update,
+        )
+        .with_get("/api/v0/organizations", pages::json_organizations::list)
+        .with_get(
+            "/api/v0/organizations/{id}",
+            pages::json_organizations::detail,
+        )
+        .with_post(
+            "/api/v0/organizations/{id}/dots",
+            pages::json_organizations::create_dot,
+        )
+        .with_post(
+            "/api/v0/organizations/{id}/dots/{dot}/active",
+            pages::json_organizations::set_active,
+        )
+        .with_get("/api/v0/dots", pages::json_dots::list)
+        .with_post("/api/v0/dots", pages::json_dots::create)
+        .with_post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/claim",
+            pages::json_dot_browser::claim,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/frame",
+            pages::json_dot_browser::frame,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/input",
+            pages::json_dot_browser::input,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/finish",
+            pages::json_dot_browser::finish,
+        )
+        .with_post(
+            "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/abort",
+            pages::json_dot_browser::abort,
+        )
+        .with_get(
+            "/api/v0/dots/{id}/workspace",
+            pages::json_dot_workspace::list,
+        )
+        .with_get(
+            "/api/v0/dots/{id}/workspace/file",
+            pages::json_dot_workspace::file_get,
+        )
+        .with_put(
+            "/api/v0/dots/{id}/workspace/file",
+            pages::json_dot_workspace::file_put,
+        )
+        .with_post(
+            "/api/v0/dots/{id}/workspace/folder",
+            pages::json_dot_workspace::folder_create,
+        )
+        .with_delete(
+            "/api/v0/dots/{id}/workspace/entry",
+            pages::json_dot_workspace::entry_delete,
+        )
+        .with_get("/api/v0/dots/{id}/access", pages::json_dots::access_get)
+        .with_put("/api/v0/dots/{id}/access", pages::json_dots::access_put)
+        .with_get(
+            "/api/v0/dots/{id}/connections",
+            pages::json_dots::connections_get,
+        )
+        .with_put(
+            "/api/v0/dots/{id}/connections/{key}",
+            pages::json_dots::connections_put,
+        )
+        .with_delete(
+            "/api/v0/dots/{id}/connections/{key}",
+            pages::json_dots::connections_delete,
+        )
+        .with_post(
+            "/api/v0/dots/{id}/connections/{key}/connect",
+            pages::json_dots::connections_connect,
+        )
+        .with_get(
+            "/api/v0/dots/{id}/communication",
+            pages::json_dots::communication_get,
+        )
+        .with_put(
+            "/api/v0/dots/{id}/communication",
+            pages::json_dots::communication_put,
+        )
+        .with_put("/api/v0/dots/{id}/active", pages::json_dots::set_active)
+        .with_post(
+            "/api/v0/dots/{id}/sessions",
+            pages::json_dots::create_session,
+        )
+        .with_get(
+            "/api/v0/dots/{id}/memories",
+            pages::json_dots::memories_list,
+        )
+        .with_post(
+            "/api/v0/dots/{id}/memories",
+            pages::json_dots::memories_create,
+        )
+        .with_put(
+            "/api/v0/dots/{id}/memories/{memory_id}",
+            pages::json_dots::memories_update,
+        )
+        .with_delete(
+            "/api/v0/dots/{id}/memories/{memory_id}",
+            pages::json_dots::memories_delete,
+        )
+        .with_get("/api/v0/dots/{id}/activity", pages::json_dots::activity)
         .with_get("/api/v0/agents/{id}", pages::json_agents::detail)
         .with_delete("/api/v0/agents/{id}", pages::json_agents::delete)
         .with_put(
@@ -306,6 +429,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         .with_get(
             "/api/v0/agents/{id}/test/{session}/events",
             pages::json_agent_test::events,
+        )
+        .with_post(
+            "/api/v0/agents/{id}/test/{session}/cancel",
+            pages::json_agent_test::cancel_turn,
         )
         .with_get(
             "/api/v0/agents/{id}/test/{session}/turns/{turn}/debug",
@@ -365,6 +492,14 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         )
         .with_post("/api/v0/agents/{id}/live", pages::json_agents::set_live)
         .with_get("/api/v0/agents/{id}/shares", pages::json_agents::shares)
+        .with_get(
+            "/api/v0/agents/{id}/communication",
+            pages::json_agents::organization_communication_get,
+        )
+        .with_put(
+            "/api/v0/agents/{id}/communication",
+            pages::json_agents::organization_communication_put,
+        )
         .with_post("/api/v0/agents/{id}/shares", pages::json_agents::share)
         .with_post(
             "/api/v0/agents/{id}/shares/revoke",
@@ -521,6 +656,7 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         // Workspace JSON API for the SPA: skills, connectors, integrations.
         .with_get("/api/v0/skills", pages::json_skills::skills_list)
         .with_post("/api/v0/skills", pages::json_skills::skills_upload)
+        .with_post("/api/v0/skills/draft", pages::json_skills::skills_draft)
         .with_get("/api/v0/skills/{name}/body", pages::json_skills::skill_body)
         .with_get(
             "/api/v0/skills/{name}/archive",

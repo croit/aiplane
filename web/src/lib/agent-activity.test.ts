@@ -124,3 +124,17 @@ test('a long message is clipped and a kind without a line has none', () => {
 	assert.equal(summarize(event({ kind: 'grant_added' })), null);
 	assert.equal(summarize(event({ kind: 'turn_started', detail: { resumed: true } }))?.key, 'agents-act-sum-resumed');
 });
+
+test('a personal Dot chat start has a localized activity summary', () => {
+	assert.deepEqual(summarize(event({ kind: 'personal_dot_session_started' })), {
+		key: 'dot-activity-session-started',
+		args: {}
+	});
+});
+
+test('a Dot communication permission change has a neutral localized summary without metadata labels', () => {
+	assert.deepEqual(summarize(event({
+		kind: 'personal_dot_delegation_changed',
+		detail: { caller_dot_id: 'harald-id', receiver_dot_id: 'clara-id', outbound_enabled: true, inbound_enabled: false }
+	})), { key: 'dot-activity-communication-changed', args: {} });
+});

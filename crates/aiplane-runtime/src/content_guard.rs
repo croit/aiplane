@@ -98,6 +98,43 @@ pub async fn evaluate_for_model(
     evaluate(state, request, compliance).await
 }
 
+pub(crate) async fn evaluate_for_turn(
+    state: &AppState,
+    request: &Value,
+    model: &str,
+    access: &PoolAccess,
+    context: &crate::server::tools::ToolContext,
+) -> Result<Action, String> {
+    let Some(compliance) = state
+        .upstreams
+        .models_with_compliance_for_kind_for(PoolKind::Chat, access)
+        .into_iter()
+        .find_map(|(id, compliance)| (id == model).then_some(compliance))
+    else {
+        return Ok(Action::Allow);
+    };
+    let guard = &state.config().content_guard;
+    if guard.enabled && !compliance.is_all_clear() {
+        let authority = context
+            .agent
+            .clone()
+            .map(crate::server::model_route::ModelAuthority::live);
+        if let Some(authority) = &authority {
+            authority.check_turn(
+                context.session_id.as_deref(),
+                context.assistant_turn_id.as_deref(),
+            )?;
+        }
+        crate::server::model_route::validate_model_authority(
+            state,
+            &context.principal,
+            authority.as_ref(),
+        )
+        .await?;
+    }
+    evaluate(state, request, compliance).await
+}
+
 async fn evaluate_checked(
     state: &AppState,
     request: &Value,
@@ -221,6 +258,126 @@ fn action_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn organization_compliance_preserves_operator_model_and_refuses_revoked_scope_in_monitor()
+    {
+        use crate::agent_run::Actor;
+        use crate::server::headless::tests::{organization_draft_fixture, state_for};
+        use aiplane_core::server::upstreams::{
+            BackendConfig, UpstreamPoolConfig, UpstreamRegistry,
+        };
+        use std::collections::HashMap;
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/systemone"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "answers":{"gdpr":{"type":"noul","noul":0.0}}
+            })))
+            .mount(&upstream)
+            .await;
+        let original = state_for(&upstream.uri()).await;
+        let (profile, params) = organization_draft_fixture(&original).await;
+        let pools: HashMap<_, _> = [
+            ("chat", PoolKind::Chat, params.model.as_str()),
+            ("guard", PoolKind::SystemOne, "operator-guard"),
+        ]
+        .into_iter()
+        .map(|(name, kind, model)| {
+            (
+                name.to_owned(),
+                UpstreamPoolConfig {
+                    kind,
+                    strategy: Default::default(),
+                    fallback_offline: None,
+                    models: Vec::new(),
+                    compliance: Compliance {
+                        gdpr: name != "chat",
+                        nda: true,
+                    },
+                    enforce_limits: true,
+                    voices: Default::default(),
+                    offer_voices: Vec::new(),
+                    allowed_groups: Vec::new(),
+                    backend: vec![BackendConfig {
+                        priority: Default::default(),
+                        name: name.into(),
+                        base_url: upstream.uri(),
+                        models: vec![model.to_owned()],
+                        api_key_env: None,
+                        api_key: None,
+                        weight: 1,
+                        max_inflight: 8,
+                        health_path: "/models".into(),
+                        alias: None,
+                        enabled: true,
+                        supports_edit: false,
+                    }],
+                },
+            )
+        })
+        .collect();
+        let mut config = (*original.config()).clone();
+        config.content_guard.enabled = true;
+        config.content_guard.model = "operator-guard".into();
+        config.content_guard.mode = ContentGuardMode::Monitor;
+        let state = crate::server::AppState::new(
+            config,
+            original.db.clone(),
+            UpstreamRegistry::new(&pools).unwrap(),
+            original.tools(),
+            original.rbac.clone(),
+        );
+        let Actor::Agent(run) = &params.actor else {
+            panic!("agent expected")
+        };
+        let context = crate::server::tools::ToolContext {
+            principal: run.principal(),
+            agent: Some(run.clone()),
+            session_id: Some(params.session_id),
+            assistant_turn_id: Some(params.assistant_turn_id),
+            ..crate::server::tools::ToolContext::for_test(state.db.clone())
+        };
+        let access = PoolAccess::for_system_models(&profile.principal, [&*params.model]);
+        assert!(!profile.principal.grants.has(
+            aiplane_core::server::principal::GrantKind::Model,
+            "operator-guard"
+        ));
+        assert_eq!(
+            evaluate_for_turn(
+                &state,
+                &json!({"messages":[]}),
+                &params.model,
+                &access,
+                &context
+            )
+            .await
+            .unwrap(),
+            Action::Allow
+        );
+        assert_eq!(upstream.received_requests().await.unwrap().len(), 1);
+        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+            .bind(&profile.principal.id)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        assert!(
+            evaluate_for_turn(
+                &state,
+                &json!({"messages":[]}),
+                &params.model,
+                &access,
+                &context
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(upstream.received_requests().await.unwrap().len(), 1);
+    }
 
     #[test]
     fn monitor_never_changes_dispatch() {

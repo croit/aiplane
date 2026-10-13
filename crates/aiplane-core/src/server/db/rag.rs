@@ -348,8 +348,19 @@ pub async fn create_collection(pool: &Pool, new: &NewCollection) -> Result<Colle
 }
 
 pub async fn list_collections(pool: &Pool) -> Result<Vec<Collection>, DbError> {
+    list_collections_with(pool).await
+}
+
+pub async fn list_collections_in(tx: &mut super::WriteTx) -> Result<Vec<Collection>, DbError> {
+    list_collections_with(&mut **tx).await
+}
+
+async fn list_collections_with<'e, E>(executor: E) -> Result<Vec<Collection>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let q = format!("SELECT {COLLECTION_COLUMNS} FROM rag_collections ORDER BY created_at DESC");
-    let rows = sqlx::query(&q).fetch_all(pool).await?;
+    let rows = sqlx::query(&q).fetch_all(executor).await?;
     rows.iter().map(map_collection_row).collect()
 }
 
@@ -362,8 +373,25 @@ pub async fn all_collection_ids(pool: &Pool) -> Result<Vec<i64>, DbError> {
 }
 
 pub async fn find_collection_by_id(pool: &Pool, id: i64) -> Result<Option<Collection>, DbError> {
+    find_collection_by_id_with(pool, id).await
+}
+
+pub async fn find_collection_by_id_in(
+    tx: &mut super::WriteTx,
+    id: i64,
+) -> Result<Option<Collection>, DbError> {
+    find_collection_by_id_with(&mut **tx, id).await
+}
+
+async fn find_collection_by_id_with<'e, E>(
+    executor: E,
+    id: i64,
+) -> Result<Option<Collection>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let q = format!("SELECT {COLLECTION_COLUMNS} FROM rag_collections WHERE id = ?");
-    let row = sqlx::query(&q).bind(id).fetch_optional(pool).await?;
+    let row = sqlx::query(&q).bind(id).fetch_optional(executor).await?;
     row.as_ref().map(map_collection_row).transpose()
 }
 
@@ -1903,6 +1931,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transactional_collection_read_observes_current_access_groups_and_rollback() {
+        let pool = fresh().await;
+        let original = create_collection(&pool, &sample_new()).await.unwrap();
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        sqlx::query(r#"UPDATE rag_collections SET allowed_groups='["current-group"]' WHERE id=?"#)
+            .bind(original.id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let current = find_collection_by_id_in(&mut tx, original.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.allowed_groups, ["current-group"]);
+        assert!(
+            find_collection_by_id_in(&mut tx, original.id + 1)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        drop(tx);
+        assert_eq!(
+            find_collection_by_id(&pool, original.id)
+                .await
+                .unwrap()
+                .unwrap(),
+            original
+        );
+    }
+
+    #[tokio::test]
     async fn create_and_round_trip_collection() {
         let pool = fresh().await;
         let c = create_collection(&pool, &sample_new()).await.unwrap();
@@ -2973,5 +3032,20 @@ mod tests {
             ..base.clone()
         };
         assert!(!index_shape_changed(&base, &renamed));
+    }
+    #[tokio::test]
+    async fn transactional_collection_inventory_observes_current_name_acl_and_rollback() {
+        let pool = fresh().await;
+        let original = create_collection(&pool, &sample_new()).await.unwrap();
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        sqlx::query(r#"UPDATE rag_collections SET name='Current collection',allowed_groups='["current-group"]' WHERE id=?"#)
+            .bind(original.id).execute(&mut *tx).await.unwrap();
+        let rows = list_collections_in(&mut tx).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, original.id);
+        assert_eq!(rows[0].name, "Current collection");
+        assert_eq!(rows[0].allowed_groups, ["current-group"]);
+        drop(tx);
+        assert_eq!(list_collections(&pool).await.unwrap(), vec![original]);
     }
 }

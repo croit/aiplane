@@ -27,7 +27,7 @@ use jiff::Timestamp;
 
 use crate::rama_server::state::RamaState;
 use aiplane_core::server::db::DbError;
-use aiplane_core::server::db::user_mcp;
+use aiplane_core::server::db::mcp_connections::{self, ConnectionOwner};
 
 /// How often the maintenance pass runs.
 const POLL_INTERVAL: Duration = Duration::from_secs(30 * 60);
@@ -56,7 +56,7 @@ pub fn spawn(state: Arc<RamaState>) {
 /// One pass: sweep stale pending authorizations, then proactively refresh
 /// every connection due for it.
 async fn drain_once(state: &Arc<RamaState>) -> Result<(), DbError> {
-    if let Ok(swept) = user_mcp::sweep_expired_pending(&state.db).await
+    if let Ok(swept) = mcp_connections::sweep_expired_pending(&state.db).await
         && swept > 0
     {
         tracing::debug!(swept, "swept expired pending MCP authorizations");
@@ -66,7 +66,8 @@ async fn drain_once(state: &Arc<RamaState>) -> Result<(), DbError> {
     let expiring_before = now + jiff::Span::new().seconds(REFRESH_WINDOW_SECS);
     let stale_before = now - jiff::Span::new().seconds(KEEPALIVE_SECS);
     let due =
-        user_mcp::connections_due_for_refresh(&state.db, expiring_before, stale_before).await?;
+        mcp_connections::connections_due_for_refresh(&state.db, expiring_before, stale_before)
+            .await?;
     if due.is_empty() {
         return Ok(());
     }
@@ -74,19 +75,21 @@ async fn drain_once(state: &Arc<RamaState>) -> Result<(), DbError> {
     for conn in due {
         if let Err(err) = state
             .mcp
-            .refresh_connection(&conn.user_id, &conn.connector_key)
+            .refresh_connection(&conn.owner, &conn.connector_key)
             .await
         {
             tracing::warn!(
-                user = %conn.user_id, connector = %conn.connector_key,
+                owner = ?conn.owner, connector = %conn.connector_key,
                 error = %err, needs_reauth = err.needs_reauth,
                 "proactive MCP token refresh failed — connection marked needs-reconnect"
             );
             // A dead credential is the user's to fix and they'd otherwise find
             // out mid-conversation, when a tool call quietly goes missing. A
             // transient failure gets no ping — the next pass may well fix it.
-            if err.needs_reauth {
-                notify_needs_reconnect(state, &conn.user_id, &conn.connector_key).await;
+            if err.needs_reauth
+                && let ConnectionOwner::User(user_id) = &conn.owner
+            {
+                notify_needs_reconnect(state, user_id, &conn.connector_key).await;
             }
         }
     }

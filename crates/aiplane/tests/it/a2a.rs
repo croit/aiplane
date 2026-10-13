@@ -483,6 +483,39 @@ async fn granting_a2a_caller_needs_a_write_share_on_the_agent() {
             .await,
         StatusCode::NOT_FOUND
     );
+    assert_eq!(
+        a.fx.share(&a.fx.alice, &a.agent, "user", "bob", "read")
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        a.fx.grant(&a.fx.bob, &bot, "a2a_caller", &a.agent).await,
+        StatusCode::FORBIDDEN
+    );
+    assert!(
+        !aiplane_agents::db::system_principals::grants(&a.fx.state.db, &bot)
+            .await
+            .unwrap()
+            .iter()
+            .any(|grant| grant.kind == aiplane_core::server::principal::GrantKind::A2aCaller)
+    );
+    let (status, organization) = a.fx.post(&a.fx.root, "/api/v0/admin/organizations", json!({"name":"Private A2A guard organization","description":"A2A authorization fixture","member_groups":["admins"]})).await;
+    assert_eq!(status, StatusCode::CREATED, "{organization}");
+    let organization_id = organization["organization"]["id"].as_str().unwrap();
+    let (status, org_dot) =
+        a.fx.post(
+            &a.fx.root,
+            &format!("/api/v0/organizations/{organization_id}/dots"),
+            json!({"name":"Private A2A guard Dot"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{org_dot}");
+    let org_dot_id = org_dot["agent"]["id"].as_str().unwrap();
+    assert_eq!(
+        a.fx.grant(&a.fx.bob, &bot, "a2a_caller", org_dot_id).await,
+        StatusCode::NOT_FOUND
+    );
     let (status, _) =
         a.fx.share(&a.fx.alice, &a.agent, "user", "bob", "write")
             .await;

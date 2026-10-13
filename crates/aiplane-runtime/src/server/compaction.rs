@@ -39,6 +39,27 @@ use aiplane_core::server::upstreams::{PoolAccess, PoolKind};
 /// background task alive indefinitely.
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+pub(crate) async fn wait_for_completed_turn(
+    state: &RamaState,
+    session_id: &str,
+    turn_id: &str,
+    mut updates: tokio::sync::broadcast::Receiver<session_core::workers::TurnUpdate>,
+) -> bool {
+    let completed = tokio::time::timeout(TIMEOUT, async {
+        loop {
+            match updates.recv().await {
+                Ok(session_core::workers::TurnUpdate::Finalized) => break,
+                Ok(session_core::workers::TurnUpdate::Released) | Err(_) => return false,
+                Ok(_) => {}
+            }
+        }
+        matches!(chat::get_turn(&state.db, session_id, turn_id).await,
+            Ok(Some(turn)) if turn.status == TurnStatus::Completed)
+    })
+    .await;
+    completed.unwrap_or(false)
+}
+
 /// Per-tool-call truncation caps in the summariser input. Tool arguments and
 /// outputs can be large (a fetched page, a document); we hand the summariser a
 /// bounded slice — enough to know what happened, not the whole payload it's
@@ -228,16 +249,36 @@ async fn run_compaction(
     // Rough token estimate for bookkeeping only (~4 chars/token); never
     // load-bearing.
     let tokens_after = Some((summary.chars().count() / 4) as i64);
-    chat_compactions::upsert(
-        &state.db,
-        session_id,
-        plan.new_up_to_seq,
-        &summary,
-        tokens_before,
-        tokens_after,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    if payer.is_organization_compaction() {
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .map_err(|error| error.to_string())?;
+        payer
+            .compaction_access_in(state, &mut tx, access, model)
+            .await?;
+        chat_compactions::upsert(
+            &mut *tx,
+            session_id,
+            plan.new_up_to_seq,
+            &summary,
+            tokens_before,
+            tokens_after,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        tx.commit().await.map_err(|error| error.to_string())?;
+    } else {
+        chat_compactions::upsert(
+            &state.db,
+            session_id,
+            plan.new_up_to_seq,
+            &summary,
+            tokens_before,
+            tokens_after,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    }
     tracing::info!(
         %session_id,
         up_to_seq = plan.new_up_to_seq,
@@ -383,6 +424,43 @@ mod tests {
     use super::*;
     use jiff::Timestamp;
     use session_core::db::{Turn, TurnRole, TurnStatus};
+
+    #[tokio::test]
+    async fn organization_compaction_waits_for_actual_completed_row_and_skips_suspended() {
+        use crate::server::headless::tests::{organization_draft_fixture, state_for};
+        for status in [
+            TurnStatus::Completed,
+            TurnStatus::Suspended,
+            TurnStatus::Cancelled,
+            TurnStatus::Errored,
+        ] {
+            let upstream = wiremock::MockServer::start().await;
+            let state = state_for(&upstream.uri()).await;
+            let (_, params) = organization_draft_fixture(&state).await;
+            let (events, receiver) = tokio::sync::broadcast::channel(4);
+            let observed_state = state.clone();
+            let session = params.session_id.clone();
+            let turn = params.assistant_turn_id.clone();
+            let waiter = tokio::spawn(async move {
+                wait_for_completed_turn(&observed_state, &session, &turn, receiver).await
+            });
+            assert!(!waiter.is_finished());
+            chat::finalize_turn(&state.db, &params.assistant_turn_id, status, None)
+                .await
+                .unwrap();
+            events
+                .send(session_core::workers::TurnUpdate::Finalized)
+                .unwrap();
+            assert_eq!(
+                tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                status == TurnStatus::Completed
+            );
+            assert!(upstream.received_requests().await.unwrap().is_empty());
+        }
+    }
 
     fn cfg() -> CompactionConfig {
         CompactionConfig {
@@ -548,5 +626,117 @@ mod tests {
             clean_summary("<think>pondering</think>\n\nThe summary."),
             "The summary."
         );
+    }
+    #[tokio::test]
+    async fn organization_compaction_revoked_during_summary_http_never_persists_summary() {
+        use crate::agent_run::Actor;
+        use crate::server::headless::tests::{organization_draft_fixture, state_for};
+        use std::sync::Arc;
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        for revoke_model in [false, true] {
+            let provider = MockServer::start().await;
+            let reached = Arc::new(tokio::sync::Notify::new());
+            let checkpoint = reached.clone();
+            Mock::given(method("POST")).and(path("/chat/completions"))
+        .respond_with(move |_: &wiremock::Request| {
+            checkpoint.notify_one();
+            ResponseTemplate::new(200).set_delay(std::time::Duration::from_millis(300))
+                .set_body_json(serde_json::json!({"choices":[{"message":{"content":"Actual summary"}}]}))
+        }).mount(&provider).await;
+            let state = state_for(&provider.uri()).await;
+            let (profile, params) = organization_draft_fixture(&state).await;
+            chat::finalize_turn(
+                &state.db,
+                &params.assistant_turn_id,
+                TurnStatus::Completed,
+                None,
+            )
+            .await
+            .unwrap();
+            sqlx::query("UPDATE chat_turns SET content='Completed organization answer' WHERE id=?")
+                .bind(&params.assistant_turn_id)
+                .execute(&state.db)
+                .await
+                .unwrap();
+            for index in 0..4 {
+                chat::create_user_turn(
+                    &state.db,
+                    &params.session_id,
+                    &format!("compaction-user-{index}"),
+                    "Actual retained organization task",
+                )
+                .await
+                .unwrap();
+            }
+            aiplane_core::server::settings::store(
+                &state.db,
+                &state.crypto,
+                &[
+                    ("chat.compaction.keep_recent_turns".into(), "2".into()),
+                    ("chat.compaction.min_turns_to_compact".into(), "2".into()),
+                ],
+            )
+            .await
+            .unwrap();
+            state.reload_settings().await;
+            let Actor::Agent(run) = params.actor else {
+                panic!("agent expected")
+            };
+            let access = PoolAccess::for_system_models(&profile.principal, [&*params.model]);
+            let payer = Payer::agent(&profile.principal, Some(run.chain().clone()))
+                .for_compaction(run, params.model.clone());
+            let observed_state = state.clone();
+            let session = params.session_id.clone();
+            let model = params.model.clone();
+            let worker = tokio::spawn(async move {
+                run_compaction(
+                    &observed_state,
+                    &session,
+                    &model,
+                    &access,
+                    &payer,
+                    None,
+                    None,
+                )
+                .await
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(3), reached.notified())
+                .await
+                .unwrap();
+            if revoke_model {
+                aiplane_agents::db::system_principals::remove_grant(
+                    &state.db,
+                    &profile.principal.id,
+                    aiplane_core::server::principal::GrantKind::Model,
+                    &params.model,
+                    "creator",
+                )
+                .await
+                .unwrap();
+            } else {
+                sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+                    .bind(&profile.principal.id)
+                    .execute(&state.db)
+                    .await
+                    .unwrap();
+            }
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_secs(5), worker)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .is_err()
+            );
+            assert!(
+                chat_compactions::get(&state.db, &params.session_id)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(provider.received_requests().await.unwrap().len(), 1);
+        }
     }
 }

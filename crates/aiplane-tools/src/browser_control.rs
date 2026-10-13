@@ -47,7 +47,8 @@ use shared::api::ToolDef;
 
 use aiplane_runtime::server::tools::feedback::BrowserReply;
 use aiplane_runtime::server::tools::{
-    ChatFeedback, Tool, ToolContext, ToolError, ToolFuture, tool_content_parts,
+    ChatFeedback, Tool, ToolAction, ToolActionFuture, ToolContext, ToolError, ToolFuture,
+    tool_content_parts,
 };
 use session_core::workers::{BrowserAction, BrowserRequest, TurnUpdate};
 
@@ -104,9 +105,85 @@ struct Args {
     actions: Vec<Value>,
 }
 
+const ACTION_CATALOGUE: [ToolAction; 14] = [
+    ToolAction {
+        id: "navigate",
+        description: "Open an absolute HTTP or HTTPS URL.",
+    },
+    ToolAction {
+        id: "go_back",
+        description: "Go back one page.",
+    },
+    ToolAction {
+        id: "read_page",
+        description: "Read a page snapshot with a ref for each interactive element; max_chars is optional.",
+    },
+    ToolAction {
+        id: "find",
+        description: "Find text on the page.",
+    },
+    ToolAction {
+        id: "click",
+        description: "Click a ref with optional button and click_count.",
+    },
+    ToolAction {
+        id: "hover",
+        description: "Hover over a ref.",
+    },
+    ToolAction {
+        id: "drag",
+        description: "Drag from one ref to another.",
+    },
+    ToolAction {
+        id: "type_text",
+        description: "Type text into a ref with optional replace and submit.",
+    },
+    ToolAction {
+        id: "press_key",
+        description: "Press a key with optional modifiers.",
+    },
+    ToolAction {
+        id: "scroll",
+        description: "Scroll the viewport or bring an optional ref into view.",
+    },
+    ToolAction {
+        id: "screenshot",
+        description: "Capture the viewport, full_page, ref, or region; use show_screenshot to show the user.",
+    },
+    ToolAction {
+        id: "set_viewport",
+        description: "Set width and height with optional mobile emulation.",
+    },
+    ToolAction {
+        id: "wait_for",
+        description: "Wait for optional text with optional timeout_ms.",
+    },
+    ToolAction {
+        id: "list_tabs",
+        description: "List available browser tabs.",
+    },
+];
+
 impl Tool for BrowserControl {
     fn id(&self) -> &str {
         "browser_control"
+    }
+
+    fn action_catalogue(&self) -> Option<&'static [ToolAction]> {
+        Some(&ACTION_CATALOGUE)
+    }
+
+    fn classify_actions<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolActionFuture<'a> {
+        Box::pin(async move {
+            ctx.person(self.id())?;
+            let actions = parse_batch(args)?;
+            Ok(Some(
+                actions
+                    .iter()
+                    .map(|action| action.name().to_string())
+                    .collect(),
+            ))
+        })
     }
 
     fn max_duration(&self) -> Option<std::time::Duration> {
@@ -160,30 +237,8 @@ impl Tool for BrowserControl {
                             "properties": {
                                 "action": {
                                     "type": "string",
-                                    "enum": [
-                                        "navigate", "go_back", "read_page", "find", "click",
-                                        "hover", "drag", "type_text", "press_key", "scroll",
-                                        "screenshot", "set_viewport", "wait_for", "list_tabs"
-                                    ],
-                                    "description": "navigate {url} / go_back. read_page \
-                                                    {max_chars?}: snapshot with a `ref` per \
-                                                    interactive element. find {text}. \
-                                                    click {ref, button?, click_count?}: a real \
-                                                    mouse click. hover {ref}: for menus that \
-                                                    open on hover. drag {from, to}. \
-                                                    type_text {ref, text, replace?, submit?}: \
-                                                    real keystrokes. press_key {key, \
-                                                    modifiers?}: Enter, Escape, Tab, a … \
-                                                    scroll {direction?, ref?}: a viewport, or \
-                                                    bring an element into view. screenshot \
-                                                    {full_page? | ref? | region?}: the \
-                                                    viewport, the whole page, one element, or \
-                                                    a rectangle — only you see it; use \
-                                                    `show_screenshot` to show the user. \
-                                                    set_viewport {width, \
-                                                    height, mobile?}: resize, or emulate a \
-                                                    phone. wait_for {text?, timeout_ms?}: \
-                                                    wait for the page to catch up. list_tabs."
+                                    "enum": ACTION_CATALOGUE.map(|action| action.id),
+                                    "description": ACTION_CATALOGUE.iter().map(|action| format!("{}: {}",action.id,action.description)).collect::<Vec<_>>().join(" ")
                                 },
                                 "url": { "type": "string", "description": "For `navigate`. Absolute http(s) URL." },
                                 "ref": {
@@ -235,10 +290,7 @@ impl Tool for BrowserControl {
     fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         Box::pin(async move {
             ctx.person(self.id())?;
-            let args: Args = serde_json::from_value(args).map_err(|e| {
-                ToolError::InvalidArgs(format!("expected {{actions: [{{action, …}}]}}: {e}"))
-            })?;
-            let actions = parse_actions(args.actions)?;
+            let actions = parse_batch(args)?;
 
             // Chat path only: off it there is no page to relay through and no
             // extension to relay to.
@@ -430,6 +482,13 @@ pub(crate) async fn audit(
 /// a batch of thirty steps. The extension refuses these too (it must — it does
 /// not trust us), but a model that learns the shape here gets a useful error
 /// instead of a silent refusal three hops away.
+fn parse_batch(args: Value) -> Result<Vec<BrowserAction>, ToolError> {
+    let args: Args = serde_json::from_value(args).map_err(|e| {
+        ToolError::InvalidArgs(format!("expected {{actions: [{{action, …}}]}}: {e}"))
+    })?;
+    parse_actions(args.actions)
+}
+
 fn parse_actions(raw: Vec<Value>) -> Result<Vec<BrowserAction>, ToolError> {
     if raw.is_empty() {
         return Err(ToolError::InvalidArgs("`actions` must not be empty".into()));
@@ -663,6 +722,199 @@ mod tests {
             ..ChatFeedback::for_test(broadcast)
         });
         (ctx, browser_hub, rx)
+    }
+
+    fn permissions(actions: Value) -> aiplane_runtime::agents::approval::Permissions {
+        let spec = aiplane_runtime::agents::spec::AgentSpec::from_value(&json!({
+            "main": {"tools": ["browser_control"], "tool_resources": {
+                "browser_control": {"permission": "always_allow", "actions": actions}
+            }}
+        }))
+        .unwrap();
+        aiplane_runtime::agents::approval::Permissions::from_spec(&spec)
+    }
+
+    #[tokio::test]
+    async fn action_catalogue_schema_and_validated_batch_share_all_fourteen_ids() {
+        let samples = [
+            json!({"action":"navigate","url":"https://example.com"}),
+            json!({"action":"go_back"}),
+            json!({"action":"read_page"}),
+            json!({"action":"find","text":"Account"}),
+            json!({"action":"click","ref":"e1"}),
+            json!({"action":"hover","ref":"e1"}),
+            json!({"action":"drag","from":"e1","to":"e2"}),
+            json!({"action":"type_text","ref":"e1","text":"Hello"}),
+            json!({"action":"press_key","key":"Enter"}),
+            json!({"action":"scroll"}),
+            json!({"action":"screenshot"}),
+            json!({"action":"set_viewport","width":390,"height":844}),
+            json!({"action":"wait_for"}),
+            json!({"action":"list_tabs"}),
+        ];
+        let ctx = ctx_off_chat().await;
+        let catalogue = BrowserControl
+            .action_catalogue()
+            .expect("declared batch actions");
+        let ids: Vec<_> = catalogue.iter().map(|entry| entry.id).collect();
+        assert_eq!(ids.len(), 14);
+        assert!(catalogue.iter().all(|entry| !entry.description.is_empty()));
+        let schema = BrowserControl.schema();
+        assert_eq!(
+            schema.function.parameters["properties"]["actions"]["items"]["properties"]["action"]["enum"],
+            json!(ids)
+        );
+        for (sample, id) in samples.iter().zip(ids) {
+            let parsed = parse_action(sample.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&parsed).unwrap()["action"], json!(id));
+            assert_eq!(
+                BrowserControl
+                    .classify_actions(ctx.clone(), json!({"actions":[sample]}))
+                    .await
+                    .unwrap(),
+                Some(vec![id.to_string()])
+            );
+        }
+        let repeated = json!({"actions":[samples[2],samples[4],samples[2]]});
+        assert_eq!(
+            BrowserControl
+                .classify_actions(ctx, repeated)
+                .await
+                .unwrap(),
+            Some(vec!["read_page".into(), "click".into(), "read_page".into()])
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_action_denial_and_invalid_later_step_emit_no_browser_prefix() {
+        use aiplane_runtime::suspend::{Suspend, extract_suspend};
+        let (mut ctx, _hub, mut rx) = ctx_on_chat().await;
+        ctx.suspend = Suspend::Available;
+        for first_rule in ["allow", "ask"] {
+            let policy = permissions(json!({"read_page":first_rule,"click":"deny"}));
+            let result = policy
+                .gate(std::sync::Arc::new(BrowserControl))
+                .run(
+                    ctx.clone(),
+                    json!({"actions":[{"action":"read_page"},{"action":"click","ref":"e1"}]}),
+                )
+                .await;
+            assert!(result.is_err());
+            assert!(matches!(
+                rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ));
+        }
+        let policy = permissions(json!({"read_page":"allow","click":"ask"}));
+        for batch in [
+            json!({"actions":[{"action":"read_page"},{"action":"click"}]}),
+            json!({"actions":[]}),
+            json!({"actions":vec![json!({"action":"read_page"});MAX_ACTIONS+1]}),
+            json!({"actions":[{"action":"read_page"},{"action":"navigate","url":"javascript:alert(1)"}]}),
+        ] {
+            let error = policy
+                .gate(std::sync::Arc::new(BrowserControl))
+                .run(ctx.clone(), batch.clone())
+                .await
+                .unwrap_err();
+            assert!(matches!(error, ToolError::InvalidArgs(_)), "{error}");
+            assert!(
+                BrowserControl
+                    .classify_actions(ctx.clone(), batch)
+                    .await
+                    .is_err()
+            );
+            assert!(matches!(
+                rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ));
+        }
+        let valid = policy
+            .gate(std::sync::Arc::new(BrowserControl))
+            .run(
+                ctx.clone(),
+                json!({"actions":[{"action":"read_page"},{"action":"click","ref":"e1"}]}),
+            )
+            .await
+            .unwrap();
+        assert!(extract_suspend(&valid).is_some());
+        assert!(
+            aiplane_core::server::db::browser_audit::recent(&ctx.db, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_action_approval_covers_one_complete_request_and_rejects_changed_facts() {
+        use aiplane_runtime::server::tools::PendingActionFacts;
+        use aiplane_runtime::suspend::{Suspend, extract_suspend};
+        let (mut ctx, hub, mut rx) = ctx_on_chat().await;
+        ctx.suspend = Suspend::Available;
+        let policy = permissions(json!({"read_page":"allow","click":"ask"}));
+        let tool = policy.gate(std::sync::Arc::new(BrowserControl));
+        let batch = json!({"actions":[{"action":"read_page"},{"action":"click","ref":"e1"},{"action":"read_page"}]});
+        let paused = extract_suspend(&tool.run(ctx.clone(), batch.clone()).await.unwrap()).unwrap();
+        assert_eq!(
+            paused.actions,
+            Some(vec!["read_page".into(), "click".into(), "read_page".into()])
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+        ctx.suspend = Suspend::Decided(
+            session_core::db::SuspensionKind::Approval,
+            session_core::db::Decision::AllowOnce,
+        );
+        ctx.pending_actions = Some(PendingActionFacts {
+            actions: paused.actions,
+        });
+        assert!(tool.run(ctx.clone(),json!({"actions":[{"action":"click","ref":"e1"},{"action":"read_page"},{"action":"read_page"}]})).await.is_err());
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+        let db = ctx.db.clone();
+        let _stream = ctx.chat_feedback.as_ref().unwrap().broadcast.clone();
+        let approved = tokio::spawn(async move { tool.run(ctx, batch).await });
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let TurnUpdate::Browser(request) = event else {
+            panic!("expected one browser batch")
+        };
+        assert_eq!(
+            request
+                .actions
+                .iter()
+                .map(BrowserAction::name)
+                .collect::<Vec<_>>(),
+            ["read_page", "click", "read_page"]
+        );
+        assert!(hub.resolve(
+            &request.request_id,
+            BrowserReply::Done {
+                results: vec![json!({"ok":true}); 3]
+            }
+        ));
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), approved)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(result["results"].as_array().unwrap().len(), 3);
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+        let audit = aiplane_core::server::db::browser_audit::recent(&db, 10)
+            .await
+            .unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].actions, "read_page,click,read_page");
     }
 
     #[test]

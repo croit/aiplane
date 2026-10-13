@@ -54,9 +54,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// Answers each upstream round with the next scripted delta. Lives on the
 /// mock server, so it keeps counting across the simulated restart.
 pub(crate) struct Scripted {
-    deltas: Vec<Value>,
-    served: AtomicUsize,
-    delay: Duration,
+    pub(crate) deltas: Vec<Value>,
+    pub(crate) served: AtomicUsize,
+    pub(crate) delay: Duration,
 }
 
 impl wiremock::Respond for Scripted {
@@ -73,7 +73,7 @@ impl wiremock::Respond for Scripted {
     }
 }
 
-fn tool_call(name: &str, arguments: Value) -> Value {
+pub(crate) fn tool_call(name: &str, arguments: Value) -> Value {
     json!({"tool_calls": [{"index": 0, "id": "call-1", "type": "function",
         "function": {"name": name, "arguments": arguments.to_string()}}]})
 }
@@ -169,6 +169,395 @@ pub(crate) async fn boot_with(
 }
 
 const AN_HOUR: Duration = Duration::from_secs(3600);
+
+#[derive(Clone, Copy)]
+enum DotResumeCase {
+    ApproveAfterRestart,
+    Deny,
+    SelectionRevoked,
+    UserToolDisabled,
+}
+
+async fn dot_memory_approval(case: DotResumeCase) {
+    use aiplane_agents::db::{agents, dot_memories, dot_sessions, system_principals};
+    use aiplane_tools::memory::Remember;
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("dots.db");
+    let server = upstream_calling(
+        tool_call(
+            "remember",
+            json!({"content": "Private approved lesson", "kind": "fact"}),
+        ),
+        "Done.",
+        Duration::ZERO,
+    )
+    .await;
+    let mut state = boot_with(
+        &db_path,
+        &server.uri(),
+        ToolRegistry::new().with(Remember),
+        &["remember"],
+    )
+    .await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let (_, dot) = agents::create_personal_dot(
+        &state.db,
+        &system_principals::NewPrincipal { name: "approval-dot", display: "Approval Dot", description: "" },
+        r#"{"main":{"tools":["remember"],"tool_resources":{"remember":{"permission":"always_ask"}}}}"#,
+        "alice", 4,
+    ).await.unwrap();
+    let dot_id = dot.unwrap().principal.id;
+    let session_id = conversation(&state).await;
+    assert!(
+        dot_sessions::link(&state.db, "alice", &dot_id, &session_id)
+            .await
+            .unwrap()
+    );
+    let turn_id = submit(&state, &cookie, &session_id).await;
+    let paused = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Suspended).await;
+    assert!(paused.suspension.is_some());
+    assert!(
+        dot_memories::list(
+            &state.db,
+            aiplane_agents::db::dot_memories::MemoryScope::Dot {
+                owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
+                dot_id: &dot_id
+            },
+            10
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .is_empty()
+    );
+    let app = router(state.clone());
+    let inbox = json_body(
+        app.serve(get("/api/v0/agents/inbox".into(), &cookie))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let item = inbox["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["turn_id"] == turn_id)
+        .unwrap();
+    assert_eq!(item["call"]["name"], "remember");
+    let request_id = item["id"].as_str().unwrap().to_string();
+    let bob = common::seed_session(&state, "bob", "bob@example.com").await;
+    let other_inbox = json_body(
+        app.serve(get("/api/v0/agents/inbox".into(), &bob))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(other_inbox["items"].as_array().unwrap().is_empty());
+    match case {
+        DotResumeCase::ApproveAfterRestart => {
+            state = boot_with(
+                &db_path,
+                &server.uri(),
+                ToolRegistry::new().with(Remember),
+                &["remember"],
+            )
+            .await;
+        }
+        DotResumeCase::SelectionRevoked => {
+            agents::update_draft(
+                &state.db,
+                &dot_id,
+                r#"{"main":{"tools":[]}}"#,
+                "alice",
+                agents::DraftChange::default(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        }
+        DotResumeCase::UserToolDisabled => {
+            db::user_tool_prefs::set(&state.db, "alice", "memory", false)
+                .await
+                .unwrap();
+        }
+        DotResumeCase::Deny => {}
+    }
+    let decision = if matches!(case, DotResumeCase::Deny) {
+        "deny"
+    } else {
+        "allow_once"
+    };
+    let (status, body) = if matches!(case, DotResumeCase::ApproveAfterRestart) {
+        let response = router(state.clone())
+            .serve(post(
+                format!("/api/v0/agents/inbox/{request_id}/answer"),
+                &cookie,
+                json!({"decision": decision}),
+            ))
+            .await
+            .unwrap();
+        (response.status(), json_body(response).await)
+    } else {
+        resume(
+            &state,
+            &cookie,
+            &session_id,
+            &turn_id,
+            json!({"decision": decision}),
+        )
+        .await
+    };
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let done = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Completed).await;
+    let memories = dot_memories::list(
+        &state.db,
+        aiplane_agents::db::dot_memories::MemoryScope::Dot {
+            owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
+            dot_id: &dot_id,
+        },
+        10,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    if matches!(case, DotResumeCase::ApproveAfterRestart) {
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].content, "Private approved lesson");
+        assert_eq!(done.tool_calls[0].status, ToolCallStatus::Completed);
+    } else {
+        assert!(
+            memories.is_empty(),
+            "a denied or revoked call must not write"
+        );
+        assert_eq!(done.tool_calls[0].status, ToolCallStatus::Errored);
+    }
+    assert!(
+        db::user_memories::list_for_user(&state.db, "alice", 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn personal_dot_approval_survives_restart_and_writes_only_its_memory() {
+    dot_memory_approval(DotResumeCase::ApproveAfterRestart).await;
+}
+
+#[tokio::test]
+async fn personal_dot_denial_never_writes_memory() {
+    dot_memory_approval(DotResumeCase::Deny).await;
+}
+
+#[tokio::test]
+async fn personal_dot_resume_rechecks_its_selected_tools() {
+    dot_memory_approval(DotResumeCase::SelectionRevoked).await;
+}
+
+#[tokio::test]
+async fn personal_dot_resume_rechecks_the_users_enabled_tools() {
+    dot_memory_approval(DotResumeCase::UserToolDisabled).await;
+}
+
+#[tokio::test]
+async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only_receiver_memory() {
+    use aiplane_agents::db::{
+        agents, dot_delegation, dot_memories, dot_sessions, system_principals,
+    };
+    use aiplane_runtime::agents::router::ForwardRequest;
+    use aiplane_tools::memory::Remember;
+
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("delegation.db");
+    let server = MockServer::start().await;
+    let mut state = boot_with(
+        &db_path,
+        &server.uri(),
+        ToolRegistry::new()
+            .with(Remember)
+            .with(ForwardRequest::personal()),
+        &["remember", "forward_request"],
+    )
+    .await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let mut ids = Vec::new();
+    for (name, spec) in [
+        (
+            "Caller",
+            r#"{"main":{"tools":["forward_request"],"tool_resources":{"forward_request":{"permission":"always_allow"}}}}"#,
+        ),
+        (
+            "Receiver",
+            r#"{"main":{"tools":["remember"],"tool_resources":{"remember":{"permission":"always_ask"}}}}"#,
+        ),
+    ] {
+        let (_, dot) = agents::create_personal_dot(
+            &state.db,
+            &system_principals::NewPrincipal {
+                name,
+                display: name,
+                description: "",
+            },
+            spec,
+            "alice",
+            4,
+        )
+        .await
+        .unwrap();
+        ids.push(dot.unwrap().principal.id);
+    }
+    let saved = dot_delegation::set_consent(
+        &state.db,
+        dot_delegation::ConsentEdit {
+            owner_user_id: "alice",
+            dot_id: &ids[0],
+            peer_id: &ids[1],
+            direction: dot_delegation::ConsentDirection::Outbound,
+            enabled: true,
+            expected_generation: None,
+        },
+    )
+    .await
+    .unwrap();
+    let dot_delegation::ConsentSaved::Saved(edge) = saved else {
+        panic!("outbound consent saved");
+    };
+    assert!(matches!(
+        dot_delegation::set_consent(
+            &state.db,
+            dot_delegation::ConsentEdit {
+                owner_user_id: "alice",
+                dot_id: &ids[1],
+                peer_id: &ids[0],
+                direction: dot_delegation::ConsentDirection::Inbound,
+                enabled: true,
+                expected_generation: Some(&edge.generation),
+            }
+        )
+        .await
+        .unwrap(),
+        dot_delegation::ConsentSaved::Saved(_)
+    ));
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(Scripted {
+            deltas: vec![
+                tool_call(
+                    "forward_request",
+                    json!({"receiver_dot_id": ids[1], "message": "Save this explicit lesson"}),
+                ),
+                tool_call(
+                    "remember",
+                    json!({"content": "Receiver approved lesson", "kind": "fact"}),
+                ),
+                json!({"content": "Lesson saved."}),
+                json!({"content": "Receiver completed the task."}),
+            ],
+            served: AtomicUsize::new(0),
+            delay: Duration::ZERO,
+        })
+        .mount(&server)
+        .await;
+    let session_id = conversation(&state).await;
+    assert!(
+        dot_sessions::link(&state.db, "alice", &ids[0], &session_id)
+            .await
+            .unwrap()
+    );
+    let turn_id = submit(&state, &cookie, &session_id).await;
+    let paused = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Suspended).await;
+    assert!(paused.suspension.is_some());
+    let pause = chat::get_suspension(&state.db, &turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let child_turn = pause.child_turn.as_deref().unwrap().to_owned();
+    let Some(aiplane_agents::db::child_sessions::LocalChild::Personal(child)) =
+        aiplane_agents::db::child_sessions::child_of_turn(&state.db, &child_turn)
+            .await
+            .unwrap()
+    else {
+        panic!("actual delegated personal child");
+    };
+    let child_session = child.session.session_id;
+    assert!(
+        dot_memories::list(
+            &state.db,
+            aiplane_agents::db::dot_memories::MemoryScope::Dot {
+                owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
+                dot_id: &ids[1]
+            },
+            10
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .is_empty()
+    );
+    state = boot_with(
+        &db_path,
+        &server.uri(),
+        ToolRegistry::new()
+            .with(Remember)
+            .with(ForwardRequest::personal()),
+        &["remember", "forward_request"],
+    )
+    .await;
+    let (status, body) = resume(
+        &state,
+        &cookie,
+        &session_id,
+        &turn_id,
+        json!({"decision": "allow_once", "request_id": pause.request_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let completed = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Completed).await;
+    assert_eq!(completed.tool_calls.len(), 1);
+    assert_eq!(completed.tool_calls[0].status, ToolCallStatus::Completed);
+    assert_eq!(
+        chat::get_turn(&state.db, &child_session, &child_turn)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Completed
+    );
+    let notes = dot_memories::list(
+        &state.db,
+        aiplane_agents::db::dot_memories::MemoryScope::Dot {
+            owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
+            dot_id: &ids[1],
+        },
+        10,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].content, "Receiver approved lesson");
+    assert!(
+        dot_memories::list(
+            &state.db,
+            aiplane_agents::db::dot_memories::MemoryScope::Dot {
+                owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
+                dot_id: &ids[0]
+            },
+            10
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        db::user_memories::list_for_user(&state.db, "alice", 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 4);
+}
 
 pub(crate) fn post(uri: String, cookie: &str, body: Value) -> Request {
     common::post_json(&uri, cookie, &body.to_string())
@@ -805,4 +1194,125 @@ async fn scheduling_waits_for_an_approval_that_survives_a_restart() {
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].name, "Weekly summary");
     assert!(!stored[0].tools_enabled);
+}
+
+#[tokio::test]
+async fn background_resume_busy_leaves_original_approval_unclaimed_for_retry() {
+    use aiplane_core::server::db::usage::UsageSource;
+    use aiplane_runtime::server::{headless, scheduled};
+    let dir = tempfile::tempdir().unwrap();
+    let server = upstream("Echoed: ship it", Duration::ZERO).await;
+    let state = boot_with(
+        &dir.path().join("gateway.db"),
+        &server.uri(),
+        ToolRegistry::new().with(Echo),
+        &["company_echo"],
+    )
+    .await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let (_, dot) = aiplane_agents::db::agents::create_personal_dot(
+        &state.db,
+        &aiplane_agents::db::system_principals::NewPrincipal {
+            name: "Harald",
+            display: "Harald",
+            description: "",
+        },
+        r#"{"main":{"tools":["company_echo"]}}"#,
+        "alice",
+        4,
+    )
+    .await
+    .unwrap();
+    let dot = dot.unwrap().principal.id;
+    let (session, turn) = headless::open_session(
+        &state.db,
+        headless::OpenParams {
+            owner: headless::Owner::User("alice"),
+            title: "Approval",
+            prompt: "echo something",
+            model: "model-a",
+            existing_session: None,
+            dot_id: Some(&dot),
+        },
+    )
+    .await
+    .unwrap();
+    let action = scheduled::create(
+        &state.db,
+        scheduled::NewAction {
+            owner: aiplane_runtime::server::background::AutomationOwner::User("alice".into()),
+            created_by: "alice".into(),
+            agent_version: None,
+            name: "Approval".into(),
+            prompt: "echo something".into(),
+            model: Some("model-a".into()),
+            cron: "* * * * *".into(),
+            timezone: "UTC".into(),
+            tools_enabled: true,
+            reuse_conversation: true,
+            reuse_rounds: 3,
+            next_run_at: None,
+            dot_id: Some(dot),
+            linked_session_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let run = scheduled::record_run_start(&state.db, &action.id)
+        .await
+        .unwrap();
+    scheduled::attach_run_turn(&state.db, &run, &session, &turn, true, Some(6))
+        .await
+        .unwrap();
+    let params = headless::DriveParams {
+        actor: aiplane_runtime::agent_run::Actor::person("alice", vec![]),
+        session_id: session.clone(),
+        assistant_turn_id: turn.clone(),
+        model: "model-a".into(),
+        source: UsageSource::Scheduled,
+        history_limit: Some(6),
+    };
+    headless::drive(&state, params).await;
+    let waiting = chat::get_suspension(&state.db, &turn)
+        .await
+        .unwrap()
+        .unwrap();
+    let competitor = match state
+        .chats
+        .register_background("alice", "competing-worker", &session)
+    {
+        session_core::workers::RegisterOutcome::Registered { worker } => worker,
+        _ => panic!("idle session expected"),
+    };
+    let body = json!({"decision":"allow_once","request_id":waiting.request_id});
+    let (status, response) = resume(&state, &cookie, &session, &turn, body.clone()).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{response}");
+    let still_waiting = chat::get_suspension(&state.db, &turn)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(still_waiting, waiting);
+    assert_eq!(
+        chat::get_turn(&state.db, &session, &turn)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        TurnStatus::Suspended
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    assert!(state.chats.holds("alice", &session, "competing-worker"));
+    state.chats.clear("alice", &competitor);
+    let (status, response) = resume(&state, &cookie, &session, &turn, body).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{response}");
+    let done = wait_for_status(&state, &session, &turn, TurnStatus::Completed).await;
+    assert!(done.suspension.is_none());
+    assert!(
+        done.tool_calls[0]
+            .output_json
+            .as_deref()
+            .unwrap()
+            .contains("ship it")
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }

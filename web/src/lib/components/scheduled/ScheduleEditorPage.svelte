@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { adminJson } from '#lib/admin-client.js';
+	import { scheduledApi } from '#lib/scheduled.js';
 	import ScheduleForm from './ScheduleForm.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 	import type { ScheduledAction, ScheduledData } from '#lib/scheduled.js';
@@ -25,29 +26,35 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let missing = $state(false);
+	let disposed = false;
+	onDestroy(() => { disposed = true; });
+	const listHref = $derived(`/scheduled${data?.principal_id || page.url.searchParams.get('principal_id') ? `?principal_id=${encodeURIComponent(data?.principal_id ?? page.url.searchParams.get('principal_id')!)}` : ''}`);
 
 	async function done() {
-		await goto(`/scheduled?notice=${id === null ? 'created' : 'saved'}`);
+		if (disposed) return;
+		await goto(`/scheduled?notice=${id === null ? 'created' : 'saved'}${data?.principal_id ? `&principal_id=${encodeURIComponent(data.principal_id)}` : ''}`);
 	}
 
 	onMount(async () => {
 		try {
-			data = await adminJson<ScheduledData>('/api/v0/scheduled');
+			const loaded = await scheduledApi.list(page.url.searchParams.get('principal_id'));
+			if (disposed) return;
+			data = loaded;
 			if (id !== null) {
 				action = data.actions.find((candidate) => candidate.id === id) ?? null;
 				missing = action === null;
 			}
 			error = null;
 		} catch (caught) {
-			error = String(caught);
+			if (!disposed) error = String(caught);
 		} finally {
-			loading = false;
+			if (!disposed) loading = false;
 		}
 	});
 </script>
 
 <div class="w-full max-w-4xl">
-	<a class="link link-hover text-sm text-base-content/60" href="/scheduled">← {t('scheduled-back')}</a>
+	<a class="link link-hover text-sm text-base-content/60" href={listHref}>← {t('scheduled-back')}</a>
 	<h1 class="m-0 mt-2 text-2xl font-bold">
 		{id === null ? t('scheduled-create-heading') : action ? t('scheduled-edit-named-heading', { name: action.name }) : t('scheduled-edit-heading')}
 	</h1>
@@ -63,9 +70,14 @@
 			<ScheduleForm
 				{action}
 				models={data.models}
+				dots={data.dots}
+				presetDotId={id === null ? page.url.searchParams.get('dot_id') : null}
 				defaultTimezone={data.default_timezone}
+				principalId={data.principal_id}
+				versions={data.versions}
+				canWrite={data.can_write}
 				onsaved={done}
-				oncancel={() => goto('/scheduled')}
+				oncancel={() => goto(listHref)}
 			/>
 		</div>
 	{/if}

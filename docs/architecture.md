@@ -69,9 +69,13 @@ The chat substrate: the `chat_*` tables' accessors, the worker registry, the
 owner-agnostic: it reads and writes a person's conversation by `user_id`, and a
 conversation whose `user_id` is NULL belongs to an owner it does not model. No
 person's read returns one, and its sweep of expired pauses covers a person's
-conversations only. The columns of the other owner (`principal_id`,
-`agent_version`, `visitor_id`, `parent_turn_id`, `lang`) and every query over
-them — opening and reading an agent run, the agent pause sweep, the inbox reads
+root conversations only. The opaque `parent_turn_id` also fences private child
+history from sharing, independent deletion and the root expiry sweep.
+Connection-level session and idle turn-pair writers join a caller-held
+`BEGIN IMMEDIATE` transaction; their pool wrappers use the same implementation.
+The columns of the other owner (`principal_id`, `agent_version`, `visitor_id`,
+`lang`) and queries that resolve parent ownership — opening and reading an
+agent run, the agent pause sweep, the inbox reads
 — live in `aiplane-agents` (`db::run_sessions`), which reuses session-core's
 suspension row mapper. The migrations' CHECK and foreign key to
 `system_principals` are SQL only; no session-core Rust depends on them.
@@ -129,9 +133,12 @@ The agent builder's persistence and the pieces only agents need, on
   one `WriteTx`, so parallel requests cannot all pass. The visitor gate
   (per-conversation and per-IP admissions over every inbound channel) and
   the verifiers' send and lookup limits both use it.
-- `db/write_tx.rs` — `WriteTx`, a transaction that holds the write lock from
-  `BEGIN IMMEDIATE`; the activity log's `append` and the rate primitive take
-  one, so nothing reads what it then writes in a deferred transaction.
+- `aiplane-core::server::db::WriteTx` — the shared transaction holds the write
+  lock from `BEGIN IMMEDIATE`. Agent admissions, activity writes and credential
+  authorization use it to check current state and update it atomically.
+  Session-core finalization uses `BEGIN IMMEDIATE` directly, preserving its
+  lower layer boundary while acquiring write authority before terminal updates
+  compete with activity writes.
 - `notify_channels.rs` — the Slack/Discord webhook payloads of the inbox.
 
 Like `aiplane-features`, it names neither `AppState` nor the tool registry, and

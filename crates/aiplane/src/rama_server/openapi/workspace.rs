@@ -20,7 +20,11 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<skills::InlineSkillBody>())
             .body(Content::Multipart(SKILL_ARCHIVE))
             .created(json::<skills::SkillSaved>())
-            .errors(&[400, 503]),
+            .errors(&[400, 404, 409, 503]),
+        post("/api/v0/skills/draft", Access::Session)
+            .body(json::<skills::WorkflowDraftRequest>())
+            .ok(json::<skills::WorkflowDraft>())
+            .errors(&[400, 429, 502, 503]),
         get("/api/v0/skills/{name}/body", Access::Session)
             .ok(json::<skills::SkillSource>())
             .errors(&[400, 404]),
@@ -93,54 +97,62 @@ pub(super) fn operations() -> Vec<Op> {
         delete("/api/v0/memories/{id}", Access::Session)
             .no_content()
             .errors(&[404]),
-        get("/api/v0/scheduled", Access::Session).ok(json::<workspace::ScheduledList>()),
+        get("/api/v0/scheduled", Access::Session)
+            .param("principal_id", Scalar::String, false)
+            .ok(json::<workspace::ScheduledList>())
+            .errors(&[400, 403, 404]),
         post("/api/v0/scheduled", Access::Session)
             .body(json::<workspace::ScheduledBody>())
             .created(json::<workspace::ActionView>())
-            .errors(&[400]),
+            .errors(&[400, 403, 404]),
         post("/api/v0/scheduled/preview", Access::Session)
             .body(json::<workspace::CronPreviewBody>())
             .ok(json::<workspace::CronPreview>())
             .errors(&[400]),
         put("/api/v0/scheduled/{id}", Access::Session)
-            .body(json::<workspace::ScheduledBody>())
+            .body(json::<workspace::ScheduledUpdateBody>())
             .ok(json::<workspace::Updated<workspace::ActionView>>())
-            .errors(&[400, 404]),
+            .errors(&[400, 403, 404, 409]),
         post("/api/v0/scheduled/{id}/toggle", Access::Session)
-            .body(json::<workspace::EnabledBody>())
-            .ok(json::<workspace::EnabledBody>())
-            .errors(&[400, 404]),
+            .body(json::<workspace::ScheduledEnabledBody>())
+            .ok(json::<workspace::ScheduledEnabledView>())
+            .errors(&[400, 403, 404, 409]),
         delete("/api/v0/scheduled/{id}", Access::Session)
             .no_content()
-            .errors(&[404]),
+            .errors(&[404, 409]),
         get("/api/v0/scheduled/{id}/runs", Access::Session)
             .ok(json::<workspace::ScheduledRuns>())
             .errors(&[404]),
-        get("/api/v0/webhooks", Access::Session).ok(json::<workspace::WebhookList>()),
+        get("/api/v0/webhooks", Access::Session)
+            .param("principal_id", Scalar::String, false)
+            .ok(json::<workspace::WebhookList>())
+            .errors(&[400, 403, 404]),
         post("/api/v0/webhooks", Access::Session)
             .body(json::<workspace::WebhookBody>())
             .created(json::<workspace::WebhookCreated>())
-            .errors(&[400]),
+            .errors(&[400, 403, 404]),
         put("/api/v0/webhooks/{id}", Access::Session)
-            .body(json::<workspace::WebhookBody>())
+            .body(json::<workspace::WebhookUpdateBody>())
             .ok(json::<workspace::Updated<workspace::WebhookView>>())
-            .errors(&[400, 404]),
+            .errors(&[400, 403, 404, 409]),
         post("/api/v0/webhooks/{id}/toggle", Access::Session)
-            .body(json::<workspace::EnabledBody>())
-            .ok(json::<workspace::EnabledBody>())
-            .errors(&[400, 404]),
+            .body(json::<workspace::WebhookEnabledBody>())
+            .ok(json::<workspace::WebhookEnabledView>())
+            .errors(&[400, 403, 404, 409]),
         post("/api/v0/webhooks/{id}/rotate", Access::Session)
+            .body(json::<workspace::WebhookRotateBody>())
             .ok(json::<workspace::WebhookSecret>())
-            .errors(&[404]),
+            .errors(&[400, 403, 404, 409]),
         delete("/api/v0/webhooks/{id}", Access::Session)
             .no_content()
-            .errors(&[404]),
+            .errors(&[404, 409]),
         get("/api/v0/webhooks/{id}/runs", Access::Session)
             .ok(json::<workspace::WebhookRuns>())
             .errors(&[404]),
         post("/api/v0/webhooks/{id}/rerun", Access::Session)
             .body(json::<workspace::RerunBody>())
             .ok(json::<workspace::RerunOutcome>())
+            .accepted(json::<workspace::RerunAccepted>())
             .errors(&[400, 404, 409, 502]),
     ]
 }

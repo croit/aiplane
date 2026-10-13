@@ -162,6 +162,15 @@ flush.
   `error` with the event's correlation ids. Outside a run (a refused visitor,
   a sweep marker) the failure is logged and the request goes on.
 
+Personal Dot tool admission and results also fail closed without an `AgentRun`:
+`ToolError::AuditUnavailable` and the runner's typed failure cause terminate the
+turn before another model round. A failed admission prevents that tool's remote
+call. A result-log failure can occur after a remote action has completed; the
+runner stops waiting tool phases, settles the turn's tool rows and does not
+retry the action. Calls already admitted or dispatched concurrently cannot be
+rolled back by an audit failure. Approval resume applies the same termination
+rule.
+
 ## What is recorded
 
 As low in the code as it allows, so nothing reaches around it:
@@ -171,7 +180,7 @@ As low in the code as it allows, so nothing reaches around it:
 | `llm_exchange` | the driver's round loop (`openai_driver/exchange.rs`), around the upstream call, whichever way the round ends | `purpose: round`, `round`, `model`, `real_model`, `backend`, `request` or, after a turn's first round, `request_delta` ([Storage](#storage)) — the body exactly as sent: system message, messages, tool offer, parameters, but for what the log never keeps (below) —, `response` (`status`, `content`, `reasoning`, `tool_calls`, `finish_reason`, `usage`), `latency_ms`, `error` (no backend, transport, non-2xx with the full body, stall, loop), `cancelled` |
 | `llm_exchange` | a side call of the run ([below](#model-calls-outside-the-round-loop)) | `purpose`, `model`, `backend`, `request`, `response`, `latency_ms`, `error`; a constrained choice also its `answer` |
 | `scope_decision` | the topic guard | `verdict` (`in_scope`, `out_of_scope`, `failed`), `topics`, `model`, `error` |
-| `tool_call` | the call policy | `decision`, `policy` ([`agent-runs.md`](agent-runs.md#every-call-decided-and-audited)) |
+| `tool_call` | the call policy; personal Dot calls admitted through the current live tool source | `decision`, `policy` ([`agent-runs.md`](agent-runs.md#every-call-decided-and-audited)); personal MCP admission can include the selected connection's typed owner, connector key, connection ID, credential generation and binding generation |
 | `tool_result` | the tool runner (`execute_tool_call`), for every call including an unregistered tool and a refused repeat; the resume path for a denied call and a sub-agent's result | `tool`, `arguments` (as the model wrote them; `{redacted: true}` for a tool that declares `sensitive_args`), `status` (`completed`, `failed`, `invalid_args`, `timed_out`, `unregistered`, `refused_repeated`, `denied`, `answered_by_sub_agent`), `result` (the tool's whole answer before injection screening and before the prompt's byte budget trims it), `injection` (`policy`, `signals`); `duration_ms` |
 | `state_written` | `agent_state::put`, on the write's transaction, in the chain of the written session's root conversation | `slot`, `old` (`value`, `provenance`, `set_at`, or `null`), `new`, `provenance`, `set_at` |
 | `turn_started` / `turn_finished` | `headless::drive`, for every agent turn (main and sub-agent, resumed too) | the message the turn answers (a visitor's, or a sub-agent's task), or `resumed: true`; `status`, `answer`, `error`, `outcome` (a contracted run's `RunOutcome`) |
@@ -186,6 +195,17 @@ As low in the code as it allows, so nothing reaches around it:
 | `assist_suggested` | the prompt assistant, in the agent's own chain | `action`, `scenario` / `template` or `field` / `text`, `model`, `usage`, `latency_ms`, `offered`, `dropped`, `error` ([`agent-builder.md`](agent-builder.md#prompt-assistant)) |
 | `conversations_swept`, `activity_swept`, `chain_checkpoint` | the retention sweep ([Retention](#retention)) | counts and chain bounds only |
 | `chain_anchored` | the end of every turn (`drive_opened_from`) | `chain_key`, `seq`, `hash` of the conversation chain's head |
+
+For a personal Dot, the optional `tool_call.identity` records the selected
+connection for that attempted call, correlated with its existing `call_id` and
+outcome. It does not assert that the provider accepted the action. The final
+MCP check either validates that same identity or refuses execution; a changed
+selection cannot substitute another account. Resuming the recorded call keeps
+its original admission event. The identity contains no tokens, provider email,
+secret arguments or generic tool metadata. Owned MCP identities also contain
+the actual catalogue generation. Shared catalogue identities contain only
+their connector key and catalogue generation; they have no owned connection
+ID. These facts bind the attempted call to the admitted resource configuration.
 
 `for_principal` — the decision trail the agent's GET, the test-chat debug view
 and the evaluation read — leaves out the content kinds (`AuditKind::is_content`:

@@ -102,6 +102,10 @@ struct ReadArgs {
 }
 
 impl Tool for ReadSkill {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         READ_SKILL_ID
     }
@@ -302,6 +306,10 @@ mod tests {
             suspend: Default::default(),
             granted_tools: None,
             agent: None,
+            personal_dot: None,
+            personal_execution: None,
+            pending_actions: None,
+            pending_execution_facts: None,
             call_id: None,
         }
     }

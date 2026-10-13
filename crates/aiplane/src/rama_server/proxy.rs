@@ -455,6 +455,10 @@ fn proxy_tool_ctx(
         // A `/v1` request is never an agent run, even on a `gws_` token: the
         // caller drives the loop, so there is no chain to carry.
         agent: None,
+        personal_dot: None,
+        personal_execution: None,
+        pending_actions: None,
+        pending_execution_facts: None,
         call_id: None,
         token_id: Some(token_id),
         pool_access,
@@ -1049,11 +1053,13 @@ impl SelectorGate for CallerGate<'_> {
     async fn admit(
         &self,
         selector_model: &str,
-    ) -> Result<(), aiplane_core::server::limits::LimitExceeded> {
+    ) -> Result<(), aiplane_core::server::automatic_routing::SelectorAdmissionError> {
         match limit_exceeded_for_model(self.state, self.user, selector_model, PoolKind::SystemOne)
             .await
         {
-            Some(exceeded) => Err(exceeded),
+            Some(exceeded) => Err(
+                aiplane_core::server::automatic_routing::SelectorAdmissionError::Limited(exceeded),
+            ),
             None => Ok(()),
         }
     }
@@ -1127,6 +1133,11 @@ fn automatic_route_error_response(
             refusals.route_error(RouteError::ModelNotAllowed(alias))
         }
         AutomaticRoutingError::SelectorLimited(exceeded) => refusals.rate_limited(&exceeded),
+        AutomaticRoutingError::SelectorUnavailable(_) => refusals.refused(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "automatic_route_unavailable",
+            &t(lang, "auto-route-error-unavailable"),
+        ),
         AutomaticRoutingError::NoEligibleCandidates { .. }
         | AutomaticRoutingError::IneligibleFallback { .. } => {
             tracing::warn!(error = %error, "automatic route is temporarily unavailable");

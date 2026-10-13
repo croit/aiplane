@@ -4,11 +4,10 @@ export type CapabilityStateFilter = ChatCapability['state'] | 'all';
 
 export const capabilityId = (item: Pick<CapabilityItem, 'kind' | 'key'>) => `${item.kind}:${item.key}`;
 
-/** The rows whose title or description contain `query`, ignoring case; all of them for an empty query. */
 export function searchCapabilities<T extends CapabilityItem>(items: T[], query: string): T[] {
 	const needle = query.trim().toLocaleLowerCase();
 	if (!needle) return items;
-	return items.filter((item) => `${item.title} ${item.description}`.toLocaleLowerCase().includes(needle));
+	return items.filter((item) => `${item.key} ${item.title} ${item.description}`.toLocaleLowerCase().includes(needle));
 }
 
 /** The rows by group, in the order the groups first appear. */

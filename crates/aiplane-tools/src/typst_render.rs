@@ -1007,6 +1007,7 @@ async fn convert_to_docx(
         network: false,
         container_id: None,
         keep_alive: false,
+        workspace: None,
     };
     let resp = sandbox.run_job(req).await?;
     if resp.exit_code != 0 || resp.timed_out {
@@ -1171,6 +1172,7 @@ async fn convert_to_pptx(
         network: false,
         container_id: None,
         keep_alive: false,
+        workspace: None,
     };
     let resp = sandbox.run_job(req).await?;
     if resp.exit_code != 0 || resp.timed_out {
@@ -2451,6 +2453,10 @@ mod tests {
             suspend: Default::default(),
             granted_tools: None,
             agent: None,
+            personal_dot: None,
+            personal_execution: None,
+            pending_actions: None,
+            pending_execution_facts: None,
             call_id: None,
         }
     }

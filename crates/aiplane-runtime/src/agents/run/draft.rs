@@ -1,24 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! The internal test chat's half of the run path (`docs/agent-builder.md` → "Test chat"): one turn of an
-//! agent's **draft**, and what a manager may see of it that a visitor never
-//! does.
-//!
-//! The test chat starts a turn with [`start_draft_turn`], which claims the
-//! conversation as the public endpoint does, so the turn runs in the
-//! background and its frames stream like any conversation's. The architect's
-//! `run_test_turn` tool, itself inside a turn, runs one to its end with
-//! [`run_draft_turn`]. Either way [`collect_turn_debug`] reads what the turn
-//! decided from the agent's activity log; nothing else stores it.
-//!
-//! The draft is passed explicitly as [`SpecSource::Draft`]; nothing about
-//! "live" is overridden anywhere, so no other path can reach a draft. The turn
-//! then goes through the same `open_session` and `drive_opened` as a
-//! visitor's, so gates, slots, tools, binds and budgets behave as they will
-//! once published. The conversation is recorded as version [`DRAFT_VERSION`],
-//! which no published version has: a visitor session can never continue it,
-//! and a test session can never be continued as one.
+//! Authenticated private chats use a saved draft or an Organization's pinned
+//! published version. The prepared profile drives the existing streamed worker.
+//! Internal architect and evaluation callers use `run_draft_turn`; Organization
+//! execution through those callers is refused without private admission.
 
 use std::sync::Arc;
 
@@ -26,7 +12,7 @@ use aiplane_agents::db::run_sessions;
 use aiplane_agents::db::{agent_audit, agents as agents_db};
 use aiplane_core::server::db::DbError;
 use jiff::Timestamp;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{AgentReply, AgentTurn, OpenedTurn, drive_opened};
@@ -41,6 +27,13 @@ use session_core::db as chat;
 
 pub use agents_db::DRAFT_VERSION;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivateChatSource {
+    Draft,
+    Published,
+}
+
 /// Run one visitor message against `draft` as the agent's principal, to its
 /// end.
 pub async fn run_draft_turn(
@@ -49,27 +42,30 @@ pub async fn run_draft_turn(
     draft: &Value,
     options: RunOptions,
 ) -> Result<AgentReply, AgentRunError> {
-    let (profile, opened) = open_draft_turn(state, turn, draft, &options).await?;
+    let (profile, opened) =
+        open_private_turn(state, turn, draft, PrivateChatSource::Draft, &options, None).await?;
     drive_opened(state, &profile, &opened).await
 }
 
 /// A test-chat turn whose rows exist and whose conversation it holds: drive
 /// it in the background, keeping `claim` until it is settled.
-pub struct StartedDraftTurn {
+pub struct StartedPrivateTurn {
     pub claim: TurnClaim,
     pub profile: RunProfile,
     pub turn: OpenedTurn,
 }
 
-/// Open one visitor message against `draft` and claim its conversation, so a
+/// Open an authenticated private message against its selected source, so a
 /// stream of it follows the turn from its first frame. Refused when the
 /// conversation is running a turn already.
-pub async fn start_draft_turn(
+pub async fn start_private_turn(
     state: &Arc<RamaState>,
     turn: AgentTurn<'_>,
     draft: &Value,
+    source: PrivateChatSource,
     options: &RunOptions,
-) -> Result<StartedDraftTurn, AgentRunError> {
+    initiator_user_id: &str,
+) -> Result<StartedPrivateTurn, AgentRunError> {
     let busy = |session: &str| AgentRunError::Busy {
         session: session.to_string(),
     };
@@ -78,14 +74,15 @@ pub async fn start_draft_turn(
     {
         return Err(busy(session));
     }
-    let (profile, opened) = open_draft_turn(state, turn, draft, options).await?;
+    let (profile, opened) =
+        open_private_turn(state, turn, draft, source, options, Some(initiator_user_id)).await?;
     match claim(
         &state.chats,
         &opened.agent_id,
         &opened.session_id,
         &opened.turn_id,
     ) {
-        Some(claim) => Ok(StartedDraftTurn {
+        Some(claim) => Ok(StartedPrivateTurn {
             claim,
             profile,
             turn: opened,
@@ -105,55 +102,162 @@ pub async fn start_draft_turn(
     }
 }
 
-/// Load `draft` as the agent's run and open the message's rows in its test
-/// conversation, a new one unless `turn` continues one.
-async fn open_draft_turn(
+/// Open the message under the conversation's exact private source.
+async fn open_private_turn(
     state: &Arc<RamaState>,
     turn: AgentTurn<'_>,
     draft: &Value,
+    source: PrivateChatSource,
     options: &RunOptions,
+    initiator_user_id: Option<&str>,
 ) -> Result<(RunProfile, OpenedTurn), AgentRunError> {
-    if let Some(session) = turn.session_id {
-        let continues = run_sessions::get_principal_session(&state.db, turn.agent_id, session)
-            .await?
-            .is_some_and(|run| run.agent_version == Some(DRAFT_VERSION));
-        if !continues {
-            let agent = aiplane_agents::db::system_principals::get(&state.db, turn.agent_id)
-                .await?
-                .map_or_else(|| turn.agent_id.to_string(), |p| p.name);
-            return Err(AgentRunError::UnknownSession {
-                agent,
-                session: session.to_string(),
-            });
+    let organization = match agents_db::dot_owner(&state.db, turn.agent_id).await? {
+        Some(agents_db::DotOwner::Organization(id)) => {
+            if initiator_user_id.is_none() || turn.visitor_id.is_some() {
+                return Err(AgentRunError::OrganizationExecutionUnavailable(
+                    turn.agent_id.to_owned(),
+                ));
+            }
+            Some(id)
         }
-        super::refuse_if_waiting(state, session).await?;
+        _ => None,
+    };
+    if source == PrivateChatSource::Published && organization.is_none() {
+        return Err(AgentRunError::OrganizationExecutionUnavailable(
+            turn.agent_id.to_owned(),
+        ));
     }
-    let profile = RunProfile::load_from(
-        state,
-        turn.agent_id,
-        SpecSource::Draft(draft.clone()),
-        Role::Main,
-        options,
-    )
-    .await?;
-    let (session_id, turn_id) = open_session(
-        &state.db,
-        OpenParams {
-            owner: Owner::Run {
-                principal_id: &profile.principal.id,
-                parent_turn_id: None,
-                agent_version: Some(DRAFT_VERSION),
-            },
-            title: &profile.principal.name,
-            prompt: turn.message,
-            model: &profile.model,
-            existing_session: turn.session_id.map(str::to_string),
+    let selected = if let Some(session) = turn.session_id {
+        let stored = run_sessions::get_principal_session(&state.db, turn.agent_id, session)
+            .await?
+            .ok_or_else(|| AgentRunError::UnknownSession {
+                agent: turn.agent_id.to_owned(),
+                session: session.to_owned(),
+            })?;
+        let selected = match (source, stored.agent_version) {
+            (PrivateChatSource::Draft, Some(DRAFT_VERSION)) => SpecSource::Draft(draft.clone()),
+            (PrivateChatSource::Published, Some(version)) if version > 0 => {
+                SpecSource::Pinned(version)
+            }
+            _ => {
+                return Err(AgentRunError::OrganizationExecutionUnavailable(
+                    turn.agent_id.to_owned(),
+                ));
+            }
+        };
+        super::refuse_if_waiting(state, session).await?;
+        selected
+    } else {
+        match source {
+            PrivateChatSource::Draft => SpecSource::Draft(draft.clone()),
+            PrivateChatSource::Published => SpecSource::Live,
+        }
+    };
+    let profile = if initiator_user_id.is_some() {
+        RunProfile::load_private(state, turn.agent_id, selected, options).await?
+    } else {
+        RunProfile::load_from(state, turn.agent_id, selected, Role::Main, options).await?
+    };
+    let params = OpenParams {
+        owner: Owner::Run {
+            principal_id: &profile.principal.id,
+            parent_turn_id: None,
+            agent_version: Some(profile.version),
         },
-    )
-    .await?;
+        title: &profile.principal.name,
+        prompt: turn.message,
+        model: &profile.model,
+        existing_session: turn.session_id.map(str::to_string),
+        dot_id: None,
+    };
+    let opened = if let Some(organization_id) = organization {
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
+        let current_owner = agents_db::get_dot_metadata_in(&mut tx, turn.agent_id).await?;
+        if current_owner.is_none_or(|dot| {
+            !dot.active || dot.owner != agents_db::DotOwner::Organization(organization_id)
+        }) || crate::agents::access::organization_access_in(
+            state,
+            &mut tx,
+            turn.agent_id,
+            initiator_user_id.unwrap_or_default(),
+        )
+        .await?
+            != Some(agents_db::Access::Write)
+        {
+            return Err(AgentRunError::OrganizationExecutionUnavailable(
+                turn.agent_id.to_owned(),
+            ));
+        }
+        if source == PrivateChatSource::Published
+            && turn.session_id.is_none()
+            && agents_db::get_in(&mut tx, turn.agent_id)
+                .await?
+                .and_then(|agent| agent.live_version)
+                != Some(profile.version)
+        {
+            return Err(AgentRunError::OrganizationExecutionUnavailable(
+                turn.agent_id.to_owned(),
+            ));
+        }
+        if let Some(session) = turn.session_id
+            && run_sessions::get_private_principal_session_in(
+                &mut tx,
+                turn.agent_id,
+                session,
+                profile.version,
+            )
+            .await?
+            .is_none()
+        {
+            return Err(AgentRunError::OrganizationExecutionUnavailable(
+                turn.agent_id.to_owned(),
+            ));
+        }
+        let opened = crate::server::headless::open_principal_session_in(&mut tx, params).await;
+        match opened {
+            Ok((session_id, turn_id)) => {
+                let chain = Arc::new(aiplane_core::server::run_chain::RunChain::root(
+                    &session_id,
+                    None,
+                    aiplane_core::server::run_chain::Frame::for_principal(&profile.principal, None),
+                ));
+                let drive = profile.drive_params(&session_id, &turn_id, chain)?;
+                let crate::agent_run::Actor::Agent(run) = drive.actor else {
+                    return Err(AgentRunError::OrganizationExecutionUnavailable(
+                        turn.agent_id.to_owned(),
+                    ));
+                };
+                let current =
+                    crate::agents::profile::validate_organization_turn_in(&mut tx, &run).await?;
+                if !current.grants.has(
+                    aiplane_core::server::principal::GrantKind::Model,
+                    &profile.model,
+                ) {
+                    return Err(AgentRunError::ModelNotGranted {
+                        agent: profile.principal.id.clone(),
+                        model: profile.model.clone(),
+                    });
+                }
+                tx.commit().await?;
+                Ok((session_id, turn_id))
+            }
+            Err(error) => Err(error),
+        }
+    } else {
+        open_session(&state.db, params).await
+    };
+    let (session_id, turn_id) = opened.map_err(|error| match error {
+        crate::server::headless::OpenError::Storage(error) => AgentRunError::Db(error),
+        crate::server::headless::OpenError::Busy => AgentRunError::Busy {
+            session: turn.session_id.unwrap_or_default().to_string(),
+        },
+        crate::server::headless::OpenError::Unavailable => {
+            AgentRunError::Unavailable(profile.principal.id.clone())
+        }
+    })?;
     let opened = OpenedTurn {
         agent_id: profile.principal.id.clone(),
-        version: DRAFT_VERSION,
+        version: profile.version,
         session_id,
         turn_id,
         visitor_id: None,
@@ -377,5 +481,264 @@ fn slot_debug(slot: String, state: &SlotState, set_by: &[Provenance]) -> SlotDeb
         provenance: entry.map(|e| e.provenance.to_string()),
         set_at: entry.map(|e| e.set_at.to_string()),
         set_by,
+    }
+}
+
+#[cfg(test)]
+mod private_source_tests {
+    use super::*;
+
+    async fn published_fixture() -> (Arc<RamaState>, String, Value) {
+        use aiplane_core::server::db::gateway_groups;
+        let server = wiremock::MockServer::start().await;
+        let state = crate::server::headless::tests::state_for(&server.uri()).await;
+        let (profile, _) = crate::server::headless::tests::organization_draft_fixture(&state).await;
+        let id = profile.principal.id.clone();
+        gateway_groups::upsert_group(&state.db, "writers", "", false, true)
+            .await
+            .unwrap();
+        gateway_groups::set_can_manage_agents(&state.db, "writers", true)
+            .await
+            .unwrap();
+        let Some(agents_db::DotOwner::Organization(organization)) =
+            agents_db::dot_owner(&state.db, &id).await.unwrap()
+        else {
+            panic!("organization expected")
+        };
+        sqlx::query(
+            "INSERT INTO organization_groups(organization_id,gateway_group) VALUES(?,'writers')",
+        )
+        .bind(organization)
+        .execute(&state.db)
+        .await
+        .unwrap();
+        let spec = json!({"main":{"model":profile.model,"tools":["company_echo"],"instructions":{"orchestration":"ORIGINAL PUBLISHED INSTRUCTIONS"}}});
+        assert_eq!(
+            agents_db::publish(&state.db, &id, &spec.to_string(), "creator")
+                .await
+                .unwrap(),
+            Some(1)
+        );
+        (state, id, spec)
+    }
+
+    #[test]
+    fn private_source_has_exact_draft_and_published_wire_values() {
+        assert_eq!(
+            serde_json::to_value(PrivateChatSource::Draft).unwrap(),
+            json!("draft")
+        );
+        assert_eq!(
+            serde_json::to_value(PrivateChatSource::Published).unwrap(),
+            json!("published")
+        );
+        assert!(serde_json::from_value::<PrivateChatSource>(json!("pinned")).is_err());
+    }
+
+    #[tokio::test]
+    async fn organization_private_published_opener_pins_actual_version_and_preserves_generic_refusal()
+     {
+        let (state, id, spec) = published_fixture().await;
+        for source in [SpecSource::Live, SpecSource::Pinned(1)] {
+            assert!(matches!(
+                RunProfile::load_from(&state, &id, source, Role::Main, &Default::default()).await,
+                Err(AgentRunError::OrganizationExecutionUnavailable(_))
+            ));
+        }
+        let first = start_private_turn(
+            &state,
+            AgentTurn {
+                agent_id: &id,
+                session_id: None,
+                message: "First",
+                visitor_id: None,
+                lang: None,
+            },
+            &json!({"main":{"instructions":{"orchestration":"IGNORED DRAFT"}}}),
+            PrivateChatSource::Published,
+            &Default::default(),
+            "creator",
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.profile.version, 1);
+        let session = first.turn.session_id.clone();
+        let turn = first.turn.turn_id.clone();
+        let persisted = run_sessions::get_principal_session(&state.db, &id, &session)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(persisted.agent_version, Some(1));
+        chat::finalize_turn(&state.db, &turn, chat::TurnStatus::Completed, None)
+            .await
+            .unwrap();
+        drop(first);
+        let mut next = spec;
+        next["main"]["instructions"]["orchestration"] = json!("NEW PUBLISHED INSTRUCTIONS");
+        assert_eq!(
+            agents_db::publish(&state.db, &id, &next.to_string(), "creator")
+                .await
+                .unwrap(),
+            Some(2)
+        );
+        let second = start_private_turn(
+            &state,
+            AgentTurn {
+                agent_id: &id,
+                session_id: Some(&session),
+                message: "Second",
+                visitor_id: None,
+                lang: None,
+            },
+            &json!({}),
+            PrivateChatSource::Published,
+            &Default::default(),
+            "creator",
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.profile.version, 1);
+        let sections = second
+            .profile
+            .surface
+            .system_sections(&state.db, &session)
+            .await
+            .join("\n");
+        assert!(sections.contains("ORIGINAL PUBLISHED INSTRUCTIONS"));
+        assert!(!sections.contains("NEW PUBLISHED INSTRUCTIONS"));
+        chat::finalize_turn(
+            &state.db,
+            &second.turn.turn_id,
+            chat::TurnStatus::Completed,
+            None,
+        )
+        .await
+        .unwrap();
+        drop(second);
+        assert!(
+            start_private_turn(
+                &state,
+                AgentTurn {
+                    agent_id: &id,
+                    session_id: Some(&session),
+                    message: "Wrong source",
+                    visitor_id: None,
+                    lang: None
+                },
+                &json!({}),
+                PrivateChatSource::Draft,
+                &Default::default(),
+                "creator"
+            )
+            .await
+            .is_err()
+        );
+        sqlx::query("DELETE FROM organization_groups")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        assert!(
+            start_private_turn(
+                &state,
+                AgentTurn {
+                    agent_id: &id,
+                    session_id: Some(&session),
+                    message: "Revoked",
+                    visitor_id: None,
+                    lang: None
+                },
+                &json!({}),
+                PrivateChatSource::Published,
+                &Default::default(),
+                "creator"
+            )
+            .await
+            .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn published_authority_rejects_changed_or_deleted_original_row_even_with_warm_cache() {
+        for delete in [false, true] {
+            let (state, id, spec) = published_fixture().await;
+            assert!(
+                state
+                    .agent_specs
+                    .version(&state.db, &id, 1)
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
+            let started = start_private_turn(
+                &state,
+                AgentTurn {
+                    agent_id: &id,
+                    session_id: None,
+                    message: "Capture",
+                    visitor_id: None,
+                    lang: None,
+                },
+                &spec,
+                PrivateChatSource::Published,
+                &Default::default(),
+                "creator",
+            )
+            .await
+            .unwrap();
+            let chain = Arc::new(aiplane_core::server::run_chain::RunChain::root(
+                &started.turn.session_id,
+                None,
+                aiplane_core::server::run_chain::Frame::for_principal(
+                    &started.profile.principal,
+                    None,
+                ),
+            ));
+            let params = started
+                .profile
+                .drive_params(&started.turn.session_id, &started.turn.turn_id, chain)
+                .unwrap();
+            let crate::agent_run::Actor::Agent(run) = params.actor else {
+                panic!("agent expected")
+            };
+            if delete {
+                sqlx::query("DELETE FROM agent_versions WHERE principal_id=? AND version=1")
+                    .bind(&id)
+                    .execute(&state.db)
+                    .await
+                    .unwrap();
+            } else {
+                let mut changed = spec;
+                changed["main"]["instructions"]["orchestration"] = json!("CHANGED ORIGINAL ROW");
+                sqlx::query("UPDATE agent_versions SET spec=? WHERE principal_id=? AND version=1")
+                    .bind(changed.to_string())
+                    .bind(&id)
+                    .execute(&state.db)
+                    .await
+                    .unwrap();
+            }
+            let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+                .await
+                .unwrap();
+            assert!(
+                crate::agents::profile::validate_organization_turn_in(&mut tx, &run)
+                    .await
+                    .is_err()
+            );
+            let authority =
+                crate::agents::profile::OrganizationResumeAuthority::capture(&run).unwrap();
+            assert!(
+                crate::agents::profile::validate_organization_resume_in(&mut tx, &authority)
+                    .await
+                    .is_err()
+            );
+            drop(tx);
+            assert_eq!(
+                chat::get_turn(&state.db, &started.turn.session_id, &started.turn.turn_id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                chat::TurnStatus::InProgress
+            );
+        }
     }
 }

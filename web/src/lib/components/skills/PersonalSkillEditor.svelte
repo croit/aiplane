@@ -5,7 +5,7 @@
 		name: string;
 		initial: string;
 		isNew: boolean;
-		onsave: (name: string, manifest: string) => void | Promise<void>;
+		onsave: (name: string, manifest: string, overwrite: boolean) => void | Promise<void>;
 	}>();
 	let manifest = $state('');
 	let saving = $state(false);
@@ -14,7 +14,7 @@
 	async function save(event: SubmitEvent) {
 		event.preventDefault();
 		saving = true;
-		try { await onsave(name, manifest); } finally { saving = false; }
+		try { await onsave(name, manifest, !isNew); } finally { saving = false; }
 	}
 </script>
 

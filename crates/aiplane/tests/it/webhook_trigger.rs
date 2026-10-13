@@ -19,10 +19,14 @@ async fn an_endless_body_is_cut_at_the_payload_cap_instead_of_buffered() {
     let hook = webhooks::create(
         &state.db,
         NewWebhook {
-            user_id: "owner".into(),
+            dot_id: None,
+            linked_session_id: None,
+            owner: aiplane_runtime::server::background::AutomationOwner::User("owner".into()),
+            created_by: "owner".into(),
+            agent_version: None,
             name: "ci".into(),
             prompt: "summarise".into(),
-            model: "model-a".into(),
+            model: Some("model-a".into()),
             tools_enabled: false,
             synchronous: false,
             reuse_conversation: false,
@@ -41,7 +45,7 @@ async fn an_endless_body_is_cut_at_the_payload_cap_instead_of_buffered() {
     let resp = common::serve_promptly(&state, req).await;
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
-    let stored = webhooks::get(&state.db, "owner", &hook.id)
+    let stored = webhooks::get(&state.db, &hook.owner, &hook.id)
         .await
         .unwrap()
         .unwrap();
@@ -54,10 +58,14 @@ async fn hook(state: &aiplane::rama_server::RamaState, synchronous: bool) -> Str
     webhooks::create(
         &state.db,
         NewWebhook {
-            user_id: "owner".into(),
+            dot_id: None,
+            linked_session_id: None,
+            owner: aiplane_runtime::server::background::AutomationOwner::User("owner".into()),
+            created_by: "owner".into(),
+            agent_version: None,
             name: "ci".into(),
             prompt: "summarise".into(),
-            model: "model-a".into(),
+            model: Some("model-a".into()),
             tools_enabled: false,
             synchronous,
             reuse_conversation: false,
@@ -118,4 +126,81 @@ async fn a_failed_sync_run_is_a_502_run_failed() {
     assert_eq!(body["error"]["code"], "run_failed", "{body}");
     assert!(body["error"]["session_id"].is_string(), "{body}");
     assert!(body["error"]["status"].is_string(), "{body}");
+}
+
+#[tokio::test]
+async fn rotation_and_pause_during_payload_read_refuse_fire_before_recording() {
+    for rotate in [true, false] {
+        let state = common::state_no_skills().await;
+        let secret = hook(&state, false).await;
+        let hash = token::hash_webhook_secret(&secret).unwrap();
+        let original = webhooks::find_active_by_secret_hash(&state.db, &hash)
+            .await
+            .unwrap()
+            .unwrap();
+        let (reading, read_started) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let body = rama::http::Body::from_stream(rama::futures::stream::once(async move {
+            reading.send(()).unwrap();
+            released.await.unwrap();
+            Ok::<_, std::io::Error>(rama::bytes::Bytes::from_static(b"actual event"))
+        }));
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/hooks/{secret}"))
+            .body(body)
+            .unwrap();
+        let fire = common::serve_promptly(&state, request);
+        let change = async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), read_started)
+                .await
+                .unwrap()
+                .unwrap();
+            let outcome = if rotate {
+                let (_, replacement) = token::mint_webhook();
+                webhooks::rotate_secret(
+                    &state.db,
+                    &original.owner,
+                    &original.id,
+                    &original.configuration_generation,
+                    &replacement,
+                )
+                .await
+                .unwrap()
+            } else {
+                webhooks::set_enabled(
+                    &state.db,
+                    &original.owner,
+                    &original.id,
+                    &original.configuration_generation,
+                    false,
+                )
+                .await
+                .unwrap()
+            };
+            assert!(matches!(outcome, webhooks::EditOutcome::Saved(_)));
+            release.send(()).unwrap();
+        };
+        let (response, ()) = tokio::join!(fire, change);
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let error: serde_json::Value =
+            serde_json::from_slice(&common::read_body(response).await).unwrap();
+        assert_eq!(error["error"]["code"], "not_found");
+        assert!(
+            webhooks::list_runs(&state.db, &original.id, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let current = webhooks::get(&state.db, &original.owner, &original.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(current.last_payload.is_none());
+        assert!(current.last_session_id.is_none());
+        assert_eq!(
+            current.configuration_generation,
+            original.configuration_generation
+        );
+    }
 }

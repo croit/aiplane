@@ -10,6 +10,9 @@ const exactTitles: Record<string, PageTitleDescriptor> = {
 	'/scheduled': { key: 'scheduled-heading', branded: true },
 	'/webhooks': { key: 'webhooks-heading', branded: true },
 	'/agents': { key: 'agents-heading', branded: true },
+	'/organizations': { key: 'organizations-heading', branded: true },
+	'/admin/organizations': { key: 'organizations-heading', branded: true },
+	'/dots': { key: 'dots-heading', branded: true },
 	'/inbox': { key: 'inbox-heading', branded: true },
 	'/tools/integrations': { key: 'integrations-heading', branded: true },
 	'/tools/skills': { key: 'my-skills-heading', branded: true },
@@ -44,8 +47,10 @@ export function pageTitleDescriptor(pathname: string): PageTitleDescriptor | nul
 	const exact = exactTitles[path];
 	if (exact) return exact;
 	if (/^\/chat\/[^/]+$/.test(path)) return { key: 'chat-default-title', branded: true };
+	if (/^\/dots\/[^/]+\/workspace$/.test(path)) return { key: 'dot-workspace-heading', branded: true };
 	if (/^\/scheduled\/[^/]+\/edit$/.test(path)) return { key: 'scheduled-edit-heading', branded: true };
 	if (/^\/scheduled\/[^/]+\/runs$/.test(path)) return { key: 'scheduled-runs-page-title', branded: true };
+	if (/^\/organizations\/[^/]+$/.test(path)) return { key: 'organizations-heading', branded: true };
 	if (/^\/agents\/[^/]+$/.test(path)) return { key: 'agents-heading', branded: true };
 	if (/^\/webhooks\/[^/]+\/edit$/.test(path)) return { key: 'webhooks-edit-heading', branded: true };
 	if (/^\/webhooks\/[^/]+\/rerun$/.test(path)) return { key: 'webhooks-rerun-page-name', branded: true };

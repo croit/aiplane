@@ -419,7 +419,7 @@ async fn handle(
             other => other,
         })
         .collect();
-    let bytes = match chat_attachments::decode_base64(&normalised) {
+    let bytes = match shared::b64::decode(&normalised) {
         Ok(bytes) => bytes,
         Err(e) => return Spilled::Refused(format!("the base64 did not decode ({e})")),
     };
@@ -709,7 +709,7 @@ mod tests {
         assert_eq!(payloads[0].filename.as_deref(), Some("report.pdf"));
         assert_eq!(payloads[0].mime.as_deref(), Some("application/pdf"));
         // Re-joined without the line breaks, so it decodes.
-        assert!(chat_attachments::decode_base64(&payloads[0].data).is_ok());
+        assert!(shared::b64::decode(&payloads[0].data).is_ok());
     }
 
     #[test]

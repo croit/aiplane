@@ -159,9 +159,13 @@ Examples of its task families:
 | `/api/v0/memories*`, `/api/v0/tools*`, `/api/v0/integrations*`, `/api/v0/skills*` | Personal capabilities, connections and memories; [tools](../guide/tools-and-integrations.md). |
 | `/api/v0/scheduled*`, `/api/v0/webhooks*`, `/api/v0/inbox*` | Automation and durable decisions; [automation guide](../guide/automation-and-inbox.md). |
 | `/api/v0/agents*` | Agent drafts, grants, evaluation, publication and observation; agent guides. |
+| `/api/v0/dots*` | List/create/active-state require resolved `can_manage_dots`; owner-scoped access remains enforced. The four connection routes additionally admit organization member writers for explicit own-principal OAuth management; they return independent action capabilities and no user credential. The memory routes also admit organization member readers and writers through current membership and existing shares; shared-note writes additionally require gateway administration. The workspace routes retain personal ownership, including inactive Dots. Listing returns actual storage availability, busy state and nullable metadata; raw downloads use attachment disposition, `nosniff` and `no-store`. Uploads and reads are capped at 50 MiB; writes, folder creation and removal require idle storage. Remaining routes retain personal ownership. Personal Dot lifecycle, tool selection, tool/action approval rules, private chats, memory and activity; scheduled actions and webhooks can run as an owned Dot; [AIplane Dots](../dots.md). |
+| `/api/v0/organizations*` | Current group-derived membership, organization details and named organization Dot creation/activation. Creation requires membership and agent-management permission; configuration uses existing agent shares and principal grants. Organization member writers can run private saved-draft and pinned published conversations through the existing agent test routes; [organization Dots](../dots-organizations.md). |
 | `/api/v0/rag*` | Knowledge collections, snapshots, indexing and profiles; [knowledge](../admin/knowledge.md). |
 | `/api/v0/admin/*` | Administrative models, grants, settings and catalogs; administration guides. |
 | `/api/v0/setup/*` | Verified setup/recovery state machine. |
+
+`POST /api/v0/skills/draft` accepts `{name, goal, steps, stop_conditions, model}` from a signed-in user and returns `{manifest, model, saved:false}`. It requires personal-skill storage, validates the model against the caller's currently offered chat models, and meters generation to that user. It has no tool execution or persistence side effect. `POST /api/v0/skills` saves the reviewed manifest; JSON skill edits must set `overwrite:true`, while a create that collides with an existing personal skill returns `409`.
 
 The running gateway supplies `/openapi.json`, a typed OpenAPI contract for the
 registered `/api/v0` routes. It describes operations, path parameters, request
@@ -171,6 +175,113 @@ Most `/api/v0` refusals return an `error` object with a readable `message` and
 machine-readable `type` and `code`; validation responses may also include
 field-level issues. Check each operation's OpenAPI response schema for details.
 
+### Organization ownership and configuration
+
+Administrators create and edit organization metadata through
+`/api/v0/admin/organizations`. `member_groups` contains actual gateway-group
+names. The list response's `member_group_user_counts` maps each bound group
+name to its count of locally known users, resolved from each user's latest
+stored OIDC claim values; default groups count every locally known user. It is
+not a live IdP directory count. An empty list grants no membership. Updates require the opaque
+`expected_revision` returned by the server; a stale revision returns `409`
+without replacing metadata or group bindings.
+
+Member organization lists contain actual memberships. Dot configuration access
+intersects that membership with the existing user/group share and
+agent-management permission. Membership alone does not expose a Dot's
+configuration. Respond-only shares supply existing Inbox standing rather than
+the agent configuration response. Administrator recovery remains available
+through the existing administration and agent-management surfaces.
+
+Agent summaries carry nullable `dot` metadata with the persisted Dot name,
+typed owner and active state. A Dot's organization owner is immutable. The
+organization detail reports its total active count and configured limit, while
+its Dot list includes only configurations the caller may read. Active idle
+Dots count towards the limit. Creation and activation enforce that limit in
+the same transaction as the current authority check.
+
+`GET /api/v0/agent-resources?agent_id={id}` resolves the actual target agent's
+configuration inventory. An organization connector is offered and grantable
+only after a current member writer explicitly selects a connected own-principal
+OAuth credential with current catalogue, credential and binding generations.
+The writer's existing catalogue eligibility and grant ceiling also apply;
+a selected credential is separate from the principal's Connector grant.
+
+`POST /api/v0/agents/{id}/test/messages` requires
+`{message, source:"draft"|"published", session_id?}`. Ordinary agents accept
+explicit `draft`; active organization Dots additionally accept `published` for
+current member writers. A new published conversation uses the actual current
+live version. Continuing it keeps its stored positive version after publishing
+or rollback; changing source requires a new conversation. The response is
+`202 {session_id, turn_id, source, agent_version}`. Draft uses version `0`.
+No client-supplied version or organization ID selects authority.
+
+Organization conversations are private principal-owned sessions with
+`user_id=NULL`, `shared=0`, no visitor and no parent turn. Events and debug
+require current member Write access and exact private source/version proof.
+Debug also returns `source` and `agent_version`. Administrator recovery
+without membership does not admit execution or history.
+
+Staff resume rechecks current member Write access in its atomic claim
+transaction. Strict saved authority retains the original source, authored
+snapshot, resolved model and initial principal grant/model-pool ceilings across
+restart. Published snapshots must agree with their actual version row; a cache
+hit cannot replace that proof. Current selected MCP account facts must match.
+A refused claim preserves the waiting request. New publication, draft edits or
+added grants cannot enlarge the paused run. Internal run context and secrets
+are absent from the public suspension response.
+
+Published private approvals, human answers and secure input appear in the
+existing Inbox only for current member writers. Draft pauses remain inline.
+Read, Respond and administrator recovery without membership expose no private
+items. Organization announcements do not send push or external channel messages.
+Publication alone does not admit public, visitor, embedded, delegated or
+test-suite execution. Scheduled actions and webhooks require their own retained
+published pin and exact recorded private-run admission.
+
+Organization share suggestions use the existing eight-result cap and check
+current membership before including users. A search examines at most one
+thousand matching candidates. When more candidates remain at that boundary,
+`truncated` is `true`; narrow the query before relying on the result. Group
+suggestions contain the organization's actual bound groups.
+
+### Dot memory scopes
+
+`GET /api/v0/dots/{id}/memories` returns at most 500 merged notes and a
+`scopes` array with each actual scope's `scope`, configured `name` and current
+`writable` flag. Each note includes its `scope`. Personal Dots expose `dot`;
+organization Dots expose `dot` and `organization`. The server derives the
+organization from the target Dot, never from an input organization ID.
+
+POST and PUT require `{kind,content,scope}`; DELETE requires `?scope=dot` or
+`?scope=organization`. Missing or invalid scope returns 400. New and updated
+content is limited to 2,000 UTF-8 bytes; existing longer notes remain readable.
+Kinds are `preference`, `project` and `fact`.
+
+Organization reads require current membership, agent-management permission
+and effective Read or Write access to that Dot. Own-note changes require
+Write; shared organization-note changes also require current gateway
+administration rights. A narrowly shared writer receives 403 on shared
+mutation. Respond-only and nonmember recovery access expose no notes. The
+server rechecks authority and applies each operation in the same transaction;
+returned writable flags do not authorize a later request. Foreign note IDs
+return 404 without revealing content.
+
+### Personal Dot browser handover
+
+An active personal Dot can request owner help through its existing `browse_page`
+tool. The exact chat turn pauses while the owner uses the Dot's server-side
+browser in the web conversation. The five `browser-handover` routes in the
+operation index claim one controller, return private JPEG frames, accept typed
+input, return control to the same turn, or stop that run. All require the same
+authenticated owner session and same-origin `Origin`; responses use
+`Cache-Control: no-store, private`. The claim body carries a client-generated
+`controller_id`; retrying with that same ID is idempotent, while another
+controller is refused. Frames and input are never added to model messages or
+chat attachments. This flow is personal-Dot-only and uses the runner's
+persistent browser profile when persistent storage is available; see [browser handover](../dots-browser-handover.md)
+and [workspace deployment limits](../dots-workspace.md#operator-implications).
+
 ### Conversation events
 
 Submitting a message and subscribing to its events are separate operations.
@@ -179,6 +290,136 @@ conversation's `events` endpoint as an SSE stream. Its data frames use the
 AIplane JSON event protocol (`snapshot`, `turn_delta`, tool and state events),
 not OpenAI chat chunks. Reconnect using the existing protocol's snapshot and
 event handling; do not append a reconnect snapshot as if it were new text.
+
+### Personal Dot automation
+
+Schedule and webhook create/update bodies accept `dot_id: string | null`.
+Omitting it selects ordinary user execution. A changed binding must select an
+active owned Dot; an unchanged unavailable binding can be retained while other
+configuration is edited, but cannot execute. Responses include the stored
+`dot_id` and the actual owned Dot metadata when that Dot exists.
+
+`linked_session_id` is valid only with conversation reuse. Omission retains
+the link, an empty string clears it, and a concrete ID must identify a private
+owned conversation with the same Dot binding. Changing the Dot binding clears
+the existing link unless a matching replacement is supplied. The chat-session
+list accepts `dot_id`: absence lists all conversations, an empty value selects
+ordinary conversations, and a Dot ID selects that owner's Dot conversations.
+This scope also applies to text search before its result limit.
+
+Run history includes the exact `assistant_turn_id`. A synchronous webhook or
+manual rerun that waits for approval returns `202` with status `waiting` and
+its conversation ID. Decisions use the existing Inbox and resume the recorded
+turn with its original history limit and tool ceiling. Disabling a trigger
+stops new firings while allowing a pending decision to settle; deleting a
+trigger with a nonterminal run returns `409`. Running background turns can be
+watched and stopped through the existing conversation endpoints; interactive
+messages, steering and history rewrites are refused while that turn runs.
+
+### Organization scheduled actions
+
+`GET /api/v0/scheduled?principal_id={dot_id}` selects an organization Dot's
+schedule inventory. Without that query, the route lists the authenticated
+user's schedules. The scoped response contains `principal_id`, `can_write`,
+`actions`, the actual target in `dots`, and its published `versions` using the
+existing agent version shape. Organization responses have `models: []` and
+`default_timezone: null`; the client must supply a timezone. An empty schedule
+list still returns the actual Dot and its versions.
+
+Creation uses the existing `POST /api/v0/scheduled` route. For an organization
+Dot, send `principal_id`, a positive `agent_version`, `name`, `prompt`, `cron`,
+`timezone`, `tools_enabled`, `reuse_conversation: false` and `reuse_rounds`.
+Omit `model`, `dot_id` and `linked_session_id`. The model comes from the pinned
+published spec, or the existing gateway Chat default when the spec omits it,
+under the Dot principal's current grants. Each fire opens a fresh private principal-owned
+conversation. Organization conversation reuse is unavailable.
+
+The returned action includes `principal_id`, `agent_version` and
+`configuration_generation`; its `model` and `dot_id` are null. Ownership is
+immutable. The schedule belongs to the principal and survives deletion of its
+creating user. Inventory, creation, edits, toggles, deletion and run history
+require current organization membership and effective Write access, checked in
+the operation's transaction. Nonmember administrator recovery rights do not
+expose these private surfaces. Personal Dot management permission is not a
+prerequisite.
+
+`PUT /api/v0/scheduled/{id}` requires the complete configuration and
+`expected_configuration_generation` from the returned action. Organization
+updates retain the same `principal_id`. `POST /api/v0/scheduled/{id}/toggle`
+requires `{enabled,expected_configuration_generation}` and returns
+`{enabled,configuration_generation}`. These generation requirements also apply
+to user-owned schedules. Missing fields are rejected; stale generations return
+409. Execution configuration changes rotate the generation. Identical saves,
+name-only changes and pause/resume retain it.
+
+`GET /api/v0/scheduled/{id}/runs` derives scope from the stored action; no
+principal query is required. It returns the actual action and up to 50 runs,
+including `session_id`, `assistant_turn_id`, `agent_version` and
+`configuration_generation`. Older user runs may have null version and
+generation snapshots. The organization UI opens a recorded conversation at
+`/agents/{principal_id}?tab=try&test_session={session_id}`. Its source and pinned
+version are obtained from the private history endpoints.
+
+Pausing prevents new fires and preserves an admitted pending decision.
+Changing execution configuration invalidates a pending run's former dispatch
+authority. To stop a running or suspended private turn, use
+`POST /api/v0/agents/{id}/test/{session}/cancel` with `{turn_id}`. The exact
+assistant turn must belong to that private conversation; current member Write
+access is required. Cancellation remains available after deactivation,
+principal disablement, grant removal or configuration changes. Success returns
+`{ok:true}`; an unavailable turn returns 404. Ordinary agents can use this route
+for their private draft conversations.
+
+Deleting a schedule with a running, waiting or starting run returns 409.
+Stop or settle it before retrying. Deleting a Dot with retained principal-owned
+schedules also returns 409: delete those schedules first, even if their runs
+have finished. Schedule deletion removes its recorded run history.
+
+### Organization webhooks
+
+`GET /api/v0/webhooks?principal_id={dot_id}` selects an organization Dot's
+webhook inventory. Without this query, it returns the authenticated user's
+webhooks. The scoped response contains `principal_id`, `can_write`, `webhooks`,
+the actual target in `dots` and its retained published `versions`.
+
+`POST /api/v0/webhooks` accepts `principal_id`, positive `agent_version`, `name`,
+`prompt` and `tools_enabled`. Organization sources require asynchronous mode
+and fresh conversations: omit `model`, `dot_id` and `linked_session_id`, and
+keep `synchronous` and `reuse_conversation` false. The response contains
+`{webhook,secret}`; only this creation and rotation disclose the minted secret.
+The stored webhook includes `principal_id`, `agent_version` and its nonempty
+`configuration_generation`. Its model and personal Dot binding are null.
+Ownership is immutable; creator deletion does not delete the principal's source.
+
+Current member Write guards inventory, configuration, secret rotation, deletion,
+history and replay. `PUT /api/v0/webhooks/{id}` requires the configuration plus
+`expected_configuration_generation`. Toggle requires
+`{enabled,expected_configuration_generation}`; rotation requires
+`{expected_configuration_generation}`. Replay requires
+`{prompt,expected_configuration_generation,run?}`. These generation requirements
+also apply to user-owned webhooks. Missing or incorrectly typed required fields
+return 400; stale generations return 409. Effective execution changes rotate the
+generation; names, unchanged saves, pausing and secret rotation preserve it.
+
+`GET /api/v0/webhooks/{id}/runs` returns `{runs}` scoped by the stored owner.
+Each new run includes its exact assistant turn, source generation and authored
+version; legacy user snapshots remain null. Organization history opens the same
+private agent Test chat as scheduled runs. Principal grants, selected own
+credentials, approvals and usage limits govern execution.
+
+Public `GET` or `POST /hooks/{secret}` returns `202 {session_id}` for organization
+sources, without output, private errors or waiting decisions. The existing
+256 KiB input-prefix limit truncates larger bodies. Unknown, rotated and paused
+secrets return the same 404. Final admission rechecks the original secret,
+enabled state and generation after reading the body.
+
+An explicit member-writer replay may run while the source is paused. It uses
+actual stored input and the submitted prompt in a new private conversation,
+under the current source's retained publication. Membership and Write are checked
+again before returning its private result. Rotation and pause preserve admitted
+decisions; execution edits invalidate further dispatch from older generations.
+Exact Stop uses the private cancellation endpoint described above. Pending or
+starting runs prevent source deletion; retained sources prevent Dot deletion.
 
 ## Public entry points and credentials
 
@@ -265,6 +506,9 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/admin/models` |
 | `PUT /api/v0/admin/models` |
 | `DELETE /api/v0/admin/models/{name}` |
+| `GET /api/v0/admin/organizations` |
+| `POST /api/v0/admin/organizations` |
+| `PUT /api/v0/admin/organizations/{id}` |
 | `PUT /api/v0/admin/pools` |
 | `DELETE /api/v0/admin/pools/{name}` |
 | `POST /api/v0/admin/pools/{name}/rename` |
@@ -287,9 +531,37 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/admin/users` |
 | `POST /api/v0/admin/users/{id}/impersonate` |
 | `POST /api/v0/agent-architect` |
+| `GET /api/v0/agent-architect/{session_id}/dot-plan` |
+| `POST /api/v0/agent-architect/{session_id}/dot-plan` |
 | `GET /api/v0/agent-resources` |
 | `GET /api/v0/agents` |
 | `POST /api/v0/agents` |
+| `GET /api/v0/organizations` |
+| `GET /api/v0/organizations/{id}` |
+| `POST /api/v0/organizations/{id}/dots` |
+| `POST /api/v0/organizations/{id}/dots/{dot}/active` |
+| `GET /api/v0/dots` |
+| `POST /api/v0/dots` |
+| `PUT /api/v0/dots/{id}/active` |
+| `GET /api/v0/dots/{id}/access` |
+| `PUT /api/v0/dots/{id}/access` |
+| `GET /api/v0/dots/{id}/connections` |
+| `PUT /api/v0/dots/{id}/connections/{key}` |
+| `POST /api/v0/dots/{id}/connections/{key}/connect` |
+| `DELETE /api/v0/dots/{id}/connections/{key}` |
+| `GET /api/v0/dots/{id}/communication` |
+| `PUT /api/v0/dots/{id}/communication` |
+| `GET /api/v0/dots/{id}/memories` |
+| `POST /api/v0/dots/{id}/memories` |
+| `PUT /api/v0/dots/{id}/memories/{memory_id}` |
+| `DELETE /api/v0/dots/{id}/memories/{memory_id}` |
+| `GET /api/v0/dots/{id}/activity` |
+| `GET /api/v0/dots/{id}/workspace` |
+| `GET /api/v0/dots/{id}/workspace/file` |
+| `PUT /api/v0/dots/{id}/workspace/file` |
+| `POST /api/v0/dots/{id}/workspace/folder` |
+| `DELETE /api/v0/dots/{id}/workspace/entry` |
+| `POST /api/v0/dots/{id}/sessions` |
 | `GET /api/v0/agents/inbox` |
 | `GET /api/v0/agents/inbox/events` |
 | `POST /api/v0/agents/inbox/{id}/answer` |
@@ -304,6 +576,8 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/agents/{id}/channels` |
 | `POST /api/v0/agents/{id}/channels` |
 | `DELETE /api/v0/agents/{id}/channels/{channel_id}` |
+| `GET /api/v0/agents/{id}/communication` |
+| `PUT /api/v0/agents/{id}/communication` |
 | `POST /api/v0/agents/{id}/conversations/{session}/turns/{turn}/resume` |
 | `PUT /api/v0/agents/{id}/draft` |
 | `POST /api/v0/agents/{id}/draft/restore` |
@@ -320,6 +594,7 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/agents/{id}/test-runs/{run}` |
 | `POST /api/v0/agents/{id}/test/messages` |
 | `GET /api/v0/agents/{id}/test/{session}/events` |
+| `POST /api/v0/agents/{id}/test/{session}/cancel` |
 | `GET /api/v0/agents/{id}/test/{session}/turns/{turn}/debug` |
 | `GET /api/v0/agents/{id}/tests` |
 | `POST /api/v0/agents/{id}/tests` |
@@ -335,6 +610,11 @@ Debug fixture routes exist only in development builds.
 | `DELETE /api/v0/chat/sessions/{id}` |
 | `GET /api/v0/chat/sessions/{id}` |
 | `POST /api/v0/chat/sessions/{id}/cancel` |
+| `POST /api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/claim` |
+| `POST /api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/frame` |
+| `POST /api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/input` |
+| `POST /api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/finish` |
+| `POST /api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/abort` |
 | `GET /api/v0/chat/sessions/{id}/capabilities` |
 | `POST /api/v0/chat/sessions/{id}/capabilities` |
 | `GET /api/v0/chat/sessions/{id}/documents` |
@@ -427,6 +707,7 @@ Debug fixture routes exist only in development builds.
 | `POST /api/v0/setup/test` |
 | `GET /api/v0/skills` |
 | `POST /api/v0/skills` |
+| `POST /api/v0/skills/draft` |
 | `DELETE /api/v0/skills/{name}` |
 | `GET /api/v0/skills/{name}/archive` |
 | `GET /api/v0/skills/{name}/body` |

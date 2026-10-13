@@ -112,6 +112,7 @@
 		</table>
 	</div>
 
+	{#if found?.truncated}<div class="alert alert-info" role="status"><span>{t('organization-share-search-truncated')}</span></div>{/if}
 	{#if writable}
 		<form class="flex flex-wrap items-end gap-3" onsubmit={(e) => { e.preventDefault(); void add(); }}>
 			<label class="flex flex-col gap-1">

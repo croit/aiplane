@@ -39,6 +39,101 @@ async fn served_document() -> serde_json::Value {
     serde_json::from_slice(&common::read_body(response).await).unwrap()
 }
 
+#[tokio::test]
+async fn organization_schedule_and_private_stop_contracts_require_exact_configuration_and_turn() {
+    let document = served_document().await;
+    let paths = &document["paths"];
+    let create = json_body(
+        &document,
+        &paths["/api/v0/scheduled"]["post"]["requestBody"]["content"],
+    );
+    assert!(create["properties"]["principal_id"].is_object());
+    assert!(create["properties"]["agent_version"].is_object());
+    assert!(
+        !create["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "model")
+    );
+    for (path, method) in [
+        ("/api/v0/scheduled/{id}", "put"),
+        ("/api/v0/scheduled/{id}/toggle", "post"),
+    ] {
+        let operation = &paths[path][method];
+        let body = json_body(&document, &operation["requestBody"]["content"]);
+        assert!(
+            body["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "expected_configuration_generation")
+        );
+        assert!(operation["responses"]["409"].is_object());
+    }
+    let stop = &paths["/api/v0/agents/{id}/test/{session}/cancel"]["post"];
+    assert_eq!(stop["x-aiplane-access"], "session");
+    let body = json_body(&document, &stop["requestBody"]["content"]);
+    assert_eq!(body["required"], serde_json::json!(["turn_id"]));
+    let reply = json_body(&document, &stop["responses"]["200"]["content"]);
+    assert!(reply["properties"]["ok"].is_object());
+}
+
+#[tokio::test]
+async fn organization_webhook_contracts_publish_principal_pin_and_strict_management_generation() {
+    let document = served_document().await;
+    let paths = &document["paths"];
+    let create = json_body(
+        &document,
+        &paths["/api/v0/webhooks"]["post"]["requestBody"]["content"],
+    );
+    for field in ["principal_id", "agent_version"] {
+        assert!(create["properties"][field].is_object(), "{field}");
+    }
+    assert!(
+        !create["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "model")
+    );
+    let list = json_body(
+        &document,
+        &paths["/api/v0/webhooks"]["get"]["responses"]["200"]["content"],
+    );
+    for field in ["principal_id", "can_write", "versions"] {
+        assert!(list["properties"][field].is_object(), "{field}");
+    }
+    for path in ["/api/v0/scheduled", "/api/v0/webhooks"] {
+        let parameters = paths[path]["get"]["parameters"].as_array().unwrap();
+        let scope = parameters
+            .iter()
+            .find(|parameter| parameter["name"] == "principal_id")
+            .unwrap();
+        assert_eq!(scope["in"], "query");
+        assert_eq!(scope["required"], false);
+        assert_eq!(scope["schema"]["type"], "string");
+    }
+    for (path, method) in [
+        ("/api/v0/webhooks/{id}", "put"),
+        ("/api/v0/webhooks/{id}/toggle", "post"),
+        ("/api/v0/webhooks/{id}/rotate", "post"),
+        ("/api/v0/webhooks/{id}/rerun", "post"),
+    ] {
+        let operation = &paths[path][method];
+        let body = json_body(&document, &operation["requestBody"]["content"]);
+        assert!(
+            body["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "expected_configuration_generation"),
+            "{method} {path}"
+        );
+        assert!(operation["responses"]["409"].is_object(), "{method} {path}");
+    }
+}
+
 /// The schema a `$ref` names, out of `components/schemas`.
 fn resolved<'a>(
     document: &'a serde_json::Value,
@@ -78,6 +173,97 @@ async fn every_operation_is_declared_with_its_access_and_responses() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn organization_operations_describe_current_typed_configuration_contracts() {
+    let document = served_document().await;
+    let paths = &document["paths"];
+    for (path, method, access, success) in [
+        ("/api/v0/admin/organizations", "get", "admin", "200"),
+        ("/api/v0/admin/organizations", "post", "admin", "201"),
+        ("/api/v0/admin/organizations/{id}", "put", "admin", "200"),
+        ("/api/v0/organizations", "get", "session", "200"),
+        ("/api/v0/organizations/{id}", "get", "session", "200"),
+        ("/api/v0/organizations/{id}/dots", "post", "session", "201"),
+        (
+            "/api/v0/organizations/{id}/dots/{dot}/active",
+            "post",
+            "session",
+            "200",
+        ),
+    ] {
+        let operation = &paths[path][method];
+        assert_eq!(operation["x-aiplane-access"], access, "{method} {path}");
+        assert!(
+            operation["x-aiplane-undeclared"].is_null(),
+            "{method} {path}"
+        );
+        let reply = json_body(&document, &operation["responses"][success]["content"]);
+        assert!(reply["properties"].is_object(), "{method} {path}");
+    }
+
+    let edit = &paths["/api/v0/admin/organizations/{id}"]["put"];
+    let body = json_body(&document, &edit["requestBody"]["content"]);
+    assert_eq!(body["properties"]["expected_revision"]["type"], "string");
+    assert_eq!(body["properties"]["member_groups"]["type"], "array");
+    assert!(edit["responses"]["409"].is_object());
+
+    let detail = json_body(
+        &document,
+        &paths["/api/v0/organizations/{id}"]["get"]["responses"]["200"]["content"],
+    );
+    for field in [
+        "organization",
+        "dots",
+        "active_count",
+        "active_limit",
+        "can_create_dot",
+    ] {
+        assert!(detail["properties"].get(field).is_some(), "missing {field}");
+    }
+    let agent = resolved(&document, &detail["properties"]["dots"]["items"]);
+    assert!(agent["properties"].get("dot").is_some());
+    let subjects = json_body(
+        &document,
+        &paths["/api/v0/agents/{id}/share-subjects"]["get"]["responses"]["200"]["content"],
+    );
+    assert_eq!(subjects["properties"]["truncated"]["type"], "boolean");
+
+    let resources = &paths["/api/v0/agent-resources"]["get"];
+    assert!(
+        resources["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|parameter| { parameter["name"] == "agent_id" && parameter["in"] == "query" })
+    );
+    assert!(resources["responses"]["404"].is_object());
+}
+
+#[tokio::test]
+async fn dot_connection_inventory_declares_authoritative_selection_and_optional_personal_identity()
+{
+    let document = served_document().await;
+    let operation = &document["paths"]["/api/v0/dots/{id}/connections"]["get"];
+    let inventory = json_body(&document, &operation["responses"]["200"]["content"]);
+    let row = resolved(&document, &inventory["properties"]["connections"]["items"]);
+    assert_eq!(row["properties"]["can_select"]["type"], "boolean");
+    assert!(
+        row["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("can_select"))
+    );
+    let identity = &row["properties"]["user_connection"];
+    assert!(
+        identity["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|choice| choice["type"] == "null")
+    );
+    assert_eq!(operation["x-aiplane-access"], "session");
 }
 
 #[tokio::test]
@@ -209,4 +395,31 @@ async fn the_chat_event_stream_describes_its_frames() {
 fn detached_openapi_document_does_not_exist() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     assert!(!manifest.join("../../docs/openapi.json").exists());
+}
+
+#[tokio::test]
+async fn private_agent_chat_declares_required_source_and_actual_version_metadata() {
+    let document = served_document().await;
+    let paths = &document["paths"];
+    let send = &paths["/api/v0/agents/{id}/test/messages"]["post"];
+    let body = json_body(&document, &send["requestBody"]["content"]);
+    assert!(
+        body["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "source")
+    );
+    let source = resolved(&document, &body["properties"]["source"]);
+    assert_eq!(source["enum"], serde_json::json!(["draft", "published"]));
+    for content in [
+        &send["responses"]["202"]["content"],
+        &paths["/api/v0/agents/{id}/test/{session}/turns/{turn}/debug"]["get"]["responses"]["200"]
+            ["content"],
+    ] {
+        let response = json_body(&document, content);
+        assert!(response["properties"]["agent_version"].is_object());
+        assert!(response["properties"]["source"].is_object());
+        assert!(response["properties"].get("draft_version").is_none());
+    }
 }

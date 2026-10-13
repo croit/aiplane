@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { api } from '#lib/api.js';
+	import { organizationsApi } from '#lib/organizations.js';
 	import { loginPageUrl } from '#lib/auth.js';
 	import { navItemActive } from '#lib/nav.js';
 	import { boundedViewport } from '#lib/viewport.js';
@@ -112,6 +113,7 @@
 	/// session alive behind a signed-out-looking shell.
 	let signOutError = $state<string | null>(null);
 	let sidebarError = $state<string | null>(null);
+	let organizationsAvailable = $state(false);
 	function savedNavSections(): Set<string> {
 		if (typeof document === 'undefined') return new Set(['workspace']);
 		const value = document.cookie
@@ -150,6 +152,8 @@
 		['nav-scheduled', '/scheduled', 'clock'],
 		['nav-webhooks', '/webhooks', 'send'],
 		['nav-agents', '/agents', 'cpu'],
+		['nav-dots', '/dots', 'cube'],
+		['organizations-heading', '/organizations', 'users'],
 		['nav-tools', '/tools', 'sliders']
 	];
 	const accountLinks: NavLink[] = [
@@ -173,7 +177,10 @@
 	const visibleWorkspaceLinks = $derived(
 		visibleNavLinks(workspaceLinks, features).filter(
 			([, path]) =>
-				(path !== '/agents' || me.value?.can_manage_agents) && (path !== '/inbox' || inboxShown(inboxLive, isActive('/inbox')))
+				(path !== '/agents' || me.value?.can_manage_agents) &&
+				(path !== '/dots' || me.value?.can_manage_dots) &&
+				(path !== '/organizations' || organizationsAvailable) &&
+				(path !== '/inbox' || inboxShown(inboxLive, isActive('/inbox')))
 		)
 	);
 	const visibleAccountLinks = $derived(visibleNavLinks(accountLinks, features));
@@ -205,6 +212,18 @@
 	}
 
 	const bounded = $derived(boundedViewport(page.url));
+
+	$effect(() => {
+		if (!me.loaded || !me.value) return;
+		void organizationsApi.list()
+			.then(({ organizations }) => {
+				organizationsAvailable = organizations.length > 0;
+			})
+			.catch((error) => {
+				console.error('loading /api/v0/organizations failed', error);
+				organizationsAvailable = false;
+			});
+	});
 
 	onMount(() => {
 		// Keep <html lang> in step with the catalog: screen readers and the

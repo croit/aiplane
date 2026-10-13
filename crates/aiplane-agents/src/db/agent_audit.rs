@@ -83,12 +83,17 @@ pub enum AuditKind {
     /// A paused run was resumed: who answered, and the decision's shape.
     RunResumed,
     AgentCreated,
+    OrganizationCreated,
+    OrganizationUpdated,
     AgentDraftUpdated,
     AgentPublished,
     AgentLiveVersionSet,
     AgentShareSet,
     AgentShareRemoved,
     AgentDeleted,
+    DotStateChanged,
+    PersonalDotDelegationChanged,
+    PersonalDotSessionStarted,
     /// A manager asked the prompt assistant to suggest a setup or improve a
     /// text: who, the scenario or text, pool, model, token counts, and
     /// which steps were offered or dropped. Nothing it suggests is applied.
@@ -163,12 +168,17 @@ impl AuditKind {
         Self::RunSuspended,
         Self::RunResumed,
         Self::AgentCreated,
+        Self::OrganizationCreated,
+        Self::OrganizationUpdated,
         Self::AgentDraftUpdated,
         Self::AgentPublished,
         Self::AgentLiveVersionSet,
         Self::AgentShareSet,
         Self::AgentShareRemoved,
         Self::AgentDeleted,
+        Self::DotStateChanged,
+        Self::PersonalDotDelegationChanged,
+        Self::PersonalDotSessionStarted,
         Self::AssistSuggested,
         Self::EmbedKeyCreated,
         Self::EmbedKeyRevoked,
@@ -192,6 +202,10 @@ impl AuditKind {
         Self::ChainCheckpoint,
     ];
 
+    fn is_user_management(self) -> bool {
+        matches!(self, Self::OrganizationCreated | Self::OrganizationUpdated)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::PrincipalCreated => "principal_created",
@@ -210,12 +224,17 @@ impl AuditKind {
             Self::RunSuspended => "run_suspended",
             Self::RunResumed => "run_resumed",
             Self::AgentCreated => "agent_created",
+            Self::OrganizationCreated => "organization_created",
+            Self::OrganizationUpdated => "organization_updated",
             Self::AgentDraftUpdated => "agent_draft_updated",
             Self::AgentPublished => "agent_published",
             Self::AgentLiveVersionSet => "agent_live_version_set",
             Self::AgentShareSet => "agent_share_set",
             Self::AgentShareRemoved => "agent_share_removed",
             Self::AgentDeleted => "agent_deleted",
+            Self::DotStateChanged => "dot_state_changed",
+            Self::PersonalDotDelegationChanged => "personal_dot_delegation_changed",
+            Self::PersonalDotSessionStarted => "personal_dot_session_started",
             Self::AssistSuggested => "assist_suggested",
             Self::EmbedKeyCreated => "embed_key_created",
             Self::EmbedKeyRevoked => "embed_key_revoked",
@@ -294,6 +313,9 @@ pub struct NewEvent<'a> {
     pub principal_id: &'a str,
     /// The person who caused it, when one did.
     pub actor_id: Option<&'a str>,
+    /// An agent attribution for a user's conversation event, such as a
+    /// personal Dot acting under the user's principal.
+    pub agent_id: Option<&'a str>,
     pub chain: Option<&'a RunChain>,
     pub at: Correlation,
     pub duration_ms: Option<u64>,
@@ -308,6 +330,7 @@ impl<'a> NewEvent<'a> {
             kind,
             principal_id,
             actor_id: None,
+            agent_id: None,
             chain: None,
             at: Correlation::default(),
             duration_ms: None,
@@ -323,6 +346,11 @@ impl<'a> NewEvent<'a> {
 
     pub fn by(mut self, actor_id: Option<&'a str>) -> Self {
         self.actor_id = actor_id;
+        self
+    }
+
+    pub fn for_agent(mut self, agent_id: &'a str) -> Self {
+        self.agent_id = Some(agent_id);
         self
     }
 
@@ -617,6 +645,29 @@ const SWEEP_SQL: &str = "SELECT chain_key, conversation_id, MAX(rtrim(created_at
 /// extended under it, so two writers cannot both take the same place. The
 /// unique index on `(chain_key, seq)` refuses a fork should one try.
 pub async fn append(conn: &mut WriteTx, mut event: NewEvent<'_>) -> Result<Appended, DbError> {
+    let user_management = event.kind.is_user_management();
+    if user_management {
+        let valid_actor: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?)")
+            .bind(event.principal_id)
+            .fetch_one(&mut **conn)
+            .await?;
+        if !valid_actor
+            || event.actor_id != Some(event.principal_id)
+            || event.agent_id.is_some()
+            || event.chain.is_some()
+            || event.at.session_id.is_some()
+            || event.at.turn_id.is_some()
+            || event.at.call_id.is_some()
+            || event.at.round.is_some()
+        {
+            return Err(DbError::Decode {
+                column: "organization_audit",
+                source: anyhow::anyhow!(
+                    "organization management audit requires its actual user actor without agent or conversation association"
+                ),
+            });
+        }
+    }
     std::mem::take(&mut event.redaction).apply(event.kind, &mut event.detail);
     let root = match &event.at.session_id {
         Some(session) => Some(root_conversation(conn, session).await?),
@@ -628,6 +679,7 @@ pub async fn append(conn: &mut WriteTx, mut event: NewEvent<'_>) -> Result<Appen
         .or_else(|| event.chain.map(|c| c.root_session.clone()));
     let chain_key = match &conversation_id {
         Some(c) => conversation_chain(c),
+        None if user_management => format!("user:{}", event.principal_id),
         None => agent_chain(event.principal_id),
     };
     if event.kind == AuditKind::LlmExchange {
@@ -672,14 +724,18 @@ pub async fn append(conn: &mut WriteTx, mut event: NewEvent<'_>) -> Result<Appen
         kind: event.kind.as_str().to_string(),
         principal_id: event.principal_id.to_string(),
         actor_id: event.actor_id.map(str::to_string),
-        agent_id: Some(
-            event
-                .chain
-                .map(|c| c.agent().principal_id.as_str())
-                .or_else(|| root.as_ref().and_then(|(_, owner)| owner.as_deref()))
-                .unwrap_or(event.principal_id)
-                .to_string(),
-        ),
+        agent_id: if user_management {
+            None
+        } else {
+            Some(
+                event
+                    .agent_id
+                    .or_else(|| event.chain.map(|c| c.agent().principal_id.as_str()))
+                    .or_else(|| root.as_ref().and_then(|(_, owner)| owner.as_deref()))
+                    .unwrap_or(event.principal_id)
+                    .to_string(),
+            )
+        },
         version: event.chain.and_then(|c| c.current().version),
         conversation_id,
         session_id: event.at.session_id,
@@ -867,7 +923,12 @@ pub async fn for_principal(pool: &Pool, principal_id: &str) -> Result<Vec<AuditE
         "SELECT {COLUMNS} FROM agent_audit
           WHERE principal_id = ? AND kind NOT IN ({})
           ORDER BY rowid DESC",
-        sql_kinds(AuditKind::ALL.iter().copied().filter(|k| k.is_content()))
+        sql_kinds(
+            AuditKind::ALL
+                .iter()
+                .copied()
+                .filter(|k| k.is_content() || k.is_user_management())
+        )
     );
     let rows = sqlx::query(&sql).bind(principal_id).fetch_all(pool).await?;
     rows.iter().map(|r| AuditEvent::of(stored(r)?)).collect()
@@ -1142,3 +1203,73 @@ pub async fn sweep_conversation_chains(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod organization_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn organization_user_chain_keeps_hash_integrity_and_agent_id_collision_private() {
+        let p = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO users(id,email,roles_json,created_at,updated_at) VALUES('same','same@example.test','[]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')").execute(&p).await.unwrap();
+        sqlx::query("INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES('same','same','Same','same','2026-01-01T00:00:00Z')").execute(&p).await.unwrap();
+        sqlx::query("INSERT INTO agents(principal_id,draft_spec,created_at,updated_at) VALUES('same','{}','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')").execute(&p).await.unwrap();
+        sqlx::query("INSERT INTO organizations(id,name,description,revision,created_by,created_at,updated_at) VALUES('actual-org','Acme','','fixture-revision','same','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')").execute(&p).await.unwrap();
+        for kind in [
+            AuditKind::OrganizationCreated,
+            AuditKind::OrganizationUpdated,
+        ] {
+            append_now(
+                &p,
+                NewEvent::new(kind, "same", json!({"organization_id":"actual-org"}))
+                    .by(Some("same")),
+            )
+            .await
+            .unwrap();
+        }
+        let rows = sqlx::query(&format!(
+            "SELECT {COLUMNS} FROM agent_audit WHERE chain_key='user:same' ORDER BY seq"
+        ))
+        .fetch_all(&p)
+        .await
+        .unwrap();
+        let events: Vec<_> = rows.iter().map(|r| stored(r).unwrap()).collect();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].seq, Some(1));
+        assert_eq!(events[1].seq, Some(2));
+        assert_eq!(events[1].prev_hash, events[0].hash);
+        let ring = key_ring();
+        for event in events {
+            assert_eq!(event.hash, event.expected_hash(&ring));
+            assert!(event.agent_id.is_none());
+        }
+        assert!(for_principal(&p, "same").await.unwrap().is_empty());
+        let agent_activity: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_audit WHERE agent_id='same'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(agent_activity, 0);
+        assert!(
+            append_now(
+                &p,
+                NewEvent::new(AuditKind::OrganizationCreated, "same", json!({}))
+                    .by(Some("different"))
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            append_now(
+                &p,
+                NewEvent::new(AuditKind::OrganizationUpdated, "same", json!({}))
+                    .by(Some("same"))
+                    .for_agent("same")
+            )
+            .await
+            .is_err()
+        );
+    }
+}

@@ -240,7 +240,7 @@ async fn a_test_chat_handoff_carries_its_context_and_stays_out_of_the_inbox() {
         &e.fx.state,
         &e.fx.alice,
         &e.agent,
-        json!({ "message": "I was billed twice for RE-1." }),
+        json!({ "source": "draft", "message": "I was billed twice for RE-1." }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{paused}");
@@ -603,10 +603,14 @@ async fn a_scheduled_run_that_paused_is_resumed_from_its_owners_inbox() {
     let action = scheduled::create(
         &fx.state.db,
         NewAction {
-            user_id: "plain".into(),
+            dot_id: None,
+            linked_session_id: None,
+            owner: aiplane_runtime::server::background::AutomationOwner::User("plain".into()),
+            created_by: "plain".into(),
+            agent_version: None,
             name: "Nightly refunds".into(),
             prompt: "Issue the refunds that are due.".into(),
-            model: "m".into(),
+            model: Some("m".into()),
             cron: "0 3 * * *".into(),
             timezone: "UTC".into(),
             tools_enabled: true,
@@ -696,10 +700,14 @@ async fn a_paused_schedule_shows_its_preview_in_the_owners_inbox() {
     scheduled::create(
         &fx.state.db,
         NewAction {
-            user_id: "plain".into(),
+            dot_id: None,
+            linked_session_id: None,
+            owner: aiplane_runtime::server::background::AutomationOwner::User("plain".into()),
+            created_by: "plain".into(),
+            agent_version: None,
             name: "Planner".into(),
             prompt: "Set up the weekly summary.".into(),
-            model: "m".into(),
+            model: Some("m".into()),
             cron: "0 3 * * *".into(),
             timezone: "UTC".into(),
             tools_enabled: true,

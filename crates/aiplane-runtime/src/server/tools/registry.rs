@@ -83,6 +83,20 @@ impl ToolRegistry {
         Self { tools }
     }
 
+    /// A registry containing only the requested tools that are registered.
+    pub fn with_only(&self, ids: &[&str]) -> Self {
+        Self {
+            tools: ids
+                .iter()
+                .filter_map(|id| {
+                    self.tools
+                        .get(*id)
+                        .map(|tool| ((*id).to_string(), tool.clone()))
+                })
+                .collect(),
+        }
+    }
+
     pub fn get(&self, id: &str) -> Option<&Arc<dyn Tool>> {
         self.tools.get(id)
     }
@@ -142,6 +156,10 @@ impl ToolRegistry {
 /// ([`super::runner`]) takes `&dyn ToolSource` so the buffered `/v1`,
 /// streaming `/v1`, and chat-UI loops all gain per-user tools at one seam.
 pub trait ToolSource: Send + Sync {
+    fn personal_call_audit_is_deferred(&self) -> bool {
+        false
+    }
+
     /// Resolve a tool by id, returning an owned handle. The registry holds
     /// `Arc`s; an overlay may mint them per request.
     fn get(&self, id: &str) -> Option<Arc<dyn Tool>>;
@@ -159,13 +177,34 @@ pub trait ToolSource: Send + Sync {
     }
 
     /// When a call to `id` runs relative to the other calls of its round.
-    fn phase(&self, _id: &str) -> ToolPhase {
-        ToolPhase::Concurrent
+    fn phase(&self, id: &str) -> ToolPhase {
+        self.get(id)
+            .map_or(ToolPhase::Concurrent, |tool| tool.phase())
     }
 
     /// A call of [`ToolPhase::WritesState`] just ran, so whatever this source
     /// holds of the run's state is stale.
     fn state_written(&self) {}
+}
+
+pub fn action_catalogues(
+    source: &dyn ToolSource,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    source
+        .ids()
+        .into_iter()
+        .filter_map(|id| {
+            let tool = source.get(&id)?;
+            let catalogue = tool.action_catalogue()?;
+            Some((
+                id,
+                catalogue
+                    .iter()
+                    .map(|action| action.id.to_string())
+                    .collect(),
+            ))
+        })
+        .collect()
 }
 
 /// The order a round's calls run in. Phases run one after the other, each
@@ -253,6 +292,18 @@ impl<'a> GrantedToolSource<'a> {
 }
 
 impl ToolSource for GrantedToolSource<'_> {
+    fn personal_call_audit_is_deferred(&self) -> bool {
+        self.source.personal_call_audit_is_deferred()
+    }
+
+    fn phase(&self, id: &str) -> ToolPhase {
+        if self.get(id).is_some() {
+            self.source.phase(id)
+        } else {
+            ToolPhase::Concurrent
+        }
+    }
+
     fn get(&self, id: &str) -> Option<Arc<dyn Tool>> {
         if self.granted.contains(id) {
             self.source.get(id)
@@ -308,6 +359,20 @@ impl aiplane_core::server::rbac::resolver::GrantableSet for ToolRegistry {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tool_phases_survive_registry_and_grants_without_exposing_denied_tools() {
+        let registry = ToolRegistry::new().with(super::super::tests::PhasedEcho);
+        assert_eq!(
+            ToolSource::phase(&registry, "company_echo"),
+            ToolPhase::ActsOnState
+        );
+        let granted = GrantedToolSource::new(&registry, ["company_echo".to_string()]);
+        assert_eq!(granted.phase("company_echo"), ToolPhase::ActsOnState);
+        let denied = GrantedToolSource::new(&registry, std::iter::empty());
+        assert!(denied.get("company_echo").is_none());
+        assert_eq!(denied.phase("company_echo"), ToolPhase::Concurrent);
+        assert_eq!(granted.phase("missing"), ToolPhase::Concurrent);
+    }
     use super::*;
     use crate::server::tools::echo::Echo;
     use crate::server::tools::time::CurrentTimestamp;
@@ -327,6 +392,28 @@ mod tests {
     }
 
     #[test]
+    fn action_catalogues_include_only_source_declared_and_granted_actions() {
+        let client = crate::server::tools::sandbox::SandboxClient::new(
+            Arc::new(aiplane_core::server::config::SandboxConfig {
+                enabled: true,
+                runner_url: "http://127.0.0.1:9".into(),
+                timeout_secs: 1,
+                max_artifact_bytes: 1024,
+            }),
+            crate::server::state::RuntimeSettings::new_handle("https://gw.example"),
+        );
+        let source = ToolRegistry::new()
+            .with(Echo)
+            .with(crate::server::tools::sandbox::BrowsePage(client));
+        let catalogue = action_catalogues(&source);
+        assert_eq!(catalogue.len(), 1);
+        assert!(catalogue["browse_page"].contains("fill"));
+        assert!(
+            action_catalogues(&GrantedToolSource::new(&source, ["company_echo".into()])).is_empty()
+        );
+    }
+
+    #[test]
     fn empty_registry() {
         let r = ToolRegistry::new();
         assert!(r.is_empty());
@@ -341,6 +428,18 @@ mod tests {
         assert!(r.contains(Echo.id()));
         assert!(r.contains(CurrentTimestamp.id()));
         assert!(!r.contains("nope"));
+    }
+
+    #[test]
+    fn with_only_copies_only_registered_requested_tools() {
+        let r = ToolRegistry::new().with(Echo).with(CurrentTimestamp);
+        let selected = r.with_only(&["get_current_timestamp", "missing"]);
+        assert_eq!(
+            selected.ids().collect::<Vec<_>>(),
+            ["get_current_timestamp"]
+        );
+        assert!(!selected.contains("company_echo"));
+        assert!(r.contains("company_echo"));
     }
 
     #[test]

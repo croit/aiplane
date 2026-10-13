@@ -43,12 +43,26 @@ pub async fn set(pool: &Pool, user_id: &str, tool_key: &str, enabled: bool) -> R
 /// Everything not in this set is enabled (the default). Callers
 /// subtract this from the RBAC-granted tool list at request time.
 pub async fn disabled_for_user(pool: &Pool, user_id: &str) -> Result<HashSet<String>, DbError> {
+    disabled_with(pool, user_id).await
+}
+
+pub async fn disabled_for_user_in(
+    tx: &mut super::WriteTx,
+    user_id: &str,
+) -> Result<HashSet<String>, DbError> {
+    disabled_with(&mut **tx, user_id).await
+}
+
+async fn disabled_with<'e, E>(executor: E, user_id: &str) -> Result<HashSet<String>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let rows = sqlx::query(
         r#"SELECT tool_key FROM user_tool_prefs
            WHERE user_id = ? AND enabled = 0"#,
     )
     .bind(user_id)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     rows.iter()
         .map(|r| r.try_get::<String, _>("tool_key").map_err(DbError::from))
@@ -63,6 +77,25 @@ mod tests {
 
     async fn fresh() -> Pool {
         open(Path::new(":memory:")).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn transaction_reads_the_same_scoped_disabled_preferences() {
+        let pool = fresh().await;
+        set(&pool, "alice", "memory", false).await.unwrap();
+        let expected = disabled_for_user(&pool, "alice").await.unwrap();
+        let mut tx = super::super::WriteTx::begin(&pool).await.unwrap();
+        assert_eq!(
+            disabled_for_user_in(&mut tx, "alice").await.unwrap(),
+            expected
+        );
+        assert!(
+            disabled_for_user_in(&mut tx, "bob")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        tx.commit().await.unwrap();
     }
 
     #[tokio::test]

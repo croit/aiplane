@@ -103,6 +103,9 @@ pub struct Config {
     /// `server::limits`.
     #[serde(default)]
     pub limits: LimitsConfig,
+    /// Active personal-Dot capacity, controlled from `/admin/settings`.
+    #[serde(default)]
+    pub dots: DotsConfig,
     /// Code-execution sandbox. Optional — with no `[sandbox]` block the
     /// `run_in_sandbox` tool family is not registered and the gateway
     /// boots fine. When set, `runner_url` points at the standalone
@@ -629,6 +632,22 @@ pub struct LimitsConfig {
     /// rules configured everyone is unlimited anyway, so leaving this on costs
     /// nothing until you set a limit.
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DotsConfig {
+    pub max_active_per_user: u32,
+    pub max_active_per_organization: u32,
+}
+
+impl Default for DotsConfig {
+    fn default() -> Self {
+        Self {
+            max_active_per_user: 4,
+            max_active_per_organization: 4,
+        }
+    }
 }
 
 impl Default for LimitsConfig {

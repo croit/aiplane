@@ -33,6 +33,10 @@ struct Args {
 }
 
 impl Tool for LookupIp {
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn id(&self) -> &str {
         "lookup_ip"
     }
@@ -201,6 +205,10 @@ mod tests {
             suspend: Default::default(),
             granted_tools: None,
             agent: None,
+            personal_dot: None,
+            personal_execution: None,
+            pending_actions: None,
+            pending_execution_facts: None,
             call_id: None,
         }
     }

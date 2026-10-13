@@ -235,18 +235,34 @@ pub struct VerifierRun {
 
 /// The synthetic tools of every runnable verifier: `verify_<id>_request_code`
 /// and `verify_<id>_submit_code` per `mcp_code`, `verify_<id>` per `lookup`.
-pub fn tools(verifiers: &Verifiers, run: &VerifierRun) -> Vec<Arc<dyn Tool>> {
-    let mut out: Vec<Arc<dyn Tool>> = Vec::new();
+pub struct VerifierTool {
+    pub tool: Arc<dyn Tool>,
+    pub dependency_tool_ids: Vec<String>,
+}
+
+pub fn tools(verifiers: &Verifiers, run: &VerifierRun) -> Vec<VerifierTool> {
+    let mut out = Vec::new();
     for code in &verifiers.codes {
         let code = Arc::new(code.clone());
-        out.push(Arc::new(otp::RequestCode::new(code.clone(), run.clone())));
-        out.push(Arc::new(otp::SubmitCode::new(code, run.clone())));
+        let send = crate::server::tools::mcp::tool_id(&code.connector, &code.send_tool);
+        let check = crate::server::tools::mcp::tool_id(&code.connector, &code.check_tool);
+        out.push(VerifierTool {
+            tool: Arc::new(otp::RequestCode::new(code.clone(), run.clone())),
+            dependency_tool_ids: vec![send, check.clone()],
+        });
+        out.push(VerifierTool {
+            tool: Arc::new(otp::SubmitCode::new(code, run.clone())),
+            dependency_tool_ids: vec![check],
+        });
     }
-    for l in &verifiers.lookups {
-        out.push(Arc::new(lookup::LookupTool::new(
-            Arc::new(l.clone()),
-            run.clone(),
-        )));
+    for lookup in &verifiers.lookups {
+        out.push(VerifierTool {
+            tool: Arc::new(lookup::LookupTool::new(
+                Arc::new(lookup.clone()),
+                run.clone(),
+            )),
+            dependency_tool_ids: vec![lookup.tool.clone()],
+        });
     }
     out
 }
@@ -283,21 +299,144 @@ pub(crate) async fn call_connector(
     args: Value,
     sensitive: bool,
 ) -> Result<Value, ToolError> {
-    let layer = run.state.mcp.layer_for_principal(&run.principal).await;
+    let organization_unavailable = || {
+        ToolError::Failed(
+            super::profile::AgentRunError::OrganizationExecutionUnavailable(
+                run.principal.id.clone(),
+            )
+            .to_string(),
+        )
+    };
+    let unavailable = || {
+        if ctx
+            .agent
+            .as_ref()
+            .is_some_and(|agent| agent.organization().is_some())
+        {
+            organization_unavailable()
+        } else {
+            ToolError::Failed(format!(
+                "connector `{connector}` offers no tool `{tool}` to this agent right now: it is not \
+                 granted, not connected, or has no such tool. The agent's owner has to fix the \
+                 verifier's connector"
+            ))
+        }
+    };
+    let layer = if let Some(agent) = &ctx.agent {
+        if agent.system_principal().id != run.principal.id
+            || !matches!(&ctx.principal, aiplane_core::server::principal::Principal::System(principal)
+            if principal.id == agent.system_principal().id)
+        {
+            return Err(unavailable());
+        }
+        run.state.mcp_layer_for_run(agent).await?
+    } else {
+        if matches!(
+            aiplane_agents::db::agents::dot_owner(&run.state.db, &run.principal.id)
+                .await
+                .map_err(|error| ToolError::Failed(error.to_string()))?,
+            Some(aiplane_agents::db::agents::DotOwner::Organization(_))
+        ) {
+            return Err(organization_unavailable());
+        }
+        run.state.mcp.layer_for_principal(&run.principal).await
+    };
     let id = crate::server::tools::mcp::tool_id(connector, tool);
+    if layer.mode_of(&id) != Some(aiplane_core::server::db::user_mcp::ToolMode::Always) {
+        return Err(unavailable());
+    }
     let found = if sensitive {
         layer.get_with_sensitive_args(&id)
     } else {
         crate::server::tools::ToolSource::get(&layer, &id)
     };
     let Some(found) = found else {
-        return Err(ToolError::Failed(format!(
-            "connector `{connector}` offers no tool `{tool}` to this agent right now: it is not \
-             granted, not connected, or has no such tool. The agent's owner has to fix the \
-             verifier's connector"
-        )));
+        return Err(unavailable());
     };
-    found.run(ctx.clone(), args).await
+    let mut nested_ctx = ctx.clone();
+    if !ctx
+        .agent
+        .as_ref()
+        .is_some_and(|agent| agent.organization().is_some())
+        && nested_ctx
+            .pending_execution_facts
+            .as_ref()
+            .is_some_and(|pending| pending.execution_facts.is_none())
+    {
+        nested_ctx.pending_execution_facts = None;
+    }
+    found.run(nested_ctx, args).await
+}
+
+pub(crate) async fn validate_verifier_authority_in(
+    tx: &mut WriteTx,
+    run: &VerifierRun,
+    ctx: &ToolContext,
+    dependency: &str,
+) -> Result<(), ToolError> {
+    let owner = aiplane_agents::db::agents::dot_owner_in(tx, &run.principal.id)
+        .await
+        .map_err(|error| ToolError::Failed(error.to_string()))?;
+    let organization = matches!(
+        owner,
+        Some(aiplane_agents::db::agents::DotOwner::Organization(_))
+    ) || ctx
+        .agent
+        .as_ref()
+        .is_some_and(|agent| agent.organization().is_some());
+    if !organization {
+        return Ok(());
+    }
+    let unavailable = || {
+        ToolError::Failed(
+            super::profile::AgentRunError::OrganizationExecutionUnavailable(
+                run.principal.id.clone(),
+            )
+            .to_string(),
+        )
+    };
+    let agent = ctx.agent.as_ref().ok_or_else(unavailable)?;
+    let context = agent.organization().ok_or_else(unavailable)?;
+    if agent.system_principal().id != run.principal.id
+        || !matches!(&ctx.principal, aiplane_core::server::principal::Principal::System(principal)
+            if principal.id == agent.system_principal().id)
+        || ctx.session_id.as_deref() != Some(context.session_id.as_str())
+        || ctx.assistant_turn_id.as_deref() != Some(context.assistant_turn_id.as_str())
+    {
+        return Err(unavailable());
+    }
+    if let Some(rest) = dependency.strip_prefix(crate::server::tools::mcp::MCP_ID_PREFIX) {
+        let (connector, _) = rest.split_once("__").ok_or_else(unavailable)?;
+        let facts = ctx
+            .pending_execution_facts
+            .as_ref()
+            .and_then(|facts| facts.execution_facts.as_ref())
+            .ok_or_else(unavailable)?;
+        let crate::server::tools::mcp::identities::McpDispatchFacts::Owned(identity) =
+            serde_json::from_value::<crate::server::tools::mcp::identities::McpDispatchFacts>(
+                facts.clone(),
+            )
+            .map_err(|_| unavailable())?
+        else {
+            return Err(unavailable());
+        };
+        if identity.connection.connector_key != connector {
+            return Err(unavailable());
+        }
+        crate::server::tools::mcp::identities::validate_organization_identity_in(tx, ctx, &identity)
+            .await
+    } else {
+        let principal = super::profile::validate_organization_turn_in(tx, agent)
+            .await
+            .map_err(|error| ToolError::Failed(error.to_string()))?;
+        if !principal
+            .grants
+            .has(aiplane_core::server::principal::GrantKind::Tool, dependency)
+        {
+            return Err(unavailable());
+        }
+        Ok(())
+    }
 }
 
 /// A tool's answer as one JSON object: structured content, or a text answer
@@ -340,10 +479,13 @@ fn write_failed(id: &str, slot: &str, why: &str) -> ToolError {
 /// Resolve every write first and store them only if all fit, so a gate never
 /// sees half a verification. The slots are `ctx`'s conversation's, written
 /// in its run.
+// The admitted call context and dependency proof must remain separate from verifier answer data.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_writes(
     run: &VerifierRun,
     ctx: &ToolContext,
     id: &str,
+    dependency: &str,
     writes: &Writes,
     answer: &Map<String, Value>,
     inputs: &Map<String, Value>,
@@ -376,6 +518,7 @@ pub(crate) async fn apply_writes(
     let mut tx = WriteTx::begin(&run.state.db)
         .await
         .map_err(|e| ToolError::Failed(format!("storing the verifier's slots: {e}")))?;
+    validate_verifier_authority_in(&mut tx, run, ctx, dependency).await?;
     write_trusted_all(&mut tx, &run.schema, session_id, &resolved, writer, now)
         .await
         .map_err(refused)?;

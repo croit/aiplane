@@ -102,3 +102,11 @@ scheduled-run-chat-deleted = chat deleted
 scheduled-run-status-ok = ok
 scheduled-run-status-error = error
 scheduled-run-status-pending = running
+
+scheduled-organization-version = Published version
+scheduled-error-invalid-configuration = Check the selected published version, model, conversation mode and tool settings, then save again.
+scheduled-error-configuration-conflict = This scheduled action changed. Reload its current settings before saving again.
+scheduled-error-identity-retained = This Dot still owns scheduled actions or webhooks. Stop pending runs and delete those sources before deleting the Dot.
+scheduled-organization-fresh = Each run starts a fresh private conversation. The model and tool access come from the selected published version.
+scheduled-organization-model-missing = No model is specified in this published version.
+scheduled-organization-version-required = Choose an available published version before saving.

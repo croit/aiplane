@@ -53,7 +53,7 @@ Moving the RAG data directory does not move existing indexes. Review persistent 
 
 ![Content guard settings choose a decision model, monitor or enforce mode, and actions for sensitive content.](../img/guide/content-guard.png)
 
-The Usage card enables per-request accounting, retention and display currency. The Limits card enables enforcement of rules from `/admin/limits`. Gateway settings control token/session lifetimes and impersonation. See [access management](access.md).
+The Usage card enables per-request accounting, retention and display currency. The Limits card enables enforcement of rules from `/admin/limits`. The Dots card sets `dots.max_active_per_user`, the maximum number of active personal Dots each user may own, including idle Dots; the clean-install default is four. The same card sets `dots.max_active_per_organization`, independently defaulting to four active Dots per organization, including idle Dots. It has no feature master switch. Administrators separately grant **Personal Dot manager** in the [group form](access.md); the limit does not grant management rights. Lowering the cap does not deactivate existing Dots, but blocks new Dots or reactivation until the active count is below the new cap. Gateway settings control token/session lifetimes and impersonation. See [access management](access.md).
 
 ### Prometheus metrics
 

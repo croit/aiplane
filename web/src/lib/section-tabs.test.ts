@@ -11,11 +11,15 @@ test('settings tabs keep account, notifications, memory, and tokens separate', (
 });
 
 test('admin access tabs keep users, tokens, groups, and limits separate', () => {
-	assert.deepEqual(sectionTabs.adminAccess.map(({ path }) => path), ['/admin/users', '/admin/tokens', '/admin/groups', '/admin/limits']);
+	assert.deepEqual(sectionTabs.adminAccess.map(({ path }) => path), ['/admin/organizations', '/admin/users', '/admin/tokens', '/admin/groups', '/admin/limits']);
 });
 
 test('tab selection uses exact paths', () => {
 	assert.equal(selectedSectionTab('/tools/skills', sectionTabs.tools)?.path, '/tools/skills');
 	assert.equal(selectedSectionTab('/admin/skills', sectionTabs.tools), undefined);
 	assert.equal(selectedSectionTab('/settings/tokens/other', sectionTabs.settings), undefined);
+});
+
+test('admin organization metadata reuses the existing access navigation', () => {
+    assert.equal(selectedSectionTab('/admin/organizations', sectionTabs.adminAccess)?.label, 'organizations-heading');
 });

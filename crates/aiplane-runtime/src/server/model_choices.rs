@@ -55,6 +55,52 @@ impl ModelChoice {
 /// automatic route whose alias the caller may name and whose fallback they
 /// may reach.
 pub async fn offered(state: &AppState, kind: PoolKind, access: &PoolAccess) -> Vec<ModelChoice> {
+    let routes = if kind == PoolKind::Chat {
+        automatic_routes::all(&state.db)
+            .await
+            .inspect_err(|err| tracing::warn!(error = %err, "listing automatic routes"))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let configured = match feature_of(kind) {
+        Some(feature) => feature_defaults::get(&state.db, feature).await,
+        None => None,
+    };
+    assemble_choices(state, kind, access, routes, configured.as_deref())
+}
+
+pub async fn offered_in(
+    state: &AppState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    kind: PoolKind,
+    access: &PoolAccess,
+) -> Result<Vec<ModelChoice>, aiplane_core::server::db::DbError> {
+    let routes = if kind == PoolKind::Chat {
+        automatic_routes::all_in(tx).await?
+    } else {
+        Vec::new()
+    };
+    let configured = match feature_of(kind) {
+        Some(feature) => feature_defaults::get_in(tx, feature).await?,
+        None => None,
+    };
+    Ok(assemble_choices(
+        state,
+        kind,
+        access,
+        routes,
+        configured.as_deref(),
+    ))
+}
+
+fn assemble_choices(
+    state: &AppState,
+    kind: PoolKind,
+    access: &PoolAccess,
+    routes: Vec<AutomaticRoute>,
+    configured: Option<&str>,
+) -> Vec<ModelChoice> {
     let mut choices: Vec<ModelChoice> = reachable(state, kind, access)
         .into_iter()
         .map(|(id, compliance)| ModelChoice {
@@ -64,10 +110,6 @@ pub async fn offered(state: &AppState, kind: PoolKind, access: &PoolAccess) -> V
         })
         .collect();
     if kind == PoolKind::Chat {
-        let routes = automatic_routes::all(&state.db)
-            .await
-            .inspect_err(|err| tracing::warn!(error = %err, "listing automatic routes"))
-            .unwrap_or_default();
         for route in routes {
             if choices.iter().any(|c| c.id == route.alias) || !access.allows_model(&route.alias) {
                 continue;
@@ -78,10 +120,7 @@ pub async fn offered(state: &AppState, kind: PoolKind, access: &PoolAccess) -> V
         }
     }
     choices.sort_by(|a, b| a.id.cmp(&b.id));
-    if let Some(feature) = feature_of(kind) {
-        let configured = feature_defaults::get(&state.db, feature).await;
-        feature_defaults::promote(configured.as_deref(), &mut choices, |c| c.id.as_str());
-    }
+    feature_defaults::promote(configured, &mut choices, |c| c.id.as_str());
     choices
 }
 
@@ -96,6 +135,20 @@ pub async fn gateway_default(state: &AppState, feature: Feature) -> Option<Strin
         .collect();
     let configured = feature_defaults::get(&state.db, feature).await;
     feature_defaults::resolve(configured.as_deref(), &offered)
+}
+
+pub async fn gateway_default_in(
+    state: &AppState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    feature: Feature,
+) -> Result<Option<String>, aiplane_core::server::db::DbError> {
+    let offered: Vec<String> = offered_in(state, tx, feature.pool_kind(), &PoolAccess::all())
+        .await?
+        .into_iter()
+        .map(|choice| choice.id)
+        .collect();
+    let configured = feature_defaults::get_in(tx, feature).await?;
+    Ok(feature_defaults::resolve(configured.as_deref(), &offered))
 }
 
 fn feature_of(kind: PoolKind) -> Option<Feature> {
@@ -152,7 +205,7 @@ fn route_choice(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
@@ -195,7 +248,7 @@ mod tests {
 
     /// Chat models `open` (everyone) and `vip` (group `vip` only), the
     /// selector `picker`, and the route `auto` over `open` and `vip`.
-    async fn state() -> AppState {
+    pub(crate) async fn state() -> AppState {
         let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
             .await
             .unwrap();
@@ -264,6 +317,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transactional_choices_use_current_routes_and_default_with_one_connection() {
+        let mut state = state().await;
+        state.db = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with((*state.db.connect_options()).clone())
+            .await
+            .unwrap();
+        let pool = state
+            .upstreams
+            .pools()
+            .into_iter()
+            .find(|pool| pool.name == "open")
+            .unwrap();
+        pool.backends[0].set_models(["open-model".into(), "alternate-model".into()].into());
+        let before = offered(&state, PoolKind::Chat, &person(&[])).await;
+        assert!(
+            !before
+                .iter()
+                .find(|choice| choice.id == "auto")
+                .unwrap()
+                .grantable()
+        );
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE automatic_route_candidates SET target='alternate-model' WHERE route_alias='auto' AND key='vip-model'")
+            .execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO app_settings(key,value,updated_at) VALUES('default_model.chat','open-model',?)")
+            .bind(jiff::Timestamp::now().to_string()).execute(&mut *tx).await.unwrap();
+        let current = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            offered_in(&state, &mut tx, PoolKind::Chat, &person(&[])),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(ids(&current), ["open-model", "alternate-model", "auto"]);
+        assert!(
+            current
+                .iter()
+                .find(|choice| choice.id == "auto")
+                .unwrap()
+                .grantable()
+        );
+        assert_eq!(
+            current
+                .iter()
+                .find(|choice| choice.id == "auto")
+                .unwrap()
+                .route
+                .as_ref()
+                .unwrap()
+                .candidates,
+            ["open-model", "alternate-model"]
+        );
+        drop(tx);
+        assert_eq!(offered(&state, PoolKind::Chat, &person(&[])).await, before);
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE automatic_route_candidates")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                offered_in(&state, &mut tx, PoolKind::Chat, &person(&[]))
+            )
+            .await
+            .unwrap()
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn a_route_with_an_unusable_candidate_is_offered_but_not_grantable() {
         let state = state().await;
         let outsider = offered(&state, PoolKind::Chat, &person(&[])).await;
@@ -325,5 +454,53 @@ mod tests {
         let routed = offered(&state, PoolKind::Chat, &agent(&["auto"])).await;
         assert_eq!(ids(&routed), ["auto"]);
         assert!(routed[0].grantable(), "a granted route reaches its members");
+    }
+    #[tokio::test]
+    async fn transactional_gateway_default_reads_uncommitted_setting_with_one_connection() {
+        let mut state = state().await;
+        state.db = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with((*state.db.connect_options()).clone())
+            .await
+            .unwrap();
+        let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO app_settings(key,value,updated_at) VALUES('default_model.chat','vip-model',?)")
+            .bind(jiff::Timestamp::now().to_string()).execute(&mut *tx).await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                super::gateway_default_in(&state, &mut tx, Feature::Chat)
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .as_deref(),
+            Some("vip-model")
+        );
+        sqlx::query("UPDATE app_settings SET value='auto' WHERE key='default_model.chat'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(
+            super::gateway_default_in(&state, &mut tx, Feature::Chat)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("auto")
+        );
+        sqlx::query("UPDATE app_settings SET value='missing' WHERE key='default_model.chat'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(
+            super::gateway_default_in(&state, &mut tx, Feature::Chat)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("auto")
+        );
+        drop(tx);
     }
 }

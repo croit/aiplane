@@ -819,3 +819,20 @@ test('the notification choice covers what exists, and all of it is every channel
 	assert.equal(setNotify(['slack'], available, 'push', true), null, 'everything on again: every channel');
 	assert.deepEqual(setNotify(['slack'], available, 'slack', false), []);
 });
+
+test('organization setup reuses ordinary steps while suppressing website provisioning', async () => {
+    const { visibleSetupSteps, STEPS } = await import('./agent-setup.ts');
+    const organization = { dot: { owner: { kind: 'organization' as const, id: 'actual-org', name: 'Acme Support' }, name: 'Harald', active: true } };
+    assert.deepEqual(visibleSetupSteps({ dot: null }), STEPS);
+    assert.ok(!visibleSetupSteps(organization).includes('site'));
+    assert.ok(visibleSetupSteps(organization).includes('identity'));
+    assert.ok(visibleSetupSteps(organization).includes('review'));
+    assert.deepEqual(visibleSetupSteps(null), []);
+});
+
+test('organization checklist hides website suggestions but retains blocking authored website issues', () => {
+    const agent = { dot: { owner: { kind: 'organization' as const, id: 'org', name: 'Acme Support' }, name: 'Harald', active: true } };
+    const todos = checklist({ main: { model: 'actual-model', instructions: { orchestration: 'Actual task' } } }, [{ path: 'publish.origins', message: 'Actual invalid authored origin' }], null, agent);
+    assert.ok(!todos.some((todo) => todo.key === 'agents-setup-todo-site'));
+    assert.ok(todos.some((todo) => todo.message === 'publish.origins: Actual invalid authored origin' && todo.blocking && todo.step === null));
+});

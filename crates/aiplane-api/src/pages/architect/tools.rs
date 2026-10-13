@@ -32,6 +32,7 @@ use aiplane_runtime::agents::assist::{ReviewContext, apply_changes, changes_sche
 use aiplane_runtime::rama_server::state::RamaState;
 use aiplane_runtime::server::model_choices::gateway_default;
 use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture};
+use session_core::i18n::Lang;
 
 /// The largest refusal body read back into a tool error.
 const MAX_REFUSAL_BYTES: usize = 64 * 1024;
@@ -41,6 +42,7 @@ pub(super) struct Ctx {
     pub state: Arc<RamaState>,
     pub user: User,
     pub session_id: String,
+    pub personal: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,11 +54,13 @@ pub(super) enum Kind {
     CreateAgentDraft,
     UpdateAgentDraft,
     RunTestTurn,
+    ProposeDotSetup,
 }
 
 impl Kind {
     fn id(self) -> &'static str {
         match self {
+            Kind::ProposeDotSetup => "propose_dot_setup",
             Kind::ListAgents => "list_agents",
             Kind::ReadAgent => "read_agent",
             Kind::ListGrantable => "list_grantable",
@@ -69,6 +73,8 @@ impl Kind {
 }
 
 /// Every tool the architect has. Publishing is deliberately not one.
+pub(super) const PERSONAL_KINDS: &[Kind] = &[Kind::ListGrantable, Kind::ProposeDotSetup];
+
 pub(super) const KINDS: &[Kind] = &[
     Kind::ListAgents,
     Kind::ReadAgent,
@@ -105,6 +111,14 @@ impl Tool for ArchitectTool {
 
     fn schema(&self) -> ToolDef {
         let (description, parameters) = match self.kind {
+            Kind::ProposeDotSetup => (
+                "Store a complete reviewed personal Dot proposal, without creating a Dot. Only task, tone, non-strict scope, abilities and one knowledge collection are supported. The changes field must be an actual JSON object, never a string containing JSON. Every requested prerequisite that cannot be configured must be listed in unresolved. Replaces the previous proposal.",
+                json!({"type":"object","additionalProperties":false,"required":["name","changes"],"properties":{"name":{"type":"string"},"display":{"type":"string"},"description":{"type":"string"},"changes":super::dot::personal_changes_schema(),"unresolved":{"type":"array","items":{"type":"string"}}}}),
+            ),
+            Kind::ListGrantable if self.ctx.personal => (
+                "Inspect the personal Dot's actual resources. Each ability reports read_only and default_permission: known read-only tools allow, external or unknown writes ask, permitted default_memory_tools allow only Dot-scoped memory writes. Use these existing defaults; valid defaults do not need an unresolved approval-rule prerequisite. This is resource information, not approval of a tool call.",
+                json!({"type":"object","properties":{},"additionalProperties":false}),
+            ),
             Kind::ListAgents => (
                 "List the agents shared with the person: id, name, whether one is live.",
                 json!({ "type": "object", "properties": {}, "additionalProperties": false }),
@@ -181,11 +195,11 @@ impl Tool for ArchitectTool {
         }
     }
 
-    fn run<'a>(&'a self, _ctx: ToolContext, args: Value) -> ToolFuture<'a> {
+    fn run<'a>(&'a self, tool_ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         Box::pin(async move {
             let ctx = &self.ctx;
             let role_ids = ctx.state.rbac.role_ids_for(&ctx.user.roles);
-            if !ctx.state.rbac.can_manage_agents(&role_ids) {
+            if !ctx.personal && !ctx.state.rbac.can_manage_agents(&role_ids) {
                 return Err(ToolError::Failed(
                     "the person no longer holds the agent-management permission, so the \
                      architect cannot act for them — an admin can enable `can_manage_agents` \
@@ -193,10 +207,31 @@ impl Tool for ArchitectTool {
                         .into(),
                 ));
             }
+            if ctx.personal && !PERSONAL_KINDS.contains(&self.kind) {
+                return Err(ToolError::Failed(
+                    "this tool is unavailable in personal Dot planning".into(),
+                ));
+            }
             let out = match self.kind {
+                Kind::ProposeDotSetup => super::dot::propose(
+                    &ctx.state,
+                    &ctx.user,
+                    &ctx.session_id,
+                    tool_ctx.assistant_turn_id.as_deref().ok_or_else(|| {
+                        ToolError::Failed(
+                            "personal planning needs its current conversation turn".into(),
+                        )
+                    })?,
+                    parse(args)?,
+                )
+                .await
+                .map_err(Refusal::from),
+                Kind::ListGrantable if ctx.personal => super::dot::resources(&ctx.state, &ctx.user)
+                    .await
+                    .map_err(Refusal::from),
                 Kind::ListAgents => list_agents(ctx).await,
                 Kind::ReadAgent => read_agent(ctx, parse(args)?).await,
-                Kind::ListGrantable => resources_for(&ctx.state, &ctx.user)
+                Kind::ListGrantable => resources_for(&ctx.state, &ctx.user, Lang::En)
                     .await
                     .map(|resources| json!(resources))
                     .map_err(Refusal::from),
@@ -250,15 +285,13 @@ async fn refusal(resp: Response) -> ToolError {
 }
 
 async fn list_agents(ctx: &Ctx) -> Result<Value, Refusal> {
-    let agents: Vec<Value> = visible_agents(&ctx.state, &ctx.user)
-        .await?
-        .iter()
-        .map(|(agent, access)| {
-            let mut v = agent_json(agent, *access);
-            v["setup_url"] = json!(setup_url(&agent.principal.id));
-            v
-        })
-        .collect();
+    let visible = visible_agents(&ctx.state, &ctx.user).await?;
+    let mut agents = Vec::with_capacity(visible.len());
+    for (agent, access) in visible {
+        let mut view = agent_json(&ctx.state, &agent, access).await?;
+        view["setup_url"] = json!(setup_url(&agent.principal.id));
+        agents.push(view);
+    }
     Ok(json!({ "agents": agents }))
 }
 
@@ -285,7 +318,7 @@ async fn read_agent(ctx: &Ctx, args: AgentArgs) -> Result<Value, Refusal> {
     let world = SpecWorld::load(&ctx.state, id).await?;
     let draft = parse_spec(&agent.draft_spec);
     let issues = publish_issues(&ctx.state, id, &draft).await?;
-    let mut v = agent_json(&agent, access);
+    let mut v = agent_json(&ctx.state, &agent, access).await?;
     v["draft_spec"] = draft;
     v["grants"] = world
         .grants
@@ -386,14 +419,22 @@ async fn grant_default_model(
         return Ok(None);
     }
     let (agent, _) = agent_by_id(&ctx.state, &ctx.user, agent_id, Access::Write).await?;
-    add_capped_grant(&ctx.state, &ctx.user, agent_id, GrantKind::Model, &default).await?;
+    add_capped_grant(
+        &ctx.state,
+        &ctx.user,
+        agent_id,
+        GrantKind::Model,
+        &default,
+        Lang::En,
+    )
+    .await?;
     let spec = json!({ "profile": { "display": display } });
     let granted = [(GrantKind::Model, default.clone())];
     let change = DraftChange {
         granted: &granted,
         ..DraftChange::default()
     };
-    save_draft(&ctx.state, &ctx.user, &agent, spec, change).await?;
+    save_draft(&ctx.state, &ctx.user, &agent, spec, change, Lang::En).await?;
     Ok(Some(default))
 }
 
@@ -451,6 +492,7 @@ async fn update(ctx: &Ctx, args: UpdateArgs) -> Result<Value, Refusal> {
         agents: &world.agents,
         live_specs: &world.live_specs,
         candidates: &candidates,
+        action_catalogues: &world.action_catalogues,
         allow_private: world.allow_private,
     };
     let base = parse_spec(&agent.draft_spec);
@@ -475,7 +517,7 @@ async fn update(ctx: &Ctx, args: UpdateArgs) -> Result<Value, Refusal> {
     let mut made = Vec::new();
     for (kind, reference) in &applied.grants {
         if !world.grants.has(*kind, reference) {
-            add_capped_grant(&ctx.state, &ctx.user, id, *kind, reference).await?;
+            add_capped_grant(&ctx.state, &ctx.user, id, *kind, reference, Lang::En).await?;
             made.push((*kind, reference.clone()));
         }
     }
@@ -483,7 +525,15 @@ async fn update(ctx: &Ctx, args: UpdateArgs) -> Result<Value, Refusal> {
         granted: &made,
         ..DraftChange::default()
     };
-    let saved = save_draft(&ctx.state, &ctx.user, &agent, applied.draft, change).await?;
+    let saved = save_draft(
+        &ctx.state,
+        &ctx.user,
+        &agent,
+        applied.draft,
+        change,
+        Lang::En,
+    )
+    .await?;
     let granted: Vec<Value> = made
         .iter()
         .map(|(kind, reference)| json!({ "kind": kind.as_str(), "ref": reference }))

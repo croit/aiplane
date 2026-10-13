@@ -1933,6 +1933,7 @@ impl Tool for RenderVideo {
                 // Keep the container so pass 2 finds the staged media in /work
                 // instead of uploading it twice.
                 keep_alive: true,
+                workspace: None,
             };
             let probe_resp = self.0.run_job(probe).await?;
             let lease = probe_resp.container_id.clone();
@@ -1983,6 +1984,7 @@ impl Tool for RenderVideo {
                 network: false,
                 container_id: lease.clone(),
                 keep_alive: false,
+                workspace: None,
             };
             let mut out_val = match self.0.execute(&ctx, render).await {
                 Ok(v) => v,

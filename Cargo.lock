@@ -157,7 +157,9 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "session-core",
+ "sha2 0.11.0",
  "shared",
+ "thiserror",
  "tokio",
  "tracing",
  "uuid",
@@ -275,6 +277,7 @@ dependencies = [
 name = "aiplane-tools"
 version = "0.1.0"
 dependencies = [
+ "aiplane-agents",
  "aiplane-core",
  "aiplane-features",
  "aiplane-runtime",

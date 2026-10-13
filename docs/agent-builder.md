@@ -7,16 +7,17 @@ The screens themselves are in [`ui.md`](ui.md#agent-builder).
 
 ## Test chat
 
-A manager talks to the agent's **draft** in a conversation that streams like
-any other, and reads per turn what a visitor never sees
+A manager talks to the agent's **draft**, or an organization Dot’s published
+version, in a private conversation that streams like any other, and reads per turn what a visitor never sees
 (`aiplane-api::pages::json_agent_test`, `agents::run::draft`).
 
 - **`POST /api/v0/agents/{id}/test/messages`** (`write` share) `{message,
-  session_id?}`. It opens one message against the draft, claims the
-  conversation as the public endpoint does (`agents::embed::claim`) and
-  answers `202 {session_id, turn_id, draft_version: 0}` at once; the turn runs
-  in the background (`run::draft::start_draft_turn`, then
-  `embed::spawn_guarded` with `TurnWork::Draft`) through the ordinary run path,
+  source:"draft"|"published", session_id?}`. Ordinary agents require `draft`;
+  organization member writers can also choose `published`. It opens a message
+  against the selected source, claims the conversation as the public endpoint does (`agents::embed::claim`) and
+  answers `202 {session_id, turn_id, source, agent_version}` at once; the turn runs
+  in the background (`run::draft::start_private_turn`, then
+  `embed::spawn_guarded` with `TurnWork::Private`) through the ordinary run path,
   as the agent's principal: its grants, gates, binds and budgets apply and its
   tools really run. No `session_id` starts a conversation; one continues it.
   Failures, all before anything runs: `404 agent_unavailable`, `404
@@ -29,17 +30,18 @@ any other, and reads per turn what a visitor never sees
   test conversation's `chat_json` stream, exactly a person's chat's
   (`chat::json_api::{live_stream, quiet_stream}`): a `snapshot`, then the
   running turn's deltas, tool calls and `turn_finalized` — or `suspended` when
-  it pauses — or `idle`. Only a test conversation (version 0) of this agent
-  streams here; any other id is `404`.
+  it pauses — or `idle`. Only the admitted private source/version of this agent streams here; any
+  other id is `404`. Organization history requires current member Write access.
 - **`GET /api/v0/agents/{id}/test/{session}/turns/{turn}/debug`** (`write`
-  share) is that turn's `{turn_id, draft_version, debug, handoff}`, read once
+  share) is that turn's `{turn_id, source, agent_version, debug, handoff}`, read once
   the turn has settled: it waits up to 15 s for the conversation's claim to
   drop (the output filter rules after the row is final), else `409
   turn_in_progress`. `handoff` is what the turn hands to a person while it
   waits on one (the pause's `run_context.handoff`), else `null`.
 - **A pause** in a test conversation is answered by the manager through the
   staff resume route, a `secure_input` included (the manager plays the
-  visitor); it never reaches the inbox ([`agent-hil.md`](agent-hil.md#answering)).
+  visitor); draft pauses stay inline. Published private organization pauses also reach
+  the current member-writer Inbox ([`agent-hil.md`](agent-hil.md#answering)).
 
 **The debug view** is for managers only and is built from the conversation's
 state now and the turn's activity events (`run::draft::collect_turn_debug`:
@@ -61,10 +63,13 @@ stored anywhere else:
   policy).
 - `scope`: a strict scope's verdict `{verdict, topics, error?}`.
 
-**How the draft is run.** `run_draft_turn` / `start_draft_turn` load the
-profile with `SpecSource::Draft(spec)`, open the session themselves and then
-use the same `drive_opened` as a visitor's turn
-([`agent-runs.md`](agent-runs.md#entry-points)), recorded as version `0`
+**How private sources run.** The synchronous evaluator `run_draft_turn` loads
+`SpecSource::Draft(spec)` and refuses organization execution. The authenticated
+`start_private_turn` admits Draft or organization Published using the common
+profile loader behind its explicit private purpose. New Published uses the
+actual live pointer, and continuation loads its captured version. Both open
+their session and use the same `drive_opened` as a visitor's turn
+([`agent-runs.md`](agent-runs.md#entry-points)). Draft is recorded as version `0`
 (`DRAFT_VERSION`). A sub-agent the draft dispatches to runs its own live
 version. The `embed` integration test publishes v1, edits the draft, and shows
 the test chat running the draft while a visitor message gets v1. Test
@@ -405,7 +410,8 @@ the model to answer in the person's language.
 through the function the matching route uses, so the share, the validator and
 the grant cap decide exactly as for a click in the setup UI, and a refusal
 reaches the model — and the chat — as the route's own message and code. Each
-checks `can_manage_agents` again when it runs.
+checks `can_manage_agents` again when it runs. The personal Dot planning
+persona described below checks the independent `can_manage_dots` permission.
 
 | Tool | Does | Through |
 |---|---|---|
@@ -420,6 +426,67 @@ checks `can_manage_agents` again when it runs.
 There is **no publish tool**: the prompt tells the model to send the person to
 the setup page (`setup_url`), where Publish stays a click. An agent may be
 named by its id or its name.
+
+### Personal Dot planning
+
+The `/dots` setup dialog uses the same architect conversation, chat controller
+and metered model execution. Start it with
+`POST /api/v0/agent-architect` `{title, dot_owner: "personal", fresh?}`.
+Its persona exposes only `list_grantable` and `propose_dot_setup`; it cannot
+create ordinary agents or apply a Dot proposal itself.
+
+`propose_dot_setup` stores a complete proposal in the existing
+`agent_architect_sessions` row. Each proposal replaces the previous proposal
+and gets a revision. It checks supported changes through `assist::apply_changes`
+and validates the resulting spec as `AgentSpec`. No principal or active Dot
+slot is allocated during planning. Actual user tools, disabled capabilities,
+knowledge metadata and access determine the offered resources. `list_grantable`
+includes each tool's actual `read_only` status, its `default_permission` and
+catalogue `capability_key`, plus the permitted default memory tool IDs.
+
+`propose_dot_setup` takes `name`, optional `display` and `description`, a
+`changes` JSON object, and optional `unresolved` requirements. A JSON-encoded
+string is not accepted as `changes`. Its schema exposes only `task`, `tone`,
+`scope`, `abilities` and `knowledge` from the existing changes schema.
+The proposal starts with the same permitted memory tools as manual personal
+Dot creation: `remember`, `recall`, `update_memory` and `forget`, with Allow.
+Other read-only tools default to Allow; other writes and tools with unknown
+effects default to Ask. Per-action rule configuration is left to existing
+access settings.
+
+`GET /api/v0/agent-architect/{session_id}/dot-plan` returns
+`{proposal, dot_id}` to the conversation's owner with current personal Dot
+management permission. The proposal contains `revision`, `source_turn_id`, `name`, `display`,
+`description`, `draft_spec`, selected `tools`, selected `knowledge`, `dropped` changes and `unresolved`
+requirements. Each selected tool includes its ID, catalogue `capability_key`,
+label, description and permission. The UI groups tools by capability and
+permission, shows a count for multiple tools and lets the person inspect each
+tool ID and rule alongside the work instructions, tone and scope topics.
+Supported settings are work instructions, tone, non-strict scope,
+available built-in tools and one available knowledge collection. Unsupported
+requirements prevent application. `source_turn_id` identifies the actual
+assistant turn that proposed the plan. A later accepted user message hides the
+old proposal from GET and prevents its application, even when the assistant
+asks a question or fails before producing a replacement.
+
+`POST /api/v0/agent-architect/{session_id}/dot-plan` `{revision}` applies the
+stored reviewed proposal. It rejects a stale revision, a proposal superseded
+by a later user message, a running planning turn
+or unresolved requirements. Creation and conversation binding share the
+existing personal lifecycle transaction: current permission, active capacity,
+tool availability and the actual knowledge collection ID and access are
+checked before creation. Collection argument bindings use the existing
+`ToolBinds` and `BoundTool` at execution; the model cannot substitute a
+different collection. A retry
+returns the same Dot; it does not allocate another active slot. The response
+is `{dot, session_id}`. Personal execution retains the owner's authority and
+uses the saved work instructions and tone through the existing owner brief
+renderer. Organization planning, account authorization, per-action rules,
+automation and peer configuration use existing settings. Conversational editing
+of an existing Dot is not supported; an applied planning conversation links to
+the created Dot's settings.
+
+### Ordinary agent draft changes
 
 **`changes`** (`assist::changes_schema`): `display`, `model`, `task`, `tone`,
 `scope`, `abilities` and `slots` in the prompt assistant's step shape, plus

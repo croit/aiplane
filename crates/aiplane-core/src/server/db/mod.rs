@@ -25,6 +25,7 @@ pub mod gateway_groups;
 pub mod limits;
 pub mod mcp_audit;
 pub mod mcp_catalog;
+pub mod mcp_connections;
 pub mod model_defaults;
 pub mod ocr_derivatives;
 pub mod push_subscriptions;
@@ -42,6 +43,8 @@ pub mod user_mcp;
 pub mod user_memories;
 pub mod user_tool_prefs;
 pub mod users;
+pub mod write_tx;
+pub use write_tx::WriteTx;
 
 pub type Pool = sqlx::SqlitePool;
 

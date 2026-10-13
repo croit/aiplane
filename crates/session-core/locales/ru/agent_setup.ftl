@@ -318,3 +318,26 @@ agents-setup-ready-recommended-pill = Готов, есть рекомендац�
 agents-setup-test-save-all = Сохранить все как тесты
 agents-setup-proposing = Настройка составляется по вашему описанию. Обычно это занимает от 20 до 40 секунд.
 agents-setup-abilities-search = Поиск возможностей
+dot-setup-title = Настроить Dot вместе
+dot-setup-intro = Опишите задачи Dot. Мы проверим доступные ресурсы и зададим уточняющие вопросы. Dot будет создан только после подтверждения предложения.
+dot-setup-empty = Например: Каждое утро подводить итоги работы компании по заявкам и письмам. Спрашивать меня перед внесением изменений.
+dot-setup-placeholder = Что должен делать ваш Dot?
+dot-setup-preview = Предложение по настройке Dot
+dot-setup-identity = Идентификация
+dot-setup-personal-identity = Личный Dot с вашими правами; подключённые учётные записи настраиваются отдельно.
+dot-setup-details = Проверить рабочие инструкции
+dot-setup-unresolved = Уточните эти требования в разговоре перед созданием Dot.
+dot-setup-apply = Настроить Dot
+architect-tool-propose-dot-setup = Подготовлено предложение по настройке Dot
+dot-setup-error-conflict = Предложение изменилось. Проверьте текущее предложение перед настройкой Dot.
+dot-setup-error-incomplete = Остались неуточнённые требования. Обсудите их в разговоре перед настройкой Dot.
+dot-setup-error-unavailable = Разговор о настройке недоступен. Откройте настройку Dot заново и повторите попытку.
+dot-setup-error-running = Ассистент ещё работает. Дождитесь ответа перед настройкой Dot.
+
+dot-plan-unsupported = Этот параметр необходимо настроить вручную перед созданием Dot.
+dot-plan-strict-scope-unavailable = Строгое ограничение тем недоступно при настройке личных Dots.
+dot-plan-one-knowledge = Выберите одну коллекцию знаний для этой настройки.
+dot-plan-task-required = Опишите задачи этого Dot.
+dot-plan-connection-required = Для этого инструмента нужно сначала настроить подключение учётной записи.
+
+dot-setup-tool-count = Инструменты: { $count }

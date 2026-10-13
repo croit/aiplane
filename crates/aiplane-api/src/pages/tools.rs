@@ -14,6 +14,8 @@
 
 use std::sync::Arc;
 
+use session_core::i18n::Lang;
+
 use rama::http::service::web::extract::State;
 use rama::http::{Request, Response};
 
@@ -34,8 +36,9 @@ use aiplane_runtime::server::tools::catalog;
 /// every tool their roles grant, with its per-user enabled state and the
 /// same grouping the page renders.
 pub async fn tools_list_json(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let lang = Lang::from_request(req.headers());
     let (_session, user) = require_session_json!(state, req);
-    let mut entries = tool_toggles::entries_for_roles(&state, &user.roles);
+    let mut entries = tool_toggles::entries_for_roles(&state, &user.roles, lang);
     let admin = super::is_admin(&state, &user);
     let registered = state.tools();
     if admin {
@@ -221,6 +224,7 @@ pub struct ToolsToggleBody {
 pub async fn tools_toggle_json(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     use rama::http::StatusCode;
 
+    let lang = Lang::from_request(req.headers());
     let (_session, user) = require_session_json!(state, req);
     let (_, body) = req.into_parts();
     let parsed: ToolsToggleBody = match read_json(body, "the toggle body").await {
@@ -229,7 +233,7 @@ pub async fn tools_toggle_json(State(state): State<Arc<RamaState>>, req: Request
     };
     // Refuse keys the caller's roles don't grant — toggling a tool you
     // cannot use would render a switch that lies.
-    let entries = tool_toggles::entries_for_roles(&state, &user.roles);
+    let entries = tool_toggles::entries_for_roles(&state, &user.roles, lang);
     if !entries.iter().any(|e| e.key == parsed.tool_key) {
         return not_found("no such tool for your roles");
     }

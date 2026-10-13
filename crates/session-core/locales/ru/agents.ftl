@@ -2,6 +2,14 @@
 
 agent-output-withheld = Я не могу дать этот ответ, так как в нём упоминались данные, которые я не смог подтвердить для вас. Переформулируйте вопрос или обратитесь в службу поддержки.
 agent-output-redacted = [удалено]
+dot-error-name-taken = В вашей учётной записи уже есть личный Dot с таким именем. Выберите другое имя.
+dot-error-name-invalid = Введите имя длиной не более 80 символов без управляющих символов.
+dot-error-active-limit = Достигнут лимит активных личных Dots. Деактивируйте один Dot, прежде чем создавать следующий.
+dot-error-not-found = Этот Dot вам недоступен.
+dot-error-id-missing = В запросе отсутствует идентификатор Dot.
+dot-memory-error-kind = Выберите для типа памяти: предпочтение, проект или факт.
+dot-memory-error-empty = Содержимое памяти не может быть пустым.
+dot-memory-error-id-missing = В запросе отсутствует идентификатор Dot или записи памяти.
 
 # What a website visitor reads next to the secure field when an identity
 # verifier (#95) asks for the code it sent. Worded the same whether or not
@@ -19,3 +27,36 @@ agent-embed-not-waiting = Сейчас ассистент не ждёт от в�
 agent-embed-message-waiting = Ваше предыдущее сообщение всё ещё ждёт ассистента. Дождитесь ответа, прежде чем отправлять следующее.
 
 agent-a2a-input-required = Партнёрскому сервису нужна ещё одна деталь, чтобы продолжить. Введите её здесь; она передаётся только этому сервису.
+dot-error-inactive = Этот Dot отключён. Включите его, прежде чем начинать диалог.
+dot-action-chat = Чат
+dot-action-chat-opening = Открываем чат…
+dot-activity-session-started = Чат с Dot начат.
+
+dot-workspace-error-unavailable = Постоянное хранилище Dot недоступно. Попросите администратора проверить сервис sandbox.
+dot-workspace-error-conflict = Рабочее пространство занято или изменилось. Обновите страницу и повторите попытку, когда Dot не работает.
+dot-workspace-error-not-found = Запись не найдена. Обновите каталог.
+dot-workspace-error-too-large = Файл или каталог превышает лимит рабочего пространства. Используйте файл или каталог меньшего размера.
+dot-workspace-error-invalid = Некорректный запрос. Проверьте путь и повторите попытку.
+dot-workspace-error-failed = Операция не выполнена. Обновите страницу и повторите попытку.
+
+dot-workspace-heading = Рабочая область
+dot-workspace-intro = Файлы в этой рабочей области сохраняются между запусками Dot. Скачайте файлы, чтобы просмотреть их.
+dot-workspace-reload = Обновить рабочую область
+dot-workspace-unavailable = Постоянное хранилище недоступно. Попросите администратора проверить сервис sandbox.
+dot-workspace-busy = Этот Dot использует свою рабочую область. Файлы могут изменяться. Загрузка файлов, создание папок и удаление доступны, когда Dot не работает.
+dot-workspace-empty = Эта папка пуста.
+dot-workspace-root = Корень рабочей области
+dot-workspace-folder = Папка
+dot-workspace-size-missing = Размер недоступен
+dot-workspace-modified = Изменено { $when }
+dot-workspace-upload = Загрузить файл
+dot-workspace-file = Файл
+dot-workspace-upload-limit = Выберите файл размером не более 50 МиБ.
+dot-workspace-create-folder = Создать папку
+dot-workspace-folder-name = Имя папки
+dot-workspace-delete = Удалить
+dot-workspace-delete-confirm = Удалить «{ $name }»? Папки должны быть пустыми.
+dot-workspace-more = Загрузить больше файлов
+dot-workspace-error-load = Не удалось загрузить рабочую область. Обновите её и повторите попытку.
+dot-workspace-error-save = Не удалось сохранить изменение. Обновите рабочую область и повторите попытку.
+dot-workspace-notice-saved = Рабочая область обновлена.

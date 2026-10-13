@@ -49,6 +49,8 @@ settings-s-usage = Métricas de uso
 settings-s-usage-blurb = Contabilidad por solicitud detrás de /usage.
 settings-s-limits = Límites de tasa y cuotas
 settings-s-limits-blurb = Interruptor principal de las reglas configuradas en /admin/limits.
+settings-s-dots = AIplane Dots
+settings-s-dots-blurb = Capacidad para Dots personales.
 settings-s-content_guard = Control de contenido
 settings-s-content_guard-blurb = Comprueba el contenido antes de que lo reciba el modelo seleccionado.
 
@@ -197,6 +199,8 @@ settings-f-usage-currency-help = Moneda en la que se informan los costes.
 
 settings-f-limits-enabled = Aplicar límites y cuotas
 settings-f-limits-enabled-help = Desactivado, las reglas de /admin/limits se ignoran.
+settings-f-dots-max_active_per_user = Dots personales activos por usuario
+settings-f-dots-max_active_per_user-help = Número máximo de Dots personales activos que puede tener un usuario. Valor predeterminado: 4.
 
 settings-f-feedback-enabled = Ofrecer el widget de comentarios
 settings-f-feedback-enabled-help = Interruptor principal del botón de comentarios de la aplicación.
@@ -282,3 +286,6 @@ settings-f-gateway-default_priority-help = Se usa cuando ni el token ni el grupo
 settings-f-gateway-default_priority-opt-low = Baja
 settings-f-gateway-default_priority-opt-medium = Media
 settings-f-gateway-default_priority-opt-high = Alta
+
+settings-f-dots-max_active_per_organization = Dots activos por organización
+settings-f-dots-max_active_per_organization-help = Número máximo de Dots activos de una organización, incluidos los que están en espera. Valor predeterminado: 4.
