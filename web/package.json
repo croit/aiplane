@@ -28,7 +28,7 @@
 		"vite": "^8.3.3"
 	},
 	"dependencies": {
-		"@zumer/snapdom": "^3.3.0",
+		"@zumer/snapdom": "^3.3.3",
 		"dompurify": "^3.4.16",
 		"marked": "^18.1.0"
 	},
