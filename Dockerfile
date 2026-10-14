@@ -52,7 +52,7 @@
 # resolves the right architecture. Dependabot's docker ecosystem bumps the
 # digest while keeping the tag readable; do not drop the tag, it is what makes
 # the pin reviewable.
-FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS runtime
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS runtime
 
 # Fonts are for the `typst_<template>` tools, which compile typst IN THIS
 # container (server/typst.rs) — unlike `render_typst`, which runs in the
