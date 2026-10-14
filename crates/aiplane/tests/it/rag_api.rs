@@ -149,7 +149,7 @@ async fn full_create_get_list_update_reindex_delete_round_trip() {
     let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
     assert_eq!(created["name"], "gateway-repo");
     assert_eq!(created["pat_set"], false);
-    assert_eq!(created["status"], "unconfigured");
+    assert_eq!(created["status"], "pending");
     let id = created["id"].as_i64().unwrap();
 
     // Get one.
@@ -187,11 +187,11 @@ async fn full_create_get_list_update_reindex_delete_round_trip() {
     );
     assert_eq!(updated["embedding_model"], "embed-2");
 
-    // Add a source and move its lifecycle to error. Collection status must
+    // Move the primary source the create queued to error. Collection status must
     // follow the searchable source, never a separate collection lifecycle.
     {
         use aiplane_core::server::db::rag as rag_db;
-        let source = rag_db::add_ref(&db, id, "main", None, true).await.unwrap();
+        let source = rag_db::primary_ref(&db, id).await.unwrap().unwrap();
         rag_db::set_ref_status(&db, source.id, rag_db::CollectionStatus::Error)
             .await
             .unwrap();
@@ -247,6 +247,73 @@ async fn full_create_get_list_update_reindex_delete_round_trip() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+/// A versioned collection is created with its primary source already queued:
+/// without one it would index nothing while the UI reports indexing queued.
+/// An aggregate collection starts empty — its sources are the repos the
+/// operator adds next.
+#[tokio::test]
+async fn creating_a_versioned_collection_queues_its_primary_source() {
+    let state = common::state_with_admin_rbac("http://unused.invalid").await;
+    let cookie = seed_admin(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({
+        "name": "kernel",
+        "git_url": "https://example.invalid/kernel.git",
+        "git_ref": "a9",
+        "embedding_model": "embed-1",
+    })
+    .to_string();
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/collections",
+            &cookie,
+            Some(&body),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(created["status"], "pending");
+    let id = created["id"].as_i64().unwrap();
+
+    let resp = app
+        .serve(req_with_cookie(
+            Method::GET,
+            &format!("/api/v0/rag/collections/{id}/refs"),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let listed: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    let refs = listed["data"].as_array().unwrap();
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0]["git_ref"], "a9");
+    assert_eq!(refs[0]["is_primary"], true);
+    assert_eq!(refs[0]["status"], "pending");
+
+    let body = json!({
+        "name": "many-repos",
+        "git_url": "https://example.invalid/unused.git",
+        "embedding_model": "embed-1",
+        "search_mode": "aggregate",
+    })
+    .to_string();
+    let resp = app
+        .serve(req_with_cookie(
+            Method::POST,
+            "/api/v0/rag/collections",
+            &cookie,
+            Some(&body),
+        ))
+        .await
+        .unwrap();
+    let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(created["status"], "unconfigured");
+}
+
 #[tokio::test]
 async fn collection_status_is_derived_from_its_search_ref() {
     use aiplane_core::server::db::rag as rag_db;
@@ -267,9 +334,9 @@ async fn collection_status_is_derived_from_its_search_ref() {
         .unwrap();
     let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
     let id = created["id"].as_i64().unwrap();
-    assert_eq!(created["status"], "unconfigured");
+    assert_eq!(created["status"], "pending");
 
-    let source = rag_db::add_ref(&db, id, "main", None, true).await.unwrap();
+    let source = rag_db::primary_ref(&db, id).await.unwrap().unwrap();
     rag_db::set_ref_status(&db, source.id, rag_db::CollectionStatus::Ready)
         .await
         .unwrap();
@@ -827,13 +894,18 @@ async fn refs_add_list_primary_and_dedupe() {
     let state = common::state_with_admin_rbac("http://unused.invalid").await;
     let cookie = seed_admin(&state, "boss").await;
     let app = common::app(state);
+    // Aggregate, so the collection starts without sources and the two added
+    // below keep their own urls.
+    let mut aggregate_body: Value = serde_json::from_str(create_body()).unwrap();
+    aggregate_body["search_mode"] = json!("aggregate");
+    let aggregate_body = aggregate_body.to_string();
 
     let resp = app
         .serve(req_with_cookie(
             Method::POST,
             "/api/v0/rag/collections",
             &cookie,
-            Some(create_body()),
+            Some(&aggregate_body),
         ))
         .await
         .unwrap();
@@ -1162,7 +1234,7 @@ async fn ref_editor_and_index_log_are_available_to_the_admin_ui() {
         .unwrap();
     let created: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
     let id = created["id"].as_i64().unwrap();
-    let source = rag_db::add_ref(&db, id, "main", None, true).await.unwrap();
+    let source = rag_db::primary_ref(&db, id).await.unwrap().unwrap();
 
     rag_db::insert_log_entry(
         &db,
@@ -1304,15 +1376,15 @@ async fn ref_routes_answer_404_outside_their_collection() {
     }
     let resp = app
         .serve(req_with_cookie(
-            Method::POST,
+            Method::GET,
             &format!("/api/v0/rag/collections/{}/refs", ids[0]),
             &cookie,
-            Some(&json!({ "sources": [{ "url": "https://example.invalid/one.git" }] }).to_string()),
+            None,
         ))
         .await
         .unwrap();
-    let added: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
-    let ref_id = added["added"][0]["id"].as_i64().unwrap();
+    let listed: Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    let ref_id = listed["data"][0]["id"].as_i64().unwrap();
 
     for (method, path) in [
         (

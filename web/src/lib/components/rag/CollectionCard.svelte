@@ -2,7 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { adminDelete, adminJson, adminPatch, adminPost } from '#lib/admin-client.js';
 	import { dt, t } from '#lib/i18n.svelte.js';
-	import { parseSources, sourceLabel, type RagCollection, type RagLogEntry, type RagRef } from '#lib/rag.js';
+	import { parseSources, refreshIntervalLabel, sourceLabel, type RagCollection, type RagLogEntry, type RagRef } from '#lib/rag.js';
 	import EditModal from '#lib/components/EditModal.svelte';
 
 	let { collection, onchanged, onnotice } = $props<{
@@ -160,6 +160,8 @@
 		}
 	}
 
+	let refresh = $derived(refreshIntervalLabel(collection.refresh_interval_mins));
+
 	onMount(loadRefs);
 </script>
 
@@ -178,6 +180,7 @@
 				<div class="mt-2 flex flex-wrap gap-2 text-xs text-base-content/60">
 					<span>{t('rag-embed-prefix')} {collection.embedding_model}</span>
 					<span>·</span><span>{collection.pat_set ? t('rag-pat-set') : t('rag-pat-none')}</span>
+					<span>·</span><span>{t('rag-label-refresh-interval')}: {t(refresh.key, refresh.args)}</span>
 					{#if collection.allowed_groups.length}<span>·</span><span>{t('rag-label-allowed-groups')}: {collection.allowed_groups.join(', ')}</span>{/if}
 				</div>
 			</div>

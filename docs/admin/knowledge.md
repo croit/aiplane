@@ -15,12 +15,14 @@ Optionally, configure a [rerank pool](models.md#pool-fields). Search then reorde
 3. Choose the source provider and complete its displayed fields. Built-in remote providers are WebDAV, Google Drive and HyperKitty, alongside Git sources.
 4. Select an embedding model. Optional extraction profiles also need an extraction model.
 5. Set file include/exclude patterns, chunk size/overlap, refresh schedule and allowed groups.
-6. Save. Follow indexing status and the source log on the collection card.
+6. Save. A versioned collection gets its ref as primary source and is queued for indexing at once; an aggregate collection starts without sources. Follow indexing status and the source log on the collection card.
 7. Once indexed, test retrieval using an allowed account and a question whose answer you can verify in the source.
 
 The editor proposes chunk size 800 and overlap 100, a daily refresh interval and Git ref `main`. These are form defaults: change them to match your source. Chunk size must be positive and overlap must satisfy `0 <= overlap < chunk_size`. Refresh is in minutes; presets are on demand (`0`), hourly (`60`), daily (`1440`) and weekly (`10080`). A custom stored interval is displayed without rounding it to a preset.
 
 After creating a Git collection, the indexing notice names the ref that was saved. Non-Git sources do not show a Git ref.
+
+The collection card shows each collection's refresh schedule. A collection on **Never** changes only through **Reindex**, a source's re-index or its sync hook; collections created before the refresh schedule existed are on **Never** until edited.
 
 ### Source-specific setup
 
@@ -44,7 +46,7 @@ An aggregate collection is not ready merely because its empty container was crea
 
 ## Maintain indexing
 
-The collection card shows source/model/access metadata, status and individual source rows. Actions include:
+The collection card shows source/model/access metadata, refresh schedule, status and individual source rows. Actions include:
 
 - **Edit collection:** Change source configuration, extraction/embedding settings, patterns, chunking, refresh and access. Changes to the index shape queue rebuilds.
 - **Reindex:** Request a full rebuild, rather than only checking for changed source content.
