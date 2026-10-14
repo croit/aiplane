@@ -74,7 +74,7 @@ quick-xml = "0.42"
 # bring in tokio + native HTTPS via the `tokio` + `with-tokio`
 # features. `no-verify-ssl` is intentionally NOT enabled — operators
 # must point at a proper TLS endpoint.
-rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls"] }
+rust-s3 = { version = "0.38", default-features = false, features = ["tokio-rustls-tls"] }
 
 # GeoIP. `ip2location` reads an IP2Location LITE DB11 `.BIN` (memory-mapped,
 # sync, Send+Sync) — shared behind an `Arc` and hot-swapped when the file
