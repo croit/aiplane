@@ -357,18 +357,38 @@ pub async fn create_collection(State(state): State<Arc<RamaState>>, req: Request
         refresh_interval_mins: body.refresh_interval_mins,
     };
     match rag_db::create_collection(&state.db, &new).await {
-        Ok(c) => match collection_view(&state.db, c).await {
-            Ok(view) => (
-                StatusCode::CREATED,
-                [(header::CONTENT_TYPE, "application/json")],
-                serde_json::to_string(&view).unwrap_or_default(),
-            )
-                .into_response(),
-            Err(err) => {
-                tracing::warn!(error = %err, "deriving created rag collection status");
-                internal_error("deriving collection status failed")
+        Ok(c) => {
+            // A versioned collection searches its primary source, so it gets
+            // that source now; an aggregate one starts empty until the
+            // operator adds the repos it spans.
+            if c.search_mode == rag_db::SearchMode::Versioned {
+                match rag_db::add_ref(&state.db, c.id, &c.git_ref, None, true).await {
+                    Ok(r) => {
+                        if let Err(err) = requeue_ref(&state, r.id).await {
+                            tracing::warn!(error = %err, ref_id = r.id, "queueing a new collection's primary source");
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(error = %err, id = c.id, "adding a new collection's primary source");
+                        return internal_error(
+                            "the collection was created but its primary source could not be added — add it with `Add ref` on its card",
+                        );
+                    }
+                }
             }
-        },
+            match collection_view(&state.db, c).await {
+                Ok(view) => (
+                    StatusCode::CREATED,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    serde_json::to_string(&view).unwrap_or_default(),
+                )
+                    .into_response(),
+                Err(err) => {
+                    tracing::warn!(error = %err, "deriving created rag collection status");
+                    internal_error("deriving collection status failed")
+                }
+            }
+        }
         // sqlx wraps the underlying sqlite error inside `DbError::Query`;
         // pull it out so the operator gets "name already exists" instead
         // of a vague 500.

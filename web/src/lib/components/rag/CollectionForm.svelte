@@ -4,7 +4,7 @@
 	import { untrack } from 'svelte';
 	import { t } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
-	import { parseList, type RagCollection, type RagProfile, type RagProvider } from '#lib/rag.js';
+	import { parseList, REFRESH_PRESETS, refreshIntervalLabel, type RagCollection, type RagProfile, type RagProvider } from '#lib/rag.js';
 	import GroupSelect from '#lib/components/GroupSelect.svelte';
 	import { normalizeSelection } from '#lib/multi-select.js';
 
@@ -63,19 +63,14 @@
 		...(form.embedding_model && !models.includes(form.embedding_model) ? [{ value: form.embedding_model, label: `${form.embedding_model} ${t('rag-suffix-not-advertised')}` }] : []),
 		...models.map((model: string) => ({ value: model, label: model }))
 	]);
-	// Minutes on the wire, human intervals in the menu. A value stored by
-	// someone scripting the API (say 720) is kept and shown rather than
-	// silently rounded to the nearest preset.
-	const REFRESH_PRESETS = ['0', '60', '1440', '10080'];
-	let refreshOptions = $derived([
-		{ value: '0', label: t('rag-refresh-never') },
-		{ value: '60', label: t('rag-refresh-hourly') },
-		{ value: '1440', label: t('rag-refresh-daily') },
-		{ value: '10080', label: t('rag-refresh-weekly') },
-		...(REFRESH_PRESETS.includes(form.refresh_interval_mins)
-			? []
-			: [{ value: form.refresh_interval_mins, label: t('rag-refresh-custom', { mins: form.refresh_interval_mins }) }])
-	]);
+	// Minutes on the wire, human intervals in the menu; a scripted value off
+	// the presets is kept and listed as itself.
+	let refreshOptions = $derived(
+		[...REFRESH_PRESETS.map(String), ...(REFRESH_PRESETS.map(String).includes(form.refresh_interval_mins) ? [] : [form.refresh_interval_mins])].map((value) => {
+			const shown = refreshIntervalLabel(Number(value));
+			return { value, label: t(shown.key, shown.args) };
+		})
+	);
 	let profileOptions = $derived([
 		{ value: '', label: t('rag-option-profile-none') },
 		...profiles.map((item: RagProfile) => ({ value: item.name, label: item.name, description: item.description || undefined }))

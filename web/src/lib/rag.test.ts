@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { listNotice, parseList, parseSources, profileFieldsJson, sourceLabel } from './rag.ts';
+import { listNotice, parseList, refreshIntervalLabel, parseSources, profileFieldsJson, sourceLabel } from './rag.ts';
 
 test('RAG lists parse comma and newline separated values without empty entries', () => {
 	assert.deepEqual(parseList('*.rs, *.md\ntarget/\n'), ['*.rs', '*.md', 'target/']);
@@ -56,4 +56,12 @@ test('created-aggregate and saved notices carry the name', () => {
 test('no or unknown notice yields nothing', () => {
 	assert.strictEqual(listNotice(params('')), null);
 	assert.strictEqual(listNotice(params('notice=bogus&name=x')), null);
+});
+
+test('RAG refresh intervals name their preset and keep a scripted value as minutes', () => {
+	assert.deepEqual(refreshIntervalLabel(0), { key: 'rag-refresh-never', args: {} });
+	assert.deepEqual(refreshIntervalLabel(60), { key: 'rag-refresh-hourly', args: {} });
+	assert.deepEqual(refreshIntervalLabel(1440), { key: 'rag-refresh-daily', args: {} });
+	assert.deepEqual(refreshIntervalLabel(10080), { key: 'rag-refresh-weekly', args: {} });
+	assert.deepEqual(refreshIntervalLabel(720), { key: 'rag-refresh-custom', args: { mins: '720' } });
 });

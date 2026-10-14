@@ -120,6 +120,29 @@ export function sourceLabel(url: string): string {
 }
 
 /** The confirmation the collection list shows after the editor redirects back to it. */
+/** The auto re-sync presets the editor offers, in minutes. */
+export const REFRESH_PRESETS = [0, 60, 1440, 10080];
+
+/**
+ * How often a collection re-syncs, as a catalog key. A value stored by
+ * someone scripting the API (say 720) is named in minutes rather than
+ * rounded to the nearest preset.
+ */
+export function refreshIntervalLabel(mins: number): { key: string; args: Record<string, string> } {
+	switch (mins) {
+		case 0:
+			return { key: 'rag-refresh-never', args: {} };
+		case 60:
+			return { key: 'rag-refresh-hourly', args: {} };
+		case 1440:
+			return { key: 'rag-refresh-daily', args: {} };
+		case 10080:
+			return { key: 'rag-refresh-weekly', args: {} };
+		default:
+			return { key: 'rag-refresh-custom', args: { mins: String(mins) } };
+	}
+}
+
 export function listNotice(params: Pick<URLSearchParams, 'get'>): { key: string; args: Record<string, string> } | null {
 	const name = params.get('name') ?? '';
 	const ref = params.get('ref');
