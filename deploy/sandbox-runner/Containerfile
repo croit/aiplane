@@ -40,7 +40,7 @@
 # Official client-only Docker CLI (static, multi-arch) for the compose path.
 FROM docker:cli@sha256:b1805116a6a86cc591b5d5f60a910a0715cdcc9d18d866ad68b1457ead25c35c AS dockercli
 
-FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
 # `podman` is the REMOTE client for the host-podman path; the `docker` CLI
 # (copied below) drives the host Docker socket for the compose path. Both are

@@ -18,17 +18,17 @@
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@tailwindcss/typography": "^0.5.20",
 		"@tailwindcss/vite": "^4.1.0",
-		"@types/node": "^26.6.4",
+		"@types/node": "^26.6.5",
 		"@typescript/native": "npm:typescript@^7.0.2",
 		"daisyui": "^5.7.47",
-		"svelte": "^5.57.1",
+		"svelte": "^5.57.2",
 		"svelte-check": "^4.7.5",
 		"tailwindcss": "^4.1.0",
 		"typescript": "^6.0.3",
-		"vite": "^8.3.3"
+		"vite": "^8.3.4"
 	},
 	"dependencies": {
-		"@zumer/snapdom": "^3.3.0",
+		"@zumer/snapdom": "^3.3.3",
 		"dompurify": "^3.4.16",
 		"marked": "^18.1.0"
 	},

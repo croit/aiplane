@@ -74,7 +74,7 @@ quick-xml = "0.42"
 # bring in tokio + native HTTPS via the `tokio` + `with-tokio`
 # features. `no-verify-ssl` is intentionally NOT enabled — operators
 # must point at a proper TLS endpoint.
-rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls"] }
+rust-s3 = { version = "0.38", default-features = false, features = ["tokio-rustls-tls"] }
 
 # GeoIP. `ip2location` reads an IP2Location LITE DB11 `.BIN` (memory-mapped,
 # sync, Send+Sync) — shared behind an `Arc` and hot-swapped when the file
@@ -86,7 +86,7 @@ rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustl
 # bzip2/lzma/zstd codecs in zip's default features).
 ip2location = "0.6"
 notify = "8"
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 symphonia = { version = "0.6", default-features = false, features = ["flac", "isomp4", "mp3", "ogg", "vorbis", "wav"] }
 
 # PDF reading for the `fetch_attachment` tool — two model-driven tiers:
