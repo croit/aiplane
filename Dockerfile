@@ -71,11 +71,6 @@ RUN groupadd --system --gid 1000 gateway \
 
 WORKDIR /app
 COPY --chown=gateway:gateway target/release/aiplane /app/aiplane
-# The executable was called `gateway` before the project was renamed to
-# croit AIplane. A hardlink keeps `docker exec <container> /app/gateway …`
-# and any hand-written unit that names it working. Deprecated; it goes
-# away in a future breaking release (docs/renaming.md).
-RUN ln /app/aiplane /app/gateway
 # `typst` CLI for the `typst_<template>` tools. Downloaded by the
 # `fetch-typst-cli` mise task (which runs as a dep of `mise run
 # build` — see mise.toml) so it arrives in the same artifacts/

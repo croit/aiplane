@@ -60,13 +60,10 @@ gateway.
 **The log key.** No new secret: the key is derived from the gateway's at-rest
 key (`Crypto`, `$AIPLANE_ENCRYPTION_KEY` or the session secret) as
 HMAC-SHA256(at-rest key, `croit-aiplane/activity-log-chain/v1`), and
-`Crypto::activity_keys` returns the ring — the current key first, then one per
-retired at-rest label. Each event stores the `key_id` (the first 16 hex digits
+`Crypto::activity_keys` returns the ring, which holds the current key. Each event stores the `key_id` (the first 16 hex digits
 of the key's SHA-256: a fingerprint, not the key) it was signed with, and
-`verify` picks that key from the ring, so a label rotation (the supported way
-to rotate the at-rest key, `crypto.rs` → `RETIRED_LABELS`) leaves every older
-event verifiable. Replacing `$AIPLANE_ENCRYPTION_KEY` outright keeps no old
-key — sealed secrets stop opening too — and `verify` then reports the older
+`verify` picks that key from the ring. Replacing `$AIPLANE_ENCRYPTION_KEY`
+keeps no old key — sealed secrets stop opening too — and `verify` then reports the older
 events as signed with a key the gateway does not hold.
 
 The ring is installed process-wide when the gateway's state is built

@@ -12,3 +12,9 @@
 pub mod db;
 pub mod notify_channels;
 pub mod rates;
+
+/// The suffix of a JSON key whose string value is sealed (`"<nonce>.<ct>"`,
+/// `Crypto::seal_to_string`). Agent specs keep their credentials this way
+/// (`token_sealed`, `secret_sealed`, …), so a credential is found by its key
+/// without knowing the spec's layout.
+pub const SEALED_SUFFIX: &str = "_sealed";

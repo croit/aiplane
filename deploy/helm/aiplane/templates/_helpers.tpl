@@ -62,9 +62,7 @@ precisely 64 lowercase hex chars.
 
 Precedence: an explicit value wins; otherwise we re-read the key already in the
 cluster so an upgrade never rotates it; only a genuinely fresh install
-generates one. A Secret written before the rename holds the value under
-`GATEWAY_SESSION_KEY`, so that spelling is read too — missing it would mint a
-fresh key and leave every secret in the database undecryptable. `lookup` returns an empty map when there is no cluster to ask
+generates one. `lookup` returns an empty map when there is no cluster to ask
 (`helm template`, `--dry-run`), which is exactly the GitOps trap called out in
 values.yaml — hence the guard in secret.yaml that refuses to render a random
 key when autoGenerate is off.
@@ -82,7 +80,7 @@ key when autoGenerate is off.
 {{- if index $data "AIPLANE_SESSION_KEY" -}}
 {{- index $data "AIPLANE_SESSION_KEY" | b64dec -}}
 {{- else if index $data "GATEWAY_SESSION_KEY" -}}
-{{- index $data "GATEWAY_SESSION_KEY" | b64dec -}}
+{{- fail (printf "Secret %s holds the session key under GATEWAY_SESSION_KEY, which AIplane no longer reads, and a new random key would make every stored secret unreadable. Copy the value to a key named AIPLANE_SESSION_KEY in that Secret, or set sessionKey.existingSecretKey=GATEWAY_SESSION_KEY." $name) -}}
 {{- else -}}
 {{- randAlphaNum 64 | sha256sum -}}
 {{- end -}}
@@ -92,11 +90,9 @@ key when autoGenerate is off.
 {{/*
 Which key inside the session Secret holds the value.
 
-The chart's own Secret carries both spellings, so either answer works there.
-An operator who brought their own Secret from before the rename has it under
-`GATEWAY_SESSION_KEY`; `sessionKey.existingSecretKey` is how they say so,
-because `lookup` cannot be trusted to answer during `helm template` or a
-GitOps dry run. See docs/compatibility.md.
+The chart's own Secret uses `AIPLANE_SESSION_KEY`. An operator who brought their
+own Secret names the key with `sessionKey.existingSecretKey`, because `lookup`
+cannot be trusted to answer during `helm template` or a GitOps dry run.
 */}}
 {{- define "aiplane.sessionSecretKey" -}}
 {{- .Values.sessionKey.existingSecretKey | default "AIPLANE_SESSION_KEY" -}}

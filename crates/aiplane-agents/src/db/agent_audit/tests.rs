@@ -532,13 +532,13 @@ async fn a_keyed_chain_cannot_be_reforged_from_the_database_alone() {
 }
 
 #[tokio::test]
-async fn events_signed_before_a_label_rotation_still_verify() {
+async fn events_signed_under_an_earlier_ring_key_still_verify() {
     let pool = memory().await;
-    let session = [5u8; 32];
-    let before = aiplane_core::server::crypto::Crypto::from_session(&session).activity_keys();
-    install_key_ring(vec![before[1].clone()]);
+    install_key_ring(keyed(1));
     run_event(&pool, &main_chain("s1"), AuditKind::ToolCall, json!({})).await;
-    install_key_ring(before.clone());
+    let mut ring = keyed(2);
+    ring.extend(keyed(1));
+    install_key_ring(ring);
     run_event(&pool, &main_chain("s1"), AuditKind::ToolCall, json!({})).await;
     let v = verify(&pool, "p-main").await.unwrap();
     assert!(v.ok(), "{v:?}");

@@ -216,9 +216,8 @@ fn key_for_request_header(headers: &rama::http::HeaderMap) -> Option<u64> {
 /// inferred one.
 pub const AFFINITY_HEADER: &str = "x-aiplane-affinity";
 
-/// The same header under the name it had before the project was renamed to
-/// croit AIplane. Still read, because it is a wire contract already baked into
-/// client launch scripts; [`AFFINITY_HEADER`] wins when a request carries both.
+/// The same header under its older name. A wire contract already baked into
+/// client launch scripts, so it is still read; [`AFFINITY_HEADER`] wins when a request carries both.
 /// Neither is forwarded upstream. See `docs/compatibility.md`.
 pub const LEGACY_AFFINITY_HEADER: &str = "x-gateway-affinity";
 

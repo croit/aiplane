@@ -15,7 +15,6 @@ pub mod capped_read;
 pub mod config;
 pub mod crypto;
 pub mod db;
-pub mod env;
 pub mod feature_defaults;
 pub mod ip_networks;
 pub mod limits;

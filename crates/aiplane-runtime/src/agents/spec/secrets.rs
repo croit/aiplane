@@ -7,12 +7,10 @@
 //! or GET carries it in clear.
 //!
 //! A sealed credential is kept as `<key>` + [`SEALED_SUFFIX`] beside where
-//! the plaintext was. The at-rest key rotation
-//! (`aiplane_core::server::db::reseal`) finds it by that suffix in every
-//! spec column, so a new slot needs nothing there.
+//! the plaintext was.
 
+use aiplane_agents::SEALED_SUFFIX;
 use aiplane_core::server::crypto::Crypto;
-use aiplane_core::server::db::reseal::SEALED_SUFFIX;
 use serde_json::Value;
 
 /// Where a spec keeps a credential.

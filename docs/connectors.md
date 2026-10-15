@@ -63,7 +63,7 @@ configuration require reconnecting user and Dot accounts separately. Stale
 credentials remain locally disconnectable and are not sent to the changed
 server. In-flight authorization or refresh cannot overwrite a connection after
 its catalogue resource changes. Returning to an earlier configuration does
-not revive earlier credentials. Cosmetic edits and encryption-key resealing
+not revive earlier credentials. Cosmetic edits
 preserve resource identity.
 
 ---

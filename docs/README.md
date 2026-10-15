@@ -80,7 +80,7 @@ integrations and features vary with each installation's configuration.*
 - [HTTP API](reference/api.md): model protocols, authentication and accepted endpoints.
 - [Environment and process](reference/environment.md).
 - [Tool inventory](tools-inventory.md): tool IDs, availability gates and dynamic families.
-- [Runtime compatibility identifiers](compatibility.md): current aliases and stable contracts retained for existing integrations.
+- [Stable identifiers](compatibility.md): names that identify existing storage and are shared with separately updated clients.
 - [Documentation website and LLM exports](documentation-system.md): where to read or download this build's documentation.
 
 ## Read with a language model

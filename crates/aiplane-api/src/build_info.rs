@@ -32,8 +32,7 @@ pub const GIT_SHA: &str = env!("AIPLANE_GIT_SHA");
 /// `AIPLANE_SOURCE_URL` in the gateway's environment to *your* repository so
 /// the in-app link points at the source actually running.
 static SOURCE_URL: LazyLock<String> = LazyLock::new(|| {
-    aiplane_core::server::env::var("AIPLANE_SOURCE_URL")
-        .unwrap_or_else(|_| DEFAULT_SOURCE_URL.to_string())
+    std::env::var("AIPLANE_SOURCE_URL").unwrap_or_else(|_| DEFAULT_SOURCE_URL.to_string())
 });
 
 /// The source URL to advertise (env override for forks, else the default).
@@ -48,7 +47,7 @@ pub fn source_url() -> &'static str {
 /// number is an `ENV` in the image, not a recompile. `scripts/derive-version.sh`
 /// produces it and CI passes it in as a build argument.
 static VERSION: LazyLock<String> =
-    LazyLock::new(|| version_from(aiplane_core::server::env::var("AIPLANE_VERSION").ok()));
+    LazyLock::new(|| version_from(std::env::var("AIPLANE_VERSION").ok()));
 
 /// The resolution itself, split out so it is testable: a `LazyLock` reads the
 /// environment once per process, which a test cannot vary.

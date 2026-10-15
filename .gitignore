@@ -25,7 +25,7 @@ deploy/*.env
 .mise.toml.local
 
 # Dev-mode SQLite. Still named `gateway.sqlite`: the filename is a persistent
-# path, and renaming it would orphan every existing database (docs/renaming.md).
+# path, and renaming it would orphan every existing database (docs/compatibility.md).
 gateway.sqlite*
 
 # Persistent dev session key, generated on first `mise run dev`. It is a real

@@ -183,12 +183,8 @@ the real schema, by withholding the tool.
 route's `token` / `client_secret`. One helper does it,
 `spec::secrets::seal_spec_secrets`, from one list of where credentials live
 (`SPEC_SECRETS`), so no draft, version, activity event or GET carries a
-plaintext. A GET → PUT round trip keeps the sealed value. The at-rest key
-rotation (`aiplane_core::server::db::reseal`) re-seals every `*_sealed` string
-in `agents.draft_spec`, `agent_draft_revisions.spec` and `agent_versions.spec`,
-so the retired key is not needed to open those. The activity log's copies are
-hash-chained and left as they are: keep the retired key while their entries
-must stay readable.
+plaintext. A GET → PUT round trip keeps the sealed value. The activity log's copies are
+hash-chained and left as they are.
 
 ## The typed spec
 

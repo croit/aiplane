@@ -42,23 +42,6 @@ pub enum CryptoError {
 #[derive(Clone)]
 pub struct Crypto {
     key: [u8; 32],
-    /// The keys every *retired* derivation label produces from the same
-    /// session secret, tried in order by [`Crypto::open`] when the current key
-    /// fails.
-    ///
-    /// A list rather than one slot, because the label has now been retired
-    /// twice (see [`RETIRED_LABELS`]) and a deployment that skips releases must
-    /// not fall through the gap. Each rename shipped for the same reason: every
-    /// value sealed under the old label — backend API keys, connector client
-    /// secrets, each user's OAuth tokens — would otherwise stop decrypting, and
-    /// "re-enter every upstream credential" is not a migration path.
-    /// [`Self::is_legacy_sealed`] lets [`crate::server::db::reseal`] notice and
-    /// rewrite them under the current key.
-    ///
-    /// Empty when the key came from `$AIPLANE_ENCRYPTION_KEY`: an explicit key
-    /// is used verbatim, so no label was ever involved and there is nothing to
-    /// fall back to.
-    legacy: Vec<[u8; 32]>,
 }
 
 impl std::fmt::Debug for Crypto {
@@ -79,31 +62,11 @@ pub struct Sealed {
 /// Domain-separation label for the at-rest key.
 ///
 /// Changing it derives a different key and orphans everything already sealed,
-/// so it is not a knob. A deliberate rotation means three things together:
-/// move the current value to the front of [`RETIRED_LABELS`], set the new one
-/// here, and let [`crate::server::db::reseal`] rewrite the stored values on the
-/// next boot. Editing this in place without the other two loses every secret in
-/// every existing database.
+/// so it is not a knob.
 pub(crate) const LABEL: &[u8] = b"croit-aiplane/at-rest-encryption/v1";
 
-/// Labels this key has been derived under before, newest first.
-///
-/// [`Crypto::open`] tries each in turn, so a database is readable no matter
-/// which release sealed it — including one that skipped the release where a
-/// label was retired. Nothing is ever removed from here without a breaking
-/// release that says so; see `docs/compatibility.md`.
-///
-/// * `croit-llm-gateway/at-rest-encryption/v1` — used until the project was
-///   renamed to croit AIplane.
-/// * `croit-llm-gateway/mcp-token-encryption/v1` — used while at-rest sealing
-///   covered only MCP tokens.
-pub(crate) const RETIRED_LABELS: &[&[u8]] = &[
-    b"croit-llm-gateway/at-rest-encryption/v1",
-    b"croit-llm-gateway/mcp-token-encryption/v1",
-];
-
 /// Domain-separation label for the agent activity log's chain key, derived
-/// from the at-rest key (and from each retired one, for the ring).
+/// from the at-rest key.
 pub(crate) const ACTIVITY_LABEL: &[u8] = b"croit-aiplane/activity-log-chain/v1";
 
 /// One key the agent activity log signs its hash chains with. `id` is a
@@ -159,10 +122,7 @@ fn open_with(key: &[u8; 32], nonce: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>,
 impl Crypto {
     /// Build from explicit 32-byte key material (used by tests).
     pub fn from_key(key: [u8; 32]) -> Self {
-        Self {
-            key,
-            legacy: Vec::new(),
-        }
+        Self { key }
     }
 
     /// A random, process-lifetime key. Used as the `AppState::new` default so
@@ -170,10 +130,8 @@ impl Crypto {
     /// [`Crypto::from_env_or_session`]. Stored secrets sealed under an
     /// ephemeral key won't survive a restart — acceptable for tests/dev.
     pub fn ephemeral() -> Self {
-        let key = <[u8; 32]>::generate();
         Self {
-            key,
-            legacy: Vec::new(),
+            key: <[u8; 32]>::generate(),
         }
     }
 
@@ -182,17 +140,12 @@ impl Crypto {
     /// (ephemeral session key path) we still derive deterministically from it
     /// so the process is internally consistent for its lifetime.
     pub fn from_env_or_session(session_secret: &[u8; 32]) -> Self {
-        if let Ok(raw) = crate::server::env::var("AIPLANE_ENCRYPTION_KEY")
+        if let Ok(raw) = std::env::var("AIPLANE_ENCRYPTION_KEY")
             && !raw.is_empty()
         {
             let key: Option<[u8; 32]> = hex_decode(&raw).and_then(|bytes| bytes.try_into().ok());
             match key {
-                Some(key) => {
-                    return Self {
-                        key,
-                        legacy: Vec::new(),
-                    };
-                }
+                Some(key) => return Self { key },
                 _ => {
                     tracing::warn!(
                         "AIPLANE_ENCRYPTION_KEY must be 64 hex chars (32 bytes); ignoring it and \
@@ -208,27 +161,17 @@ impl Crypto {
     ///
     /// HKDF-lite: HMAC-SHA256(session_secret, [`LABEL`]). The label names this
     /// key's purpose and is what separates it from any other key derived from
-    /// the same session secret. Every entry of [`RETIRED_LABELS`] is derived
-    /// alongside it so values written under an older label still open — see
-    /// [`Self::legacy`].
+    /// the same session secret.
     pub fn from_session(session_secret: &[u8; 32]) -> Self {
         Self {
             key: derive(session_secret, LABEL),
-            legacy: RETIRED_LABELS
-                .iter()
-                .map(|label| derive(session_secret, label))
-                .collect(),
         }
     }
 
-    /// The activity log's key ring: the key derived from the current at-rest
-    /// key first (what new events are signed with), then one per retired
-    /// at-rest key, so a label rotation leaves every older event verifiable.
+    /// The activity log's key ring: the key derived from the at-rest key,
+    /// which new events are signed with.
     pub fn activity_keys(&self) -> Vec<ActivityKey> {
-        std::iter::once(&self.key)
-            .chain(&self.legacy)
-            .map(ActivityKey::derived_from)
-            .collect()
+        vec![ActivityKey::derived_from(&self.key)]
     }
 
     /// Encrypt `plaintext` under a fresh random nonce.
@@ -252,42 +195,7 @@ impl Crypto {
 
     /// Decrypt a `(nonce, ciphertext)` pair.
     pub fn open(&self, nonce: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-        if let Ok(plain) = open_with(&self.key, nonce, ciphertext) {
-            return Ok(plain);
-        }
-        // Sealed under an older derivation label. Opening it is the whole
-        // point — the alternative shipped once already, and it was "re-enter
-        // every upstream credential".
-        self.legacy
-            .iter()
-            .find_map(|legacy| open_with(legacy, nonce, ciphertext).ok())
-            .ok_or(CryptoError::Decrypt)
-    }
-
-    /// Whether `nonce`/`ciphertext` needs a retired key, i.e. whether it should
-    /// be re-sealed. `false` for anything the current key opens, and for
-    /// anything no key opens (that is not a migration, it is a wrong key).
-    pub fn is_legacy_sealed(&self, nonce: &[u8], ciphertext: &[u8]) -> bool {
-        if open_with(&self.key, nonce, ciphertext).is_ok() {
-            return false;
-        }
-        self.legacy
-            .iter()
-            .any(|legacy| open_with(legacy, nonce, ciphertext).is_ok())
-    }
-
-    /// [`Self::is_legacy_sealed`] for the `"<nonce>.<ciphertext>"` string form.
-    pub fn is_legacy_sealed_string(&self, stored: &str) -> bool {
-        let Some((nonce, ciphertext)) = stored.split_once('.') else {
-            return false;
-        };
-        let Some(nonce) = URL_SAFE_NO_PAD.decode(nonce).ok() else {
-            return false;
-        };
-        let Some(ciphertext) = URL_SAFE_NO_PAD.decode(ciphertext).ok() else {
-            return false;
-        };
-        self.is_legacy_sealed(&nonce, &ciphertext)
+        open_with(&self.key, nonce, ciphertext)
     }
 
     /// Convenience: decrypt to a UTF-8 string.
@@ -412,18 +320,6 @@ mod activity_key_tests {
             "another gateway's key signs differently"
         );
     }
-
-    #[test]
-    fn a_rotated_label_keeps_the_older_activity_keys_in_the_ring() {
-        let ring = Crypto::from_session(&[3u8; 32]).activity_keys();
-        assert_eq!(ring.len(), 1 + RETIRED_LABELS.len());
-        assert_eq!(
-            ring[1].id,
-            ActivityKey::derived_from(&derive(&[3u8; 32], RETIRED_LABELS[0])).id
-        );
-        let ids: std::collections::BTreeSet<&str> = ring.iter().map(|k| k.id.as_str()).collect();
-        assert_eq!(ids.len(), ring.len(), "every key has its own id");
-    }
 }
 
 #[cfg(test)]
@@ -527,122 +423,6 @@ mod tests {
         assert!(c.open(&nonce, &ciphertext).is_err());
     }
 
-    /// A value sealed under ANY retired derivation label must still open.
-    ///
-    /// This is the regression that matters: `7e7ec42` renamed the label with no
-    /// migration, so every backend API key, connector client secret and stored
-    /// OAuth token from before it became undecryptable — and the release notes
-    /// answered "re-enter them". Verified against a real database before that
-    /// fix: the July-era `backends.api_key_ct` row opened under
-    /// `mcp-token-encryption/v1` and not under the label that replaced it.
-    ///
-    /// Looping over [`RETIRED_LABELS`] rather than naming one is the point: the
-    /// label has been retired twice now (the second time with the rename to
-    /// croit AIplane), and a deployment that skipped a release must not fall
-    /// through the gap. A future rotation is covered by this test for free.
-    #[test]
-    fn a_value_sealed_under_any_retired_label_still_opens() {
-        let session = session_secret();
-        let now = Crypto::from_session(&session);
-
-        assert!(
-            !RETIRED_LABELS.is_empty(),
-            "the fallback list is what makes an upgrade survivable"
-        );
-        for label in RETIRED_LABELS {
-            // What a build of that era would have written.
-            let old = Crypto::from_key(derive(&session, label));
-            let sealed = old.seal(b"sk-upstream-secret").unwrap();
-
-            assert_ne!(
-                now.key,
-                old.key,
-                "{} must derive a different key from the current label",
-                String::from_utf8_lossy(label)
-            );
-            assert_eq!(
-                now.open(&sealed.nonce, &sealed.ciphertext).unwrap(),
-                b"sk-upstream-secret",
-                "a value sealed under {} must still be readable",
-                String::from_utf8_lossy(label)
-            );
-            assert!(
-                now.is_legacy_sealed(&sealed.nonce, &sealed.ciphertext),
-                "and must be reported as needing a re-seal"
-            );
-        }
-    }
-
-    /// Retiring a label must not quietly reuse one: two labels deriving the
-    /// same key would make `is_legacy_sealed` answer `false` for values that do
-    /// need rewriting, and the re-seal pass would skip them forever.
-    #[test]
-    fn every_label_derives_a_distinct_key() {
-        let session = session_secret();
-        let mut keys: Vec<[u8; 32]> = vec![derive(&session, LABEL)];
-        for label in RETIRED_LABELS {
-            keys.push(derive(&session, label));
-        }
-        let mut sorted = keys.clone();
-        sorted.sort_unstable();
-        sorted.dedup();
-        assert_eq!(sorted.len(), keys.len(), "two labels derive the same key");
-    }
-
-    #[test]
-    fn a_value_sealed_under_the_current_label_needs_no_reseal() {
-        let session = session_secret();
-        let now = Crypto::from_session(&session);
-        let sealed = now.seal(b"fresh").unwrap();
-        assert_eq!(
-            now.open(&sealed.nonce, &sealed.ciphertext).unwrap(),
-            b"fresh"
-        );
-        assert!(!now.is_legacy_sealed(&sealed.nonce, &sealed.ciphertext));
-    }
-
-    /// The fallback must not weaken the failure case: a genuinely wrong key
-    /// still fails, and is not misreported as a migration.
-    #[test]
-    fn an_unrelated_key_is_not_mistaken_for_a_legacy_seal() {
-        let stranger = Crypto::ephemeral();
-        let sealed = stranger.seal(b"other deployment").unwrap();
-
-        let session = session_secret();
-        let now = Crypto::from_session(&session);
-        assert!(now.open(&sealed.nonce, &sealed.ciphertext).is_err());
-        assert!(!now.is_legacy_sealed(&sealed.nonce, &sealed.ciphertext));
-    }
-
-    /// An explicit `$AIPLANE_ENCRYPTION_KEY` is used verbatim, so there is no
-    /// label and nothing to fall back to — a legacy value must NOT open, or the
-    /// fallback would be silently widening which keys can read a database.
-    #[test]
-    fn an_explicit_key_has_no_legacy_fallback() {
-        let session = session_secret();
-        let old = Crypto::from_key(derive(&session, RETIRED_LABELS[0]));
-        let sealed = old.seal(b"secret").unwrap();
-
-        let explicit = Crypto::ephemeral();
-        assert!(explicit.legacy.is_empty());
-        assert!(explicit.open(&sealed.nonce, &sealed.ciphertext).is_err());
-    }
-
-    #[test]
-    fn the_string_form_reports_a_legacy_seal_too() {
-        let session = session_secret();
-        for label in RETIRED_LABELS {
-            let old = Crypto::from_key(derive(&session, label));
-            let stored = old.seal_to_string("vapid-ish").unwrap();
-
-            let now = Crypto::from_session(&session);
-            assert_eq!(now.open_from_string(&stored).as_deref(), Some("vapid-ish"));
-            assert!(now.is_legacy_sealed_string(&stored));
-        }
-        let now = Crypto::from_session(&session);
-        assert!(!now.is_legacy_sealed_string("not-even-two-parts"));
-    }
-
     /// Known-answer tests: the exact bytes an existing database depends on.
     ///
     /// Everything else in this module proves the implementation agrees with
@@ -661,8 +441,7 @@ mod tests {
         use super::*;
 
         /// HMAC-SHA256(session_secret, label) — what turns the session secret
-        /// into the at-rest key. Pinned for the current label and for every
-        /// retired one, because [`Crypto::open`] still tries all of them.
+        /// into the at-rest key.
         #[test]
         fn key_derivation_is_byte_for_byte_stable() {
             let secret = [9u8; 32];
@@ -674,23 +453,6 @@ mod tests {
                 ],
                 "the at-rest key derivation changed — every sealed value in every \
                  existing database is now unreadable"
-            );
-            assert_eq!(
-                derive(&secret, RETIRED_LABELS[0]),
-                [
-                    6, 198, 191, 86, 225, 153, 102, 242, 5, 158, 192, 55, 41, 243, 3, 67, 24, 195,
-                    211, 135, 83, 208, 94, 83, 173, 133, 211, 128, 98, 96, 150, 239
-                ],
-                "the pre-rename key can no longer be derived, so a database \
-                 sealed before the rename can no longer be read or re-sealed"
-            );
-            assert_eq!(
-                derive(&secret, RETIRED_LABELS[1]),
-                [
-                    251, 91, 182, 98, 22, 69, 201, 191, 88, 51, 241, 191, 211, 228, 248, 4, 123,
-                    248, 37, 199, 143, 0, 251, 52, 35, 79, 220, 193, 16, 217, 62, 99
-                ],
-                "the oldest key can no longer be derived"
             );
         }
 

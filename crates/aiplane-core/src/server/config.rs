@@ -1214,7 +1214,7 @@ pub fn legacy_default_db_path() -> PathBuf {
 /// Read-only paths (typst templates, skills bundles) deliberately do NOT
 /// hang off this — they ship in the image's read-only layers.
 pub fn data_dir() -> PathBuf {
-    data_dir_from(crate::server::env::var_os("AIPLANE_DATA_DIR"))
+    data_dir_from(std::env::var_os("AIPLANE_DATA_DIR"))
 }
 
 /// The pure half of [`data_dir`], split out so it can be tested without
@@ -1309,7 +1309,7 @@ impl Config {
     /// them a morning.
     pub fn db_path(&self) -> Result<PathBuf, ConfigError> {
         Ok(db_path_from(
-            crate::server::env::var("AIPLANE_DB_PATH").ok().as_deref(),
+            std::env::var("AIPLANE_DB_PATH").ok().as_deref(),
         ))
     }
 
@@ -1328,7 +1328,7 @@ impl Config {
     pub fn bootstrap_admin_groups(&self) -> Vec<String> {
         bootstrap_admin_groups_from(
             &self.gateway.bootstrap_admin_groups,
-            crate::server::env::var("AIPLANE_BOOTSTRAP_ADMIN_GROUPS")
+            std::env::var("AIPLANE_BOOTSTRAP_ADMIN_GROUPS")
                 .ok()
                 .as_deref(),
         )
@@ -1346,7 +1346,7 @@ impl Config {
         &self,
     ) -> Result<crate::server::trusted_proxies::TrustedProxies, ConfigError> {
         crate::server::trusted_proxies::TrustedProxies::parse(
-            crate::server::env::var("AIPLANE_TRUSTED_PROXIES")
+            std::env::var("AIPLANE_TRUSTED_PROXIES")
                 .unwrap_or_default()
                 .as_str(),
         )
@@ -1368,7 +1368,7 @@ impl Config {
     /// gateway can read out of a database it has not opened yet.
     pub fn load() -> Result<Self, ConfigError> {
         let mut config = Self::default();
-        if let Some(url) = crate::server::env::var("AIPLANE_PUBLIC_URL")
+        if let Some(url) = std::env::var("AIPLANE_PUBLIC_URL")
             .ok()
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
@@ -1377,9 +1377,7 @@ impl Config {
         }
         config.network.allow_private_networks = flag_from(
             PRIVATE_NETWORKS_VAR,
-            crate::server::env::var(PRIVATE_NETWORKS_VAR)
-                .ok()
-                .as_deref(),
+            std::env::var(PRIVATE_NETWORKS_VAR).ok().as_deref(),
         )?;
         if std::env::var_os(RETIRED_A2A_PRIVATE_VAR).is_some() {
             tracing::warn!(

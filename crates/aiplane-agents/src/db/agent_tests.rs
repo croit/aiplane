@@ -15,8 +15,8 @@ use sqlx::sqlite::SqliteRow;
 use uuid::Uuid;
 
 use super::{DbError, Pool};
+use crate::SEALED_SUFFIX;
 use aiplane_core::server::crypto::sha256_hex;
-use aiplane_core::server::db::reseal::SEALED_SUFFIX;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestCase {
@@ -184,10 +184,8 @@ pub fn suite_hash(cases: &[TestCase]) -> String {
 }
 
 /// What a spec says, hashed. A sealed credential counts as a fixed marker:
-/// its ciphertext changes whenever it is re-sealed — the at-rest key
-/// rotation rewrites every one (`aiplane_core::server::db::reseal`) — and a
-/// credential is no behaviour the suite tests, so neither may make a passing
-/// run stale.
+/// its ciphertext changes whenever it is re-sealed, and a credential is no
+/// behaviour the suite tests, so neither may make a passing run stale.
 pub fn spec_hash(spec: &Value) -> String {
     let mut meaning = spec.clone();
     mask_sealed(&mut meaning);
@@ -421,7 +419,7 @@ mod tests {
         assert_eq!(
             before,
             spec_hash(&spec("nonce2.ct2", "Help.")),
-            "the key rotation re-seals a credential; the spec means the same"
+            "re-sealing a credential changes its ciphertext, not what the spec means"
         );
         assert_ne!(before, spec_hash(&spec("nonce1.ct1", "Help more.")));
     }

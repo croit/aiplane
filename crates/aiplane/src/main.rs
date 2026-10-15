@@ -26,11 +26,15 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(aiplane::logging::from_env())
         .init();
 
-    // Both spellings of a path the image also bakes a default for cannot be
-    // honoured at once, and guessing wrong points the process at an empty data
-    // directory. Checked before anything reads a path. See docs/compatibility.md.
-    if let Err(e) = srv::env::check_conflicts(srv::env::IMAGE_BAKED) {
-        anyhow::bail!(e);
+    let legacy = legacy_env_names(std::env::vars().map(|(name, _)| name));
+    if !legacy.is_empty() {
+        anyhow::bail!(
+            "these environment variables use the old GATEWAY_ prefix, which AIplane no longer \
+             reads: {}. Rename each to its AIPLANE_ equivalent (for example GATEWAY_DB_PATH to \
+             AIPLANE_DB_PATH). Starting anyway would ignore them — a wrong database path opens \
+             an empty database and an open setup wizard.",
+            legacy.join(", ")
+        );
     }
 
     // `mut` because the operator settings stored in the database are applied
@@ -64,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
     // indistinguishable from here (there is no file left to compare against),
     // and the second ends in an unauthenticated `/setup` on a live URL, so say
     // plainly which file is about to be created rather than only logging it.
-    if !db_path.exists() && !srv::env::is_set("AIPLANE_DB_PATH") {
+    if !db_path.exists() && std::env::var_os("AIPLANE_DB_PATH").is_none() {
         tracing::warn!(
             path = %db_path.display(),
             "no database here yet — creating one. If this deployment already had a database, \
@@ -85,25 +89,6 @@ async fn main() -> anyhow::Result<()> {
     // for the SessionStore below.
     let session_secret = load_session_secret(&state_session_key())?;
     let crypto = std::sync::Arc::new(srv::crypto::Crypto::from_env_or_session(&session_secret));
-
-    // Rewrite anything still sealed under the pre-rename at-rest key. Runs
-    // before any of it is read, so a boot either migrates a value or reads it
-    // through the compatibility path — never neither. Idempotent, and a no-op
-    // on every boot after the first. Not fatal: a failure here leaves the
-    // values readable via the fallback, which is strictly better than refusing
-    // to start.
-    match srv::db::reseal::legacy_sealed_values(&db, &crypto).await {
-        Ok(0) => {}
-        Ok(n) => tracing::info!(
-            count = n,
-            "re-sealed secrets that were still encrypted under the previous at-rest key"
-        ),
-        Err(err) => tracing::warn!(
-            error = %err,
-            "re-sealing secrets under the current at-rest key; they remain readable through \
-             the compatibility path"
-        ),
-    }
 
     // The process coming back *is* the restart every `restart`-flagged save was
     // waiting for, so the banner clears itself here rather than needing anyone
@@ -666,7 +651,7 @@ async fn main() -> anyhow::Result<()> {
 /// 64 hex chars (32 bytes). Empty when unset, which
 /// [`load_session_secret`] turns into a fatal, actionable error.
 fn state_session_key() -> String {
-    srv::env::var(srv::config::SESSION_KEY_VAR).unwrap_or_default()
+    std::env::var(srv::config::SESSION_KEY_VAR).unwrap_or_default()
 }
 
 /// What `gateway --help` prints, and what an unrecognised argument points at.
@@ -695,6 +680,14 @@ const SESSION_KEY_HELP: &str = "AIPLANE_SESSION_KEY is required: it signs browse
      deployment:\n\n    AIPLANE_SESSION_KEY=$(openssl rand -hex 32)\n\n\
      Losing or changing it logs every user out and makes stored backend API keys, \
      connector secrets and OAuth tokens permanently unreadable.";
+
+/// The names among `vars` that still carry the pre-rename `GATEWAY_` prefix,
+/// sorted.
+fn legacy_env_names(vars: impl Iterator<Item = String>) -> Vec<String> {
+    let mut names: Vec<String> = vars.filter(|name| name.starts_with("GATEWAY_")).collect();
+    names.sort();
+    names
+}
 
 fn load_session_secret(raw: &str) -> anyhow::Result<[u8; 32]> {
     // Refusing to boot is deliberate. The old behaviour — fall back to an
@@ -841,5 +834,29 @@ mod tests {
     #[test]
     fn a_valid_session_key_round_trips() {
         assert_eq!(load_session_secret(&"0".repeat(64)).unwrap(), [0u8; 32]);
+    }
+
+    #[test]
+    fn only_gateway_prefixed_names_are_reported_sorted() {
+        let vars = [
+            "PATH",
+            "GATEWAY_SESSION_KEY",
+            "AIPLANE_DB_PATH",
+            "GATEWAY_DB_PATH",
+        ]
+        .into_iter()
+        .map(String::from);
+        assert_eq!(
+            legacy_env_names(vars),
+            vec!["GATEWAY_DB_PATH", "GATEWAY_SESSION_KEY"]
+        );
+    }
+
+    #[test]
+    fn no_legacy_names_means_nothing_to_report() {
+        let vars = ["AIPLANE_SESSION_KEY", "MY_GATEWAY_X"]
+            .into_iter()
+            .map(String::from);
+        assert!(legacy_env_names(vars).is_empty());
     }
 }

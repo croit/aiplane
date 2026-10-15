@@ -18,13 +18,6 @@
 # exists. Full walkthrough: docs/kubernetes.md.
 
 # -- Object names. Empty keeps "<release>-aiplane".
-#
-# UPGRADING FROM THE `llm-gateway` CHART: object names are derived from the
-# chart name, so installing `aiplane` over a release of the old chart would
-# rename the StatefulSet, the Service and - the one that matters - the
-# PersistentVolumeClaim holding the database. Set `nameOverride: llm-gateway`
-# to keep every existing object name exactly as it was. See
-# docs/compatibility.md.
 nameOverride: ""
 fullnameOverride: ""
 
@@ -63,9 +56,8 @@ sessionKey:
   #     --from-literal=AIPLANE_SESSION_KEY="$(openssl rand -hex 32)"
   existingSecret: ""
   # Which key inside that Secret holds the value. Empty means
-  # `AIPLANE_SESSION_KEY`. A Secret you created before the rename holds it
-  # under `GATEWAY_SESSION_KEY` — name that here rather than rewriting the
-  # Secret, and the pod keeps starting. See docs/compatibility.md.
+  # `AIPLANE_SESSION_KEY`. Name the key here when your Secret stores the value
+  # under another one.
   existingSecretKey: ""
   # Or hand the value to Helm directly (it then lives in the release's own
   # Secret, which is fine — but you still have to back it up). Must be 64 hex

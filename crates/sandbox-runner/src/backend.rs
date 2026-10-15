@@ -115,16 +115,7 @@ fn listed_container_exists(bytes: &[u8], expected: &str) -> Result<bool, Backend
 
 /// Label every sandbox container this runner creates carries, so a restart
 /// (or an operator, or the unit's ExecStopPost) can find them all again.
-///
-/// A container may hold only one value per label key, so this cannot be
-/// written twice under `app=`. [`LEGACY_LABEL`] is what the runner wrote
-/// before the project was renamed to croit AIplane, and is still swept at
-/// startup — an upgrade otherwise leaves the outgoing version's containers
-/// behind with nothing looking for them.
 pub const LABEL: &str = "app=aiplane-sandbox";
-
-/// The pre-rename label. Swept, never written. See [`LABEL`].
-pub const LEGACY_LABEL: &str = "app=llm-gateway-sandbox";
 
 /// Network posture a sandbox container is created with. Pooled (warm)
 /// containers are always [`Network::None`]; a call that requests and is
@@ -640,34 +631,26 @@ print(json.dumps(dict(uid=os.getuid(),gid=os.getgid(),kernel=platform.release(),
     /// scratch, keep their directories pinned too). Assumes one runner per
     /// host, which the fixed bind address already implies.
     pub async fn reap_stale_containers(&self) -> Result<(), BackendError> {
-        // Two passes rather than one `--filter` with two labels: podman ANDs
-        // repeated filters, so asking for both at once matches nothing.
-        let mut ids: Vec<String> = Vec::new();
-        for label in [LABEL, LEGACY_LABEL] {
-            let out = self
-                .command(false)
-                .args([
-                    "ps",
-                    "-aq",
-                    "--no-trunc",
-                    "--filter",
-                    &format!("label={label}"),
-                ])
-                .stdin(Stdio::null())
-                .output()
-                .await;
-            let out = out?;
-            if !out.status.success() {
-                return Err(BackendError::Command {
-                    op: "ps",
-                    code: out.status.to_string(),
-                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-                });
-            }
-            ids.extend(parse_container_ids(&out.stdout)?);
+        let out = self
+            .command(false)
+            .args([
+                "ps",
+                "-aq",
+                "--no-trunc",
+                "--filter",
+                &format!("label={LABEL}"),
+            ])
+            .stdin(Stdio::null())
+            .output()
+            .await?;
+        if !out.status.success() {
+            return Err(BackendError::Command {
+                op: "ps",
+                code: out.status.to_string(),
+                stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+            });
         }
-        ids.sort();
-        ids.dedup();
+        let ids = parse_container_ids(&out.stdout)?;
         if ids.is_empty() {
             return Ok(());
         }

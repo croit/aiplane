@@ -295,8 +295,8 @@ a person's headless run does:
   prunes); the link is `/inbox?item=<request_id>`.
 - **Slack and Discord** incoming webhooks (`agent_notify_channels`,
   `db::agent_channels`, `aiplane_agents::notify_channels`), narrowed by the
-  hand-off route's `notify` list. The URL is the credential: sealed at rest
-  (and in the reseal pass), never returned by the API, never in a log line or
+  hand-off route's `notify` list. The URL is the credential: sealed at rest,
+  never returned by the API, never in a log line or
   an event; only its host is kept in clear.
 
 **Who configured a channel decides where it may post**
