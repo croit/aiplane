@@ -625,7 +625,7 @@ pub const DEFAULT_CONNECTORS: &[DefaultConnector] = &[
         key: "discord",
         // A shared bot, not a per-user account: a Discord bot token
         // authenticates one bot for the whole server, so this is the one seeded
-        // *global* connector (was the config-file `[[mcp.servers]]` case).
+        // *global* connector.
         scope: Scope::Global,
         audit: true,
         name: "Discord",

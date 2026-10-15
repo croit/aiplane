@@ -41,8 +41,7 @@ file. Off by default: with the switch off, no ComfyUI tools register and AIplane
 | `comfyui.queue_poll_interval_ms` | `/history` poll cadence |
 | `comfyui.max_concurrent_jobs` | 24 GB VRAM realistically allows 1 |
 
-The field names are the TOML paths these settings had before they moved into
-the database; `/admin/settings` prints each one under its label.
+`/admin/settings` prints each field name under its label.
 
 The `content_dir` is **not** part of the public repo. It is a private, operator-managed directory holding workflows, manifests, and — at the operator's discretion — model files (or symlinks to a shared model volume). AIplane reads from it at startup; nothing in `content_dir` is ever written by AIplane or shipped to the browser.
 
@@ -204,7 +203,7 @@ ComfyUI tools register like any other tool: per-role `tools = ["comfyui_text_to_
 
 | Case | Behaviour |
 |---|---|
-| `[comfyui]` not configured, tool invoked | `ToolError::Failed("ComfyUI is not configured on this AIplane")` |
+| ComfyUI not configured (`comfyui.enabled` off), tool invoked | `ToolError::Failed("ComfyUI is not configured on this AIplane")` |
 | `content_dir` missing at startup | Gateway boots; no comfyui tools register; logged at WARN |
 | Manifest parse error | That workflow is skipped; logged at ERROR; others register |
 | ComfyUI HTTP error | `ToolError::Failed` with backend's status + body excerpt |

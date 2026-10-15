@@ -192,7 +192,7 @@ pub(crate) async fn resolve_one_attachment(
     let (Some(session_id), Some(s3)) = (ctx.session_id.as_deref(), ctx.s3.as_ref()) else {
         return Err(ToolError::Failed(
             "this tool works on uploaded chat files and needs the chat path with attachment \
-             storage configured ([chat.s3]); it isn't available here."
+             storage configured; it isn't available here."
                 .into(),
         ));
     };

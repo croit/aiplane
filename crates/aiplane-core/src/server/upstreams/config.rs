@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! TOML configuration shape for the multi-provider routing layer.
+//! Configuration shape for the multi-provider routing layer, built from the
+//! database topology by `db_bridge`.
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct UpstreamPoolConfig {
     pub kind: PoolKind,
-    #[serde(default)]
     pub strategy: PickerStrategy,
     /// Backup model for this pool when a model it *knows* has no healthy
     /// backend right now (every replica down). On that `503`-shaped outage
@@ -20,14 +17,12 @@ pub struct UpstreamPoolConfig {
     /// through the normal path (so it may itself be an alias/group) and only a
     /// **single hop**: if the backup is also unavailable the original `503` is
     /// returned. Absent ⇒ the outage surfaces as `503`, as before. Distinct
-    /// from [`crate::server::config::Config`]'s `[fallback]`, which handles a
+    /// from [`crate::server::config::Config`]'s `fallback`, which handles a
     /// wholly *unknown* model name.
-    #[serde(default)]
     pub fallback_offline: Option<String>,
     /// Pool-level model IDs, served by every backend in this pool that
     /// declares none of its own. Setting them turns discovery off for those
     /// backends — see [`BackendConfig::models`] for the precedence.
-    #[serde(default)]
     pub models: Vec<String>,
     /// Data-handling/compliance attributes for every model this pool serves.
     /// Absent block ⇒ [`Compliance::default`] (all-clear): no UI warning. Set
@@ -35,7 +30,6 @@ pub struct UpstreamPoolConfig {
     /// chat UI — purely advisory signalling, no request-blocking. Lives at the
     /// pool level because residency/coverage is a property of the upstream
     /// endpoint, not the individual model id.
-    #[serde(default)]
     pub compliance: Compliance,
     /// Whether calls served by this pool count toward users' rate limits and
     /// quotas. Default `true`. Set `false` for pools whose usage should be
@@ -44,7 +38,6 @@ pub struct UpstreamPoolConfig {
     /// pools stay enforced. Like [`compliance`](Self::compliance), it lives at
     /// the pool level because "is this endpoint billable" is a property of the
     /// upstream, not the individual model id. See `server::limits`.
-    #[serde(default = "default_true")]
     pub enforce_limits: bool,
     /// Language → voice name map, only meaningful for `kind = "speech"` pools.
     /// The voice-conversation flow picks the voice whose key matches the
@@ -52,7 +45,6 @@ pub struct UpstreamPoolConfig {
     /// entry as the default voice, then to no explicit voice at all. Keys are
     /// lowercase ISO-639-1 codes (`"de"`, `"en"`, …); values are backend voice
     /// ids. Empty ⇒ always send the backend/default voice.
-    #[serde(default)]
     pub voices: HashMap<String, String>,
     /// Voices this pool offers users to *choose* from, in menu order. Only
     /// meaningful for `kind = "speech"` pools.
@@ -62,18 +54,31 @@ pub struct UpstreamPoolConfig {
     /// not "which German voices may a user pick". Empty (the default) means no
     /// menu, and the per-user picker falls back to whatever `voices` resolves
     /// to — one entry in a single-voice deployment, which hides the picker.
-    #[serde(default)]
     pub offer_voices: Vec<String>,
     /// Gateway-group names allowed to see + route to this pool. Empty (default)
-    /// = unrestricted. Managed in `/admin/upstreams` (DB), not the config file;
-    /// this field exists so the DB→registry bridge can carry it. See
+    /// = unrestricted. Managed in `/admin/upstreams`. See
     /// `db::gateway_groups` and `Resolver::resource_allowed`.
-    #[serde(default)]
     pub allowed_groups: Vec<String>,
     pub backend: Vec<BackendConfig>,
 }
 
 impl UpstreamPoolConfig {
+    /// A pool of `kind` over `backend` with every other setting at its default.
+    pub fn new(kind: PoolKind, backend: Vec<BackendConfig>) -> Self {
+        Self {
+            kind,
+            strategy: PickerStrategy::default(),
+            fallback_offline: None,
+            models: Vec::new(),
+            compliance: Compliance::default(),
+            enforce_limits: true,
+            voices: HashMap::new(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            backend,
+        }
+    }
+
     /// Resolve the TTS voice for a spoken `language` (lowercase ISO-639-1).
     /// Exact match wins; then the default (`""`) entry; then `None` (let the
     /// backend use its own default voice). Pure so it's unit-tested.
@@ -86,19 +91,16 @@ impl UpstreamPoolConfig {
 }
 
 /// Per-pool data-handling attributes, surfaced to the user as chat-UI warnings
-/// when a flag is `false`. Both default to `true` (compliant), so an existing
-/// config with no `[upstream_pools.x.compliance]` block keeps today's
-/// no-warning behaviour — you opt **in** to a warning by declaring `false`.
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+/// when a flag is `false`. Both default to `true` (compliant), so a pool with
+/// no compliance flags set shows no warning — you opt **in** to a warning by
+/// declaring `false`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Compliance {
     /// `false` ⇒ data sent here leaves the EU / has no GDPR safeguards. Warns
     /// the user not to enter personal data.
-    #[serde(default = "default_true")]
     pub gdpr: bool,
     /// `false` ⇒ the endpoint is not covered by a confidentiality agreement.
     /// Warns the user not to send NDA-protected / proprietary material.
-    #[serde(default = "default_true")]
     pub nda: bool,
 }
 
@@ -118,12 +120,7 @@ impl Compliance {
     }
 }
 
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PoolKind {
     Chat,
     Transcription,
@@ -190,8 +187,7 @@ impl PoolKind {
     ];
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PickerStrategy {
     RoundRobin,
     #[default]
@@ -229,27 +225,20 @@ impl PickerStrategy {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct BackendConfig {
-    #[serde(default)]
     pub priority: crate::server::priority::BackendPriority,
     pub name: String,
     pub base_url: String,
     pub api_key_env: Option<String>,
-    /// The API key value itself. Normally left unset in TOML (use `api_key_env`
-    /// there); the DB topology path populates it with the decrypted stored key
-    /// (see `db_bridge`). When present it takes precedence over `api_key_env`.
-    #[serde(default)]
+    /// The API key value itself: the decrypted stored key (see `db_bridge`).
+    /// When present it takes precedence over `api_key_env`.
     pub api_key: Option<String>,
-    #[serde(default = "default_weight")]
     pub weight: u32,
-    #[serde(default = "default_max_inflight")]
     pub max_inflight: u32,
     /// Custom health probe path. Defaults to `/models` (every OpenAI-compat
     /// server exposes it). For backends that don't, e.g. plain whisper.cpp,
     /// override here.
-    #[serde(default = "default_health_path")]
     pub health_path: String,
     /// The models this backend serves. Configured models are the catalog:
     /// the probe then only checks liveness and never discovers anything.
@@ -258,7 +247,6 @@ pub struct BackendConfig {
     ///   1. this backend's `models` (more specific than the pool's);
     ///   2. the pool's [`UpstreamPoolConfig::models`];
     ///   3. neither set → whatever the backend's `/models` probe reports.
-    #[serde(default)]
     pub models: Vec<String>,
     /// Client-facing aliases this backend also answers to. An alias decouples
     /// the name clients send from the real model that's loaded: point clients
@@ -266,67 +254,28 @@ pub struct BackendConfig {
     /// changes. The same alias on several backends forms a load-balanced
     /// **group**. Both forms combine across backends into one group.
     ///
-    /// Two forms (pick one per backend):
-    ///   - **list** — `alias = ["qwen", "fast"]`. Each name binds to the one
-    ///     model this backend serves; use on single-model backends (the GPU norm).
-    ///   - **map** — `alias = { smart = "glm-4.6" }`. Each name targets a
-    ///     specific real id; required on multi-model backends (e.g. a cloud
-    ///     provider serving many models behind one `base_url`), where a bare
-    ///     name couldn't tell which model it means.
+    /// Each alias maps to an optional explicit target. A bare alias (`None`)
+    /// binds to the one model this backend serves; use that on single-model
+    /// backends (the GPU norm). A targeted alias (`Some(real_id)`) names a
+    /// specific real id; required on multi-model backends (e.g. a cloud
+    /// provider serving many models behind one `base_url`), where a bare
+    /// name couldn't tell which model it means. Empty means no aliases.
     ///
-    /// See [`AliasSpec`] and `docs/upstreams.md`.
-    #[serde(default)]
-    pub alias: Option<AliasSpec>,
+    /// See `docs/upstreams.md`.
+    pub alias: HashMap<String, Option<String>>,
     /// Whether this backend may receive traffic. `false` is the maintenance
     /// switch: the backend keeps every setting and keeps being health-probed,
     /// but the picker skips it. Its models stay *known* to the gateway, so a
     /// request for one gets a sibling backend, or a temporary-outage answer —
     /// never "that model does not exist". Managed from `/admin/upstreams`
-    /// (DB-backed); defaults to `true` for config-file backends.
-    #[serde(default = "default_true")]
+    /// (DB-backed).
     pub enabled: bool,
     /// Whether this backend supports image *editing* (image-to-image), not just
     /// text-to-image generation. Only meaningful on `kind = "image"` pools.
     /// Default `false` (text→image only, e.g. z.AI GLM-Image). A self-hosted
     /// edit-capable model (e.g. Qwen-Image-Edit) sets `true`, which is what
     /// lights up the `edit_image` tool / `/v1/images/edits` surface.
-    #[serde(default)]
     pub supports_edit: bool,
-}
-
-/// How a backend's [`alias`](BackendConfig::alias) is written in TOML — either a
-/// bare list of names (each binds to the backend's sole model) or a map from
-/// alias name to the real model id it targets. Deserialised untagged: a TOML
-/// array parses as [`AliasSpec::Names`], an inline table as
-/// [`AliasSpec::Targets`]. (Untagged enums can't carry `deny_unknown_fields`.)
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(untagged)]
-pub enum AliasSpec {
-    Names(Vec<String>),
-    Targets(HashMap<String, String>),
-    /// Per-alias optional targets — a mix of bare (`None`) and explicitly
-    /// targeted (`Some`) aliases on one backend. TOML can't express this (it's
-    /// either an array or a table), so it never deserialises to this variant;
-    /// it exists only for the DB topology path (see `db_bridge`), where each
-    /// alias row carries its own `Option<target>`. Listed last so the untagged
-    /// deserializer always prefers `Names`/`Targets` for TOML input.
-    Mixed(HashMap<String, Option<String>>),
-}
-
-impl AliasSpec {
-    /// Normalise to `alias name → optional explicit target`. A list entry maps
-    /// to `None` (resolve to the backend's sole model at request time); a map
-    /// entry maps to `Some(real_id)`; a mixed entry is already in this shape.
-    pub fn into_map(&self) -> HashMap<String, Option<String>> {
-        match self {
-            AliasSpec::Names(names) => names.iter().map(|n| (n.clone(), None)).collect(),
-            AliasSpec::Targets(m) => m
-                .iter()
-                .map(|(k, v)| (k.clone(), Some(v.clone())))
-                .collect(),
-            AliasSpec::Mixed(m) => m.clone(),
-        }
-    }
 }
 
 /// Unknown-model fallback, keyed by request kind. When a request names a model
@@ -338,16 +287,11 @@ impl AliasSpec {
 /// rescue an embeddings or transcription miss. Distinct from a pool's
 /// [`fallback_offline`](UpstreamPoolConfig::fallback_offline), which handles a
 /// *known* model whose backends are all down.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FallbackConfig {
-    #[serde(default)]
     pub chat: Option<String>,
-    #[serde(default)]
     pub embedding: Option<String>,
-    #[serde(default)]
     pub transcription: Option<String>,
-    #[serde(default)]
     pub image: Option<String>,
 }
 
@@ -366,17 +310,26 @@ impl FallbackConfig {
     }
 }
 
-fn default_weight() -> u32 {
-    1
-}
-fn default_max_inflight() -> u32 {
-    16
-}
-fn default_health_path() -> String {
-    "/models".into()
-}
-
 impl BackendConfig {
+    /// A backend reachable at `base_url` with every other setting at its
+    /// default: weight 1, 16 in-flight requests, probed at `/models`, enabled.
+    pub fn new(name: impl Into<String>, base_url: impl Into<String>) -> Self {
+        Self {
+            priority: Default::default(),
+            name: name.into(),
+            base_url: base_url.into(),
+            api_key_env: None,
+            api_key: None,
+            weight: 1,
+            max_inflight: 16,
+            health_path: "/models".into(),
+            models: Vec::new(),
+            alias: HashMap::new(),
+            enabled: true,
+            supports_edit: false,
+        }
+    }
+
     /// The effective API key: the direct [`api_key`](Self::api_key) value (from
     /// the DB, decrypted) wins; otherwise the referenced `api_key_env` var is
     /// read from the environment. `None` when neither yields a non-empty value.
@@ -403,211 +356,79 @@ mod tests {
         assert_eq!(internal, vec![PoolKind::Ocr]);
     }
 
+    fn pool(kind: PoolKind, backend: Vec<BackendConfig>) -> UpstreamPoolConfig {
+        UpstreamPoolConfig::new(kind, backend)
+    }
+
     #[test]
-    fn parses_speech_pool_with_voices() {
-        let s = r#"
-            kind = "speech"
-
-            [voices]
-            de = "de-voice"
-            en = "en-voice"
-            "" = "fallback-voice"
-
-            [[backend]]
-            name = "tts"
-            base_url = "http://tts:8000/v1"
-            models = ["tts-1"]
-        "#;
-        let p: UpstreamPoolConfig = toml::from_str(s).unwrap();
-        assert_eq!(p.kind, PoolKind::Speech);
-        // Exact match wins.
+    fn speech_pool_resolves_the_voice_for_a_language() {
+        let p = UpstreamPoolConfig {
+            voices: HashMap::from([
+                ("de".into(), "de-voice".into()),
+                ("en".into(), "en-voice".into()),
+                ("".into(), "fallback-voice".into()),
+            ]),
+            ..pool(
+                PoolKind::Speech,
+                vec![BackendConfig::new("tts", "http://tts:8000/v1")],
+            )
+        };
         assert_eq!(p.voice_for_language("de"), Some("de-voice"));
         assert_eq!(p.voice_for_language("en"), Some("en-voice"));
-        // Unknown language falls back to the "" default entry.
         assert_eq!(p.voice_for_language("fr"), Some("fallback-voice"));
     }
 
     #[test]
     fn voice_for_language_none_without_map() {
-        let s = r#"
-            kind = "speech"
-            [[backend]]
-            name = "tts"
-            base_url = "http://tts:8000/v1"
-        "#;
-        let p: UpstreamPoolConfig = toml::from_str(s).unwrap();
-        // No voices map + no default → let the backend pick its own voice.
+        let p = pool(
+            PoolKind::Speech,
+            vec![BackendConfig::new("tts", "http://tts:8000/v1")],
+        );
         assert_eq!(p.voice_for_language("de"), None);
     }
 
     #[test]
-    fn parses_full_pool() {
-        let s = r#"
-            kind = "chat"
-            strategy = "round_robin"
-
-            [[backend]]
-            name = "gpu-01"
-            base_url = "http://gpu-01:8000/v1"
-            weight = 2
-            max_inflight = 32
-
-            [[backend]]
-            name = "gpu-02"
-            base_url = "http://gpu-02:8000/v1"
-        "#;
-        let p: UpstreamPoolConfig = toml::from_str(s).unwrap();
-        assert_eq!(p.kind, PoolKind::Chat);
-        assert_eq!(p.strategy, PickerStrategy::RoundRobin);
-        assert_eq!(p.backend.len(), 2);
-        assert_eq!(p.backend[0].weight, 2);
-        assert_eq!(p.backend[0].max_inflight, 32);
-        assert_eq!(p.backend[1].weight, 1);
-        assert_eq!(p.backend[1].max_inflight, 16);
-        assert_eq!(p.backend[0].health_path, "/models");
+    fn a_new_backend_carries_the_documented_defaults() {
+        let b = BackendConfig::new("gpu-02", "http://gpu-02:8000/v1");
+        assert_eq!(b.weight, 1);
+        assert_eq!(b.max_inflight, 16);
+        assert_eq!(b.health_path, "/models");
+        assert!(b.enabled);
+        assert!(!b.supports_edit);
+        assert!(b.models.is_empty());
+        assert!(b.alias.is_empty());
     }
 
     #[test]
-    fn parses_pool_and_backend_model_fallbacks() {
-        let s = r#"
-            kind = "transcription"
-            models = ["pool-fallback"]
-
-            [[backend]]
-            name = "voxtral"
-            base_url = "http://voxtral:8000/v1"
-            models = ["mistralai/Voxtral-Mini-4B-Realtime-2602"]
-
-            [[backend]]
-            name = "plain"
-            base_url = "http://plain:8000/v1"
-        "#;
-        let p: UpstreamPoolConfig = toml::from_str(s).unwrap();
-        assert_eq!(p.models, vec!["pool-fallback"]);
-        assert_eq!(
-            p.backend[0].models,
-            vec!["mistralai/Voxtral-Mini-4B-Realtime-2602"]
-        );
-        // Backend without its own `models` parses to an empty list (the pool
-        // fallback is applied later, in the registry).
-        assert!(p.backend[1].models.is_empty());
-    }
-
-    #[test]
-    fn model_fallbacks_default_to_empty() {
-        let s = r#"
-            kind = "chat"
-
-            [[backend]]
-            name = "x"
-            base_url = "http://x"
-        "#;
-        let p: UpstreamPoolConfig = toml::from_str(s).unwrap();
+    fn a_new_pool_carries_the_documented_defaults() {
+        let p = pool(PoolKind::Chat, vec![BackendConfig::new("x", "http://x")]);
+        assert_eq!(p.strategy, PickerStrategy::LeastInflight);
         assert!(p.models.is_empty());
-        assert!(p.backend[0].models.is_empty());
-    }
-
-    #[test]
-    fn compliance_absent_defaults_to_all_clear() {
-        let s = r#"
-            kind = "chat"
-
-            [[backend]]
-            name = "x"
-            base_url = "http://x"
-        "#;
-        let p: UpstreamPoolConfig = toml::from_str(s).unwrap();
+        assert!(p.fallback_offline.is_none());
+        assert!(p.enforce_limits);
         assert_eq!(p.compliance, Compliance::default());
         assert!(p.compliance.is_all_clear());
         assert!(p.compliance.gdpr && p.compliance.nda);
     }
 
     #[test]
-    fn compliance_flags_parse_and_partial_block_keeps_other_true() {
-        let s = r#"
-            kind = "chat"
-
-            [compliance]
-            gdpr = false
-
-            [[backend]]
-            name = "zai"
-            base_url = "https://api.z.ai/api/coding/paas/v4"
-        "#;
-        let p: UpstreamPoolConfig = toml::from_str(s).unwrap();
-        assert!(!p.compliance.gdpr, "explicit gdpr=false must parse");
-        assert!(p.compliance.nda, "unspecified nda must default true");
-        assert!(!p.compliance.is_all_clear());
+    fn a_compliance_flag_set_false_leaves_the_other_true() {
+        let c = Compliance {
+            gdpr: false,
+            ..Compliance::default()
+        };
+        assert!(!c.gdpr);
+        assert!(c.nda);
+        assert!(!c.is_all_clear());
     }
 
     #[test]
-    fn picker_strategy_defaults_to_least_inflight() {
-        let s = r#"
-            kind = "transcription"
-
-            [[backend]]
-            name = "x"
-            base_url = "http://x"
-        "#;
-        let p: UpstreamPoolConfig = toml::from_str(s).unwrap();
-        assert_eq!(p.strategy, PickerStrategy::LeastInflight);
-    }
-
-    #[test]
-    fn alias_list_form_parses_and_normalises_to_bare_targets() {
-        let s = r#"
-            kind = "chat"
-            fallback_offline = "glm-4.6"
-
-            [[backend]]
-            name = "gpu-a"
-            base_url = "http://gpu-a:8000/v1"
-            alias = ["qwen", "fast"]
-        "#;
-        let p: UpstreamPoolConfig = toml::from_str(s).unwrap();
-        assert_eq!(p.fallback_offline.as_deref(), Some("glm-4.6"));
-        let map = p.backend[0].alias.as_ref().unwrap().into_map();
-        assert_eq!(map.get("qwen"), Some(&None));
-        assert_eq!(map.get("fast"), Some(&None));
-    }
-
-    #[test]
-    fn alias_map_form_parses_with_explicit_targets() {
-        let s = r#"
-            kind = "chat"
-
-            [[backend]]
-            name = "zai"
-            base_url = "https://api.z.ai/v1"
-            alias = { smart = "glm-4.6", cheap = "glm-4.5-air" }
-        "#;
-        let p: UpstreamPoolConfig = toml::from_str(s).unwrap();
-        let map = p.backend[0].alias.as_ref().unwrap().into_map();
-        assert_eq!(map.get("smart"), Some(&Some("glm-4.6".to_string())));
-        assert_eq!(map.get("cheap"), Some(&Some("glm-4.5-air".to_string())));
-    }
-
-    #[test]
-    fn alias_absent_and_fallback_offline_default_to_none() {
-        let s = r#"
-            kind = "chat"
-
-            [[backend]]
-            name = "x"
-            base_url = "http://x"
-        "#;
-        let p: UpstreamPoolConfig = toml::from_str(s).unwrap();
-        assert!(p.fallback_offline.is_none());
-        assert!(p.backend[0].alias.is_none());
-    }
-
-    #[test]
-    fn fallback_config_parses_per_kind_and_reports_by_kind() {
-        let s = r#"
-            chat = "qwen"
-            embedding = "text-embedding-3-small"
-        "#;
-        let fb: FallbackConfig = toml::from_str(s).unwrap();
+    fn fallback_config_reports_by_kind() {
+        let fb = FallbackConfig {
+            chat: Some("qwen".into()),
+            embedding: Some("text-embedding-3-small".into()),
+            ..FallbackConfig::default()
+        };
         assert_eq!(fb.for_kind(PoolKind::Chat), Some("qwen"));
         assert_eq!(
             fb.for_kind(PoolKind::Embedding),

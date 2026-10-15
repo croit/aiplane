@@ -2330,7 +2330,6 @@ async fn memories_list_reports_whether_preferences_reach_the_assistant() {
             vec![RoleConfig {
                 id: "all".into(),
                 admin: false,
-                models: vec![],
                 tools: vec!["*".into()],
                 skills: vec![],
             }],

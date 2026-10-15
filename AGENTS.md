@@ -101,7 +101,8 @@ migrations/               # (crate root) sqlx migration set, embedded by db/mod.
 server/
     auth/oidc.rs              hand-rolled OIDC client (reqwest)
     auth/token.rs             gateway-token mint/hash helpers
-    config.rs                 [upstream_pools] + [[models]] + [oidc] schema
+    config.rs                 environment-derived runtime config; settings.rs applies the
+                              /admin/settings rows over it
     db/                       sqlx; users/tokens/sessions/prefs/usage — chat_* live
                               in session-core, gateway just runs the migration
     crypto.rs                 AES-256-GCM at-rest sealing
@@ -154,7 +155,7 @@ rama_server/
 Inside `crates/aiplane-tools/src/`: one module per tool family (`fetch_url`,
 `search_web`, `typst_render`, `document`, `rag`, `qr`, `netcheck`, …). Register a
 new tool in the `ToolRegistry` that `gateway`'s `main.rs` builds, and grant it in
-`[rbac]`. `tests/` holds the two test modules that need both the machinery and the
+the group grants at `/admin/groups`. `tests/` holds the two test modules that need both the machinery and the
 real tools (catalog grouping, `AppState` authorization).
 
 Inside `crates/aiplane-api/src/`:

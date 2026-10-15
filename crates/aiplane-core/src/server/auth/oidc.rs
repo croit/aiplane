@@ -42,7 +42,6 @@ use thiserror::Error;
 use url::Url;
 
 use crate::server::auth::jwks::JwksCache;
-use crate::server::config::OidcConfig;
 
 #[derive(Debug, Error)]
 pub enum OidcError {
@@ -131,12 +130,9 @@ pub struct OidcClient {
 /// Everything [`OidcClient::build`] needs, with the client secret already
 /// resolved to its value.
 ///
-/// Two sources feed this. The legacy [`OidcConfig`] names an environment
-/// variable holding the secret ([`OidcConfig::to_params`] resolves it); the
-/// setup wizard stores the secret sealed in the database and hands it over
-/// directly. Funnelling both through one struct keeps a single code path that
-/// knows how to talk to a provider — the wizard's "test this login for real"
-/// button therefore exercises exactly what production will use.
+/// The setup wizard stores the secret sealed in the database and hands it over
+/// directly, so the wizard's "test this login for real" button exercises
+/// exactly what production will use.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OidcParams {
     pub issuer: String,
@@ -158,22 +154,6 @@ pub struct OidcParams {
 /// reported by providers with famously unhelpful errors.
 pub fn redirect_uri_for(public_url: &str) -> String {
     format!("{}/auth/callback", public_url.trim_end_matches('/'))
-}
-
-impl OidcConfig {
-    /// Resolve the config-file shape into [`OidcParams`], reading the client
-    /// secret out of the environment variable it names. `None` when that
-    /// variable is unset or empty — the caller reports it as a configuration
-    /// error rather than attempting a doomed discovery round trip.
-    pub fn to_params(&self) -> Option<OidcParams> {
-        Some(OidcParams {
-            issuer: self.issuer.clone(),
-            client_id: self.client_id.clone(),
-            client_secret: self.client_secret()?,
-            scopes: self.scopes.clone(),
-            roles_claim: self.roles_claim.clone(),
-        })
-    }
 }
 
 impl OidcClient {
@@ -234,7 +214,7 @@ impl OidcClient {
         Url::parse(&redirect_uri).map_err(|_| OidcError::RedirectUrl(redirect_uri.clone()))?;
 
         // openid is always requested; the user can add email/profile/etc on
-        // top via [oidc].scopes.
+        // top via the provider's scopes setting.
         let mut scopes = vec!["openid".to_string()];
         for s in &config.scopes {
             if s != "openid" {

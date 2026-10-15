@@ -104,7 +104,7 @@ dependency doesn't change the trait signature:
   scan) when the call is part of one (`ctx.agent_active()`, `ctx.chain()`);
   `None` everywhere else. See [`agent-runs.md`](agent-runs.md#the-call-chain).
 - **Storage** — `db` (the SQLite pool), `s3` (chat attachments; `None` without
-  `[chat.s3]`), `crypto` (the at-rest key, for tools that read a sealed
+  S3 attachment storage), `crypto` (the at-rest key, for tools that read a sealed
   operator setting).
 - **Conversation** — `assistant_turn_id`, `session_id`: `Some` only on the
   chat-UI path. The `/v1` proxy paths have no session, which is what
@@ -288,10 +288,10 @@ Roles come from the OIDC roles claim (configurable — see [`auth.md`](auth.md))
 mapped onto internal role ids. A user's effective tool set is the **union over
 their roles**, and grants come from several sources that are unioned:
 
-- **Static config** — each role's `tools` list in `[[roles]]`; `["*"]` means
+- **Role grants** — each role's `tools` list; `["*"]` means
   everything *registered*. `*` never grants a tool that doesn't exist, and a
   granted id that isn't registered at boot is logged and ignored (fail-soft, so
-  a stale config can't block startup).
+  a stale grant can't block startup).
 - **Groups** — `/admin/groups` maps OIDC claim values onto gateway groups with
   their own tool and skill grants. Pools, RAG collections, and MCP connectors
   restrict access by group, and those saves reject a group name that matches no
@@ -375,20 +375,12 @@ the live tool id at call time.
   permitted skills. Missing built-in tools default to Auto; missing MCP
   integrations and skills default to Off. Explicit Auto is stored for the
   latter two families. The token's master tool switch remains an outer gate.
-- **Skills** — a role's `skills` list plus a per-skill grant editor in the UI;
+- **Skills** — each skill's "Granted to" editor on `/admin/skills` (roles are groups);
   `read_skill` rides along for any role granted a skill.
 
-```toml
-[[roles]]
-id = "engineering"
-models = ["*"]
-tools = ["search_web", "rag_search", "run_in_sandbox"]
-
-[[roles]]
-id = "admin"
-models = ["*"]
-tools = ["*"]               # everything registered
-```
+A role is a group at `/admin/groups`: `engineering` can be granted
+`search_web`, `rag_search` and `run_in_sandbox`, while `admin` is granted `*`
+(everything registered).
 
 The layers compose in one direction only: RBAC (roles + groups) decides what a
 user *may* use; the per-conversation, per-token, and per-user layers can only

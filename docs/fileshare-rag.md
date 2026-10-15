@@ -357,7 +357,7 @@ citation costs no network call.
 | PDF with a text layer | `pdf::extract_text_pages` | — |
 | PDF that is a scan | the OCR backend | an `ocr` pool |
 | image | the OCR backend | an `ocr` pool |
-| `.docx` / `.pptx` / `.xlsx` | sandbox extractor | `[sandbox]` |
+| `.docx` / `.pptx` / `.xlsx` | sandbox extractor | the sandbox (`sandbox.enabled`) |
 
 Classification is by **extension first, MIME second**: the extension is chosen
 by whoever saved the file, while the MIME type is guessed by the server, and
@@ -530,7 +530,7 @@ Three ways a collection gets re-synced, cheapest first:
 
 | Trigger | When |
 | --- | --- |
-| the indexer's poll | every `[rag]` poll interval, for refs already queued |
+| the indexer's poll | every indexer poll interval, for refs already queued |
 | **the refresh interval** | when the collection's last index is older than `refresh_interval_mins` |
 | **the sync hook** | whenever the file host says something changed |
 | **Re-index** on `/rag` | an operator decides |
@@ -576,7 +576,7 @@ left alone, so a burst of file events does not pile up builds.
 | `ocr_derivatives` | OCR cache |
 | `rag_index_log` | the build timeline shown on `/rag` |
 
-**Per-collection store** (`[rag].data_dir/<uuid>/` — large, regenerable):
+**Per-collection store** (`rag.data_dir/<uuid>/` — large, regenerable):
 `rag.sqlite` (`rag_files`, `rag_chunks`, `rag_chunks_fts`, `rag_documents`,
 `rag_doc_fields`) plus `index.usearch`.
 

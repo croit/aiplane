@@ -102,7 +102,7 @@ impl Tool for GenerateImage {
             let s3 = ctx.s3.as_ref().ok_or_else(|| {
                 ToolError::Failed(
                     "chat attachments are not configured on this gateway \
-                     (operator must set [chat.s3]) — nowhere to store the image"
+                     (the operator must enable S3 attachment storage in /admin/settings) — nowhere to store the image"
                         .into(),
                 )
             })?;

@@ -10,7 +10,7 @@ use super::config::{RbacConfig, RoleConfig};
 use crate::server::db::gateway_groups::GroupSnapshot;
 use crate::server::principal::{GrantKind, Principal};
 
-/// Synthetic group that `[gateway].bootstrap_admin_groups` resolve to. It is
+/// Synthetic group that `$AIPLANE_BOOTSTRAP_ADMIN_GROUPS` values resolve to. It is
 /// injected on every build/reload so a break-glass admin works regardless of
 /// what's in (or missing from) the DB group tables — the anti-lockout anchor.
 pub const BOOTSTRAP_ADMIN_GROUP: &str = "__bootstrap_admin__";
@@ -55,7 +55,7 @@ pub struct Resolver {
     /// `read_skill` tool updates without a rebuild.
     skill_overlay: Arc<RwLock<HashMap<String, Vec<String>>>>,
     /// Raw OIDC claim values that always resolve to admin, from
-    /// `[gateway].bootstrap_admin_groups`. Static (config-only) — re-applied on
+    /// `$AIPLANE_BOOTSTRAP_ADMIN_GROUPS`. Static — re-applied on
     /// every reload so a botched DB mapping can't lock the operator out.
     bootstrap_admin_groups: Vec<String>,
 }
@@ -97,9 +97,9 @@ impl<T: GrantableSet + ?Sized> GrantableSet for std::sync::Arc<T> {
 }
 
 impl Resolver {
-    /// Build straight from `[rbac]` + `[[roles]]` config. Used by tests and by
-    /// the first-boot seed's validation; production reloads from the DB via
-    /// [`Self::from_snapshot`] / [`Self::reload`]. `models` on each role is
+    /// Build straight from an [`RbacConfig`] and its roles. Used by tests;
+    /// production reloads from the DB via [`Self::from_snapshot`] /
+    /// [`Self::reload`]. `models` on each role is
     /// intentionally ignored — model access is governed per-pool now.
     pub fn build(rbac: RbacConfig, roles: Vec<RoleConfig>) -> Result<Self, ResolveError> {
         Self::build_with_bootstrap(rbac, roles, Vec::new())
@@ -277,7 +277,7 @@ impl Resolver {
     }
 
     /// Whether `group` is a group id this resolver knows, wherever it was
-    /// defined: the database, `[rbac]` config, or the bootstrap admin group.
+    /// defined: the database, an [`RbacConfig`], or the bootstrap admin group.
     pub fn has_group(&self, group: &str) -> bool {
         self.inner
             .read()
@@ -495,8 +495,8 @@ impl Resolver {
     }
 
     /// Union of skill names granted by any of the user's groups, filtered to
-    /// loaded skills. `*` expands to every loaded skill. Sources both the config
-    /// build path's per-group `skills` and the DB `skill_role_grants` overlay.
+    /// loaded skills. `*` expands to every loaded skill. Sources the DB `skill_role_grants` overlay and, on a resolver built
+    /// directly from [`RoleConfig`]s (tests), each role's `skills` list.
     pub fn allowed_skills(&self, role_ids: &[String], registry: &impl GrantableSet) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         if let Ok(snap) = self.inner.read() {
@@ -773,7 +773,6 @@ mod tests {
             id: id.into(),
             admin: false,
             tools: tools.iter().map(|s| (*s).to_string()).collect(),
-            models: Vec::new(),
             skills: Vec::new(),
         }
     }
@@ -783,7 +782,6 @@ mod tests {
             id: id.into(),
             admin: true,
             tools: Vec::new(),
-            models: Vec::new(),
             skills: Vec::new(),
         }
     }
@@ -925,7 +923,6 @@ mod tests {
             id: id.into(),
             admin: false,
             tools: Vec::new(),
-            models: Vec::new(),
             skills: skills.iter().map(|s| (*s).to_string()).collect(),
         }
     }
@@ -934,9 +931,8 @@ mod tests {
         Registered::of(names)
     }
 
-    fn mapping(claim: &str, value: &str, role: &str) -> RoleMapping {
+    fn mapping(value: &str, role: &str) -> RoleMapping {
         RoleMapping {
-            oidc_claim: claim.into(),
             oidc_value: value.into(),
             role: role.into(),
         }
@@ -963,7 +959,7 @@ mod tests {
     fn build_rejects_mapping_to_unknown_role() {
         let rbac = RbacConfig {
             default_role: None,
-            mappings: vec![mapping("groups", "engineering", "engineering")],
+            mappings: vec![mapping("engineering", "engineering")],
         };
         let err = Resolver::build(rbac, vec![role("user", &[])]).unwrap_err();
         assert_eq!(
@@ -987,8 +983,8 @@ mod tests {
         let rbac = RbacConfig {
             default_role: Some("user".into()),
             mappings: vec![
-                mapping("groups", "engineering", "engineering"),
-                mapping("groups", "admin", "admin"),
+                mapping("engineering", "engineering"),
+                mapping("admin", "admin"),
             ],
         };
         let r = Resolver::build(
@@ -1009,8 +1005,8 @@ mod tests {
         let rbac = RbacConfig {
             default_role: None,
             mappings: vec![
-                mapping("groups", "eng-team-a", "engineering"),
-                mapping("groups", "eng-team-b", "engineering"),
+                mapping("eng-team-a", "engineering"),
+                mapping("eng-team-b", "engineering"),
             ],
         };
         let r = Resolver::build(rbac, vec![role("engineering", &[])]).unwrap();
@@ -1061,7 +1057,7 @@ mod tests {
         let r = Resolver::build(
             RbacConfig {
                 default_role: None,
-                mappings: vec![mapping("groups", "g-dev", "developers")],
+                mappings: vec![mapping("g-dev", "developers")],
             },
             vec![role("developers", &[]), admin_role("ops")],
         )
@@ -1342,7 +1338,6 @@ mod tests {
             vec![RoleConfig {
                 id: "plain".into(),
                 admin: false,
-                models: vec![],
                 tools: vec![],
                 skills: vec![],
             }],

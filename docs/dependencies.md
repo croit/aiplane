@@ -38,7 +38,7 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 | `uuid` (v4, serde) | `gateway` | Stable IDs for tokens. |
 | `url` | `gateway` | OIDC redirect-URI construction and parsing. |
 | `clap` (derive) | `sandbox-runner` | Argument parsing. The standard. |
-| `toml` | `gateway` | Config file. |
+| `toml` | `aiplane-core`, `aiplane-features`, `aiplane-tools` | Operator-authored TOML: model request defaults, ComfyUI and Typst manifests, TOML documents the document tool edits. |
 | `anyhow` | `gateway`, `sandbox-runner` (binaries only) | Error chains in binary code paths. **Not** allowed in `shared` or any code whose errors cross an API boundary — those use `thiserror`. See `docs/errors.md`. |
 | `jiff` | `gateway`, `shared` | Timestamps, durations, TTLs (token expiry, health-check intervals, audit-log times). Chosen over `chrono` and `time` for the cleaner API and serde support. |
 | `jsonwebtoken` | `gateway`, `aiplane-core`, `aiplane-runtime` | RS256 verification of OIDC ID tokens (via `openidconnect`'s plumbing) and signing of test-only ID tokens in `tests/oidc_integration.rs`; HS256/RS256/ES256 verification of an embedding website's identity tokens (`agents::verifier::host_jwt`), including its `jwk` module for JWKS keys. Already in the workspace — the runtime crate only references it. |
@@ -121,7 +121,7 @@ output (see the Dockerfile).
 | `chrono`, `time` | `jiff` is the chosen time crate. Don't mix. |
 | `lazy_static`, `once_cell` | `std::sync::OnceLock` / `LazyLock` cover it. |
 | `jsonschema`, `boon`, `valico` | The finish contract (`aiplane_runtime::finish`) validates a run's result with a ~100-line subset validator — `type`, `properties`, `required`, `enum`, `items`, boolean `additionalProperties` — and refuses any other keyword when the contract is built. A full validator would pull in regex engines, URI/format checkers and remote `$ref` resolution for schemas an operator writes by hand. Revisit if contracts need `$ref`, `oneOf` or formats. |
-| `serde_yaml` | Config is TOML. One format. |
+| `serde_yaml` | The formats in use are JSON and TOML; no third one. |
 | `figment` | Hand-roll config layering until it stops being trivial. |
 | `axum`, `tower-sessions`, `tower-http` | The server stack is rama-only. Sessions are hand-rolled (`rama_server::session`); HTTP-layer concerns ride on rama services. Bringing axum back would mean running two routers in parallel. |
 | `dioxus`, `dioxus-primitives`, `dioxus-icons` | Dropped during the rama spike. The UI went server-rendered (plait + datastar) and then, in the SPA migration, to SvelteKit — see `web/` and [`ui.md`](ui.md). Don't reopen this; two UI frameworks is one too many. |

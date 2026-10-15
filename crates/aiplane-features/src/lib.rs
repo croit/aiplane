@@ -2,7 +2,7 @@
 // Copyright (C) 2026 croit GmbH
 
 //! The gateway's optional subsystems — the things a deployment turns on in
-//! `gateway.toml` and can run entirely without.
+//! `/admin/settings` and can run entirely without.
 //!
 //! RAG indexing, Agent Skills, ComfyUI workflows, Web Push, GeoIP, typst
 //! template discovery, image generation, chat-attachment storage, embeddings,

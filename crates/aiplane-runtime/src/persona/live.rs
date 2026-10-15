@@ -887,7 +887,6 @@ mod tests {
                     RbacConfig {
                         default_role: None,
                         mappings: vec![RoleMapping {
-                            oidc_claim: "roles".into(),
                             oidc_value: "current-role".into(),
                             role: "member".into(),
                         }],
@@ -895,7 +894,6 @@ mod tests {
                     vec![RoleConfig {
                         id: "member".into(),
                         admin: false,
-                        models: vec![],
                         tools: vec!["company_echo".into()],
                         skills: vec![],
                     }],

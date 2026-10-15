@@ -345,10 +345,7 @@ async fn fixture_with_usage(metered: bool) -> Fixture {
     let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let mut pools = HashMap::new();
     let mut open = chat_pool(&upstream.uri(), vec![]);
-    open.backend[0].alias = Some(upstreams::config::AliasSpec::Targets(HashMap::from([(
-        "fast".to_string(),
-        "model-a".to_string(),
-    )])));
+    open.backend[0].alias = HashMap::from([("fast".to_string(), Some("model-a".to_string()))]);
     pools.insert("pool".to_string(), open);
     pools.insert(
         "vip".to_string(),

@@ -8,7 +8,7 @@
 //! coarse city/country (and a precise browser position when the user
 //! shared one — see `db::users`).
 //!
-//! **Optional by design.** With no `[geoip]` config and no database
+//! **Optional by design.** With no GeoIP setting and no database
 //! file the gateway boots and serves exactly as before; every lookup
 //! returns `None` and the tool falls back to the browser position (or
 //! reports the location is unknown). There is no `panic`/`expect` on a

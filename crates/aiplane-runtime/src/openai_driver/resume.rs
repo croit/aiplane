@@ -681,7 +681,7 @@ mod tests {
                 models: Vec::new(),
                 backend: vec![BackendConfig {
                     priority: Default::default(),
-                    alias: None,
+                    alias: Default::default(),
                     supports_edit: false,
                     enabled: true,
                     name: "mock".into(),
@@ -961,7 +961,6 @@ mod tests {
                 vec![aiplane_core::server::rbac::config::RoleConfig {
                     id: "member".into(),
                     admin: false,
-                    models: vec!["*".into()],
                     tools: vec!["company_echo".into(), "get_current_timestamp".into()],
                     skills: vec![],
                 }],

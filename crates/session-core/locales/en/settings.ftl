@@ -1,14 +1,13 @@
-# Operator settings (/admin/settings) — the config blocks that moved out of
-# gateway.toml into the database.
+# Operator settings (/admin/settings), stored in the database.
 #
 # Card titles (settings-s-*), field labels (settings-f-*) and their one-line
 # help (settings-f-*-help) are keyed off the spec entries in
 # aiplane_core::server::settings::SECTIONS, which derives each key from the
-# TOML path: `sandbox.runner_url` -> `settings-f-sandbox-runner_url`. Dots
+# dotted setting path: `sandbox.runner_url` -> `settings-f-sandbox-runner_url`. Dots
 # become dashes because Fluent identifiers reject `.`; underscores stay.
 #
 # The Rust table holds no prose at all, so these files are the only copy.
-# The editor prints the TOML path itself next to the help text, untranslated —
+# The editor prints the setting path itself next to the help text, untranslated —
 # a localised label says what a field does, the identifier says what to grep
 # for in the docs and the logs.
 
@@ -113,8 +112,8 @@ settings-f-chat-ocr-max_output_chars = Maximum extracted text
 settings-f-chat-ocr-max_output_chars-help = Cap on the text extracted from one document, in characters.
 settings-f-chat-ocr-timeout_secs = Timeout
 settings-f-chat-ocr-timeout_secs-help = Deadline for one document, in seconds.
-settings-f-chat-ocr-max_concurrency = Pages in parallel
-settings-f-chat-ocr-max_concurrency-help = How many pages are read at once.
+settings-f-chat-ocr-max_concurrency = Documents in parallel
+settings-f-chat-ocr-max_concurrency-help = How many documents are read at once across the whole gateway. Others wait in a queue.
 settings-f-chat-ocr-auto_min_text_chars_per_page = Scanned-page threshold
 settings-f-chat-ocr-auto_min_text_chars_per_page-help = Below this many embedded characters per page, a PDF is treated as scanned and sent to OCR.
 
@@ -262,7 +261,7 @@ settings-f-metrics-allowed_ips-help = Addresses or CIDR networks, e.g. 10.0.0.0/
 # Confirmation before clearing one stored setting (SPA settings editor).
 settings-clear-confirm = Reset { $key } to its built-in default?
 settings-heading = Settings
-settings-intro = Operator settings for this gateway. They live in the database, so no configuration file is needed — each field also shows the TOML key it replaces.
+settings-intro = Operator settings for this gateway. They live in the database — each field also shows its setting key.
 settings-saved-restart = Saved. Some fields in this section only take effect after a restart.
 settings-save-failed = Could not save those settings.
 settings-cleared = Cleared. The built-in default applies again.

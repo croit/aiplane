@@ -1565,12 +1565,11 @@ async fn parse_chat_submit(
                     continue;
                 }
                 // Bound, not chained: `config()` hands back an owned snapshot,
-                // and borrowing `[chat.s3]` out of a temporary would drop it at
+                // and borrowing S3 attachment storage out of a temporary would drop it at
                 // the end of the statement.
                 let config = state.config();
                 let cfg = config.chat.s3.as_ref().ok_or_else(|| {
-                    "chat attachments are not configured (enable [chat.s3] \
-                         at /admin/settings)"
+                    "chat attachments are not configured (enable S3 attachment storage in /admin/settings)"
                         .to_string()
                 })?;
                 // Nameless blobs (some drag/paste sources) get a

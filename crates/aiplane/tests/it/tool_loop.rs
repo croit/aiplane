@@ -58,7 +58,7 @@ async fn state_with_tool_grants(upstream_uri: &str, granted_tools: Vec<String>) 
             models: Vec::new(),
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: None,
+                alias: Default::default(),
                 supports_edit: false,
                 enabled: true,
                 name: "mock".into(),
@@ -89,7 +89,6 @@ async fn state_with_tool_grants(upstream_uri: &str, granted_tools: Vec<String>) 
         RbacConfig {
             default_role: None,
             mappings: vec![RoleMapping {
-                oidc_claim: "groups".into(),
                 oidc_value: "engineering".into(),
                 role: "engineer".into(),
             }],
@@ -97,7 +96,6 @@ async fn state_with_tool_grants(upstream_uri: &str, granted_tools: Vec<String>) 
         vec![RoleConfig {
             id: "engineer".into(),
             admin: false,
-            models: vec!["*".into()],
             tools: granted_tools,
             skills: vec![],
         }],

@@ -24,13 +24,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use aiplane::rama_server::{RamaState, SessionStore, router::router};
 use aiplane_core::server::auth::oidc::OidcClient;
-use aiplane_core::server::config::{Config, OidcConfig};
+use aiplane_core::server::auth::oidc::OidcParams;
+use aiplane_core::server::config::Config;
 use aiplane_core::server::db;
 use aiplane_core::server::rbac::Resolver;
-use aiplane_core::server::upstreams::{
-    self,
-    config::{PoolKind, UpstreamPoolConfig},
-};
+use aiplane_core::server::upstreams;
 use aiplane_runtime::server::AppState;
 use aiplane_runtime::server::tools::ToolRegistry;
 use common::Service as _;
@@ -46,7 +44,6 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 pub(crate) const KEY_ID: &str = "test-key";
 const CLIENT_ID: &str = "gateway-test-client";
 const CLIENT_SECRET: &str = "test-client-secret";
-const CLIENT_SECRET_ENV: &str = "AIPLANE_OIDC_TEST_SECRET";
 pub(crate) const SUBJECT: &str = "alice-sub";
 pub(crate) const EMAIL: &str = "alice@example.com";
 const NAME: &str = "Alice";
@@ -133,48 +130,21 @@ pub(crate) fn sign_id_token(
 
 /// Build a `RamaState` with the OIDC client pointed at `idp_uri`.
 async fn state_with_oidc(idp_uri: &str, roles_claim: Option<&str>) -> RamaState {
-    // Set the client-secret env var the OidcConfig points at. The OIDC
-    // build path reads it via `std::env::var`, so we have to plant it
-    // before constructing the client.
-    //
-    // SAFETY: integration tests run in the same process. Concurrent
-    // tests that set this env to different values would race; we're
-    // the only caller, so the value is stable for the test's lifetime.
-    unsafe { std::env::set_var(CLIENT_SECRET_ENV, CLIENT_SECRET) };
-
-    let oidc_config = OidcConfig {
+    let params = OidcParams {
         issuer: idp_uri.to_string(),
         client_id: CLIENT_ID.into(),
-        client_secret_env: CLIENT_SECRET_ENV.into(),
+        client_secret: CLIENT_SECRET.into(),
         scopes: vec!["email".into(), "profile".into()],
         roles_claim: roles_claim.map(String::from),
     };
-    // The provider is a database row now; the test builds its client straight
-    // from `oidc_config` below, which is the only thing it was ever kept for.
     let mut config = Config::default();
-    config.gateway.public_url_import_only = "http://gateway.test".into();
+    config.gateway.public_url_fallback = "http://gateway.test".into();
 
     let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let registry = upstreams::UpstreamRegistry::new(&Default::default()).unwrap();
-    let _: PoolKind = PoolKind::Chat; // keep the import live; UpstreamRegistry::new ate ours
     let tools = Arc::new(ToolRegistry::new());
     let rbac = Arc::new(Resolver::empty());
-    let _: UpstreamPoolConfig = UpstreamPoolConfig {
-        fallback_offline: None,
-        compliance: Default::default(),
-        enforce_limits: true,
-        voices: Default::default(),
-        offer_voices: Vec::new(),
-        allowed_groups: Vec::new(),
-        kind: PoolKind::Chat,
-        strategy: upstreams::config::PickerStrategy::RoundRobin,
-        models: Vec::new(),
-        backend: vec![],
-    };
 
-    let params = oidc_config
-        .to_params()
-        .expect("client secret env var was planted above");
     let public_url = config.public_url_fallback().to_string();
     let oidc = OidcClient::build(&params, &public_url)
         .await

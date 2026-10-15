@@ -16,8 +16,8 @@ pub struct Me {
     pub name: Option<String>,
     /// Raw OIDC claim values for this user (e.g. groups: ["engineering"]).
     pub roles: Vec<String>,
-    /// Internal RBAC role IDs the user resolves to after `[rbac.mapping]`
-    /// (and `default_role`) is applied.
+    /// Internal RBAC role IDs the user resolves to after the OIDC group mappings
+    /// (and the default group) are applied.
     #[serde(default)]
     pub role_ids: Vec<String>,
     /// Tools granted to this user (union over their roles). UI/CLI uses this

@@ -232,11 +232,11 @@ tightest decides, none widens another — measured against
   such usage row has `source = 'agent'` (`UsageSource::Agent`), however the
   conversation came in (embed, A2A, a parent's route, the test chat), so the
   Usage page tells an agent's traffic apart and filters it as *Agents*. Usage
-  rows need `[usage] enabled`; with metrics off, nothing is ever spent against
+  rows need `usage.enabled`; with metrics off, nothing is ever spent against
   a budget.
 - **Debt model**, like every other limit: the message that crosses the line
   is served, the next is refused. The owner's budget is part of the agent and
-  applies even with `[limits] enabled = false`; that switch only governs the
+  applies even with `limits.enabled` off; that switch only governs the
   operator's rules. Both are checked on starting a conversation and on every
   message.
 - **Managers see the state** in `GET /api/v0/agents/{id}` under

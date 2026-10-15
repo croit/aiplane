@@ -314,8 +314,8 @@ log event on the same transaction (`agent_created`, `agent_draft_updated`,
   access (`404`), and `GET /api/v0/agents` does not list the agent.
 - **Without a share an agent answers 404**, not 403.
 - **A share names a subject that exists**: a user id from `users`, or a group
-  the RBAC resolver knows (`Resolver::has_group`: database groups, which the
-  `[rbac]` config seeds, and the bootstrap admin group). For `read` and
+  the RBAC resolver knows (`Resolver::has_group`: database groups and the
+  bootstrap admin group). For `read` and
   `write` the holder must have `can_manage_agents` when the share is written:
   a user through their groups, a group through the flag or `is_admin`, asked
   of the resolver; otherwise `422 share_needs_agent_manager`, naming
@@ -452,7 +452,7 @@ model.
   itself an alias reaches its target the same way. Compaction compacts on
   the target the route pinned for the session, else its fallback
   (`compaction::compaction_target`).
-- **Fallback.** The kind's unknown-model fallback (`[fallback].<kind>`)
+- **Fallback.** The kind's unknown-model fallback (the **Unknown-model fallbacks** editor on `/admin/upstreams`)
   applies to an agent only when it is granted as well, and to a person's
   token only when its allowlist lets the fallback through.
 

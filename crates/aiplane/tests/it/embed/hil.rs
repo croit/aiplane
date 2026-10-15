@@ -488,9 +488,8 @@ async fn respond_shares_and_channels_are_managed_with_a_share_and_a_url_is_never
         StatusCode::CREATED,
         "a respond share needs no manager permission: {body}"
     );
-    // `[rbac]` config groups reach the resolver through the database
-    // (`gateway_groups::seed_roles`), as `support` does here; the bootstrap
-    // admin group exists only in the resolver.
+    // Groups reach the resolver through the database, as `support` does here;
+    // the bootstrap admin group exists only in the resolver.
     for group in ["support", BOOTSTRAP_ADMIN_GROUP] {
         let (status, body) = fx.share(&fx.alice, &agent, "group", group, "respond").await;
         assert_eq!(status, StatusCode::CREATED, "{group}: {body}");

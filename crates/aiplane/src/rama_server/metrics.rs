@@ -262,7 +262,7 @@ mod tests {
     fn backend(name: &str) -> BackendConfig {
         BackendConfig {
             priority: Default::default(),
-            alias: None,
+            alias: Default::default(),
             supports_edit: false,
             enabled: true,
             name: name.into(),

@@ -33,7 +33,6 @@ fn base_config() -> FeedbackConfig {
         github_owner: "croit".into(),
         github_repo: "aiplane".into(),
         github_token: Some("ghp_test".into()),
-        github_token_env: None,
         labels: vec!["feedback".into(), "from-gateway".into()],
         assets_branch: "feedback-assets".into(),
         extraction_model: None,
@@ -42,7 +41,6 @@ fn base_config() -> FeedbackConfig {
         gitlab_url: "https://gitlab.example.com".into(),
         gitlab_project_id: String::new(),
         gitlab_token: None,
-        gitlab_token_env: None,
     }
 }
 

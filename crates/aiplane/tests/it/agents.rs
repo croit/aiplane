@@ -33,7 +33,7 @@ use aiplane_runtime::server::tools::time::CurrentTimestamp;
 
 pub(crate) const TIME: &str = "get_current_timestamp";
 
-/// The `[gateway].bootstrap_admin_groups` claim value of the fixture.
+/// The break-glass admin claim value of the fixture.
 const BREAK_GLASS: &str = "break-glass";
 
 pub(crate) struct Fx {

@@ -25,7 +25,7 @@ use aiplane_core::server::rbac::Resolver;
 use aiplane_core::server::rbac::config::{RbacConfig, RoleConfig};
 use aiplane_core::server::upstreams::{
     self,
-    config::{AliasSpec, BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
+    config::{BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
 };
 use aiplane_runtime::server::AppState;
 use aiplane_runtime::server::tools::ToolRegistry;
@@ -71,7 +71,7 @@ async fn state_with_chat_access(
             models: Vec::new(),
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: None,
+                alias: Default::default(),
                 supports_edit: false,
                 enabled: true,
                 name: "mock".into(),
@@ -115,7 +115,7 @@ async fn state_with_aliased_chat_model(model: &str, alias: &str) -> RamaState {
             models: Vec::new(),
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: Some(AliasSpec::Names(vec![alias.to_string()])),
+                alias: HashMap::from([(alias.to_string(), None)]),
                 supports_edit: false,
                 enabled: true,
                 name: "mock".into(),
@@ -172,7 +172,6 @@ async fn setup_with_location_tool_metered(
             vec![RoleConfig {
                 id: "member".into(),
                 admin: false,
-                models: vec![],
                 tools: vec!["get_user_location".into()],
                 skills: vec![],
             }],
@@ -650,7 +649,6 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
             vec![RoleConfig {
                 id: "member".into(),
                 admin: false,
-                models: vec![],
                 tools: memory_ids
                     .iter()
                     .map(|id| (*id).to_string())
@@ -2872,7 +2870,7 @@ async fn multipart_submit_uploads_attachments_into_the_turn() {
         )
         .await
         .unwrap();
-    // No [chat.s3] in this harness → the attachment upload is refused with
+    // No S3 attachment storage in this harness → the attachment upload is refused with
     // a 400 that names the missing configuration (the same contract the
     // legacy composer surfaces as a toast). The marker/content assertions
     // live in the S3-configured suites; here we pin the refusal shape.
@@ -3783,7 +3781,6 @@ async fn setup_granting_only_the_timestamp(upstream_uri: &str) -> (Arc<RamaState
             vec![RoleConfig {
                 id: "member".into(),
                 admin: false,
-                models: vec![],
                 tools: vec!["get_current_timestamp".into()],
                 skills: vec![],
             }],
@@ -4628,7 +4625,6 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
                 vec![RoleConfig {
                     id: "admin".into(),
                     admin: true,
-                    models: vec![],
                     tools: vec![],
                     skills: vec![],
                 }],
@@ -4866,7 +4862,6 @@ async fn assert_personal_forward_capability(
                 id: "member".into(),
                 admin: false,
                 tools: grants,
-                models: Vec::new(),
                 skills: Vec::new(),
             }],
         )

@@ -65,7 +65,6 @@ pub(crate) fn granted_to_everyone() -> aiplane_core::server::rbac::Resolver {
         vec![RoleConfig {
             id: "member".into(),
             admin: false,
-            models: vec!["*".into()],
             tools: vec!["company_echo".into()],
             skills: vec![],
         }],

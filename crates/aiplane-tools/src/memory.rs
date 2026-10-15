@@ -1279,7 +1279,18 @@ mod tests {
                 .with(UpdateMemory)
                 .with(Forget),
         );
-        let pools = serde_json::from_value(json!({"pool":{"kind":"chat","models":["model"],"backend":[{"name":"fixture","base_url":upstream}]}})).unwrap();
+        let pools = std::collections::HashMap::from([(
+            "pool".to_string(),
+            aiplane_core::server::upstreams::config::UpstreamPoolConfig {
+                models: vec!["model".into()],
+                ..aiplane_core::server::upstreams::config::UpstreamPoolConfig::new(
+                    aiplane_core::server::upstreams::config::PoolKind::Chat,
+                    vec![aiplane_core::server::upstreams::config::BackendConfig::new(
+                        "fixture", upstream,
+                    )],
+                )
+            },
+        )]);
         let app = AppState::new(
             Config::default(),
             pool.clone(),

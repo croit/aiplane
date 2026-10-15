@@ -13,8 +13,8 @@
 //! inlines into HTML). This is the standard progressive-disclosure shape:
 //! the model only pays for the detail it actually needs.
 //!
-//! Operators drop bundles under `[skills] dir`, exactly like Typst
-//! templates under `[typst] templates_dir`:
+//! Operators drop bundles under `skills.dir`, exactly like Typst
+//! templates under `typst.templates_dir`:
 //!
 //! - a directory containing a `SKILL.md` (optionally nested one level —
 //!   the folder a `*.skill` archive unzips to), or
@@ -27,7 +27,7 @@
 //! live admin **upload** and **delete** ([`SkillStore::install_archive`] /
 //! [`SkillStore::remove`]): each re-scans the directory and atomically swaps
 //! the registry, so changes take effect with no gateway restart. RBAC gates
-//! which roles see which skill, by `name`, via the role's `skills` list (see
+//! which roles see which skill, by `name`, via the skill grants of a role (see
 //! `rbac::Resolver`).
 
 use std::collections::{BTreeMap, HashMap};
@@ -54,7 +54,7 @@ pub struct Skill {
     /// From the frontmatter `name`. The lookup key the model passes to
     /// `read_skill`, and the id RBAC grants. Validated to `[A-Za-z0-9._-]`,
     /// non-empty, <= 64 chars so it's safe as a tool argument and matches
-    /// cleanly against a role's `skills` list.
+    /// cleanly against a role's skill grants.
     pub name: String,
     /// Human-readable display name for UI surfaces (the composer's "+" menu).
     /// From the optional frontmatter `title`; when absent, derived by
@@ -205,7 +205,7 @@ impl SkillRegistry {
     }
 
     /// Skill names in stable (sorted) order. Used by RBAC to expand `"*"`
-    /// and to intersect with a role's `skills` grant.
+    /// and to intersect with a role's skill grants.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.skills.keys().map(String::as_str)
     }
@@ -826,7 +826,7 @@ fn prettify_name(slug: &str) -> String {
 }
 
 /// A skill `name` must be safe to pass back as a tool argument and to match
-/// against a role's `skills` list: non-empty, `[A-Za-z0-9._-]`, <= 64 chars.
+/// against a role's skill grants: non-empty, `[A-Za-z0-9._-]`, <= 64 chars.
 fn is_valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64

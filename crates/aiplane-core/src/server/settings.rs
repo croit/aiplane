@@ -1,25 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! The operator settings that used to live in `gateway.toml`, now owned by the
-//! database and edited at `/admin/settings`.
+//! The operator settings, owned by the database and edited at `/admin/settings`.
 //!
-//! This is the last step of the move the rest of the gateway already made:
-//! upstream topology, groups, search and the OIDC provider are all database
-//! rows seeded once from a config file that is then ignored. These blocks —
-//! `[chat.ocr]`, `[chat.compaction]`, `[chat.s3]`, `[sandbox]`, `[comfyui]`,
-//! `[rag]`, `[skills]`, `[typst]`, `[geoip]`, `[usage]`, `[limits]`,
-//! `[feedback]`, `[push]`, and the session/token half of `[gateway]` — were
-//! what still forced a file onto a deployment that wanted none.
-//!
-//! What is left in the file afterwards is `[db]` (the gateway has to find the
-//! database before it can read settings out of it) and the two `[gateway]` keys
-//! in [`GATEWAY_KEYS_STAYING_IN_THE_FILE`], each for a stated reason.
+//! Upstream topology, groups, search and the OIDC provider have stores of
+//! their own; the settings here — OCR, compaction, S3, the sandbox, ComfyUI,
+//! RAG, skills, Typst, GeoIP, usage, limits, feedback, push, metrics and the
+//! session/token lifetimes — are rows that [`apply`] writes over the
+//! [`Config`] defaults on boot. What stays in the environment is what the
+//! gateway needs before it can open the database: the listen address, the data
+//! directory, the database path and the public URL fallback.
 //!
 //! # Shape
 //!
-//! One [`app_settings`] row per leaf field, keyed by its TOML path under a
-//! `settings.` prefix: `[sandbox] runner_url` is `settings.sandbox.runner_url`.
+//! One [`app_settings`] row per leaf field, keyed by its dotted path under a
+//! `settings.` prefix: `sandbox.runner_url` is stored as
+//! `settings.sandbox.runner_url`.
 //! Not one JSON blob per block, for the reason the sibling stores give: a row
 //! an operator can read and patch in a `sqlite3` shell while debugging is worth
 //! more than a compact encoding, and a secret then gets its own sealed row
@@ -29,11 +25,10 @@
 //!
 //! It does not. Nothing outside this module reads these rows. [`apply`]
 //! overwrites those blocks of an in-memory [`Config`], and every existing
-//! reader keeps saying `state.config().chat.ocr.dpi` exactly as it did when the
-//! value came from a file. That is deliberate: the alternative — teaching a
-//! hundred call sites to consult a settings store — would have been a far
-//! larger and far riskier change than the one this replaces, and it would have
-//! made the config file and the database two live sources instead of one.
+//! reader keeps saying `state.config().chat.ocr.dpi`. That is deliberate: the
+//! alternative — teaching a hundred call sites to consult a settings store —
+//! would make the in-memory config and the database two live sources instead of
+//! one.
 //!
 //! # Drift
 //!
@@ -191,7 +186,7 @@ const fn span_for(kind: Kind) -> Span {
 
 /// One editable field.
 pub struct FieldSpec {
-    /// The TOML path this field had in `gateway.toml`, e.g.
+    /// The dotted path of this field, e.g.
     /// `sandbox.runner_url`, used verbatim as the row key (under [`PREFIX`]),
     /// as the form field name, and as the stem of this field's two i18n keys
     /// (see [`FieldSpec::label_key`]).
@@ -305,7 +300,7 @@ fn json_list<'a>(items: impl Iterator<Item = &'a str>) -> String {
 
 /// A group of fields, rendered as one card.
 pub struct SectionSpec {
-    /// TOML block name, e.g. `chat.ocr`. Also the anchor in the page and the
+    /// Block name, e.g. `chat.ocr`. Also the anchor in the page and the
     /// stem of the card's two i18n keys (see [`SectionSpec::title_key`]).
     pub name: &'static str,
     /// Which [`Category`] tab this card appears under. Mandatory, so adding a
@@ -385,8 +380,8 @@ impl Category {
     }
 
     /// Fluent key for the tab label. Localised, unlike the field identifiers:
-    /// this is navigation chrome, not something an operator matches against a
-    /// config file or a log line.
+    /// this is navigation chrome, not something an operator matches against the
+    /// docs or a log line.
     pub fn i18n_key(self) -> &'static str {
         match self {
             Self::Chat => "settings-tab-chat",
@@ -435,11 +430,9 @@ const fn r(key: &'static str, kind: Kind) -> FieldSpec {
 
 /// Every field the settings editor knows about.
 ///
-/// The order is the order of the page. Blocks that were `Option<…>` in the
-/// config file each gained an explicit `enabled` field: "leave the URL blank to
-/// turn it off" is a workable rule in a file an operator writes by hand and a
-/// bad one in a form, where a cleared field looks like a mistake rather than a
-/// decision.
+/// The order is the order of the page. Optional blocks carry an explicit
+/// `enabled` field: "leave the URL blank to turn it off" is a bad rule in a
+/// form, where a cleared field looks like a mistake rather than a decision.
 ///
 /// Titles, labels and help text live in `session-core/locales/*/settings.ftl`
 /// under the keys these entries derive (see [`FieldSpec::label_key`]), not
@@ -676,26 +669,6 @@ pub static SECTIONS: &[SectionSpec] = &[
     },
 ];
 
-/// The `[gateway]` keys that deliberately did **not** move into the database,
-/// and why. Named here rather than left implicit, because "why is this one
-/// still in the file?" is the obvious question about the section above.
-///
-/// * `public_url` — owned by the setup wizard (`/setup`), which stores it in
-///   its own row. The file's copy is a one-time import; see
-///   the setup wizard.
-/// * `bootstrap_admin_groups` — the anti-lockout anchor. It exists so a
-///   break-glass admin works *regardless of what is in the database*, which
-///   makes the database the one place it must not live: a botched group mapping
-///   is exactly the situation it rescues you from. Same reasoning that keeps the
-///   listen socket in the environment.
-/// * `session_key_env` — vestigial. `$AIPLANE_SESSION_KEY` is read directly and
-///   is mandatory, so naming a different variable has no effect; a stale value
-///   is reported by [`Config::warn_about_ignored_blocks`].
-///
-/// [`Config::warn_about_ignored_blocks`]: crate::server::config::Config::warn_about_ignored_blocks
-pub const GATEWAY_KEYS_STAYING_IN_THE_FILE: &[&str] =
-    &["public_url", "bootstrap_admin_groups", "session_key_env"];
-
 /// Every declared field, flattened.
 pub fn all_fields() -> impl Iterator<Item = &'static FieldSpec> {
     SECTIONS.iter().flat_map(|s| s.fields.iter())
@@ -784,7 +757,7 @@ pub fn section_is_enabled(config: &Config, section: &SectionSpec) -> Option<bool
         "feedback" => config.feedback.is_some(),
         "push" => config.push.enabled,
         "metrics" => config.metrics.enabled,
-        // `[gateway]` is session and token lifetimes — always in force, no
+        // The `gateway` section is session and token lifetimes — always in force, no
         // master switch to report.
         _ => return None,
     })
@@ -813,7 +786,7 @@ pub fn field(key: &str) -> Option<&'static FieldSpec> {
 // ---------------------------------------------------------------------------
 // The loaded values
 
-/// Every settings row, unsealed, keyed by TOML path (no [`PREFIX`]).
+/// Every settings row, unsealed, keyed by dotted path (no [`PREFIX`]).
 ///
 /// Also records which keys [`apply`] read, which is what
 /// `every_declared_field_is_actually_applied` checks the declaration against.
@@ -855,7 +828,7 @@ impl Settings {
     ///
     /// Refuses to hand back a [`Kind::Secret`] value, whatever the map holds.
     /// [`effective`] builds its map from [`snapshot`], which resolves secrets
-    /// to plaintext so the import can seal them — and that same map is what the
+    /// to plaintext so they can be sealed — and that same map is what the
     /// editor renders from. One forgetful `value:` in a control would then put
     /// a live credential in the HTML. Blocking it here makes that impossible
     /// rather than merely unlikely; `secret_is_set` still answers the only
@@ -955,8 +928,8 @@ impl Settings {
 
 /// Overwrite the twelve settings-owned blocks of `config` from the database.
 ///
-/// Everything else in `config` — `[bind]`, `[db]`, `[gateway]`, the upstream
-/// topology and the seed-only blocks — is left exactly as the file left it.
+/// Everything else in `config` — the listen address, the database path, the
+/// public URL fallback, the upstream topology — is left as it was.
 pub fn apply(settings: &Settings, config: &mut Config) {
     config.chat = ChatConfig {
         ocr: ocr(settings),
@@ -1012,16 +985,12 @@ pub fn apply(settings: &Settings, config: &mut Config) {
         allowed_ips: allowed_ips(settings),
     };
 
-    // Field-by-field, not `config.gateway = …` like the blocks above. Two keys
-    // in this block are owned by the config file on purpose — the wizard's
-    // `public_url` import and the `bootstrap_admin_groups` anti-lockout anchor —
-    // and replacing the struct would erase them. See
-    // [`GATEWAY_KEYS_STAYING_IN_THE_FILE`].
+    // Field-by-field, not `config.gateway = …` like the blocks above: the
+    // public URL fallback comes from the environment and replacing the struct
+    // would erase it.
     // Missing rows fall back to the *built-in* defaults, not to whatever is
     // currently in memory — same as every block above, and what the editor's
-    // clear button promises ("the built-in default applies again"). A first
-    // boot writes every row from the file before this runs, so the file's
-    // values are never lost to this.
+    // clear button promises ("the built-in default applies again").
     let d = GatewayConfig::default();
     let g = &mut config.gateway;
     g.token_ttl_days = settings.int("gateway.token_ttl_days", d.token_ttl_days);
@@ -1098,9 +1067,6 @@ fn s3(s: &Settings) -> S3Config {
         key_prefix: s.text_or("chat.s3.key_prefix", "chat-attachments"),
         access_key: s.text("chat.s3.access_key"),
         secret_key: s.text("chat.s3.secret_key"),
-        // See `feedback()`: the sealed row replaces the env-var indirection.
-        access_key_env: None,
-        secret_key_env: None,
     }
 }
 
@@ -1154,8 +1120,6 @@ fn geoip(s: &Settings) -> GeoipConfig {
             PathBuf::from("data/ip2location/IP2LOCATION-LITE-DB11.BIN"),
         ),
         update_token: s.text("geoip.update_token"),
-        // See `feedback()`: the sealed row replaces the env-var indirection.
-        update_token_env: None,
     }
 }
 
@@ -1174,11 +1138,6 @@ fn feedback(s: &Settings) -> FeedbackConfig {
         github_owner: s.text_or("feedback.github_owner", ""),
         github_repo: s.text_or("feedback.github_repo", ""),
         github_token: s.text("feedback.github_token"),
-        // Legacy env-var indirection. The database holds the token sealed, so
-        // nothing new writes this; it survives only for a deployment whose
-        // config file still names a variable, and `github_token()` prefers the
-        // direct value anyway.
-        github_token_env: None,
         github_api_base: s.text_or("feedback.github_api_base", "https://api.github.com"),
         labels: s.list("feedback.labels", vec!["feedback".to_string()]),
         assets_branch: s.text_or("feedback.assets_branch", "feedback-assets"),
@@ -1187,8 +1146,6 @@ fn feedback(s: &Settings) -> FeedbackConfig {
         gitlab_url: s.text_or("feedback.gitlab_url", "https://gitlab.com"),
         gitlab_project_id: s.text_or("feedback.gitlab_project_id", ""),
         gitlab_token: s.text("feedback.gitlab_token"),
-        // Same legacy-only indirection as `github_token_env` above.
-        gitlab_token_env: None,
     }
 }
 
@@ -1313,7 +1270,7 @@ pub async fn clear(pool: &Pool, key: &str) -> Result<(), DbError> {
 /// had configured.
 /// Written as a flat match on the key rather than as twelve serializers so
 /// that the declaration in [`SECTIONS`] stays the only list of fields — an
-/// entry with no arm here fails `every_declared_field_can_be_imported`.
+/// entry with no arm here fails `every_declared_field_is_snapshotted`.
 pub fn snapshot(c: &Config) -> Vec<(String, String)> {
     let ocr = &c.chat.ocr;
     let comp = &c.chat.compaction;
@@ -1407,7 +1364,7 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
         num(cf.map(|v| v.max_concurrent_jobs as u64), 1),
     );
 
-    // Absent `[rag]` has always meant "run with defaults", not "off".
+    // An unset RAG block means "run with defaults", not "off".
     put("rag.enabled", "true".into());
     let rag_default = RagConfig::default();
     put(
@@ -1658,7 +1615,7 @@ mod tests {
         for name in ["comfyui", "rag", "skills", "usage", "limits"] {
             assert!(on.iter().any(|s| s == name), "{name} missing from {on:?}");
         }
-        // `[gateway]` has no master switch: always in force, never gated.
+        // `gateway` has no master switch: always in force, never gated.
         assert!(!on.iter().any(|s| s == "gateway"));
         assert!(
             !on.iter().any(|s| s == "metrics"),
@@ -1696,8 +1653,8 @@ mod tests {
         // control that saves a row nobody reads, or a row nobody can set.
         // Every optional block turned on, because `apply` only builds a
         // block's fields when its `enabled` flag says to — with everything off
-        // the guard would report the whole of `[sandbox]`, `[comfyui]`,
-        // `[feedback]` and friends as unread and prove nothing.
+        // the guard would report the whole of the sandbox, ComfyUI,
+        // feedback and friends sections as unread and prove nothing.
         let settings = Settings::from_map(
             all_fields()
                 .filter(|f| f.key.ends_with(".enabled"))
@@ -1723,10 +1680,10 @@ mod tests {
     }
 
     #[test]
-    fn every_declared_field_can_be_imported() {
-        // The other half of the same guard: `snapshot` is what carries an
-        // existing config file into the database, and a field it forgets is a
-        // setting that silently reverts to its default on upgrade.
+    fn every_declared_field_is_snapshotted() {
+        // The other half of the same guard: `snapshot` is what the editor
+        // renders from, and a field it forgets shows as its default while the
+        // gateway runs with the stored value.
         let declared: HashSet<&str> = all_fields().map(|f| f.key).collect();
         let snapshotted: HashSet<String> = snapshot(&Config::default())
             .into_iter()
@@ -1739,14 +1696,14 @@ mod tests {
             .collect();
         assert!(
             missing.is_empty(),
-            "declared but never imported: {missing:?}"
+            "declared but never snapshotted: {missing:?}"
         );
 
         let extra: Vec<_> = snapshotted
             .iter()
             .filter(|k| !declared.contains(k.as_str()))
             .collect();
-        assert!(extra.is_empty(), "imported but not declared: {extra:?}");
+        assert!(extra.is_empty(), "snapshotted but not declared: {extra:?}");
     }
 
     #[test]
@@ -1915,7 +1872,7 @@ mod tests {
         );
     }
 
-    // The GitLab half of `[feedback]` travels the same path as the GitHub
+    // The GitLab half of the feedback settings travels the same path as the GitHub
     // half — rows in, `FeedbackConfig` out — and the selector has to arrive
     // with it, or the editor offers a dropdown the gateway ignores.
     #[test]
@@ -2201,46 +2158,19 @@ mod tests {
     }
 
     #[test]
-    fn applying_settings_never_touches_the_file_owned_gateway_keys() {
-        // `apply` replaces whole blocks, but `[gateway]` is shared: four keys
-        // moved into the database and two did not. `bootstrap_admin_groups` is
-        // the anti-lockout anchor — it exists so a break-glass admin works
-        // regardless of what the database says, which is precisely why erasing
-        // it from a database read would be the worst possible bug here.
-        // `public_url` is owned by the setup wizard.
+    fn applying_settings_keeps_the_public_url_fallback() {
+        // `apply` replaces whole blocks, but `gateway` is shared: the public
+        // URL fallback comes from the environment, not from a settings row.
         let mut config = Config::default();
-        config.gateway.bootstrap_admin_groups = vec!["ops-oncall".into()];
-        config.gateway.public_url_import_only = "https://gw.example.com".into();
+        config.gateway.public_url_fallback = "https://gw.example.com".into();
 
         apply(
             &settings_of(&[("gateway.token_ttl_days", "7")]),
             &mut config,
         );
 
-        assert_eq!(
-            config.gateway.bootstrap_admin_groups,
-            vec!["ops-oncall".to_string()],
-            "the break-glass admin list must survive a settings reload"
-        );
-        assert_eq!(
-            config.gateway.public_url_import_only,
-            "https://gw.example.com"
-        );
+        assert_eq!(config.gateway.public_url_fallback, "https://gw.example.com");
         assert_eq!(config.gateway.token_ttl_days, 7, "and the move still works");
-    }
-
-    #[test]
-    fn the_gateway_keys_left_in_the_file_are_not_also_declared() {
-        // The two lists must not overlap: a key that is both file-owned and
-        // editable at /admin/settings has two live sources, and the file's copy
-        // would silently lose on every boot.
-        for key in GATEWAY_KEYS_STAYING_IN_THE_FILE {
-            let full = format!("gateway.{key}");
-            assert!(
-                field(&full).is_none(),
-                "{full} is documented as file-owned but is also a settings field"
-            );
-        }
     }
 
     #[test]

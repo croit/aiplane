@@ -390,7 +390,7 @@ zeros.
 - `human_handoffs`: `human_handoff` events (`AuditKind::HumanHandoff`).
 - `usage`: `usage_events` with `agent_id` = the agent, which includes the
   sub-agents' calls and the side calls. Tokens are `total_tokens`, or prompt +
-  completion when that is missing. Needs `[usage] enabled`.
+  completion when that is missing. Needs `usage.enabled`.
 
 **What is never counted.** Builder test conversations (`agent_version = 0`;
 their events and usage rows carry the draft version in the chain's main

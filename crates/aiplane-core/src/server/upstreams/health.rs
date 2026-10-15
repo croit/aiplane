@@ -839,7 +839,7 @@ mod tests {
             max_inflight: 16,
             health_path: "/models".into(),
             models: vec!["glm-image".into()],
-            alias: None,
+            alias: Default::default(),
             supports_edit: false,
             enabled: true,
         }
@@ -1269,7 +1269,7 @@ mod detection_wiring {
                     max_inflight: 16,
                     health_path: "/models".into(),
                     models: Vec::new(),
-                    alias: None,
+                    alias: Default::default(),
                     enabled: true,
                     supports_edit: false,
                 }],

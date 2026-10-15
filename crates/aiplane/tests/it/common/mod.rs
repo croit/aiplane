@@ -43,7 +43,7 @@ pub const TEST_SECRET: [u8; 32] = [7u8; 32];
 pub fn mock_backend(name: &str, base_url: &str) -> BackendConfig {
     BackendConfig {
         priority: Default::default(),
-        alias: None,
+        alias: Default::default(),
         supports_edit: false,
         enabled: true,
         name: name.into(),
@@ -361,10 +361,7 @@ pub async fn state_with_alias_for_kind(
 ) -> RamaState {
     let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let mut backend = mock_backend("mock", upstream_url);
-    backend.alias = Some(upstreams::config::AliasSpec::Targets(HashMap::from([(
-        alias.to_string(),
-        real_model.to_string(),
-    )])));
+    backend.alias = HashMap::from([(alias.to_string(), Some(real_model.to_string()))]);
     let mut pools = HashMap::new();
     pools.insert(
         "pool".to_string(),
@@ -421,26 +418,18 @@ pub async fn state_with_speech_voices(
     state_from_registry(db_pool, registry)
 }
 
-/// Env var names the S3 test config points at for its credentials. Real
-/// deployments name their own; the values are irrelevant to a mock endpoint
-/// (it never verifies the signature) but must be non-empty or the config
-/// reports a missing credential.
-pub const TEST_S3_ACCESS_KEY_ENV: &str = "AIPLANE_TEST_S3_ACCESS_KEY";
-pub const TEST_S3_SECRET_KEY_ENV: &str = "AIPLANE_TEST_S3_SECRET_KEY";
+/// Credentials of the S3 test config. The values are irrelevant to a mock
+/// endpoint (it never verifies the signature) but must be non-empty or the
+/// config reports a missing credential.
 pub const TEST_S3_BUCKET: &str = "test-bucket";
 pub const TEST_S3_PREFIX: &str = "chat-attachments";
 
-/// Build a `RamaState` with `[chat.s3]` pointed at `endpoint` — a wiremock
+/// Build a `RamaState` with S3 attachment storage pointed at `endpoint` — a wiremock
 /// server standing in for the object store. Path-style addressing means the
 /// object lands at `GET /<bucket>/<key_prefix>/<turn_id>/<filename>`, which
 /// is what the attachment tests assert on.
 pub async fn state_with_s3(endpoint: &str) -> RamaState {
     use aiplane_core::server::config::S3Config;
-    // SAFETY: single-threaded test setup, before any concurrent env reads.
-    unsafe {
-        std::env::set_var(TEST_S3_ACCESS_KEY_ENV, "test-access-key");
-        std::env::set_var(TEST_S3_SECRET_KEY_ENV, "test-secret-key");
-    }
     let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let registry = upstreams::UpstreamRegistry::new(&HashMap::new()).unwrap();
     let mut config = test_config();
@@ -448,12 +437,8 @@ pub async fn state_with_s3(endpoint: &str) -> RamaState {
         endpoint: endpoint.to_string(),
         region: "us-east-1".into(),
         bucket: TEST_S3_BUCKET.into(),
-        access_key: None,
-        secret_key: None,
-        // The legacy env-var indirection, still honoured — which is what this
-        // fixture happens to exercise, since the harness sets these two.
-        access_key_env: Some(TEST_S3_ACCESS_KEY_ENV.into()),
-        secret_key_env: Some(TEST_S3_SECRET_KEY_ENV.into()),
+        access_key: Some("test-access-key".into()),
+        secret_key: Some("test-secret-key".into()),
         key_prefix: TEST_S3_PREFIX.into(),
     });
     let tools = Arc::new(ToolRegistry::new());
@@ -596,7 +581,7 @@ pub async fn state_with_admin_rbac_and_comfyui(upstream_url: &str) -> RamaState 
             models: Vec::new(),
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: None,
+                alias: Default::default(),
                 supports_edit: false,
                 enabled: true,
                 name: "mock".into(),
@@ -618,7 +603,6 @@ pub async fn state_with_admin_rbac_and_comfyui(upstream_url: &str) -> RamaState 
     let rbac_config = RbacConfig {
         default_role: None,
         mappings: vec![RoleMapping {
-            oidc_claim: "groups".into(),
             oidc_value: "admin".into(),
             role: "admin".into(),
         }],
@@ -626,7 +610,6 @@ pub async fn state_with_admin_rbac_and_comfyui(upstream_url: &str) -> RamaState 
     let admin_role = RoleConfig {
         id: "admin".into(),
         admin: true,
-        models: vec!["*".into()],
         tools: vec!["*".into()],
         skills: vec![],
     };
@@ -658,7 +641,7 @@ pub async fn state_with_admin_rbac_and_comfyui(upstream_url: &str) -> RamaState 
     )
 }
 
-/// Same as [`state_with_admin_rbac`] but with `[gateway].allow_impersonation`
+/// Same as [`state_with_admin_rbac`] but with `gateway.allow_impersonation`
 /// turned off, for tests that exercise the impersonation kill switch.
 pub async fn state_with_admin_rbac_no_impersonation(upstream_url: &str) -> RamaState {
     state_with_admin_rbac_cfg(upstream_url, false).await
@@ -683,7 +666,7 @@ async fn state_with_admin_rbac_cfg(upstream_url: &str, allow_impersonation: bool
             models: Vec::new(),
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: None,
+                alias: Default::default(),
                 supports_edit: false,
                 enabled: true,
                 name: "mock".into(),
@@ -704,7 +687,6 @@ async fn state_with_admin_rbac_cfg(upstream_url: &str, allow_impersonation: bool
     let rbac_config = RbacConfig {
         default_role: None,
         mappings: vec![RoleMapping {
-            oidc_claim: "groups".into(),
             oidc_value: "admin".into(),
             role: "admin".into(),
         }],
@@ -712,7 +694,6 @@ async fn state_with_admin_rbac_cfg(upstream_url: &str, allow_impersonation: bool
     let admin_role = RoleConfig {
         id: "admin".into(),
         admin: true,
-        models: vec!["*".into()],
         tools: vec!["*".into()],
         skills: vec![],
     };

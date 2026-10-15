@@ -189,7 +189,7 @@ pub enum RunError {
     #[error("ComfyUI recorded no output for node `{node_id}` (workflow `{prompt_id}`)")]
     NoOutput { node_id: String, prompt_id: String },
     #[error(
-        "chat attachments are not configured (operator must set [chat.s3]) — workflow `{workflow_id}` needs attachment `{param_key}`"
+        "chat attachments are not configured (the operator must enable S3 attachment storage in /admin/settings) — workflow `{workflow_id}` needs attachment `{param_key}`"
     )]
     S3NotConfigured {
         workflow_id: String,

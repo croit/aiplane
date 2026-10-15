@@ -12,7 +12,7 @@
 //! (gVisor boundary, default-deny network behind an egress allowlist,
 //! resource caps); the gateway only does the tool plumbing.
 //!
-//! Three tools are registered when `[sandbox]` is configured:
+//! Three tools are registered when the sandbox is configured:
 //!   - `run_in_sandbox` — the generic escape hatch (any python/bash).
 //!   - `generate_document` — markdown → pdf/docx/pptx via pandoc (a thin,
 //!     injection-safe preset over the generic path).
@@ -23,7 +23,7 @@
 //! from: on the chat page they're uploaded and spliced inline as chat
 //! attachments; on the `/v1` API path they're stored per-user and the
 //! result carries a bearer-authed download URL (see
-//! `rama_server::sandbox_api`). With no `[chat.s3]` configured, files are
+//! `rama_server::sandbox_api`). With no S3 attachment storage configured, files are
 //! reported as metadata only.
 
 use aiplane_core::server::capped_read;
@@ -479,7 +479,7 @@ impl SandboxClient {
                 (None, Some(s3), _) => self.deliver_api(ctx, s3, a, bytes).await,
                 _ => Ok(json!({
                     "name": a.name, "size": a.size, "mime": a.mime, "status": "not_stored",
-                    "note": "no attachment storage configured ([chat.s3]); file was produced but not retained",
+                    "note": "no attachment storage configured; file was produced but not retained",
                 })),
             };
             let mut entry =
@@ -1042,7 +1042,7 @@ async fn stage_attachments(
         return Ok(s);
     };
     // Storage gates *attachments*, not canvas documents — those live in the
-    // DB. A deployment without `[chat.s3]` can still stage a document the
+    // DB. A deployment without S3 attachment storage can still stage a document the
     // model names here, so resolve first and only skip the S3 half.
     let s3 = match ctx.s3.as_ref() {
         Some(s3) => Some(s3),
@@ -1461,8 +1461,6 @@ mod tests {
             bucket: "b".into(),
             access_key: None,
             secret_key: None,
-            access_key_env: None,
-            secret_key_env: None,
             key_prefix: "chat-attachments".into(),
         })
     }

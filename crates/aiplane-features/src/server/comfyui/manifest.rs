@@ -3,8 +3,8 @@
 
 //! Workflow manifest: the typed tool surface the model sees.
 //!
-//! One `manifest.toml` per workflow subdirectory under `[comfyui]
-//! content_dir`. The manifest is the **only** part of the workflow the
+//! One `manifest.toml` per workflow subdirectory under
+//! `comfyui.content_dir`. The manifest is the **only** part of the workflow the
 //! LLM ever sees — anything not declared here (model paths, weight dtype,
 //! sampler defaults, node graph) stays operator-curated and invisible.
 //!

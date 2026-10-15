@@ -86,7 +86,7 @@ in the tree. No routing, no `AppState`, no tool registry:
 - `auth/oidc.rs` — hand-rolled OIDC client (discovery + JWKS-verified ID tokens, on reqwest).
 - `auth/jwks.rs` — the one JWKS cache, shared by the OIDC login and an agent's `host_jwt` verifier: each fetches its set its own way, the cache decides when (fresh for a TTL, refetched for an unknown `kid` at most once per window).
 - `auth/token.rs` — gateway-token mint/hash helpers.
-- `config.rs` — typed `[upstream_pools]`, `[[models]]`, `[oidc]`, `[rbac]` schema.
+- `config.rs` — the in-memory `Config`: the environment-derived values (listen address, data directory, database path, public URL fallback, trusted proxies) plus the typed defaults that `settings.rs` overwrites from the `/admin/settings` rows on boot.
 - `db/` — sqlx; users / tokens / sessions / prefs / usage / limits / …, plus `migrations/` at the crate root, embedded by `db/mod.rs`'s `sqlx::migrate!`. Migrations run on one connection with foreign keys **off** and a `foreign_key_check` after, so a parent table can be rebuilt without `ON DELETE CASCADE` emptying its children (see `migrations/README.md`).
 - `principal.rs`, `run_chain.rs` — who acts: a person or a system principal, and on an agent run the call chain (agent → sub-agent → tool) that audit rows serialize. See [`agent-runs.md`](agent-runs.md#the-call-chain).
 - `crypto.rs` — AES-256-GCM at-rest sealing for DB-stored secrets.

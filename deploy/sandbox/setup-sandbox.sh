@@ -177,9 +177,8 @@ systemctl enable --now sandbox-runner.service
 cat <<EOF
 
 Done. Next (no gateway network change needed — it already reaches ${BRIDGE_IP}):
-  1. Add to the gateway config, then daemon-reload + restart gateway.service:
-       [sandbox]
-       runner_url = "http://${BRIDGE_IP}:9000"
+  1. At /admin/settings, set sandbox.runner_url to:
+       http://${BRIDGE_IP}:9000
   2. Confirm isolation actually applied:
        journalctl -u sandbox-runner.service | grep -i isolation
      Expect "isolation confirmed". If you see "SANDBOX IS NOT ISOLATED",

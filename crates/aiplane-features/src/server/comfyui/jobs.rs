@@ -74,7 +74,7 @@ pub async fn pending(db: &Pool) -> Result<Vec<ComfyuiJob>, sqlx::Error> {
 }
 
 /// Count of jobs with `status = 'pending'`. Used by the tool to
-/// enforce `[comfyui] max_concurrent_jobs` before submitting a new
+/// enforce `comfyui.max_concurrent_jobs` before submitting a new
 /// workflow — cheaper than loading all rows.
 pub async fn pending_count(db: &Pool) -> Result<i64, sqlx::Error> {
     let row = sqlx::query("SELECT COUNT(*) as count FROM comfyui_jobs WHERE status = 'pending'")

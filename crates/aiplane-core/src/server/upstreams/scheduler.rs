@@ -155,7 +155,7 @@ impl Drop for Ticket {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::upstreams::config::UpstreamPoolConfig;
+    use crate::server::upstreams::config::{BackendConfig, UpstreamPoolConfig};
 
     #[test]
     fn waiting_requests_share_one_dispatch_pass_per_poll_interval() {
@@ -196,17 +196,14 @@ mod tests {
     }
 
     fn registry() -> std::sync::Arc<UpstreamRegistry> {
-        let pool: UpstreamPoolConfig = toml::from_str(
-            r#"
-kind = "chat"
-[[backend]]
-name = "b"
-base_url = "http://unused/v1"
-max_inflight = 1
-models = ["m"]
-"#,
-        )
-        .unwrap();
+        let pool = UpstreamPoolConfig::new(
+            PoolKind::Chat,
+            vec![BackendConfig {
+                max_inflight: 1,
+                models: vec!["m".into()],
+                ..BackendConfig::new("b", "http://unused/v1")
+            }],
+        );
         UpstreamRegistry::new(&std::collections::HashMap::from([("p".into(), pool)])).unwrap()
     }
 

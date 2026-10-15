@@ -80,7 +80,7 @@ impl Tool for ReadSandboxOutput {
             let args: ReadArgs = serde_json::from_value(args)
                 .map_err(|e| ToolError::InvalidArgs(format!("expected {{id, action?, …}}: {e}")))?;
             let s3 = ctx.s3.as_ref().ok_or_else(|| {
-                ToolError::Failed("attachment storage not configured ([chat.s3])".into())
+                ToolError::Failed("attachment storage not configured (enable S3 attachment storage in /admin/settings)".into())
             })?;
             // `id` is "<turn>/<filename>". Restrict to the CURRENT turn so the
             // model can only read outputs it just produced — never another

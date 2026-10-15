@@ -68,10 +68,9 @@ RUST_LOG = "info,aiplane=debug,aiplane_core=debug,aiplane_features=debug,aiplane
 # live in the DB and are set under "Web search" on /admin/models (the legacy
 # SEARCH_PROVIDER / SEARXNG_URL / BRAVE_SEARCH_API_KEY vars are imported once
 # at first boot, then ignored). For the optional GeoIP
-# auto-updater (the `get_user_location` tool), set the IP2Location LITE
-# download token in `mise.local.toml`; the `geoip`
-# update_token_env` names which var to read (default below):
-# IP2LOCATION_TOKEN = "<your-ip2location-lite-token>"   # ← in mise.local.toml
+# auto-updater (the `get_user_location` tool), enter the IP2Location LITE
+# download token as `geoip.update_token` on /admin/settings; it is stored
+# encrypted in the database, not read from the environment.
 
 [tasks.test-nextcloud]
 description = "LIVE E2E for the fileshare RAG WebDAV provider against a real Nextcloud in a throwaway container. Never runs in normal CI or `cargo test` — the test binary is gated behind RUN_NEXTCLOUD_E2E and skips without it. Verifies the assumptions the mocked tests cannot: that oc:fileid really survives a move, and that a collection etag really changes and propagates when something beneath it changes (subtree pruning is built on that). Needs docker or podman. First run pulls ~600 MB and waits ~60-90 s for Nextcloud to install itself."

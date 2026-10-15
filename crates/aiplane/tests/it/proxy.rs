@@ -1226,7 +1226,7 @@ async fn state_with_backend_api_key(
             models: Vec::new(),
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: None,
+                alias: Default::default(),
                 supports_edit: false,
                 enabled: true,
                 name: "mock".into(),
@@ -1266,7 +1266,7 @@ async fn state_with_alias_pool(
     use aiplane_core::server::rbac::Resolver;
     use aiplane_core::server::upstreams::{
         self,
-        config::{AliasSpec, BackendConfig, PickerStrategy, UpstreamPoolConfig},
+        config::{BackendConfig, PickerStrategy, UpstreamPoolConfig},
     };
     use aiplane_core::server::{Config, db};
     use aiplane_runtime::server::AppState;
@@ -1288,7 +1288,7 @@ async fn state_with_alias_pool(
             models: Vec::new(),
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: Some(AliasSpec::Names(vec!["qwen".into()])),
+                alias: HashMap::from([("qwen".into(), None)]),
                 supports_edit: false,
                 enabled: true,
                 name: "mock".into(),
@@ -2269,8 +2269,7 @@ async fn token_priority_is_trusted_and_translated_at_dispatch() {
             ))
             .mount(&upstream)
             .await;
-        let mut pool: UpstreamPoolConfig =
-            serde_json::from_value(json!({"kind":"chat", "backend":[]})).unwrap();
+        let mut pool = UpstreamPoolConfig::new(PoolKind::Chat, Vec::new());
         let mut backend = common::mock_backend("priority-test", &upstream.uri());
         backend.models = vec!["model-a".into()];
         backend.priority = if custom {

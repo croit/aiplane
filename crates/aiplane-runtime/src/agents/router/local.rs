@@ -987,7 +987,6 @@ mod tests {
             aiplane_core::server::rbac::config::RbacConfig {
                 default_role: Some("member".into()),
                 mappings: vec![aiplane_core::server::rbac::config::RoleMapping {
-                    oidc_claim: "groups".into(),
                     oidc_value: "engineering".into(),
                     role: "engineering".into(),
                 }],
@@ -996,14 +995,12 @@ mod tests {
                 aiplane_core::server::rbac::config::RoleConfig {
                     id: "member".into(),
                     admin: false,
-                    models: vec!["*".into()],
                     tools: vec![],
                     skills: vec![],
                 },
                 aiplane_core::server::rbac::config::RoleConfig {
                     id: "engineering".into(),
                     admin: false,
-                    models: vec!["*".into()],
                     tools: vec![],
                     skills: vec![],
                 },

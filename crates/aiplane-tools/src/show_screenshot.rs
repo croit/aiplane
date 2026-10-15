@@ -119,7 +119,7 @@ impl Tool for ShowScreenshot {
             else {
                 return Err(ToolError::Failed(
                     "chat attachments are not configured on this gateway (the operator must \
-                     set [chat.s3]), so there is nowhere to put the screenshot — describe \
+                     enable S3 attachment storage in /admin/settings), so there is nowhere to put the screenshot — describe \
                      what you see instead"
                         .into(),
                 ));
@@ -233,8 +233,6 @@ mod tests {
                     bucket: "b".into(),
                     access_key: Some("test-access".into()),
                     secret_key: Some("test-secret".into()),
-                    access_key_env: None,
-                    secret_key_env: None,
                     key_prefix: "chat-attachments".into(),
                 },
             ));
@@ -272,7 +270,7 @@ mod tests {
     async fn without_attachment_storage_the_browser_is_never_asked() {
         let OnChat { ctx, mut rx, .. } = on_chat(None).await;
         let err = ShowScreenshot.run(ctx, json!({})).await.unwrap_err();
-        assert!(err.to_string().contains("[chat.s3]"), "{err}");
+        assert!(err.to_string().contains("S3 attachment storage"), "{err}");
         assert!(
             rx.try_recv().is_err(),
             "nothing may reach the browser when the image has nowhere to go"

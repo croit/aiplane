@@ -147,7 +147,6 @@ pub(crate) async fn boot_with(
         vec![RoleConfig {
             id: "member".into(),
             admin: false,
-            models: vec!["*".into()],
             tools: granted.iter().map(|t| t.to_string()).collect(),
             skills: vec![],
         }],

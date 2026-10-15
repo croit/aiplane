@@ -51,7 +51,7 @@ becomes reachable again. Conflating the two would let one locked-out admin take
 a production gateway offline for everyone else. `setup_wizard.rs` pins this.
 
 The wizard cannot help if the provider itself is gone, since it proves a
-provider by signing in through it. `[gateway].bootstrap_admin_groups` remains
+provider by signing in through it. `$AIPLANE_BOOTSTRAP_ADMIN_GROUPS` remains
 the break-glass anchor that does not depend on the group tables.
 
 Required env: none for OIDC. `AIPLANE_SESSION_KEY` is required for AIplane

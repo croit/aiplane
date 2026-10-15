@@ -157,7 +157,7 @@ pub enum OcrError {
 }
 
 /// Per-call knobs for [`recognize_document`]. [`OcrService`] derives these from
-/// `[chat.ocr]`; the low-level function takes them explicitly so a test can
+/// the `chat.ocr` settings; the low-level function takes them explicitly so a test can
 /// exercise one call without a service.
 #[derive(Debug, Clone)]
 pub struct OcrOptions {
@@ -756,7 +756,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     shared::hex::encode_lower(&hasher.finalize())
 }
 
-/// Hex digest of every `[chat.ocr]` setting that changes the recognised text.
+/// Hex digest of every `chat.ocr` setting that changes the recognised text.
 /// Two gateways with the same settings share cache rows; changing the DPI or
 /// the token cap correctly misses. Operational knobs (concurrency, timeout,
 /// byte ceiling) are deliberately absent — they don't change the text.
@@ -804,7 +804,7 @@ mod tests {
                     max_inflight: 2,
                     health_path: "/models".into(),
                     models: vec!["unlimited-ocr".into()],
-                    alias: None,
+                    alias: Default::default(),
                     supports_edit: false,
                     enabled: true,
                 }],

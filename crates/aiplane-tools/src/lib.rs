@@ -12,8 +12,8 @@
 //! the chat driver needs them.
 //!
 //! Adding a tool means writing it here, registering it in the `ToolRegistry`
-//! that `gateway`'s `main.rs` builds, and granting it to one or more roles in
-//! `[rbac]`. We do **not** discover tools at runtime.
+//! that `gateway`'s `main.rs` builds, and granting it to one or more groups at
+//! `/admin/groups`. We do **not** discover tools at runtime.
 //!
 //! This crate sits above `aiplane-core` and beside `aiplane-api`: only the
 //! binary's wiring depends on it, so adding or editing a tool is a leaf-crate

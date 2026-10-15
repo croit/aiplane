@@ -35,7 +35,7 @@ Category: **Chat**.
 | `chat.ocr.dpi` | Integer | Resolution PDF pages are rendered at before reading, in DPI. | No |
 | `chat.ocr.max_output_chars` | Integer | Cap on the text extracted from one document, in characters. | No |
 | `chat.ocr.timeout_secs` | Integer | Deadline for one document, in seconds. | No |
-| `chat.ocr.max_concurrency` | Integer | How many pages are read at once. | No |
+| `chat.ocr.max_concurrency` | Integer | How many documents are read at once across the whole gateway; others wait in a queue. | No |
 | `chat.ocr.auto_min_text_chars_per_page` | Integer | Below this many embedded characters per page, a PDF is treated as scanned and sent to OCR. | No |
 
 ### chat.compaction

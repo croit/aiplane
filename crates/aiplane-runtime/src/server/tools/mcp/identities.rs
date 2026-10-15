@@ -732,7 +732,6 @@ mod tests {
                     RbacConfig {
                         default_role: None,
                         mappings: vec![RoleMapping {
-                            oidc_claim: "roles".into(),
                             oidc_value: "allowed".into(),
                             role: "member".into(),
                         }],
@@ -740,7 +739,6 @@ mod tests {
                     vec![RoleConfig {
                         id: "member".into(),
                         admin: true,
-                        models: vec!["*".into()],
                         tools: vec!["*".into()],
                         skills: vec![],
                     }],
@@ -1071,7 +1069,19 @@ mod tests {
             .execute(&base.db)
             .await
             .unwrap();
-        let pools = serde_json::from_value(json!({"pool":{"kind":"chat","models":["selected"],"backend":[{"name":"fixture","base_url":server.uri()}]}})).unwrap();
+        let pools = std::collections::HashMap::from([(
+            "pool".to_string(),
+            aiplane_core::server::upstreams::config::UpstreamPoolConfig {
+                models: vec!["selected".into()],
+                ..aiplane_core::server::upstreams::config::UpstreamPoolConfig::new(
+                    aiplane_core::server::upstreams::config::PoolKind::Chat,
+                    vec![aiplane_core::server::upstreams::config::BackendConfig::new(
+                        "fixture",
+                        server.uri(),
+                    )],
+                )
+            },
+        )]);
         let state = AppState::new(
             Default::default(),
             base.db.clone(),
@@ -2330,7 +2340,19 @@ mod tests {
             .execute(&base.db)
             .await
             .unwrap();
-        let pools = serde_json::from_value(serde_json::json!({"pool":{"kind":"chat","models":["selected"],"backend":[{"name":"fixture","base_url":server.uri()}]}})).unwrap();
+        let pools = std::collections::HashMap::from([(
+            "pool".to_string(),
+            aiplane_core::server::upstreams::config::UpstreamPoolConfig {
+                models: vec!["selected".into()],
+                ..aiplane_core::server::upstreams::config::UpstreamPoolConfig::new(
+                    aiplane_core::server::upstreams::config::PoolKind::Chat,
+                    vec![aiplane_core::server::upstreams::config::BackendConfig::new(
+                        "fixture",
+                        server.uri(),
+                    )],
+                )
+            },
+        )]);
         let app = AppState::new(
             Default::default(),
             base.db.clone(),

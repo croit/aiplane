@@ -567,38 +567,6 @@ killed: the largest entries name the culprit — a test binary at tens of GB is 
 size-probe test (above), many `rustc`/`ld` entries are concurrent builds (one
 Rust-building agent at a time, `CARGO_BUILD_JOBS=4`).
 
-### A seed/import marker may only be burned once the decision is final
-
-**Symptom.** An upgraded deployment comes up missing something it had in its
-config file — no upstream pools, no groups, or no OIDC provider at all — and no
-amount of restarting brings it back. With OIDC it is worse than missing: AIplane marks itself configured because the database has users, so `/setup`
-404s and the only way in is `restore-setup` on the host.
-
-**Cause.** Four `app_settings` rows gate one-time work: `topology.seeded`,
-`rbac.seeded`, `setup.config_imported` and `settings.imported`. Each existed to
-stop a config file resurrecting values an admin deleted in the UI. Three of the
-four burned the marker unconditionally, including on a boot that found **no
-config file at all** — a volume mounted late, a bind mount not ready, a binary
-started from the wrong directory. That boot seeds nothing, records "done", and
-the file is never read again.
-
-All three had shipped. It was found by starting AIplane once in a checkout
-whose config lived under a different filename, which is exactly how an operator
-would hit it.
-
-**Prevention.** The rule is now uniform: burn the marker only when the work
-actually happened, or when there was a file to do it from
-(`Config::loaded_from.is_some()`). `settings::import_once` had it right from the
-start and is the reference; `setup::import_config_once` carries the reasoning in
-its `settled` flag, with regression tests
-(`a_boot_without_a_config_file_does_not_lock_out_a_later_import`,
-`a_provider_already_in_the_database_settles_the_decision`) covering both
-directions.
-
-If you add a fifth marker, the question to answer in a comment is not "has this
-run?" but **"could a later boot still have something to do here?"** — and a boot
-with no config file always could.
-
 ### Never `git push .` at a branch checked out in a sibling worktree
 
 **Symptom.** The push succeeds, the branch moves, and the other checkout now

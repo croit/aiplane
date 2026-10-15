@@ -105,8 +105,8 @@ settings-f-chat-ocr-max_output_chars = Maximaler extrahierter Text
 settings-f-chat-ocr-max_output_chars-help = Obergrenze für den aus einem Dokument extrahierten Text, in Zeichen.
 settings-f-chat-ocr-timeout_secs = Zeitlimit
 settings-f-chat-ocr-timeout_secs-help = Frist für ein Dokument, in Sekunden.
-settings-f-chat-ocr-max_concurrency = Seiten parallel
-settings-f-chat-ocr-max_concurrency-help = Wie viele Seiten gleichzeitig gelesen werden.
+settings-f-chat-ocr-max_concurrency = Dokumente parallel
+settings-f-chat-ocr-max_concurrency-help = Wie viele Dokumente gleichzeitig im gesamten Gateway gelesen werden. Weitere warten in der Warteschlange.
 settings-f-chat-ocr-auto_min_text_chars_per_page = Schwelle für Scan-Erkennung
 settings-f-chat-ocr-auto_min_text_chars_per_page-help = Unterhalb dieser Zahl eingebetteter Zeichen pro Seite gilt ein PDF als gescannt und geht an die OCR.
 
@@ -254,7 +254,7 @@ settings-f-metrics-allowed_ips-help = Adressen oder CIDR-Netze, z. B. 10.0.0.0/8
 # Bestätigung vor dem Zurücksetzen einer gespeicherten Einstellung (SPA-Editor).
 settings-clear-confirm = { $key } auf den eingebauten Standardwert zurücksetzen?
 settings-heading = Einstellungen
-settings-intro = Betriebseinstellungen dieses Gateways. Sie liegen in der Datenbank, eine Konfigurationsdatei ist nicht nötig — jedes Feld zeigt zusätzlich den TOML-Schlüssel, den es ersetzt.
+settings-intro = Betriebseinstellungen dieses Gateways. Sie liegen in der Datenbank — jedes Feld zeigt zusätzlich seinen Einstellungsschlüssel.
 settings-saved-restart = Gespeichert. Einige Felder dieses Abschnitts greifen erst nach einem Neustart.
 settings-save-failed = Diese Einstellungen konnten nicht gespeichert werden.
 settings-cleared = Zurückgesetzt. Es gilt wieder der Standardwert.
