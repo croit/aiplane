@@ -179,10 +179,18 @@ pub async fn compaction_target(
 /// alias first), matching how reasoning config and cost accounting key on it —
 /// an alias carries no settings of its own.
 pub(crate) async fn model_context_window(state: &RamaState, model: &str) -> Option<i64> {
-    model_defaults::get(&state.db, model)
-        .await
-        .ok()
-        .flatten()
+    let row = model_defaults::get(&state.db, model).await.ok().flatten();
+    known_context_window(row.as_ref(), &state.upstreams, model)
+}
+
+/// The context window the gateway knows for `model`: the admin's value, else
+/// the one the serving backend reports. `None` when neither exists.
+pub fn known_context_window(
+    defaults: Option<&model_defaults::ModelDefaults>,
+    upstreams: &aiplane_core::server::upstreams::UpstreamRegistry,
+    model: &str,
+) -> Option<i64> {
+    defaults
         .and_then(|row| row.context_window)
         .filter(|w| *w > 0)
         // Nothing configured: ask the backend. The health probe already reads
@@ -194,7 +202,7 @@ pub(crate) async fn model_context_window(state: &RamaState, model: &str) -> Opti
         // shrank the turn's tool-output allowance to an eighth of its size —
         // which is what starved a multi-step retrieval turn into 2 KB tool
         // results and made it report that it could not read a file.
-        .or_else(|| state.upstreams.probed_context_window(model))
+        .or_else(|| upstreams.probed_context_window(model))
 }
 
 /// Load the session, plan the fold, call the summariser, and persist the

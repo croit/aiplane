@@ -27,6 +27,7 @@ Built on **rama 0.3** (HTTP server + router + middleware) on the server, and **S
 ├── Dockerfile                   # gateway runtime image
 ├── docs/                        # detailed design docs (index in docs/README.md)
 ├── web/                         # SvelteKit SPA (Tailwind v4 + daisyUI v5) — see docs/ui.md
+├── clients/                     # files the gateway serves to clients (the OpenCode plugin)
 └── crates/
     ├── shared/                  # OpenAI wire types, shared with the CLI
     ├── session-core/            # chat-style UI substrate

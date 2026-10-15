@@ -219,8 +219,10 @@ the selection reaches a model without GDPR or NDA cover. The data comes from
 these inner tabs until the page is left, so switching to a guide does not hide
 the one-time value. The guide's `client` query parameter selects OpenCode,
 Claude Code, Pi, Oh My Pi, or Python; code examples use the browser's current origin so they
-also work on self-hosted domains. All guide instructions live in the six Fluent
-catalogs.
+also work on self-hosted domains. The OpenCode guide installs the plugin the gateway serves at
+`/clients/opencode/aiplane.js` and signs in with `opencode auth login aiplane`; the plugin then
+lists the token's chat models itself ([OpenCode plugin](reference/api.md#opencode-plugin)). All
+guide instructions live in the six Fluent catalogs.
 
 The token creation dialog and each active token card's Priority editor reuse
 `PrioritySelect`. `/api/v0/tokens/details` supplies the saved nullable priority,

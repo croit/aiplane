@@ -2042,19 +2042,25 @@ pub async fn list_models(State(state): State<Arc<RamaState>>, req: Request) -> R
     // access. A withheld model is also unroutable for them (see `route_access`),
     // so the list is a true capability view, not a cosmetic filter.
     let access = state.pool_access_for_token(&user);
-    let mut listed = state.upstreams.all_models_for(&access);
+    let mut listed: Vec<ListedModel> = state
+        .upstreams
+        .model_catalog_for(&access)
+        .into_iter()
+        .map(ListedModel::from)
+        .collect();
     if let Ok(routes) = aiplane_core::server::db::automatic_routes::all(&state.db).await {
         for route in routes {
             if access.allows_model(&route.alias)
                 && automatic_route_available(&state, &route, &access)
-                && !listed.contains(&route.alias)
+                && !listed.iter().any(|m| m.id == route.alias)
             {
-                listed.push(route.alias);
+                listed.push(ListedModel::route(route.alias));
             }
         }
     }
-    listed.sort();
-    let data: Vec<Value> = listed.into_iter().map(model_object).collect();
+    listed.sort_by(|a, b| a.id.cmp(&b.id));
+    let facts = ModelFacts::load(&state).await;
+    let data: Vec<Value> = listed.iter().map(|m| facts.object(m)).collect();
     let body = json!({ "object": "list", "data": data });
     (
         StatusCode::OK,
@@ -2099,10 +2105,27 @@ pub async fn retrieve_model(State(state): State<Arc<RamaState>>, req: Request) -
     if id.is_empty() || (!state.upstreams.knows_any_for(&id, &access) && !automatic) {
         return model_not_found_response(&id);
     }
+    // `knows_any_for` admits a real id a grant reaches only through an alias,
+    // which the caller's own catalog leaves out; access is settled by now, so
+    // the unfiltered catalog is only read for the id's kind and alias target.
+    let catalog_entry = |access: &PoolAccess| {
+        state
+            .upstreams
+            .model_catalog_for(access)
+            .into_iter()
+            .find(|m| m.id == id)
+    };
+    let listed = match catalog_entry(&access).or_else(|| catalog_entry(&PoolAccess::all())) {
+        Some(model) => ListedModel::from(model),
+        None => ListedModel::route(id),
+    };
     (
         StatusCode::OK,
         [("content-type", "application/json")],
-        model_object(id).to_string(),
+        ModelFacts::load_one(&state, &listed.real)
+            .await
+            .object(&listed)
+            .to_string(),
     )
         .into_response()
 }
@@ -2149,16 +2172,123 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// A full OpenAI model object: `{ id, object:"model", created, owned_by }`.
-/// We have no real per-model creation time; clients don't depend on the exact
-/// `created` value, only that it's a sane unix-seconds integer.
-fn model_object(id: String) -> Value {
-    json!({
-        "id": id,
-        "object": "model",
-        "created": jiff::Timestamp::now().as_second(),
-        "owned_by": "aiplane",
-    })
+/// One `/v1/models` entry: the id a caller names, the pool kind that serves
+/// it, and the real model whose settings apply (an alias carries none of its
+/// own; an automatic route is its own).
+struct ListedModel {
+    id: String,
+    real: String,
+    kind: PoolKind,
+}
+
+impl From<aiplane_core::server::upstreams::registry::CatalogModel> for ListedModel {
+    fn from(model: aiplane_core::server::upstreams::registry::CatalogModel) -> Self {
+        Self {
+            real: model.alias_of.unwrap_or_else(|| model.id.clone()),
+            id: model.id,
+            kind: model.kind,
+        }
+    }
+}
+
+impl ListedModel {
+    fn route(alias: String) -> Self {
+        Self {
+            real: alias.clone(),
+            id: alias,
+            kind: PoolKind::Chat,
+        }
+    }
+}
+
+/// What the gateway knows about the models it lists, read once per request.
+struct ModelFacts {
+    defaults:
+        std::collections::HashMap<String, aiplane_core::server::db::model_defaults::ModelDefaults>,
+    upstreams: Arc<aiplane_core::server::upstreams::UpstreamRegistry>,
+}
+
+impl ModelFacts {
+    async fn load(state: &RamaState) -> Self {
+        let defaults = aiplane_core::server::db::model_defaults::all(&state.db)
+            .await
+            .inspect_err(
+                |err| tracing::warn!(error = %err, "reading model defaults for /v1/models"),
+            )
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| (row.model_name.clone(), row))
+            .collect();
+        Self {
+            defaults,
+            upstreams: state.upstreams.clone(),
+        }
+    }
+
+    async fn load_one(state: &RamaState, model: &str) -> Self {
+        let defaults = aiplane_core::server::db::model_defaults::get(&state.db, model)
+            .await
+            .inspect_err(|err| tracing::warn!(error = %err, model, "reading model defaults"))
+            .ok()
+            .flatten()
+            .map(|row| (row.model_name.clone(), row))
+            .into_iter()
+            .collect();
+        Self {
+            defaults,
+            upstreams: state.upstreams.clone(),
+        }
+    }
+
+    /// The OpenAI model object, extended with `kind` and — only where the
+    /// gateway holds the fact — the context window it compacts and budgets
+    /// against, the output cap it applies by default, and the capabilities
+    /// an admin confirmed or the gateway learned. Clients such as the
+    /// OpenCode plugin size their requests from these.
+    fn object(&self, model: &ListedModel) -> Value {
+        let mut object = json!({
+            "id": model.id,
+            "object": "model",
+            "created": jiff::Timestamp::now().as_second(),
+            "owned_by": "aiplane",
+            "kind": model.kind.as_str(),
+        });
+        if model.kind != PoolKind::Chat {
+            return object;
+        }
+        let row = self.defaults.get(&model.real);
+        if let Some(window) = aiplane_runtime::server::compaction::known_context_window(
+            row,
+            &self.upstreams,
+            &model.real,
+        ) {
+            object["context_window"] = json!(window);
+        }
+        let Some(row) = row else { return object };
+        if let Some(max) = default_output_cap(&row.defaults_toml) {
+            object["max_output_tokens"] = json!(max);
+        }
+        let caps = &row.capabilities;
+        let mut known = serde_json::Map::new();
+        for (name, value) in [("vision", caps.vision), ("tools", caps.tools)] {
+            if let Some(value) = value {
+                known.insert(name.to_string(), json!(value));
+            }
+        }
+        if !known.is_empty() {
+            object["capabilities"] = Value::Object(known);
+        }
+        object
+    }
+}
+
+/// The output-token cap a model's admin defaults put on every request that
+/// sets none of its own.
+fn default_output_cap(defaults_toml: &str) -> Option<u64> {
+    let defaults = aiplane_core::server::model_defaults::parse_defaults(defaults_toml).ok()?;
+    ["max_completion_tokens", "max_tokens"]
+        .into_iter()
+        .find_map(|key| defaults.get(key).and_then(Value::as_u64))
 }
 
 /// Forwards a request body to the chosen upstream backend and relays the

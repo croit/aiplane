@@ -978,6 +978,120 @@ async fn v1_models_lists_all_pools_deduped_with_full_objects() {
     }
 }
 
+async fn v1_models_list(
+    app: &impl common::Service<
+        rama::http::Request,
+        Output = rama::http::Response,
+        Error = std::convert::Infallible,
+    >,
+    bearer: &str,
+) -> Vec<serde_json::Value> {
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/models")
+        .header("authorization", format!("Bearer {bearer}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let parsed: serde_json::Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    parsed["data"].as_array().expect("data array").clone()
+}
+
+#[tokio::test]
+async fn v1_models_carry_the_facts_the_gateway_holds_about_each_model() {
+    use aiplane_core::server::db::model_defaults::{self, AllFields, ModelCapabilities};
+    let state = common::state_with_chat_and_config_transcription(
+        "Qwen/Qwen3.6-35B-A3B-FP8",
+        "mistralai/Voxtral-Mini-4B-Realtime-2602",
+    )
+    .await;
+    model_defaults::set_all(
+        &state.db,
+        "Qwen/Qwen3.6-35B-A3B-FP8",
+        &AllFields {
+            defaults_toml: "max_tokens = 8192\ntemperature = 0.6".into(),
+            context_window: Some(131_072),
+            capabilities: ModelCapabilities {
+                vision: Some(true),
+                tools: Some(false),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let data = v1_models_list(&app, &bearer).await;
+    let chat = data
+        .iter()
+        .find(|m| m["id"] == "Qwen/Qwen3.6-35B-A3B-FP8")
+        .expect("chat model listed");
+    assert_eq!(chat["kind"], "chat");
+    assert_eq!(chat["context_window"], 131_072);
+    assert_eq!(chat["max_output_tokens"], 8192);
+    assert_eq!(
+        chat["capabilities"],
+        json!({ "vision": true, "tools": false })
+    );
+
+    let transcription = data
+        .iter()
+        .find(|m| m["id"] == "mistralai/Voxtral-Mini-4B-Realtime-2602")
+        .expect("transcription model listed");
+    assert_eq!(transcription["kind"], "transcription");
+}
+
+#[tokio::test]
+async fn v1_models_leave_out_what_the_gateway_does_not_know() {
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let data = v1_models_list(&app, &bearer).await;
+    let model = data.iter().find(|m| m["id"] == "model-a").expect("listed");
+    assert_eq!(model["kind"], "chat");
+    for unknown in ["context_window", "max_output_tokens", "capabilities"] {
+        assert!(
+            model.get(unknown).is_none(),
+            "`{unknown}` must be absent when nothing is configured or probed: {model}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn v1_models_retrieve_carries_the_same_facts_as_the_list() {
+    use aiplane_core::server::db::model_defaults::{self, AllFields};
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    model_defaults::set_all(
+        &state.db,
+        "model-a",
+        &AllFields {
+            context_window: Some(65_536),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/models/model-a")
+        .header("authorization", format!("Bearer {bearer}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let parsed: serde_json::Value = serde_json::from_slice(&common::read_body(resp).await).unwrap();
+    assert_eq!(parsed["kind"], "chat");
+    assert_eq!(parsed["context_window"], 65_536);
+}
+
 #[tokio::test]
 async fn v1_models_retrieve_returns_model_object_for_id_with_slash() {
     let state = common::state_with_chat_and_config_transcription(

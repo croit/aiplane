@@ -39,6 +39,46 @@ OpenAI-compatible upstreams determine many request options and response fields.
 AIplane compatibility is endpoint-specific; an upstream's additional endpoint
 is not automatically exposed by the gateway.
 
+### Model facts
+
+`GET /v1/models` and `GET /v1/models/{*id}` return OpenAI model objects with
+additional fields. Every entry has `kind`, the pool kind that serves it
+(`chat`, `transcription`, `embedding`, `image`, `speech`, `rerank` or
+`system_one`). A chat model also carries, only where the gateway holds the
+fact:
+
+| Field | Source |
+|---|---|
+| `context_window` | The model's context window from model settings, else the window its backend reports. Compaction and the tool-output budget use the same value. |
+| `max_output_tokens` | `max_completion_tokens` or `max_tokens` from the model's request defaults. |
+| `capabilities.vision`, `capabilities.tools` | Capabilities an administrator set or the gateway learned from a backend refusal. |
+
+An alias reports the facts of the model it resolves to. An automatic route
+reports only its own settings. A field the gateway does not know is absent,
+never filled with a guess.
+
+```json
+{"id":"Qwen/Qwen3.6-35B-A3B-FP8","object":"model","created":1792011760,
+ "owned_by":"aiplane","kind":"chat","context_window":131072,
+ "max_output_tokens":8192,"capabilities":{"vision":true,"tools":true}}
+```
+
+### OpenCode plugin
+
+`GET /clients/opencode/aiplane.js` serves a plugin for OpenCode v2 with this
+gateway's public URL filled in. It needs no sign-in and contains no
+credential. Saved as `~/.config/opencode/plugins/aiplane.js`, it adds the
+`aiplane` integration, which signs in with a personal `gwk_` token
+(`opencode auth login aiplane`), and the `aiplane` provider, whose models are
+the token's chat models from `/v1/models`. The plugin maps `context_window`,
+`max_output_tokens` and `capabilities` onto OpenCode's model limits and
+capabilities. Where the gateway reports no window it keeps OpenCode's own
+fallbacks. The output limit never exceeds half the window, because OpenCode
+reserves it inside the window. A model accepts images only when the gateway
+reports `vision: true`; tools stay enabled unless it reports `tools: false`.
+Models are reloaded when the stored token changes. OpenCode v1 is not
+supported.
+
 ### First completion and streaming
 
 Set `AIPLANE_TOKEN` from your secret store and substitute an actually accessible
@@ -749,6 +789,7 @@ Debug fixture routes exist only in development builds.
 | `GET /auth/login` |
 | `POST /auth/logout` |
 | `GET /chat/attachment/{turn_id}/{filename}` |
+| `GET /clients/opencode/aiplane.js` |
 | `GET /healthz` |
 | `POST /hooks/rag/{token}` |
 | `GET /hooks/{secret}` |

@@ -490,6 +490,7 @@ pub use tool_toggles::{
 pub mod a2a;
 mod agent_errors;
 pub mod architect;
+pub mod clients;
 pub mod embed;
 pub mod json_admin;
 pub mod json_agent_activity;
