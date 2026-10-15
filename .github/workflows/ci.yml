@@ -96,7 +96,7 @@ jobs:
 
       # install_args limits this to gitleaks; pulling the full toolset (Rust,
       # Node, typst) would cost minutes for a 1.3 s scan.
-      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: gitleaks
 
@@ -148,7 +148,7 @@ jobs:
 
       # Installs the toolchain pinned in mise.toml (Rust + components, Node,
       # typst, cargo-binstall) and caches it across runs.
-      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
       # Belt-and-suspenders: mise.toml requests the rustfmt/clippy components,
       # but on the GitHub runner (which ships its own rustup) that doesn't
       # always take, so `cargo fmt`/`clippy` via the pinned toolchain fail.
@@ -176,7 +176,7 @@ jobs:
 
       - run: ls -lh target/release/aiplane target/release/sandbox-runner
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gateway-binaries
           path: |
@@ -191,7 +191,7 @@ jobs:
       # target/frontend/build/ by the `build-web` mise task). A separate
       # artifact because it is a whole directory the container job COPYs;
       # `gateway-binaries` is executables-only.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gateway-spa
           path: target/frontend/build/
@@ -217,14 +217,14 @@ jobs:
           fetch-depth: 0
       # The Dockerfile COPYs the binaries built by the `ci` job — it does not
       # compile anything. Pull them back into target/release/.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: gateway-binaries
           path: target/release
 
       # Same for the SPA build — the Dockerfile COPYs target/frontend/build
       # (staged there by the `build-web` mise task in the `ci` job).
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: gateway-spa
           path: target/frontend/build
@@ -238,7 +238,7 @@ jobs:
       # rather than in the `ci` job, whose shallow checkout cannot derive a
       # version, and not taken from the `extension` job, so a failed store
       # publish on a tag cannot hold back the image.
-      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: node@24
       - name: mise run stage-extension
@@ -406,7 +406,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # COPY-prebuilt, like the gateway image: pull the binary the `ci` job
       # built and restore its executable bit (upload-artifact drops it).
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: gateway-binaries
           path: target/release
@@ -543,7 +543,7 @@ jobs:
           fetch-depth: 0
 
       # Node alone: packaging is a copy, a JSON edit and a zip.
-      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: node@24
 
@@ -553,7 +553,7 @@ jobs:
 
       # Kept whatever happens, so a release always has the exact artefact that
       # was submitted — the store shows you what is live, not what you sent.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: chrome-extension
           path: ${{ steps.package.outputs.zip }}
@@ -640,7 +640,7 @@ jobs:
       # are pinned here rather than in mise.toml's [tools] so a developer who
       # never touches the chart does not download them on every `mise install`;
       # `mise run helm-lint` pins the same versions.
-      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: helm@3.19.0 kubeconform@0.7.0
 

@@ -109,10 +109,10 @@ fn extract_and_install(zip_bytes: &[u8], db_path: &Path) -> anyhow::Result<()> {
     let mut archive = zip::ZipArchive::new(reader)?;
 
     let bin_index = (0..archive.len()).find(|&i| {
-        archive
-            .by_index(i)
-            .ok()
-            .is_some_and(|e| e.name().to_ascii_uppercase().ends_with(".BIN"))
+        archive.by_index(i).ok().is_some_and(|e| {
+            e.name()
+                .is_ok_and(|n| n.to_ascii_uppercase().ends_with(".BIN"))
+        })
     });
     let idx =
         bin_index.ok_or_else(|| anyhow::anyhow!("no .BIN entry in the IP2Location archive"))?;

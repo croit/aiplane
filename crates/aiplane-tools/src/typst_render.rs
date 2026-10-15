@@ -3195,7 +3195,7 @@ mod tests {
 
         let mut zr = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
         let mut names: Vec<String> = (0..zr.len())
-            .map(|i| zr.by_index(i).unwrap().name().to_string())
+            .map(|i| zr.by_index(i).unwrap().name().unwrap().to_string())
             .collect();
         names.sort();
         assert_eq!(names, vec!["deck.json", "fonts/Brand.ttf", "template.typ"]);
@@ -3218,7 +3218,7 @@ mod tests {
         let zip_bytes = build_bundle_zip(root, "deck.json", b"{}", &staged).unwrap();
         let mut zr = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
         let names: Vec<String> = (0..zr.len())
-            .map(|i| zr.by_index(i).unwrap().name().to_string())
+            .map(|i| zr.by_index(i).unwrap().name().unwrap().to_string())
             .collect();
         assert!(names.iter().any(|n| n == "uploads/u0_pic.png"), "{names:?}");
     }

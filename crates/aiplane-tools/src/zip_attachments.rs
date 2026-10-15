@@ -445,7 +445,7 @@ mod tests {
             let mut f = zr.by_index(i).unwrap();
             let mut s = String::new();
             std::io::Read::read_to_string(&mut f, &mut s).unwrap();
-            found.push((f.name().to_string(), s));
+            found.push((f.name().unwrap().to_string(), s));
         }
         assert_eq!(
             found,

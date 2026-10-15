@@ -715,7 +715,7 @@ fn archive_top_component(archive: &Path) -> Option<String> {
     let file = std::fs::File::open(archive).ok()?;
     let mut zip = zip::ZipArchive::new(file).ok()?;
     let first = zip.by_index(0).ok()?;
-    first.name().split('/').next().map(str::to_string)
+    first.name().ok()?.split('/').next().map(str::to_string)
 }
 
 #[derive(Debug, Error)]
