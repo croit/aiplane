@@ -27,6 +27,7 @@ mod automatic_routing;
 mod body_limit;
 mod browser_feedback;
 mod chat_json_api;
+mod clients;
 mod comfyui_integration;
 mod common;
 mod cors;

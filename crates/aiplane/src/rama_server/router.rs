@@ -8,6 +8,9 @@
 //!   - **Non-UI survivors**: the two public `/hooks` triggers (the URL is the
 //!     credential) and the OAuth round-trips, whose redirect URIs are
 //!     registered with external providers and so cannot move.
+//!   - **Client integrations**: `/clients/opencode/aiplane.js`, the OpenCode
+//!     provider plugin with this gateway's address filled in. Public: it
+//!     holds no credential.
 //!   - **Model API proxy**: `/v1/models`, `/v1/chat/completions`, `/v1/responses`,
 //!     `/v1/systemone`, `/v1/audio/*`, `/v1/embeddings`, `/v1/rerank`,
 //!     `/v1/images/*` — bearer-authenticated, forwarded to the upstream pool
@@ -99,6 +102,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         .with_post("/integrations/{key}/retry", pages::integrations_retry)
         .with_get("/integrations/callback", pages::integrations_callback)
         .with_endpoint_layer(endpoint(BodyLimitLayer::UPLOAD))
+        .with_get(
+            "/clients/opencode/aiplane.js",
+            pages::clients::opencode_plugin,
+        )
         .with_get("/v1/models", proxy::list_models)
         // Catch-all param: model ids contain `/` (e.g.
         // `mistralai/Voxtral-Mini-4B-Realtime-2602`).

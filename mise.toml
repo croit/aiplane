@@ -457,6 +457,12 @@ sources = ["extension/src/**/*.js", "scripts/publish-extension*.mjs"]
 dir = "{{ config_root }}"
 run = "node --test 'extension/src/**/*.test.js' scripts/publish-extension.test.mjs"
 
+[tasks.test-clients]
+description = "Unit-test the client integrations the gateway serves (node --test): the OpenCode plugin's model mapping, its listing against a local stand-in gateway, and its sign-in flow against a stand-in for OpenCode's plugin host. The plugin inside a real OpenCode is verified by hand — see docs/reference/api.md → OpenCode plugin."
+sources = ["clients/**/*.js"]
+dir = "{{ config_root }}"
+run = "node --test 'clients/**/*.test.js'"
+
 [tasks.lint]
 description = "Clippy + rustfmt + svelte-check."
 depends = ["check-web"]
@@ -540,11 +546,11 @@ run = "gitleaks git . --staged --redact --no-banner"
 
 [tasks.ci]
 description = "Everything CI runs: lint + tests + release build of the gateway binary + SPA build. mise fans out via the DAG. Locally prefer `verify` — same gate, minus the release build you don't need."
-depends = ["lint", "test", "test-web", "test-extension", "build", "build-web", "parity-gap"]
+depends = ["lint", "test", "test-web", "test-extension", "test-clients", "build", "build-web", "parity-gap"]
 
 [tasks.verify]
 description = "The local pre-push gate: lint + Rust tests + SPA checks and build. Same checks as `ci` minus the release build — nothing in `ci` catches a compile error that `test` doesn't, and the release build is a THIRD full compile of the workspace (dev for clippy, test for nextest, release for the binary). Run this once before pushing; use `test-crate` / `lint-crate` while iterating."
-depends = ["lint", "test", "test-web", "test-extension", "build-web", "parity-gap"]
+depends = ["lint", "test", "test-web", "test-extension", "test-clients", "build-web", "parity-gap"]
 
 [tasks.test-crate]
 description = "Tests for ONE crate — the iteration loop. `mise run test-crate aiplane-api [filter]`. Seconds instead of the ~20 min a full `test` costs after touching a root crate, because it links that crate's test binaries only."

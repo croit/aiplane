@@ -42,6 +42,13 @@ Open **Settings → Tokens** (`/settings/tokens`).
 5. Create it and copy the plaintext value from the reveal panel immediately.
 6. Follow the **Guides** tab for the client you want to configure.
 
+For OpenCode v2, the **Guides → OpenCode** tab shows two commands. The first
+downloads the AIplane plugin, already set up for your gateway, into
+`~/.config/opencode/plugins/`. The second, `opencode auth login aiplane`, asks
+for the token. OpenCode then lists every chat model the token may use under
+**croit AIplane**, with the context window and capabilities the gateway knows.
+Signing in with a different token, or revoking it, changes that list.
+
 The plaintext is revealed at creation or rotation; it cannot be retrieved from a normal token listing. Store it as a credential, not in a document, screenshot or source repository. New tokens have gateway-owned tool execution disabled by default.
 
 Each token card provides four configuration areas:
