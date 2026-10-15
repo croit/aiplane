@@ -110,7 +110,7 @@ impl Tool for UploadAttachment {
             let s3 = ctx.s3.as_ref().ok_or_else(|| {
                 ToolError::Failed(
                     "chat attachments are not configured on this gateway \
-                     (operator must set [chat.s3])"
+                     (the operator must enable S3 attachment storage in /admin/settings)"
                         .into(),
                 )
             })?;
@@ -243,8 +243,6 @@ mod tests {
                     // touches the network — which is the point of the fixture.
                     access_key: None,
                     secret_key: None,
-                    access_key_env: None,
-                    secret_key_env: None,
                     key_prefix: "chat-attachments".into(),
                 },
             )),

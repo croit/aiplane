@@ -123,8 +123,7 @@ changes. Name, description, icon, category, audit, enablement and allowed-group
 edits preserve that generation; current authorization still checks enablement
 and groups. New rows get fresh generations, including delete/recreate and
 restoration of a previously deleted default. Returning to an older URL cannot
-restore an older generation. Crypto resealing preserves resource and credential
-generations.
+restore an older generation.
 
 An owned credential and its pending OAuth reservation retain the actual
 catalogue generation used to authorize them. Provenance is checked before token

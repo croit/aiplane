@@ -32,8 +32,7 @@ use aiplane_core::server::config::{
     ComfyuiConfig, FeedbackConfig, GatewayConfig, RagConfig, SandboxConfig, SkillsConfig,
     TypstConfig,
 };
-use aiplane_core::server::rbac::RoleConfig;
-use aiplane_core::server::rbac::{Resolver, config::RbacConfig, config::RoleMapping};
+use aiplane_core::server::rbac::{Resolver, RoleConfig};
 use aiplane_core::server::upstreams::{
     self,
     config::{BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
@@ -295,7 +294,7 @@ async fn main() -> anyhow::Result<()> {
             models: Vec::new(),
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: None,
+                alias: Default::default(),
                 supports_edit: false,
                 enabled: true,
                 name: "wiremock-chat".into(),
@@ -323,7 +322,7 @@ async fn main() -> anyhow::Result<()> {
             models: Vec::new(),
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: None,
+                alias: Default::default(),
                 supports_edit: false,
                 enabled: true,
                 name: "wiremock-voice".into(),
@@ -351,7 +350,7 @@ async fn main() -> anyhow::Result<()> {
             models: vec!["demo-selector".into()],
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: None,
+                alias: Default::default(),
                 supports_edit: false,
                 enabled: true,
                 name: "wiremock-selector".into(),
@@ -384,7 +383,7 @@ async fn main() -> anyhow::Result<()> {
             models: vec!["demo-tts".into()],
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: None,
+                alias: Default::default(),
                 supports_edit: false,
                 enabled: true,
                 name: "wiremock-speech".into(),
@@ -414,7 +413,7 @@ async fn main() -> anyhow::Result<()> {
             models: vec!["demo-image".into()],
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: None,
+                alias: Default::default(),
                 supports_edit: true,
                 enabled: true,
                 name: "wiremock-image".into(),
@@ -504,35 +503,30 @@ async fn main() -> anyhow::Result<()> {
         RoleConfig {
             id: "admin".into(),
             admin: true,
-            models: vec!["*".into()],
             tools: vec!["*".into()],
             skills: vec!["*".into()],
         },
         RoleConfig {
             id: "user".into(),
             admin: false,
-            models: vec!["*".into()],
             tools: vec!["*".into()],
             skills: vec![],
         },
         RoleConfig {
             id: "engineering".into(),
             admin: false,
-            models: vec!["*".into()],
             tools: vec!["*".into()],
             skills: vec![],
         },
         RoleConfig {
             id: "finance".into(),
             admin: false,
-            models: vec!["demo-model".into()],
             tools: vec![],
             skills: vec![],
         },
         RoleConfig {
             id: "support".into(),
             admin: false,
-            models: vec!["demo-model".into()],
             tools: vec!["search_web".into()],
             skills: vec![],
         },
@@ -556,39 +550,17 @@ async fn main() -> anyhow::Result<()> {
         queue_poll_interval_ms: 500,
         max_concurrent_jobs: 1,
     };
-    // OIDC→role mapping (seed-only, mirrors a real deployment). Every signed-in
-    // user gets `user` as a baseline; team/admin roles come from their OIDC
-    // groups. `dev` carries the `platform-admins` group → resolves to admin.
-    let dev_rbac = RbacConfig {
-        default_role: Some("user".into()),
-        mappings: vec![
-            RoleMapping {
-                oidc_claim: "groups".into(),
-                oidc_value: "platform-admins".into(),
-                role: "admin".into(),
-            },
-            RoleMapping {
-                oidc_claim: "groups".into(),
-                oidc_value: "admin".into(),
-                role: "admin".into(),
-            },
-            RoleMapping {
-                oidc_claim: "groups".into(),
-                oidc_value: "engineering".into(),
-                role: "engineering".into(),
-            },
-            RoleMapping {
-                oidc_claim: "groups".into(),
-                oidc_value: "finance".into(),
-                role: "finance".into(),
-            },
-            RoleMapping {
-                oidc_claim: "groups".into(),
-                oidc_value: "support".into(),
-                role: "support".into(),
-            },
-        ],
-    };
+    // OIDC group → role mapping, mirroring a real deployment. Every signed-in
+    // user gets `user` as a baseline (the default group); team/admin roles come
+    // from their OIDC groups. `dev` carries the `platform-admins` group →
+    // resolves to admin.
+    let dev_group_mappings = [
+        ("platform-admins", "admin"),
+        ("admin", "admin"),
+        ("engineering", "engineering"),
+        ("finance", "finance"),
+        ("support", "support"),
+    ];
     let config = Config {
         sandbox: Some(SandboxConfig {
             enabled: true,
@@ -611,12 +583,8 @@ async fn main() -> anyhow::Result<()> {
         rag: Some(RagConfig::default()),
         // Turn on impersonation so the /admin/users page renders its
         // Impersonate action column (audited in production; harmless here).
-        // `bootstrap_admin_groups` mirrors production's break-glass admin so the
-        // `dev` user stays admin even after an `/admin/groups` edit reloads the
-        // resolver from the (DB-seeded) group tables.
         gateway: GatewayConfig {
             allow_impersonation: true,
-            bootstrap_admin_groups: vec!["platform-admins".into()],
             ..Default::default()
         },
         // Seed a feedback config so the floating feedback button + dialog
@@ -630,7 +598,6 @@ async fn main() -> anyhow::Result<()> {
             github_owner: "demo-owner".into(),
             github_repo: "demo-repo".into(),
             github_token: Some("dev-ui-dummy-token".into()),
-            github_token_env: None,
             labels: vec!["feedback".into()],
             assets_branch: "feedback-assets".into(),
             // Operator-chosen models (the form has no picker). Empty would also
@@ -644,7 +611,6 @@ async fn main() -> anyhow::Result<()> {
             gitlab_url: "https://gitlab.com".into(),
             gitlab_project_id: String::new(),
             gitlab_token: None,
-            gitlab_token_env: None,
         }),
         ..Config::default()
     };
@@ -661,8 +627,9 @@ async fn main() -> anyhow::Result<()> {
     .expect("dev_ui settings seed");
     // Seed the DB group tables, then build the resolver from the DB snapshot — so `/admin/groups`
     // shows the seeded groups and an edit + `reload_rbac` round-trips through the
-    // same DB path production uses. `bootstrap_admin_groups` keeps `dev` admin.
-    aiplane_core::server::db::gateway_groups::seed_roles(&pool, &dev_rbac, &roles)
+    // same DB path production uses. The break-glass admin group keeps `dev` admin
+    // after an `/admin/groups` edit reloads the resolver from the group tables.
+    seed_dev_groups(&pool, &roles, &dev_group_mappings)
         .await
         .expect("dev_ui RBAC seed");
     let group_snapshot = aiplane_core::server::db::gateway_groups::load_snapshot(&pool)
@@ -670,7 +637,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("dev_ui load groups");
     let rbac = Arc::new(Resolver::from_snapshot(
         group_snapshot,
-        config.gateway.bootstrap_admin_groups.clone(),
+        vec!["platform-admins".into()],
     ));
     if let Ok(grants) = aiplane_core::server::db::skill_grants::all(&pool).await {
         rbac.set_skill_grant_overlay(grants);
@@ -2701,5 +2668,30 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
     )
     .await?;
 
+    Ok(())
+}
+
+/// Write the demo roles into the group tables: each role becomes a gateway
+/// group with its tool and skill grants, `user` is the default group, and each
+/// `(oidc_value, group)` pair maps an OIDC group claim onto a role.
+async fn seed_dev_groups(
+    pool: &aiplane_core::server::db::Pool,
+    roles: &[RoleConfig],
+    mappings: &[(&str, &str)],
+) -> Result<(), aiplane_core::server::db::DbError> {
+    use aiplane_core::server::db::{gateway_groups, skill_grants};
+    for role in roles {
+        gateway_groups::upsert_group(pool, &role.id, "", role.admin, role.id == "user").await?;
+        gateway_groups::set_tools_for_group(pool, &role.id, &role.tools).await?;
+        skill_grants::add_grants_for_role(pool, &role.id, &role.skills).await?;
+    }
+    for role in roles {
+        let values: Vec<String> = mappings
+            .iter()
+            .filter(|(_, group)| *group == role.id)
+            .map(|(value, _)| (*value).to_string())
+            .collect();
+        gateway_groups::set_mappings_for_group(pool, &role.id, &values).await?;
+    }
     Ok(())
 }

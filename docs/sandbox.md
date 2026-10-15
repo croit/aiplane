@@ -620,9 +620,8 @@ sudo deploy/sandbox/setup-sandbox.sh            # add --egress for pip / capture
 
 # 3. wire AIplane to the runner (no gateway network change — it already
 #    reaches the bridge gateway IP that setup printed, usually 10.88.0.1):
-#      add to the AIplane settings:
-#         [sandbox]
-#         runner_url = "http://10.88.0.1:9000"
+#      at /admin/settings set sandbox.runner_url to
+#         http://10.88.0.1:9000
 sudo podman pull ghcr.io/croit/aiplane:latest     # the rebuilt gateway has the sandbox tools
 sudo systemctl daemon-reload
 sudo systemctl restart gateway.service
@@ -686,14 +685,11 @@ Quadlet. (`/dev/kvm` is not required — gVisor runs entirely in userspace.)
    option. See [Egress and the capability probe](#egress-and-the-capability-probe).
 
 4. **Point AIplane at the runner.** No gateway network change is needed —
-   it already reaches the bridge gateway IP over the default podman network. In
-   the gateway config (use the `BRIDGE_IP` from step 3, usually `10.88.0.1`):
-   ```toml
-   [sandbox]
-   runner_url = "http://10.88.0.1:9000"
-   ```
+   it already reaches the bridge gateway IP over the default podman network. At
+   `/admin/settings`, set `sandbox.runner_url` to `http://10.88.0.1:9000` (use
+   the `BRIDGE_IP` from step 3, usually `10.88.0.1`).
    Produced-file delivery (chat attachments + API download URLs) needs
-   `[chat.s3]` configured. Then `sudo systemctl daemon-reload && sudo systemctl
+   attachment storage (S3) configured at `/admin/settings`. Then `sudo systemctl daemon-reload && sudo systemctl
    restart gateway.service`.
 
 ## Docker / Compose deployment (gVisor via the Docker socket)
@@ -790,8 +786,7 @@ SANDBOX_RUNTIME=local-unsafe SANDBOX_BIND=127.0.0.1:9000 \
   cargo run -p sandbox-runner
 
 # Terminal 2: point AIplane at it.
-#   [sandbox]
-#   runner_url = "http://127.0.0.1:9000"
+#   at /admin/settings set sandbox.runner_url to http://127.0.0.1:9000
 # then `mise run dev` and call run_in_sandbox from the chat UI / API.
 ```
 
@@ -857,7 +852,7 @@ see [Per-turn container reuse](#per-turn-container-reuse)).
 > `SANDBOX_MEMORY`. Warm/in-flight containers *and* idle per-turn leases both
 > count, so budget `SANDBOX_MEMORY × (SANDBOX_MAX_CONCURRENT + SANDBOX_MAX_LEASES)`
 > against free host RAM (with headroom). Produced files also pass back through
-> AIplane's `[sandbox] max_artifact_bytes` cap — raise it for large outputs.
+> AIplane's `sandbox.max_artifact_bytes` cap — raise it for large outputs.
 
 **Egress allowlist** — `deploy/quadlet/allowlist.txt` (one host per line),
 consumed by the squid proxy. Default-deny: only listed hosts are reachable.

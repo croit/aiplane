@@ -4,7 +4,7 @@
 
 ## What changed
 
-The upstream pool/backend topology moved from `config.toml` to the database, managed through
+The upstream pool/backend topology lives in the database, managed through
 the admin UI. On top of that, a per-model **capability system** lets AIplane know whether
 a model supports vision, tool calling, structured output, etc. — and **auto-learns** from
 upstream errors when it doesn't.
@@ -63,12 +63,6 @@ Migration `0042_upstream_config_db.sql` created:
 
 Plus 9 new columns on `model_defaults` for capabilities + fallback refs.
 
-## Config seeding (backward compat)
-
-On first boot after migration, if the DB has no pools and `config.toml` has `[upstream_pools]`,
-the startup sequence seeds the DB from TOML (`seed_from_config`). After that, the DB is the
-source of truth and the TOML sections are ignored.
-
 ## Registry hot-reload
 
 The `UpstreamRegistry` holds its pool/backend data behind an `ArcSwap` (lock-free). The admin
@@ -98,6 +92,6 @@ internal to the registry.
 | `server/upstreams/error_classify.rs` | Pattern-matches upstream 400s → `CapabilityField` |
 | `server/capabilities.rs` | Vision describe-and-inject logic |
 | `server/upstreams/db_bridge.rs` | `UpstreamConfigSnapshot` ↔ config structs |
-| `server/db/upstreams_config.rs` | DB CRUD + `load_snapshot` + `seed_from_config` |
+| `server/db/upstreams_config.rs` | DB CRUD + `load_snapshot` |
 | `rama_server/pages/admin.rs` | Capabilities UI + reload endpoint |
 | `session-core/src/workers.rs` | `TurnUpdate::InfoMessage` for chat notifications |

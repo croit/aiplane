@@ -105,8 +105,8 @@ settings-f-chat-ocr-max_output_chars = Texte extrait maximal
 settings-f-chat-ocr-max_output_chars-help = Plafond du texte extrait d'un document, en caractères.
 settings-f-chat-ocr-timeout_secs = Délai d'attente
 settings-f-chat-ocr-timeout_secs-help = Délai pour un document, en secondes.
-settings-f-chat-ocr-max_concurrency = Pages en parallèle
-settings-f-chat-ocr-max_concurrency-help = Combien de pages sont lues en même temps.
+settings-f-chat-ocr-max_concurrency = Documents en parallèle
+settings-f-chat-ocr-max_concurrency-help = Combien de documents sont lus en même temps sur toute la passerelle. Les autres attendent en file.
 settings-f-chat-ocr-auto_min_text_chars_per_page = Seuil de détection de numérisation
 settings-f-chat-ocr-auto_min_text_chars_per_page-help = En dessous de ce nombre de caractères intégrés par page, un PDF est considéré comme numérisé et envoyé à l'OCR.
 
@@ -254,7 +254,7 @@ settings-f-metrics-allowed_ips-help = Adresses ou réseaux CIDR, p. ex. 10.0.0.0
 # Confirmation avant d'effacer un réglage enregistré (éditeur de la SPA).
 settings-clear-confirm = Réinitialiser { $key } à sa valeur par défaut intégrée ?
 settings-heading = Paramètres
-settings-intro = Paramètres d'exploitation de cette passerelle. Ils sont stockés en base, aucun fichier de configuration n'est nécessaire — chaque champ affiche aussi la clé TOML qu'il remplace.
+settings-intro = Paramètres d'exploitation de cette passerelle. Ils sont stockés en base — chaque champ affiche aussi sa clé de paramètre.
 settings-saved-restart = Enregistré. Certains champs de cette section ne prennent effet qu'après un redémarrage.
 settings-save-failed = Impossible d'enregistrer ces paramètres.
 settings-cleared = Réinitialisé. La valeur par défaut s'applique de nouveau.

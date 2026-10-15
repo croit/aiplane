@@ -4,7 +4,7 @@
 //! Per-collection usearch index wrapper.
 //!
 //! One on-disk file per collection at `<data_dir>/rag/<collection_id>.usearch`
-//! (operator chooses `<data_dir>` via `[rag] data_dir = …`, defaults to
+//! (operator chooses `<data_dir>` via `rag.data_dir`, defaults to
 //! `data/rag` alongside the sqlite file). Cosine distance, F32 vectors —
 //! the embedding upstreams we route to (BGE family, OpenAI's
 //! `text-embedding-3-small`, Voyage, etc.) all emit F32 vectors meant to

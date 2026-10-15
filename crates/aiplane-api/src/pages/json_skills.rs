@@ -707,9 +707,8 @@ pub struct SkillGrantsBody {
     pub roles: Vec<String>,
 }
 
-/// PUT /api/v0/admin/skills/grants — replace a skill's role-grant overlay
-/// (on top of the static `[[roles]].skills` config), live via the RBAC
-/// overlay.
+/// PUT /api/v0/admin/skills/grants — replace the set of roles (groups) granted a
+/// skill, live via the RBAC overlay.
 pub async fn admin_skills_grants(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();

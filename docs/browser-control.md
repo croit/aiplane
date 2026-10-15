@@ -233,7 +233,7 @@ It is its own tool rather than a flag on the batch on purpose: presenting is a
 capability with its own row on `/tools`, its own key for `enable_tools`, and a
 switch a user can turn off without losing the browser. Like `browser_control` it
 is chat-only, so it appears in neither the `/v1` tool list nor a token's panel.
-Without `[chat.s3]` it refuses *before* asking the browser for anything — a
+Without attachment storage (S3) configured it refuses *before* asking the browser for anything — a
 capture with nowhere to go is a page rendered for nothing.
 
 It is audited as its own step name, `show_screenshot`, with no URL, like every

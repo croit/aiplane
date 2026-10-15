@@ -5,8 +5,8 @@
 //!
 //! Stack:
 //!
-//! - **Config** (`config.rs`): the typed `[upstream_pools]` map. No
-//!   `[[models]]` routing table — routes are discovered at runtime from
+//! - **Config** (`config.rs`): the typed pool map built from the
+//!   database topology. No model routing table — routes are discovered at runtime from
 //!   each backend's own `/models` response (see Health below).
 //! - **Runtime** (`registry.rs`): the `UpstreamRegistry` owns `Pool`s; each
 //!   backend tracks the set of model IDs it currently advertises.
@@ -55,8 +55,7 @@ mod scheduler;
 pub mod wait;
 
 pub use config::{
-    AliasSpec, BackendConfig, Compliance, FallbackConfig, PickerStrategy, PoolKind,
-    UpstreamPoolConfig,
+    BackendConfig, Compliance, FallbackConfig, PickerStrategy, PoolKind, UpstreamPoolConfig,
 };
 pub use prefix_index::PrefixIndex;
 pub use profile::{BackendProfile, Detected};

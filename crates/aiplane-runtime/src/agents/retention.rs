@@ -313,8 +313,6 @@ mod tests {
             bucket: "b".into(),
             access_key: Some("ak".into()),
             secret_key: Some("sk".into()),
-            access_key_env: None,
-            secret_key_env: None,
             key_prefix: "chat".into(),
         };
         let pool = aiplane_core::server::db::open(std::path::Path::new(":memory:"))

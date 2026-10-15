@@ -26,11 +26,15 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(aiplane::logging::from_env())
         .init();
 
-    // Both spellings of a path the image also bakes a default for cannot be
-    // honoured at once, and guessing wrong points the process at an empty data
-    // directory. Checked before anything reads a path. See docs/compatibility.md.
-    if let Err(e) = srv::env::check_conflicts(srv::env::IMAGE_BAKED) {
-        anyhow::bail!(e);
+    let legacy = legacy_env_names(std::env::vars().map(|(name, _)| name));
+    if !legacy.is_empty() {
+        anyhow::bail!(
+            "these environment variables use the old GATEWAY_ prefix, which AIplane no longer \
+             reads: {}. Rename each to its AIPLANE_ equivalent (for example GATEWAY_DB_PATH to \
+             AIPLANE_DB_PATH). Starting anyway would ignore them — a wrong database path opens \
+             an empty database and an open setup wizard.",
+            legacy.join(", ")
+        );
     }
 
     // `mut` because the operator settings stored in the database are applied
@@ -56,23 +60,7 @@ async fn main() -> anyhow::Result<()> {
         _ => anyhow::bail!("unrecognised arguments: {}\n\n{USAGE}", args.join(" ")),
     }
 
-    let db_path = config.db_path()?;
-    refuse_to_orphan_an_existing_database(&db_path)?;
-    // Creating a database, at a path nobody named, is the shape of a genuine
-    // fresh install — and also the shape of an upgrade whose path used to live
-    // in the config file this release stopped reading. The two are
-    // indistinguishable from here (there is no file left to compare against),
-    // and the second ends in an unauthenticated `/setup` on a live URL, so say
-    // plainly which file is about to be created rather than only logging it.
-    if !db_path.exists() && !srv::env::is_set("AIPLANE_DB_PATH") {
-        tracing::warn!(
-            path = %db_path.display(),
-            "no database here yet — creating one. If this deployment already had a database, \
-             its path came from the config file, which this release no longer reads: stop the \
-             gateway and set $AIPLANE_DB_PATH to where it actually lives, or this boots as a \
-             fresh install and serves an open setup wizard."
-        );
-    }
+    let db_path = config.db_path();
     tracing::info!(path = %db_path.display(), "database");
 
     let db = srv::db::open(&db_path)
@@ -85,25 +73,6 @@ async fn main() -> anyhow::Result<()> {
     // for the SessionStore below.
     let session_secret = load_session_secret(&state_session_key())?;
     let crypto = std::sync::Arc::new(srv::crypto::Crypto::from_env_or_session(&session_secret));
-
-    // Rewrite anything still sealed under the pre-rename at-rest key. Runs
-    // before any of it is read, so a boot either migrates a value or reads it
-    // through the compatibility path — never neither. Idempotent, and a no-op
-    // on every boot after the first. Not fatal: a failure here leaves the
-    // values readable via the fallback, which is strictly better than refusing
-    // to start.
-    match srv::db::reseal::legacy_sealed_values(&db, &crypto).await {
-        Ok(0) => {}
-        Ok(n) => tracing::info!(
-            count = n,
-            "re-sealed secrets that were still encrypted under the previous at-rest key"
-        ),
-        Err(err) => tracing::warn!(
-            error = %err,
-            "re-sealing secrets under the current at-rest key; they remain readable through \
-             the compatibility path"
-        ),
-    }
 
     // The process coming back *is* the restart every `restart`-flagged save was
     // waiting for, so the banner clears itself here rather than needing anyone
@@ -124,9 +93,7 @@ async fn main() -> anyhow::Result<()> {
     // The one handle everything shares. `reload_runtime` further down fills it
     // in from the database; anything built before that (the sandbox client)
     // holds this same Arc and therefore sees the wizard's URL the moment it
-    // lands. Nothing downstream may read the config-file value directly — on a
-    // wizard-configured deployment that is still the localhost fallback, which
-    // is why the field is named `public_url_import_only`.
+    // lands.
     let runtime =
         aiplane_runtime::server::state::RuntimeSettings::new_handle(config.public_url_fallback());
 
@@ -189,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Build the sandbox client once (when `[sandbox]` is enabled) — shared by
+    // Build the sandbox client once (when the sandbox is enabled) — shared by
     // the sandbox tools, the typst PPTX/DOCX-export path, AND fetch_attachment's
     // Office-file extractor. `None` leaves typst rendering PDF + preview only
     // and Office uploads unreadable (binary stub).
@@ -209,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
     );
     // `lookup_ip` is GeoIP-only — unlike `get_user_location` (which also has
     // the browser-GPS path), it can do nothing without a database. Register
-    // it only when `[geoip]` is configured, so the model is never offered a
+    // it only when GeoIP is configured, so the model is never offered a
     // tool that could only ever answer "not available". A configured-but-
     // not-yet-loaded file is fine: the handle hot-reloads (see below) and the
     // tool's own runtime guard returns a clean `known:false` in the gap.
@@ -222,7 +189,7 @@ async fn main() -> anyhow::Result<()> {
     // generate_image only when an `kind = "image"` upstream pool exists —
     // same rationale as lookup_ip: don't offer the model a tool whose every
     // call would fail with "no image backend configured". Keyed off the live
-    // DB-backed registry (not config.toml), so the tool surface matches the
+    // DB-backed registry, so the tool surface matches the
     // topology the admin actually configured through the UI.
     let image_pools: Vec<_> = upstreams
         .pools()
@@ -250,7 +217,7 @@ async fn main() -> anyhow::Result<()> {
     }
     // Display metadata for the discovered templates, for the per-template
     // toggle rows in the tool menu / `/tools` page (the human title isn't in
-    // the tool schema). Stays empty when `[typst]` isn't configured.
+    // the tool schema). Stays empty when Typst isn't configured.
     // One tool per typst template. Built through the same closure the settings
     // reload uses (`with_tool_family_builder` below), so there is exactly one
     // place that knows which tools a template produces — the boot path and the
@@ -269,14 +236,14 @@ async fn main() -> anyhow::Result<()> {
     // admin-managed connector catalog (`/admin/connectors`) and are connected
     // lazily per request by `rt::tools::mcp::manager` — global connectors as a
     // shared connection, per-user connectors with the user's own credential.
-    // Code-execution sandbox. Registered only when `[sandbox]` points at a
+    // Code-execution sandbox. Registered only when the sandbox points at a
     // reachable sandbox-runner; the three tools share one HTTP client.
     match config.sandbox.as_ref() {
         Some(sandbox_cfg) if sandbox_cfg.enabled => {
-            // Reuse the client built above (Some whenever [sandbox] is enabled).
+            // Reuse the client built above (Some whenever the sandbox is enabled).
             let client = sandbox_client
                 .clone()
-                .expect("sandbox_client is built when [sandbox] is enabled");
+                .expect("sandbox_client is built when the sandbox is enabled");
             // Ask the runner what it can do before deciding what to register.
             // Egress is a property of the *runner's* deployment (a podman
             // network + an allowlisting proxy) that this config can't see, so
@@ -308,8 +275,8 @@ async fn main() -> anyhow::Result<()> {
                 "registered sandbox tools"
             );
         }
-        Some(_) => tracing::info!("[sandbox] enabled = false — sandbox tools not registered"),
-        None => tracing::info!("no [sandbox] config — sandbox tools not registered"),
+        Some(_) => tracing::info!("the sandbox is disabled — sandbox tools not registered"),
+        None => tracing::info!("no sandbox configured — sandbox tools not registered"),
     }
     // `enable_tools` is registered last so its catalog snapshot covers every
     // other tool (static + typst + MCP + ComfyUI). It's part of the
@@ -320,7 +287,7 @@ async fn main() -> anyhow::Result<()> {
     // We need the ComfyUI store handle here (so enable_tools can advertise
     // the `comfyui` master toggle in its description), but the store is built
     // from config — same source the rest of the registry sees. Build it now
-    // from `[comfyui]`, before wiring the ComfyuiHandle onto AppState further
+    // from ComfyUI, before wiring the ComfyuiHandle onto AppState further
     // down.
     let comfyui_store: Option<std::sync::Arc<feat::comfyui::ComfyuiStore>> =
         if let Some(comfyui_cfg) = config.comfyui.clone().filter(|c| c.enabled) {
@@ -342,13 +309,13 @@ async fn main() -> anyhow::Result<()> {
     }
     tool_registry = tool_registry.with(enable_tools);
 
-    // Agent Skills: a hot-reloadable store over `[skills] dir` (admin upload /
+    // Agent Skills: a hot-reloadable store over `skills.dir` (admin upload /
     // delete re-scan and swap it live — no restart). Registered *after*
     // `enable_tools` (so the loader isn't itself an enableable group — it's
     // always-on when the caller has a permitted skill; see
-    // `AppState::allowed_tools_for_session`). When `[skills]` is configured we
+    // `AppState::allowed_tools_for_session`). When skills are configured we
     // register `read_skill` even if the dir is currently empty, so an upload
-    // works without a restart; skill-less deployments (no `[skills]` block)
+    // works without a restart; skill-less deployments (none configured)
     // keep the exact same tool surface.
     let skill_store = config.skills.as_ref().map(|skills_cfg| {
         let store = feat::skills::SkillStore::load(skills_cfg.dir.clone());
@@ -361,7 +328,7 @@ async fn main() -> anyhow::Result<()> {
     });
     // Per-user **private** skills live under `<skills.dir>/.users/` — a level
     // deeper than the global scanner reaches, so the two never cross. Wired
-    // only when `[skills]` is configured, in lockstep with `skill_store`.
+    // only when skills are configured, in lockstep with `skill_store`.
     let user_skill_store = config.skills.as_ref().map(|skills_cfg| {
         let users_dir = skills_cfg.dir.join(".users");
         // Best-effort: create the skills dir + its `.users` subdir now, so the
@@ -440,7 +407,7 @@ async fn main() -> anyhow::Result<()> {
                 // runner can resolve Image/Video/AudioAttachment params
                 // via the same path `edit_image` uses. The config is
                 // already validated when the state was built — `None`
-                // only when `[chat.s3]` is unconfigured, in which case
+                // only when S3 attachment storage is unconfigured, in which case
                 // workflows with attachment-kind params fail cleanly.
                 let s3 = state.config().chat.s3.clone().map(std::sync::Arc::new);
                 let chat_updates = feat::comfyui::ChatUpdateRegistry::default();
@@ -484,7 +451,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::warn!(
                     error = %err,
                     base_url = %comfyui_cfg.base_url,
-                    "[comfyui] client build failed — no comfyui tools will be registered",
+                    "ComfyUI client build failed — no comfyui tools will be registered",
                 );
             }
         }
@@ -514,7 +481,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Web Push: load (or first-time generate + persist) the VAPID keypair and
-    // wire the sender in. Disabled via `[push] enabled = false`; a keypair
+    // wire the sender in. Skipped when `push.enabled` is off; a keypair
     // failure logs and leaves push off rather than blocking boot.
     if state.config().push.enabled {
         match feat::push::PushSender::new(
@@ -530,11 +497,11 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     } else {
-        tracing::info!("Web Push disabled via [push].enabled = false");
+        tracing::info!("Web Push disabled (push.enabled is off)");
     }
 
     // GeoIP (client-IP → coarse location) for the `get_user_location`
-    // tool. Optional: with no `[geoip]` block we skip it entirely. A
+    // tool. Optional: with no GeoIP database configured we skip it entirely. A
     // missing DB file is fine — the handle loads lazily, hot-reloads when
     // a file appears, and the (token-gated) weekly updater is a no-op
     // without a token. So this never blocks boot or fails the gateway.
@@ -547,7 +514,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Usage metrics: a batched background writer + retention-prune task,
     // fronted by a fire-and-forget handle on the shared state. When
-    // `[usage] enabled = false` the handle is a no-op and no tasks spawn.
+    // `usage.enabled` off the handle is a no-op and no tasks spawn.
     let usage = if state.config().usage.enabled {
         srv::usage::spawn(state.db.clone(), state.config().usage.retention_days)
     } else {
@@ -560,7 +527,7 @@ async fn main() -> anyhow::Result<()> {
     // poller running every 30s. Operators add collections via the admin
     // API; the worker picks them up.
     //
-    // `[rag] data_dir` MUST resolve to a writable path. The container
+    // `rag.data_dir` MUST resolve to a writable path. The container
     // image runs with a read-only rootfs (see deploy/quadlet/gateway.container),
     // so the default `data/rag` works for local dev only — operators
     // point this at a subdirectory of the named volume.
@@ -666,7 +633,7 @@ async fn main() -> anyhow::Result<()> {
 /// 64 hex chars (32 bytes). Empty when unset, which
 /// [`load_session_secret`] turns into a fatal, actionable error.
 fn state_session_key() -> String {
-    srv::env::var(srv::config::SESSION_KEY_VAR).unwrap_or_default()
+    std::env::var(srv::config::SESSION_KEY_VAR).unwrap_or_default()
 }
 
 /// What `gateway --help` prints, and what an unrecognised argument points at.
@@ -696,6 +663,14 @@ const SESSION_KEY_HELP: &str = "AIPLANE_SESSION_KEY is required: it signs browse
      Losing or changing it logs every user out and makes stored backend API keys, \
      connector secrets and OAuth tokens permanently unreadable.";
 
+/// The names among `vars` that still carry the pre-rename `GATEWAY_` prefix,
+/// sorted.
+fn legacy_env_names(vars: impl Iterator<Item = String>) -> Vec<String> {
+    let mut names: Vec<String> = vars.filter(|name| name.starts_with("GATEWAY_")).collect();
+    names.sort();
+    names
+}
+
 fn load_session_secret(raw: &str) -> anyhow::Result<[u8; 32]> {
     // Refusing to boot is deliberate. The old behaviour — fall back to an
     // ephemeral key and log an error — produced a gateway that LOOKED healthy
@@ -717,44 +692,6 @@ fn load_session_secret(raw: &str) -> anyhow::Result<[u8; 32]> {
     Ok(bytes.try_into().expect("session key length was checked"))
 }
 
-/// Abort if the database we are about to open is *not* the one this deployment
-/// has been using.
-///
-/// `AIPLANE_DATA_DIR` moved the *default* database path from the working
-/// directory to the data volume. That is right for new deployments and wrong,
-/// silently, for an existing one that ran without a named path and persisted its
-/// working directory: `db::open` would happily create an empty database at the
-/// new path, the gateway would find no users, conclude it is a fresh install —
-/// and serve an **open, unauthenticated `/setup`** on a production URL while
-/// the real users, chats and sealed keys sat untouched a directory away.
-///
-/// Fires only in that exact case: the path is the *default* (an operator who
-/// set `$AIPLANE_DB_PATH` explicitly chose it and is not affected), the default has
-/// actually moved (`AIPLANE_DATA_DIR` is set), a database exists where the old
-/// default put it, and none exists where the new one points.
-fn refuse_to_orphan_an_existing_database(resolved: &std::path::Path) -> anyhow::Result<()> {
-    let legacy = srv::config::legacy_default_db_path();
-    // Not the default path → the operator named it, so nothing moved under
-    // them. Also covers the case where the default has not moved at all.
-    if resolved != srv::config::default_db_path() || resolved == legacy {
-        return Ok(());
-    }
-    if !legacy.exists() || resolved.exists() {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "found an existing database at {} (the working directory), but this release resolves \
-         the default database to {}.\n\nThat path changed when AIPLANE_DATA_DIR was \
-         introduced. Booting would create an empty database and treat this deployment as a \
-         fresh install — which opens an unauthenticated setup wizard while your real data \
-         sits where it is. Nothing has been changed.\n\nMove the existing file to the new \
-         location (with its -wal and -shm siblings), or point AIPLANE_DATA_DIR / \
-         AIPLANE_DB_PATH at where it already lives.",
-        legacy.display(),
-        resolved.display(),
-    )
-}
-
 /// Reopen the setup wizard on an already-configured gateway, for an operator
 /// who can no longer sign in — the IdP moved, or no group maps to admin.
 ///
@@ -773,7 +710,7 @@ async fn restore_setup(config: &Config) -> anyhow::Result<()> {
     // `open` would run migrations and sweep every `in_progress` turn to
     // `errored` — a maintenance command must not fail every conversation in
     // flight. See `db::attach`.
-    let db_path = config.db_path()?;
+    let db_path = config.db_path();
     let db = srv::db::attach(&db_path).await.map_err(|e| {
         anyhow::anyhow!(
             "opening the gateway database at {}: {e:#}\n\nRun this inside the gateway container \
@@ -841,5 +778,29 @@ mod tests {
     #[test]
     fn a_valid_session_key_round_trips() {
         assert_eq!(load_session_secret(&"0".repeat(64)).unwrap(), [0u8; 32]);
+    }
+
+    #[test]
+    fn only_gateway_prefixed_names_are_reported_sorted() {
+        let vars = [
+            "PATH",
+            "GATEWAY_SESSION_KEY",
+            "AIPLANE_DB_PATH",
+            "GATEWAY_DB_PATH",
+        ]
+        .into_iter()
+        .map(String::from);
+        assert_eq!(
+            legacy_env_names(vars),
+            vec!["GATEWAY_DB_PATH", "GATEWAY_SESSION_KEY"]
+        );
+    }
+
+    #[test]
+    fn no_legacy_names_means_nothing_to_report() {
+        let vars = ["AIPLANE_SESSION_KEY", "MY_GATEWAY_X"]
+            .into_iter()
+            .map(String::from);
+        assert!(legacy_env_names(vars).is_empty());
     }
 }

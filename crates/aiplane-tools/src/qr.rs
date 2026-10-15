@@ -4,7 +4,7 @@
 //! `generate_qr_code` — native QR code generation.
 //!
 //! Encodes the payload with the pure-Rust `qrcode` crate and renders
-//! PNG/SVG in-process, so the tool needs neither a `[sandbox]` deployment
+//! PNG/SVG in-process, so the tool needs neither a sandbox deployment
 //! nor a network roundtrip — a QR code is deterministic pixel work, not
 //! code execution. The model composes the payload itself (URL, WiFi,
 //! vCard, EPC/GiroCode, … — the schema description documents the common
@@ -498,7 +498,7 @@ impl Tool for GenerateQrCode {
             let s3 = ctx.s3.as_ref().ok_or_else(|| {
                 ToolError::Failed(
                     "chat attachments are not configured on this gateway \
-                     (operator must set [chat.s3]) — nowhere to store the QR code"
+                     (the operator must enable S3 attachment storage in /admin/settings) — nowhere to store the QR code"
                         .into(),
                 )
             })?;

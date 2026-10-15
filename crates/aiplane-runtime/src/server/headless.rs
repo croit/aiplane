@@ -940,7 +940,7 @@ pub(crate) mod tests {
                 models: Vec::new(),
                 backend: vec![BackendConfig {
                     priority: Default::default(),
-                    alias: None,
+                    alias: Default::default(),
                     supports_edit: false,
                     enabled: true,
                     name: "mock".into(),
@@ -2144,7 +2144,6 @@ pub(crate) mod tests {
                 id: "dot".into(),
                 admin: false,
                 tools: vec!["company_echo".into(), "forward_request".into()],
-                models: vec!["*".into()],
                 skills: Vec::new(),
             }],
         )
@@ -2332,7 +2331,7 @@ pub(crate) mod tests {
                         models: Vec::new(),
                         backend: vec![BackendConfig {
                             priority: Default::default(),
-                            alias: None,
+                            alias: Default::default(),
                             supports_edit: false,
                             enabled: true,
                             name: role.into(),
@@ -2354,7 +2353,6 @@ pub(crate) mod tests {
                 mappings: ["old", "new"]
                     .into_iter()
                     .map(|role| RoleMapping {
-                        oidc_claim: "groups".into(),
                         oidc_value: role.into(),
                         role: role.into(),
                     })
@@ -2366,7 +2364,6 @@ pub(crate) mod tests {
                     id: role.into(),
                     admin: false,
                     tools: vec!["company_echo".into()],
-                    models: vec!["*".into()],
                     skills: Vec::new(),
                 })
                 .collect(),

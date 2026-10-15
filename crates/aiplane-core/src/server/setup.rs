@@ -332,7 +332,7 @@ mod tests {
     #[tokio::test]
     async fn a_deployment_already_in_use_never_falls_into_first_run_mode() {
         // The regression: first-run mode leaves `/setup` OPEN. A running
-        // gateway with no `[oidc]` block — a token-only `/v1` deployment is a
+        // gateway with no OIDC provider — a token-only `/v1` deployment is a
         // supported shape — used to land there on the first boot after this
         // release, handing anyone who could reach the port an unauthenticated
         // way to make themselves admin.

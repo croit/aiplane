@@ -4,8 +4,8 @@ Uploaded scans and images are recognised by a dedicated OCR backend and handed
 to the chat model as untrusted document text, so a conversation about a scanned
 invoice works without the chat model being vision-capable.
 
-The feature is **off** until two things are true: `[chat.ocr] enabled = true`
-and a healthy `kind = "ocr"` pool serving a model. Until then AIplane
+The feature is **off** until two things are true: `chat.ocr.enabled` is on at
+`/admin/settings` and a healthy `kind = "ocr"` pool serving a model. Until then AIplane
 behaves exactly as if OCR did not exist — no tool, no model, no extra call.
 
 ## Where it happens

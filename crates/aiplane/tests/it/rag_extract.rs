@@ -88,7 +88,7 @@ fn pool(kind: PoolKind, url: &str, model: &str, name: &str) -> UpstreamPoolConfi
         models: Vec::new(),
         backend: vec![BackendConfig {
             priority: Default::default(),
-            alias: None,
+            alias: Default::default(),
             supports_edit: false,
             enabled: true,
             name: name.into(),

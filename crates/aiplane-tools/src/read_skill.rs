@@ -261,7 +261,6 @@ mod tests {
         let role = RoleConfig {
             id: "user".into(),
             admin: false,
-            models: vec![],
             tools: vec![],
             skills: skills.iter().map(|s| (*s).to_string()).collect(),
         };

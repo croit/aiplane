@@ -24,7 +24,7 @@ or notification setup also show when that prerequisite is missing.
 ## Always registered
 
 No configuration required. A tool here can still fail at runtime when its
-*storage* is unconfigured (e.g. `[chat.s3]`), but it fails with a clear
+*storage* is unconfigured (e.g. S3 attachment storage), but it fails with a clear
 message rather than being absent.
 
 | Tool | Chat-only | Toggle key | What it does |
@@ -36,7 +36,7 @@ message rather than being absent.
 | `convert_currency` | — | `convert_currency` | Currency conversion at daily ECB reference rates. |
 | `ask_user` | yes | `ask_user` | Ask the user a short question mid-turn and wait for the answer, rather than guessing. Needs a live chat turn *and* someone watching it; times out and reports `answered: false` otherwise. |
 | `forward_request` | yes | `forward_request` | An active personal Dot sends an explicit task to another active Dot it may address: a personal Dot belonging to its owner (both directed consents), or an organization Dot the caller's member organization consented to receive from (cross-boundary consent plus the caller's current membership). The receiver uses its own tools, memory, credentials and approval rules. Ordinary chats and stateless `/v1` requests do not offer this personal variant. See [Dot communication](dots-communication.md) and [cross-organization delegation](dots-cross-organization.md). |
-| `notify_user` | — | `notify_user` | Send the user a Web Push notification (long work finished, a scheduled action found something). Deliberately *not* chat-only — a notification lands on a device, not in a conversation, so it also works from the headless scheduler. Hard limit of **one per turn**, latched in `PushNotifier`; errors clearly when `[push]` is unconfigured or the user has no subscribed device. |
+| `notify_user` | — | `notify_user` | Send the user a Web Push notification (long work finished, a scheduled action found something). Deliberately *not* chat-only — a notification lands on a device, not in a conversation, so it also works from the headless scheduler. Hard limit of **one per turn**, latched in `PushNotifier`; errors clearly when Web Push is unconfigured or the user has no subscribed device. |
 | `get_user_location` | — | `get_user_location` | Caller's location: a browser GPS prompt when a live chat turn is watching, else coarse GeoIP. |
 | `generate_qr_code` | yes | `generate_qr_code` | QR codes (URL, WiFi, vCard, SEPA) as PNG/SVG, rendered in-process. |
 | `search_web` | — | `search_web` | Web search via SearXNG, Brave, or Tavily, with optional domain and recency filters. A confirmed exhausted provider quota triggers another configured provider; the result identifies the one used. Tavily has a separate Enable switch and is eligible only when enabled with a stored key. Configured on `/admin/settings?tab=web-search`. |
@@ -102,21 +102,21 @@ Gated so the model is never offered a tool whose every call could only answer
 
 | Tool | Gate | Chat-only | Toggle key |
 |---|---|---|---|
-| `lookup_ip` | `[geoip]` configured | — | `lookup_ip` |
+| `lookup_ip` | GeoIP configured (`geoip.enabled`) | — | `lookup_ip` |
 | `generate_image` | an `image`-kind upstream pool exists | yes | `generate_image` |
 | `edit_image` | an image backend advertises `supports_edit` | yes | `edit_image` |
-| `read_skill` | `[skills]` configured | — | *(always on when the caller has a permitted skill)* |
-| `run_in_sandbox` | `[sandbox] enabled` | — | `run_in_sandbox` |
-| `generate_document` | `[sandbox] enabled` | — | `generate_document` |
-| `export_document` | `[sandbox] enabled` | yes | `document` |
-| `convert_document` | `[sandbox] enabled` | — | `convert_document` |
-| `edit_presentation` | `[sandbox] enabled` | — | `edit_presentation` |
-| `capture_webpage` | `[sandbox] enabled` **and** the runner reports egress | — | `capture_webpage` |
-| `browse_page` | `[sandbox] enabled` **and** the runner reports egress | — | `browse_page` |
-| `render_typst` | `[sandbox] enabled` | — | `render_typst` |
-| `render_excalidraw` | `[sandbox] enabled` | — | `render_excalidraw` |
-| `render_video` | `[sandbox] enabled` | — | `render_video` |
-| `read_sandbox_output` | `[sandbox] enabled` | yes | `read_sandbox_output` |
+| `read_skill` | skills configured (`skills.enabled`) | — | *(always on when the caller has a permitted skill)* |
+| `run_in_sandbox` | `sandbox.enabled` | — | `run_in_sandbox` |
+| `generate_document` | `sandbox.enabled` | — | `generate_document` |
+| `export_document` | `sandbox.enabled` | yes | `document` |
+| `convert_document` | `sandbox.enabled` | — | `convert_document` |
+| `edit_presentation` | `sandbox.enabled` | — | `edit_presentation` |
+| `capture_webpage` | `sandbox.enabled` **and** the runner reports egress | — | `capture_webpage` |
+| `browse_page` | `sandbox.enabled` **and** the runner reports egress | — | `browse_page` |
+| `render_typst` | `sandbox.enabled` | — | `render_typst` |
+| `render_excalidraw` | `sandbox.enabled` | — | `render_excalidraw` |
+| `render_video` | `sandbox.enabled` | — | `render_video` |
+| `read_sandbox_output` | `sandbox.enabled` | yes | `read_sandbox_output` |
 
 `export_document` is the one sandbox tool that rides the canvas `document`
 toggle: it exports a canvas document, so it belongs to that capability from

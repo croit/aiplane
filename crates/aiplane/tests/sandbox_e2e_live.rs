@@ -34,12 +34,10 @@ fn s3_cfg() -> Arc<S3Config> {
             .unwrap_or_else(|_| "https://s3.example.com".into()),
         region: std::env::var("E2E_S3_REGION").unwrap_or_else(|_| "fra1".into()),
         bucket: std::env::var("E2E_S3_BUCKET").unwrap_or_else(|_| "aiplane".into()),
-        access_key: None,
-        secret_key: None,
         // A live run takes its credentials from the environment it is started
-        // with, which the legacy `*_env` path still supports.
-        access_key_env: Some("AIPLANE_S3_ACCESS_KEY".into()),
-        secret_key_env: Some("AIPLANE_S3_SECRET_KEY".into()),
+        // with.
+        access_key: std::env::var("AIPLANE_S3_ACCESS_KEY").ok(),
+        secret_key: std::env::var("AIPLANE_S3_SECRET_KEY").ok(),
         // Isolate this test's objects under their own prefix.
         key_prefix: "e2e-sandbox-test".into(),
     })

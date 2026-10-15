@@ -22,8 +22,8 @@ deployment methods are provided — pick one:
 | **ocr-sidecar** | `ghcr.io/croit/aiplane-ocr-sidecar` | PDF-aware Unlimited-OCR adapter. Optional; needs an external Unlimited-OCR vLLM service. (Compose still builds it locally from [`ocr-sidecar/`](ocr-sidecar/); the published image is what Kubernetes pulls.) |
 | sandbox workload | `ghcr.io/croit/aiplane-sandbox` | The "gold image" the runner spawns per job (pulled by the runner, not run directly). |
 
-Per-host secrets live in env files; everything an operator would once have put
-in a config TOML now lives in the database and is edited in the browser. The
+Per-host secrets live in env files; everything else an operator sets lives in
+the database and is edited in the browser. The
 SQLite DB (also the session store) lives in a named volume. Real secret files
 (`gateway.env`, `google-workspace-mcp.env`) are git-ignored — only the
 `*.example.*` templates are committed. There is no config file at all.
@@ -152,7 +152,7 @@ Operationally worth knowing:
 - Results are cached in AIplane's `ocr_derivatives` table by document hash + model + prompt version + settings, so a document costs one OCR run no matter how many turns reference it, and the cache survives restarts. Changing `dpi`, `max_tokens`, `ngram_window`, `max_pages`, or `max_output_chars` invalidates it by design.
 - The sidecar issues one inference call **per page** by default (page numbers survive, one bad page doesn't lose the document). `OCR_MULTI_IMAGE=1` switches to one call per document.
 - OCR work is metered like any upstream call: `usage_events` rows with `kind = "ocr"`, tokens from the sidecar, and pages in `input_units`. Cache hits cost nothing and are not recorded.
-- `[chat.ocr] max_concurrency` bounds documents in flight gateway-wide; everything else queues (visibly, in the chat UI).
+- The `chat.ocr.max_concurrency` setting (`/admin/settings` → Chat, labelled “Documents in parallel”) bounds documents in flight gateway-wide; everything else queues (visibly, in the chat UI).
 
 See [`../docs/ocr.md`](../docs/ocr.md).
 
@@ -393,7 +393,7 @@ model, the gVisor install, and the isolation self-check are documented in
   stop. On Docker Desktop / macOS (no gVisor) use `SANDBOX_RUNTIME=local-unsafe`
   for dev only — never in a deployment.
 
-Point AIplane at the runner via `[sandbox] runner_url` in the config TOML
+Point AIplane at the runner via the `sandbox.runner_url` setting at `/admin/settings`
 (`http://sandbox-runner:9000` on the compose network, or the podman bridge IP for
 the host-service path).
 

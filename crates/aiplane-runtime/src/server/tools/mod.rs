@@ -10,7 +10,7 @@
 //! plain assistant message (or we hit the round bound — see `runner`).
 //!
 //! Adding a tool means writing code, registering it in `ToolRegistry`, and
-//! granting it to one or more roles in `[rbac]`. We do **not** discover tools
+//! granting it to one or more groups at `/admin/groups`. We do **not** discover tools
 //! at runtime.
 
 use std::future::Future;
@@ -71,7 +71,7 @@ pub struct ToolContext {
     /// S3 config for chat attachments. Threaded through so the
     /// `fetch_attachment` tool can resolve opaque attachment ids
     /// (`<turn_id>/<filename>`) back to the live bucket. `None` when
-    /// the deployment hasn't configured `[chat.s3]` — the tool errs
+    /// the deployment hasn't configured S3 attachment storage — the tool errs
     /// with `NotConfigured` in that case.
     pub s3: Option<std::sync::Arc<aiplane_core::server::config::S3Config>>,
     /// Id of the assistant turn the gateway is currently driving.
@@ -92,7 +92,7 @@ pub struct ToolContext {
     /// can't attribute an IP to.
     pub client_ip: Option<String>,
     /// Client-IP → location resolver, cloned from `AppState`. `None`
-    /// when `[geoip]` isn't configured. Carried here (rather than reached
+    /// when GeoIP isn't configured. Carried here (rather than reached
     /// via global state) so tools stay a pure function of their context.
     pub geoip: Option<aiplane_features::server::geoip::GeoIp>,
     /// Handles for an interactive mid-turn browser prompt. `Some` only on
@@ -133,7 +133,7 @@ pub struct ToolContext {
     /// The turn's sandbox-container lease, so successive `run_in_sandbox`
     /// calls reuse one container (persisting `/work` across a turn's rounds)
     /// instead of each running single-use. `Some` on the chat + proxy paths
-    /// when `[sandbox]` is configured; `None` elsewhere (tests, sandbox-less
+    /// when the sandbox is configured; `None` elsewhere (tests, sandbox-less
     /// deployments), where sandbox calls stay single-use. The driver releases
     /// it at turn end. See [`sandbox::SandboxLease`].
     pub sandbox_lease: Option<std::sync::Arc<sandbox::SandboxLease>>,

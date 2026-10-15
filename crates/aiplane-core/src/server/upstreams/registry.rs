@@ -50,7 +50,7 @@ pub struct CatalogModel {
 pub struct AliasStatus {
     /// The client-facing name.
     pub name: String,
-    /// Explicit target real id (map form), or `None` for a bare list alias
+    /// Explicit target real id, or `None` for a bare alias
     /// that binds to the backend's sole model.
     pub target: Option<String>,
     /// True when a bare alias is currently disabled because the backend serves
@@ -130,9 +130,9 @@ pub struct Backend {
     /// When non-empty this *is* the served set and nothing is discovered —
     /// see [`Backend::with_effective_models`].
     config_models: HashSet<String>,
-    /// Client-facing aliases this backend answers to, from config: alias name →
-    /// optional explicit target real id. `Some(id)` (map form) pins a specific
-    /// model; `None` (bare list form) resolves to the backend's sole model at
+    /// Client-facing aliases this backend answers to, alias name →
+    /// optional explicit target real id. `Some(id)` pins a specific
+    /// model; `None` (a bare alias) resolves to the backend's sole model at
     /// request time. Static — aliases never come from the probe.
     aliases: HashMap<String, Option<String>>,
     /// Bare aliases currently disabled because the backend serves ≠1 model, so
@@ -181,7 +181,7 @@ impl Backend {
         };
         let config_models: HashSet<String> =
             fallback.iter().filter(|s| !s.is_empty()).cloned().collect();
-        let aliases = cfg.alias.as_ref().map(|a| a.into_map()).unwrap_or_default();
+        let aliases = cfg.alias.clone();
         let backend = Self {
             priority: cfg.priority.clone(),
             name: cfg.name.clone(),
@@ -559,8 +559,8 @@ impl Backend {
                     alias = %name,
                     models = effective_len,
                     "bare alias `{name}` is ambiguous — this backend now serves multiple models, \
-                     so it can't pick one; disabling it. Give it an explicit target with the map \
-                     form, e.g. `alias = {{ \"{name}\" = \"<real-model-id>\" }}`."
+                     so it can't pick one; disabling it. Give the alias an explicit target \
+                     (the real model id) at /admin/upstreams."
                 );
             }
         }
@@ -619,7 +619,7 @@ pub struct Pool {
     /// (speech pools only). See [`UpstreamPoolConfig::offer_voices`] — this is
     /// the menu, `voices` is the resolution.
     pub offer_voices: Vec<String>,
-    /// Pool-level configured model ids (the `models` TOML list). Retained so
+    /// Pool-level configured model ids (the pool's `models` list). Retained so
     /// the speech default-model pick can prefer the operator's declared TTS
     /// model over the `/models` probe — a cloud provider like OpenAI reports
     /// its whole catalogue on `/models`, which would otherwise swamp the pick.
@@ -1423,7 +1423,7 @@ pub struct UpstreamRegistry {
 
 struct RegistryData {
     pools: HashMap<String, Arc<Pool>>,
-    /// Unknown-model fallback per kind (`[fallback]`). Applied by `route` when
+    /// Unknown-model fallback per kind. Applied by `route` when
     /// a requested name is neither a real id nor an alias.
     fallback: FallbackConfig,
 }
@@ -1538,14 +1538,14 @@ impl UpstreamRegistry {
     }
 
     /// Build with no unknown-model fallback. Used by tests and any caller that
-    /// doesn't route `[fallback]` (RAG embeddings, etc.).
+    /// doesn't use the unknown-model fallback (RAG embeddings, etc.).
     pub fn new(
         pool_configs: &HashMap<String, UpstreamPoolConfig>,
     ) -> Result<Arc<Self>, BuildError> {
         Self::build(pool_configs, FallbackConfig::default())
     }
 
-    /// Build with the `[fallback]` map wired in, so `route` can substitute an
+    /// Build with the unknown-model fallback map wired in, so `route` can substitute an
     /// unknown requested model with a configured per-kind default.
     pub fn with_fallback(
         pool_configs: &HashMap<String, UpstreamPoolConfig>,
@@ -1556,8 +1556,7 @@ impl UpstreamRegistry {
 
     /// Build from a DB topology snapshot (loaded by
     /// [`crate::server::db::upstreams_config::load_snapshot`]). Converts the
-    /// snapshot into the same config structs that TOML parsing produces, then
-    /// delegates to [`build`]. Used on startup and on every "Apply changes"
+    /// snapshot into config structs, then delegates to [`build`]. Used on startup and on every "Apply changes"
     /// reload from the admin UI.
     pub fn from_snapshot(
         snap: &crate::server::db::upstreams_config::UpstreamConfigSnapshot,
@@ -2313,7 +2312,7 @@ impl UpstreamRegistry {
 
     /// Resolve + acquire with the two fallbacks layered on top of
     /// [`acquire_for`] (§ Fallback models in `docs/upstreams.md`):
-    ///   - **unknown model** (`UnknownModel`) → retry with `[fallback].<kind>`;
+    ///   - **unknown model** (`UnknownModel`) → retry with the unknown-model fallback for the kind;
     ///   - **known but all replicas down** (`NoHealthyBackend`) → retry with
     ///     that pool's `fallback_offline`;
     ///   - **saturated** (all healthy backends at `max_inflight`) → *no*
@@ -2382,7 +2381,7 @@ impl UpstreamRegistry {
             .and_then(|p| p.fallback_offline.clone())
     }
 
-    /// The configured unknown-model fallback for `kind` (`[fallback]`), if any.
+    /// The configured unknown-model fallback for `kind`, if any.
     /// Read-only admin view.
     pub fn fallback_model(&self, kind: PoolKind) -> Option<String> {
         self.data().fallback.for_kind(kind).map(str::to_owned)
@@ -2557,14 +2556,13 @@ fn validate_aliases(pool_configs: &HashMap<String, UpstreamPoolConfig>) -> Resul
     }
     for (pool_name, cfg) in pool_configs {
         for b in &cfg.backend {
-            let Some(spec) = &b.alias else { continue };
             // This backend's effective config models (backend wins over pool).
             let declared: &[String] = if b.models.is_empty() {
                 &cfg.models
             } else {
                 &b.models
             };
-            for (alias, target) in spec.into_map() {
+            for (alias, target) in b.alias.clone() {
                 if config_ids.contains(alias.as_str()) {
                     return Err(BuildError::AliasCollidesWithModel {
                         alias,
@@ -2643,19 +2641,28 @@ impl RouteError {
 mod tests {
     #[test]
     fn priority_mapping_removes_stale_fields_when_dispatch_changes_backend() {
+        use super::super::config::{BackendConfig, UpstreamPoolConfig};
         use crate::server::priority::Priority;
-        let pool: super::super::config::UpstreamPoolConfig = toml::from_str(r#"
-kind = "chat"
-[[backend]]
-name = "custom"
-base_url = "http://unused"
-models = ["first"]
-priority = { mode = "custom", mapping = { field = "request_priority", low = 1, medium = 0, high = -1 } }
-[[backend]]
-name = "generic"
-base_url = "http://unused"
-models = ["second"]
-"#).unwrap();
+        use crate::server::priority::{BackendPriority, PriorityMapping};
+        let pool = UpstreamPoolConfig::new(
+            super::PoolKind::Chat,
+            vec![
+                BackendConfig {
+                    priority: BackendPriority::Custom(PriorityMapping {
+                        field: "request_priority".into(),
+                        low: 1,
+                        medium: 0,
+                        high: -1,
+                    }),
+                    models: vec!["first".into()],
+                    ..BackendConfig::new("custom", "http://unused")
+                },
+                BackendConfig {
+                    models: vec!["second".into()],
+                    ..BackendConfig::new("generic", "http://unused")
+                },
+            ],
+        );
         let registry =
             super::UpstreamRegistry::new(&std::collections::HashMap::from([("p".into(), pool)]))
                 .unwrap();
@@ -3096,7 +3103,7 @@ models = ["second"]
     #[test]
     fn a_bare_alias_on_a_backend_with_no_models_reports_itself_broken() {
         let mut b = backend("qwen-gpu0", 16);
-        b.alias = Some(AliasSpec::Names(vec!["default".into()]));
+        b.alias = HashMap::from([("default".into(), None)]);
         let be = Backend::new(&b, &[]);
 
         assert!(
@@ -3258,15 +3265,9 @@ models = ["second"]
     fn a_backend_whose_alias_is_broken_drops_out_of_the_balancer() {
         let served = "unsloth/Qwen3.8-27B-NVFP4";
         let mut good = backend("qwen-gpu1", 16);
-        good.alias = Some(AliasSpec::Targets(HashMap::from([(
-            "default".to_string(),
-            served.to_string(),
-        )])));
+        good.alias = HashMap::from([("default".to_string(), Some(served.to_string()))]);
         let mut broken = backend("qwen-gpu0", 16);
-        broken.alias = Some(AliasSpec::Targets(HashMap::from([(
-            "default".to_string(),
-            "qwen-32b".to_string(), // never loaded on this server
-        )])));
+        broken.alias = HashMap::from([("default".to_string(), Some("qwen-32b".to_string()))]);
 
         let pools = HashMap::from([(
             "qwen".to_string(),
@@ -3323,7 +3324,7 @@ models = ["second"]
 
         // Bare alias + exactly one served model: resolves and is advertised.
         let mut b = backend("qwen-gpu0", 4);
-        b.alias = Some(AliasSpec::Names(vec!["default".into(), "qwen".into()]));
+        b.alias = HashMap::from([("default".into(), None), ("qwen".into(), None)]);
         let bare = Backend::new(&b, &[]);
         bare.set_models(HashSet::from([served.to_string()]));
         assert_eq!(bare.resolve("default").as_deref(), Some(served));
@@ -3340,10 +3341,7 @@ models = ["second"]
         // unresolvable, also unlisted — the failure mode that looks like a
         // correctly configured alias.
         let mut m = backend("qwen-gpu1", 4);
-        m.alias = Some(AliasSpec::Targets(HashMap::from([(
-            "default".to_string(),
-            "qwen-32b".to_string(),
-        )])));
+        m.alias = HashMap::from([("default".to_string(), Some("qwen-32b".to_string()))]);
         let mapped = Backend::new(&m, &[]);
         mapped.set_models(HashSet::from([served.to_string()]));
         assert!(
@@ -3354,33 +3352,38 @@ models = ["second"]
 
         // Pointed at what the server actually reports, it resolves.
         let mut m2 = backend("qwen-gpu2", 4);
-        m2.alias = Some(AliasSpec::Targets(HashMap::from([(
-            "default".to_string(),
-            served.to_string(),
-        )])));
+        m2.alias = HashMap::from([("default".to_string(), Some(served.to_string()))]);
         let ok = Backend::new(&m2, &[]);
         ok.set_models(HashSet::from([served.to_string()]));
         assert_eq!(ok.resolve("default").as_deref(), Some(served));
     }
 
     use crate::server::upstreams::config::{
-        AliasSpec, BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig,
+        BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig,
     };
 
     fn backend(name: &str, max_inflight: u32) -> BackendConfig {
         BackendConfig {
-            priority: Default::default(),
-            name: name.into(),
-            base_url: format!("http://{name}:8000/v1"),
-            api_key_env: None,
-            api_key: None,
-            weight: 1,
             max_inflight,
-            health_path: "/models".into(),
-            models: Vec::new(),
-            alias: None,
-            supports_edit: false,
-            enabled: true,
+            ..BackendConfig::new(name, format!("http://{name}:8000/v1"))
+        }
+    }
+
+    /// A speech pool over one backend; `voices` is the language → voice map.
+    fn speech_pool(
+        models: &[&str],
+        voices: &[(&str, &str)],
+        offer_voices: &[&str],
+        backend: BackendConfig,
+    ) -> UpstreamPoolConfig {
+        UpstreamPoolConfig {
+            models: models.iter().map(|m| (*m).to_string()).collect(),
+            voices: voices
+                .iter()
+                .map(|(l, v)| ((*l).to_string(), (*v).to_string()))
+                .collect(),
+            offer_voices: offer_voices.iter().map(|v| (*v).to_string()).collect(),
+            ..UpstreamPoolConfig::new(PoolKind::Speech, vec![backend])
         }
     }
 
@@ -3613,16 +3616,8 @@ models = ["second"]
         backends: Vec<BackendConfig>,
     ) -> UpstreamPoolConfig {
         UpstreamPoolConfig {
-            voices: Default::default(),
-            offer_voices: Vec::new(),
-            allowed_groups: Vec::new(),
-            compliance: Default::default(),
-            enforce_limits: true,
-            kind,
             strategy,
-            models: Vec::new(),
-            fallback_offline: None,
-            backend: backends,
+            ..UpstreamPoolConfig::new(kind, backends)
         }
     }
 
@@ -3687,19 +3682,12 @@ models = ["second"]
         // Regression: a cloud provider's /models probe reports its whole
         // catalogue. speech_target must return the operator's declared TTS
         // model, not the alphabetically-first of the flood.
-        let cfg: UpstreamPoolConfig = toml::from_str(
-            r#"
-            kind = "speech"
-            models = ["tts-1"]
-            [voices]
-            "" = "alloy"
-            de = "nova"
-            [[backend]]
-            name = "openai"
-            base_url = "https://api.openai.com/v1"
-        "#,
-        )
-        .unwrap();
+        let cfg = speech_pool(
+            &["tts-1"],
+            &[("", "alloy"), ("de", "nova")],
+            &[],
+            BackendConfig::new("openai", "https://api.openai.com/v1"),
+        );
         let reg = build(vec![("openai_tts", cfg)]);
         // Simulate the OpenAI /models flood.
         seed_models(
@@ -3727,33 +3715,21 @@ models = ["second"]
         // Two speech pools, one voice shared between them and one restricted to
         // a group. The picker must offer each distinct voice once, and only
         // from pools the caller may route to.
-        let open: UpstreamPoolConfig = toml::from_str(
-            r#"
-            kind = "speech"
-            models = ["tts-1"]
-            [voices]
-            "" = "alloy"
-            de = "onyx"
-            [[backend]]
-            name = "openai"
-            base_url = "https://api.openai.com/v1"
-        "#,
-        )
-        .unwrap();
-        let restricted: UpstreamPoolConfig = toml::from_str(
-            r#"
-            kind = "speech"
-            models = ["tts-1"]
-            allowed_groups = ["studio"]
-            [voices]
-            "" = "onyx"
-            en = "sage"
-            [[backend]]
-            name = "local"
-            base_url = "http://tts.example.com"
-        "#,
-        )
-        .unwrap();
+        let open = speech_pool(
+            &["tts-1"],
+            &[("", "alloy"), ("de", "onyx")],
+            &[],
+            BackendConfig::new("openai", "https://api.openai.com/v1"),
+        );
+        let restricted = UpstreamPoolConfig {
+            allowed_groups: vec!["studio".into()],
+            ..speech_pool(
+                &["tts-1"],
+                &[("", "onyx"), ("en", "sage")],
+                &[],
+                BackendConfig::new("local", "http://tts.example.com"),
+            )
+        };
         let reg = build(vec![("cloud", open), ("studio", restricted)]);
 
         // A member of no group sees only the unrestricted pool's voices.
@@ -3768,22 +3744,20 @@ models = ["second"]
 
     #[test]
     fn a_speech_model_offers_the_voices_of_the_pools_serving_it() {
-        let pool = |model: &str, voices: &str| -> UpstreamPoolConfig {
-            toml::from_str(&format!(
-                r#"
-                kind = "speech"
-                models = ["{model}"]
-                offer_voices = [{voices}]
-                [[backend]]
-                name = "{model}-backend"
-                base_url = "http://{model}.example.com"
-            "#
-            ))
-            .unwrap()
+        let pool = |model: &str, voices: &[&str]| -> UpstreamPoolConfig {
+            speech_pool(
+                &[model],
+                &[],
+                voices,
+                BackendConfig::new(
+                    format!("{model}-backend"),
+                    format!("http://{model}.example.com"),
+                ),
+            )
         };
         let reg = build(vec![
-            ("cloud", pool("tts-1", r#""marin", "alloy""#)),
-            ("local", pool("kokoro", r#""af_heart""#)),
+            ("cloud", pool("tts-1", &["marin", "alloy"])),
+            ("local", pool("kokoro", &["af_heart"])),
         ]);
 
         assert_eq!(reg.speech_voices_of("tts-1"), vec!["marin", "alloy"]);
@@ -3793,16 +3767,12 @@ models = ["second"]
 
     #[test]
     fn a_speech_model_keeps_its_voices_while_its_backends_are_down() {
-        let cfg: UpstreamPoolConfig = toml::from_str(
-            r#"
-            kind = "speech"
-            offer_voices = ["af_heart"]
-            [[backend]]
-            name = "kokoro"
-            base_url = "http://kokoro.example.com"
-        "#,
-        )
-        .unwrap();
+        let cfg = speech_pool(
+            &[],
+            &[],
+            &["af_heart"],
+            BackendConfig::new("kokoro", "http://kokoro.example.com"),
+        );
         let reg = build(vec![("local", cfg)]);
         let pool = reg.data().pools.get("local").unwrap().clone();
         let backend = &pool.backends[0];
@@ -3823,20 +3793,12 @@ models = ["second"]
         // which the (pool, lang) keyed map cannot hold. The menu keeps the
         // operator's order — the house voice belongs first, not wherever the
         // alphabet puts it — and the map's own voices fill in behind it.
-        let cfg: UpstreamPoolConfig = toml::from_str(
-            r#"
-            kind = "speech"
-            models = ["tts-1"]
-            offer_voices = ["marin", "cedar", "alloy"]
-            [voices]
-            "" = "alloy"
-            de = "onyx"
-            [[backend]]
-            name = "openai"
-            base_url = "https://api.openai.com/v1"
-        "#,
-        )
-        .unwrap();
+        let cfg = speech_pool(
+            &["tts-1"],
+            &[("", "alloy"), ("de", "onyx")],
+            &["marin", "cedar", "alloy"],
+            BackendConfig::new("openai", "https://api.openai.com/v1"),
+        );
         let reg = build(vec![("cloud", cfg)]);
         assert_eq!(
             reg.speech_voices_for(&PoolAccess::default()),
@@ -3852,18 +3814,12 @@ models = ["second"]
     #[test]
     fn speech_target_follows_the_admins_default_speech_model() {
         let speech = |model: &str, voice: &str| -> UpstreamPoolConfig {
-            toml::from_str(&format!(
-                r#"
-                kind = "speech"
-                models = ["{model}"]
-                [voices]
-                "" = "{voice}"
-                [[backend]]
-                name = "{model}-backend"
-                base_url = "http://127.0.0.1:9/v1"
-            "#
-            ))
-            .unwrap()
+            speech_pool(
+                &[model],
+                &[("", voice)],
+                &[],
+                BackendConfig::new(format!("{model}-backend"), "http://127.0.0.1:9/v1"),
+            )
         };
         let reg = build(vec![
             ("a-cloud", speech("tts-1", "alloy")),
@@ -5123,25 +5079,23 @@ models = ["second"]
 
     // ------- aliases + fallback -------
 
-    fn backend_alias(name: &str, spec: AliasSpec) -> BackendConfig {
+    fn backend_alias(name: &str, spec: HashMap<String, Option<String>>) -> BackendConfig {
         BackendConfig {
             priority: Default::default(),
-            alias: Some(spec),
+            alias: spec,
             ..backend(name, 16)
         }
     }
 
-    fn names(v: &[&str]) -> AliasSpec {
-        AliasSpec::Names(v.iter().map(|s| (*s).to_string()).collect())
+    fn names(v: &[&str]) -> HashMap<String, Option<String>> {
+        v.iter().map(|s| ((*s).to_string(), None)).collect()
     }
 
-    fn targets(pairs: &[(&str, &str)]) -> AliasSpec {
-        AliasSpec::Targets(
-            pairs
-                .iter()
-                .map(|(k, t)| ((*k).to_string(), (*t).to_string()))
-                .collect(),
-        )
+    fn targets(pairs: &[(&str, &str)]) -> HashMap<String, Option<String>> {
+        pairs
+            .iter()
+            .map(|(k, t)| ((*k).to_string(), Some((*t).to_string())))
+            .collect()
     }
 
     fn pool_offline(

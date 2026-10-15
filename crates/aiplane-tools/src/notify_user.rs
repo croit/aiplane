@@ -21,7 +21,7 @@
 //! Deliberately **not** chat-only: a notification lands on the user's phone,
 //! not in a conversation, so it works from the headless scheduler path (which
 //! has a session but no browser) and from `/v1`. What it does need is a
-//! configured `[push]` VAPID key and at least one subscribed browser; both
+//! configured Web Push VAPID key and at least one subscribed browser; both
 //! absences are reported as errors that tell the model to say so in its reply
 //! rather than to retry.
 //!

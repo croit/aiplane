@@ -104,8 +104,8 @@ settings-f-chat-ocr-max_output_chars = 最大提取文本量
 settings-f-chat-ocr-max_output_chars-help = 单个文档提取文本的上限，以字符计。
 settings-f-chat-ocr-timeout_secs = 超时
 settings-f-chat-ocr-timeout_secs-help = 处理单个文档的时限，以秒计。
-settings-f-chat-ocr-max_concurrency = 并行页数
-settings-f-chat-ocr-max_concurrency-help = 同时读取多少页。
+settings-f-chat-ocr-max_concurrency = 并行文档数
+settings-f-chat-ocr-max_concurrency-help = 整个网关同时读取多少份文档，其余的排队等待。
 settings-f-chat-ocr-auto_min_text_chars_per_page = 扫描件判定阈值
 settings-f-chat-ocr-auto_min_text_chars_per_page-help = 每页内嵌字符少于此数时，PDF 视为扫描件并送入 OCR。
 
@@ -253,7 +253,7 @@ settings-f-metrics-allowed_ips-help = 地址或 CIDR 网段，例如 10.0.0.0/8�
 # 清除某项已保存设置前的确认（SPA 设置编辑器）。
 settings-clear-confirm = 要将 { $key } 重置为内置默认值吗？
 settings-heading = 设置
-settings-intro = 本网关的运维设置。它们保存在数据库中，无需配置文件——每个字段还会显示它所替代的 TOML 键名。
+settings-intro = 本网关的运维设置。它们保存在数据库中——每个字段还会显示其设置键名。
 settings-saved-restart = 已保存。本节中部分字段需重启后才生效。
 settings-save-failed = 无法保存这些设置。
 settings-cleared = 已清除，重新使用内置默认值。

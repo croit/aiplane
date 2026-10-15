@@ -4,7 +4,7 @@
 //! Typst-templated document generation.
 //!
 //! Operators drop one subdirectory per template under
-//! `[typst] templates_dir`. Each subdir holds:
+//! `typst.templates_dir`. Each subdir holds:
 //!
 //! - `template.typ`  — the typst source the CLI compiles
 //! - `template.toml` — manifest describing the tool the model sees:

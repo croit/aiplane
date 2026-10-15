@@ -46,7 +46,7 @@ use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture, T
 pub struct TypstRenderTool {
     template: Arc<Template>,
     /// Sandbox client for the optional editable-PowerPoint export
-    /// (typ2pptx). `None` when the deployment has no `[sandbox]`
+    /// (typ2pptx). `None` when the deployment has no sandbox
     /// configured — the render still produces the PDF + preview, just
     /// no `.pptx`.
     sandbox: Option<Arc<SandboxClient>>,
@@ -200,7 +200,7 @@ impl Tool for TypstRenderTool {
             let s3 = ctx.s3.as_ref().ok_or_else(|| {
                 ToolError::Failed(
                     "chat attachments are not configured on this gateway \
-                     (operator must set [chat.s3]); typst output has nowhere \
+                     (the operator must enable S3 attachment storage in /admin/settings); typst output has nowhere \
                      to land"
                         .into(),
                 )
@@ -972,7 +972,7 @@ const DOCX_OUT: &str = "out.docx";
 /// (the real compiler — content, headings, lists, tables, and the logo/brand
 /// bar images all come through; only fixed-layout chrome like a `place()`d
 /// footer is dropped) and let pandoc turn that into an editable Word doc. When
-/// the template declares a `[docx] font`, we set it as the document default and
+/// the template declares a `docx.font`, we set it as the document default and
 /// **embed** it as an obfuscated `.odttf` (sourced from the template's own
 /// `fonts/<font>-Regular.ttf` / `-Bold.ttf`), so the output renders on-brand
 /// even where the font isn't installed. Single-source: no reference.docx.
@@ -1655,7 +1655,7 @@ impl Tool for TypstEditTool {
             let s3 = ctx.s3.as_ref().ok_or_else(|| {
                 ToolError::Failed(
                     "chat attachments are not configured on this gateway \
-                     (operator must set [chat.s3])"
+                     (the operator must enable S3 attachment storage in /admin/settings)"
                         .into(),
                 )
             })?;
@@ -2470,8 +2470,6 @@ mod tests {
             bucket: "b".into(),
             access_key: None,
             secret_key: None,
-            access_key_env: None,
-            secret_key_env: None,
             key_prefix: "chat-attachments".into(),
         }
     }

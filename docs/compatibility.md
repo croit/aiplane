@@ -3,39 +3,20 @@ SPDX-License-Identifier: AGPL-3.0-only
 Copyright (C) 2026 croit GmbH
 -->
 
-# Runtime compatibility identifiers
+# Stable identifiers
 
-AIplane retains a small set of identifiers so current deployments and independently updated clients continue to work. These are active runtime behaviors, not setup instructions for new installations. New deployments should use the current AIplane names shown in the deployment guides.
+Some names in AIplane look older than the product. They identify existing
+storage or are shared with separately updated clients, so they are part of
+active contracts and must not be renamed casually.
 
-## Accepted legacy inputs
+- `/var/lib/gateway`, `gateway.sqlite`, the `gateway` container user, and the `systemd-gateway` volume name identify the runtime storage of existing installations. Renaming one starts a second, empty store beside the database.
+- Browser-extension message names and the `gateways` browser storage key are shared between the extension and the server, which are updated independently.
+- `x-gateway-affinity`, `X-Gateway-Backend`, and `x-gateway-tool-rounds` are client-facing HTTP fields. The affinity header is also accepted as `x-aiplane-affinity`, which wins when a request carries both.
+- The `llmgw-` ComfyUI output prefix is part of the generated-file contract.
 
-The server still accepts selected `GATEWAY_*` environment variables as aliases for `AIPLANE_*`. The `AIPLANE_*` spelling takes precedence; using the old spelling produces a deprecation warning. Set only the current spelling for new deployments. Do not use legacy aliases to override image defaults such as `AIPLANE_DATA_DIR` or `AIPLANE_STATIC_DIR`.
+AIplane refuses to start while any environment variable starting with `GATEWAY_` is set, naming each one, so a forgotten old name fails loudly instead of being ignored.
 
-The Helm chart can read an existing session key stored under either `AIPLANE_SESSION_KEY` or `GATEWAY_SESSION_KEY`. It renders the key under both names when managing its Secret. If an externally managed Secret uses the older key name, configure `sessionKey.existingSecretKey` explicitly.
-
-## Published names
-
-Images and the Helm chart are published only under the AIplane names
-(`ghcr.io/croit/aiplane*` and `oci://ghcr.io/croit/charts/aiplane`). The former
-`ghcr.io/croit/llm-gateway*` images and `llm-gateway` chart receive no further
-builds; an installation that still references them stays on its last pulled
-version. Point image references at the matching `aiplane` name. To move a Helm
-release of the `llm-gateway` chart, upgrade it to `oci://ghcr.io/croit/charts/aiplane`
-with `nameOverride: llm-gateway`, which keeps every object name, including the
-PersistentVolumeClaim that holds the database.
-
-## Stored-data compatibility
-
-The encryption key derivation still tries retired product-name labels when reading stored secrets. New values are written using the current AIplane label. This allows current releases to read databases created by earlier releases without changing the operator's configured key.
-
-## Stable protocol and storage identifiers
-
-Some old-looking names are part of active contracts and must not be renamed casually:
-
-- `/var/lib/gateway`, `gateway.sqlite`, the `gateway` container user, and the `systemd-gateway` volume name identify existing runtime storage.
-- Browser-extension message names and the `gateways` browser storage key are shared between separately updated clients and the server.
-- `x-gateway-affinity`, `X-Gateway-Backend`, and `x-gateway-tool-rounds` are client-facing HTTP fields. The affinity header also accepts `x-aiplane-affinity`.
-- `[gateway]` configuration keys and the `llmgw-` ComfyUI output prefix remain part of existing configuration and generated-file contracts.
-- Sandbox cleanup recognizes the older `app=llm-gateway-sandbox` container label as well as the current label.
-
-These compatibility inputs are implementation details for existing integrations. New configuration and deployments should use the AIplane names documented in the current operator guides.
+Everything else uses the AIplane names: environment variables are `AIPLANE_*`,
+the binary is `/app/aiplane`, images and the Helm chart are published as
+`ghcr.io/croit/aiplane*` and `oci://ghcr.io/croit/charts/aiplane`, and the Helm
+session Secret key is `AIPLANE_SESSION_KEY`.

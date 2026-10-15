@@ -20,7 +20,7 @@ use uuid::Uuid;
 use super::{DbError, Pool};
 
 /// Where a rule attaches. `Global` is the deployment default; `Role` keys on
-/// a `[[roles]]` id; `User` keys on a `users.id`.
+/// a role (group) id; `User` keys on a `users.id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubjectType {
     Global,

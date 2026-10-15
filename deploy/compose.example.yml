@@ -88,10 +88,6 @@ services:
       # database and the RAG index store on this volume — mounting it is all
       # that persistence needs.
       #
-      # OPTIONAL config file. Not needed: OCR, ComfyUI, the sandbox, Typst,
-      # skills, GeoIP and RAG tuning all live at /admin/settings now. Mount one
-      # only to migrate an older install — its contents are imported into the
-      # database on the first boot and ignored afterwards.
       # The gateway has no config file: topology, groups, the OIDC provider
       # and every operator setting live in the database and are edited in the
       # web UI. Everything below is a property of where the process runs.

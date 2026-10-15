@@ -3,8 +3,8 @@
 
 //! Database-backed upstream topology — pools, backends, and their relationships.
 //!
-//! Replaces the `[upstream_pools]` TOML sections with DB rows managed through
-//! the admin UI. [`load_snapshot`] reads the full topology in a handful of
+//! Pools and backends are DB rows managed through the admin UI.
+//! [`load_snapshot`] reads the full topology in a handful of
 //! queries for registry rebuilds; the CRUD functions power `/admin/backends`
 //! and `/admin/pools`.
 //!
@@ -124,16 +124,6 @@ pub async fn load_snapshot(db: &Pool) -> Result<UpstreamConfigSnapshot, DbError>
         backends,
         fallbacks,
     })
-}
-
-/// True when the DB has no pools (and therefore no usable topology). Note the
-/// first-boot seed in `main.rs` gates on a persistent `topology.seeded` marker,
-/// not on this — deleting every pool via the UI must not trigger a reseed.
-pub async fn is_empty(db: &Pool) -> Result<bool, DbError> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pools")
-        .fetch_one(db)
-        .await?;
-    Ok(count == 0)
 }
 
 async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbError> {
@@ -1086,7 +1076,7 @@ mod tests {
         assert!(snap.pools.is_empty());
         assert!(snap.backends.is_empty());
         assert!(snap.fallbacks.is_empty());
-        assert!(is_empty(&pool).await.unwrap());
+        assert!(load_snapshot(&pool).await.unwrap().pools.is_empty());
     }
 
     /// A backend with nothing else set, for the detection tests.
@@ -1310,7 +1300,7 @@ mod tests {
         assert_eq!(loaded.aliases.len(), 2);
         // is_empty tracks pools, not backends: inserting a backend alone leaves
         // the topology "empty" (no pool → nothing routable yet).
-        assert!(is_empty(&pool).await.unwrap());
+        assert!(load_snapshot(&pool).await.unwrap().pools.is_empty());
 
         // Update — change weight, drop a model.
         let mut updated = backend.clone();
@@ -1656,7 +1646,7 @@ mod tests {
         assert!(p.compliance_nda);
         assert_eq!(p.backends, vec!["b1"]);
         assert_eq!(p.models, vec!["pool-fallback-model"]);
-        assert!(!is_empty(&pool).await.unwrap());
+        assert!(!load_snapshot(&pool).await.unwrap().pools.is_empty());
 
         set_backend_pool(&pool, "b2", Some("chat-pool"))
             .await
@@ -1846,7 +1836,7 @@ mod tests {
         .unwrap();
 
         delete_pool(&pool, "p").await.unwrap();
-        assert!(is_empty(&pool).await.unwrap());
+        assert!(load_snapshot(&pool).await.unwrap().pools.is_empty());
 
         // Backend should still exist (delete pool ≠ delete backend).
         assert!(get_backend(&pool, "b").await.unwrap().is_some());

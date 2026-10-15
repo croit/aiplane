@@ -50,7 +50,7 @@ async fn gateway(upstream: &MockServer) -> RamaState {
             models: Vec::new(),
             backend: vec![BackendConfig {
                 priority: Default::default(),
-                alias: None,
+                alias: Default::default(),
                 supports_edit: false,
                 enabled: true,
                 name: "mock".into(),

@@ -50,12 +50,12 @@ pub struct RamaState {
     >,
     /// Fire-and-forget usage-metrics sink. The proxy, chat driver, and
     /// scheduler hand it a `UsageRecord` per upstream call; a background
-    /// task batches the writes. `disabled()` when `[usage] enabled = false`,
+    /// task batches the writes. `disabled()` when `usage.enabled` is off,
     /// where `emit` is a no-op. See `server::usage`.
     pub usage: UsageHandle,
     /// Automatic document OCR: the derivative cache, the limits, the shared
     /// concurrency gate, and the usage accounting. Always present — the
-    /// service reports itself unavailable when `[chat.ocr] enabled = false` or
+    /// service reports itself unavailable when `chat.ocr.enabled` is off or
     /// no healthy `ocr` pool serves a model, and the chat path then behaves
     /// exactly as it did before OCR existed. Lives here (not on `AppState`)
     /// because it needs the usage sink, and it must be *one* instance:
@@ -64,7 +64,7 @@ pub struct RamaState {
     pub ocr: aiplane_features::server::ocr::OcrService,
     /// Rate-limit / quota gate, consulted by the `/v1` proxy, the chat send
     /// path, and the scheduler before a call runs. Reads the same DB; a no-op
-    /// when `[limits] enabled = false` or the caller has no rules. See
+    /// when `limits.enabled` is off or the caller has no rules. See
     /// `server::limits`.
     pub enforcer: Arc<aiplane_core::server::limits::Enforcer>,
     /// In-memory count of unapplied upstream-topology edits — pool/backend
@@ -87,7 +87,7 @@ pub struct RamaState {
     /// Proxies whose forwarded headers are believed; empty until
     /// [`Self::with_trusted_proxies`]. Read through [`Self::client_ip`].
     trusted_proxies: aiplane_core::server::trusted_proxies::TrustedProxies,
-    /// Test-only override of `[gateway] upstream_wait_secs`. See
+    /// Test-only override of `gateway.upstream_wait_secs`. See
     /// [`Self::with_upstream_wait`].
     upstream_wait_override: Option<std::time::Duration>,
 }
@@ -184,7 +184,7 @@ impl RamaState {
     }
 
     /// How long a request may be parked waiting for its pool to come back
-    /// (`[gateway] upstream_wait_secs`, default 120 s; `0` disables parking).
+    /// (`gateway.upstream_wait_secs`, default 120 s; `0` disables parking).
     /// Read per request so the value is never stale after a config reload.
     pub fn upstream_wait(&self) -> std::time::Duration {
         self.upstream_wait_override.unwrap_or_else(|| {

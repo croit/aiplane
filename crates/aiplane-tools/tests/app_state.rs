@@ -50,7 +50,6 @@ mod skill_overlay_tests {
             id: "user".into(),
             admin: false,
             tools: vec!["*".into()],
-            models: vec!["*".into()],
             skills: skill_grant.iter().map(|s| (*s).to_string()).collect(),
         }];
         let rbac = Arc::new(Resolver::build(rbac_config, roles).unwrap());
@@ -142,7 +141,6 @@ mod token_gate_tests {
         let role = RoleConfig {
             id: "all".into(),
             admin: false,
-            models: vec!["*".into()],
             tools: vec!["*".into()],
             skills: vec![],
         };
@@ -394,7 +392,6 @@ mod memory_gate_tests {
                 vec![RoleConfig {
                     id: "all".into(),
                     admin: false,
-                    models: vec!["*".into()],
                     tools: vec!["*".into()],
                     skills: vec![],
                 }],

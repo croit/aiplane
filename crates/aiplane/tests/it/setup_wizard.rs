@@ -55,7 +55,7 @@ const PUBLIC_URL: &str = "http://gateway.test";
 /// A gateway that has never been configured: no OIDC, no completed setup.
 async fn unconfigured_state() -> RamaState {
     let mut config = Config::default();
-    config.gateway.public_url_import_only = PUBLIC_URL.into();
+    config.gateway.public_url_fallback = PUBLIC_URL.into();
     let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let registry = upstreams::UpstreamRegistry::new(&Default::default()).unwrap();
     let app = AppState::new(

@@ -23,7 +23,7 @@ pub fn base_registry(
         ))
         // Fetch an image from a URL and keep it as a reusable attachment
         // (so it can be embedded in a later typst render). Always on — the
-        // runtime guard errors cleanly off the chat path / without [chat.s3].
+        // runtime guard errors cleanly off the chat path / without S3 attachment storage.
         .with(aiplane_tools::load_image_url::LoadImageUrl::new(
             allow_private_networks,
         ))
@@ -62,11 +62,11 @@ pub fn base_registry(
         // extension" rather than a hang.
         .with(aiplane_tools::browser_control::BrowserControl)
         // The same browser, but the capture goes into the reply: the user
-        // cannot see a `browser_control` screenshot. Needs [chat.s3] at
+        // cannot see a `browser_control` screenshot. Needs S3 attachment storage at
         // runtime and says so before touching the browser.
         .with(aiplane_tools::show_screenshot::ShowScreenshot)
         // Reach the user when they aren't watching: a finished long job, or a
-        // scheduled action that found something. Runtime-gated on `[push]`
+        // scheduled action that found something. Runtime-gated on Web Push
         // being configured plus a subscribed device, so it stays registered
         // (and RBAC-grantable) on deployments without push.
         .with(aiplane_tools::notify_user::NotifyUser)
@@ -94,7 +94,7 @@ pub fn base_registry(
         .with(aiplane_tools::currency::ConvertCurrency)
         // RAG. These tools are no-ops without the indexer wired into
         // AppState; registering them unconditionally keeps RBAC config
-        // stable across deployments where `[rag]` is only sometimes set.
+        // stable across deployments where RAG is only sometimes set.
         .with(aiplane_tools::rag::RagListCollections::new(rbac.clone()))
         .with(aiplane_tools::rag::RagSearch::new(rbac.clone()))
         // Regex over the same indexed corpus, for patterns BM25 can't express
@@ -129,7 +129,7 @@ pub fn base_registry(
         .with(aiplane_tools::document::DeleteDocument)
         .with(aiplane_tools::document::UndeleteDocument)
         // QR codes render natively in-process (no sandbox, no upstream), so
-        // the tool is always on; it needs [chat.s3] at runtime to deliver
+        // the tool is always on; it needs S3 attachment storage at runtime to deliver
         // the file and errors cleanly without it.
         .with(aiplane_tools::qr::GenerateQrCode)
 }

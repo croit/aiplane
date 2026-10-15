@@ -65,7 +65,7 @@ const SHORT_CACHE: &str = "public, max-age=300";
 /// The static root, resolved once from the environment. Empty when
 /// `AIPLANE_STATIC_DIR` is unset — in which case [`serve`] answers 503.
 static STATIC_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
-    aiplane_core::server::env::var(STATIC_DIR_ENV)
+    std::env::var(STATIC_DIR_ENV)
         .map(PathBuf::from)
         .unwrap_or_default()
 });

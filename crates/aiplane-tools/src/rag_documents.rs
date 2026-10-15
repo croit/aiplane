@@ -691,7 +691,7 @@ mod tests {
                     max_inflight: 1,
                     health_path: "/models".into(),
                     models: Vec::new(),
-                    alias: None,
+                    alias: Default::default(),
                     supports_edit: false,
                     enabled: true,
                 }],

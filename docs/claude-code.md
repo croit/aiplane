@@ -139,8 +139,7 @@ interacts with one gateway behaviour worth knowing about:
 
 - While a request is **parked** waiting for a replica to come back
   ([`upstreams.md`](upstreams.md#waiting-out-an-outage)) AIplane sends
-  nothing at all — no status line, no bytes. Keep `[gateway]
-  upstream_wait_secs` well under five minutes (the default 120 s is), or set
+  nothing at all — no status line, no bytes. Keep `gateway.upstream_wait_secs` well under five minutes (the default 120 s is), or set
   `API_FORCE_IDLE_TIMEOUT=0` on the client.
 - Once a streamed turn has started, AIplane emits an SSE `ping` every 15 s,
   so a slow model does not trip either the byte-level or event-level watchdog

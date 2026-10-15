@@ -313,7 +313,7 @@ mod tests {
                         weight: 1,
                         max_inflight: 8,
                         health_path: "/models".into(),
-                        alias: None,
+                        alias: Default::default(),
                         enabled: true,
                         supports_edit: false,
                     }],

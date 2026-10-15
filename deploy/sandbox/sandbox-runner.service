@@ -65,12 +65,7 @@ ExecStart=/usr/local/bin/sandbox-runner
 # Leave no sandboxes behind on a stop: the runner reaps stale containers and
 # scratch directories at startup, but a service that is stopped and not started
 # again would otherwise keep both pinned indefinitely.
-# Two commands, not two `--filter` arguments (podman ANDs repeated filters, so
-# asking for both labels at once matches nothing) and not a shell loop either
-# (systemd expands `$var` in an Exec line before the shell ever sees it). The
-# second label is what runners wrote before the project was renamed to croit
-# AIplane; an upgrade must not leave those containers behind. docs/compatibility.md.
-ExecStopPost=/bin/sh -c 'podman ps -aq --filter label=app=aiplane-sandbox | xargs -r podman rm -f >/dev/null 2>&1; podman ps -aq --filter label=app=llm-gateway-sandbox | xargs -r podman rm -f >/dev/null 2>&1; true'
+ExecStopPost=/bin/sh -c 'podman ps -aq --filter label=app=aiplane-sandbox | xargs -r podman rm -f >/dev/null 2>&1; true'
 # Deprioritise the runner for the host OOM-killer: a sandbox memory bomb (which
 # runs with --oom-score-adj=1000) gets reaped first, so the runner survives.
 OOMScoreAdjust=-800

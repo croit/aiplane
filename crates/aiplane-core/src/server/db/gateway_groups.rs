@@ -9,9 +9,8 @@
 //! `allowed_groups`, and [`crate::server::rbac::Resolver::role_ids_for`] maps a
 //! user's raw OIDC claim values onto the groups they hold.
 //!
-//! The DB is the runtime source of truth. [`seed_roles`]
-//! imports the legacy `[rbac]` + `[[roles]]` config once; after that the
-//! `/admin/groups` UI owns it. The resolver holds a snapshot ([`load_snapshot`])
+//! The DB is the runtime source of truth, edited in the `/admin/groups` UI.
+//! The resolver holds a snapshot ([`load_snapshot`])
 //! that is rebuilt from these tables at startup and after every admin edit.
 
 use std::collections::BTreeMap;
@@ -452,74 +451,6 @@ pub async fn group_member_counts_in(
         .collect()
 }
 
-/// True when no group has been created yet — the trigger for a one-time
-/// [`seed_roles`].
-pub async fn is_empty(pool: &Pool) -> Result<bool, DbError> {
-    let n: i64 = sqlx::query("SELECT COUNT(*) AS n FROM gateway_groups")
-        .fetch_one(pool)
-        .await?
-        .try_get("n")?;
-    Ok(n == 0)
-}
-
-/// Write a role set into the group tables, once, when they are empty.
-///
-/// The config file this was named for is gone; what remains is a way to
-/// populate an empty deployment from an in-memory role set, which is what the
-/// `dev_ui` fixture needs. Roles become gateway groups, mappings become OIDC
-/// mappings, `default_role` becomes the default group, and each role's `tools`
-/// / `skills` become grant rows. `models` is intentionally dropped: model
-/// access is governed per-pool (see `allowed_groups` on pools), not per-role.
-pub async fn seed_roles(
-    pool: &Pool,
-    rbac: &crate::server::rbac::config::RbacConfig,
-    roles: &[crate::server::rbac::config::RoleConfig],
-) -> Result<(), DbError> {
-    if !is_empty(pool).await? {
-        return Ok(());
-    }
-    if roles.is_empty() && rbac.default_role.is_none() && rbac.mappings.is_empty() {
-        // Nothing to seed — leave the tables empty (a fresh deployment manages
-        // everything in the UI from scratch).
-        return Ok(());
-    }
-    for role in roles {
-        let is_default = rbac.default_role.as_deref() == Some(role.id.as_str());
-        upsert_group(pool, &role.id, "", role.admin, is_default).await?;
-        if !role.tools.is_empty() {
-            set_tools_for_group(pool, &role.id, &role.tools).await?;
-        }
-        // Skills fold into the existing `skill_role_grants` overlay, keyed by
-        // group name (== role id) — the same table the `/admin/skills` editor
-        // and the resolver already use.
-        if !role.skills.is_empty() {
-            super::skill_grants::add_grants_for_role(pool, &role.id, &role.skills).await?;
-        }
-    }
-    // A default_role that isn't itself a `[[roles]]` entry still needs a group.
-    if let Some(default) = rbac.default_role.as_deref()
-        && !roles.iter().any(|r| r.id == default)
-    {
-        upsert_group(pool, default, "", false, true).await?;
-    }
-    for m in &rbac.mappings {
-        // The mapping's target role is now a group; ensure it exists even if it
-        // had no `[[roles]]` entry, so the FK holds.
-        if !roles.iter().any(|r| r.id == m.role) && rbac.default_role.as_deref() != Some(&m.role) {
-            upsert_group(pool, &m.role, "", false, false).await?;
-        }
-        sqlx::query(
-            "INSERT OR IGNORE INTO oidc_group_mappings (oidc_claim, oidc_value, gateway_group) VALUES (?, ?, ?)",
-        )
-        .bind(&m.oidc_claim)
-        .bind(&m.oidc_value)
-        .bind(&m.role)
-        .execute(pool)
-        .await?;
-    }
-    Ok(())
-}
-
 pub async fn set_priority(
     pool: &Pool,
     name: &str,
@@ -607,14 +538,14 @@ mod tests {
     #[tokio::test]
     async fn groups_round_trip() {
         let pool = fresh().await;
-        assert!(is_empty(&pool).await.unwrap());
+        assert!(list_groups(&pool).await.unwrap().is_empty());
         upsert_group(&pool, "developers", "Dev team", false, false)
             .await
             .unwrap();
         upsert_group(&pool, "admins", "", true, false)
             .await
             .unwrap();
-        assert!(!is_empty(&pool).await.unwrap());
+        assert!(!list_groups(&pool).await.unwrap().is_empty());
         let groups = list_groups(&pool).await.unwrap();
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].name, "admins");
@@ -862,60 +793,5 @@ mod tests {
         delete_group(&pool, "developers").await.unwrap();
         assert!(all_mappings(&pool).await.unwrap().is_empty());
         assert!(all_tool_grants(&pool).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn seed_roles_imports_roles_mappings_and_default() {
-        use crate::server::rbac::config::{RbacConfig, RoleConfig, RoleMapping};
-        let pool = fresh().await;
-        let rbac = RbacConfig {
-            default_role: Some("user".into()),
-            mappings: vec![RoleMapping {
-                oidc_claim: "groups".into(),
-                oidc_value: "grp-net".into(),
-                role: "network_admin".into(),
-            }],
-        };
-        let roles = vec![
-            RoleConfig {
-                id: "user".into(),
-                admin: false,
-                models: vec!["*".into()],
-                tools: vec!["search_web".into()],
-                skills: vec![],
-            },
-            RoleConfig {
-                id: "network_admin".into(),
-                admin: true,
-                models: vec![],
-                tools: vec!["*".into()],
-                skills: vec![],
-            },
-        ];
-        seed_roles(&pool, &rbac, &roles).await.unwrap();
-
-        let groups = list_groups(&pool).await.unwrap();
-        assert_eq!(groups.len(), 2);
-        let user = groups.iter().find(|g| g.name == "user").unwrap();
-        assert!(user.is_default);
-        let na = groups.iter().find(|g| g.name == "network_admin").unwrap();
-        assert!(na.is_admin);
-        assert_eq!(
-            tools_for_group(&pool, "user").await.unwrap(),
-            v(&["search_web"])
-        );
-        assert_eq!(
-            mapped_values_for_group(&pool, "network_admin")
-                .await
-                .unwrap(),
-            v(&["grp-net"])
-        );
-
-        // Idempotent: a second seed with different config is a no-op (tables
-        // are no longer empty).
-        seed_roles(&pool, &RbacConfig::default(), &[])
-            .await
-            .unwrap();
-        assert_eq!(list_groups(&pool).await.unwrap().len(), 2);
     }
 }

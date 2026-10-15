@@ -26,7 +26,7 @@ use aiplane_features::server::comfyui::runner::{RunError, Runner};
 use aiplane_features::server::comfyui::store::ComfyuiStore;
 
 /// Cheaply-cloneable bundle of everything a [`ComfyuiWorkflowTool`] needs
-/// to execute a workflow. Built once at startup from `[comfyui]` config;
+/// to execute a workflow. Built once at startup from ComfyUI settings;
 /// held in `Arc` by the store and the tool source.
 #[derive(Clone)]
 pub struct ComfyuiHandle {
@@ -37,14 +37,14 @@ pub struct ComfyuiHandle {
     /// Chat-attachment S3 config. When `Some`, attachment-kind params
     /// (Image/Video/AudioAttachment) are resolved from the gateway's
     /// chat bucket and staged into ComfyUI's input store before
-    /// workflow injection. `None` only when `[chat.s3]` is unconfigured
+    /// workflow injection. `None` only when S3 attachment storage is unconfigured
     /// — workflows with attachment-kind params then fail cleanly with
     /// `RunError::S3NotConfigured`.
     pub s3: Option<Arc<aiplane_core::server::config::S3Config>>,
     /// Maximum number of concurrently pending ComfyUI jobs. The tool
     /// rejects new submissions when the pending count reaches this
     /// limit, so a single 24 GB GPU isn't flooded with overlapping
-    /// diffusion runs. Mirrors `[comfyui] max_concurrent_jobs`.
+    /// diffusion runs. Mirrors `comfyui.max_concurrent_jobs`.
     pub max_concurrent_jobs: usize,
     /// Process-local slots prevent one model response from flooding the
     /// worker with several long-running workflows at once.
@@ -151,7 +151,7 @@ impl Tool for ComfyuiWorkflowTool {
             let _s3 = ctx.s3.as_ref().ok_or_else(|| {
                 ToolError::Failed(
                     "chat attachments are not configured on this gateway \
-                     (operator must set [chat.s3]) — nowhere to store the output"
+                     (the operator must enable S3 attachment storage in /admin/settings) — nowhere to store the output"
                         .into(),
                 )
             })?;

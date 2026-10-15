@@ -63,7 +63,7 @@ configuration require reconnecting user and Dot accounts separately. Stale
 credentials remain locally disconnectable and are not sent to the changed
 server. In-flight authorization or refresh cannot overwrite a connection after
 its catalogue resource changes. Returning to an earlier configuration does
-not revive earlier credentials. Cosmetic edits and encryption-key resealing
+not revive earlier credentials. Cosmetic edits
 preserve resource identity.
 
 ---
@@ -262,7 +262,7 @@ Related, and deliberate:
   model didn't set it, and the tool's description says why. An explicit
   `false` from the model still stands.
 - **Nothing is silently dropped.** If there is nowhere to store the file (a
-  `/v1` proxy request has no conversation; an installation without `[chat.s3]`) or
+  `/v1` proxy request has no conversation; an installation without attachment storage (S3)) or
   it is over the 25 MB ceiling, the base64 is *still* removed and the
   replacement line says what happened, so the model tells the user rather than
   pretending it has the file.
@@ -378,7 +378,7 @@ needs a toggle flipped — it's not an AIplane problem.
 | OAuth `missing field access_token` / token-exchange errors | The provider returned an OAuth error body rather than a token (bad client secret, wrong redirect URI, unsupported grant). AIplane surfaces the provider's `error_description`. |
 | Refresh tokens die after ~7 days (Google) | App is **External + Testing**. Publish to production or switch the audience to **Internal**. |
 | `invalid_client: Invalid client_id` on refresh, everyone "Needs reconnect" at once, recurring | The MCP server lost the OAuth store that holds AIplane's registered client — an ephemeral container filesystem (no volume), or a changed `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` / `GOOGLE_OAUTH_CLIENT_SECRET`. See *The server's OAuth state must be persisted*. Users must reconnect once after fixing it; the old grants are unrecoverable. |
-| A tool returned a file and the model says it can't use it | Look at the replacement line in the tool result: AIplane removes file bytes from every result and stores them as an attachment instead (see *Files a connector returns become conversation artifacts*). If it says the file was **not** stored, the cause is named there — no conversation to attach to (a `/v1` proxy call), `[chat.s3]` unconfigured, or over the 25 MB ceiling. |
+| A tool returned a file and the model says it can't use it | Look at the replacement line in the tool result: AIplane removes file bytes from every result and stores them as an attachment instead (see *Files a connector returns become conversation artifacts*). If it says the file was **not** stored, the cause is named there — no conversation to attach to (a `/v1` proxy call), attachment storage (S3) unconfigured, or over the 25 MB ceiling. |
 | `MCP integrations are not enabled on this installation` (404) | Server-side: the target MCP server hasn't enabled its MCP endpoint. Not an AIplane issue. |
 
 The gateway logs each failed tool call as `tool failed tool=mcp__… error=…`

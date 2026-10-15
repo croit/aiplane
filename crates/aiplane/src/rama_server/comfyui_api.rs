@@ -19,7 +19,7 @@ use aiplane_core::server::db::users;
 use aiplane_features::server::comfyui::{ComfyuiJob, ReloadReport, WorkerHealth, jobs};
 use aiplane_runtime::rama_server::state::RamaState;
 
-/// `POST /api/v0/comfyui/reload` — re-scan `[comfyui] content_dir` and
+/// `POST /api/v0/comfyui/reload` — re-scan `comfyui.content_dir` and
 /// atomically swap in the new catalog. In-flight tool calls keep their
 /// old snapshot; the next `schema()`/`run()` sees the new one. Returns a
 /// [`ReloadReport`] describing what landed and what was skipped so the
@@ -124,7 +124,7 @@ pub async fn catalog(State(state): State<Arc<RamaState>>, req: Request) -> Respo
 /// Always `200` when ComfyUI is configured: an unreachable worker is the
 /// answer the operator came for, not a server error, so the reachability
 /// verdict rides in the body (`reachable` + `error`) instead of the status
-/// code. Only a missing `[comfyui]` block is a `409`, matching `reload`.
+/// code. Only an unconfigured ComfyUI is a `409`, matching `reload`.
 pub async fn health(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     if let Err(resp) = require_admin(&state, &req).await {
         return resp;

@@ -5,12 +5,11 @@
 //! "Granted to" editor.
 //!
 //! Skills are uploaded and deleted live from the admin page, so who may use
-//! them is managed there too. These rows are an **additive overlay** on top of
-//! the static `[[roles]].skills` config:
-//! [`crate::server::rbac::Resolver::allowed_skills`] unions them with the
-//! config grants. The config grants stay authoritative and read-only (a role
-//! with `skills = ["*"]` keeps every skill regardless of this table); the UI
-//! only ever adds or removes rows here. Filtering to currently-loaded skills
+//! them is managed there too. These rows are the skill grants of a role
+//! (gateway group): [`crate::server::rbac::Resolver::allowed_skills`] reads them
+//! for the groups a user holds, and a `*` row grants every loaded skill. The
+//! group tables loaded from the database carry no skill list of their own, so
+//! this table is the only source in production. Filtering to currently-loaded skills
 //! happens in the resolver, so a dangling row for a deleted skill is harmless.
 //!
 //! Schema: `migrations/0025_skill_role_grants.sql`.
@@ -38,8 +37,7 @@ pub async fn all(pool: &Pool) -> Result<Vec<(String, String)>, DbError> {
         .map_err(DbError::from)
 }
 
-/// Role ids currently granted `skill_name` via the UI overlay (config grants
-/// not included — those live in `[[roles]].skills`).
+/// Role ids currently granted `skill_name` via the UI.
 pub async fn roles_for_skill(pool: &Pool, skill_name: &str) -> Result<Vec<String>, DbError> {
     let rows =
         sqlx::query("SELECT role_id FROM skill_role_grants WHERE skill_name = ? ORDER BY role_id")
@@ -93,8 +91,7 @@ pub async fn delete_skill(pool: &Pool, skill_name: &str) -> Result<(), DbError> 
 }
 
 /// Add `(skill, role_id)` grants for a single role (group), keeping any
-/// existing rows. Used by [`crate::server::db::gateway_groups::seed_roles`]
-/// to import `[[roles]].skills` into the overlay, and by the `/admin/groups`
+/// existing rows. Used by the `/admin/groups`
 /// editor when granting a group a set of skills. `*` is stored verbatim — the
 /// resolver expands it to every loaded skill at read time.
 pub async fn add_grants_for_role(

@@ -119,7 +119,6 @@ mod tests {
             github_owner: String::new(),
             github_repo: String::new(),
             github_token: None,
-            github_token_env: None,
             labels: vec!["feedback".into()],
             assets_branch: "feedback-assets".into(),
             extraction_model: None,
@@ -128,7 +127,6 @@ mod tests {
             gitlab_url: "https://gitlab.example.com".into(),
             gitlab_project_id: String::new(),
             gitlab_token: None,
-            gitlab_token_env: None,
         }
     }
 

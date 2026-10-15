@@ -138,7 +138,7 @@ Resolution order for a model's context window, most specific first:
 
 1. `model_defaults.context_window` — what an operator set on `/admin/models`;
 2. what the serving backends reported, capped by what they said they allocated (the smallest wins when several serve the same model — a request may land on any of them);
-3. the global `[chat.compaction] default_context_window` (32768).
+3. the global `chat.compaction.default_context_window` setting (32768).
 
 An operator may always override. **Lowering** is legitimate — capping a model to save VRAM — and passes without comment. **Raising it above what the backend reports** gets a warning next to the field, because that is the silent-truncation failure in new packaging: nothing here compacts the prompt, and the server discards the overflow without an error.
 
@@ -285,7 +285,7 @@ A GPU box restarting, a model being swapped, an upstream that OOMs and comes bac
 
 So AIplane parks it. `upstreams::wait::route_or_wait` retries the normal routing decision every 250 ms until a backend is available or the budget runs out. Nothing has been written to the client at that point — not a byte, not a status line — so a request that waits and then succeeds is indistinguishable from a slow one and the client's stream starts normally.
 
-- **Budget**: `[gateway] upstream_wait_secs`, default `120`. `0` restores fail-immediately behaviour. Keep it well below the client's own request timeout; the point is to absorb outages the client would otherwise see, not to out-wait the client.
+- **Budget**: `gateway.upstream_wait_secs`, default `120`. `0` restores fail-immediately behaviour. Keep it well below the client's own request timeout; the point is to absorb outages the client would otherwise see, not to out-wait the client.
 - **Only capacity failures wait.** An unknown model name is a typo or a misconfiguration, and waiting for it would turn a clear `404` into a long hang.
 - **No slot is held while parked** — a parked request costs a task and a timer, nothing on the backend.
 - **Recovery latency is the probe's, not the poll's.** A backend that is known down is re-probed every second rather than every five, because that interval is what every parked request pays.

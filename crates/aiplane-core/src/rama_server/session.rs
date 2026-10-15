@@ -162,7 +162,7 @@ impl SessionStore {
 
     /// Apply a new session policy to every clone of this store, live.
     ///
-    /// Called when `/admin/settings` saves the `[gateway]` section, which is
+    /// Called when `/admin/settings` saves the `gateway` settings, which is
     /// why those two fields no longer need a restart. Existing sessions keep
     /// the deadline they were last stamped with; the new idle timeout applies
     /// from their next renewal, and the new cap is enforced on the next

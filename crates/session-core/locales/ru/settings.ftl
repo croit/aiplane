@@ -104,8 +104,8 @@ settings-f-chat-ocr-max_output_chars = Максимум извлечённого
 settings-f-chat-ocr-max_output_chars-help = Предел объёма текста, извлекаемого из одного документа, в символах.
 settings-f-chat-ocr-timeout_secs = Таймаут
 settings-f-chat-ocr-timeout_secs-help = Срок обработки одного документа, в секундах.
-settings-f-chat-ocr-max_concurrency = Страниц параллельно
-settings-f-chat-ocr-max_concurrency-help = Сколько страниц читается одновременно.
+settings-f-chat-ocr-max_concurrency = Документов параллельно
+settings-f-chat-ocr-max_concurrency-help = Сколько документов читается одновременно на всём шлюзе. Остальные ждут в очереди.
 settings-f-chat-ocr-auto_min_text_chars_per_page = Порог распознавания сканов
 settings-f-chat-ocr-auto_min_text_chars_per_page-help = Если встроенного текста на странице меньше, PDF считается сканом и отправляется в OCR.
 
@@ -253,7 +253,7 @@ settings-f-metrics-allowed_ips-help = Адреса или сети CIDR, нап�
 # Подтверждение перед сбросом сохранённой настройки (редактор в SPA).
 settings-clear-confirm = Сбросить { $key } к встроенному значению по умолчанию?
 settings-heading = Настройки
-settings-intro = Эксплуатационные настройки этого шлюза. Они хранятся в базе данных, файл конфигурации не нужен — рядом с каждым полем показан ключ TOML, который оно заменяет.
+settings-intro = Эксплуатационные настройки этого шлюза. Они хранятся в базе данных — рядом с каждым полем показан его ключ настройки.
 settings-saved-restart = Сохранено. Некоторые поля этого раздела вступят в силу только после перезапуска.
 settings-save-failed = Не удалось сохранить эти настройки.
 settings-cleared = Сброшено. Снова действует значение по умолчанию.

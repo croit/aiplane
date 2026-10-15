@@ -38,7 +38,7 @@ pub struct ComfyuiScheduler {
     poll_interval: Duration,
     /// Hard ceiling on how long a single job can stay pending before
     /// the scheduler declares it timed out. Mirrors the operator's
-    /// `[comfyui] timeout_secs`.
+    /// `comfyui.timeout_secs`.
     timeout: Duration,
     chat_updates: super::ChatUpdateRegistry,
 }
@@ -175,7 +175,7 @@ impl ComfyuiScheduler {
         let Some(s3) = self.s3.as_ref() else {
             tracing::warn!(
                 job_id = job.id,
-                "ComfyUI scheduler: [chat.s3] not configured — cannot re-host asset",
+                "ComfyUI scheduler: S3 attachment storage is not configured — cannot re-host asset",
             );
             jobs::fail(
                 &self.db,

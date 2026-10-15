@@ -13,9 +13,7 @@ publish.workspace = true
 # drive the router. See docs/architecture.md.
 
 # The executable is `aiplane` — cargo infers it from the package name, so there
-# is no [[bin]] block. It was called `gateway` before the rename; the container
-# image links /app/gateway to it so a pre-rename `exec` keeps working (see
-# Dockerfile and docs/compatibility.md).
+# is no [[bin]] block.
 
 [dependencies]
 aiplane-core = { path = "../aiplane-core" }

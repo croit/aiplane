@@ -441,7 +441,7 @@ async fn handle(
     ) else {
         return Spilled::Refused(
             "this request has no conversation to store files in (an API/proxy call, or \
-             a gateway without [chat.s3] configured)"
+             a gateway without S3 attachment storage configured)"
                 .into(),
         );
     };

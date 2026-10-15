@@ -5,17 +5,16 @@
 //! [`UpstreamRegistry`] builder expects.
 //!
 //! Converts [`crate::server::db::upstreams_config::UpstreamConfigSnapshot`]
-//! into the same `HashMap<String, UpstreamPoolConfig>` + `FallbackConfig`
-//! shapes that TOML parsing produces, so [`UpstreamRegistry::build`] is
-//! reused without duplicating Pool/Backend construction logic.
+//! into the `HashMap<String, UpstreamPoolConfig>` + `FallbackConfig` shapes
+//! that [`UpstreamRegistry::build`] expects, so Pool/Backend construction
+//! logic is not duplicated.
 
 use std::collections::HashMap;
 
 use crate::server::crypto::Crypto;
 use crate::server::db::upstreams_config::{BackendRow, UpstreamConfigSnapshot};
 use crate::server::upstreams::config::{
-    AliasSpec, BackendConfig, Compliance, FallbackConfig, PickerStrategy, PoolKind,
-    UpstreamPoolConfig,
+    BackendConfig, Compliance, FallbackConfig, PickerStrategy, PoolKind, UpstreamPoolConfig,
 };
 
 /// Convert a DB snapshot into the `(pool_configs, fallback)` pair the registry
@@ -86,19 +85,12 @@ pub fn snapshot_to_configs(
 }
 
 fn backend_row_to_config(row: &BackendRow, crypto: &Crypto) -> BackendConfig {
-    // Each DB alias row carries its own optional target (bare or targeted), so
-    // emit the per-alias `Mixed` form directly — it's the normalized shape the
-    // registry builder consumes via `AliasSpec::into_map`. The `Names`/`Targets`
-    // variants exist only for TOML's array/table syntax; picking the "tightest"
-    // one here would be a distinction `into_map` immediately discards.
-    let alias = (!row.aliases.is_empty()).then(|| {
-        AliasSpec::Mixed(
-            row.aliases
-                .iter()
-                .map(|a| (a.alias.clone(), a.target.clone()))
-                .collect(),
-        )
-    });
+    // Each DB alias row carries its own optional target (bare or targeted).
+    let alias = row
+        .aliases
+        .iter()
+        .map(|a| (a.alias.clone(), a.target.clone()))
+        .collect();
 
     // Unseal the stored API key, if any. A decrypt failure (e.g. the encryption
     // key changed) is logged and treated as "no stored key" so routing degrades
@@ -299,8 +291,7 @@ mod tests {
         });
 
         let (pools, _) = snapshot_to_configs(&snap, &crypto());
-        let alias = pools["p"].backend[0].alias.as_ref().unwrap();
-        let map = alias.into_map();
+        let map = &pools["p"].backend[0].alias;
         assert_eq!(map.get("a1"), Some(&None));
         assert_eq!(map.get("a2"), Some(&None));
     }
@@ -370,7 +361,7 @@ mod tests {
             ],
         );
         let (pools, _) = snapshot_to_configs(&snap, &crypto());
-        let map = pools["p"].backend[0].alias.as_ref().unwrap().into_map();
+        let map = &pools["p"].backend[0].alias;
         assert_eq!(map.get("fast"), Some(&None), "bare alias must stay bare");
         assert_eq!(map.get("smart"), Some(&Some("m1".to_string())));
     }

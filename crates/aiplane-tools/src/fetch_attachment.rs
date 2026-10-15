@@ -64,7 +64,7 @@ pub struct FetchAttachment {
     /// Sandbox client for reading Office formats (docx/pptx/xlsx), which
     /// aren't text and aren't PDFs — a python extractor in the sandbox
     /// turns them into verbatim structured content. `None` when no
-    /// `[sandbox]` is configured; those uploads then fall back to the
+    /// the sandbox is configured; those uploads then fall back to the
     /// generic "binary — re-upload" stub.
     sandbox: Option<Arc<SandboxClient>>,
 }
@@ -410,7 +410,7 @@ impl Tool for FetchAttachment {
             let s3 = ctx.s3.as_ref().ok_or_else(|| {
                 ToolError::Failed(
                     "chat attachments are not configured on this gateway \
-                     (operator must set [chat.s3])"
+                     (the operator must enable S3 attachment storage in /admin/settings)"
                         .into(),
                 )
             })?;
@@ -1084,7 +1084,7 @@ mod tests {
 
         let mut ctx = ctx_no_s3(pool);
         ctx.session_id = Some("s1".into());
-        // By id and by title, and with no `[chat.s3]` configured at all.
+        // By id and by title, and with no S3 attachment storage configured at all.
         for given in [id.as_str(), "Migration plan"] {
             let out = FetchAttachment::new(None)
                 .run(ctx.clone(), json!({"id": given}))
@@ -1180,8 +1180,6 @@ mod tests {
                     // touches the network — which is the point of the fixture.
                     access_key: None,
                     secret_key: None,
-                    access_key_env: None,
-                    secret_key_env: None,
                     key_prefix: "chat-attachments".into(),
                 },
             )),

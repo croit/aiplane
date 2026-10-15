@@ -57,7 +57,7 @@ pub struct EnableTools {
     /// description gains a `comfyui` entry advertising the master
     /// ComfyUI-workflows toggle — listing whatever workflows are
     /// currently loaded. ComfyUI tools aren't in the static `ToolRegistry`
-    /// (they're discovered from `[comfyui] content_dir`), so without this
+    /// (they're discovered from `comfyui.content_dir`), so without this
     /// hook the model would never see the toggle and couldn't enable it.
     comfyui_store: Option<Arc<aiplane_features::server::comfyui::ComfyuiStore>>,
 }
@@ -75,7 +75,7 @@ impl EnableTools {
     }
 
     /// Install the hot-reloadable ComfyUI catalog. Builder-style; chain after
-    /// `from_registry` when `[comfyui]` is configured. The `comfyui` toggle
+    /// `from_registry` when ComfyUI is configured. The `comfyui` toggle
     /// key then appears in the schema description listing whichever workflows
     /// are currently loaded — and the model can pass it to `enable_tools`
     /// to turn the whole ComfyUI family on.
@@ -847,7 +847,6 @@ mod tests {
             id: "user".into(),
             admin: false,
             tools: vec!["*".into()],
-            models: vec!["*".into()],
             skills: vec![],
         }];
         let rbac = Resolver::build(rbac_config, roles).unwrap();

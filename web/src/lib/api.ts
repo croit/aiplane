@@ -44,7 +44,7 @@ export interface Me {
 	name: string | null;
 	/** Raw OIDC claim values (e.g. groups). */
 	roles: string[];
-	/** RBAC role IDs after `[rbac.mapping]`. */
+	/** RBAC role IDs after the OIDC group mappings. */
 	role_ids: string[];
 	allowed_tools: ToolSummary[];
 	/**

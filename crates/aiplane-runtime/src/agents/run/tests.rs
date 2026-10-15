@@ -272,12 +272,8 @@ impl World {
             let alias = aliases
                 .iter()
                 .find(|(pool, _)| pool == name)
-                .map(|(_, alias)| {
-                    aiplane_core::server::upstreams::config::AliasSpec::Targets(HashMap::from([(
-                        alias.to_string(),
-                        model.to_string(),
-                    )]))
-                });
+                .map(|(_, alias)| HashMap::from([(alias.to_string(), Some(model.to_string()))]))
+                .unwrap_or_default();
             configs.insert(
                 name.to_string(),
                 UpstreamPoolConfig {

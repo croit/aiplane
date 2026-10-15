@@ -14,7 +14,7 @@ use aiplane_core::server::rbac::Resolver;
 use aiplane_core::server::rbac::config::{RbacConfig, RoleConfig, RoleMapping};
 use aiplane_core::server::upstreams::{
     self,
-    config::{AliasSpec, PickerStrategy, PoolKind, UpstreamPoolConfig},
+    config::{PickerStrategy, PoolKind, UpstreamPoolConfig},
 };
 use aiplane_core::server::{Config, db};
 use aiplane_runtime::server::AppState;
@@ -81,10 +81,7 @@ fn gzip(bytes: &[u8]) -> Vec<u8> {
 fn system_one_pool(upstream_url: &str, allowed_groups: &[&str]) -> UpstreamPoolConfig {
     let mut backend = common::mock_backend("openrouter", upstream_url);
     backend.models = vec![LATEST_ID.into(), PINNED_ID.into()];
-    backend.alias = Some(AliasSpec::Targets(HashMap::from([(
-        LATEST_ALIAS.into(),
-        LATEST_ID.into(),
-    )])));
+    backend.alias = HashMap::from([(LATEST_ALIAS.into(), Some(LATEST_ID.into()))]);
     UpstreamPoolConfig {
         voices: Default::default(),
         offer_voices: Vec::new(),
@@ -155,7 +152,6 @@ fn system_one_rbac() -> Arc<Resolver> {
             RbacConfig {
                 default_role: Some("ordinary".into()),
                 mappings: vec![RoleMapping {
-                    oidc_claim: "groups".into(),
                     oidc_value: "system-one-users".into(),
                     role: "system-one-user".into(),
                 }],
@@ -164,14 +160,12 @@ fn system_one_rbac() -> Arc<Resolver> {
                 RoleConfig {
                     id: "ordinary".into(),
                     admin: false,
-                    models: vec!["*".into()],
                     tools: Vec::new(),
                     skills: Vec::new(),
                 },
                 RoleConfig {
                     id: "system-one-user".into(),
                     admin: false,
-                    models: vec!["*".into()],
                     tools: Vec::new(),
                     skills: Vec::new(),
                 },

@@ -190,7 +190,6 @@ mod tests {
             github_owner: String::new(),
             github_repo: String::new(),
             github_token: None,
-            github_token_env: None,
             labels: vec!["feedback".into()],
             assets_branch: "feedback-assets".into(),
             extraction_model: None,
@@ -199,7 +198,6 @@ mod tests {
             gitlab_url: url.into(),
             gitlab_project_id: project.into(),
             gitlab_token: Some("glpat-x".into()),
-            gitlab_token_env: None,
         }
     }
 

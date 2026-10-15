@@ -226,7 +226,7 @@ impl Vapid {
 pub struct PushSender {
     vapid: Vapid,
     /// The VAPID `sub` claim — a `mailto:` or `https:` contact for the push
-    /// service to reach the operator. From `[push].contact`.
+    /// service to reach the operator. From `push.contact`.
     contact: String,
 }
 

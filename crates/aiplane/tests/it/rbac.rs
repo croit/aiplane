@@ -46,7 +46,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 fn backend(name: &str, base_url: &str, supports_edit: bool) -> BackendConfig {
     BackendConfig {
         priority: Default::default(),
-        alias: None,
+        alias: Default::default(),
         supports_edit,
         enabled: true,
         name: name.into(),
@@ -90,12 +90,10 @@ fn resolver() -> Arc<Resolver> {
         default_role: Some("user".into()),
         mappings: vec![
             RoleMapping {
-                oidc_claim: "groups".into(),
                 oidc_value: "platform-admins".into(),
                 role: "admin".into(),
             },
             RoleMapping {
-                oidc_claim: "groups".into(),
                 oidc_value: "engineering".into(),
                 role: "engineering".into(),
             },
@@ -105,21 +103,18 @@ fn resolver() -> Arc<Resolver> {
         RoleConfig {
             id: "admin".into(),
             admin: true,
-            models: vec!["*".into()],
             tools: vec!["*".into()],
             skills: vec![],
         },
         RoleConfig {
             id: "engineering".into(),
             admin: false,
-            models: vec!["*".into()],
             tools: vec!["*".into()],
             skills: vec![],
         },
         RoleConfig {
             id: "user".into(),
             admin: false,
-            models: vec!["*".into()],
             tools: vec![],
             skills: vec![],
         },

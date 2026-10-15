@@ -116,7 +116,7 @@ impl Tool for LoadImageUrl {
             let s3 = ctx.s3.as_ref().ok_or_else(|| {
                 ToolError::Failed(
                     "chat attachments are not configured on this gateway \
-                     (operator must set [chat.s3]) — nowhere to store the image"
+                     (the operator must enable S3 attachment storage in /admin/settings) — nowhere to store the image"
                         .into(),
                 )
             })?;
@@ -320,12 +320,14 @@ mod tests {
     /// A context whose storage preconditions pass, so a call gets as far as
     /// the fetch. The bucket is never reached in these tests.
     async fn ctx_with_storage() -> ToolContext {
-        let s3: aiplane_core::server::config::S3Config = serde_json::from_value(json!({
-            "endpoint": "http://127.0.0.1:9",
-            "region": "us-east-1",
-            "bucket": "b",
-        }))
-        .unwrap();
+        let s3 = aiplane_core::server::config::S3Config {
+            endpoint: "http://127.0.0.1:9".into(),
+            region: "us-east-1".into(),
+            bucket: "b".into(),
+            access_key: None,
+            secret_key: None,
+            key_prefix: "chat-attachments".into(),
+        };
         ToolContext {
             s3: Some(std::sync::Arc::new(s3)),
             attachment_reservations: Some(Default::default()),

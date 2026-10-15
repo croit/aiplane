@@ -577,7 +577,7 @@ mod tests {
             max_inflight: 16,
             health_path: "/models".into(),
             models: vec!["test-image".into()],
-            alias: None,
+            alias: Default::default(),
             supports_edit: false,
             enabled: true,
         }

@@ -106,8 +106,8 @@ settings-f-chat-ocr-max_output_chars = Texto extraído máximo
 settings-f-chat-ocr-max_output_chars-help = Tope del texto extraído de un documento, en caracteres.
 settings-f-chat-ocr-timeout_secs = Tiempo límite
 settings-f-chat-ocr-timeout_secs-help = Plazo para un documento, en segundos.
-settings-f-chat-ocr-max_concurrency = Páginas en paralelo
-settings-f-chat-ocr-max_concurrency-help = Cuántas páginas se leen a la vez.
+settings-f-chat-ocr-max_concurrency = Documentos en paralelo
+settings-f-chat-ocr-max_concurrency-help = Cuántos documentos se leen a la vez en toda la pasarela. El resto espera en cola.
 settings-f-chat-ocr-auto_min_text_chars_per_page = Umbral de detección de escaneo
 settings-f-chat-ocr-auto_min_text_chars_per_page-help = Por debajo de esta cantidad de caracteres incrustados por página, un PDF se trata como escaneado y se envía a OCR.
 
@@ -255,7 +255,7 @@ settings-f-metrics-allowed_ips-help = Direcciones o redes CIDR, p. ej. 10.0.0.0/
 # Confirmación antes de borrar un ajuste guardado (editor de la SPA).
 settings-clear-confirm = ¿Restablecer { $key } a su valor predeterminado integrado?
 settings-heading = Ajustes
-settings-intro = Ajustes de operación de esta pasarela. Se guardan en la base de datos, así que no hace falta ningún fichero de configuración — cada campo muestra además la clave TOML a la que sustituye.
+settings-intro = Ajustes de operación de esta pasarela. Se guardan en la base de datos — cada campo muestra además su clave de ajuste.
 settings-saved-restart = Guardado. Algunos campos de esta sección solo se aplican tras reiniciar.
 settings-save-failed = No se han podido guardar estos ajustes.
 settings-cleared = Restablecido. Vuelve a aplicarse el valor por defecto.

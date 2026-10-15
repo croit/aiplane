@@ -260,8 +260,8 @@ pub struct AppState {
     /// one bound to the same pool + ephemeral crypto; production overrides via
     /// [`Self::with_mcp`].
     pub mcp: Arc<crate::server::tools::mcp::manager::McpConnectionManager>,
-    /// Web Push sender (VAPID keypair + HTTP client). `None` when `[push]
-    /// enabled = false`; the push endpoints then report "disabled" and the
+    /// Web Push sender (VAPID keypair + HTTP client). `None` when `push.enabled`
+    /// is off; the push endpoints then report "disabled" and the
     /// turn-complete hook is a no-op. Built at startup by [`Self::with_push`].
     pub push: Option<Arc<aiplane_features::server::push::PushSender>>,
     /// System tokens' capped grants and last-use writes. Everything that can
@@ -284,8 +284,8 @@ impl AppState {
             crypto.clone(),
             rbac.clone(),
         );
-        // Seeded from the config file so tests and the dev harness get the
-        // historical behaviour; production replaces it with the shared handle
+        // Seeded from the config fallback so tests and the dev harness have a
+        // URL; production replaces it with the shared handle
         // via `with_runtime_handle` and then fills it in from the DB.
         let runtime = RuntimeSettings::new_handle(config.public_url_fallback());
         // Vetted outbound client: the shared one for the operator's upstream
@@ -317,7 +317,7 @@ impl AppState {
     }
 
     /// Install the sandbox-runner client (built once at startup when
-    /// `[sandbox]` is enabled) so per-turn tool contexts can lease a
+    /// the sandbox is enabled) so per-turn tool contexts can lease a
     /// container. Off → sandbox calls stay single-use.
     pub fn with_sandbox_client(
         self,
@@ -328,7 +328,7 @@ impl AppState {
     }
 
     /// Install the ComfyUI catalog + HTTP client. Built once at startup
-    /// when `[comfyui]` is enabled; off → no `comfyui_*` tools register.
+    /// when ComfyUI is enabled; off → no `comfyui_*` tools register.
     pub fn with_comfyui(self, comfyui: Arc<crate::server::comfyui_tool::ComfyuiHandle>) -> Self {
         self.mutate_surface(|s| s.comfyui = Some(comfyui));
         self
@@ -349,7 +349,7 @@ impl AppState {
     /// alone grants a private skill, no RBAC role needed. Global names come
     /// first (RBAC order), then any private names not already present; a
     /// private skill that shadows a global one appears once, under that name.
-    /// Empty when `[skills]` isn't configured. The single home for skill
+    /// Empty when skills aren't configured. The single home for skill
     /// authorization, shared by the chat system-message listing, the
     /// `read_skill`-always-on rule below, and the chat capability rows — so
     /// they can't drift, the same way [`Self::allowed_tools_for_user`] anchors
@@ -405,7 +405,7 @@ impl AppState {
 
     /// The skill registry to resolve names against for `user_id`: their private
     /// skills overlaid on the global operator skills (private shadows global).
-    /// `None` when `[skills]` isn't configured. Used by the chat driver's
+    /// `None` when skills aren't configured. Used by the chat driver's
     /// skill advertisement / re-injection and the chat capability rows, so the
     /// name a caller sees always resolves to the right bundle body.
     pub fn combined_skills_for(
@@ -500,7 +500,7 @@ impl AppState {
     /// on the RBAC grant (admin / wildcard / explicit list). Centralised so
     /// every call site that asks "what tools does this caller see"
     /// (`/api/v0/me`, `/tools` page, `allowed_tools_for_user`) agrees on
-    /// ComfyUI visibility. No-op when `[comfyui]` isn't configured.
+    /// ComfyUI visibility. No-op when ComfyUI isn't configured.
     pub fn expand_comfyui_tools(&self, allowed: &mut Vec<String>, role_ids: &[String]) {
         let Some(handle) = self.comfyui() else {
             return;
@@ -709,8 +709,8 @@ impl AppState {
     ///
     /// Re-applies onto the *current* config, which is safe because [`apply`]
     /// overwrites all twelve blocks wholesale and touches nothing else:
-    /// `[bind]`, `[db]`, `[gateway]`, the topology and the seed-only blocks
-    /// survive untouched, however many times this runs.
+    /// the listen address, the database path, the public URL fallback and
+    /// the topology survive untouched, however many times this runs.
     ///
     /// [`SECTIONS`]: aiplane_core::server::settings::SECTIONS
     /// [`apply`]: aiplane_core::server::settings::apply
@@ -918,7 +918,7 @@ impl AppState {
     }
 
     /// Install the per-user private-skills store. Wired at startup alongside
-    /// [`Self::with_skills`] (both gate on `[skills]`), so `user_skills` is
+    /// [`Self::with_skills`] (both gate on skills), so `user_skills` is
     /// `Some` exactly when `skills` is.
     pub fn with_user_skills(
         self,
@@ -929,7 +929,7 @@ impl AppState {
     }
 
     /// Install the Web Push sender (VAPID keypair + HTTP client). Called at
-    /// startup only when `[push] enabled = true`.
+    /// startup only when `push.enabled`.
     pub fn with_push(mut self, push: Arc<aiplane_features::server::push::PushSender>) -> Self {
         self.push = Some(push);
         self
