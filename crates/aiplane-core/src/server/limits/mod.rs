@@ -53,6 +53,9 @@ pub struct LimitStatus {
     pub used: f64,
     /// Which hierarchy level supplied the winning limit (for UI labelling).
     pub source: SubjectType,
+    /// A total is always an additional ceiling; overrides resolve
+    /// most-specific-wins per (dimension, window) for the called model.
+    pub is_total: bool,
     /// When the sliding window next advances (the next top of the hour).
     pub refreshes_at: Timestamp,
 }
@@ -223,6 +226,7 @@ impl Enforcer {
                 limit: lim.value,
                 used,
                 source: lim.source,
+                is_total: lim.is_total,
                 refreshes_at: lim.window.next_refresh(now),
             });
         }
@@ -234,8 +238,11 @@ impl Enforcer {
     /// ceiling blocks the *next* call). Unlimited callers and disabled
     /// enforcement pass instantly. Pools exempt from enforcement do
     /// not consume a budget and must remain available after it is spent.
-    /// Model-scoped rules apply only when their scope names this model; an
-    /// unscoped rule remains the aggregate budget across all metered models.
+    /// Model scopes resolve most-specific-wins per (dimension, window): an
+    /// exact scope beats a `prefix-*` family, which beats the aggregate, and
+    /// a more specific subject beats a more specific scope (your own
+    /// aggregate wins over a global model rule). Totals are checked
+    /// additionally — they are the overall ceilings.
     pub async fn check_for_model(
         &self,
         user_id: &str,
@@ -246,13 +253,13 @@ impl Enforcer {
         if !enforce_limits {
             return Ok(());
         }
-        first_breach(
+        first_breach(select_in_force(
             self.statuses(user_id, role_ids)
                 .await
                 .into_iter()
-                .filter(|status| status.model.as_deref().is_none_or(|scope| scope == model))
+                .filter(|status| limits::model_matches(status.model.as_deref(), model))
                 .collect(),
-        )
+        ))
     }
 
     /// Gate a call against the calling token's own rules — the *additional*
@@ -270,13 +277,13 @@ impl Enforcer {
         if !enforce_limits {
             return Ok(());
         }
-        first_breach(
+        first_breach(select_in_force(
             self.token_statuses(token_id)
                 .await
                 .into_iter()
-                .filter(|status| status.model.as_deref().is_none_or(|scope| scope == model))
+                .filter(|status| limits::model_matches(status.model.as_deref(), model))
                 .collect(),
-        )
+        ))
     }
 
     /// What one agent's conversations have spent against each ceiling on it:
@@ -323,6 +330,47 @@ impl Enforcer {
     }
 }
 
+/// Most-specific-wins among the override rules matching one call: totals
+/// always stay (each is a ceiling of its own); per (dimension, window) only
+/// the most specific override counts — highest subject rank, then most
+/// specific model scope. Totals read first, so a refusal names the overall
+/// ceiling before a carved-out allowance.
+fn select_in_force(statuses: Vec<LimitStatus>) -> Vec<LimitStatus> {
+    use std::collections::HashMap;
+    let rank = |s: &LimitStatus| {
+        (
+            subject_rank(s.source),
+            limits::scope_specificity(s.model.as_deref()),
+        )
+    };
+    let mut winners: HashMap<(Dimension, Window), LimitStatus> = HashMap::new();
+    let mut totals = Vec::new();
+    for s in statuses {
+        if s.is_total {
+            totals.push(s);
+            continue;
+        }
+        let key = (s.dimension, s.window);
+        let replace = winners.get(&key).is_none_or(|cur| rank(cur) < rank(&s));
+        if replace {
+            winners.insert(key, s);
+        }
+    }
+    totals.extend(winners.into_values());
+    totals
+}
+
+/// Subject precedence for most-specific-wins, mirroring the hierarchy in
+/// `db::limits::effective_limits`: your own rule beats a role's, which beats
+/// the default.
+fn subject_rank(s: SubjectType) -> u8 {
+    match s {
+        SubjectType::Token | SubjectType::System | SubjectType::AgentSpec => 3,
+        SubjectType::User => 2,
+        SubjectType::Role => 1,
+        SubjectType::Global => 0,
+    }
+}
 /// The first status already at/over its ceiling, as the refusal to send.
 fn first_breach(statuses: Vec<LimitStatus>) -> Result<(), LimitExceeded> {
     first_breach_at(statuses, Timestamp::now())
@@ -763,6 +811,213 @@ mod tests {
         s.parse().unwrap()
     }
 
+    /// An override helper: an admin rule that takes part in
+    /// most-specific-wins rather than capping additionally.
+    async fn upsert_override(
+        pool: &Pool,
+        subject: limits::SubjectType,
+        id: &str,
+        model: Option<&str>,
+        dim: limits::Dimension,
+        win: limits::Window,
+        value: f64,
+    ) {
+        limits::upsert_checked(
+            pool,
+            subject,
+            id,
+            model,
+            dim,
+            win,
+            value,
+            limits::ManagedBy::Admin,
+            false,
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Most-specific-wins: a model-scoped override replaces the aggregate in
+    /// its (dimension, window) — the aggregate no longer caps that model.
+    #[tokio::test]
+    async fn a_model_override_replaces_the_aggregate_for_that_model() {
+        let pool = pool().await;
+        upsert_override(
+            &pool,
+            limits::SubjectType::User,
+            "alice",
+            None,
+            Dimension::Tokens,
+            Window::Month,
+            25.0,
+        )
+        .await;
+        upsert_override(
+            &pool,
+            limits::SubjectType::User,
+            "alice",
+            Some("pricey"),
+            Dimension::Tokens,
+            Window::Month,
+            250.0,
+        )
+        .await;
+        let enf = Enforcer::new(pool.clone(), true);
+        let now = Timestamp::now();
+        usage::insert_batch(&pool, &[event("alice", "pricey", 100, true, now)])
+            .await
+            .unwrap();
+
+        // 100 tokens on pricey: under the specific 250 → allowed, even
+        // though the aggregate 25 is long exceeded.
+        assert!(
+            enf.check_for_model("alice", &[], "pricey", true)
+                .await
+                .is_ok()
+        );
+        // Any other model still sees the aggregate — and it is spent.
+        assert!(
+            enf.check_for_model("alice", &[], "cheap", true)
+                .await
+                .is_err()
+        );
+    }
+
+    /// A total keeps the old behaviour: it caps additionally, so the
+    /// specific allowance cannot exceed it.
+    #[tokio::test]
+    async fn a_total_aggregate_still_caps_the_specific_rule() {
+        let pool = pool().await;
+        // Aggregate as a real overall ceiling (is_total = true).
+        limits::upsert(
+            &pool,
+            limits::SubjectType::User,
+            "alice",
+            None,
+            Dimension::Tokens,
+            Window::Month,
+            25.0,
+        )
+        .await
+        .unwrap();
+        upsert_override(
+            &pool,
+            limits::SubjectType::User,
+            "alice",
+            Some("pricey"),
+            Dimension::Tokens,
+            Window::Month,
+            250.0,
+        )
+        .await;
+        let enf = Enforcer::new(pool.clone(), true);
+        let now = Timestamp::now();
+        usage::insert_batch(&pool, &[event("alice", "pricey", 100, true, now)])
+            .await
+            .unwrap();
+
+        let err = enf
+            .check_for_model("alice", &[], "pricey", true)
+            .await
+            .unwrap_err();
+        assert_eq!(err.limit, 25.0);
+    }
+
+    /// A `prefix-*` scope counts every matching model, and an exact scope
+    /// outranks it for its own model.
+    #[tokio::test]
+    async fn a_prefix_scope_covers_its_family_and_loses_to_exact() {
+        let pool = pool().await;
+        upsert_override(
+            &pool,
+            limits::SubjectType::User,
+            "alice",
+            Some("claude-*"),
+            Dimension::Tokens,
+            Window::Month,
+            500.0,
+        )
+        .await;
+        upsert_override(
+            &pool,
+            limits::SubjectType::User,
+            "alice",
+            Some("claude-sonnet-5-5"),
+            Dimension::Tokens,
+            Window::Month,
+            50.0,
+        )
+        .await;
+        let enf = Enforcer::new(pool.clone(), true);
+        let now = Timestamp::now();
+        usage::insert_batch(
+            &pool,
+            &[
+                event("alice", "claude-sonnet-5-5", 60, true, now),
+                event("alice", "claude-haiku-5-5", 60, true, now),
+            ],
+        )
+        .await
+        .unwrap();
+
+        // Sonnet spent 60 of its exact 50 → blocked (exact wins over prefix).
+        assert!(
+            enf.check_for_model("alice", &[], "claude-sonnet-5-5", true)
+                .await
+                .is_err()
+        );
+        // Haiku spent 60 of the family's 500 → allowed; unrelated models are
+        // untouched by the family scope.
+        assert!(
+            enf.check_for_model("alice", &[], "claude-haiku-5-5", true)
+                .await
+                .is_ok()
+        );
+        assert!(
+            enf.check_for_model("alice", &[], "gpt", true).await.is_ok(),
+            "no aggregate rule exists, so other models are unlimited"
+        );
+    }
+
+    /// Subject specificity outranks model specificity: your own aggregate
+    /// beats a global rule scoped to the model.
+    #[tokio::test]
+    async fn a_users_own_aggregate_beats_a_global_model_rule() {
+        let pool = pool().await;
+        upsert_override(
+            &pool,
+            limits::SubjectType::Global,
+            "",
+            Some("pricey"),
+            Dimension::Tokens,
+            Window::Month,
+            10.0,
+        )
+        .await;
+        upsert_override(
+            &pool,
+            limits::SubjectType::User,
+            "alice",
+            None,
+            Dimension::Tokens,
+            Window::Month,
+            1_000.0,
+        )
+        .await;
+        let enf = Enforcer::new(pool.clone(), true);
+        let now = Timestamp::now();
+        usage::insert_batch(&pool, &[event("alice", "pricey", 100, true, now)])
+            .await
+            .unwrap();
+
+        // Alice's own aggregate (1000) wins over the global model rule (10).
+        assert!(
+            enf.check_for_model("alice", &[], "pricey", true)
+                .await
+                .is_ok()
+        );
+    }
+
     fn agent_event(principal: &str, agent: &str, tokens: i64, at: Timestamp) -> UsageRecord {
         UsageRecord {
             principal_kind: crate::server::principal::PrincipalKind::System,
@@ -778,6 +1033,7 @@ mod tests {
             window: Window::Month,
             value,
             source: SubjectType::AgentSpec,
+            is_total: true,
         }
     }
 

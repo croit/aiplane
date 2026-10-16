@@ -937,7 +937,8 @@ impl<'a> Subject<'a> {
 /// Usage accumulated since an instant, for one subject — the read behind
 /// limit enforcement (`server::limits`). Counts only `enforce_limits = 1`
 /// rows (exempt pools never consume a budget) and, when `model` is set,
-/// narrows to that single model; `None` sums across all metered models.
+/// narrows to that scope: an exact model id, or a `prefix-*` family matched
+/// with `LIKE`; `None` sums across all metered models.
 pub async fn usage_in_window(
     pool: &Pool,
     subject: Subject<'_>,
@@ -951,12 +952,32 @@ pub async fn usage_in_window(
          WHERE {} = ? AND created_at >= ? AND enforce_limits = 1",
         subject.column(),
     );
-    if model.is_some() {
-        sql.push_str(" AND model = ?");
+    enum Narrow<'a> {
+        Exact(&'a str),
+        Prefix(String),
     }
+    let narrow = match model {
+        None => None,
+        Some(scope) if scope.ends_with('*') && scope.len() > 1 => {
+            sql.push_str(" AND model LIKE ? ESCAPE '\\'");
+            Some(Narrow::Prefix(
+                scope[..scope.len() - 1]
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_")
+                    + "%",
+            ))
+        }
+        Some(id) => {
+            sql.push_str(" AND model = ?");
+            Some(Narrow::Exact(id))
+        }
+    };
     let mut q = sqlx::query(&sql).bind(subject.id()).bind(fmt_ts(since));
-    if let Some(m) = model {
-        q = q.bind(m);
+    match narrow {
+        None => {}
+        Some(Narrow::Exact(id)) => q = q.bind(id),
+        Some(Narrow::Prefix(pattern)) => q = q.bind(pattern),
     }
     let row = q.fetch_one(pool).await?;
     Ok(WindowUsage {

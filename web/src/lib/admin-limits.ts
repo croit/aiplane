@@ -10,6 +10,7 @@ export interface AdminLimitRule {
 	dimension: LimitDimension;
 	window: LimitWindow;
 	value: number;
+	is_total: boolean;
 	managed_by: string;
 }
 

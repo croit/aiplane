@@ -67,6 +67,7 @@ pub fn owner_budget(spec: &AgentSpec) -> Vec<EffectiveLimit> {
             window: Window::Month,
             value,
             source: SubjectType::AgentSpec,
+            is_total: true,
         })
     };
     let budget = &spec.publish.budget;

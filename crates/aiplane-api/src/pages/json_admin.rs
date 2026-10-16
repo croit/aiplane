@@ -1286,11 +1286,13 @@ pub struct LimitView {
     pub id: String,
     pub subject_type: &'static str,
     pub subject_id: String,
-    /// `null` = all metered models together.
+    /// `null` = all metered models together; a trailing `*` scopes a family.
     pub model: Option<String>,
     pub dimension: &'static str,
     pub window: &'static str,
     pub value: f64,
+    /// A total is an additional ceiling; otherwise most-specific-wins.
+    pub is_total: bool,
     /// Who set the rule, which decides who may change it.
     pub managed_by: &'static str,
 }
@@ -1304,6 +1306,7 @@ fn limit_view(rule: &limits::LimitRule) -> LimitView {
         dimension: rule.dimension.as_str(),
         window: rule.window.as_str(),
         value: rule.value,
+        is_total: rule.is_total,
         managed_by: rule.managed_by.as_str(),
     }
 }
@@ -1316,12 +1319,17 @@ pub struct LimitBody {
     pub id: Option<String>,
     pub subject_type: String,
     pub subject_id: String,
-    /// Empty = all models.
+    /// Empty = all models; a trailing `*` scopes a model family (`claude-*`).
     #[serde(default)]
     pub model: String,
     pub dimension: String,
     pub window: String,
     pub value: f64,
+    /// A total is checked in addition to more specific rules (a real overall
+    /// ceiling); without it the most specific matching rule wins. Omitted
+    /// reads as a total, so older clients keep the previous behaviour.
+    #[serde(default)]
+    pub is_total: Option<bool>,
 }
 
 /// POST /api/v0/admin/limits — upsert one rule (admin rules outrank owner
@@ -1398,8 +1406,11 @@ pub async fn limits_save(State(state): State<Arc<RamaState>>, req: Request) -> R
     if !parsed.value.is_finite() || parsed.value < 0.0 {
         return bad_request("the value must be a number ≥ 0");
     }
-    let model = parsed.model.trim();
-    let model = if model.is_empty() { None } else { Some(model) };
+    let model = match limits::validate_model_scope(&parsed.model) {
+        Ok(scope) => scope,
+        Err(msg) => return bad_request(msg),
+    };
+    let is_total = parsed.is_total.unwrap_or(true);
     let saved = match parsed.id.as_deref() {
         Some(id) => match limits::update(
             &state.db,
@@ -1407,10 +1418,11 @@ pub async fn limits_save(State(state): State<Arc<RamaState>>, req: Request) -> R
             limits::LimitUpdate {
                 subject_type,
                 subject_id: &subject_id,
-                model,
+                model: model.as_deref(),
                 dimension,
                 window,
                 value: parsed.value,
+                is_total,
             },
         )
         .await
@@ -1419,16 +1431,19 @@ pub async fn limits_save(State(state): State<Arc<RamaState>>, req: Request) -> R
             Ok(false) => Err(not_found("the limit no longer exists")),
             Err(err) => Err(internal(err)),
         },
-        None => limits::upsert(
+        None => limits::upsert_checked(
             &state.db,
             subject_type,
             &subject_id,
-            model,
+            model.as_deref(),
             dimension,
             window,
             parsed.value,
+            limits::ManagedBy::Admin,
+            is_total,
         )
         .await
+        .map(|_| ())
         .map_err(internal),
     };
     match saved {

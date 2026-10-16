@@ -16,7 +16,7 @@
 		catch (caught) { error = String(caught); }
 	}
 
-	async function save(body: Record<string, string | number>, subject: string) {
+	async function save(body: Record<string, string | number | boolean>, subject: string) {
 		error = null;
 		try { await adminPost('/api/v0/admin/limits', body); notice = t('limits-saved', { subject }); editing = null; await refresh(); }
 		catch (caught) { error = String(caught); }

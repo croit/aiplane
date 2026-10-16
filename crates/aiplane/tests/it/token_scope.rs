@@ -263,6 +263,7 @@ async fn token_management_details_return_saved_scopes_quotas_policy_and_account(
         Window::Day,
         42.0,
         ManagedBy::Owner,
+        true,
     )
     .await
     .unwrap();

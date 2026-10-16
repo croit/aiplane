@@ -2474,6 +2474,7 @@ pub async fn owner_token_quota(
         window,
         parsed.value,
         ManagedBy::Owner,
+        true,
     )
     .await
     {
