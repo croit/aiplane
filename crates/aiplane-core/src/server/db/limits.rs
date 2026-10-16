@@ -12,9 +12,9 @@
 //! the ones actually in force, resolving the global → role → user hierarchy
 //! per (model-scope, dimension, window) cell. The enforcement layer
 //! (`server::limits`) then compares each against the caller's recent usage —
-//! totals always, overrides most-specific-wins per (dimension, window) for
-//! the called model (exact scope beats `prefix-*`, which beats the
-//! aggregate; a more specific subject beats a more specific scope).
+//! totals always, overrides most-specific-wins per dimension for the called
+//! model (a more specific subject beats a more specific scope; exact beats
+//! `prefix-*`, which beats the aggregate; the window takes no part).
 
 use jiff::{SignedDuration, Timestamp};
 use sqlx::Row;
@@ -271,6 +271,16 @@ pub fn model_matches(scope: Option<&str>, model: &str) -> bool {
         ModelScope::Aggregate => true,
         ModelScope::Exact(id) => id == model,
         ModelScope::Prefix(prefix) => model.starts_with(prefix),
+    }
+}
+
+/// Whether every model `inner` matches is also matched by `outer`.
+pub fn scope_covers(outer: Option<&str>, inner: Option<&str>) -> bool {
+    match (model_scope(outer), model_scope(inner)) {
+        (ModelScope::Aggregate, _) => true,
+        (ModelScope::Prefix(p), ModelScope::Prefix(q) | ModelScope::Exact(q)) => q.starts_with(p),
+        (ModelScope::Exact(a), ModelScope::Exact(b)) => a == b,
+        _ => false,
     }
 }
 
@@ -959,6 +969,19 @@ mod tests {
         assert!(model_matches(Some("claude-*"), "claude-haiku-5-5"));
         assert!(!model_matches(Some("claude-*"), "gpt"));
         assert!(!model_matches(Some("claude-*"), "CLAUDE-X"));
+    }
+
+    #[test]
+    fn a_scope_covers_what_it_matches_and_nothing_wider() {
+        assert!(scope_covers(None, None));
+        assert!(scope_covers(None, Some("claude-*")));
+        assert!(scope_covers(Some("claude-*"), Some("claude-sonnet-*")));
+        assert!(scope_covers(Some("claude-*"), Some("claude-x")));
+        assert!(!scope_covers(Some("claude-sonnet-*"), Some("claude-*")));
+        assert!(!scope_covers(Some("claude-*"), None));
+        assert!(!scope_covers(Some("claude-x"), Some("claude-*")));
+        assert!(scope_covers(Some("claude-x"), Some("claude-x")));
+        assert!(!scope_covers(Some("claude-x"), Some("gpt")));
     }
 
     #[test]
