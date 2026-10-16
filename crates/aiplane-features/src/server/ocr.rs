@@ -806,6 +806,7 @@ mod tests {
                     models: vec!["unlimited-ocr".into()],
                     alias: Default::default(),
                     supports_edit: false,
+                    extra_headers: Default::default(),
                     enabled: true,
                 }],
                 models: vec![],

@@ -4,7 +4,7 @@
 //! Configuration shape for the multi-provider routing layer, built from the
 //! database topology by `db_bridge`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone)]
 pub struct UpstreamPoolConfig {
@@ -276,6 +276,87 @@ pub struct BackendConfig {
     /// edit-capable model (e.g. Qwen-Image-Edit) sets `true`, which is what
     /// lights up the `edit_image` tool / `/v1/images/edits` surface.
     pub supports_edit: bool,
+    /// Operator-configured extra headers sent with every request the gateway
+    /// makes to this backend — probe, identification, connection test and
+    /// traffic alike. The escape hatch for upstream APIs that demand a header
+    /// beyond the bearer credential (Anthropic: `anthropic-version`); see
+    /// [`validate_extra_headers`]. Empty for every backend that does not need
+    /// one.
+    pub extra_headers: BTreeMap<String, String>,
+}
+
+/// The ceiling on one backend's configured extra headers.
+pub const MAX_EXTRA_HEADERS: usize = 16;
+/// The ceiling on a single extra header value.
+pub const MAX_EXTRA_HEADER_VALUE_LEN: usize = 512;
+
+/// Header names the gateway always sets itself on an upstream request. An
+/// operator-supplied header may not shadow any of them — above all
+/// `authorization`, where the stored key must stay authoritative, and
+/// `content-length` / `transfer-encoding`, where a second value is a
+/// malformed request.
+const EXTRA_HEADER_DENYLIST: &[&str] = &[
+    "authorization",
+    "host",
+    "content-type",
+    "content-length",
+    "transfer-encoding",
+    "proxy-authorization",
+];
+
+/// Check one backend's configured extra headers. The admin API calls this
+/// before saving (and before a connection test), so a malformed entry is a
+/// `400` at the form rather than a silently broken probe five seconds later.
+///
+/// The message names the first violation and what to change — the same
+/// contract as the other `bad_request` answers in the backend form.
+pub fn validate_extra_headers(headers: &BTreeMap<String, String>) -> Result<(), String> {
+    if headers.len() > MAX_EXTRA_HEADERS {
+        return Err(format!(
+            "at most {MAX_EXTRA_HEADERS} extra headers per backend, got {}",
+            headers.len()
+        ));
+    }
+    for (name, value) in headers {
+        if name.trim().is_empty() {
+            return Err("an extra header name may not be empty".into());
+        }
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c))
+        {
+            return Err(format!(
+                "extra header name `{name}` is not a valid HTTP token (alphanumerics and !#$%&'*+-.^_`|~ only)"
+            ));
+        }
+        if EXTRA_HEADER_DENYLIST
+            .iter()
+            .any(|reserved| name.eq_ignore_ascii_case(reserved))
+        {
+            return Err(format!(
+                "extra header `{name}` is set by the gateway itself and cannot be overridden"
+            ));
+        }
+        if value.chars().count() > MAX_EXTRA_HEADER_VALUE_LEN {
+            return Err(format!(
+                "extra header value for `{name}` is longer than {MAX_EXTRA_HEADER_VALUE_LEN} characters"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Attach a backend's configured extra headers to a request, after the
+/// gateway's own credential. Every upstream request site calls this rather
+/// than spelling the loop, so a new site cannot forget the headers (the
+/// failure mode is a green form and a probe that 400s forever).
+pub fn apply_extra_headers(
+    req: reqwest::RequestBuilder,
+    headers: &BTreeMap<String, String>,
+) -> reqwest::RequestBuilder {
+    headers
+        .iter()
+        .fold(req, |req, (name, value)| req.header(name, value))
 }
 
 /// Unknown-model fallback, keyed by request kind. When a request names a model
@@ -327,6 +408,7 @@ impl BackendConfig {
             alias: HashMap::new(),
             enabled: true,
             supports_edit: false,
+            extra_headers: BTreeMap::new(),
         }
     }
 
@@ -397,6 +479,91 @@ mod tests {
         assert!(!b.supports_edit);
         assert!(b.models.is_empty());
         assert!(b.alias.is_empty());
+        assert!(b.extra_headers.is_empty());
+    }
+
+    #[test]
+    fn extra_headers_validate_clean_for_the_anthropic_case() {
+        let headers = BTreeMap::from([("anthropic-version".to_string(), "2023-06-01".to_string())]);
+        assert!(validate_extra_headers(&headers).is_ok());
+    }
+
+    #[test]
+    fn extra_headers_reject_names_the_gateway_sets_itself() {
+        for name in [
+            "authorization",
+            "Authorization",
+            "HOST",
+            "content-type",
+            "content-length",
+            "transfer-encoding",
+            "proxy-authorization",
+        ] {
+            let headers = BTreeMap::from([(name.to_string(), "x".to_string())]);
+            let err = validate_extra_headers(&headers).unwrap_err();
+            assert!(err.contains(name), "{name}: {err}");
+        }
+    }
+
+    #[test]
+    fn extra_headers_reject_invalid_token_names() {
+        for name in [
+            "",
+            "  ",
+            "has space",
+            "colon:name",
+            "semi;colon",
+            "line\nbreak",
+        ] {
+            let headers = BTreeMap::from([(name.to_string(), "x".to_string())]);
+            assert!(
+                validate_extra_headers(&headers).is_err(),
+                "{name:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn extra_headers_accept_the_full_token_character_set() {
+        let headers = BTreeMap::from([("!#$%&'*+-.^_`|~a1".to_string(), "v".to_string())]);
+        assert!(validate_extra_headers(&headers).is_ok());
+    }
+
+    #[test]
+    fn extra_headers_enforce_the_count_and_value_ceilings() {
+        let mut many = BTreeMap::new();
+        for i in 0..=MAX_EXTRA_HEADERS {
+            many.insert(format!("h{i}"), "v".to_string());
+        }
+        assert!(validate_extra_headers(&many).is_err());
+        let mut ok = BTreeMap::new();
+        ok.insert("h0".into(), "v".into());
+        ok.insert("h1".into(), "x".repeat(MAX_EXTRA_HEADER_VALUE_LEN));
+        assert!(validate_extra_headers(&ok).is_ok());
+        ok.insert("h2".into(), "x".repeat(MAX_EXTRA_HEADER_VALUE_LEN + 1));
+        assert!(validate_extra_headers(&ok).is_err());
+    }
+
+    #[test]
+    #[allow(clippy::disallowed_methods)] // test-only: the client is a RequestBuilder factory; nothing is sent
+    fn apply_extra_headers_attaches_every_configured_header() {
+        use reqwest::Method;
+
+        let headers = BTreeMap::from([
+            ("anthropic-version".to_string(), "2023-06-01".to_string()),
+            ("x-custom".to_string(), "v".to_string()),
+        ]);
+        let request = apply_extra_headers(
+            reqwest::Client::new().request(Method::GET, "http://x.invalid/v1"),
+            &headers,
+        )
+        .build()
+        .unwrap();
+        assert_eq!(
+            request.headers().get("anthropic-version").unwrap(),
+            "2023-06-01"
+        );
+        assert_eq!(request.headers().get("x-custom").unwrap(), "v");
     }
 
     #[test]

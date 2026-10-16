@@ -148,6 +148,7 @@ mod tests {
             models: vec!["m1".into()],
             alias: Default::default(),
             supports_edit: false,
+            extra_headers: Default::default(),
             enabled: true,
         };
         HashMap::from([(

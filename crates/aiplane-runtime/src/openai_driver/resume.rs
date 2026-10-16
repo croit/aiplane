@@ -683,6 +683,7 @@ mod tests {
                     priority: Default::default(),
                     alias: Default::default(),
                     supports_edit: false,
+                    extra_headers: Default::default(),
                     enabled: true,
                     name: "mock".into(),
                     base_url: upstream.into(),

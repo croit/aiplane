@@ -282,17 +282,22 @@ async fn detect_all(http: &reqwest::Client, targets: &[ProbeTarget], db: Option<
         let permits = Arc::clone(&permits);
         rounds.push(tokio::spawn(async move {
             let _permit = permits.acquire().await.ok()?;
-            let detected = profile::detect(&http, &backend.base_url, backend.api_key.as_deref())
-                .await
-                // Stamped here rather than by the database write, so the
-                // live registry carries the same time the row does — the
-                // admin page reads the registry, and was showing `null`
-                // for every backend it had actually identified.
-                .map(|d| profile::Detected {
-                    priority_mapping: None,
-                    detected_at: Some(jiff::Timestamp::now().to_string()),
-                    ..d
-                });
+            let detected = profile::detect(
+                &http,
+                &backend.base_url,
+                backend.api_key.as_deref(),
+                &backend.extra_headers,
+            )
+            .await
+            // Stamped here rather than by the database write, so the
+            // live registry carries the same time the row does — the
+            // admin page reads the registry, and was showing `null`
+            // for every backend it had actually identified.
+            .map(|d| profile::Detected {
+                priority_mapping: None,
+                detected_at: Some(jiff::Timestamp::now().to_string()),
+                ..d
+            });
 
             // Nothing answered. Keep what we already knew — an unreachable
             // server is not a plain OpenAI server, and writing that
@@ -454,6 +459,7 @@ async fn probe_once(
             &backend.base_url,
             backend.api_key.as_deref(),
             backend.profile(),
+            &backend.extra_headers,
         )
         .await
     };
@@ -468,6 +474,7 @@ async fn probe_once(
     if let Some(key) = backend.api_key.as_deref() {
         req = req.bearer_auth(key);
     }
+    req = super::config::apply_extra_headers(req, &backend.extra_headers);
     let (result, context) = tokio::join!(tokio::time::timeout(PROBE_TIMEOUT, req.send()), context);
 
     let resp = match result {
@@ -794,6 +801,7 @@ async fn run_probe(
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     #[tokio::test]
     async fn describe_transport_error_surfaces_concrete_cause() {
@@ -841,6 +849,7 @@ mod tests {
             models: vec!["glm-image".into()],
             alias: Default::default(),
             supports_edit: false,
+            extra_headers: BTreeMap::new(),
             enabled: true,
         }
     }
@@ -1055,6 +1064,7 @@ mod tests {
                 max_inflight: 16,
                 health_path: "/models".into(),
                 supports_edit: false,
+                extra_headers: BTreeMap::new(),
                 enabled: true,
                 models: Vec::new(),
                 aliases: Vec::new(),
@@ -1230,7 +1240,7 @@ mod detection_wiring {
     };
     use crate::server::upstreams::profile::BackendProfile;
     use crate::server::upstreams::registry::PoolAccess;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1272,6 +1282,7 @@ mod detection_wiring {
                     alias: Default::default(),
                     enabled: true,
                     supports_edit: false,
+                    extra_headers: BTreeMap::new(),
                 }],
             },
         )]);

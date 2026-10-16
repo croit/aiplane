@@ -192,6 +192,10 @@ async fn describe_with(
     if let Some(key) = acquired.backend().api_key.as_deref() {
         req = req.bearer_auth(key);
     }
+    req = crate::server::upstreams::config::apply_extra_headers(
+        req,
+        &acquired.backend().extra_headers,
+    );
     let resp = req.send().await?;
     let status = resp.status();
     call.status = Some(status.as_u16());

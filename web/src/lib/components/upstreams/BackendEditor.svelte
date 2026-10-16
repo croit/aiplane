@@ -5,7 +5,7 @@
 	import { ApiError, request } from '#lib/api.js';
 	import { t, n } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
-	import { backendTestFailure, completeAliasLine, parallelismMismatch, parseAliases, splitList, type Backend, type BackendTestResult, type Pool } from '#lib/upstreams.js';
+	import { backendTestFailure, completeAliasLine, formatHeaders, parallelismMismatch, parseAliases, parseHeaders, splitList, type Backend, type BackendTestResult, type Pool } from '#lib/upstreams.js';
 
 	interface Props {
 		backend?: Backend | null;
@@ -29,6 +29,7 @@
 	let aliases = $state(
 		untrack(() => backend?.aliases.map(({ alias, target }) => (target ? `${alias}=${target}` : alias)).join('\n') ?? '')
 	);
+	let extraHeaders = $state(untrack(() => formatHeaders(backend?.extra_headers ?? {})));
 	let supportsEdit = $state(untrack(() => backend?.supports_edit ?? false));
 	let priorityMode = $state<BackendPriority['mode']>(untrack(() => backend?.priority.mode ?? 'auto'));
 	let priorityField = $state(untrack(() => backend?.priority.mode === 'custom' ? backend.priority.mapping.field : 'priority'));
@@ -71,6 +72,7 @@
 				supports_edit: supportsEdit,
 				models: splitList(models),
 				aliases: parseAliases(aliases),
+				extra_headers: parseHeaders(extraHeaders),
 				pool: poolName || null,
 				overwrite
 			});
@@ -119,12 +121,18 @@
 		switch (result.code) {
 			case 'ok': return t('backends-test-ok', { source, count: result.model_count ?? result.models.length });
 			case 'ok_no_models': return t('backends-test-ok-no-models', { source });
-			case 'auth_failed': return t('backends-test-auth-failed', { source, status: result.status ?? 401 });
-			case 'http_error': return t('backends-test-http-error', { url: result.url ?? baseUrl, status: result.status ?? 500 });
+			case 'auth_failed': return withUpstreamDetail(t('backends-test-auth-failed', { source, status: result.status ?? 401 }), result.detail);
+			case 'http_error': return withUpstreamDetail(t('backends-test-http-error', { url: result.url ?? baseUrl, status: result.status ?? 500 }), result.detail);
 			case 'unreachable': return t('backends-test-unreachable', { url: result.url ?? baseUrl, err: result.detail ?? '' });
 			case 'timeout': return t('backends-test-timeout', { url: result.url ?? baseUrl, secs: result.timeout_seconds ?? 8 });
 			case 'base_url_required': return t('backends-error-base-url-required');
 		}
+	}
+
+	// The backend's own response body is the detail of a refused test — it says
+	// what was actually wrong (a missing anthropic-version, a wrong path).
+	function withUpstreamDetail(message: string, detail?: string) {
+		return detail ? `${message} ${t('backends-test-upstream-said', { detail })}` : message;
 	}
 
 	async function testConnection() {
@@ -134,7 +142,7 @@
 			testResult = await request<BackendTestResult>('/api/v0/admin/backends/test', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ name, base_url: baseUrl, api_key_env: apiKeyEnv, api_key: apiKey, health_path: healthPath })
+				body: JSON.stringify({ name, base_url: baseUrl, api_key_env: apiKeyEnv, api_key: apiKey, health_path: healthPath, extra_headers: parseHeaders(extraHeaders) })
 			});
 		} catch (err) {
 			const failed = err instanceof ApiError ? backendTestFailure(err.detail) : null;
@@ -225,6 +233,11 @@
 	<label class="flex flex-col gap-1">
 		<span class="text-xs text-base-content/70">{t('backends-field-aliases')}</span>
 		<textarea bind:this={aliasesInput} class="textarea font-mono w-full" rows="3" bind:value={aliases}></textarea>
+	</label>
+	<label class="flex flex-col gap-1">
+		<span class="text-xs text-base-content/70">{t('backends-field-extra-headers')}</span>
+		<textarea class="textarea font-mono w-full" rows="3" bind:value={extraHeaders}></textarea>
+		<span class="text-xs text-base-content/50">{t('backends-field-extra-headers-hint')}</span>
 	</label>
 	<div class="flex flex-wrap gap-4">
 		<label class="label gap-2"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={supportsEdit} /><span>{t('backends-field-supports-edit')}</span></label>

@@ -203,6 +203,7 @@ pub async fn count_tokens(State(state): State<Arc<RamaState>>, req: Request) -> 
     let backend = acquired.backend().name.clone();
     let url = tokenize_url(&acquired.backend().base_url);
     let api_key = acquired.backend().api_key.clone();
+    let extra_headers = acquired.backend().extra_headers.clone();
     // Release the in-flight slot before the call: this is not inference, and
     // holding a chat slot for it would let token counting starve real turns.
     drop(acquired);
@@ -229,6 +230,7 @@ pub async fn count_tokens(State(state): State<Arc<RamaState>>, req: Request) -> 
     if let Some(key) = api_key.as_deref() {
         http = http.bearer_auth(key);
     }
+    http = aiplane_core::server::upstreams::config::apply_extra_headers(http, &extra_headers);
     let resp = match http.send().await {
         Ok(r) => r,
         Err(err) => {

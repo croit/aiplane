@@ -10,7 +10,7 @@
 //!
 //! Schema lives in `migrations/0042_upstream_config_db.sql`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use jiff::Timestamp;
 use sqlx::Row;
@@ -42,6 +42,10 @@ pub struct BackendRow {
     pub supports_edit: bool,
     /// `false` = taken out of rotation for maintenance (migration 0063).
     pub enabled: bool,
+    /// Operator-configured extra headers sent with every request to this
+    /// backend (migration 0083); a JSON object of name to value in the
+    /// `extra_headers` column.
+    pub extra_headers: BTreeMap<String, String>,
     pub models: Vec<String>,
     pub aliases: Vec<AliasRow>,
     pub created_at: Timestamp,
@@ -129,7 +133,7 @@ pub async fn load_snapshot(db: &Pool) -> Result<UpstreamConfigSnapshot, DbError>
 async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbError> {
     let rows = sqlx::query(
         r#"SELECT name, base_url, api_key_env, api_key_ct, api_key_nonce, weight, max_inflight,
-                  health_path, supports_edit, enabled, priority, created_at, updated_at
+                  health_path, supports_edit, enabled, priority, extra_headers, created_at, updated_at
              FROM backends ORDER BY name"#,
     )
     .fetch_all(db)
@@ -159,6 +163,11 @@ async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbE
                 health_path: row.try_get("health_path")?,
                 supports_edit: row.try_get::<i64, _>("supports_edit")? != 0,
                 enabled: row.try_get::<i64, _>("enabled")? != 0,
+                extra_headers: serde_json::from_str(&row.try_get::<String, _>("extra_headers")?)
+                    .map_err(|source| DbError::Decode {
+                        column: "extra_headers",
+                        source: source.into(),
+                    })?,
                 models: Vec::new(),
                 aliases: Vec::new(),
                 created_at,
@@ -592,8 +601,8 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
     sqlx::query(
         r#"INSERT INTO backends
                (name, base_url, api_key_env, api_key_ct, api_key_nonce, weight, max_inflight,
-                health_path, supports_edit, enabled, priority, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                health_path, supports_edit, enabled, priority, extra_headers, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(name) DO UPDATE SET
                base_url      = excluded.base_url,
                api_key_env   = excluded.api_key_env,
@@ -605,6 +614,7 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
                supports_edit = excluded.supports_edit,
                enabled       = excluded.enabled,
                priority      = excluded.priority,
+               extra_headers = excluded.extra_headers,
                updated_at    = excluded.updated_at"#,
     )
     .bind(&row.name)
@@ -620,6 +630,12 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
     .bind(
         serde_json::to_string(&row.priority).map_err(|source| DbError::Decode {
             column: "priority",
+            source: source.into(),
+        })?,
+    )
+    .bind(
+        serde_json::to_string(&row.extra_headers).map_err(|source| DbError::Decode {
+            column: "extra_headers",
             source: source.into(),
         })?,
     )
@@ -1092,6 +1108,7 @@ mod tests {
             max_inflight: 16,
             health_path: "/models".into(),
             supports_edit: false,
+            extra_headers: BTreeMap::new(),
             enabled: true,
             models: Vec::new(),
             aliases: Vec::new(),
@@ -1275,6 +1292,7 @@ mod tests {
             max_inflight: 32,
             health_path: "/v1/models".into(),
             supports_edit: false,
+            extra_headers: BTreeMap::from([("anthropic-version".into(), "2023-06-01".into())]),
             enabled: true,
             models: vec!["qwen-32b".into(), "qwen-7b".into()],
             aliases: vec![
@@ -1298,18 +1316,24 @@ mod tests {
         assert_eq!(loaded.max_inflight, 32);
         assert_eq!(loaded.models, vec!["qwen-32b", "qwen-7b"]);
         assert_eq!(loaded.aliases.len(), 2);
+        assert_eq!(
+            loaded.extra_headers.get("anthropic-version"),
+            Some(&"2023-06-01".to_string())
+        );
         // is_empty tracks pools, not backends: inserting a backend alone leaves
         // the topology "empty" (no pool → nothing routable yet).
         assert!(load_snapshot(&pool).await.unwrap().pools.is_empty());
 
-        // Update — change weight, drop a model.
+        // Update — change weight, drop a model, replace the header map.
         let mut updated = backend.clone();
         updated.weight = 5;
         updated.models = vec!["qwen-32b".into()];
+        updated.extra_headers = BTreeMap::new();
         upsert_backend(&pool, &updated).await.unwrap();
         let reloaded = get_backend(&pool, "gpu-01").await.unwrap().unwrap();
         assert_eq!(reloaded.weight, 5);
         assert_eq!(reloaded.models, vec!["qwen-32b"]);
+        assert!(reloaded.extra_headers.is_empty());
     }
 
     /// No foreign key points at a *name*.
@@ -1364,6 +1388,7 @@ mod tests {
             max_inflight: 16,
             health_path: "/models".into(),
             supports_edit: false,
+            extra_headers: BTreeMap::new(),
             enabled: true,
             models: vec!["voxtral-small".into()],
             aliases: vec![AliasRow {
@@ -1455,6 +1480,7 @@ mod tests {
                     max_inflight: 16,
                     health_path: "/models".into(),
                     supports_edit: false,
+                    extra_headers: BTreeMap::new(),
                     enabled: true,
                     models: vec![],
                     aliases: vec![],
@@ -1526,6 +1552,7 @@ mod tests {
                     max_inflight: 16,
                     health_path: "/models".into(),
                     supports_edit: false,
+                    extra_headers: BTreeMap::new(),
                     enabled: true,
                     models: vec![],
                     aliases: vec![],
@@ -1567,6 +1594,7 @@ mod tests {
             max_inflight: 16,
             health_path: "/models".into(),
             supports_edit: false,
+            extra_headers: BTreeMap::new(),
             enabled: true,
             models: vec!["m1".into()],
             aliases: vec![AliasRow {
@@ -1605,6 +1633,7 @@ mod tests {
             max_inflight: 16,
             health_path: "/models".into(),
             supports_edit: false,
+            extra_headers: BTreeMap::new(),
             enabled: true,
             models: vec![],
             aliases: vec![],
@@ -1674,6 +1703,7 @@ mod tests {
                 max_inflight: 16,
                 health_path: "/models".into(),
                 supports_edit: false,
+                extra_headers: BTreeMap::new(),
                 enabled: true,
                 models: vec![],
                 aliases: vec![],
@@ -1800,6 +1830,7 @@ mod tests {
                 max_inflight: 16,
                 health_path: "/models".into(),
                 supports_edit: false,
+                extra_headers: BTreeMap::new(),
                 enabled: true,
                 models: vec![],
                 aliases: vec![],

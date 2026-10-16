@@ -1848,6 +1848,10 @@ async fn run_one_turn(
         if let Some(key) = backend.api_key.as_deref() {
             http_req = http_req.bearer_auth(key);
         }
+        http_req = aiplane_core::server::upstreams::config::apply_extra_headers(
+            http_req,
+            &backend.extra_headers,
+        );
         let started = std::time::Instant::now();
         let served = || exchange::Served {
             model: &ctx.model,

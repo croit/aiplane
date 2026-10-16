@@ -693,6 +693,7 @@ mod tests {
                     models: Vec::new(),
                     alias: Default::default(),
                     supports_edit: false,
+                    extra_headers: Default::default(),
                     enabled: true,
                 }],
             },

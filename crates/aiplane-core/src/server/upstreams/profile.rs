@@ -39,7 +39,7 @@
 //! capability learner already handle it.
 
 use crate::server::capped_read;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -265,6 +265,7 @@ pub async fn detect(
     http: &reqwest::Client,
     base_url: &str,
     api_key: Option<&str>,
+    extra_headers: &BTreeMap<String, String>,
 ) -> Option<Detected> {
     let base = base_url.trim_end_matches('/');
     let root = server_root(base);
@@ -279,11 +280,11 @@ pub async fn detect(
         format!("{root}/api/ps"),
     );
     let (ollama, props, models, sglang, ps) = tokio::join!(
-        get_json(http, &version_url, api_key),
-        get_json(http, &props_url, api_key),
-        get_json(http, &models_url, api_key),
-        get_json(http, &sglang_url, api_key),
-        get_json(http, &ps_url, api_key),
+        get_json(http, &version_url, api_key, extra_headers),
+        get_json(http, &props_url, api_key, extra_headers),
+        get_json(http, &models_url, api_key, extra_headers),
+        get_json(http, &sglang_url, api_key, extra_headers),
+        get_json(http, &ps_url, api_key, extra_headers),
     );
 
     let reached = [&ollama, &props, &models, &sglang, &ps]
@@ -366,7 +367,7 @@ pub async fn detect(
         // Asked only once SGLang is known: its launch flags decide whether a
         // per-request thinking budget is enforced, and it is the one server
         // that says so.
-        let info = get_json(http, &format!("{root}/server_info"), api_key)
+        let info = get_json(http, &format!("{root}/server_info"), api_key, extra_headers)
             .await
             .body;
         let strict_thinking = info
@@ -416,6 +417,7 @@ pub async fn read_context(
     base_url: &str,
     api_key: Option<&str>,
     profile: BackendProfile,
+    extra_headers: &BTreeMap<String, String>,
 ) -> Option<(HashMap<String, i64>, Option<i64>)> {
     let endpoint = profile.context_endpoint()?;
     let url = format!("{}{endpoint}", server_root(base_url.trim_end_matches('/')));
@@ -424,7 +426,7 @@ pub async fn read_context(
     // had: overwriting with "nothing" drops every model on that backend onto
     // the assumed window, which is the silent truncation this exists to
     // prevent, arriving on a single bad tick.
-    let body = get_json(http, &url, api_key).await.body?;
+    let body = get_json(http, &url, api_key, extra_headers).await.body?;
     Some(match profile {
         BackendProfile::Ollama => (ps_context_windows(&body), None),
         BackendProfile::LlamaCpp => (HashMap::new(), props_n_ctx(&body)),
@@ -461,7 +463,12 @@ struct Probe {
     body: Option<serde_json::Value>,
 }
 
-async fn get_json(http: &reqwest::Client, url: &str, api_key: Option<&str>) -> Probe {
+async fn get_json(
+    http: &reqwest::Client,
+    url: &str,
+    api_key: Option<&str>,
+    extra_headers: &BTreeMap<String, String>,
+) -> Probe {
     let mut req = http.get(url).header(
         "user-agent",
         concat!("aiplane/", env!("CARGO_PKG_VERSION"), " detect"),
@@ -469,6 +476,7 @@ async fn get_json(http: &reqwest::Client, url: &str, api_key: Option<&str>) -> P
     if let Some(key) = api_key {
         req = req.bearer_auth(key);
     }
+    req = crate::server::upstreams::config::apply_extra_headers(req, extra_headers);
     // The timeout covers the body too, not just the headers. Bounding only
     // `send()` leaves `json()` unbounded, and neither client used here sets a
     // global timeout — so an upstream that answers 200 and then stalls
@@ -917,9 +925,14 @@ mod detect_tests {
                 json!({"enable_strict_thinking": strict, "version": "0.5.19"}),
             )
             .await;
-            let detected = detect(&reqwest::Client::new(), &base(&server), None)
-                .await
-                .expect("the server answered");
+            let detected = detect(
+                &reqwest::Client::new(),
+                &base(&server),
+                None,
+                &BTreeMap::new(),
+            )
+            .await
+            .expect("the server answered");
             assert_eq!(detected.profile, BackendProfile::SgLang);
             assert_eq!(detected.thinking_budget, expected, "strict={strict}");
             assert_eq!(detected.version.as_deref(), Some("0.5.19"));
@@ -955,9 +968,14 @@ mod detect_tests {
             let server = MockServer::start().await;
             route(&server, "/get_model_info", json!({"model_path": "m"})).await;
             route(&server, "/server_info", info).await;
-            let detected = detect(&reqwest::Client::new(), &base(&server), None)
-                .await
-                .unwrap();
+            let detected = detect(
+                &reqwest::Client::new(),
+                &base(&server),
+                None,
+                &BTreeMap::new(),
+            )
+            .await
+            .unwrap();
             assert_eq!(detected.priority_mapping, expected);
         }
     }
@@ -968,9 +986,14 @@ mod detect_tests {
     async fn an_sglang_without_server_info_gets_no_budget() {
         let server = MockServer::start().await;
         route(&server, "/get_model_info", json!({"model_path": "m"})).await;
-        let detected = detect(&reqwest::Client::new(), &base(&server), None)
-            .await
-            .expect("the server answered");
+        let detected = detect(
+            &reqwest::Client::new(),
+            &base(&server),
+            None,
+            &BTreeMap::new(),
+        )
+        .await
+        .expect("the server answered");
         assert_eq!(detected.profile, BackendProfile::SgLang);
         assert_eq!(detected.thinking_budget, None);
     }
@@ -999,9 +1022,14 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None)
-            .await
-            .expect("the mock answered, so identification must not report silence");
+        let detected = detect(
+            &reqwest::Client::new(),
+            &base(&server),
+            None,
+            &BTreeMap::new(),
+        )
+        .await
+        .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::Ollama);
         assert_eq!(detected.version.as_deref(), Some("0.34.0"));
         assert_eq!(detected.context_windows.get("qwen3:0.6b"), Some(&4_096));
@@ -1029,9 +1057,14 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None)
-            .await
-            .expect("the mock answered, so identification must not report silence");
+        let detected = detect(
+            &reqwest::Client::new(),
+            &base(&server),
+            None,
+            &BTreeMap::new(),
+        )
+        .await
+        .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::Ollama);
         assert!(detected.context_windows.is_empty());
     }
@@ -1061,9 +1094,14 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None)
-            .await
-            .expect("the mock answered, so identification must not report silence");
+        let detected = detect(
+            &reqwest::Client::new(),
+            &base(&server),
+            None,
+            &BTreeMap::new(),
+        )
+        .await
+        .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::LlamaCpp);
         assert_eq!(detected.version.as_deref(), Some("b1234"));
         assert_eq!(detected.max_parallel, Some(4));
@@ -1088,9 +1126,14 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None)
-            .await
-            .expect("the mock answered, so identification must not report silence");
+        let detected = detect(
+            &reqwest::Client::new(),
+            &base(&server),
+            None,
+            &BTreeMap::new(),
+        )
+        .await
+        .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::VLlm);
         assert_eq!(detected.context_windows.get("Qwen/Qwen3"), Some(&262_144));
         assert_eq!(detected.context_cap, None);
@@ -1115,9 +1158,14 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None)
-            .await
-            .expect("the mock answered, so identification must not report silence");
+        let detected = detect(
+            &reqwest::Client::new(),
+            &base(&server),
+            None,
+            &BTreeMap::new(),
+        )
+        .await
+        .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::Generic);
     }
 
@@ -1133,9 +1181,14 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None)
-            .await
-            .expect("the mock answered, so identification must not report silence");
+        let detected = detect(
+            &reqwest::Client::new(),
+            &base(&server),
+            None,
+            &BTreeMap::new(),
+        )
+        .await
+        .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected.profile, BackendProfile::Generic);
     }
 
@@ -1152,9 +1205,14 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None)
-            .await
-            .expect("the mock answered, so identification must not report silence");
+        let detected = detect(
+            &reqwest::Client::new(),
+            &base(&server),
+            None,
+            &BTreeMap::new(),
+        )
+        .await
+        .expect("the mock answered, so identification must not report silence");
         assert_eq!(detected, Detected::default());
         assert_eq!(detected.profile.reasoning_dialect(), None);
         assert!(detected.profile.honors_tool_choice());
@@ -1174,7 +1232,13 @@ mod detect_tests {
         let addr = dead.local_addr().unwrap();
         drop(dead);
 
-        let detected = detect(&reqwest::Client::new(), &format!("http://{addr}/v1"), None).await;
+        let detected = detect(
+            &reqwest::Client::new(),
+            &format!("http://{addr}/v1"),
+            None,
+            &BTreeMap::new(),
+        )
+        .await;
         assert_eq!(
             detected, None,
             "nothing answered, so nothing may be concluded"
@@ -1196,9 +1260,14 @@ mod detect_tests {
         )
         .await;
 
-        let detected = detect(&reqwest::Client::new(), &base(&server), None)
-            .await
-            .expect("the mock answered, so identification must not report silence");
+        let detected = detect(
+            &reqwest::Client::new(),
+            &base(&server),
+            None,
+            &BTreeMap::new(),
+        )
+        .await
+        .expect("the mock answered, so identification must not report silence");
         assert_eq!(
             detected.profile,
             BackendProfile::Generic,
@@ -1243,7 +1312,7 @@ mod live_ollama {
     #[tokio::test]
     #[ignore = "needs a running Ollama; set AIPLANE_LIVE_OLLAMA to its /v1 base url"]
     async fn a_real_ollama_is_identified() {
-        let detected = detect(&reqwest::Client::new(), &base_url(), None)
+        let detected = detect(&reqwest::Client::new(), &base_url(), None, &BTreeMap::new())
             .await
             .expect("a running Ollama must answer");
 
@@ -1278,6 +1347,7 @@ mod live_ollama {
             &http,
             &format!("{}/models", base.trim_end_matches('/')),
             None,
+            &BTreeMap::new(),
         )
         .await
         .body
@@ -1295,9 +1365,10 @@ mod live_ollama {
             .send()
             .await;
 
-        let (windows, cap) = read_context(&http, &base, None, BackendProfile::Ollama)
-            .await
-            .expect("/api/ps must answer on a running Ollama");
+        let (windows, cap) =
+            read_context(&http, &base, None, BackendProfile::Ollama, &BTreeMap::new())
+                .await
+                .expect("/api/ps must answer on a running Ollama");
         assert_eq!(cap, None, "Ollama states no server-wide cap");
         let window = windows
             .get(&model)

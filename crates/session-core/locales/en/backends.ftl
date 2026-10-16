@@ -39,6 +39,8 @@ backends-field-weight = Weight
 backends-field-max-inflight = Max in-flight
 backends-field-models = Models (comma-separated; blank = discover from /models)
 backends-field-aliases = Aliases (name=target per line)
+backends-field-extra-headers = Extra headers (name: value per line)
+backends-field-extra-headers-hint = Sent with every request to this backend, after the API key. For example the anthropic-version: 2023-06-01 that Anthropic requires.
 backends-field-supports-edit = Supports image editing
 backends-status-saturated = saturated
 backends-auth-failed-title = The upstream rejected the health probe's credentials (401/403), so model discovery is off — nothing new can become routable through this backend. Check the API key; if it uses an env var, check that the variable is actually set.
@@ -65,6 +67,7 @@ backends-test-ok = Reachable, authenticated ({ $source }), { $count } models dis
 backends-test-ok-no-models = Reachable and authenticated ({ $source }), but the response is neither an OpenAI nor a TypeSafe /models list, so discovery cannot read it. This backend can only serve the ids you list under "Models".
 backends-test-auth-failed = Rejected with HTTP { $status }: the credential was refused ({ $source }). Model discovery stays off until this is fixed, which leaves the backend advertising nothing.
 backends-test-http-error = { $url } answered HTTP { $status }.
+backends-test-upstream-said = Upstream response: { $detail }
 backends-test-unreachable = Could not reach { $url }: { $err }
 backends-test-timeout = { $url } did not answer within { $secs }s.
 backends-test-key-typed = using the key typed above

@@ -36,6 +36,8 @@ backends-field-weight = Gewichtung
 backends-field-max-inflight = Max. gleichzeitig
 backends-field-models = Modelle (kommagetrennt; leer = über /models erkennen)
 backends-field-aliases = Aliase (name=target pro Zeile)
+backends-field-extra-headers = Zusätzliche Header (name: value pro Zeile)
+backends-field-extra-headers-hint = Wird mit jeder Anfrage an dieses Backend gesendet, nach dem API-Schlüssel. Beispiel: anthropic-version: 2023-06-01, den Anthropic verlangt.
 backends-field-supports-edit = Unterstützt Bildbearbeitung
 backends-status-saturated = ausgelastet
 backends-auth-failed-title = Der Upstream hat die Zugangsdaten des Health-Probes abgelehnt (401/403), damit ist die Modell-Erkennung aus — über dieses Backend kann nichts Neues routbar werden. API-Schlüssel prüfen; bei einer Env-Var prüfen, ob die Variable überhaupt gesetzt ist.
@@ -62,6 +64,7 @@ backends-test-ok = Erreichbar, authentifiziert ({ $source }), { $count } Modelle
 backends-test-ok-no-models = Erreichbar und authentifiziert ({ $source }), aber die Antwort ist weder eine OpenAI- noch eine TypeSafe-/models-Liste — die Erkennung kann sie nicht lesen. Dieses Backend kann nur die Ids bedienen, die du unter „Modelle“ einträgst.
 backends-test-auth-failed = Abgelehnt mit HTTP { $status }: die Zugangsdaten wurden verweigert ({ $source }). Bis das behoben ist, bleibt die Modell-Erkennung aus und das Backend meldet nichts.
 backends-test-http-error = { $url } antwortete mit HTTP { $status }.
+backends-test-upstream-said = Upstream-Antwort: { $detail }
 backends-test-unreachable = { $url } nicht erreichbar: { $err }
 backends-test-timeout = { $url } hat nicht innerhalb von { $secs }s geantwortet.
 backends-test-key-typed = mit dem oben eingetippten Schlüssel

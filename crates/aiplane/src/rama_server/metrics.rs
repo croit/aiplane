@@ -264,6 +264,7 @@ mod tests {
             priority: Default::default(),
             alias: Default::default(),
             supports_edit: false,
+            extra_headers: Default::default(),
             enabled: true,
             name: name.into(),
             base_url: format!("http://{name}.internal:8000"),

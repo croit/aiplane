@@ -119,6 +119,7 @@ fn backend_row_to_config(row: &BackendRow, crypto: &Crypto) -> BackendConfig {
         alias,
         supports_edit: row.supports_edit,
         enabled: row.enabled,
+        extra_headers: row.extra_headers.clone(),
     }
 }
 
@@ -161,6 +162,7 @@ mod tests {
     use super::*;
     use crate::server::db::upstreams_config::{AliasRow, BackendRow, PoolRow, VoiceRow};
     use jiff::Timestamp;
+    use std::collections::BTreeMap;
 
     fn ts() -> Timestamp {
         Timestamp::now()
@@ -194,6 +196,7 @@ mod tests {
                 max_inflight: 32,
                 health_path: "/models".into(),
                 supports_edit: false,
+                extra_headers: BTreeMap::new(),
                 enabled: true,
                 models: vec!["qwen-32b".into()],
                 aliases: vec![AliasRow {
@@ -256,6 +259,7 @@ mod tests {
                 max_inflight: 16,
                 health_path: "/models".into(),
                 supports_edit: false,
+                extra_headers: BTreeMap::new(),
                 enabled: true,
                 models: vec![],
                 aliases: vec![
@@ -316,6 +320,7 @@ mod tests {
                 max_inflight: 16,
                 health_path: "/models".into(),
                 supports_edit: false,
+                extra_headers: BTreeMap::new(),
                 enabled: true,
                 models: vec!["m1".into()],
                 aliases,

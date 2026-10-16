@@ -61,6 +61,8 @@ export interface Backend {
 	health_path: string;
 	supports_edit: boolean;
 	enabled: boolean;
+	/** Extra headers sent with every request to this backend; empty = none. */
+	extra_headers: Record<string, string>;
 	models: string[];
 	aliases: BackendAlias[];
 	live: LiveBackend | null;
@@ -235,6 +237,32 @@ export function parseAliases(value: string): BackendAlias[] {
 			? { alias: line, target: null }
 			: { alias: line.slice(0, separator).trim(), target: line.slice(separator + 1).trim() || null };
 	});
+}
+
+/**
+ * The editor's extra-headers field: one `name: value` per line, the same
+ * grammar as the aliases field. A line without a separator is dropped — the
+ * server rejects it on save, and the editor should not ship it in the first
+ * place. The value keeps everything after the first `:`, so a header whose
+ * value contains a colon (a URL) survives.
+ */
+export function parseHeaders(value: string): Record<string, string> {
+	const headers: Record<string, string> = {};
+	for (const line of splitLines(value)) {
+		const separator = line.indexOf(':');
+		if (separator <= 0) continue;
+		const name = line.slice(0, separator).trim();
+		const headerValue = line.slice(separator + 1).trim();
+		if (!name || !headerValue) continue;
+		headers[name] = headerValue;
+	}
+	return headers;
+}
+
+export function formatHeaders(headers: Record<string, string>): string {
+	return Object.entries(headers)
+		.map(([name, value]) => `${name}: ${value}`)
+		.join('\n');
 }
 
 export function completeAliasLine(value: string, cursor: number, model: string) {

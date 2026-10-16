@@ -93,6 +93,7 @@ fn registry_pointed_at(upstream_url: &str) -> Arc<UpstreamRegistry> {
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
+                extra_headers: Default::default(),
                 enabled: true,
                 name: "mock".into(),
                 base_url: upstream_url.into(),

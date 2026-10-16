@@ -233,6 +233,7 @@ pub(super) mod tests {
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
+                extra_headers: Default::default(),
                 enabled: true,
                 name: format!("{kind:?}-{}", groups.join("-")),
                 base_url: "http://upstream.invalid/v1".into(),

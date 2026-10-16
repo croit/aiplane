@@ -579,6 +579,7 @@ mod tests {
             models: vec!["test-image".into()],
             alias: Default::default(),
             supports_edit: false,
+            extra_headers: Default::default(),
             enabled: true,
         }
     }

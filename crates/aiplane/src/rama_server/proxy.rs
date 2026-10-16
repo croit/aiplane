@@ -37,7 +37,7 @@ use aiplane_core::server::db::usage::{
     self, StopReason, UnitUsage, UsageKind, UsageRecord, UsageSource,
 };
 use aiplane_core::server::upstreams::registry::{Acquired, RouteError};
-use aiplane_core::server::upstreams::{PoolAccess, PoolKind};
+use aiplane_core::server::upstreams::{PoolAccess, PoolKind, config};
 use aiplane_core::server::usage::UsageHandle;
 use aiplane_features::server::speech::{self, SpokenMarkers};
 use aiplane_features::server::vad;
@@ -667,6 +667,7 @@ async fn forward_one_round_once(
     if let Some(key) = acquired.backend().api_key.as_deref() {
         http = http.bearer_auth(key);
     }
+    http = config::apply_extra_headers(http, &acquired.backend().extra_headers);
     // A backend was contacted, so the call is counted either way — a
     // transport/read failure records a 502 row (parallel to `forward`).
     let resp = match http.body(serialized).send().await {
@@ -2407,6 +2408,7 @@ async fn forward(
     if let Some(key) = backend.api_key.as_deref() {
         req = req.bearer_auth(key);
     }
+    req = config::apply_extra_headers(req, &backend.extra_headers);
 
     let upstream = match req.body(body).send().await {
         Ok(r) => r,
@@ -2596,6 +2598,7 @@ async fn forward_streaming(
     if let Some(key) = backend.api_key.as_deref() {
         req = req.bearer_auth(key);
     }
+    req = config::apply_extra_headers(req, &backend.extra_headers);
 
     let upstream = match req.body(body).send().await {
         Ok(r) => r,
@@ -3495,6 +3498,7 @@ async fn drive_streaming_tool_loop_inner(
                 if let Some(key) = acquired.backend().api_key.as_deref() {
                     http = http.bearer_auth(key);
                 }
+                http = config::apply_extra_headers(http, &acquired.backend().extra_headers);
 
                 let failure = match http.send().await {
                     Ok(u) if !is_retryable_dispatch_status(u.status().as_u16()) => {

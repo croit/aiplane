@@ -36,6 +36,8 @@ backends-field-weight = Peso
 backends-field-max-inflight = Máximo en curso
 backends-field-models = Modelos (separados por comas; en blanco = descubrir vía /models)
 backends-field-aliases = Alias (name=target por línea)
+backends-field-extra-headers = Encabezados adicionales (nombre: valor por línea)
+backends-field-extra-headers-hint = Se envía con cada petición a este backend, después de la clave API. Por ejemplo anthropic-version: 2023-06-01, que Anthropic exige.
 backends-field-supports-edit = Admite edición de imágenes
 backends-status-saturated = saturado
 backends-auth-failed-title = El upstream rechazó las credenciales de la sonda de salud (401/403), así que el descubrimiento de modelos está desactivado y nada nuevo puede enrutarse por este backend. Revisa la clave API; si usa una variable de entorno, comprueba que esté definida.
@@ -62,6 +64,7 @@ backends-test-ok = Alcanzable, autenticado ({ $source }), { $count } modelos des
 backends-test-ok-no-models = Alcanzable y autenticado ({ $source }), pero la respuesta no es una lista /models de OpenAI ni de TypeSafe, así que el descubrimiento no puede leerla. Este backend solo podrá servir los ids que indiques en «Modelos».
 backends-test-auth-failed = Rechazado con HTTP { $status }: la credencial fue denegada ({ $source }). Hasta que se corrija, el descubrimiento de modelos queda desactivado y el backend no anuncia nada.
 backends-test-http-error = { $url } respondió HTTP { $status }.
+backends-test-upstream-said = Respuesta del upstream: { $detail }
 backends-test-unreachable = No se pudo alcanzar { $url }: { $err }
 backends-test-timeout = { $url } no respondió en { $secs }s.
 backends-test-key-typed = con la clave escrita arriba

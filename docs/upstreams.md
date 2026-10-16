@@ -23,9 +23,29 @@ Pools, backends, and per-model settings are configured **in the admin UI at `/ad
 
 A **pool** has a name, a `kind` (`chat` | `transcription` | `embedding` | `image` | `speech` | `system_one` | `ocr` | `rerank`), a picker `strategy` (`prefix_affinity` — recommended for multi-replica chat pools — `least_inflight`, or `round_robin`), optional GDPR/NDA compliance flags, a rate-limit-exemption toggle, and an optional offline-fallback model. `ocr` is an internal capability pool rather than a public model endpoint. `rerank` is a public kind like `embedding`: it backs `POST /v1/rerank`, and its models are listed by `/v1/models`, offered in token model restrictions and grantable to system principals; the pool's allowed groups apply to those callers. Knowledge search also reranks through it, as a gateway-internal call that is neither subject to the searching person's pool groups nor metered. A rerank pool without allowed groups is therefore reachable through `/v1/rerank` and listed in `/v1/models` for every token with default pool access; set the pool's allowed groups to limit who may call it (knowledge search is unaffected), or restrict individual tokens to a model list.
 
-A **backend** can belong to one or more pools and carries a name, base URL, an API key (entered once, stored encrypted; an env-var name can be given as a fallback), weight, max in-flight, health path, client-facing aliases, an optional model list, and a capability flag. Each pool gets its own runtime view of that backend, so pool-specific model policy stays isolated even when the name, URL, and credentials are shared:
+A **backend** can belong to one or more pools and carries a name, base URL, an API key (entered once, stored encrypted; an env-var name can be given as a fallback), weight, max in-flight, health path, client-facing aliases, an optional model list, an optional [extra-header map](#extra-headers), and a capability flag. Each pool gets its own runtime view of that backend, so pool-specific model policy stays isolated even when the name, URL, and credentials are shared:
 
 - **Supports image editing** (`supports_edit`, default off). Marks an image backend as capable of editing. The `edit_image` tool is only registered when some image backend sets this, and editing is additionally refused against a backend whose pool is non-GDPR (it would ship existing user images off-site).
+
+### Extra headers
+
+A backend can carry a small map of **extra HTTP headers** that the gateway sends with *every* request to that backend — the health probe, model discovery, server identification, the connection test, and live traffic alike. The **Extra headers** field in the Add/Edit backend form takes one `name: value` per line, the same grammar as the aliases field.
+
+The case it exists for: a provider that demands a header an OpenAI client never sends. Anthropic's API refuses a request without `anthropic-version`, so an Anthropic backend needs the one line
+
+```
+anthropic-version: 2023-06-01
+```
+
+and both **Test connection** and normal traffic then work against `https://api.anthropic.com/v1`. A refusal that carries the provider's own body — the banner shows it, e.g. `anthropic-version: header is required` — is the signal that a header like this one is missing.
+
+The map is validated on save and on test, so a malformed entry is a `400` at the form:
+
+- at most 16 headers per backend, each value at most 512 characters;
+- names must be valid HTTP tokens (alphanumerics and `!#$%&'*+-.^_`|~` only);
+- `authorization`, `host`, `content-type`, `content-length`, `transfer-encoding` and `proxy-authorization` are refused, because the gateway sets them itself — above all `authorization`, where the stored key must stay authoritative.
+
+Headers are attached after the API key's `Authorization` header, on every upstream request site through the same helper, so a backend's headers reach the probe and the traffic together.
 
 A **speech** pool also takes an optional voice map — one voice id per spoken language (lowercase ISO-639-1), plus a default used when no language matches; voice mode resolves the voice from the language the STT detected. Unlike other kinds, a speech pool has **no unknown-model fallback** — a mistyped model or voice just surfaces the backend's own error. The chat UI's voice mode appears only when both a speech pool and a transcription model exist (see [`ui.md`](ui.md)).
 

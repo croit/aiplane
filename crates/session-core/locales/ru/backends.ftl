@@ -36,6 +36,8 @@ backends-field-weight = Вес
 backends-field-max-inflight = Макс. одновременных
 backends-field-models = Модели (через запятую; пусто = определять через /models)
 backends-field-aliases = Алиасы (name=target по одному в строке)
+backends-field-extra-headers = Дополнительные заголовки (имя: значение на строку)
+backends-field-extra-headers-hint = Отправляется с каждым запросом к этому бэкенду, после API-ключа. Например anthropic-version: 2023-06-01, который требует Anthropic.
 backends-field-supports-edit = Поддерживает редактирование изображений
 backends-status-saturated = перегружен
 backends-auth-failed-title = Upstream отклонил учётные данные health-пробы (401/403), поэтому обнаружение моделей отключено — через этот бэкенд не станет доступно ничего нового. Проверьте ключ API; если он берётся из переменной окружения, проверьте, что она задана.
@@ -62,6 +64,7 @@ backends-test-ok = Доступен, аутентификация пройден
 backends-test-ok-no-models = Доступен, аутентификация пройдена ({ $source }), но ответ не является списком /models ни в формате OpenAI, ни в формате TypeSafe — обнаружение не может его прочитать. Этот бэкенд сможет обслуживать только id, перечисленные в поле «Модели».
 backends-test-auth-failed = Отклонено с HTTP { $status }: учётные данные не приняты ({ $source }). Пока это не исправлено, обнаружение моделей отключено и бэкенд ничего не объявляет.
 backends-test-http-error = { $url } ответил HTTP { $status }.
+backends-test-upstream-said = Ответ upstream: { $detail }
 backends-test-unreachable = Не удалось связаться с { $url }: { $err }
 backends-test-timeout = { $url } не ответил за { $secs } с.
 backends-test-key-typed = с введённым выше ключом

@@ -20,7 +20,7 @@
 //! config-order wins (`HashMap` iteration is unordered, so for deterministic
 //! priority callers should keep one pool per kind in practice).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -78,6 +78,9 @@ pub struct Backend {
     pub weight: u32,
     pub max_inflight: u32,
     pub health_path: String,
+    /// Operator-configured extra headers sent with every request to this
+    /// backend (see [`crate::server::upstreams::config::BackendConfig::extra_headers`]).
+    pub extra_headers: BTreeMap<String, String>,
     /// Whether the probe discovers [`models`](Self::models) from `/models`:
     /// exactly when no model is configured. A configured list is the catalog,
     /// full stop — it is how a backend whose `/models` lists something else
@@ -190,6 +193,7 @@ impl Backend {
             weight: cfg.weight.max(1),
             max_inflight: cfg.max_inflight.max(1),
             health_path: cfg.health_path.clone(),
+            extra_headers: cfg.extra_headers.clone(),
             discovers_models: config_models.is_empty(),
             supports_edit: cfg.supports_edit,
             inflight: AtomicU32::new(0),
@@ -5491,6 +5495,7 @@ mod tests {
                     max_inflight: 16,
                     health_path: "/models".into(),
                     supports_edit: false,
+                    extra_headers: BTreeMap::new(),
                     enabled: true,
                     models: vec![],
                     aliases: vec![],

@@ -158,6 +158,7 @@ fn registry(embed: &str) -> Arc<UpstreamRegistry> {
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
+                extra_headers: Default::default(),
                 enabled: true,
                 name: "e".into(),
                 base_url: embed.into(),

@@ -90,6 +90,7 @@ fn pool(kind: PoolKind, url: &str, model: &str, name: &str) -> UpstreamPoolConfi
             priority: Default::default(),
             alias: Default::default(),
             supports_edit: false,
+            extra_headers: Default::default(),
             enabled: true,
             name: name.into(),
             base_url: url.into(),

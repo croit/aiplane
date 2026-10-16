@@ -290,6 +290,7 @@ impl World {
                         priority: Default::default(),
                         alias,
                         supports_edit: false,
+                        extra_headers: Default::default(),
                         enabled: true,
                         name: format!("{name}-backend"),
                         base_url: upstream.uri(),

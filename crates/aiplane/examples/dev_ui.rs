@@ -23,7 +23,7 @@
 //! Not part of any test target; not run by CI. Strictly a local-only
 //! convenience.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -296,6 +296,7 @@ async fn main() -> anyhow::Result<()> {
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
+                extra_headers: BTreeMap::new(),
                 enabled: true,
                 name: "wiremock-chat".into(),
                 base_url: chat_mock.uri(),
@@ -324,6 +325,7 @@ async fn main() -> anyhow::Result<()> {
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
+                extra_headers: BTreeMap::new(),
                 enabled: true,
                 name: "wiremock-voice".into(),
                 base_url: voice_mock.uri(),
@@ -352,6 +354,7 @@ async fn main() -> anyhow::Result<()> {
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
+                extra_headers: BTreeMap::new(),
                 enabled: true,
                 name: "wiremock-selector".into(),
                 base_url: chat_mock.uri(),
@@ -385,6 +388,7 @@ async fn main() -> anyhow::Result<()> {
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
+                extra_headers: BTreeMap::new(),
                 enabled: true,
                 name: "wiremock-speech".into(),
                 base_url: chat_mock.uri(),
@@ -415,6 +419,7 @@ async fn main() -> anyhow::Result<()> {
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: true,
+                extra_headers: BTreeMap::new(),
                 enabled: true,
                 name: "wiremock-image".into(),
                 base_url: chat_mock.uri(),
@@ -448,6 +453,7 @@ async fn main() -> anyhow::Result<()> {
                     max_inflight: backend.max_inflight,
                     health_path: backend.health_path.clone(),
                     supports_edit: backend.supports_edit,
+                    extra_headers: BTreeMap::new(),
                     enabled: backend.enabled,
                     models: backend.models.clone(),
                     aliases: Vec::new(),

@@ -49,6 +49,7 @@ fn backend(name: &str, base_url: &str, supports_edit: bool) -> BackendConfig {
         alias: Default::default(),
         supports_edit,
         enabled: true,
+        extra_headers: Default::default(),
         name: name.into(),
         base_url: base_url.into(),
         api_key_env: None,

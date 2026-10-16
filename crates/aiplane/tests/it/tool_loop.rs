@@ -60,6 +60,7 @@ async fn state_with_tool_grants(upstream_uri: &str, granted_tools: Vec<String>) 
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
+                extra_headers: Default::default(),
                 enabled: true,
                 name: "mock".into(),
                 base_url: upstream_uri.into(),

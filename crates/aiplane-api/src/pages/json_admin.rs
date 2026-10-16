@@ -16,6 +16,7 @@
 
 use aiplane_core::server::capped_read;
 use aiplane_core::server::priority::{BackendPriority, Priority, PriorityMapping};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use rama::http::service::web::extract::{Path, State};
@@ -2104,6 +2105,7 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
             health_path: b.health_path.clone(),
             supports_edit: b.supports_edit,
             enabled: b.enabled,
+            extra_headers: b.extra_headers.clone(),
             models: b.models.clone(),
             aliases: b
                 .aliases
@@ -2216,6 +2218,8 @@ pub struct BackendView {
     pub supports_edit: bool,
     /// `false` while the backend is drained.
     pub enabled: bool,
+    /// Operator-configured headers sent with every request to this backend.
+    pub extra_headers: BTreeMap<String, String>,
     pub models: Vec<String>,
     pub aliases: Vec<BackendAliasView>,
     /// The backend in the running registry; `null` when it is not running.
@@ -2441,6 +2445,10 @@ pub struct BackendSaveBody {
     pub health_path: String,
     #[serde(default)]
     pub supports_edit: bool,
+    /// Extra headers sent with every request to this backend; empty when
+    /// absent from the body.
+    #[serde(default)]
+    pub extra_headers: BTreeMap<String, String>,
     #[serde(default)]
     pub models: Vec<String>,
     #[serde(default)]
@@ -2472,6 +2480,9 @@ pub struct BackendTestBody {
     pub api_key: String,
     #[serde(default)]
     pub health_path: String,
+    /// Extra headers to send with the test request, as on the saved backend.
+    #[serde(default)]
+    pub extra_headers: BTreeMap<String, String>,
 }
 
 const BACKEND_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
@@ -2497,6 +2508,9 @@ pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) ->
             BackendTestFailure::default(),
         );
     }
+    if let Err(message) = upstreams::config::validate_extra_headers(&parsed.extra_headers) {
+        return bad_request(message);
+    }
     let health_path = match parsed.health_path.trim() {
         "" => "/models",
         path => path,
@@ -2510,6 +2524,7 @@ pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) ->
     if let Some(key) = key.as_deref() {
         request = request.bearer_auth(key);
     }
+    request = upstreams::config::apply_extra_headers(request, &parsed.extra_headers);
     let response = match tokio::time::timeout(BACKEND_TEST_TIMEOUT, request.send()).await {
         Ok(Ok(response)) => response,
         Ok(Err(err)) => {
@@ -2552,6 +2567,7 @@ pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) ->
     // The backend's own 401 is not the caller's: answering it as such would
     // read as "your gateway session expired". It is a failed upstream, 502.
     if matches!(status, 401 | 403) {
+        let detail = String::from_utf8_lossy(&body).chars().take(1000).collect();
         return backend_test_failed(
             StatusCode::BAD_GATEWAY,
             "auth_failed",
@@ -2560,12 +2576,16 @@ pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) ->
             ),
             BackendTestFailure {
                 status: Some(status),
+                detail: Some(detail),
                 key_source: Some(key_source),
                 ..Default::default()
             },
         );
     }
     if !(200..300).contains(&status) {
+        // The backend's own body is the answer — "answered HTTP 400" left the
+        // operator guessing what was wrong, so the test shows it, truncated.
+        let detail = String::from_utf8_lossy(&body).chars().take(1000).collect();
         return backend_test_failed(
             StatusCode::BAD_GATEWAY,
             "http_error",
@@ -2573,6 +2593,7 @@ pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) ->
             BackendTestFailure {
                 status: Some(status),
                 url: Some(url),
+                detail: Some(detail),
                 key_source: Some(key_source),
                 ..Default::default()
             },
@@ -2591,10 +2612,14 @@ pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) ->
     // `None` means nothing answered — which the reachability test above has
     // already ruled out, but the panel should not invent a profile if it ever
     // did.
-    let detected =
-        aiplane_core::server::upstreams::profile::detect(&state.http, base_url, key.as_deref())
-            .await
-            .unwrap_or_default();
+    let detected = aiplane_core::server::upstreams::profile::detect(
+        &state.http,
+        base_url,
+        key.as_deref(),
+        &parsed.extra_headers,
+    )
+    .await
+    .unwrap_or_default();
     let none_listed = models.is_empty();
     let found = BackendFound {
         outcome: if none_listed {
@@ -2796,6 +2821,9 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
     {
         return bad_request(session_core::i18n::t(lang, "priority-error-mapping"));
     }
+    if let Err(message) = upstreams::config::validate_extra_headers(&parsed.extra_headers) {
+        return bad_request(message);
+    }
     let name = parsed.name.trim().to_string();
     if name.is_empty() {
         return bad_request("a backend needs a name");
@@ -2851,6 +2879,7 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
         },
         supports_edit: parsed.supports_edit,
         enabled,
+        extra_headers: parsed.extra_headers,
         models: parsed.models,
         aliases: parsed
             .aliases

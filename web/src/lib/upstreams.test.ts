@@ -8,6 +8,8 @@ import {
 	parallelismMismatch,
 	completeAliasLine,
 	poolCoverage,
+	parseHeaders,
+	formatHeaders,
 	type Backend,
 	type Pool, naturalSort } from './upstreams.ts';
 
@@ -24,6 +26,7 @@ const backends: Backend[] = [
 		health_path: '/models',
 		supports_edit: false,
 		enabled: true,
+		extra_headers: {},
 		models: [],
 		aliases: [{ alias: 'default', target: 'model-a' }],
 		live: {
@@ -53,6 +56,7 @@ const backends: Backend[] = [
 		health_path: '/models',
 		supports_edit: false,
 		enabled: true,
+		extra_headers: {},
 		models: [],
 		aliases: [{ alias: 'default', target: 'model-b' }],
 		live: {
@@ -82,6 +86,7 @@ const backends: Backend[] = [
 		health_path: '/models',
 		supports_edit: false,
 		enabled: true,
+		extra_headers: {},
 		models: ['manual'],
 		aliases: [],
 		live: null
@@ -201,4 +206,28 @@ test('a refusal that is not a connection-test outcome is left to the caller', ()
 	assert.equal(backendTestFailure(JSON.stringify({ error: { message: 'no', code: 'forbidden' } })), null);
 	assert.equal(backendTestFailure('not json'), null);
 	assert.equal(backendTestFailure(undefined), null);
+});
+
+test('extra headers parse one name: value per line and keep the rest of the value', () => {
+	assert.deepEqual(
+		parseHeaders('anthropic-version: 2023-06-01\nx-trace-id: abc-123'),
+		{ 'anthropic-version': '2023-06-01', 'x-trace-id': 'abc-123' }
+	);
+	// A colon inside the value is part of the value.
+	assert.deepEqual(parseHeaders('x-url: https://example.test/x'), { 'x-url': 'https://example.test/x' });
+});
+
+test('malformed extra-header lines are dropped, not guessed', () => {
+	assert.deepEqual(parseHeaders(''), {});
+	assert.deepEqual(parseHeaders('\n  \n'), {});
+	// No separator, empty name, empty value: all unparseable.
+	assert.deepEqual(parseHeaders('no-separator\n: value\nname:'), {});
+});
+
+test('extra headers format back to the editor field', () => {
+	assert.equal(
+		formatHeaders({ 'anthropic-version': '2023-06-01', 'x-trace-id': 'abc' }),
+		'anthropic-version: 2023-06-01\nx-trace-id: abc'
+	);
+	assert.equal(formatHeaders({}), '');
 });

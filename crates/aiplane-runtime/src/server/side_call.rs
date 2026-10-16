@@ -582,6 +582,7 @@ async fn send(
     if let Some(key) = backend.api_key.as_deref() {
         req = req.bearer_auth(key);
     }
+    req = aiplane_core::server::upstreams::config::apply_extra_headers(req, &backend.extra_headers);
     let resp = req.send().await.map_err(failed)?;
     let status = resp.status();
     let bytes = capped_read::read_capped(resp, capped_read::MODEL_ANSWER_BYTES)

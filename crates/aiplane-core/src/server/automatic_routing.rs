@@ -863,6 +863,7 @@ mod tests {
                         health_path: "/models".into(),
                         alias: Default::default(),
                         enabled: true,
+                        extra_headers: Default::default(),
                         supports_edit: false,
                     }],
                 },
