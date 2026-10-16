@@ -65,7 +65,7 @@ Use the token's menu to rotate or revoke it. Rotation reveals a replacement cred
 
 Open `/usage`. Choose a period and optionally filter by source, backend or API token. The page summarizes usage and groups it by backend, source, model and token. Users with permission to view all usage also receive an all-users scope and per-user table; other users see their own scope.
 
-Your applicable limits appear in the personal view. Cost depends on the installation's configured pricing. An unpriced-model warning means the displayed cost cannot account for those models reliably. If usage collection is disabled, the page reports that condition; an empty accounting view is not proof that no requests ran.
+Your applicable limits appear in the personal view; a rule replaced by a more specific one for you is left out. A model-scoped limit counts only calls on its models, and an all-models limit next to it counts only the remaining models, unless it is an overall ceiling. A spent cost limit does not block models priced at zero. Cost depends on the installation's configured pricing. An unpriced-model warning means the displayed cost cannot account for those models reliably. If usage collection is disabled, the page reports that condition; an empty accounting view is not proof that no requests ran.
 
 When a limit blocks a request, inspect the window and dimension and contact the administrator if necessary. Token quotas are additional constraints, not permission to exceed owner-level limits.
 

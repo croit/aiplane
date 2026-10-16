@@ -563,6 +563,12 @@ pub struct ModelPrice {
     pub pricing_unit: PricingUnit,
 }
 
+/// Whether a model with these prices can cost anything: with neither side
+/// priced above zero, every call settles to 0.
+pub fn charges(input_price: Option<f64>, output_price: Option<f64>) -> bool {
+    input_price.is_some_and(|p| p > 0.0) || output_price.is_some_and(|p| p > 0.0)
+}
+
 /// Load every priced model's prices into a map, keyed by model name. Rows
 /// with no price on either side are skipped. Called once per flush by the
 /// usage writer to turn token counts into `cost` without a per-row query —

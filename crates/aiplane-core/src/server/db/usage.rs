@@ -867,11 +867,8 @@ pub async fn distinct_tokens(
         .collect()
 }
 
-/// One user's usage accumulated since an instant — the read behind limit
-/// enforcement (`server::limits`). Counts only `enforce_limits = 1` rows (exempt
-/// pools never consume a budget) and, when `model` is set, narrows to that
-/// single model; `None` sums across all metered models. Token-agnostic: a
-/// user's whole budget spans every API token + chat + scheduled call.
+/// One subject's metered usage of one model since an instant — a row of
+/// [`usage_by_model_in_window`].
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct WindowUsage {
     pub requests: i64,
@@ -934,57 +931,40 @@ impl<'a> Subject<'a> {
     }
 }
 
-/// Usage accumulated since an instant, for one subject — the read behind
-/// limit enforcement (`server::limits`). Counts only `enforce_limits = 1`
-/// rows (exempt pools never consume a budget) and, when `model` is set,
-/// narrows to that scope: an exact model id, or a `prefix-*` family matched
-/// with `LIKE`; `None` sums across all metered models.
-pub async fn usage_in_window(
+/// Usage accumulated since an instant, for one subject, per model — the read
+/// behind limit enforcement (`server::limits`), which decides per model which
+/// rule a call's spend belongs to. Counts only `enforce_limits = 1` rows
+/// (exempt pools never consume a budget).
+pub async fn usage_by_model_in_window(
     pool: &Pool,
     subject: Subject<'_>,
     since: Timestamp,
-    model: Option<&str>,
-) -> Result<WindowUsage, DbError> {
-    let mut sql = format!(
-        "SELECT COUNT(*) AS requests, COALESCE(SUM(total_tokens), 0) AS tokens, \
+) -> Result<Vec<(String, WindowUsage)>, DbError> {
+    let sql = format!(
+        "SELECT model, COUNT(*) AS requests, COALESCE(SUM(total_tokens), 0) AS tokens, \
                 COALESCE(SUM(cost), 0) AS cost \
          FROM usage_events \
-         WHERE {} = ? AND created_at >= ? AND enforce_limits = 1",
+         WHERE {} = ? AND created_at >= ? AND enforce_limits = 1 \
+         GROUP BY model",
         subject.column(),
     );
-    enum Narrow<'a> {
-        Exact(&'a str),
-        Prefix(String),
-    }
-    let narrow = match model {
-        None => None,
-        Some(scope) if scope.ends_with('*') && scope.len() > 1 => {
-            sql.push_str(" AND model LIKE ? ESCAPE '\\'");
-            Some(Narrow::Prefix(
-                scope[..scope.len() - 1]
-                    .replace('\\', "\\\\")
-                    .replace('%', "\\%")
-                    .replace('_', "\\_")
-                    + "%",
+    let rows = sqlx::query(&sql)
+        .bind(subject.id())
+        .bind(fmt_ts(since))
+        .fetch_all(pool)
+        .await?;
+    rows.iter()
+        .map(|row| {
+            Ok((
+                row.try_get("model")?,
+                WindowUsage {
+                    requests: row.try_get("requests")?,
+                    tokens: row.try_get("tokens")?,
+                    cost: row.try_get("cost")?,
+                },
             ))
-        }
-        Some(id) => {
-            sql.push_str(" AND model = ?");
-            Some(Narrow::Exact(id))
-        }
-    };
-    let mut q = sqlx::query(&sql).bind(subject.id()).bind(fmt_ts(since));
-    match narrow {
-        None => {}
-        Some(Narrow::Exact(id)) => q = q.bind(id),
-        Some(Narrow::Prefix(pattern)) => q = q.bind(pattern),
-    }
-    let row = q.fetch_one(pool).await?;
-    Ok(WindowUsage {
-        requests: row.try_get("requests")?,
-        tokens: row.try_get("tokens")?,
-        cost: row.try_get("cost")?,
-    })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1181,10 +1161,22 @@ mod tests {
         assert_eq!(unfiltered.summary.requests, 2);
     }
 
+    async fn window_total(pool: &Pool, subject: Subject<'_>, since: Timestamp) -> WindowUsage {
+        usage_by_model_in_window(pool, subject, since)
+            .await
+            .unwrap()
+            .into_iter()
+            .fold(WindowUsage::default(), |acc, (_, u)| WindowUsage {
+                requests: acc.requests + u.requests,
+                tokens: acc.tokens + u.tokens,
+                cost: acc.cost + u.cost,
+            })
+    }
+
     /// A token's window read must count only that token — the whole point of
     /// the second ceiling.
     #[tokio::test]
-    async fn usage_in_window_for_token_counts_only_that_token() {
+    async fn window_usage_for_token_counts_only_that_token() {
         let pool = pool().await;
         let now = Timestamp::now();
         insert_batch(
@@ -1198,14 +1190,10 @@ mod tests {
         .await
         .unwrap();
         let since = now - SignedDuration::from_hours(1);
-        let a = usage_in_window(&pool, Subject::Token("tok-a"), since, None)
-            .await
-            .unwrap();
+        let a = window_total(&pool, Subject::Token("tok-a"), since).await;
         assert_eq!((a.requests, a.tokens), (1, 10));
         // The owner's own budget still sees everything they spent.
-        let user = usage_in_window(&pool, Subject::User("alice"), since, None)
-            .await
-            .unwrap();
+        let user = window_total(&pool, Subject::User("alice"), since).await;
         assert_eq!((user.requests, user.tokens), (3, 1110));
     }
 
@@ -1239,9 +1227,7 @@ mod tests {
         .await
         .unwrap();
         let since = now - SignedDuration::from_hours(1);
-        let spent = usage_in_window(&pool, Subject::Agent("main"), since, None)
-            .await
-            .unwrap();
+        let spent = window_total(&pool, Subject::Agent("main"), since).await;
         assert_eq!((spent.requests, spent.tokens), (1, 30));
         let stored: Option<String> =
             sqlx::query_scalar("SELECT chain FROM usage_events WHERE agent_id = 'main'")
