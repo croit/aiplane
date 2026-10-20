@@ -30,7 +30,7 @@
 	"dependencies": {
 		"@zumer/snapdom": "^3.3.3",
 		"dompurify": "^3.4.16",
-		"marked": "^18.1.0"
+		"marked": "^18.1.1"
 	},
 	"overrides": {
 		"postcss-selector-parser": "7.1.6"
