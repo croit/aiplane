@@ -42,21 +42,22 @@ Open **Settings → Tokens** (`/settings/tokens`).
 5. Create it and copy the plaintext value from the reveal panel immediately.
 6. Follow the **Guides** tab for the client you want to configure.
 
-For OpenCode v2, the **Guides → OpenCode** tab shows two commands. The first
-downloads the AIplane plugin, already set up for your gateway, into
-`~/.config/opencode/plugins/`. The second, `opencode auth login aiplane`, asks
-for the token. OpenCode then lists every chat model the token may use under
-**croit AIplane**, with the context window and capabilities the gateway knows.
-Signing in with a different token, or revoking it, changes that list.
+For OpenCode v2, the **Guides → OpenCode** tab shows a prompt and a command.
+The prompt is for OpenCode itself: paste it into a session — in the terminal
+or the Desktop app — and the agent downloads the AIplane plugin, already set
+up for your gateway, into `~/.config/opencode/plugins/`. The command does the
+same from a terminal. Either way, paste the token when OpenCode asks for it.
+The running session picks the plugin up without a restart, and OpenCode then
+lists every chat model the token may use under **croit AIplane**, with the
+context window and capabilities the gateway knows. Signing in with a
+different token, or revoking it, changes that list.
 
-**OpenCode Desktop** uses the same setup. Desktop is a separate download, but
-on a machine it uses the same global configuration directory and background
-service as the terminal, so the plugin in `~/.config/opencode/plugins/`
-applies to both. In the Desktop app, sign in to **croit AIplane** from its
-provider connection screen and paste the `gwk_` token — the same credential
-the terminal's `opencode auth login aiplane` stores. Signing in in one makes
-the models available in the other, and both see gateway-side changes such as a
-newly granted model without a restart.
+**OpenCode Desktop** uses the same flow: on a machine it shares the global
+configuration directory and background service with the terminal, so the
+plugin and the sign-in apply to both. Paste the prompt into the Desktop
+app's chat and the models appear under **croit AIplane** there just like in
+the terminal; both pick up gateway-side changes such as a newly granted model
+without a restart.
 
 The plaintext is revealed at creation or rotation; it cannot be retrieved from a normal token listing. Store it as a credential, not in a document, screenshot or source repository. New tokens have gateway-owned tool execution disabled by default.
 

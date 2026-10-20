@@ -17,7 +17,8 @@
 		python: 'tokens-guide-python'
 	} as const;
 
-	let opencodeCommands = $derived(`curl -fsSL --create-dirs -o ~/.config/opencode/plugins/aiplane.js ${origin}/clients/opencode/aiplane.js\nopencode auth login aiplane`);
+	let opencodePrompt = $derived(t('tokens-opencode-prompt', { url: `${origin}/clients/opencode/aiplane.js` }));
+	let opencodeCommands = $derived(`curl -fsSL --create-dirs -o ~/.config/opencode/plugins/aiplane.js ${origin}/clients/opencode/aiplane.js && opencode auth login aiplane`);
 	let claudeConfig = $derived(`export ANTHROPIC_BASE_URL=${origin}\nexport ANTHROPIC_AUTH_TOKEN=gwk_PASTE_YOUR_TOKEN\nexport ANTHROPIC_MODEL=YOUR_MODEL_ID\nexport ANTHROPIC_DEFAULT_HAIKU_MODEL=YOUR_MODEL_ID\nclaude`);
 	let piConfig = $derived(JSON.stringify({
 		providers: {
@@ -54,6 +55,8 @@
 				<li>{t('tokens-opencode-step-2')}</li>
 				<li>{t('tokens-opencode-step-3')}</li>
 			</ol>
+			<pre class="w-full overflow-x-auto rounded-box bg-base-200 p-4 text-xs"><code>{opencodePrompt}</code></pre>
+			<p class="text-sm text-base-content/70">{t('tokens-opencode-terminal')}</p>
 			<pre class="w-full overflow-x-auto rounded-box bg-base-200 p-4 text-xs"><code>{opencodeCommands}</code></pre>
 			<p class="text-sm text-base-content/70">{t('tokens-opencode-finish')}</p>
 		</div></article>
