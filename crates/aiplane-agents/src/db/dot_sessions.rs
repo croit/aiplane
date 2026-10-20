@@ -250,15 +250,16 @@ pub async fn session_matches(
     session_id: &str,
     dot_id: Option<&str>,
 ) -> Result<bool, DbError> {
+    // An unbound (person) session is a valid home for a Dot-configured run —
+    // the Dot is optional — alongside the session bound to that Dot.
     Ok(sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM chat_sessions s
          LEFT JOIN personal_dot_sessions d ON d.session_id = s.id
          WHERE s.id = ? AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
-           AND ((? IS NULL AND d.session_id IS NULL) OR (d.dot_id = ? AND d.owner_user_id = ?)))",
+           AND (d.session_id IS NULL OR (d.dot_id = ? AND d.owner_user_id = ?)))",
     )
     .bind(session_id)
     .bind(owner_user_id)
-    .bind(dot_id)
     .bind(dot_id)
     .bind(owner_user_id)
     .fetch_one(connection)
@@ -1270,6 +1271,31 @@ mod tests {
             !session_matches(&mut connection, "alice", &bound.id, None)
                 .await
                 .unwrap()
+        );
+    }
+
+    /// An unbound (person) session is a valid home for a Dot-configured run —
+    /// the Dot is optional — while a no-Dot run still requires an unbound session.
+    #[tokio::test]
+    async fn session_matches_accepts_an_unbound_session_for_a_dot_configured_run() {
+        let pool = open(Path::new(":memory:")).await.unwrap();
+        user(&pool, "alice").await;
+        let dot_id = dot(&pool, "alice", "helper").await;
+        let ordinary = session_core::db::create_session(&pool, "alice")
+            .await
+            .unwrap();
+        let mut connection = pool.acquire().await.unwrap();
+        assert!(
+            session_matches(&mut connection, "alice", &ordinary.id, Some(&dot_id))
+                .await
+                .unwrap(),
+            "a Dot-configured run may use an unbound session"
+        );
+        assert!(
+            session_matches(&mut connection, "alice", &ordinary.id, None)
+                .await
+                .unwrap(),
+            "a no-Dot run uses an unbound session"
         );
     }
 }

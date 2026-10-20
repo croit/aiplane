@@ -331,6 +331,89 @@ async fn dot_webhook_fire_and_rerun_wait_for_approval_and_cannot_be_deleted_unti
     assert_eq!(upstream.received_requests().await.unwrap().len(), 2);
 }
 
+/// A background run bound to a Dot, suspended for approval, must still resume
+/// when the Dot's principal is disabled — it degrades to the person, the
+/// pre-Dots behavior — instead of failing with `dot_unavailable`.
+#[tokio::test]
+async fn suspended_background_run_resumes_as_person_when_its_dot_principal_is_disabled() {
+    use super::agents::{TIME, fixture_on};
+    use super::turn_suspension::{Scripted, tool_call};
+    use aiplane_agents::db::system_principals;
+    use session_core::db as chat;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer};
+
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(Scripted {
+            deltas: vec![tool_call(TIME, json!({})), json!({"content": "Done."})],
+            served: std::sync::atomic::AtomicUsize::new(0),
+            delay: std::time::Duration::ZERO,
+        })
+        .mount(&upstream)
+        .await;
+    let fx = fixture_on(Some(&upstream.uri())).await;
+    let (_, created) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({"name":"Approver"}))
+        .await;
+    let dot_id = created["dot"]["id"].as_str().unwrap();
+    let access_url = format!("/api/v0/dots/{dot_id}/access");
+    let (access_status, access) = fx.get(&fx.alice, &access_url).await;
+    assert_eq!(access_status, StatusCode::OK, "{access}");
+    let (status, access) = fx
+        .send(
+            Some(&fx.alice),
+            Method::PUT,
+            &access_url,
+            Some(json!({"revision":access["revision"],"tools":[{"id":TIME,"permission":"always_ask"}]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{access}");
+    let (status, created) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/webhooks",
+            json!({"name":"Approve updates","prompt":"Review payload","model":"m","tools_enabled":true,"synchronous":true,"reuse_conversation":false,"reuse_rounds":5,"dot_id":dot_id}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let hook_id = created["webhook"]["id"].as_str().unwrap();
+    let secret = created["secret"].as_str().unwrap();
+    let (status, fire) = fx
+        .send(
+            None,
+            Method::POST,
+            &format!("/hooks/{secret}"),
+            Some(json!({"event":"update"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{fire}");
+    assert_eq!(fire["status"], "waiting");
+    let session = fire["session_id"].as_str().unwrap();
+    let runs = aiplane_runtime::server::webhooks::list_runs(&fx.state.db, hook_id, 10)
+        .await
+        .unwrap();
+    let turn_id = runs[0].assistant_turn_id.as_deref().unwrap();
+    let suspension = chat::get_suspension(&fx.state.db, turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    // Disable the Dot's principal: the suspended run must still resume.
+    system_principals::disable(&fx.state.db, dot_id, "alice")
+        .await
+        .unwrap();
+    let (status, body) = fx
+        .send(
+            Some(&fx.alice),
+            Method::POST,
+            &format!("/api/v0/chat/sessions/{session}/turns/{turn_id}/resume"),
+            Some(json!({"decision":"allow_once","request_id":suspension.request_id})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+}
+
 #[tokio::test]
 async fn background_openapi_describes_binding_waiting_and_delete_conflicts() {
     let fx = fixture().await;

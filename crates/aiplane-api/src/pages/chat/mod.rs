@@ -1132,8 +1132,12 @@ pub(crate) async fn resume_turn(
             .map_err(ResumeTurnError::Context)?
         {
             Some(PersonalDotContext::Active { actor, .. }) => actor,
-            Some(PersonalDotContext::Unavailable) => return Err(ResumeTurnError::Unavailable),
-            None => aiplane_runtime::agent_run::Actor::person(user.id.clone(), user.roles.clone()),
+            // A background run's Dot is optional: when its principal is gone
+            // the run resumes as the person, the pre-Dots behavior, so a
+            // suspended run never orphans on a disabled Dot.
+            Some(PersonalDotContext::Unavailable) | None => {
+                aiplane_runtime::agent_run::Actor::person(user.id.clone(), user.roles.clone())
+            }
         };
         let worker = match state
             .chats

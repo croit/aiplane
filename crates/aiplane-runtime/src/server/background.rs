@@ -130,7 +130,10 @@ pub async fn for_turn(
     let row = &rows[0];
     let dot: Option<String> = row.try_get("dot_id")?;
     let session_dot: Option<String> = row.try_get("session_dot")?;
-    if !owner_matches(row, owner)? || row.try_get::<bool, _>("shared")? || dot != session_dot {
+    // An unbound (person) session is a valid home for a Dot-configured run —
+    // the Dot is optional — but a session bound to a *different* Dot is not.
+    let dot_mismatch = !(session_dot.is_none() || session_dot == dot);
+    if !owner_matches(row, owner)? || row.try_get::<bool, _>("shared")? || dot_mismatch {
         return Err(invalid(
             "The background run no longer matches its owner and conversation binding. Restore its original binding before continuing.",
         ));
@@ -730,6 +733,16 @@ mod tests {
     #[tokio::test]
     async fn changed_trigger_binding_and_missing_state_refuse_continuation() {
         let db = fixture().await;
+        // A session bound to a *different* Dot than the run's configured Dot is
+        // a mismatch and refuses continuation.
+        sqlx::query(
+            "INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at)
+             SELECT id,'owner','bound-dot',? FROM chat_sessions WHERE user_id='owner'",
+        )
+        .bind(jiff::Timestamp::now().to_string())
+        .execute(&db)
+        .await
+        .unwrap();
         sqlx::query("UPDATE scheduled_actions SET dot_id='another-dot'")
             .execute(&db)
             .await
@@ -745,6 +758,22 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    /// A Dot-configured run whose session is unbound (person) is a valid home —
+    /// the Dot is optional — so `for_turn` accepts it instead of refusing.
+    #[tokio::test]
+    async fn dot_configured_run_accepts_an_unbound_session() {
+        let db = fixture().await;
+        sqlx::query("UPDATE scheduled_actions SET dot_id='some-dot'")
+            .execute(&db)
+            .await
+            .unwrap();
+        let ctx = for_turn(&db, &AutomationOwner::User("owner".into()), "turn")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ctx.source, UsageSource::Scheduled);
     }
 
     #[tokio::test]

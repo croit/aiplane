@@ -69,6 +69,11 @@ deactivating one frees a slot. Removing management permission blocks lifecycle
 management, without deactivating existing Dots or stopping their runs. Tool
 access and approvals remain bounded by the current permissions on execution.
 
+A schedule or webhook bound to a Dot that is later deactivated, or whose
+principal is disabled, runs as the ordinary assistant from then on rather than
+failing. Disabling the Dot's principal also cancels its in-flight runs, the same
+as deactivating the Dot.
+
 ### Set up a personal Dot in conversation
 
 1. Choose **Set up a Dot together** on `/dots`.

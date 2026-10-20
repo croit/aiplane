@@ -110,12 +110,17 @@ pub async fn open_session(db: &Pool, p: OpenParams<'_>) -> Result<(String, Strin
         }
         Owner::User(owner) => owner,
     };
-    if let Some(dot_id) = p.dot_id {
-        let dot = aiplane_agents::db::agents::get_personal_dot(db, owner, dot_id).await?;
-        if !dot.is_some_and(|dot| dot.active) {
-            return Err(OpenError::Unavailable);
+    // A background run's Dot is optional: when it is unavailable — inactive or
+    // its principal disabled — the session opens unbound and the run proceeds
+    // as the person, the pre-Dots behavior.
+    let dot_id = match p.dot_id {
+        Some(dot_id) => {
+            let dot = aiplane_agents::db::agents::get_personal_dot(db, owner, dot_id).await?;
+            dot.is_some_and(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
+                .then_some(dot_id)
         }
-    }
+        None => None,
+    };
     if let Some(session_id) = p.existing_session.as_deref() {
         let mut conn = db.acquire().await.map_err(DbError::from)?;
         if !aiplane_agents::db::dot_sessions::session_matches(
@@ -134,7 +139,7 @@ pub async fn open_session(db: &Pool, p: OpenParams<'_>) -> Result<(String, Strin
             session.id
         }
     };
-    if let Some(dot_id) = p.dot_id
+    if let Some(dot_id) = dot_id
         && !aiplane_agents::db::dot_sessions::link(db, owner, dot_id, &session_id).await?
     {
         return Err(OpenError::Unavailable);
@@ -333,6 +338,7 @@ async fn person_context(
     let tools_enabled = background
         .as_ref()
         .is_none_or(|context| context.tools_enabled);
+    let is_background_run = background.is_some();
     if let Some(background) = background {
         p.source = background.source;
         p.history_limit = background.history_limit;
@@ -375,6 +381,10 @@ async fn person_context(
             p.actor = actor;
             Ok(Some(persona))
         }
+        // A background run's Dot is optional: when its principal is gone the
+        // run proceeds as the person (set above), the pre-Dots behavior, so a
+        // scheduled run never stalls on a disabled Dot.
+        Some(PersonalDotContext::Unavailable) if is_background_run => Ok(None),
         Some(PersonalDotContext::Unavailable) => Err(fail(
             "The personal Dot is unavailable. Activate it or restore its owned binding before continuing.",
         )),
@@ -2127,6 +2137,149 @@ pub(crate) mod tests {
         state.chats.clear("u1", &newer);
     }
 
+    /// A scheduled run bound to a Dot whose principal gets disabled must still
+    /// complete — it degrades to the person, the pre-Dots behavior — instead of
+    /// stalling on `The personal Dot is unavailable`.
+    #[tokio::test]
+    async fn background_run_degrades_to_person_when_its_dot_principal_is_disabled() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done\"}}]}\n\ndata: [DONE]\n\n",
+                "text/event-stream"))
+            .mount(&upstream).await;
+        let state = state_for(&upstream.uri()).await;
+        let (session, turn) = open(&state, "medium").await;
+        personal_background(&state, &session, &turn, false).await;
+        let dot = aiplane_agents::db::dot_sessions::for_session(&state.db, "u1", &session)
+            .await
+            .unwrap()
+            .unwrap()
+            .dot_id;
+        aiplane_agents::db::system_principals::disable(&state.db, &dot, "u1")
+            .await
+            .unwrap();
+        drive(
+            &state,
+            DriveParams {
+                actor: person(),
+                session_id: session.clone(),
+                assistant_turn_id: turn.clone(),
+                model: MODEL.into(),
+                source: UsageSource::Scheduled,
+                history_limit: Some(6),
+            },
+        )
+        .await;
+        let stored = chat::get_turn(&state.db, &session, &turn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stored.status,
+            chat::TurnStatus::Completed,
+            "the run must complete as the person, not stall on the disabled Dot: {:?}",
+            stored.error_message
+        );
+    }
+
+    /// Opening a background run session for a Dot whose principal is disabled
+    /// opens an unbound (person) session instead of failing — the Dot is
+    /// optional at fire time.
+    #[tokio::test]
+    async fn open_session_falls_back_to_unbound_when_the_dot_is_unavailable() {
+        let state = state_for(&MockServer::start().await.uri()).await;
+        let now = jiff::Timestamp::now();
+        aiplane_core::server::db::users::upsert(
+            &state.db,
+            &aiplane_core::server::db::users::User {
+                id: "u1".into(),
+                email: "u1@example.com".into(),
+                name: None,
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        let (_, dot) = aiplane_agents::db::agents::create_personal_dot(
+            &state.db,
+            &aiplane_agents::db::system_principals::NewPrincipal {
+                name: "Harald",
+                display: "Harald",
+                description: "",
+            },
+            r#"{"main":{"tools":["company_echo"]}}"#,
+            "u1",
+            4,
+        )
+        .await
+        .unwrap();
+        let dot = dot.unwrap().principal.id;
+        aiplane_agents::db::system_principals::disable(&state.db, &dot, "u1")
+            .await
+            .unwrap();
+        let (session, _turn) = open_session(
+            &state.db,
+            OpenParams {
+                owner: Owner::User("u1"),
+                title: "run",
+                prompt: "prompt",
+                model: MODEL,
+                existing_session: None,
+                dot_id: Some(&dot),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            aiplane_agents::db::dot_sessions::for_session(&state.db, "u1", &session)
+                .await
+                .unwrap()
+                .is_none(),
+            "the session must open unbound when the Dot is unavailable"
+        );
+    }
+
+    /// Cancelling a Dot's personal runs stops every in-flight turn it owns and
+    /// settles the scheduled run to an error — the mechanism a disabled
+    /// principal's runs go through.
+    #[tokio::test]
+    async fn cancel_personal_runs_for_dot_stops_its_in_flight_run() {
+        let state = state_for(&MockServer::start().await.uri()).await;
+        let (session, turn) = open(&state, "medium").await;
+        let run = personal_background(&state, &session, &turn, false).await;
+        let dot = aiplane_agents::db::dot_sessions::for_session(&state.db, "u1", &session)
+            .await
+            .unwrap()
+            .unwrap()
+            .dot_id;
+        crate::agents::resume::cancel_personal_runs_for_dot(&state, "u1", &dot)
+            .await
+            .unwrap();
+        assert_eq!(
+            chat::get_turn(&state.db, &session, &turn)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            chat::TurnStatus::Cancelled
+        );
+        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id=?")
+            .bind(&run)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(status, "error");
+    }
+
     async fn personal_forward_setup() -> (MockServer, Arc<RamaState>, String, String, Vec<String>) {
         use aiplane_agents::db::{
             agents, dot_delegation, dot_sessions, system_principals::NewPrincipal,
@@ -3092,9 +3245,20 @@ pub(crate) mod tests {
         );
     }
 
+    /// An inactive personal Dot no longer refuses its background run: the run
+    /// degrades to the person, the pre-Dots behavior, and reconciles to `ok`.
     #[tokio::test]
-    async fn inactive_personal_background_refuses_before_model_and_reconciles_error() {
+    async fn inactive_personal_background_degrades_to_person_and_reconciles_ok() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
         let upstream = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done\"}}]}\n\ndata: [DONE]\n\n",
+                "text/event-stream"))
+            .mount(&upstream).await;
         let state = state_for(&upstream.uri()).await;
         let (session, turn) = open(&state, "medium").await;
         let run = personal_background(&state, &session, &turn, true).await;
@@ -3105,21 +3269,21 @@ pub(crate) mod tests {
         let mut p = params(&session, &turn, person());
         p.source = UsageSource::Scheduled;
         drive(&state, p).await;
-        assert_eq!(upstream.received_requests().await.unwrap().len(), 0);
+        assert_eq!(upstream.received_requests().await.unwrap().len(), 1);
         assert_eq!(
             chat::get_turn(&state.db, &session, &turn)
                 .await
                 .unwrap()
                 .unwrap()
                 .status,
-            chat::TurnStatus::Errored
+            chat::TurnStatus::Completed
         );
         let status: String = sqlx::query_scalar("SELECT status FROM scheduled_runs WHERE id=?")
             .bind(&run)
             .fetch_one(&state.db)
             .await
             .unwrap();
-        assert_eq!(status, "error");
+        assert_eq!(status, "ok");
     }
 
     #[tokio::test]

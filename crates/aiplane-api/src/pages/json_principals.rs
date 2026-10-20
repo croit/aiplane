@@ -445,6 +445,23 @@ pub async fn disable(State(state): State<Arc<RamaState>>, req: Request) -> Respo
     }
     if changed {
         aiplane_agents::db::embed_keys::origins_changed();
+        // Disabling a principal stops its personal Dot's in-flight runs, the
+        // same as deleting or deactivating the Dot — so a suspended run never
+        // orphans on a disabled principal.
+        if let Some(owner) = aiplane_agents::db::agents::personal_dot_owner(&state.db, &p.id)
+            .await
+            .ok()
+            .flatten()
+            && let Err(error) =
+                aiplane_runtime::agents::resume::cancel_personal_runs_for_dot(&state, &owner, &p.id)
+                    .await
+        {
+            tracing::warn!(
+                principal = %p.id,
+                %error,
+                "cancelling the disabled principal's personal runs"
+            );
+        }
     }
     match sp_db::get(&state.db, &p.id).await {
         Ok(Some(p)) => json_ok(
