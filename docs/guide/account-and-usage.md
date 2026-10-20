@@ -49,6 +49,15 @@ for the token. OpenCode then lists every chat model the token may use under
 **croit AIplane**, with the context window and capabilities the gateway knows.
 Signing in with a different token, or revoking it, changes that list.
 
+**OpenCode Desktop** uses the same setup. Desktop is a separate download, but
+on a machine it uses the same global configuration directory and background
+service as the terminal, so the plugin in `~/.config/opencode/plugins/`
+applies to both. In the Desktop app, sign in to **croit AIplane** from its
+provider connection screen and paste the `gwk_` token — the same credential
+the terminal's `opencode auth login aiplane` stores. Signing in in one makes
+the models available in the other, and both see gateway-side changes such as a
+newly granted model without a restart.
+
 The plaintext is revealed at creation or rotation; it cannot be retrieved from a normal token listing. Store it as a credential, not in a document, screenshot or source repository. New tokens have gateway-owned tool execution disabled by default.
 
 Each token card provides four configuration areas:
