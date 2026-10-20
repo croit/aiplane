@@ -2,6 +2,11 @@
   "deck_title": "Example Corp — Product Overview",
   "footer_left": "example.com",
   "theme": "dark",
+  "meta": {
+    "author": "Jane Doe",
+    "date": "2026-10",
+    "confidential": true
+  },
   "slides": [
     {
       "layout": "cover",
@@ -16,10 +21,26 @@
       "layout": "agenda",
       "title": "Agenda",
       "items": [
-        { "label": "The problem", "note": "why storage sprawl hurts" },
-        { "label": "Our approach", "note": "one control plane" },
-        { "label": "Results", "note": "what customers see" },
-        { "label": "Next steps", "note": "getting started" }
+        {
+          "label": "The problem",
+          "note": "why storage sprawl hurts",
+          "page": "03"
+        },
+        {
+          "label": "Our approach",
+          "note": "one control plane",
+          "page": "05"
+        },
+        {
+          "label": "Results",
+          "note": "what customers see",
+          "page": "07"
+        },
+        {
+          "label": "Next steps",
+          "note": "getting started",
+          "page": "19"
+        }
       ]
     },
     {
@@ -33,37 +54,441 @@
       "kicker": "Overview",
       "title": "What we deliver",
       "subtitle": "A single platform, not a pile of tools.",
-      "body": "We unify storage behind one API so your team stops babysitting hardware. Questions? Write to us at hello\\@example.com — we reply within a day.\n\nEverything below is *native Typst markup*, styled automatically."
+      "body": "We unify storage behind one API so your team stops babysitting hardware. Questions? Write to us at hello\\@example.com — we reply within a day.\n\nEverything below is *native Typst markup*, styled automatically.",
+      "takeaway": "One API, one console, one bill — across every protocol."
     },
     {
       "layout": "cards",
       "title": "Built for operators",
       "cards": [
-        { "title": "Resilient", "body": "Self-healing across nodes.", "icon": "shield" },
-        { "title": "Fast", "body": "NVMe-first data path.", "icon": "zap" },
-        { "title": "Observable", "body": "Metrics on every layer.", "icon": "activity" }
+        {
+          "title": "Resilient",
+          "body": "Self-healing across nodes.",
+          "icon": "shield"
+        },
+        {
+          "title": "Fast",
+          "body": "NVMe-first data path.",
+          "icon": "zap"
+        },
+        {
+          "title": "Observable",
+          "body": "Metrics on every layer.",
+          "icon": "activity"
+        }
       ]
     },
     {
       "layout": "stats",
       "title": "By the numbers",
       "stats": [
-        { "value": "99.99%", "label": "Availability", "note": "trailing 12 months" },
-        { "value": "1.2 PB", "label": "Under management" },
-        { "value": "40%", "label": "Lower TCO", "note": "vs. legacy SAN" }
+        {
+          "value": "99.99%",
+          "label": "Availability",
+          "note": "trailing 12 months"
+        },
+        {
+          "value": "1.2 PB",
+          "label": "Under management"
+        },
+        {
+          "value": "40%",
+          "label": "Lower TCO",
+          "note": "vs. legacy SAN"
+        }
       ]
     },
     {
-      "layout": "split",
-      "title": "How it fits",
-      "left_body": "Drop it in next to what you run today.",
-      "left_bullets": [
-        "No forklift migration",
-        "Works with your *existing* hardware",
-        "One console for every protocol"
+      "layout": "hbar",
+      "kicker": "Results",
+      "title": "Capacity by region",
+      "categories": [
+        "EMEA",
+        "Americas",
+        "APAC"
       ],
-      "right_kind": "code",
-      "right": "$ example-ctl cluster create \\\n    --nodes 3 --replicas 2"
+      "series": [
+        {
+          "name": "Block",
+          "values": [
+            420,
+            310,
+            180
+          ]
+        },
+        {
+          "name": "Object",
+          "values": [
+            260,
+            390,
+            240
+          ]
+        }
+      ],
+      "caption": "Petabytes under management, by service type."
+    },
+    {
+      "layout": "bar",
+      "title": "Quarterly throughput",
+      "categories": [
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4"
+      ],
+      "series": [
+        {
+          "name": "Reads (TB/d)",
+          "values": [
+            820,
+            940,
+            1180,
+            1420
+          ]
+        },
+        {
+          "name": "Writes (TB/d)",
+          "values": [
+            410,
+            460,
+            590,
+            720
+          ]
+        }
+      ],
+      "callouts": [
+        "",
+        "",
+        "",
+        "+27%"
+      ]
+    },
+    {
+      "layout": "line",
+      "title": "Growth curve",
+      "categories": [
+        "2023",
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "series": [
+        {
+          "name": "Customers",
+          "values": [
+            12,
+            29,
+            61,
+            118
+          ]
+        },
+        {
+          "name": "Regions",
+          "values": [
+            2,
+            4,
+            7,
+            11
+          ]
+        }
+      ],
+      "caption": "Customer count and covered regions since launch."
+    },
+    {
+      "layout": "donut",
+      "title": "Workload mix",
+      "slices": [
+        {
+          "value": 46,
+          "name": "Object"
+        },
+        {
+          "value": 31,
+          "name": "Block"
+        },
+        {
+          "value": 17,
+          "name": "File"
+        },
+        {
+          "value": 6,
+          "name": "Archival"
+        }
+      ],
+      "center_label": "1.2 PB"
+    },
+    {
+      "layout": "matrix",
+      "title": "Feature comparison",
+      "highlight": "Us",
+      "columns": [
+        "Single API",
+        "Auto-tiering",
+        "Built-in RBAC",
+        "Global replication"
+      ],
+      "rows": [
+        {
+          "name": "Legacy SAN",
+          "cells": [
+            "–",
+            "–",
+            "✓",
+            "–"
+          ]
+        },
+        {
+          "name": "Object bucket",
+          "cells": [
+            "✓",
+            "–",
+            "✓",
+            "✓"
+          ]
+        },
+        {
+          "name": "Us",
+          "cells": [
+            "✓",
+            "✓",
+            "✓",
+            "✓"
+          ]
+        }
+      ],
+      "caption": "What the unified platform adds on day one."
+    },
+    {
+      "layout": "stack",
+      "title": "How it layers",
+      "highlight": "Control plane",
+      "layers": [
+        {
+          "label": "Apps & SDKs",
+          "note": "S3, POSIX, iSCSI"
+        },
+        {
+          "label": "Control plane",
+          "note": "policy, quota, routing"
+        },
+        {
+          "label": "Storage nodes",
+          "note": "NVMe, erasure coded"
+        }
+      ],
+      "side": "*Policy* lives in one place: quotas, RBAC and routing are configured per team, not per device."
+    },
+    {
+      "layout": "do-dont",
+      "title": "Migration: dos and don'ts",
+      "left": {
+        "heading": "Do",
+        "points": [
+          "Snapshot the source before the cut-over",
+          "Migrate warm data first, cold data last",
+          "Verify checksums on the first pass"
+        ]
+      },
+      "right": {
+        "heading": "Don't",
+        "points": [
+          "Don't re-architect mid-migration",
+          "Don't skip the read-only bake period",
+          "Don't move the live volume on a Friday"
+        ]
+      }
+    },
+    {
+      "layout": "numbered-cards",
+      "title": "Key principles",
+      "per_row": 3,
+      "cards": [
+        {
+          "title": "One control plane",
+          "body": "Every device, one API, one console."
+        },
+        {
+          "title": "Policy over plumbing",
+          "body": "Quota and RBAC declared, not scripted."
+        },
+        {
+          "title": "Boring reliability",
+          "body": "Erasure coding and self-healing by default."
+        }
+      ]
+    },
+    {
+      "layout": "persona",
+      "title": "Who it's for",
+      "people": [
+        {
+          "name": "Dana Kim",
+          "role": "Head of Infrastructure",
+          "pains": [
+            "Three silos, three bills",
+            "Manual capacity planning"
+          ],
+          "needs": [
+            "One console",
+            "Predictable TCO"
+          ],
+          "quote": "I want to stop being a storage plumber.",
+          "message": "Start with the control plane, migrate one team at a time."
+        },
+        {
+          "name": "Luis Prado",
+          "role": "Data Engineer",
+          "pains": [
+            "Copy jobs for every project",
+            "No per-team quotas"
+          ],
+          "needs": [
+            "Self-serve access",
+            "S3-compatible API"
+          ],
+          "quote": "Our pipelines should not care where the bytes live.",
+          "message": "Point existing S3 clients at the gateway — nothing else changes."
+        }
+      ]
+    },
+    {
+      "layout": "findings",
+      "title": "What we learned",
+      "items": [
+        {
+          "title": "Adoption starts with the console",
+          "detail": "Teams adopt faster when the whole estate is visible in one place."
+        },
+        {
+          "title": "Tiering pays for itself",
+          "detail": "Auto-tiering cut storage spend by a third within two quarters."
+        },
+        {
+          "title": "Policy beats scripts",
+          "detail": "Declared RBAC replaced 40 pages of runbook."
+        }
+      ]
+    },
+    {
+      "layout": "qa",
+      "title": "Common questions",
+      "per_row": 2,
+      "items": [
+        {
+          "q": "Is the API S3-compatible?",
+          "a": "Yes — any S3 SDK works unchanged, plus POSIX and iSCSI."
+        },
+        {
+          "q": "What about encryption?",
+          "a": "AES-256 at rest, TLS in transit, keys you can bring."
+        },
+        {
+          "q": "How do quotas work?",
+          "a": "Per-team budgets declared in the control plane, enforced automatically."
+        },
+        {
+          "q": "Can we keep our hardware?",
+          "a": "Yes. It runs on the nodes you already own."
+        }
+      ]
+    },
+    {
+      "layout": "objection",
+      "title": "Objections we hear",
+      "rows": [
+        {
+          "objection": "“We already have an object store.”",
+          "response": "Good — keep it. This adds the block and file layers and one policy plane on top."
+        },
+        {
+          "objection": "“Migration is too risky.”",
+          "response": "Read-only bake plus checksums; cut over per volume, never big-bang."
+        },
+        {
+          "objection": "“Another vendor lock-in?”",
+          "response": "Open S3/POSIX interfaces and your own nodes — the data never leaves."
+        }
+      ]
+    },
+    {
+      "layout": "actions",
+      "title": "Next steps",
+      "rows": [
+        {
+          "action": "Stand up a proof-of-concept cluster",
+          "owner": "Infra team",
+          "status": "Week 1"
+        },
+        {
+          "action": "Migrate the warm dataset",
+          "owner": "Platform team",
+          "status": "Week 2–3"
+        },
+        {
+          "action": "Enable per-team quotas",
+          "owner": "Finance + Infra",
+          "status": "Week 4"
+        }
+      ]
+    },
+    {
+      "layout": "twocol",
+      "title": "Before and after",
+      "cols": [
+        {
+          "heading": "Before",
+          "body": "Three silos, three consoles, three bills.",
+          "bullets": [
+            "Capacity planned by hand",
+            "Access via ad-hoc scripts",
+            "Tiers managed per device"
+          ]
+        },
+        {
+          "heading": "After",
+          "body": "One platform, one policy plane.",
+          "bullets": [
+            "Capacity auto-tiered",
+            "RBAC declared per team",
+            "Every metric in one dashboard"
+          ]
+        }
+      ]
+    },
+    {
+      "layout": "compose",
+      "title": "In one slide",
+      "blocks": [
+        {
+          "type": "text",
+          "content": "The result of moving storage behind a single control plane:"
+        },
+        {
+          "type": "stats",
+          "stats": [
+            {
+              "value": "40%",
+              "label": "Lower TCO"
+            },
+            {
+              "value": "3×",
+              "label": "Faster adoption"
+            },
+            {
+              "value": "0",
+              "label": "Forklifts"
+            }
+          ]
+        },
+        {
+          "type": "bullets",
+          "items": [
+            "One API for block, file and object",
+            "Policy declared, not scripted",
+            "Runs on the hardware you own"
+          ]
+        }
+      ]
     },
     {
       "layout": "quote",
@@ -77,7 +502,16 @@
       "kicker": "Get started",
       "title": "See it on your own data",
       "body": "Spin up a proof-of-concept in an afternoon.",
-      "buttons": [ { "label": "Book a demo", "style": "light" }, { "label": "Read the docs", "style": "outline" } ]
+      "buttons": [
+        {
+          "label": "Book a demo",
+          "style": "light"
+        },
+        {
+          "label": "Read the docs",
+          "style": "outline"
+        }
+      ]
     },
     {
       "layout": "closing",

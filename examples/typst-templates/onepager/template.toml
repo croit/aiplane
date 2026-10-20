@@ -9,9 +9,11 @@ role/offer overview — anything that is NOT addressed to a specific recipient \
 (for outgoing correspondence with a recipient, use `typst_letter`; for slides \
 use `typst_presentation`).
 
-You supply a title, an optional subtitle, and the body content. Do NOT ask the \
-user for the logo, colours, or company data — those are baked in. Never tell the \
-user you lack the company logo: it is embedded in this template.
+You supply a title, an optional subtitle, and the content — as free-form \
+`body` markup, a structured `blocks` array, or both (`body` renders first, then \
+the blocks). Do NOT ask the user for the logo, colours, or company data — those \
+are baked in. Never tell the user you lack the company logo: it is embedded in \
+this template.
 """
 output_basename = "onepager"
 
@@ -34,14 +36,15 @@ description = "Optional one-line subheading / tagline under the title (e.g. a sh
 
 [[field]]
 name = "body"
-required = true
+required = false
 description = """
-The one-pager content. Unlike a letter, a one-pager has NO salutation, date, or \
-sign-off — just the content itself; the template supplies the header and footer. \
-Separate paragraphs with a blank line. \
-The body is rendered as native Typst markup (NOT Markdown); the template styles \
-it in the sample brand automatically, so just write plain Typst: \
-Inline emphasis — \"*bold*\" with SINGLE asterisks (not **double**) and \
+Free-form content in native Typst markup (NOT Markdown) — the original \
+mechanism. Unlike a letter, a one-pager has NO salutation, date, or sign-off — \
+just the content itself; the template supplies the header and footer. Separate \
+paragraphs with a blank line. Use `body` for flowing prose, `blocks` for \
+structured content (or both — body first, blocks after). \
+The template styles it in the sample brand automatically, so just write plain \
+Typst: Inline emphasis — \"*bold*\" with SINGLE asterisks (not **double**) and \
 \"_italic_\" with SINGLE underscores. Headings, each on its own line — \
 \"= Heading\" (large), \"== Heading\" (medium), \"=== Heading\" (small) — print \
 in the brand colour. Lists — a line \"- item\" for a bullet or \"+ item\" for a \
@@ -69,6 +72,38 @@ literally, so do not clutter the text with needless backslashes. Only escape a \
 lone _ or * that you want to show as a literal symbol between spaces."""
 
 [[field]]
+name = "blocks"
+required = false
+description = """
+Structured content as a JSON ARRAY of typed blocks (passed as a string) — the \
+richer way to compose a one-pager. Each block is a JSON object with a `type` \
+plus its fields; blocks render top-to-bottom in the page, each in the brand \
+style. Supply AT LEAST ONE of `body` / `blocks` (never both empty). Block \
+types: \
+• section — {heading, body?} a brand-coloured subheading with optional prose \
+  under it. \
+• text — {content} a paragraph of native Typst markup (same escaping rules as \
+  `body`). \
+• bullets — {items[]} a branded bulleted list; items may carry inline Typst \
+  markup. \
+• stats — {stats[{value, label, note?}]} a row of soft brand-tinted \
+  big-number callouts (2–4). \
+• table — {columns[], rows[][]} a branded table (brand header row, light zebra \
+  body); rows is an array of rows, each an array of cell strings. \
+• cards — {cards[{title, body}]} a row of small titled cards (2–4); body may \
+  carry inline Typst markup. \
+• image — {src, size?, caption?} a centred picture; size = \"small\" (40%), \
+  \"medium\" (65%), \"large\" (85%, default) or \"full\" (100%); src = an \
+  `att:<turn>/<file>` attachment ref or a template-relative asset path. \
+• quote — {text, attribution?} a pull quote with a brand left rule. \
+• callout — {label?, text} a soft brand-tinted box with an optional \
+  ALL-CAPS label; text may carry inline Typst markup. \
+Prefer `blocks` for anything with numbers, tables, comparisons or a list of \
+parallel items — it stays tidy and on-brand without you writing table/box code. \
+Keep the whole sheet compact: it is a ONE-pager (aim for one page; long content \
+may flow to a second)."""
+
+[[field]]
 name = "image"
 required = false
 description = """
@@ -77,7 +112,8 @@ screenshot, or logo. The value MUST be the attachment reference as its ENTIRE \
 value: \"att:<turn>/<file>\" (get ids from `list_attachments`; fetch a web image \
 with `load_image_url` first). Do NOT embed the ref inside the body text — it is \
 only staged when it is the whole value of THIS field. The image flows in the \
-page and never overlaps the text. Leave unset for no image."""
+page and never overlaps the text. Leave unset for no image. (For an image WITH \
+a caption inside the content flow, an `image` block in `blocks` also works.)"""
 
 [[field]]
 name = "image_size"

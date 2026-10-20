@@ -13,17 +13,19 @@ fields take lightweight Typst markup (see MARKUP & ESCAPING below).
 
 Before you build the deck, plan the narrative: a typical deck opens with a \
 `cover`, may use `agenda`, groups content with `section` dividers, carries the \
-message on `content`/`split`/`cards`/`stats`/`comparison`/`process`/`bignumber`/ \
-`quote`/`media`/`image`/`gallery`/`timeline`/`logos`/`team`/`table`/`diagram`, and ends \
-with `closing`. ONE idea per slide. Keep it tight: ≤6 bullets, ≤4 cards/stats \
-per row, ≤6 process steps, ≤8 table rows (there is NO auto-pagination — content \
-that overflows the slide height is simply cut off, so split long material across \
-several slides).
+message on `content`/`split`/`cards`/`stats`/`dashboard`/`comparison`/`process`/ \
+`bignumber`/`quote`/`media`/`image`/`gallery`/`timeline`/`logos`/`team`/`table`/ \
+`diagram`/`hbar`/`bar`/`line`/`donut`/`matrix`/`stack`/`findings`/`qa`/`objection`/ \
+`actions`/`twocol`/`compose`, and ends with `closing`. ONE idea per slide. Keep \
+it tight: ≤6 bullets, ≤4 cards/stats per row, ≤6 process steps, ≤8 table rows, \
+≤8 chart categories (there is NO auto-pagination — content that overflows the \
+slide height is simply cut off, so split long material across several slides).
 
 THE `deck` FIELD IS A SINGLE JSON OBJECT (as a string):
   {
     "deck_title": "Example Corp — Product Overview",   // shown in every footer
     "footer_left": "example.com",                       // optional, defaults example.com
+    "meta": { "author": "Jane Doe", "date": "Oct 2026", "confidential": true }, // optional, printed after footer-left
     "theme": "dark",                                  // "dark" (default) or "light"
     "slides": [ { "layout": "...", ... }, ... ]
   }
@@ -33,17 +35,23 @@ text, white logo. Light = white background, anthracite text, black logo. Do NOT 
 mix — every slide uses the deck theme (a lone white slide in a dark deck looks \
 like a mistake). Every layout renders identically in both themes.
 
-GLOBAL OPTIONAL KEYS on any content slide: `kicker` (a short ALL-CAPS section \
-label shown top-right). Footer + slide number are added automatically.
+GLOBAL OPTIONAL KEYS on any content slide: \
+• `kicker` — a short ALL-CAPS section label shown top-right. \
+• `takeaway` — ONE line of the slide's bottom line, printed in a full-width \
+  gradient band reserved at the bottom of the content area (the body above it \
+  gets the remaining height, so nothing overlaps). Add `takeaway_label` to \
+  change the band's small ALL-CAPS label (defaults "TAKEAWAY"). Use it on \
+  slides that land a claim — it is the deck's signature move. \
+Footer + slide number are added automatically.
 
 LAYOUTS AND THEIR FIELDS (✱ = required):
 • cover — title slide. eyebrow?, title✱, title_line_2?, subtitle?, presenter?, role?, date?, bg_image?
-• agenda — title?, items✱[{label✱, note?}] (2–8)
+• agenda — title?, items✱[{label✱, note?, page?}] (2–8). `page` = the slide number the section starts on, printed in the accent colour at the row's right edge.
 • section — divider. number?, title✱, summary?, bg_image?
 • content — workhorse text. title✱, subtitle?, tags? (array of short strings → a row of pill badges under the subtitle), and ONE of body (prose, blank-line-separated paragraphs) OR bullets[] (≤6, one line each)
 • split — two columns. title✱, left_body?, left_bullets[]?, right_kind ("text"|"code"|"image"), right✱ (payload for that kind — text, code, or image path), frame? (true → wrap an image right side in a browser/device frame)
 • cards — glass cards. title✱, card_style? ("glass" default | "gradient" = gradient-border cards), cards✱[{title✱, body✱, icon?, image?, link?}] (2–4). icon = the NAME of a built-in outline icon (one of: server, activity, trending-up, shield, database, bell, users, zap, cloud, lock, layers, clock, gauge, globe, rocket, check-circle, arrow-up-right) — rendered outline-only, white on dark / anthracite on light, per CI. image = a top banner photo (overrides icon). link = inline "learn more ↗" text at the card bottom (example.com product-card style).
-• stats — big numbers (centred, no cards). title✱, stats✱[{value✱, label✱, note?}] (2–4)
+• stats — big numbers (centred, no cards). title✱, stats✱[{value✱, label✱, note?, sub?}] (2–4). `note` = a short muted line under the label; `sub` = a second, smaller muted line (e.g. a unit, source or baseline).
 • dashboard — a metrics dashboard: a row of glass metric CARDS, each with a label, a big gradient value, an optional trend and an optional sparkline. title✱, cards✱[{value✱, label✱, trend?, spark?}] (2–4). `value` = the metric (e.g. "99.98%", "1.24 PB"). `trend` = a SIGNED delta string ("+18%", "-2.1pt") — a leading "+" renders green, "-" renders peach, so choose the sign to match sentiment. `spark` = an array of ≥2 numbers drawn as a mini trend line at the card bottom. Prefer this over pasting a dashboard SCREENSHOT: it renders real numbers natively (crisp, on-brand, editable in the pptx export). Use `stats` instead when you only have bare figures with no trend/series.
 • comparison — title✱, left✱{heading✱, points✱[]}, right✱{heading✱, points✱[]}, highlight ("left"|"right", default right; the highlighted side gets the gradient border)
 • process — horizontal steps. title✱, steps✱[{label✱, detail?}] (2–6)
@@ -61,11 +69,70 @@ LAYOUTS AND THEIR FIELDS (✱ = required):
 • cta-panel — full-width brand-gradient callout band on a dark slide. kicker?, title✱, body?, buttons? (defaults to light+outline styles)
 • closing — end/CTA. headline?, subline?, cta_label?, contact_name?, contact_email?, buttons?
 
-BUTTONS: cover, statement, cta-panel and closing accept a `buttons` array — each \
-entry is either a string or {label✱, style?}. Styles mirror example.com: "primary" \
-(gradient pill, white text — use on dark), "light" (white pill, purple text — use \
-on the gradient panel), "outline" (transparent pill, white border — secondary). \
-All render a pill with the ↗ arrow. `cta_label` is the single-button shortcut.
+CHARTS — native vector charts in the brand series colours (purple, peach, \
+teal, dark-purple, cycled across series). All four take title✱ and an \
+optional `caption` (one muted line under the chart). Series shape: \
+`series✱[{name✱, values✱[numbers]}]` — 1–4 series, `values` aligned to \
+`categories`.
+• hbar — horizontal grouped bars, value labels at each bar end. Best when \
+  category labels are long (benchmark/feature comparisons). title✱, \
+  categories✱[strings] (3–8), series✱.
+• bar — vertical grouped bars, value labels above each bar, optional \
+  per-category gradient callout chips (e.g. "+13%") via `callouts` (array of \
+  strings, same order as categories, "" = no chip). title✱, \
+  categories✱[strings] (3–8), series✱, callouts?.
+• line — line chart with point markers, 1–3 series, two gridlines. title✱, \
+  categories✱[strings] (3–12, e.g. months/quarters), series✱.
+• donut — donut (default) or pie: filled wedges in brand colours + a legend \
+  with values and percentages. title✱, slices✱[{name✱, value✱}] (2–6), \
+  style? ("donut" default | "pie"), center_label? (short text in the donut \
+  hole, e.g. the total).
+
+STRUCTURED CONTENT LAYOUTS:
+• matrix — product rows × feature columns with ✓/✗/– marks. title✱, \
+  columns✱[strings] (3–7), rows✱[{name✱, cells✱[strings]}] (2–6) — one cell per \
+  column, "✓" supported / "✗" not / "–" partial. `highlight` (a row name) fills \
+  that row with the brand gradient — use it for YOUR product. caption?.
+• stack — vertical layer diagram, top layer first (e.g. the stack from UI to \
+  infrastructure). title✱, layers✱[{label✱, note?}] (3–6, top→bottom order), \
+  highlight? (a layer label → that layer gets the gradient card), side? (prose \
+  for a glass panel beside the stack, e.g. "why this order").
+• do-dont — two panels: green ✓ items vs peach ✕ items (best practices). \
+  title✱, left✱{heading✱, points✱[] (3–5)}, right✱{heading✱, points✱[] (3–5)}.
+• numbered-cards — a grid of glass cards numbered 01–06 in gradient. \
+  title✱, cards✱[{title✱, body?}] (2–6), per_row? (default 3).
+• persona — buyer/persona cards: avatar, name/role, pains & needs micro-lists, \
+  an italic quote, and a gradient "message to us" band. title✱, \
+  people✱[{name✱, role?, avatar?, pains[]?, needs[]?, pains_label? (default \
+  "Pains"), needs_label? (default "Needs"), quote?, message?}] (2–3).
+• findings — a dense numbered list with a detail line under each title \
+  (audit results, research findings). title✱, items✱[{title✱, detail?}] (3–6).
+• qa — two-column question cards: a purple "Q" + the question, then the \
+  answer below. title✱, items✱[{q✱, a✱}] (2–6), per_row? (default 2).
+• objection — objection→response rows: the objection in a soft peach box, the \
+  response in the cell beside it. title✱, rows✱[{objection✱, response✱}] (3–6).
+• actions — action plan table: numbered badge, action, owner, status pill. \
+  title✱, rows✱[{action✱, owner?, status?}] (3–8). `status` = a short word \
+  ("Now", "Next", "Q1") rendered as a pill.
+• twocol — two (or three) independent text columns, each with a purple \
+  heading, prose and/or bullets (current vs future, pros vs cons, regions). \
+  title✱, cols✱[{heading?, body?, bullets?[]}] (2–3).
+• compose — free stacking of branded content blocks in one slide: a `blocks` \
+  array, each {type, …}, rendered at a compact scale and stacked top-to-bottom. \
+  Block types: text{content}, bullets{items[]}, callout{label?, text}, \
+  cards{cards[{title, body, icon?}], card_style?}, table{columns[], rows[][]}, \
+  hbar/bar/line{categories[], series[{name, values[]}]}, donut{slices[{name, \
+  value}], style?}, image{src, caption?}, quote{text, attribution?}, \
+  stats{stats[{value, label}]}, process{steps[{label}]}, divider{}. title? \
+  (omit for a block-only slide). Use it when a slide needs a MIX (e.g. three \
+  stats + a short paragraph + a callout) that no single layout gives.
+
+BUTTONS: cover, statement, cta-panel and closing accept a `buttons` array — \
+each entry is either a string or {label✱, style?}. Styles mirror example.com: \
+"primary" (gradient pill, white text — use on dark), "light" (white pill, \
+purple text — use on the gradient panel), "outline" (transparent pill, white \
+border — secondary). All render a pill with the ↗ arrow. `cta_label` is the \
+single-button shortcut.
 
 IMAGES: any image/avatar/bg_image/banner field takes EITHER (a) a file path \
 string (PNG/JPEG/SVG) resolved relative to the template root — e.g. \
@@ -94,20 +161,25 @@ case; kickers/section labels ALL CAPS. Warm, confident, "we" voice — no stiff 
 corporate jargon.
 
 MARKUP & ESCAPING — applies to the PROSE fields ONLY: `content` body, `content` \
-bullets[], `cards[].body`, `split` left_body, and `split` left_bullets[]. Those \
-five are rendered as native Typst markup (NOT Markdown); the renderer styles \
-them in the brand automatically, so write plain Typst: inline emphasis \"*bold*\" \
-with SINGLE asterisks (not **double**) and \"_italic_\" with SINGLE underscores; \
-a line \"- item\" / \"+ item\" for a bullet / numbered list (but prefer the \
-dedicated `bullets` array); a link \"#link(\"https://example.com\")[example.com]\". \
+bullets[], `cards[].body`, `split` left_body, `split` left_bullets[], `stack` \
+side, `qa[].a`, `objection[].response`, `twocol[].body`, and in `compose` blocks \
+the `text` content, `callout` text and `bullets` items. Those are rendered as \
+native Typst markup (NOT Markdown); the renderer styles them in the brand \
+automatically, so write plain Typst: inline emphasis \"*bold*\" with SINGLE \
+asterisks (not **double**) and \"_italic_\" with SINGLE underscores; a line \
+"- item" / "+ item" for a bullet / numbered list (but prefer the dedicated \
+`bullets` arrays); a link \"#link(\"https://example.com\")[example.com]\". \
 Separate paragraphs in a `body` with a blank line. EVERY OTHER field (titles, \
 subtitles, eyebrows, kickers, quotes, attributions, stats values/labels, table \
-cells, `split` right text, buttons, captions, agenda/timeline/process labels) is \
-PLAIN TEXT — write it literally, with NO markup and NO escaping. \
-ESCAPING, in the five prose fields ONLY — MANDATORY: because they are real \
-Typst, five characters start Typst syntax and MUST each be preceded by a \
-backslash EVERY time they appear as ordinary text, or the WHOLE deck fails to \
-render (you get no slides at all, not just a wrong character): \
+cells, chart categories/series names/callouts/center_label, matrix marks, \
+stack layer labels/notes, persona names/roles/pains/needs/messages, action \
+owners/statuses, takeaway lines, `split` right text, buttons, captions, \
+agenda/timeline/process labels) is PLAIN TEXT — write it literally, with NO \
+markup and NO escaping. \
+ESCAPING, in the prose fields ONLY — MANDATORY: because they are real Typst, \
+five characters start Typst syntax and MUST each be preceded by a backslash \
+EVERY time they appear as ordinary text, or the WHOLE deck fails to render (you \
+get no slides at all, not just a wrong character): \
 (1) \"@\" is THE most common trap — EVERY email address and @-handle must be \
 escaped: write \"john\\@acme.com\", NEVER \"john@acme.com\"; an unescaped @ is \
 read as a cross-reference and always crashes the render. \
@@ -137,11 +209,12 @@ required = true
 description = """
 The entire presentation as a JSON object (passed as a string). Top-level keys: \
 `deck_title` (string, shown in footers), `footer_left` (optional, default \
-"example.com"), `theme` ("dark" default | "light", applied to the WHOLE deck), and \
-`slides` (an array of slide objects). Each slide has a `layout` plus that \
-layout's fields — see the full layout/field catalogue in this manifest's \
-description. Build the slide sequence to tell one clear story, one idea per \
-slide, and do not overflow a slide (no auto-pagination)."""
+"example.com"), `meta` (optional, {author, date, confidential} — printed after \
+footer-left in every footer), `theme` ("dark" default | "light", applied to the \
+WHOLE deck), and `slides` (an array of slide objects). Each slide has a \
+`layout` plus that layout's fields — see the full layout/field catalogue in \
+this manifest's description. Build the slide sequence to tell one clear story, \
+one idea per slide, and do not overflow a slide (no auto-pagination)."""
 
 [[field]]
 name = "theme"

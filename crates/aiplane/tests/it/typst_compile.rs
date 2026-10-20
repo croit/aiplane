@@ -289,3 +289,143 @@ async fn unescaped_at_crashes_and_escaped_at_renders() {
     .expect("escaped @ should compile");
     assert!(rendered.pdf.starts_with(b"%PDF-"), "PDF magic missing");
 }
+
+/// Count PDF pages via the uncompressed `/MediaBox` page dictionaries (content
+/// streams are Flate-compressed, so text can't be grepped reliably).
+fn pdf_pages(pdf: &[u8]) -> usize {
+    pdf.windows(b"/MediaBox".len())
+        .filter(|w| *w == b"/MediaBox")
+        .count()
+}
+
+/// Every layout in the catalogue renders exactly one slide each — no layout may
+/// overflow onto extra, chromeless pages. One slide per layout (all 15 of the
+/// chart / structured-content / compose layouts plus the global fields:
+/// deck `meta`, agenda `page`, `stats` `sub`, and the `takeaway` band), so
+/// `pages == slides` is the contract.
+#[tokio::test]
+async fn presentation_all_layouts_render_one_page_each() {
+    if !typst_available() {
+        eprintln!("skipping: typst CLI not on PATH");
+        return;
+    }
+    let templates = gw_typst::discover_templates(&example_dir()).expect("discover");
+    let deck = templates
+        .iter()
+        .find(|t| t.id == "presentation")
+        .expect("presentation template not found under examples/typst-templates");
+    let deck_json = r#"{
+        "deck_title": "Layout probe",
+        "meta": { "author": "Test", "date": "Oct 2026", "confidential": true },
+        "theme": "dark",
+        "slides": [
+            {"layout": "agenda", "title": "Agenda",
+             "items": [{"label": "Intro", "note": "short", "page": "03"}]},
+            {"layout": "stats", "title": "Stats",
+             "stats": [{"value": "42%", "label": "Faster", "note": "vs last q", "sub": "n = 1000"}]},
+            {"layout": "hbar", "title": "HBar", "caption": "Benchmarks",
+             "categories": ["Alpha", "Beta", "Gamma"],
+             "series": [{"name": "Us", "values": [8, 5, 3]}, {"name": "Them", "values": [6, 6, 7]}]},
+            {"layout": "bar", "title": "Bar",
+             "categories": ["Q1", "Q2", "Q3", "Q4"],
+             "series": [{"name": "Revenue", "values": [12, 15, 14, 20]}],
+             "callouts": ["", "+25%", "", "+43%"]},
+            {"layout": "line", "title": "Line",
+             "categories": ["Jan", "Feb", "Mar", "Apr", "May"],
+             "series": [{"name": "Uptime", "values": [99.1, 99.4, 99.2, 99.8, 99.9]}]},
+            {"layout": "donut", "title": "Donut", "center_label": "100",
+             "slices": [{"name": "EU", "value": 50}, {"name": "US", "value": 30}, {"name": "APAC", "value": 20}]},
+            {"layout": "matrix", "title": "Matrix",
+             "columns": ["Objects", "Tiering", "Compliance"],
+             "rows": [{"name": "Ours", "cells": ["✓", "✓", "✓"]},
+                      {"name": "Other", "cells": ["✓", "✗", "–"]}],
+             "highlight": "Ours"},
+            {"layout": "stack", "title": "Stack",
+             "layers": [{"label": "UI", "note": "web"}, {"label": "API"}, {"label": "Storage"}],
+             "highlight": "Storage", "side": "Why this order: *simplicity*."},
+            {"layout": "do-dont", "title": "Do / Don't",
+             "left": {"heading": "Do", "points": ["Use objects", "Enable tiering", "Set retention"]},
+             "right": {"heading": "Don't", "points": ["Store VMs", "Ignore lifecycle", "Over-provision"]}},
+            {"layout": "numbered-cards", "title": "Steps",
+             "cards": [{"title": "One", "body": "First."}, {"title": "Two", "body": "Second."}, {"title": "Three"}]},
+            {"layout": "persona", "title": "Personas",
+             "people": [{"name": "Ada", "role": "CTO", "pains": ["Cost"], "needs": ["Simplicity"],
+                         "quote": "We need less.", "message": "Lead with savings."}]},
+            {"layout": "findings", "title": "Findings",
+             "items": [{"title": "First", "detail": "Detail line."}, {"title": "Second", "detail": "More."}, {"title": "Third"}]},
+            {"layout": "qa", "title": "Q&A",
+             "items": [{"q": "Why?", "a": "Because *reasons*."}, {"q": "How?", "a": "Simply."}]},
+            {"layout": "objection", "title": "Objections",
+             "rows": [{"objection": "Too expensive", "response": "It pays for itself."},
+                      {"objection": "Migration pain", "response": "We handle it."}]},
+            {"layout": "actions", "title": "Actions",
+             "rows": [{"action": "Kick off", "owner": "Jane", "status": "Now"},
+                      {"action": "Migrate", "owner": "Team", "status": "Next"}]},
+            {"layout": "twocol", "title": "Two columns",
+             "cols": [{"heading": "Now", "body": "Where we are.", "bullets": ["One", "Two"]},
+                      {"heading": "Next", "body": "Where we go."}]},
+            {"layout": "compose", "title": "Compose",
+             "blocks": [{"type": "stats", "stats": [{"value": "3", "label": "Big"}]},
+                        {"type": "text", "content": "A *mixed* slide."},
+                        {"type": "callout", "label": "Note", "text": "Composed."}]},
+            {"layout": "content", "title": "Takeaway slide", "body": "The point.",
+             "takeaway": "Ship it.", "takeaway_label": "Bottom line"}
+        ]
+    }"#;
+    let rendered = gw_typst::compile(
+        deck,
+        &[("deck".to_string(), deck_json.to_string())],
+        1,
+        None,
+    )
+    .await
+    .expect("all-layouts deck compiles");
+    assert!(rendered.pdf.starts_with(b"%PDF-"), "PDF magic missing");
+    let pages = pdf_pages(&rendered.pdf);
+    assert_eq!(
+        pages, 18,
+        "18 slides rendered as {pages} pages — a layout is overflowing onto extra slides"
+    );
+}
+
+/// The one-pager's structured `blocks` system: every block type renders
+/// through the gateway path (`--input blocks=<JSON string>`) and the whole
+/// sheet stays on ONE page — the blocks are compact by design.
+#[tokio::test]
+async fn onepager_all_block_types_render() {
+    if !typst_available() {
+        eprintln!("skipping: typst CLI not on PATH");
+        return;
+    }
+    let templates = gw_typst::discover_templates(&example_dir()).expect("discover");
+    let sheet = templates
+        .iter()
+        .find(|t| t.id == "onepager")
+        .expect("onepager template not found under examples/typst-templates");
+    let blocks = r#"[
+        {"type": "section", "heading": "Capabilities", "body": "A short *paragraph*."},
+        {"type": "text", "content": "A plain paragraph."},
+        {"type": "bullets", "items": ["One", "Two"]},
+        {"type": "stats", "stats": [{"value": "42%", "label": "Faster", "note": "vs last q"}, {"value": "3x", "label": "Faster still"}]},
+        {"type": "table", "columns": ["A", "B"], "rows": [["1", "2"], ["3", "4"]]},
+        {"type": "cards", "cards": [{"title": "One", "body": "First."}, {"title": "Two", "body": "Second."}]},
+        {"type": "image", "src": "assets/brand-bar.png", "size": "medium", "caption": "Brand bar"},
+        {"type": "quote", "text": "A quote.", "attribution": "Someone"},
+        {"type": "callout", "label": "Note", "text": "A callout."}
+    ]"#;
+    let inputs = vec![
+        ("title".to_string(), "Block probe".to_string()),
+        ("subtitle".to_string(), "All nine block types".to_string()),
+        ("body".to_string(), "An intro paragraph.".to_string()),
+        ("blocks".to_string(), blocks.to_string()),
+    ];
+    let rendered = gw_typst::compile(sheet, &inputs, 1, None)
+        .await
+        .expect("onepager blocks compile");
+    assert!(rendered.pdf.starts_with(b"%PDF-"), "PDF magic missing");
+    let pages = pdf_pages(&rendered.pdf);
+    assert_eq!(
+        pages, 1,
+        "one-pager with nine blocks rendered as {pages} pages — blocks should stay compact"
+    );
+}

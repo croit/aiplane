@@ -1,51 +1,16 @@
 // Example branded one-pager — neutral sample branding.
-// This is a generic, data-free SAMPLE template shipped with the gateway to
-// demonstrate a non-letter branded document. Replace the colours and logo
-// below with your own, or point `[typst].templates_dir` at your own templates
-// directory (see docs).
+// This is the render entrypoint. Brand tokens + inputs live in `context.typ`;
+// the typed block renderer lives in `blocks.typ` (shared, byte-identical across
+// the sample and croit-branded template sets).
 //
-// A NON-letter branded document: title + optional subtitle + body content, with
-// a logo header and a generic page footer. The model supplies content + one
-// optional switch:
-//   language = "en" (default) | "de"   (typography only)
-// Values arrive as strings on `sys.inputs`.
+// A NON-letter branded document: title + optional subtitle + content, with a
+// logo header and a generic page footer. Content is `body` (free-form native
+// Typst markup) and/or `blocks` (a JSON array of typed blocks: section, text,
+// bullets, stats, table, cards, image, quote, callout). `body` renders first,
+// then the blocks.
 
-#let inputs = sys.inputs
-
-// ---- Brand tokens (sample palette — swap for your own) ---------------------
-#let c-primary = rgb("#2563EB")
-#let c-accent = rgb("#0EA5E9")
-#let ink = rgb("#0F172A")
-#let muted = rgb("#64748B")
-#let brand = gradient.linear(c-primary, c-accent)
-
-// ---- Switches --------------------------------------------------------------
-// Document language, for correct hyphenation/justification only ("en" default,
-// "de" for a German one-pager). The footer is generic, so no entity switch.
-#let lang = inputs.at("language", default: "en")
-
-// ---- Optional content image ------------------------------------------------
-// The model may place ONE image in the one-pager (a photo, chart, diagram,
-// screenshot, logo, …) at a chosen size, flowing in the page — never
-// overlapping the text. `image` is an `att:<turn>/<file>` attachment ref (or a
-// template-relative asset path); `image_size` picks the width; `image_position`
-// puts it above or below the body.
-#let doc-image = inputs.at("image", default: "")
-#let img-width = (
-  small: 40%, medium: 65%, large: 85%, full: 100%,
-).at(inputs.at("image_size", default: "large"), default: 85%)
-#let img-caption = inputs.at("image_caption", default: "")
-#let img-pos = inputs.at("image_position", default: "bottom")
-#let render-doc-image() = {
-  if doc-image != "" {
-    v(6mm)
-    align(center, image(doc-image, width: img-width))
-    if img-caption != "" {
-      v(2mm)
-      align(center, text(size: 9pt, fill: muted, style: "italic")[#img-caption])
-    }
-  }
-}
+#import "context.typ": *
+#import "blocks.typ": render-block
 
 // ---- Page (generic brand footer with page numbers) -------------------------
 #set page(
@@ -70,10 +35,10 @@
 #set par(justify: true, leading: 0.72em, spacing: 1.15em)
 
 // ---- Brand styling for the body's native Typst elements --------------------
-// The body is rendered with eval(mode: "markup") below; these rules make
-// Typst's own headings / links / quotes / lists / tables come out in the sample
-// brand automatically, so the model just writes plain Typst markup and never
-// sets colours itself. Swap the colours for your own.
+// The body is rendered with eval(mode: "markup"); these rules make Typst's own
+// headings / links / quotes / lists / tables come out in the sample brand
+// automatically, so the model just writes plain Typst markup and never sets
+// colours itself.
 #let heading-sizes = (15pt, 13pt, 11.5pt)
 #show heading: it => {
   set text(fill: c-primary, weight: "bold", size: heading-sizes.at(calc.min(it.level, 3) - 1))
@@ -99,6 +64,18 @@
   text(fill: white, weight: "semibold", it)
 } else { it }
 
+// ---- Optional content image ------------------------------------------------
+#let render-doc-image() = {
+  if doc-image != "" {
+    v(6mm)
+    align(center, image(doc-image, width: img-width))
+    if img-caption != "" {
+      v(2mm)
+      align(center, text(size: 9pt, fill: muted, style: "italic")[#img-caption])
+    }
+  }
+}
+
 // ---- Header: logo + brand gradient rule ------------------------------------
 #image("assets/logo.svg", height: 10mm)
 #v(6pt)
@@ -107,8 +84,7 @@
 #v(9mm)
 
 // ---- Title + optional subtitle ---------------------------------------------
-#text(weight: "bold", size: 22pt, fill: ink)[#inputs.title]
-#let subtitle = inputs.at("subtitle", default: "")
+#text(weight: "bold", size: 22pt, fill: ink)[#title]
 #if subtitle != "" {
   v(2mm)
   text(weight: "medium", size: 13pt, fill: c-primary)[#subtitle]
@@ -119,11 +95,18 @@
 // Content image above the body when requested.
 #if img-pos == "top" { render-doc-image(); v(7mm) }
 
-// ---- Body: native Typst markup ---------------------------------------------
-// Rendered with eval(mode: "markup"): *bold*, _italic_, `= headings`, `- ` / `+ `
-// lists, #link(...), #table(...) all style themselves via the show rules above.
-// Paragraphs stay blank-line separated; a lone newline is a space.
-#eval(inputs.body, mode: "markup")
+// ---- Body: native Typst markup (the original mechanism) ---------------------
+#if body != "" { eval(body, mode: "markup") }
+
+// ---- Blocks: the typed block system -----------------------------------------
+// Rendered after the body; each block flows vertically in the page.
+#if blocks.len() > 0 {
+  v(4mm)
+  for (i, b) in blocks.enumerate() {
+    render-block(b)
+    if i < blocks.len() - 1 { v(3.5mm) }
+  }
+}
 
 // Content image below the body (the default position).
 #if img-pos != "top" { render-doc-image() }
