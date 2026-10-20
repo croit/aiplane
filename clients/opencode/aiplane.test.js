@@ -36,7 +36,7 @@ function host(credential, { failNextResolve = false } = {}) {
   const providerTransforms = []
   const listeners = []
   const reloads = []
-  const state = { credential, providers: [], failNextResolve }
+  const state = { credential, providers: [], failNextResolve, reloadCount: 0 }
   const ctx = {
     integration: {
       transform: async (fn) => {
@@ -65,6 +65,7 @@ function host(credential, { failNextResolve = false } = {}) {
     provider: {
       transform: async (fn) => providerTransforms.push(fn),
       reload: async () => {
+        state.reloadCount++
         state.providers = []
         providerTransforms.forEach((fn) => fn({ add: (record) => state.providers.push(record) }))
         reloads.splice(0).forEach((done) => done())
@@ -202,6 +203,65 @@ test("a failed refresh keeps the plugin watching for sign-ins", async () => {
     assert.deepEqual(h.state.providers, [], "the failed refresh offers nothing")
     await h.switchTo({ type: "key", key: TOKEN })
     assert.deepEqual(h.state.providers.flatMap((p) => p.models.map((m) => m.id)), ["chat-a"])
+  } finally {
+    await cleanup()
+    gw.close()
+  }
+})
+
+test("a periodic refresh picks up models the gateway adds later", async () => {
+  const listing = { [TOKEN]: { data: [{ id: "chat-a", kind: "chat" }] } }
+  const gw = await gateway(listing)
+  const h = host({ type: "key", key: TOKEN })
+  const cleanup = await plugin(gw.url, undefined, 50).setup(h.ctx)
+  try {
+    assert.deepEqual(h.state.providers.flatMap((p) => p.models.map((m) => m.id)), ["chat-a"])
+    listing[TOKEN].data.push({ id: "chat-b", kind: "chat" })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    assert.deepEqual(
+      h.state.providers.flatMap((p) => p.models.map((m) => m.id)),
+      ["chat-a", "chat-b"],
+      "a gateway-side change reaches the client without a restart",
+    )
+  } finally {
+    await cleanup()
+    gw.close()
+  }
+})
+
+test("a failed periodic refresh keeps the last good models", async () => {
+  let requests = 0
+  const server = createServer((req, res) => {
+    if (req.url !== "/v1/models") return res.writeHead(404).end()
+    requests++
+    if (requests > 1) return res.writeHead(503, { "content-type": "application/json" }).end('{"error":{"message":"hiccup"}}')
+    res.writeHead(200, { "content-type": "application/json" }).end(
+      JSON.stringify({ object: "list", data: [{ id: "chat-a", kind: "chat" }] }),
+    )
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const h = host({ type: "key", key: TOKEN })
+  const cleanup = await plugin(`http://127.0.0.1:${server.address().port}`, undefined, 50).setup(h.ctx)
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    assert.deepEqual(
+      h.state.providers.flatMap((p) => p.models.map((m) => m.id)),
+      ["chat-a"],
+      "a transient gateway failure must not withdraw the models",
+    )
+  } finally {
+    await cleanup()
+    server.close()
+  }
+})
+
+test("an unchanged listing does not reload the provider", async () => {
+  const gw = await gateway([{ id: "chat-a", kind: "chat" }])
+  const h = host({ type: "key", key: TOKEN })
+  const cleanup = await plugin(gw.url, undefined, 50).setup(h.ctx)
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    assert.equal(h.state.reloadCount, 1, "the initial listing is the only reload")
   } finally {
     await cleanup()
     gw.close()

@@ -76,8 +76,10 @@ capabilities. Where the gateway reports no window it keeps OpenCode's own
 fallbacks. The output limit never exceeds half the window, because OpenCode
 reserves it inside the window. A model accepts images only when the gateway
 reports `vision: true`; tools stay enabled unless it reports `tools: false`.
-Models are reloaded when the stored token changes. OpenCode v1 is not
-supported.
+Models are reloaded when the stored token changes, and re-fetched on a five
+minute tick — a model granted to the token, or a context window an operator
+set, reaches the client without a restart. A failed tick keeps the last good
+listing. OpenCode v1 is not supported.
 
 ### First completion and streaming
 

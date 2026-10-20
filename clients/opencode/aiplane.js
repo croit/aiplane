@@ -5,7 +5,10 @@
 // /clients/opencode/aiplane.js with GATEWAY set to its own address; OpenCode
 // loads it from ~/.config/opencode/plugins/. `opencode auth login aiplane`
 // stores the person's own gateway token, and the plugin lists the chat models
-// that token may use, sized from the facts /v1/models reports.
+// that token may use, sized from the facts /v1/models reports. The listing is
+// polled on a slow tick (five minutes by default): the gateway changes slowly,
+// and a granted model or a newly set context window should reach the client
+// without a restart.
 
 const GATEWAY = "__AIPLANE_GATEWAY__"
 const ID = "aiplane"
@@ -70,7 +73,7 @@ export async function chatModels(gateway, token, fetchImpl = fetch) {
   return body.data.filter((model) => model.kind === "chat").map(modelInfo)
 }
 
-export function plugin(gateway, fetchImpl = fetch) {
+export function plugin(gateway, fetchImpl = fetch, intervalMs = 300_000) {
   return {
     id: "croit.aiplane",
     setup: async (ctx) => {
@@ -89,15 +92,18 @@ export function plugin(gateway, fetchImpl = fetch) {
       })
 
       let generation = 0
+      const listModels = async () => {
+        const connection = await ctx.integration.connection.active(ID)
+        const credential = connection ? await ctx.integration.connection.resolve(connection) : undefined
+        if (credential?.type !== "key") return undefined
+        return { models: await chatModels(gateway, credential.key, fetchImpl), connection }
+      }
+
       const refresh = async () => {
         const current = ++generation
         let next = { models: [], connection: undefined }
         try {
-          const connection = await ctx.integration.connection.active(ID)
-          const credential = connection ? await ctx.integration.connection.resolve(connection) : undefined
-          if (credential?.type === "key") {
-            next = { models: await chatModels(gateway, credential.key, fetchImpl), connection }
-          }
+          next = (await listModels()) ?? next
         } catch (error) {
           console.error(`${NAME}: ${error instanceof Error ? error.message : error}`)
         }
@@ -107,7 +113,30 @@ export function plugin(gateway, fetchImpl = fetch) {
         await ctx.provider.reload()
       }
 
+      // The gateway changes slowly — a model granted to the token, a context
+      // window an operator set — and clients size their requests from the
+      // listing, so it is polled. Only a successful, changed listing replaces
+      // the loaded one: a transient failure keeps the last good models, and an
+      // unchanged listing does not churn the provider every interval.
+      const tick = async () => {
+        const current = ++generation
+        let next
+        try {
+          next = await listModels()
+        } catch (error) {
+          console.error(`${NAME}: ${error instanceof Error ? error.message : error}`)
+          return
+        }
+        if (current !== generation || !next) return
+        if (JSON.stringify(next.models) === JSON.stringify(loaded.models)) return
+        Object.assign(loaded, next)
+        await ctx.provider.reload()
+      }
+
       const stop = new AbortController()
+      const timer = setInterval(() => {
+        tick().catch((error) => console.error(`${NAME}: periodic model refresh failed: ${error instanceof Error ? error.message : error}`))
+      }, intervalMs)
       const watch = async () => {
         for await (const event of ctx.event.subscribe({ signal: stop.signal })) {
           if (event.type === "credential.switched" && event.data.integrationID === ID) {
@@ -119,7 +148,10 @@ export function plugin(gateway, fetchImpl = fetch) {
         if (!stop.signal.aborted) console.error(`${NAME}: watching sign-ins stopped: ${error}`)
       })
       await refresh().catch((error) => console.error(`${NAME}: reloading models failed: ${error}`))
-      return () => stop.abort()
+      return () => {
+        stop.abort()
+        clearInterval(timer)
+      }
     },
   }
 }
