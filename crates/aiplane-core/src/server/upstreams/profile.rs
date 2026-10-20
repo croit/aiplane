@@ -12,7 +12,10 @@
 //!     there and a truer one on `/props`; Ollama answers nowhere the OpenAI
 //!     surface can see, because its context is a server setting rather than a
 //!     model attribute — but its own `/api/ps` states the figure actually
-//!     allocated, which on a default install is 4096.
+//!     allocated, which on a default install is 4096. A hosted
+//!     OpenAI-compatible server answers in its own field — `max_input_tokens`,
+//!     `context_length`, `max_context_length` — only when it chooses to; most
+//!     answer nothing, and that stays the honest *not reported*.
 //!   * **How do I say "think harder"?** Every server spells it differently,
 //!     and a server that does not know a spelling *discards it silently* —
 //!     no 400, nothing to learn from, just an effort control that does
@@ -519,8 +522,11 @@ async fn get_json(
 /// The `/models` entry shape, across the servers that put a window on it.
 ///
 /// vLLM uses `max_model_len`; llama.cpp nests the model's trained context as
-/// `meta.n_ctx_train`. Both are optional, and an entry carrying neither is
-/// simply a model with no known window.
+/// `meta.n_ctx_train`; a hosted OpenAI-compatible server that states one at
+/// all uses `max_input_tokens`, `context_length` or `max_context_length`.
+/// All are optional, and an entry carrying none is simply a model with no
+/// known window. Output caps (`max_tokens`, `max_output_tokens`) are
+/// deliberately absent: they cap the answer, not the context.
 #[derive(Deserialize)]
 struct ModelEntry {
     // No `id`: it is read straight off the raw value, so that a row whose
@@ -529,6 +535,12 @@ struct ModelEntry {
     max_model_len: Option<i64>,
     #[serde(default)]
     meta: Option<ModelMeta>,
+    #[serde(default)]
+    max_input_tokens: Option<i64>,
+    #[serde(default)]
+    context_length: Option<i64>,
+    #[serde(default)]
+    max_context_length: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -591,6 +603,9 @@ pub fn read_models(body: &serde_json::Value) -> Option<(HashSet<String>, HashMap
             && let Some(window) = entry
                 .max_model_len
                 .or_else(|| entry.meta.as_ref().and_then(|meta| meta.n_ctx_train))
+                .or(entry.max_input_tokens)
+                .or(entry.context_length)
+                .or(entry.max_context_length)
                 .filter(|w| *w > 0)
         {
             windows.insert(id.to_string(), window);
@@ -770,6 +785,46 @@ mod tests {
             read_models(&body).unwrap().1.get("gemma.gguf"),
             Some(&131072)
         );
+    }
+
+    /// Hosted OpenAI-compatible servers that state a window at all use their
+    /// own field names. Reading only vLLM's and llama.cpp's spellings left
+    /// every such model on "not reported" even though the answer sat in the
+    /// body the probe had just parsed.
+    #[test]
+    fn hosted_windows_come_from_their_field_names() {
+        let body = json!({"data": [
+            {"id": "openrouter-style", "context_length": 200_000},
+            {"id": "ollama-style", "max_context_length": 131_072},
+            {"id": "litellm-style", "max_input_tokens": 262_144},
+        ]});
+        let windows = read_models(&body).unwrap().1;
+        assert_eq!(windows.get("openrouter-style"), Some(&200_000));
+        assert_eq!(windows.get("ollama-style"), Some(&131_072));
+        assert_eq!(windows.get("litellm-style"), Some(&262_144));
+    }
+
+    /// Output caps are not context windows. An Anthropic-native listing calls
+    /// its *output* limit `max_tokens`; reading it as a window would shrink a
+    /// model to the size of its answer on the strength of a different fact.
+    #[test]
+    fn output_caps_are_not_context_windows() {
+        let body = json!({"data": [
+            {"id": "capped", "max_tokens": 65_536, "max_output_tokens": 8_192},
+        ]});
+        let (ids, windows) = read_models(&body).unwrap();
+        assert!(windows.is_empty());
+        assert_eq!(ids, HashSet::from(["capped".to_string()]));
+    }
+
+    /// When a body carries several spellings, the server-specific one the
+    /// profile already trusted wins — the generic fields are the fallback.
+    #[test]
+    fn the_server_specific_window_wins_over_the_generic_ones() {
+        let body = json!({"data": [
+            {"id": "both", "max_model_len": 8_192, "context_length": 262_144},
+        ]});
+        assert_eq!(read_models(&body).unwrap().1.get("both"), Some(&8_192));
     }
 
     /// One malformed row must not take the others with it. Deserialising the
