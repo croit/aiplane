@@ -219,10 +219,11 @@ impl<'a> TurnPolicy<'a> {
         user_mcp: &UserMcpLayer,
         summary: Option<&str>,
     ) -> Value {
+        let config = d.state.config();
         let leading = match self {
             Self::Chat => Leading {
-                voice_directive: d.voice_mode.then_some(VOICE_DIRECTIVE),
-                own: chat_own_sections(&d.state.config()),
+                voice_directive: d.voice_mode.then_some(voice_directive(&config)),
+                own: chat_own_sections(&config),
                 context: build_request_context(d, user_mcp, Audience::Person).await,
                 summary,
             },
@@ -457,6 +458,17 @@ impl<'a> TurnPolicy<'a> {
     }
 }
 
+/// The voice directive for a voice-mode turn: the operator's own wording
+/// while it has text, the built-in directive otherwise. Only a person's chat
+/// carries it — a persona's turn is its persona's, and an agent run never
+/// gets voice.
+fn voice_directive(config: &aiplane_core::server::config::Config) -> &str {
+    match config.chat.voice.directive.trim() {
+        "" => VOICE_DIRECTIVE,
+        _ => &config.chat.voice.directive,
+    }
+}
+
 /// The operator's standing instructions for a person's chat, as the leading
 /// message's own section: one entry while the prompt is enabled and has
 /// text, none otherwise. An agent run never reads it — its system message
@@ -571,5 +583,15 @@ mod tests {
             })),
             vec!["Answer in plain German.".to_owned()]
         );
+    }
+
+    #[test]
+    fn the_voice_directive_falls_back_to_the_builtin_one_while_blank() {
+        let mut config = Config::default();
+        assert_eq!(voice_directive(&config), VOICE_DIRECTIVE);
+        config.chat.voice.directive = "   ".into();
+        assert_eq!(voice_directive(&config), VOICE_DIRECTIVE);
+        config.chat.voice.directive = "Keep answers to one sentence.".into();
+        assert_eq!(voice_directive(&config), "Keep answers to one sentence.");
     }
 }

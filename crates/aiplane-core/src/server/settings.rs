@@ -48,7 +48,7 @@ use crate::server::config::{
     ChatConfig, ComfyuiConfig, CompactionConfig, Config, ContentGuardConfig, ContentGuardMode,
     ContentGuardPolicy, DotsConfig, FeedbackConfig, GatewayConfig, GeoipConfig, LimitsConfig,
     LoopsConfig, MetricsConfig, OcrConfig, PromptConfig, PushConfig, RagConfig, S3Config,
-    SandboxConfig, SkillsConfig, TurnsConfig, TypstConfig, UsageConfig,
+    SandboxConfig, SkillsConfig, TurnsConfig, TypstConfig, UsageConfig, VoiceConfig,
 };
 use crate::server::crypto::Crypto;
 use crate::server::db::{DbError, Pool, app_settings};
@@ -473,6 +473,12 @@ pub static SECTIONS: &[SectionSpec] = &[
         ],
     },
     SectionSpec {
+        name: "chat.voice",
+        category: Category::Chat,
+        user_feature: false,
+        fields: &[f("chat.voice.directive", Kind::TextArea)],
+    },
+    SectionSpec {
         name: "chat.ocr",
         category: Category::Chat,
         user_feature: true,
@@ -501,6 +507,7 @@ pub static SECTIONS: &[SectionSpec] = &[
             f("chat.compaction.keep_recent_turns", Kind::Int),
             f("chat.compaction.min_turns_to_compact", Kind::Int),
             f("chat.compaction.summary_max_tokens", Kind::Int),
+            f("chat.compaction.summary_prompt", Kind::TextArea),
         ],
     },
     SectionSpec {
@@ -948,6 +955,7 @@ impl Settings {
 pub fn apply(settings: &Settings, config: &mut Config) {
     config.chat = ChatConfig {
         prompt: prompt(settings),
+        voice: voice(settings),
         ocr: ocr(settings),
         compaction: compaction(settings),
         turns: turns(settings),
@@ -1031,6 +1039,12 @@ fn prompt(s: &Settings) -> PromptConfig {
     }
 }
 
+fn voice(s: &Settings) -> VoiceConfig {
+    VoiceConfig {
+        directive: s.text_or("chat.voice.directive", ""),
+    }
+}
+
 fn ocr(s: &Settings) -> OcrConfig {
     let d = OcrConfig::default();
     OcrConfig {
@@ -1080,6 +1094,7 @@ fn compaction(s: &Settings) -> CompactionConfig {
             d.min_turns_to_compact,
         ),
         summary_max_tokens: s.int("chat.compaction.summary_max_tokens", d.summary_max_tokens),
+        summary_prompt: s.text_or("chat.compaction.summary_prompt", ""),
     }
 }
 
@@ -1312,6 +1327,7 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
 
     put("chat.prompt.enabled", c.chat.prompt.enabled.to_string());
     put("chat.prompt.text", c.chat.prompt.text.clone());
+    put("chat.voice.directive", c.chat.voice.directive.clone());
 
     put("chat.ocr.enabled", ocr.enabled.to_string());
     put("chat.ocr.model", ocr.model.clone().unwrap_or_default());
@@ -1351,6 +1367,10 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
     put(
         "chat.compaction.summary_max_tokens",
         comp.summary_max_tokens.to_string(),
+    );
+    put(
+        "chat.compaction.summary_prompt",
+        comp.summary_prompt.clone(),
     );
 
     put(
@@ -1641,6 +1661,56 @@ mod tests {
             &mut config,
         );
         assert_eq!(section_is_enabled(&config, section), Some(true));
+    }
+
+    #[test]
+    fn compaction_and_voice_prompts_round_trip_and_default_to_empty() {
+        let mut config = Config::default();
+        assert!(config.chat.compaction.summary_prompt.is_empty());
+        assert!(config.chat.voice.directive.is_empty());
+        apply(
+            &settings_of(&[
+                (
+                    "chat.compaction.summary_prompt",
+                    "Summarise in one paragraph.",
+                ),
+                ("chat.voice.directive", "Speak like a calm host."),
+            ]),
+            &mut config,
+        );
+        assert_eq!(
+            config.chat.compaction.summary_prompt,
+            "Summarise in one paragraph."
+        );
+        assert_eq!(config.chat.voice.directive, "Speak like a calm host.");
+        assert_eq!(
+            snapshot(&config)
+                .into_iter()
+                .find(|(k, _)| k == "chat.compaction.summary_prompt")
+                .map(|(_, v)| v),
+            Some("Summarise in one paragraph.".to_owned())
+        );
+        assert_eq!(
+            snapshot(&config)
+                .into_iter()
+                .find(|(k, _)| k == "chat.voice.directive")
+                .map(|(_, v)| v),
+            Some("Speak like a calm host.".to_owned())
+        );
+
+        let mut cleared = Config::default();
+        apply(
+            &settings_of(&[
+                ("chat.compaction.summary_prompt", "   "),
+                ("chat.voice.directive", ""),
+            ]),
+            &mut cleared,
+        );
+        assert!(
+            cleared.chat.compaction.summary_prompt.is_empty(),
+            "blank means the built-in default"
+        );
+        assert!(cleared.chat.voice.directive.is_empty());
     }
 
     #[test]

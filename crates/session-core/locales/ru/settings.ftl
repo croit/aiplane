@@ -28,6 +28,8 @@ settings-s-chat-ocr = OCR документов
 settings-s-chat-ocr-blurb = Превращение загруженных PDF и изображений в текст, который может прочитать модель.
 settings-s-chat-compaction = Сжатие переписки
 settings-s-chat-compaction-blurb = Пересказ более старой половины длинного разговора, чтобы он и дальше помещался в контекстное окно модели.
+settings-s-chat-voice = Голос
+settings-s-chat-voice-blurb = Постоянные инструкции для голосового чата: как ассистент формулирует то, что произносит вслух.
 settings-s-chat-turns = Параллельные разговоры
 settings-s-chat-turns-blurb = Сколько чатов одного пользователя могут отвечать одновременно.
 settings-s-chat-loops = Перезапуск при зацикливании
@@ -127,6 +129,11 @@ settings-f-chat-compaction-min_turns_to_compact = Минимальная дли�
 settings-f-chat-compaction-min_turns_to_compact-help = Разговоры короче этого числа реплик не сжимаются никогда.
 settings-f-chat-compaction-summary_max_tokens = Бюджет токенов пересказа
 settings-f-chat-compaction-summary_max_tokens-help = Бюджет токенов для пересказа, который заменяет сжатые реплики.
+settings-f-chat-compaction-summary_prompt = Промпт сумматора
+settings-f-chat-compaction-summary_prompt-help = Инструкции, по которым работает сумматор. Оставьте пустым, чтобы использовать встроенный промпт.
+
+settings-f-chat-voice-directive = Голосовая директива
+settings-f-chat-voice-directive-help = Постоянные инструкции для голосовых ходов, добавляемые к системному сообщению. Оставьте пустым, чтобы использовать встроенную директиву.
 
 settings-f-chat-turns-max_parallel = Разговоров одновременно
 settings-f-chat-turns-max_parallel-help = Сколько ответов пользователь может получать параллельно, в разных разговорах. 1 сохраняет прежнее поведение: второй чат ждёт.

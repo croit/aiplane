@@ -28,6 +28,8 @@ settings-s-chat-ocr = 文档 OCR
 settings-s-chat-ocr-blurb = 把上传的 PDF 与图片转成模型能读的文本。
 settings-s-chat-compaction = 会话压缩
 settings-s-chat-compaction-blurb = 概括长会话中较早的一半，使其继续能放进模型的上下文窗口。
+settings-s-chat-voice = 语音
+settings-s-chat-voice-blurb = 语音聊天的常驻指令：助理在朗读时该如何措辞。
 settings-s-chat-turns = 并行会话
 settings-s-chat-turns-blurb = 同一位用户可以同时有多少个会话在作答。
 settings-s-chat-loops = 循环时重试
@@ -127,6 +129,11 @@ settings-f-chat-compaction-min_turns_to_compact = 会话最小长度
 settings-f-chat-compaction-min_turns_to_compact-help = 轮次少于此数的会话永不压缩。
 settings-f-chat-compaction-summary_max_tokens = 摘要 token 预算
 settings-f-chat-compaction-summary_max_tokens-help = 用于替换被压缩轮次的摘要的 token 预算。
+settings-f-chat-compaction-summary_prompt = 摘要提示词
+settings-f-chat-compaction-summary_prompt-help = 摘要器工作的指令。留空则使用内置提示词。
+
+settings-f-chat-voice-directive = 语音指令
+settings-f-chat-voice-directive-help = 语音回合的常驻指令，附加到系统消息中。留空则使用内置指令。
 
 settings-f-chat-turns-max_parallel = 同时进行的会话
 settings-f-chat-turns-max_parallel-help = 一位用户可以在不同会话中并行进行的回答数量。设为 1 保持原有行为：第二个会话需要等待。

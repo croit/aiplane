@@ -35,6 +35,8 @@ settings-s-chat-ocr = Document OCR
 settings-s-chat-ocr-blurb = Turning uploaded PDFs and images into text the model can read.
 settings-s-chat-compaction = Conversation compaction
 settings-s-chat-compaction-blurb = Summarising the older half of a long conversation so it keeps fitting in the model's context window.
+settings-s-chat-voice = Voice
+settings-s-chat-voice-blurb = The standing instructions for a chat that speaks: how the assistant should phrase what it says out loud.
 settings-s-chat-turns = Parallel conversations
 settings-s-chat-turns-blurb = How many of a user's chats may be answering at the same time.
 settings-s-chat-loops = Loop retries
@@ -135,6 +137,11 @@ settings-f-chat-compaction-min_turns_to_compact = Minimum conversation length
 settings-f-chat-compaction-min_turns_to_compact-help = Never compact a conversation shorter than this many turns.
 settings-f-chat-compaction-summary_max_tokens = Summary token budget
 settings-f-chat-compaction-summary_max_tokens-help = Token budget for the summary that replaces the compacted turns.
+settings-f-chat-compaction-summary_prompt = Summariser prompt
+settings-f-chat-compaction-summary_prompt-help = The instructions the summariser works from. Leave empty to use the built-in prompt.
+
+settings-f-chat-voice-directive = Voice directive
+settings-f-chat-voice-directive-help = Standing instructions for voice turns, added to the system message. Leave empty to use the built-in directive.
 
 settings-f-chat-turns-max_parallel = Conversations at once
 settings-f-chat-turns-max_parallel-help = Turns one user may have running in parallel, in different conversations. 1 keeps the old behaviour: a second chat waits.

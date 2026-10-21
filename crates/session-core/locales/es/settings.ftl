@@ -29,6 +29,8 @@ settings-s-chat-ocr = OCR de documentos
 settings-s-chat-ocr-blurb = Convertir los PDF e imágenes subidos en texto que el modelo pueda leer.
 settings-s-chat-compaction = Compactación de conversaciones
 settings-s-chat-compaction-blurb = Resumir la mitad más antigua de una conversación larga para que siga cabiendo en la ventana de contexto del modelo.
+settings-s-chat-voice = Voz
+settings-s-chat-voice-blurb = Las instrucciones permanentes de un chat que habla: cómo debe formular el asistente lo que dice en voz alta.
 settings-s-chat-turns = Conversaciones en paralelo
 settings-s-chat-turns-blurb = Cuántos chats de una persona pueden estar respondiendo a la vez.
 settings-s-chat-loops = Reintentos tras un bucle
@@ -129,6 +131,11 @@ settings-f-chat-compaction-min_turns_to_compact = Longitud mínima de conversaci
 settings-f-chat-compaction-min_turns_to_compact-help = Nunca compactar una conversación con menos turnos que este número.
 settings-f-chat-compaction-summary_max_tokens = Presupuesto de tokens del resumen
 settings-f-chat-compaction-summary_max_tokens-help = Presupuesto de tokens para el resumen que sustituye a los turnos compactados.
+settings-f-chat-compaction-summary_prompt = Prompt del resumidor
+settings-f-chat-compaction-summary_prompt-help = Las instrucciones del resumidor. Déjalo vacío para usar el prompt integrado.
+
+settings-f-chat-voice-directive = Directiva de voz
+settings-f-chat-voice-directive-help = Instrucciones permanentes para turnos de voz, añadidas al mensaje del sistema. Déjalo vacío para usar la directiva integrada.
 
 settings-f-chat-turns-max_parallel = Conversaciones a la vez
 settings-f-chat-turns-max_parallel-help = Respuestas que una persona puede tener en curso en paralelo, en conversaciones distintas. 1 mantiene el comportamiento anterior: el segundo chat espera.

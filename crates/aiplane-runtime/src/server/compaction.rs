@@ -77,6 +77,16 @@ Write in compact prose or bullet points. No preamble, no meta-commentary, no \"h
 summary\" — output only the summary itself.\n\
 /no_think";
 
+/// The summariser's instructions: the operator's own prompt while it has
+/// text, the built-in one otherwise.
+fn summary_instructions(cfg: &aiplane_core::server::config::CompactionConfig) -> &str {
+    if cfg.summary_prompt.is_empty() {
+        SUMMARY_SYSTEM_PROMPT
+    } else {
+        &cfg.summary_prompt
+    }
+}
+
 /// Check the session's current context size against the compaction threshold
 /// and, if over, summarise the oldest turns in the background. Best-effort:
 /// every failure path logs and returns without touching the conversation.
@@ -236,7 +246,7 @@ async fn run_compaction(
             purpose: "compaction_summary",
             model,
             access,
-            instructions: SUMMARY_SYSTEM_PROMPT,
+            instructions: summary_instructions(cfg),
             input: &plan.input_text,
             temperature: 0.0,
             max_tokens: Some(cfg.summary_max_tokens),
@@ -478,7 +488,20 @@ mod tests {
             keep_recent_turns: 2,
             min_turns_to_compact: 2,
             summary_max_tokens: 512,
+            summary_prompt: String::new(),
         }
+    }
+
+    #[test]
+    fn the_summariser_uses_the_operators_prompt_only_while_it_has_text() {
+        let default = cfg();
+        assert_eq!(summary_instructions(&default), SUMMARY_SYSTEM_PROMPT);
+        let mut custom = default;
+        custom.summary_prompt = "Summarise in one short paragraph.".into();
+        assert_eq!(
+            summary_instructions(&custom),
+            "Summarise in one short paragraph."
+        );
     }
 
     fn turn(seq: i64, role: TurnRole, text: &str) -> TurnWithTools {
