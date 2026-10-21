@@ -14,7 +14,7 @@
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-static": "^4.0.0",
-		"@sveltejs/kit": "^3.0.1",
+		"@sveltejs/kit": "^3.1.0",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@tailwindcss/typography": "^0.5.20",
 		"@tailwindcss/vite": "^4.1.0",
@@ -22,7 +22,7 @@
 		"@typescript/native": "npm:typescript@^7.0.2",
 		"daisyui": "^5.7.50",
 		"svelte": "^5.57.2",
-		"svelte-check": "^4.7.5",
+		"svelte-check": "^4.7.7",
 		"tailwindcss": "^4.1.0",
 		"typescript": "^6.0.3",
 		"vite": "^8.3.4"
