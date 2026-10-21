@@ -3,13 +3,13 @@
 	import { t } from '#lib/i18n.svelte.js';
 	import { skillFileTree, type AdminSkill } from '#lib/admin-skills.js';
 
-	let { skills, selected, source, configured, onupload } = $props<{
+	let { skills, selected, source, configured, onupload }: {
 		skills: AdminSkill[];
 		selected: AdminSkill | null;
 		source: string | null;
 		configured: boolean;
 		onupload: (file: File) => void | Promise<void>;
-	}>();
+	} = $props();
 	let file = $state<File | null>(null);
 	let uploading = $state(false);
 

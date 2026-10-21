@@ -14,7 +14,13 @@ test('settings category summaries count only switchable sections', () => {
 });
 
 test('setting drafts preserve booleans and make stored lists editable', () => {
-	assert.equal(fieldDraft({ kind: 'bool', value: 'true' }), 'true');
-	assert.equal(fieldDraft({ kind: 'list', value: '["feedback","support"]' }), 'feedback, support');
-	assert.equal(fieldDraft({ kind: 'list', value: 'hand-edited' }), 'hand-edited');
+	assert.equal(fieldDraft({ kind: 'bool', value: 'true', default: '' }), 'true');
+	assert.equal(fieldDraft({ kind: 'list', value: '["feedback","support"]', default: '' }), 'feedback, support');
+	assert.equal(fieldDraft({ kind: 'list', value: 'hand-edited', default: '' }), 'hand-edited');
+});
+
+test('an empty field drafts its built-in default while a stored value wins', () => {
+	assert.equal(fieldDraft({ kind: 'textarea', value: null, default: 'built-in text' }), 'built-in text');
+	assert.equal(fieldDraft({ kind: 'textarea', value: 'custom', default: 'built-in text' }), 'custom');
+	assert.equal(fieldDraft({ kind: 'textarea', value: null, default: '' }), '');
 });

@@ -1,5 +1,5 @@
 <script lang="ts">
-	let { children } = $props<{ children: import('svelte').Snippet }>();
+	let { children }: { children: import('svelte').Snippet } = $props();
 	import { me } from '#lib/session.svelte.js';
 	import { t } from '#lib/i18n.svelte.js';
 

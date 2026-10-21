@@ -133,8 +133,10 @@ turn-discipline rule as its system message and every grant as its offer.
 
 Built by the same `leading_system_message` as a person's turn: the
 turn-discipline rule first, then the turn's own sections, the request context
-and the compaction summary, as one `system` message. An agent's own sections
-(`AgentSurface::system_sections`) are:
+and the compaction summary, as one `system` message. For a person's turn the
+own section is the operator's deployment-wide chat prompt
+(`chat.prompt` at `/admin/settings`) while it is enabled and has text; an
+agent run's own sections are:
 
 ```
 ## Role

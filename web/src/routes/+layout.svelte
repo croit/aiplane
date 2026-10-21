@@ -25,7 +25,7 @@
 	import FeedbackFab from '#lib/components/feedback/FeedbackFab.svelte';
 	import FeedbackDialog from '#lib/components/feedback/FeedbackDialog.svelte';
 
-	let { children } = $props<{ children: import('svelte').Snippet }>();
+	let { children }: { children: import('svelte').Snippet } = $props();
 
 	loadMe();
 

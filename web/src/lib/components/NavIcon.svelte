@@ -15,7 +15,7 @@
 		| 'sparkles'
 		| 'users';
 
-	let { name, size = 16 } = $props<{ name: NavIconName; size?: number }>();
+	let { name, size = 16 }: { name: NavIconName; size?: number } = $props();
 </script>
 
 <svg

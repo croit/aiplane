@@ -2,7 +2,7 @@
 	import { connectorOAuthHelpProvider, type ConnectorFormValue } from '#lib/admin-connectors.js';
 	import { t } from '#lib/i18n.svelte.js';
 
-	let { form, redirectUri } = $props<{ form: ConnectorFormValue; redirectUri: string }>();
+	let { form, redirectUri }: { form: ConnectorFormValue; redirectUri: string } = $props();
 	let provider = $derived(connectorOAuthHelpProvider(form));
 </script>
 

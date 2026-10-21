@@ -32,10 +32,12 @@ Attachment chips in the transcript allow downloading. The owner can remove an at
 
 Ask the assistant to create or edit a document when the document capability is available. A generated document appears in the canvas alongside the conversation. The header's canvas button lets you reopen the panel.
 
+Documents render by their format. Markdown and HTML documents show as rendered content; the other formats (JSON, TOML, YAML, Typst, plain text) show as a source code block — JSON pretty-printed with indentation, the rest exactly as stored. Long lines scroll horizontally, and each code block has a copy button.
+
 1. Select the **Document** tab.
 2. If the conversation contains several documents, choose one from the selector.
 3. Use the version selector to read an earlier revision.
-4. Select **Edit** to change the Markdown content yourself, then **Save** to create a user-authored revision. Cancel discards the unsaved draft.
+4. Select **Edit** to change the document's content yourself, then **Save** to create a user-authored revision. Cancel discards the unsaved draft.
 5. Ask the assistant to make further changes in the conversation.
 
 If a newer revision arrives while your manual edit is open, the panel warns you and offers to load the newer version. Review that warning before saving. Saving a manual edit is not an automatic merge of both versions.

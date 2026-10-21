@@ -20,7 +20,7 @@
 		"@tailwindcss/vite": "^4.1.0",
 		"@types/node": "^26.6.5",
 		"@typescript/native": "npm:typescript@^7.0.2",
-		"daisyui": "^5.7.47",
+		"daisyui": "^5.7.50",
 		"svelte": "^5.57.2",
 		"svelte-check": "^4.7.5",
 		"tailwindcss": "^4.1.0",
@@ -28,9 +28,9 @@
 		"vite": "^8.3.4"
 	},
 	"dependencies": {
-		"@zumer/snapdom": "^3.3.3",
+		"@zumer/snapdom": "^3.3.4",
 		"dompurify": "^3.4.16",
-		"marked": "^18.1.0"
+		"marked": "^18.1.1"
 	},
 	"overrides": {
 		"postcss-selector-parser": "7.1.6"

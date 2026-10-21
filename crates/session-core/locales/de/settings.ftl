@@ -7,6 +7,7 @@
 
 settings-save = Abschnitt speichern
 settings-saved = Gespeichert. Ab der nächsten Anfrage aktiv.
+settings-reset-default = Auf Standard zurücksetzen
 settings-restart-note = Mit „Neustart“ markierte Felder werden nur beim Start gelesen; Änderungen greifen erst nach einem Neustart.
 settings-secret-set = gespeichert — neuen Wert eingeben, um ihn zu ersetzen
 settings-secret-unset = nicht gesetzt
@@ -22,10 +23,14 @@ settings-restart-pending-body = Diese Einstellungen sind gespeichert, greifen ab
 
 # ─── Abschnittskarten ────────────────────────────────────────────────────────
 
+settings-s-chat-prompt = Chat-Prompt
+settings-s-chat-prompt-blurb = Feste Anweisungen, die das Modell in jedem Chat einer Person befolgt.
 settings-s-chat-ocr = Dokumenten-OCR
 settings-s-chat-ocr-blurb = Hochgeladene PDFs und Bilder in Text umwandeln, den das Modell lesen kann.
 settings-s-chat-compaction = Gesprächsverdichtung
 settings-s-chat-compaction-blurb = Die ältere Hälfte eines langen Gesprächs zusammenfassen, damit es weiter in das Kontextfenster des Modells passt.
+settings-s-chat-voice = Sprache
+settings-s-chat-voice-blurb = Die stehenden Anweisungen für ein Chat, das spricht: wie der Assistent das Formulierte, das er laut ausspricht.
 settings-s-chat-turns = Parallele Gespräche
 settings-s-chat-turns-blurb = Wie viele Chats einer Person gleichzeitig antworten dürfen.
 settings-s-chat-loops = Neustarts bei Wiederholung
@@ -87,6 +92,10 @@ settings-f-content_guard-nda_action-opt-allow = Erlauben
 settings-f-content_guard-nda_action-opt-confirm = Bestätigung anfordern
 settings-f-content_guard-nda_action-opt-deny = Ablehnen
 
+settings-f-chat-prompt-enabled = Chat-Prompt aktivieren
+settings-f-chat-prompt-enabled-help = Hauptschalter für den deployment-weiten System-Prompt der Person-Chats.
+settings-f-chat-prompt-text = System-Prompt
+settings-f-chat-prompt-text-help = Wird bei Aktivierung in die System-Meldung jedes Person-Chats aufgenommen. Agenten und Dots behalten ihre eigenen Anweisungen.
 settings-f-chat-ocr-enabled = OCR aktivieren
 settings-f-chat-ocr-enabled-help = Hauptschalter für das Auslesen von Text aus hochgeladenen Dokumenten.
 settings-f-chat-ocr-model = OCR-Modell
@@ -122,6 +131,11 @@ settings-f-chat-compaction-min_turns_to_compact = Mindestlänge des Gesprächs
 settings-f-chat-compaction-min_turns_to_compact-help = Gespräche mit weniger Zügen werden nie verdichtet.
 settings-f-chat-compaction-summary_max_tokens = Token-Budget der Zusammenfassung
 settings-f-chat-compaction-summary_max_tokens-help = Token-Budget für die Zusammenfassung, die die verdichteten Züge ersetzt.
+settings-f-chat-compaction-summary_prompt = Zusammenfassungs-Prompt
+settings-f-chat-compaction-summary_prompt-help = Die Anweisungen, nach denen der Zusammenfasser arbeitet. Leer lassen für den eingebauten Prompt.
+
+settings-f-chat-voice-directive = Sprach-Anweisung
+settings-f-chat-voice-directive-help = Stehende Anweisung für Sprach-Züge, ergänzt zur Systemmeldung. Leer lassen für die eingebaute Anweisung.
 
 settings-f-chat-turns-max_parallel = Gespräche gleichzeitig
 settings-f-chat-turns-max_parallel-help = Wie viele Antworten eine Person parallel laufen lassen darf, in verschiedenen Gesprächen. 1 behält das bisherige Verhalten: Ein zweiter Chat wartet.

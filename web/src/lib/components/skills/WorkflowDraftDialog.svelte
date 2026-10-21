@@ -5,10 +5,10 @@
 	import { t } from '#lib/i18n.svelte.js';
 	import { modelSelectOptions } from '#lib/model-option.js';
 
-	let { open = $bindable(false), ongenerated } = $props<{
+	let { open = $bindable(false), ongenerated }: {
 		open?: boolean;
 		ongenerated: (manifest: string) => void | Promise<void>;
-	}>();
+	} = $props();
 
 	let name = $state('');
 	let goal = $state('');

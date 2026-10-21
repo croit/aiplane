@@ -34,7 +34,7 @@
 	// instance belongs to exactly one conversation for its whole life —
 	// which is what lets every `$state` below simply be per-conversation
 	// state, with no reset list to maintain.
-	let { id } = $props<{ id: string }>();
+	let { id }: { id: string } = $props();
 
 	let controller = $state<ReturnType<typeof createConversationController> | null>(null);
 	let session = $state<ChatSession | null>(null);

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '#lib/i18n.svelte.js';
-	let { url } = $props<{ url: string }>();
+	let { url }: { url: string } = $props();
 </script>
 
 <div class="alert alert-success mb-6 flex-col items-start gap-2">

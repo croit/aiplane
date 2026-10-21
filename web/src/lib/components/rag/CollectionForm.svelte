@@ -17,7 +17,7 @@
 		defaultModel = null,
 		onsaved,
 		oncancel
-	} = $props<{
+	}: {
 		collection?: RagCollection | null;
 		providers: RagProvider[];
 		profiles: RagProfile[];
@@ -26,7 +26,7 @@
 		defaultModel?: string | null;
 		onsaved: (name: string, aggregate: boolean, gitRef: string | null) => void | Promise<void>;
 		oncancel?: () => void;
-	}>();
+	} = $props();
 
 	const initialCollection = untrack(() => collection);
 	const profile = untrack(() => profiles.find((item: RagProfile) => item.id === initialCollection?.profile_id));

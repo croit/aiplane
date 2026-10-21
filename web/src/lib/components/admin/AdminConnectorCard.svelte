@@ -2,11 +2,11 @@
 	import { connectorBadges, type AdminConnector } from '#lib/admin-connectors.js';
 	import { t } from '#lib/i18n.svelte.js';
 
-	let { connector, ontoggle, ondelete } = $props<{
+	let { connector, ontoggle, ondelete }: {
 		connector: AdminConnector;
 		ontoggle: () => void | Promise<void>;
 		ondelete: () => void | Promise<void>;
-	}>();
+	} = $props();
 
 	const badgeClass: Record<string, string> = { enabled: 'badge-success', disabled: 'badge-ghost', global: 'badge-info', agent: 'badge-secondary', audited: 'badge-warning', default: 'badge-outline', dcr: 'badge-outline', needs_setup: 'badge-warning' };
 </script>

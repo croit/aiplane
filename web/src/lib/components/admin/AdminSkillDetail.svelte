@@ -3,12 +3,12 @@
 	import { t } from '#lib/i18n.svelte.js';
 	import { effectiveSkillGroups, type AdminSkill } from '#lib/admin-skills.js';
 
-	let { skill, groups, ondelete, onsavegrants } = $props<{
+	let { skill, groups, ondelete, onsavegrants }: {
 		skill: AdminSkill;
 		groups: string[];
 		ondelete: () => void | Promise<void>;
 		onsavegrants: (groups: string[]) => void | Promise<void>;
-	}>();
+	} = $props();
 	let dialog: HTMLDialogElement;
 	let selectedGroups = $state<string[]>([]);
 	let saving = $state(false);

@@ -3,7 +3,7 @@
 	import { t } from '#lib/i18n.svelte.js';
 	import type { PersonalSkill } from '#lib/skills.js';
 
-	let { skill, body, ondelete } = $props<{ skill: PersonalSkill; body: string; ondelete: () => void | Promise<void> }>();
+	let { skill, body, ondelete }: { skill: PersonalSkill; body: string; ondelete: () => void | Promise<void> } = $props();
 </script>
 
 <section class="min-w-0 flex-1">

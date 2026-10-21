@@ -630,6 +630,38 @@ pub struct TypstConfig {
     pub templates_dir: PathBuf,
 }
 
+/// The operator's standing instructions for a person's chat.
+///
+/// Written over the in-memory config by the settings layer and read by the
+/// turn driver, which puts it into the leading system message of every
+/// person's chat turn while `enabled`: the operator's own `text` while it is
+/// non-empty, the built-in prompt otherwise. An agent run is not affected:
+/// its system message comes from its spec.
+#[derive(Debug, Clone)]
+pub struct PromptConfig {
+    pub enabled: bool,
+    pub text: String,
+}
+
+impl Default for PromptConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            text: String::new(),
+        }
+    }
+}
+
+/// Voice-turn settings.
+#[derive(Debug, Clone, Default)]
+pub struct VoiceConfig {
+    /// The operator's own voice directive, injected into the leading system
+    /// message of voice-mode turns. Empty means the built-in directive; the
+    /// TTS pipeline only reads what the model writes, so any wording works —
+    /// it is the operator's call to keep it suited for speech.
+    pub directive: String,
+}
+
 /// Chat-page settings. Attachments go to S3 (object storage) so the
 /// DB doesn't bloat and the OpenAI API can fetch image URLs directly
 /// from the bucket. We don't gate which model gets to receive
@@ -639,6 +671,10 @@ pub struct TypstConfig {
 #[derive(Debug, Clone, Default)]
 pub struct ChatConfig {
     pub s3: Option<S3Config>,
+    /// The deployment-wide system prompt for a person's chat.
+    pub prompt: PromptConfig,
+    /// The operator's standing instructions for voice turns.
+    pub voice: VoiceConfig,
     /// Optional automatic OCR enrichment for image/PDF attachments. The OCR
     /// pool must point at the document-aware OCR sidecar.
     pub ocr: OcrConfig,
@@ -792,6 +828,9 @@ pub struct CompactionConfig {
     pub min_turns_to_compact: usize,
     /// Output-token cap for the summariser call. Default 1024.
     pub summary_max_tokens: i64,
+    /// The operator's own summariser prompt. Empty means the built-in
+    /// prompt; the gateway never parses the summary, so any wording works.
+    pub summary_prompt: String,
 }
 
 impl Default for CompactionConfig {
@@ -803,6 +842,7 @@ impl Default for CompactionConfig {
             keep_recent_turns: 6,
             min_turns_to_compact: 4,
             summary_max_tokens: 1024,
+            summary_prompt: String::new(),
         }
     }
 }

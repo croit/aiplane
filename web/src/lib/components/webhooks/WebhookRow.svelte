@@ -13,13 +13,13 @@
 	 * the last fire alone — `runLinks` picks between the one conversation and
 	 * the list of them, by the same rule `/scheduled` uses.
 	 */
-	let { webhook, canWrite, onchanged, onnotice, onsecret } = $props<{
+	let { webhook, canWrite, onchanged, onnotice, onsecret }: {
 		webhook: Webhook;
 		canWrite: boolean;
 		onchanged: () => void | Promise<void>;
 		onnotice: (message: string) => void;
 		onsecret: (secret: string) => void;
-	}>();
+	} = $props();
 
 	// A webhook run stores the payload it fired with and the prompt that payload
 	// was rendered into — neither is in the chat — so its history is worth

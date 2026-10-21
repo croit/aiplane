@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Conversation from '#lib/Conversation.svelte';
 
-	let { data } = $props<{ data: { id: string } }>();
+	let { data }: { data: { id: string } } = $props();
 </script>
 
 <!--

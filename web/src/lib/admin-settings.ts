@@ -5,6 +5,7 @@ export type SettingsFieldKind =
 	| 'int'
 	| 'float'
 	| 'text'
+	| 'textarea'
 	| 'path'
 	| 'model'
 	| 'secret'
@@ -27,6 +28,12 @@ export interface AdminSettingsField {
 	 * stable while its wording is translated.
 	 */
 	choices: string[];
+	/**
+	 * The built-in value the gateway falls back to while no value is stored;
+	 * empty for a field without one. The field shows it while empty and its
+	 * reset button restores it.
+	 */
+	default: string;
 }
 
 export interface AdminSettingsSection {
@@ -52,7 +59,7 @@ export function categorySummary(sections: Pick<AdminSettingsSection, 'enabled'>[
 	return { on: switchable.filter((section) => section.enabled).length, switchable: switchable.length };
 }
 
-export function fieldDraft(field: Pick<AdminSettingsField, 'kind' | 'value'>): string {
+export function fieldDraft(field: Pick<AdminSettingsField, 'kind' | 'value' | 'default'>): string {
 	if (field.kind === 'bool') return field.value === 'true' ? 'true' : 'false';
 	if (field.kind === 'list' && field.value) {
 		try {
@@ -60,7 +67,8 @@ export function fieldDraft(field: Pick<AdminSettingsField, 'kind' | 'value'>): s
 			if (Array.isArray(items) && items.every((item) => typeof item === 'string')) return items.join(', ');
 		} catch {}
 	}
-	return field.value ?? '';
+	const value = field.value ?? '';
+	return value === '' && field.default !== '' ? field.default : value;
 }
 
 export function settingsCatalogKey(prefix: string, path: string): string {

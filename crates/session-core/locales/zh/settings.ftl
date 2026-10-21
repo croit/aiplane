@@ -7,6 +7,7 @@
 
 settings-save = 保存本节
 settings-saved = 已保存，下一个请求起生效。
+settings-reset-default = 重置为默认值
 settings-restart-note = 标记为“需重启”的字段仅在网关启动时读取，修改后需重启才能生效。
 settings-secret-set = 已存储——输入新值即可替换
 settings-secret-unset = 未设置
@@ -22,10 +23,14 @@ settings-restart-pending-body = 以下设置已保存，但需重启网关后才
 
 # ─── 分区卡片 ─────────────────────────────────────────────────────────────────
 
+settings-s-chat-prompt = 聊天提示词
+settings-s-chat-prompt-blurb = 模型在每个人类对话中遵循的固定指令。
 settings-s-chat-ocr = 文档 OCR
 settings-s-chat-ocr-blurb = 把上传的 PDF 与图片转成模型能读的文本。
 settings-s-chat-compaction = 会话压缩
 settings-s-chat-compaction-blurb = 概括长会话中较早的一半，使其继续能放进模型的上下文窗口。
+settings-s-chat-voice = 语音
+settings-s-chat-voice-blurb = 语音聊天的常驻指令：助理在朗读时该如何措辞。
 settings-s-chat-turns = 并行会话
 settings-s-chat-turns-blurb = 同一位用户可以同时有多少个会话在作答。
 settings-s-chat-loops = 循环时重试
@@ -86,6 +91,10 @@ settings-s-metrics-blurb = GET /metrics 抓取端点。仅在设置了令牌或�
 
 # ─── 字段 ─────────────────────────────────────────────────────────────────────
 
+settings-f-chat-prompt-enabled = 启用聊天提示词
+settings-f-chat-prompt-enabled-help = 全局聊天系统提示词的主开关。
+settings-f-chat-prompt-text = 系统提示词
+settings-f-chat-prompt-text-help = 启用后会加入每个人类对话的系统消息。智能体和 Dot 保留各自的指令。
 settings-f-chat-ocr-enabled = 启用 OCR
 settings-f-chat-ocr-enabled-help = 从上传文档中提取文本的总开关。
 settings-f-chat-ocr-model = OCR 模型
@@ -121,6 +130,11 @@ settings-f-chat-compaction-min_turns_to_compact = 会话最小长度
 settings-f-chat-compaction-min_turns_to_compact-help = 轮次少于此数的会话永不压缩。
 settings-f-chat-compaction-summary_max_tokens = 摘要 token 预算
 settings-f-chat-compaction-summary_max_tokens-help = 用于替换被压缩轮次的摘要的 token 预算。
+settings-f-chat-compaction-summary_prompt = 摘要提示词
+settings-f-chat-compaction-summary_prompt-help = 摘要器工作的指令。留空则使用内置提示词。
+
+settings-f-chat-voice-directive = 语音指令
+settings-f-chat-voice-directive-help = 语音回合的常驻指令，附加到系统消息中。留空则使用内置指令。
 
 settings-f-chat-turns-max_parallel = 同时进行的会话
 settings-f-chat-turns-max_parallel-help = 一位用户可以在不同会话中并行进行的回答数量。设为 1 保持原有行为：第二个会话需要等待。

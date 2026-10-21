@@ -4,6 +4,7 @@
 	import type { CanvasDocument, ChatAsset } from '#lib/api.js';
 	import { canvasBounds, clampCanvasWidth } from '#lib/canvas-layout.js';
 	import { canvasRefresh } from '#lib/canvas-refresh.js';
+	import { documentMarkdown } from '#lib/markdown.js';
 	import { n, t } from '#lib/i18n.svelte.js';
 	import Markdown from './Markdown.svelte';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
@@ -42,6 +43,9 @@
 		label: `v${revision.version}`,
 		description: revision.author === 'user' ? t('render-canvas-version-by-you') : revision.summary
 	})));
+	// The format decides what the bytes ARE: markdown is rendered, source
+	// formats are shown verbatim as an indented code block.
+	let displayContent = $derived(opened ? documentMarkdown(opened.document.format, opened.version.content) : '');
 
 	onMount(() => {
 		const container = panel.parentElement;
@@ -206,7 +210,7 @@
 					<p class="text-xs opacity-60">{t('render-canvas-edit-hint')}</p>
 					<textarea class="textarea min-h-96 w-full flex-1 font-mono text-sm" bind:value={draft}></textarea>
 				{:else}
-					<Markdown content={opened.version.content} class="prose prose-sm max-w-none overflow-x-auto" />
+					<Markdown content={displayContent} class="prose prose-sm max-w-none overflow-x-auto" />
 				{/if}
 			{/if}
 		</div>

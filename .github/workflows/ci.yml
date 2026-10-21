@@ -96,7 +96,7 @@ jobs:
 
       # install_args limits this to gitleaks; pulling the full toolset (Rust,
       # Node, typst) would cost minutes for a 1.3 s scan.
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
           install_args: gitleaks
 
@@ -148,7 +148,7 @@ jobs:
 
       # Installs the toolchain pinned in mise.toml (Rust + components, Node,
       # typst, cargo-binstall) and caches it across runs.
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
       # Belt-and-suspenders: mise.toml requests the rustfmt/clippy components,
       # but on the GitHub runner (which ships its own rustup) that doesn't
       # always take, so `cargo fmt`/`clippy` via the pinned toolchain fail.
@@ -238,7 +238,7 @@ jobs:
       # rather than in the `ci` job, whose shallow checkout cannot derive a
       # version, and not taken from the `extension` job, so a failed store
       # publish on a tag cannot hold back the image.
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
           install_args: node@24
       - name: mise run stage-extension
@@ -543,7 +543,7 @@ jobs:
           fetch-depth: 0
 
       # Node alone: packaging is a copy, a JSON edit and a zip.
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
           install_args: node@24
 
@@ -640,7 +640,7 @@ jobs:
       # are pinned here rather than in mise.toml's [tools] so a developer who
       # never touches the chart does not download them on every `mise install`;
       # `mise run helm-lint` pins the same versions.
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
           install_args: helm@3.19.0 kubeconform@0.7.0
 

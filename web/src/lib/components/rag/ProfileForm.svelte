@@ -12,11 +12,11 @@
 		];
 	}
 
-	let { profile = null, onsaved, oncancel } = $props<{
+	let { profile = null, onsaved, oncancel }: {
 		profile?: RagProfile | null;
 		onsaved: (message: string) => void | Promise<void>;
 		oncancel?: () => void;
-	}>();
+	} = $props();
 	const initialProfile = untrack(() => profile);
 	let name = $state(initialProfile?.name ?? '');
 	let description = $state(initialProfile?.description ?? '');
