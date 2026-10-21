@@ -557,6 +557,43 @@ async fn creating_a_conversation_reuses_the_empty_one() {
     assert_eq!(listed().await, 2);
 }
 
+/// A failed blank-conversation lookup is a 500, never a fallback to a fresh
+/// conversation the caller did not need.
+#[tokio::test]
+async fn a_failed_blank_conversation_lookup_is_a_500_and_creates_nothing() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let db = state.db.clone();
+    let app = router(state);
+    sqlx::query("ALTER TABLE chat_turns RENAME TO chat_turns_unavailable")
+        .execute(&db)
+        .await
+        .unwrap();
+
+    for (method, uri) in [
+        (Method::POST, "/api/v0/chat/sessions"),
+        (Method::GET, "/api/v0/chat/landing"),
+    ] {
+        let resp = app
+            .serve(json_req(method.clone(), uri.into(), &cookie, None))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{method} {uri}"
+        );
+        assert!(
+            body_string(resp).await.contains("\"internal_error\""),
+            "{method} {uri}"
+        );
+    }
+    let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chat_sessions")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(sessions, 0);
+}
+
 #[tokio::test]
 async fn an_unknown_session_is_a_404_everywhere() {
     let (state, cookie) = setup("http://unused.invalid").await;
